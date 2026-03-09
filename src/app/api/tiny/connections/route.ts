@@ -76,7 +76,7 @@ export async function PUT(request: NextRequest) {
     updates.access_token = null;
     updates.refresh_token = null;
     updates.token_expires_at = null;
-    updates.token = null;
+    updates.token = "";
     updates.ultimo_teste_em = null;
     updates.ultimo_teste_ok = null;
   }

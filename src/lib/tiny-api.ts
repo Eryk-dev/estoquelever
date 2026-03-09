@@ -118,13 +118,57 @@ export async function buscarProdutoPorSku(
   return itens.length > 0 ? itens[0] : null;
 }
 
-/** List all deposits (warehouses) from Tiny */
+/** List all deposits (warehouses) from Tiny by fetching stock of any active product */
 export async function listarDepositos(token: string): Promise<TinyDeposito[]> {
-  const res = await tinyFetch<{ data: { itens: TinyDeposito[] } }>(
-    "/depositos",
+  // Tiny v3 has no /depositos endpoint — deposits come from stock queries.
+  // Fetch first active product, then get its stock to discover deposits.
+  const prodRes = await tinyFetch<{ data: { itens: { id: number }[] } }>(
+    "/produtos?situacao=A&limit=1",
     { token },
   );
-  return res.data?.itens ?? [];
+  const firstProduct = prodRes.data?.itens?.[0];
+  if (!firstProduct) return [];
+
+  const stockRes = await tinyFetch<{ data: { depositos: TinyDeposito[] } }>(
+    `/estoque/${firstProduct.id}`,
+    { token },
+  );
+  return stockRes.data?.depositos ?? [];
+}
+
+/** Post (deduct) stock for an order — calls the origin account */
+export async function lancarEstoque(
+  token: string,
+  pedidoId: string,
+): Promise<void> {
+  await tinyFetch<unknown>(`/pedidos/${pedidoId}/lancar-estoque`, {
+    token,
+    method: "POST",
+  });
+}
+
+/** Reverse a previous stock posting */
+export async function estornarEstoque(
+  token: string,
+  pedidoId: string,
+): Promise<void> {
+  await tinyFetch<unknown>(`/pedidos/${pedidoId}/estornar-estoque`, {
+    token,
+    method: "POST",
+  });
+}
+
+/** Update order status in Tiny */
+export async function atualizarStatusPedido(
+  token: string,
+  pedidoId: string,
+  situacao: "aberto" | "aprovado" | "preparando" | "faturado" | "pronto" | "enviado" | "entregue" | "cancelado",
+): Promise<void> {
+  await tinyFetch<unknown>(`/pedidos/${pedidoId}/situacao`, {
+    token,
+    method: "PUT",
+    body: { situacao },
+  });
 }
 
 /** Test connection by fetching company info */

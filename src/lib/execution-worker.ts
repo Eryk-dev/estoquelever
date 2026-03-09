@@ -5,16 +5,17 @@
  * and retries with exponential backoff on failure.
  *
  * Stock posting logic:
- * - "propria": calls Tiny API to post stock in origin branch (order exists there)
- * - "transferencia": order only exists in origin — can't post via API in support.
- *   Marked as done; physical transfer + manual stock handled outside SISO.
+ * - "propria": calls Tiny lancarEstoque on origin branch (order-level deduction)
+ * - "transferencia": deducts stock item-by-item from support branch via
+ *   POST /estoque/{id} with tipo="S" (order doesn't exist in support account)
  * - "oc": no stock to post. Marked as done.
  */
 
 import { createServiceClient } from "./supabase-server";
-import { lancarEstoque } from "./tiny-api";
+import { lancarEstoque, movimentarEstoque, buscarProdutoPorSku } from "./tiny-api";
 import { getValidTokenByFilial } from "./tiny-oauth";
-import { checkRateLimit, registerApiCall } from "./rate-limiter";
+import { checkRateLimit, registerApiCall, waitForRateLimit } from "./rate-limiter";
+import { getNomeFilial } from "./cnpj-filial";
 import { logger } from "./logger";
 
 interface FilaJob {
@@ -95,6 +96,23 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
       continue;
     }
 
+    // GAP 2: Skip jobs whose order was cancelled while queued
+    const { data: orderCheck } = await supabase
+      .from("siso_pedidos")
+      .select("status")
+      .eq("id", job.pedido_id)
+      .single();
+
+    if (orderCheck?.status === "cancelado") {
+      await supabase
+        .from("siso_fila_execucao")
+        .update({ status: "cancelado", atualizado_em: new Date().toISOString() })
+        .eq("id", job.id);
+      result.skipped++;
+      logger.info("worker", "Job skipped — pedido cancelado", { pedidoId: job.pedido_id });
+      continue;
+    }
+
     try {
       await executeJob(job);
 
@@ -108,14 +126,15 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
         })
         .eq("id", job.id);
 
-      // Update pedido status to concluido
+      // Update pedido status — only if still "executando" (don't overwrite "cancelado")
       await supabase
         .from("siso_pedidos")
         .update({
           status: "concluido",
           processado_em: new Date().toISOString(),
         })
-        .eq("id", job.pedido_id);
+        .eq("id", job.pedido_id)
+        .eq("status", "executando");
 
       result.processed++;
       result.jobs.push({
@@ -197,29 +216,204 @@ async function executeJob(job: FilaJob): Promise<void> {
     throw new Error(`Tipo de job desconhecido: ${job.tipo}`);
   }
 
-  // Only "propria" gets automated stock posting.
-  // "transferencia": order lives in origin account only — can't post stock via
-  // support account API. Physical transfer happens outside SISO.
-  // "oc": no stock exists to post.
-  if (job.decisao !== "propria") {
-    logger.info("worker", `Decisão "${job.decisao}" — sem lançamento automático`, {
+  if (job.decisao === "propria") {
+    await executarSaidaPropria(job);
+    return;
+  }
+
+  if (job.decisao === "transferencia") {
+    await executarSaidaTransferencia(job);
+    return;
+  }
+
+  // "oc" — no stock exists to post
+  logger.info("worker", `Decisão "oc" — sem lançamento de estoque`, {
+    pedidoId: job.pedido_id,
+    decisao: job.decisao,
+  });
+}
+
+/** propria: use Tiny's order-level stock posting (deducts from origin) */
+async function executarSaidaPropria(job: FilaJob): Promise<void> {
+  const supabase = createServiceClient();
+
+  // Idempotency: skip if stock was already posted (prevents double-deduction on retry)
+  const { data: pedido } = await supabase
+    .from("siso_pedidos")
+    .select("estoque_lancado")
+    .eq("id", job.pedido_id)
+    .single();
+
+  if (pedido?.estoque_lancado) {
+    logger.info("worker", "Estoque já lançado (retry idempotente)", {
       pedidoId: job.pedido_id,
-      decisao: job.decisao,
     });
     return;
   }
 
-  // Get token for the branch where the order lives
   const { token } = await getValidTokenByFilial(job.filial_execucao);
 
-  // Register the API call for shared rate limit tracking
   await registerApiCall(job.filial_execucao, "POST /pedidos/{id}/lancar-estoque");
-
-  // Post stock
   await lancarEstoque(token, job.pedido_id);
 
-  logger.info("worker", "Estoque lançado no Tiny", {
+  // Mark as posted for idempotency
+  await supabase
+    .from("siso_pedidos")
+    .update({ estoque_lancado: true })
+    .eq("id", job.pedido_id);
+
+  logger.info("worker", "Estoque lançado no Tiny (própria)", {
     pedidoId: job.pedido_id,
     filial: job.filial_execucao,
   });
+}
+
+/**
+ * transferencia: deduct stock item-by-item from the support branch.
+ *
+ * The order lives in the ORIGIN account, but stock is fulfilled by the
+ * SUPPORT branch. Since the order doesn't exist in the support account,
+ * we can't use lancarEstoque — we do manual "S" (saída) movements
+ * for each item via POST /estoque/{idProduto}.
+ *
+ * Uses `estoque_saida_lancada` on siso_pedido_itens for retry idempotency.
+ */
+async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
+  const supabase = createServiceClient();
+
+  // Get order info for the description
+  const { data: pedido, error: pedidoErr } = await supabase
+    .from("siso_pedidos")
+    .select("numero, filial_origem")
+    .eq("id", job.pedido_id)
+    .single();
+
+  if (pedidoErr || !pedido) {
+    throw new Error(`Pedido ${job.pedido_id} não encontrado no banco`);
+  }
+
+  const filialOrigem = pedido.filial_origem as "CWB" | "SP";
+  const nomeOrigem = getNomeFilial(filialOrigem);
+
+  // Get items NOT yet deducted (retry-safe)
+  const { data: itens, error: itensErr } = await supabase
+    .from("siso_pedido_itens")
+    .select("produto_id, produto_id_suporte, sku, descricao, quantidade_pedida, estoque_saida_lancada")
+    .eq("pedido_id", job.pedido_id)
+    .or("estoque_saida_lancada.is.null,estoque_saida_lancada.eq.false");
+
+  if (itensErr) {
+    throw new Error(`Erro ao buscar itens: ${itensErr.message}`);
+  }
+
+  if (!itens?.length) {
+    logger.info("worker", "Todos os itens já tiveram saída lançada", {
+      pedidoId: job.pedido_id,
+      filial: job.filial_execucao,
+    });
+    return;
+  }
+
+  // Token for the support branch (where stock will be deducted)
+  const { token } = await getValidTokenByFilial(job.filial_execucao);
+
+  // Get configured deposit for support branch
+  const { data: conn } = await supabase
+    .from("siso_tiny_connections")
+    .select("deposito_id")
+    .eq("filial", job.filial_execucao)
+    .eq("ativo", true)
+    .single();
+
+  const depositoId = conn?.deposito_id ?? null;
+
+  const observacoes = `Saída para atender pedido ${pedido.numero} da ${nomeOrigem} (${filialOrigem})`;
+
+  let processed = 0;
+  let errors = 0;
+  const failedSkus: string[] = [];
+
+  for (const item of itens) {
+    try {
+      // Use pre-cached product ID from webhook enrichment; fall back to SKU search
+      let produtoIdSuporte = item.produto_id_suporte as number | null;
+
+      if (!produtoIdSuporte) {
+        await waitForRateLimit(job.filial_execucao);
+        await registerApiCall(job.filial_execucao, "GET /produtos?codigo=");
+        const produto = await buscarProdutoPorSku(token, item.sku);
+        produtoIdSuporte = produto?.id ?? null;
+        if (produtoIdSuporte) await sleep(500);
+      }
+
+      if (!produtoIdSuporte) {
+        logger.warn("worker", `SKU ${item.sku} não encontrado em ${job.filial_execucao}`, {
+          pedidoId: job.pedido_id,
+          sku: item.sku,
+          filial: job.filial_execucao,
+        });
+        errors++;
+        failedSkus.push(item.sku);
+        continue;
+      }
+
+      // Deduct stock
+      await waitForRateLimit(job.filial_execucao);
+      await registerApiCall(job.filial_execucao, "POST /estoque/{id}");
+
+      await movimentarEstoque(token, produtoIdSuporte, {
+        tipo: "S",
+        quantidade: item.quantidade_pedida,
+        deposito: depositoId ? { id: depositoId } : undefined,
+        observacoes,
+      });
+
+      // Mark item as deducted (idempotency for retries)
+      await supabase
+        .from("siso_pedido_itens")
+        .update({ estoque_saida_lancada: true })
+        .eq("pedido_id", job.pedido_id)
+        .eq("produto_id", item.produto_id);
+
+      processed++;
+      logger.info("worker", `Saída lançada: ${item.sku} x${item.quantidade_pedida}`, {
+        pedidoId: job.pedido_id,
+        sku: item.sku,
+        quantidade: item.quantidade_pedida,
+        filial: job.filial_execucao,
+      });
+
+      // Breathing room between items
+      await sleep(500);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors++;
+      failedSkus.push(item.sku);
+      logger.error("worker", `Falha ao lançar saída: ${item.sku}`, {
+        pedidoId: job.pedido_id,
+        sku: item.sku,
+        filial: job.filial_execucao,
+        error: msg,
+      });
+    }
+  }
+
+  // Any failure → throw to trigger retry. Items already deducted are
+  // marked estoque_saida_lancada=true and will be skipped on retry.
+  if (errors > 0) {
+    throw new Error(
+      `Falha em ${errors} de ${errors + processed} itens (SKUs: ${failedSkus.join(", ")})`,
+    );
+  }
+
+  logger.info("worker", "Saídas de transferência concluídas", {
+    pedidoId: job.pedido_id,
+    filial: job.filial_execucao,
+    totalItens: itens.length,
+    processed,
+  });
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
 }

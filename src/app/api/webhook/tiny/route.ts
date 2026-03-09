@@ -116,6 +116,16 @@ export async function POST(request: NextRequest) {
         })
         .eq("id", pedidoId);
 
+      // Cancel any pending execution jobs to prevent stock posting
+      await supabase
+        .from("siso_fila_execucao")
+        .update({
+          status: "cancelado",
+          atualizado_em: new Date().toISOString(),
+        })
+        .eq("pedido_id", pedidoId)
+        .eq("status", "pendente");
+
       await supabase
         .from("siso_webhook_logs")
         .update({ status: "concluido", processado_em: new Date().toISOString() })

@@ -3,6 +3,7 @@ import { getPedido, getEstoque, buscarProdutoPorSku } from "./tiny-api";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { getValidTokenByFilial } from "./tiny-oauth";
 import { registerApiCall, waitForRateLimit } from "./rate-limiter";
+import { processQueue } from "./execution-worker";
 import { logger } from "./logger";
 import type { TinyPedidoItem } from "./tiny-api";
 
@@ -11,6 +12,8 @@ type Decisao = "propria" | "transferencia" | "oc";
 
 interface ProcessedItem {
   produto_id: number;
+  /** Product ID in the support branch's Tiny account (for transfers) */
+  produto_id_suporte: number | null;
   sku: string;
   descricao: string;
   quantidade_pedida: number;
@@ -74,11 +77,12 @@ export async function processWebhook(
     const { token: origemToken } = await getValidTokenByFilial(filialOrigem);
 
     let suporteToken: string | null = null;
+    let suporteIndisponivel = false;
     try {
       const result = await getValidTokenByFilial(filialSuporte);
       suporteToken = result.token;
     } catch {
-      // Support branch may not be configured yet
+      suporteIndisponivel = true;
       logger.warn("processor", `No token for support branch ${filialSuporte} — stock check skipped`, {
         pedidoId: pedidoTinyId,
         filial: filialOrigem,
@@ -118,9 +122,29 @@ export async function processWebhook(
       itensProcessados,
     );
 
+    // 5b. Append warnings when data may be incomplete
+    const warnings: string[] = [];
+    if (suporteIndisponivel) {
+      warnings.push(`Estoque de ${filialSuporte} não verificado (sem conexão)`);
+    }
+    const origemDepositoId = filialOrigem === "CWB" ? cwbDepositoId : spDepositoId;
+    if (origemDepositoId === null) {
+      warnings.push(`${filialOrigem} sem depósito configurado`);
+    }
+    if (!suporteIndisponivel) {
+      const suporteDepositoId = filialSuporte === "CWB" ? cwbDepositoId : spDepositoId;
+      if (suporteDepositoId === null) {
+        warnings.push(`${filialSuporte} sem depósito configurado`);
+      }
+    }
+    const motivoFinal = warnings.length > 0
+      ? `${motivo} | ${warnings.join("; ")}`
+      : motivo;
+
     // 6. Determine status: auto-approve ONLY if origin has ALL items (not partial)
     const isAuto = sugestao === "propria" && !parcial;
-    const status = isAuto ? "concluido" : "pendente";
+    // Auto-approved orders go to "executando" (worker posts stock then marks "concluido")
+    const status = isAuto ? "executando" : "pendente";
     const tipoResolucao = isAuto ? "auto" : null;
 
     // 7. Insert into siso_pedidos (dedup on id)
@@ -139,11 +163,11 @@ export async function processWebhook(
           forma_envio_id: pedido.formaEnvio?.id ?? null,
           forma_envio_descricao: pedido.formaEnvio?.descricao ?? null,
           sugestao,
-          sugestao_motivo: motivo,
+          sugestao_motivo: motivoFinal,
           status,
           tipo_resolucao: tipoResolucao,
           decisao_final: isAuto ? "propria" : null,
-          processado_em: isAuto ? new Date().toISOString() : null,
+          processado_em: null,
           marcadores: isAuto ? [filialOrigem] : [],
           payload_original: pedido,
         },
@@ -152,19 +176,34 @@ export async function processWebhook(
 
     if (pedidoError) throw pedidoError;
 
+    // 7b. Auto-approved → enqueue stock posting job + kick worker
     if (isAuto) {
-      logger.info("processor", "Order auto-approved", {
+      await supabase.from("siso_fila_execucao").insert({
+        pedido_id: pedidoTinyId,
+        tipo: "lancar_estoque",
+        filial_execucao: filialOrigem,
+        decisao: "propria",
+      });
+
+      processQueue(1).catch((err) => {
+        logger.error("processor", "Auto-approve worker kick failed", {
+          pedidoId: pedidoTinyId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+
+      logger.info("processor", "Order auto-approved → stock posting queued", {
         pedidoId: pedidoTinyId,
         filial: filialOrigem,
         sugestao,
-        motivo,
+        motivo: motivoFinal,
       });
     } else {
       logger.info("processor", "Order queued for human review", {
         pedidoId: pedidoTinyId,
         filial: filialOrigem,
         sugestao,
-        motivo,
+        motivo: motivoFinal,
         parcial,
       });
     }
@@ -274,6 +313,7 @@ async function enrichItem(
   }
 
   // Stock in support branch (need to find product by SKU first)
+  let produtoIdSuporte: number | null = null;
   if (suporteToken) {
     const filialSup: "CWB" | "SP" = filialOrigem === "CWB" ? "SP" : "CWB";
     try {
@@ -282,6 +322,7 @@ async function enrichItem(
       await registerApiCall(filialSup, "GET /produtos?codigo=");
       const produtoSuporte = await buscarProdutoPorSku(suporteToken, sku);
       if (produtoSuporte) {
+        produtoIdSuporte = produtoSuporte.id;
         await sleep(500);
         await waitForRateLimit(filialSup);
         await registerApiCall(filialSup, "GET /estoque/{id}");
@@ -307,6 +348,7 @@ async function enrichItem(
 
   return {
     produto_id: item.produto.id,
+    produto_id_suporte: produtoIdSuporte,
     sku,
     descricao: item.produto.descricao,
     quantidade_pedida: qtd,
@@ -337,6 +379,14 @@ function calcularSugestao(
   filialOrigem: Filial,
   itens: ProcessedItem[],
 ): SugestaoResult {
+  if (itens.length === 0) {
+    return {
+      sugestao: "oc",
+      motivo: "Pedido sem itens — verificar manualmente",
+      parcial: false,
+    };
+  }
+
   const origemAtendeTudo = itens.every((i) =>
     filialOrigem === "CWB" ? i.cwb_atende : i.sp_atende,
   );

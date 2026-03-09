@@ -163,6 +163,31 @@ export async function atualizarStatusPedido(
   });
 }
 
+/** Move stock for a single product (entry, exit, or balance) */
+export async function movimentarEstoque(
+  token: string,
+  produtoId: number,
+  params: {
+    tipo: "E" | "S" | "B";
+    quantidade: number;
+    deposito?: { id: number };
+    observacoes?: string;
+    precoUnitario?: number;
+  },
+): Promise<{ idLancamento: number }> {
+  return tinyFetch<{ idLancamento: number }>(`/estoque/${produtoId}`, {
+    token,
+    method: "POST",
+    body: {
+      tipo: params.tipo,
+      quantidade: params.quantidade,
+      precoUnitario: params.precoUnitario ?? 0,
+      ...(params.deposito && { deposito: params.deposito }),
+      ...(params.observacoes && { observacoes: params.observacoes }),
+    },
+  });
+}
+
 /** Test connection by fetching company info */
 export async function testarConexao(
   token: string,

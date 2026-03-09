@@ -35,12 +35,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  // Only process approved or cancelled order updates
+  // Only process approved or cancelled order events
   const codigoSituacao = (dados.codigoSituacao as string) ?? "";
+  const tiposAceitos = ["atualizacao_pedido", "inclusao_pedido"];
   const situacoesAceitas = ["aprovado", "cancelado"];
-  if (tipo !== "atualizacao_pedido" || !situacoesAceitas.includes(codigoSituacao)) {
+  if (!tiposAceitos.includes(tipo) || !situacoesAceitas.includes(codigoSituacao)) {
     logger.info("webhook", "Ignoring non-order or non-approved/cancelled event", { tipo, codigoSituacao });
-    return NextResponse.json({ status: "ignored", reason: "Not an approved/cancelled order update" });
+    return NextResponse.json({ status: "ignored", reason: "Not an approved/cancelled order event" });
   }
 
   const pedidoId = dados.id as string;

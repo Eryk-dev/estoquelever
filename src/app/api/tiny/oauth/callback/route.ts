@@ -14,7 +14,11 @@ export async function GET(request: NextRequest) {
   const state = request.nextUrl.searchParams.get("state");
   const error = request.nextUrl.searchParams.get("error");
 
-  const configUrl = new URL("/configuracoes", request.nextUrl.origin);
+  // Use X-Forwarded headers from reverse proxy for correct public URL
+  const forwardedProto = request.headers.get("x-forwarded-proto") ?? "https";
+  const forwardedHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? request.nextUrl.host;
+  const publicOrigin = `${forwardedProto}://${forwardedHost}`;
+  const configUrl = new URL("/configuracoes", publicOrigin);
 
   // Handle OAuth errors
   if (error) {
@@ -50,7 +54,7 @@ export async function GET(request: NextRequest) {
 
   try {
     // Exchange code for tokens
-    const redirectUri = `${request.nextUrl.origin}/api/tiny/oauth/callback`;
+    const redirectUri = `${publicOrigin}/api/tiny/oauth/callback`;
     const tokens = await exchangeCodeForTokens({
       code,
       clientId: conn.client_id,

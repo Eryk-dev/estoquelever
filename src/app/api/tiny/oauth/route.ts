@@ -47,8 +47,10 @@ export async function GET(request: NextRequest) {
     .update({ oauth_state: state })
     .eq("id", connectionId);
 
-  // Build redirect URL
-  const origin = request.nextUrl.origin;
+  // Build redirect URL — use X-Forwarded headers from reverse proxy
+  const forwardedProto = request.headers.get("x-forwarded-proto") ?? "https";
+  const forwardedHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? request.nextUrl.host;
+  const origin = `${forwardedProto}://${forwardedHost}`;
   const redirectUri = `${origin}/api/tiny/oauth/callback`;
 
   const authorizeUrl = buildAuthorizeUrl({

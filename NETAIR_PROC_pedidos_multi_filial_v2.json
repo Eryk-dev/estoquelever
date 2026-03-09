@@ -1,0 +1,2551 @@
+{
+  "name": "NETAIR_PROC_pedidos_multi_filial_v2",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "push",
+        "list": "webhook_queue",
+        "messageData": "={{ JSON.stringify($json.body) }}"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        720,
+        1952
+      ],
+      "id": "f6077252-7b62-4727-b60f-36e0483d14c7",
+      "name": "Add to Queue1",
+      "credentials": {
+        "redis": {
+          "id": "GIpuBkZ8qm3ZMsmG",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "custom",
+              "cronExpression": "*/15 * * * * * "
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        304,
+        1088
+      ],
+      "id": "66894282-7e17-4643-bd99-dff515f7f60e",
+      "name": "Queue Processor (Every 10s)1"
+    },
+    {
+      "parameters": {
+        "operation": "pop",
+        "list": "webhook_queue",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        528,
+        1088
+      ],
+      "id": "aee736ce-c7c6-4e2e-8315-df094dcdf350",
+      "name": "Get from Queue1",
+      "credentials": {
+        "redis": {
+          "id": "GIpuBkZ8qm3ZMsmG",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "queue-not-empty",
+              "leftValue": "={{ $json.propertyName }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        752,
+        1088
+      ],
+      "id": "f595399d-8b6a-41a8-bb8b-540bdbe40832",
+      "name": "Queue Not Empty?1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the JSON data from Redis queue\nconst webhookData = $input.first().json.propertyName;\n\n// Return the parsed webhook data with body structure  \nreturn [{ json: { body: webhookData } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        1088
+      ],
+      "id": "d57f5bfe-d610-4ee4-9ea5-5ef3c7f67fa5",
+      "name": "Parse Webhook Data1"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.cnpj }}",
+                    "rightValue": "34857388000163",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "cnpj-cwb-check"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CWB"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "cnpj-sp-check",
+                    "leftValue": "={{ $json.body.cnpj }}",
+                    "rightValue": "34857388000244",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SP"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1200,
+        1088
+      ],
+      "id": "1c500485-c177-4648-b1ef-9e8d074693f1",
+      "name": "Route by Company1"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"queued\", \"message\": \"Webhook received and queued for processing\", \"timestamp\": new Date().toISOString() } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        928,
+        1952
+      ],
+      "id": "9abce7cf-9863-40f4-8bf1-5d9e5bb7f8fb",
+      "name": "Webhook Response1"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "queue_stats",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        5248,
+        960
+      ],
+      "id": "70ef2132-b6eb-4792-b0b8-440f7ddc22b0",
+      "name": "Get Queue Stats1",
+      "credentials": {
+        "redis": {
+          "id": "GIpuBkZ8qm3ZMsmG",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update processing statistics\nconst currentStats = $input.first().json.queue_stats;\nlet stats = {};\n\nif (currentStats) {\n  try {\n    stats = JSON.parse(currentStats);\n  } catch (e) {\n    stats = { processed: 0, errors: 0, lastProcessed: null };\n  }\n} else {\n  stats = { processed: 0, errors: 0, lastProcessed: null };\n}\n\n// Check if there was an error in the API call\nconst hasError = $input.all().some(item => item.json.error);\n\nif (hasError) {\n  stats.errors += 1;\n} else {\n  stats.processed += 1;\n}\n\nstats.lastProcessed = new Date().toISOString();\n\nreturn [{ json: { stats: JSON.stringify(stats) } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5472,
+        960
+      ],
+      "id": "c4d57af9-e197-4e1d-b713-139fcf66ccef",
+      "name": "Update Stats1"
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "queue_stats",
+        "value": "={{ $json.stats }}"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        5696,
+        960
+      ],
+      "id": "c1277999-7a99-4560-b8ea-bfc033143198",
+      "name": "Save Queue Stats1",
+      "credentials": {
+        "redis": {
+          "id": "GIpuBkZ8qm3ZMsmG",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C07F6QL1T8Q",
+          "mode": "list",
+          "cachedResultName": "vendas"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"> :package: *Nova Venda NETAIR:*\\n>\\n> _*PRODUTO:* {{ $('Split Out3').item.json.produto.descricao }}_\\n> *SKU:* {{ $('Split Out3').item.json.produto.sku }}\\n> *CONTA:* {{ $('Get from Queue1').item.json.propertyName.dados.nomeEcommerce }}\\n> *VALOR:* R${{ $('Split Out3').item.json.valorUnitario }}\\n> *ESTOQUE (CWB):* {{ $('Consulta estoque PD CWB1').item.json.depositos[1].saldo }}\\n>\"\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \":logo-netair-grande:\"\n        }\n      ]\n    }\n  ]\n}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        4336,
+        560
+      ],
+      "id": "47f61b02-bd85-437e-bebc-39b25a1baa03",
+      "name": "Send a message",
+      "webhookId": "d34adc7e-561a-4968-9a8e-9b595df01e1d",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "HsFcutnnk4pngdHN",
+          "name": "Slack account 4"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C07F6QL1T8Q",
+          "mode": "list",
+          "cachedResultName": "vendas"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"> :package: *Nova Venda NETAIR:*\\n>\\n> _*PRODUTO:* {{ $('Split Out3').item.json.produto.descricao }}_\\n> *SKU:* {{ $('Split Out3').item.json.produto.sku }}\\n> *CONTA:* {{ $('Get from Queue1').item.json.propertyName.dados.nomeEcommerce }}\\n> *VALOR:* R${{ $('Split Out3').item.json.valorUnitario }}\\n> *ESTOQUE (CWB):* {{ $('Consulta estoque PD CWB1').item.json.depositos[1].saldo }}\\n> *ESTOQUE (SP):* {{ $('Consulta estoque SP Suporte1').item.json.depositos[0].saldo }}\\n>\\n> *ATENDIDO PELA FILIAL SÃO PAULO*\"\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \":logo-netair-grande:\"\n        }\n      ]\n    }\n  ]\n}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        4336,
+        800
+      ],
+      "id": "1c7c98ed-1e5d-4a88-8d22-9beea76a0aca",
+      "name": "Send a message1",
+      "webhookId": "5f0c0847-a433-453c-826e-7b2d9fd78ee7",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "HsFcutnnk4pngdHN",
+          "name": "Slack account 4"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C07F6QL1T8Q",
+          "mode": "list",
+          "cachedResultName": "vendas"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"> :package: *Nova Venda NETAIR:*\\n>\\n> _*PRODUTO:* {{ $('Split Out3').item.json.produto.descricao }}_\\n> *SKU:* {{ $('Split Out3').item.json.produto.sku }}\\n> *CONTA:* {{ $('Get from Queue1').item.json.propertyName.dados.nomeEcommerce }}\\n> *VALOR:* R${{ $('Split Out3').item.json.valorUnitario }}\\n> *ESTOQUE (CWB):* {{ $('Consulta estoque PD CWB1').item.json.depositos[1].saldo }}\\n> *ESTOQUE (SP):* {{ $('Consulta estoque SP Suporte1').item.json.depositos[0].saldo }}\\n>\\n> *CAIU PARA ORDEM DE COMPRA*\"\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \":logo-netair-grande:\"\n        }\n      ]\n    }\n  ]\n}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        4336,
+        992
+      ],
+      "id": "7afef09d-9425-4d08-b89a-41c4cf576172",
+      "name": "Send a message2",
+      "webhookId": "7b5a0684-13d7-4a14-874e-563dd4b1076e",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "HsFcutnnk4pngdHN",
+          "name": "Slack account 4"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C07F6QL1T8Q",
+          "mode": "list",
+          "cachedResultName": "vendas"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"> :package: *Nova Venda NETPARTS:*\\n>\\n> _*PRODUTO:* {{ $('Split Out2').item.json.produto.descricao }}_\\n> *SKU:* {{ $('Split Out2').item.json.produto.sku }}\\n> *CONTA:* {{ $('Get from Queue1').item.json.propertyName.dados.nomeEcommerce }}\\n> *VALOR:* R${{ $('Split Out2').item.json.valorUnitario }}\\n> *ESTOQUE (CWB):* {{ $('Consulta estoque CWB Suporte1').item.json.depositos[1].saldo }}\\n> *ESTOQUE (SP):* {{ $('Consulta estoque PD SP1').item.json.depositos[0].saldo }}\\n>\\n> *ATENDIDO PELA FILIAL DE CURITIBA*\"\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \":netparts1:\"\n        }\n      ]\n    }\n  ]\n}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        4336,
+        1376
+      ],
+      "id": "d5e13d1b-fee9-4ec9-9e82-c72f53bbaf27",
+      "name": "Send a message3",
+      "webhookId": "f5c0b3c0-bf09-49c9-a1e6-063ca0f61af8",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "HsFcutnnk4pngdHN",
+          "name": "Slack account 4"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C07F6QL1T8Q",
+          "mode": "list",
+          "cachedResultName": "vendas"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"> :package: *Nova Venda NETPARTS:*\\n>\\n> _*PRODUTO:* {{ $('Split Out2').item.json.produto.descricao }}_\\n> *SKU:* {{ $('Split Out2').item.json.produto.sku }}\\n> *CONTA:* {{ $('Get from Queue1').item.json.propertyName.dados.nomeEcommerce }}\\n> *VALOR:* R${{ $('Split Out2').item.json.valorUnitario }}\\n> *ESTOQUE (CWB):* {{ $('Consulta estoque CWB Suporte1').item.json.depositos[1].saldo }}\\n> *ESTOQUE (SP):* {{ $('Consulta estoque PD SP1').item.json.depositos[0].saldo }}\\n>\\n> *CAIU PARA ORDEM DE COMPRA*\"\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \":netparts1:\"\n        }\n      ]\n    }\n  ]\n}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        4336,
+        1616
+      ],
+      "id": "0254f523-2626-4f04-ab73-c975bd901ea0",
+      "name": "Send a message4",
+      "webhookId": "f41921fb-9413-4ef8-9127-dcb0439c4f30",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "HsFcutnnk4pngdHN",
+          "name": "Slack account 4"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C07F6QL1T8Q",
+          "mode": "list",
+          "cachedResultName": "vendas"
+        },
+        "messageType": "block",
+        "blocksUi": "={\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"> :package: *Nova Venda NETPARTS:*\\n>\\n> _*PRODUTO:* {{ $('Split Out2').item.json.produto.descricao }}_\\n> *SKU:* {{ $('Split Out2').item.json.produto.sku }}\\n> *CONTA:* {{ $('Get from Queue1').item.json.propertyName.dados.nomeEcommerce }}\\n> *VALOR:* R${{ $('Split Out2').item.json.valorUnitario }}\\n> *ESTOQUE (CWB):* {{ $('Consulta estoque PD SP1').item.json.depositos[1].saldo }}\\n>\"\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \":netparts1:\"\n        }\n      ]\n    }\n  ]\n}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        4336,
+        1184
+      ],
+      "id": "58133042-f1b7-4d62-8cee-fcfc53daa491",
+      "name": "Send a message5",
+      "webhookId": "ecb7f411-1f70-4066-8637-26d58f218254",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "HsFcutnnk4pngdHN",
+          "name": "Slack account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error handling and logging\nconst inputData = $input.first().json;\n\n// Check if this is actually an error or successful data\nif (inputData.ok === true || inputData.ok === false) {\n  // This is Slack response data, not an error\n  console.log('Slack response received:', {\n    success: inputData.ok,\n    channel: inputData.channel,\n    timestamp: new Date().toISOString()\n  });\n  \n  return [{ json: inputData }];\n} else {\n  // This is an actual error\n  const error = inputData.error || 'Unknown error';\n  \n  console.log('Processing error:', {\n    error: error,\n    webhookId: inputData.body?.dados?.id,\n    timestamp: new Date()."
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5472,
+        1184
+      ],
+      "id": "2b45049f-c314-42b0-b552-1e99e79ca71e",
+      "name": "Error Handler"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido CWB1').item.json.id }}/marcadores",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "[{\"descricao\":\"CWB\"}]",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3664,
+        560
+      ],
+      "id": "63dfc38b-20cf-40a4-bfa7-74522929380b",
+      "name": "Inserir marcador CWB1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiny.com.br/public-api/v3/produtos?codigo={{ $json.codigo }}&situacao=A",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2768,
+        896
+      ],
+      "id": "dd8682a1-ae19-4ee9-9bed-cc09b1f8daf6",
+      "name": "Obtenção id filial1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d25dff33-d9bc-44c0-99a9-918c1f0d8016",
+              "leftValue": "={{ $json.depositos[0].saldo }}",
+              "rightValue": "={{ $('Split Out3').item.json.quantidade }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3216,
+        896
+      ],
+      "id": "ad131958-f748-4794-9f18-48a045a03ed3",
+      "name": "Filial SP atende o pedido?1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido CWB1').item.json.id }}/gerar-nota-fiscal",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3888,
+        992
+      ],
+      "id": "14989d3c-c575-4323-a1a8-360be672df5d",
+      "name": "Gerar NF",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido CWB1').item.json.id }}/gerar-nota-fiscal",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          },
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3664,
+        800
+      ],
+      "id": "23c56af5-329d-4d4f-99a0-fb23dd0f9eef",
+      "name": "Gerar NF3",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido SP1').item.json.id }}/gerar-nota-fiscal",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3888,
+        1616
+      ],
+      "id": "f65c5503-7d9a-4f76-a09a-8a2ba05c2b31",
+      "name": "Gerar NF6",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido SP1').item.json.id }}/gerar-nota-fiscal",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3664,
+        1376
+      ],
+      "id": "386318e8-41b3-4021-ba97-b8065d55afab",
+      "name": "Gerar NF7",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido SP1').item.json.id }}/marcadores",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "[{\"descricao\":\"SP\"}]",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3664,
+        1184
+      ],
+      "id": "6b54a760-235c-4c55-b22b-90d883eceeba",
+      "name": "Inserir marcador SP1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiny.com.br/public-api/v3/produtos?codigo={{ $json.codigo }}&situacao=A",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2544,
+        1520
+      ],
+      "id": "2cd1ce6d-333a-4fe1-97dd-c9c3ee1f359e",
+      "name": "Obtenção id CWB1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "528511dc-c297-4533-9814-9208a82c1e9b",
+              "leftValue": "={{ $json.depositos[1].saldo }}",
+              "rightValue": "={{ $('Consulta pedido CWB1').item.json.itens[0].quantidade }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2320,
+        752
+      ],
+      "id": "8c52a09e-053b-444d-98d7-e21a65d4be2e",
+      "name": "Estoque CWB Atende?1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "528511dc-c297-4533-9814-9208a82c1e9b",
+              "leftValue": "={{ $json.depositos[0].saldo }}",
+              "rightValue": "={{ $('Split Out2').item.json.quantidade }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2096,
+        1424
+      ],
+      "id": "f1859082-d246-46a5-854b-f88e97af43f1",
+      "name": "Estoque SP atende?1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d25dff33-d9bc-44c0-99a9-918c1f0d8016",
+              "leftValue": "={{ $json.depositos[1].saldo }}",
+              "rightValue": "={{ $('Split Out2').item.json.quantidade }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3216,
+        1520
+      ],
+      "id": "730ff269-f442-400c-a8ac-7ac026af4cb0",
+      "name": "Filial CWB atende o pedido?1"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "=itens",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1648,
+        1424
+      ],
+      "id": "bcd25df1-7979-4d90-9587-1d404207b271",
+      "name": "Split Out2"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "itens",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1872,
+        752
+      ],
+      "id": "ceb2a50d-c055-415f-a885-7ae0966b8445",
+      "name": "Split Out3"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiny.com.br/public-api/v3/estoque/{{ $json.produto.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1872,
+        1424
+      ],
+      "id": "70c901f5-ea69-4255-b330-7b0f8899b432",
+      "name": "Consulta estoque PD SP1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiny.com.br/public-api/v3/estoque/{{ $json.produto.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2096,
+        752
+      ],
+      "id": "61116573-46aa-4785-a4e2-13b4f093d08b",
+      "name": "Consulta estoque PD CWB1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido SP1').item.json.id }}/gerar-nota-fiscal",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4112,
+        1184
+      ],
+      "id": "20dceef7-e6c1-4413-99b7-e8bd8c252ae5",
+      "name": "Gerar Produto com estoque SP1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido CWB1').item.json.id }}/gerar-nota-fiscal",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4112,
+        560
+      ],
+      "id": "be98876a-53c7-4e0e-98b9-3ef038ed59eb",
+      "name": "Gerar Produto com estoque CWB1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiny.com.br/public-api/v3/estoque/{{ $json.itens[0].id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2992,
+        896
+      ],
+      "id": "64d5a670-25f6-4a0c-97e5-514dcbd4a017",
+      "name": "Consulta estoque SP Suporte1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiny.com.br/public-api/v3/estoque/{{ $json.itens[0].id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2992,
+        1520
+      ],
+      "id": "b39d8f87-fd7b-49a9-9d3e-3543885c57e8",
+      "name": "Consulta estoque CWB Suporte1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido SP1').item.json.id }}/marcadores",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n(() => {\n  // 1) Pegamos o SKU do nó \"Split Out\"\n  const sku = $('Split Out2').item.json.produto.sku || '';\n\n  // 2) Helper para simular indexOf(...)=0\n  //    (isto é, \"começa com\" tal prefixo)\n  function startsWith(str, prefix) {\n    return str.indexOf(prefix) === 0;\n  }\n\n  // 3) Replicamos cada verificação:\n  if (startsWith(sku, '19')) {\n    // Se começar com '19'\n    return '[{\"descricao\":\"OC Diversos\"}]';\n\n  } else if (startsWith(sku, 'LD')) {\n    return '[{\"descricao\":\"OC LDRU\"},{\"descricao\":\"SP\"}]';\n\n  } else if (startsWith(sku, 'TH')) {\n    return '[{\"descricao\":\"OC Tiger\"},{\"descricao\":\"SP\"}]';\n\n  } else if (startsWith(sku, 'L0')) {\n    return '[{\"descricao\":\"OC LEFS\"},{\"descricao\":\"SP\"}]';\n\n  /*\n   * Se você realmente precisa checar \"substring(0,1) = '' + '0'\",\n   * adapte aqui. Exemplo, se SKU começa com '0':\n   *\n   * } else if (startsWith(sku, '0')) {\n   *   return '[{\"descricao\":\"...\"}]';\n   */\n\n  } else if (sku.length === 6) {\n    return '[{\"descricao\":\"OC ACA\"},{\"descricao\":\"CWB\"}]';\n\n  } else if (startsWith(sku, 'G')) {\n    return '[{\"descricao\":\"OC GAUSS\"},{\"descricao\":\"CWB\"}]';\n\n  } else if (startsWith(sku, 'M')) {\n    return '[{\"descricao\":\"OC MRMK\"},{\"descricao\":\"SP\"}]';\n\n  } else if (startsWith(sku, 'CAK')) {\n    return '[{\"descricao\":\"OC Delphi\"},{\"descricao\":\"SP\"}]';\n\n  } else if (startsWith(sku, 'CS')) {\n    return '[{\"descricao\":\"OC Delphi\"},{\"descricao\":\"SP\"}]';\n\n  } else {\n    // Caso nenhuma condição seja atendida\n    return '[{\"descricao\":\"Verificar SKU\"}]';\n  }\n})()\n}}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3664,
+        1616
+      ],
+      "id": "12149388-a1ea-473f-ac7b-888d396f3266",
+      "name": "Inserir marcador SP Sem estoque1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido CWB1').item.json.id }}/marcadores",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n(() => {\n  // 1) Pegamos o SKU do nó \"Split Out1\"\n  const sku = $('Split Out3').item.json.produto.sku || '';\n\n  // 2) Helper para simular indexOf(...)=0\n  //    (isto é, \"começa com\" tal prefixo)\n  function startsWith(str, prefix) {\n    return str.indexOf(prefix) === 0;\n  }\n\n  // 3) Replicamos cada verificação:\n  if (startsWith(sku, '19')) {\n    // Se começar com '19'\n    return '[{\"descricao\":\"OC Diversos\"}]';\n\n  } else if (startsWith(sku, 'LD')) {\n    return '[{\"descricao\":\"OC LDRU\"},{\"descricao\":\"SP\"}]';\n\n  } else if (startsWith(sku, 'TH')) {\n    return '[{\"descricao\":\"OC Tiger\"},{\"descricao\":\"SP\"}]';\n\n  } else if (startsWith(sku, 'L0')) {\n    return '[{\"descricao\":\"OC LEFS\"},{\"descricao\":\"SP\"}]';\n\n  /*\n   * Se você realmente precisa checar \"substring(0,1) = '' + '0'\",\n   * adapte aqui. Exemplo, se SKU começa com '0':\n   *\n   * } else if (startsWith(sku, '0')) {\n   *   return '[{\"descricao\":\"...\"}]';\n   */\n\n  } else if (sku.length === 6) {\n    return '[{\"descricao\":\"OC ACA\"},{\"descricao\":\"CWB\"}]';\n\n  } else if (startsWith(sku, 'G')) {\n    return '[{\"descricao\":\"OC GAUSS\"},{\"descricao\":\"CWB\"}]';\n\n  } else if (startsWith(sku, 'M')) {\n    return '[{\"descricao\":\"OC MRMK\"},{\"descricao\":\"SP\"}]';\n\n  } else if (startsWith(sku, 'CAK')) {\n    return '[{\"descricao\":\"OC Delphi\"},{\"descricao\":\"SP\"}]';\n\n  } else if (startsWith(sku, 'CS')) {\n    return '[{\"descricao\":\"OC Delphi\"},{\"descricao\":\"SP\"}]';\n\n  } else {\n    // Caso nenhuma condição seja atendida\n    return '[{\"descricao\":\"Verificar SKU\"}]';\n  }\n})()\n}}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3664,
+        992
+      ],
+      "id": "17709a4f-c0e7-4550-8dc5-e69da6631428",
+      "name": "Inserir marcador CWB Sem estoque1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido CWB1').item.json.id }}/marcadores",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "[{\"descricao\":\"CWB\"}]",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3440,
+        800
+      ],
+      "id": "0823fde9-e338-4305-8400-a737531e4968",
+      "name": "Inserir marcador CWB Filial suporte atende1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $('Consulta pedido SP1').item.json.id }}/marcadores",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "[{\"descricao\":\"CWB\"}]",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3440,
+        1376
+      ],
+      "id": "27f14f58-ea42-4d7a-9f3b-dc003c054b6b",
+      "name": "Inserir marcador SP Filial suporte atende1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/estoque/{{ $('Consulta estoque PD CWB1').item.json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"deposito\": {\n    \"id\": {{ $('Consulta estoque PD CWB1').item.json.depositos[1].id }}\n  },\n  \"tipo\": \"E\",\n  \"quantidade\": {{ $('Consulta pedido CWB1').item.json.itens[0].quantidade }},\n  \"precoUnitario\": 0,\n  \"observacoes\": \"Estorno pedido {{ $('Consulta pedido CWB1').item.json.numeroPedido }}, Atendido por SP\"\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3888,
+        800
+      ],
+      "id": "45335cf7-3291-4736-9ff0-3a38ff9bafdc",
+      "name": "Estorno estoque em CWB1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/estoque/{{ $('Consulta estoque PD SP1').item.json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"deposito\": {\n    \"id\": {{ $('Consulta estoque PD SP1').item.json.depositos[1].id }}\n  },\n  \"tipo\": \"E\",\n  \"quantidade\": {{ $('Split Out2').item.json.quantidade }},\n  \"precoUnitario\": 0,\n  \"observacoes\": \"Estorno pedido {{ $('Consulta pedido SP1').item.json.numeroPedido }}, Atendido por CWB\"\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3888,
+        1376
+      ],
+      "id": "98c5d2ab-fe0f-4129-b8ef-8fdd0897f345",
+      "name": "Estorno estoque em SP1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/estoque/{{ $('Consulta estoque SP Suporte1').item.json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"deposito\": {\n    \"id\": {{ $('Consulta estoque SP Suporte1').item.json.depositos[0].id }}\n  },\n  \"tipo\": \"S\",\n  \"quantidade\": {{ $('Consulta pedido CWB1').item.json.itens[0].quantidade }},\n  \"precoUnitario\": 0,\n  \"observacoes\": \"Saída para atender pedido {{ $('Consulta pedido CWB1').item.json.numeroPedido }}, CWB\"\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4112,
+        800
+      ],
+      "id": "017183ec-70e3-43bd-9fb3-722f14e88909",
+      "name": "Saída estoque SP1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.tiny.com.br/public-api/v3/estoque/{{ $('Consulta estoque CWB Suporte1').item.json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"deposito\": {\n    \"id\": {{ $('Consulta estoque CWB Suporte1').item.json.depositos[1].id }}\n  },\n  \"tipo\": \"S\",\n  \"quantidade\": {{ $('Split Out2').item.json.quantidade }},\n  \"precoUnitario\": 0,\n  \"observacoes\": \"Saída para atender pedido {{ $('Consulta pedido SP1').item.json.numeroPedido }}, SP\"\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4112,
+        1376
+      ],
+      "id": "0ae9073d-6545-4dff-b5a0-d3e85bb290cf",
+      "name": "Saída estoque CWB1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1-5ioJ86UnpRGNb3yX3bRIF7vDZtA7uC8M3Y-o9s1Qv8",
+          "mode": "list",
+          "cachedResultName": "OC Automática",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1-5ioJ86UnpRGNb3yX3bRIF7vDZtA7uC8M3Y-o9s1Qv8/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Página1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1-5ioJ86UnpRGNb3yX3bRIF7vDZtA7uC8M3Y-o9s1Qv8/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID Pedido": "={{ $('Consulta pedido CWB1').item.json.id }}",
+            "Nome Produto": "={{ $('Split Out3').item.json.produto.descricao }}",
+            "SKU": "={{ $('Split Out3').item.json.produto.sku }}",
+            "Quantidade": "={{ $('Split Out3').item.json.quantidade }}",
+            "Filial NF": "NETAIR",
+            "ID Produto SP": "={{ $('Obtenção id filial1').item.json.itens[0].id }}",
+            "ID Produto CWB": "={{ $('Split Out3').item.json.produto.id }}",
+            "Fornecedor": "={{\n(() => {\n  // 1) Pegamos o SKU do nó \"Split Out1\"\n  const sku = $('Split Out3').item.json.produto.sku || '';\n\n  // 2) Helper para simular indexOf(...)=0\n  //    (isto é, \"começa com\" tal prefixo)\n  function startsWith(str, prefix) {\n    return str.indexOf(prefix) === 0;\n  }\n\n  // 3) Replicamos cada verificação:\n  if (startsWith(sku, '19')) {\n    // Se começar com '19'\n    return 'Diversos';\n\n  } else if (startsWith(sku, 'LD')) {\n    return 'LDRU';\n\n  } else if (startsWith(sku, 'TH')) {\n    return 'TIGER';\n\n  } else if (startsWith(sku, 'L0')) {\n    return 'LEFS';\n\n  /*\n   * Se você realmente precisa checar \"substring(0,1) = '' + '0'\",\n   * adapte aqui. Exemplo, se SKU começa com '0':\n   *\n   * } else if (startsWith(sku, '0')) {\n   *   return '[{\"descricao\":\"...\"}]';\n   */\n\n  } else if (sku.length === 6) {\n    return 'ACA';\n\n  } else if (startsWith(sku, 'G')) {\n    return 'GAUSS';\n\n  } else if (startsWith(sku, 'M')) {\n    return 'MRMK';\n\n  } else if (startsWith(sku, 'CAK')) {\n    return 'DELPHI';\n\n  } else if (startsWith(sku, 'CS')) {\n    return 'DELPHI';\n\n  } else {\n    // Caso nenhuma condição seja atendida\n    return 'VERIFICAR SKU';\n  }\n})()\n}}"
+          },
+          "matchingColumns": [
+            "ID Pedido"
+          ],
+          "schema": [
+            {
+              "id": "ID Pedido",
+              "displayName": "ID Pedido",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Nome Produto",
+              "displayName": "Nome Produto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "SKU",
+              "displayName": "SKU",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Filial NF",
+              "displayName": "Filial NF",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Quantidade",
+              "displayName": "Quantidade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Fornecedor",
+              "displayName": "Fornecedor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ID Produto SP",
+              "displayName": "ID Produto SP",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ID Produto CWB",
+              "displayName": "ID Produto CWB",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4112,
+        992
+      ],
+      "id": "cd11ecc5-5c05-4457-af5a-03a09a0b62da",
+      "name": "Adicionar a Ordem de compra2",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "fKiY3NgqKz3yTj2Q",
+          "name": "Google Sheets VENDASB2B@Netair.com.br"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1-5ioJ86UnpRGNb3yX3bRIF7vDZtA7uC8M3Y-o9s1Qv8",
+          "mode": "list",
+          "cachedResultName": "OC Automática",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1-5ioJ86UnpRGNb3yX3bRIF7vDZtA7uC8M3Y-o9s1Qv8/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Página1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1-5ioJ86UnpRGNb3yX3bRIF7vDZtA7uC8M3Y-o9s1Qv8/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID Pedido": "={{ $('Consulta pedido SP1').item.json.id }}",
+            "Nome Produto": "={{ $('Split Out2').item.json.produto.descricao }}",
+            "SKU": "={{ $('Split Out2').item.json.produto.sku }}",
+            "Quantidade": "={{ $('Split Out2').item.json.quantidade }}",
+            "Filial NF": "NETPARTS",
+            "ID Produto SP": "={{ $('Split Out2').item.json.produto.id }}",
+            "ID Produto CWB": "={{ $('Obtenção id CWB1').item.json.itens[0].id }}",
+            "Fornecedor": "={{\n(() => {\n  // 1) Pegamos o SKU do nó \"Split Out\"\n  const sku = $('Split Out2').item.json.produto.sku || '';\n\n  // 2) Helper para simular indexOf(...)=0\n  //    (isto é, \"começa com\" tal prefixo)\n  function startsWith(str, prefix) {\n    return str.indexOf(prefix) === 0;\n  }\n\n  // 3) Replicamos cada verificação:\n  if (startsWith(sku, '19')) {\n    // Se começar com '19'\n    return 'Diversos';\n\n  } else if (startsWith(sku, 'LD')) {\n    return 'LDRU';\n\n  } else if (startsWith(sku, 'TH')) {\n    return 'TIGER';\n\n  } else if (startsWith(sku, 'L0')) {\n    return 'LEFS';\n\n  /*\n   * Se você realmente precisa checar \"substring(0,1) = '' + '0'\",\n   * adapte aqui. Exemplo, se SKU começa com '0':\n   *\n   * } else if (startsWith(sku, '0')) {\n   *   return '[{\"descricao\":\"...\"}]';\n   */\n\n  } else if (sku.length === 6) {\n    return 'ACA';\n\n  } else if (startsWith(sku, 'G')) {\n    return 'GAUSS';\n\n  } else if (startsWith(sku, 'M')) {\n    return 'MRMK';\n\n  } else if (startsWith(sku, 'CAK')) {\n    return 'DELPHI';\n\n  } else if (startsWith(sku, 'CS')) {\n    return 'DELPHI';\n\n  } else {\n    // Caso nenhuma condição seja atendida\n    return 'VERIFICAR SKU';\n  }\n})()\n}}"
+          },
+          "matchingColumns": [
+            "ID Pedido"
+          ],
+          "schema": [
+            {
+              "id": "ID Pedido",
+              "displayName": "ID Pedido",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Nome Produto",
+              "displayName": "Nome Produto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "SKU",
+              "displayName": "SKU",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Filial NF",
+              "displayName": "Filial NF",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Quantidade",
+              "displayName": "Quantidade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Fornecedor",
+              "displayName": "Fornecedor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ID Produto SP",
+              "displayName": "ID Produto SP",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ID Produto CWB",
+              "displayName": "ID Produto CWB",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4112,
+        1616
+      ],
+      "id": "59bb0363-a356-4af4-ae10-3f933910b058",
+      "name": "Adicionar a Ordem de compra3",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "fKiY3NgqKz3yTj2Q",
+          "name": "Google Sheets VENDASB2B@Netair.com.br"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $json.body.dados.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 3000
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1648,
+        752
+      ],
+      "id": "c096be0f-b173-46be-9e36-68e42929042a",
+      "name": "Consulta pedido CWB1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "8urXHrEC6H7doRo0",
+          "name": "Tiny NetAir"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.tiny.com.br/public-api/v3/pedidos/{{ $json.body.dados.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 3000
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1424,
+        1424
+      ],
+      "id": "77f2535d-f6e3-4724-8221-3bd2f2973ceb",
+      "name": "Consulta pedido SP1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JZ6KiQJa4pBqrNfG",
+          "name": "Tiny NetParts"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "5edad03d-0613-487b-99b6-6e042f586a6f",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        400,
+        1968
+      ],
+      "id": "260d478e-0d77-47ce-b443-4788216afd98",
+      "name": "Webhook",
+      "webhookId": "5edad03d-0613-487b-99b6-6e042f586a6f"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3440,
+        560
+      ],
+      "id": "34add477-dd05-4356-ae37-a13c8bb35e6c",
+      "name": "Wait",
+      "webhookId": "515df42c-26b3-47d6-a2df-b0e8c2749ec2"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2544,
+        896
+      ],
+      "id": "2f26fc56-b375-4bf6-a263-114b048fd62d",
+      "name": "Wait1",
+      "webhookId": "515df42c-26b3-47d6-a2df-b0e8c2749ec2"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3440,
+        1184
+      ],
+      "id": "7041e56f-f9ba-4db5-a9af-b05124cf2199",
+      "name": "Wait2",
+      "webhookId": "515df42c-26b3-47d6-a2df-b0e8c2749ec2"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2320,
+        1520
+      ],
+      "id": "48fae772-978e-4470-aec8-cdc5203a7d20",
+      "name": "Wait3",
+      "webhookId": "515df42c-26b3-47d6-a2df-b0e8c2749ec2"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3888,
+        560
+      ],
+      "id": "1718f4d9-3244-4f54-ac16-2a19ae842822",
+      "name": "Wait4",
+      "webhookId": "515df42c-26b3-47d6-a2df-b0e8c2749ec2"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3888,
+        1184
+      ],
+      "id": "34c8094c-b326-4132-a96d-4f7d8ada9a98",
+      "name": "Wait5",
+      "webhookId": "515df42c-26b3-47d6-a2df-b0e8c2749ec2"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2768,
+        1520
+      ],
+      "id": "cadfcdc2-e904-4cd2-8cf7-1acd7bfdb95c",
+      "name": "Wait6",
+      "webhookId": "515df42c-26b3-47d6-a2df-b0e8c2749ec2"
+    }
+  ],
+  "pinData": {
+    "Send a message2": [
+      {
+        "json": {
+          "ok": true,
+          "channel": "C07F6QL1T8Q",
+          "message": {
+            "user": "U07E7283HMF",
+            "type": "message",
+            "ts": "1752586237.162789",
+            "bot_id": "B08J79CH329",
+            "app_id": "A08JCKWPXPW",
+            "text": "&gt; :package: *Nova Venda NETAIR:*\n&gt;\n&gt; _*PRODUTO:* SERVO MOTOR CXA VW FUSCA NOVO/AUDI A-3/GOL GV (2 PINOS)_\n&gt; *SKU:* 019982\n&gt; *CONTA:* Mercado Livre\n&gt; *VALOR:* R$104\n&gt; *ESTOQUE (CWB):* -23\n&gt; *ESTOQUE (SP):* 0\n&gt;\n&gt; *CAIU PARA ORDEM DE COMPRA* :logo-netair-grande:",
+            "team": "T07DWSA7H28",
+            "bot_profile": {
+              "id": "B08J79CH329",
+              "app_id": "A08JCKWPXPW",
+              "name": "n8n aut",
+              "icons": {
+                "image_36": "https://a.slack-edge.com/80588/img/plugins/app/bot_36.png",
+                "image_48": "https://a.slack-edge.com/80588/img/plugins/app/bot_48.png",
+                "image_72": "https://a.slack-edge.com/80588/img/plugins/app/service_72.png"
+              },
+              "deleted": false,
+              "updated": 1742313261,
+              "team_id": "T07DWSA7H28"
+            },
+            "blocks": [
+              {
+                "type": "section",
+                "block_id": "wjV+y",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "&gt; :package: *Nova Venda NETAIR:*\n&gt;\n&gt; _*PRODUTO:* SERVO MOTOR CXA VW FUSCA NOVO/AUDI A-3/GOL GV (2 PINOS)_\n&gt; *SKU:* 019982\n&gt; *CONTA:* Mercado Livre\n&gt; *VALOR:* R$104\n&gt; *ESTOQUE (CWB):* -23\n&gt; *ESTOQUE (SP):* 0\n&gt;\n&gt; *CAIU PARA ORDEM DE COMPRA*",
+                  "verbatim": false
+                }
+              },
+              {
+                "type": "context",
+                "block_id": "6eNuh",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": ":logo-netair-grande:",
+                    "verbatim": false
+                  }
+                ]
+              }
+            ]
+          },
+          "message_timestamp": "1752586237.162789"
+        }
+      }
+    ],
+    "Error Handler": [
+      {
+        "json": {
+          "stats": "{\"processed\":1,\"errors\":0,\"lastProcessed\":\"2025-07-15T13:31:03.137Z\"}"
+        }
+      }
+    ],
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n-n8n-start.gnnc3f.easypanel.host",
+            "user-agent": "axios/1.8.3",
+            "content-length": "440",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.18.0.1",
+            "x-forwarded-host": "n8n-n8n-start.gnnc3f.easypanel.host",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "f6eed8289cb5",
+            "x-real-ip": "172.18.0.1"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "versao": "1.0.1",
+            "cnpj": "34857388000163",
+            "tipo": "atualizacao_pedido",
+            "dados": {
+              "id": "1039996865",
+              "numero": "90892",
+              "data": "26/06/2025",
+              "idPedidoEcommerce": "S45078434921",
+              "codigoSituacao": "aprovado",
+              "descricaoSituacao": "Aprovado",
+              "idContato": "1005868129",
+              "idNotaFiscal": "0",
+              "nomeEcommerce": "Mercado Livre",
+              "cliente": {
+                "nome": "Leonardo Silva dos Santos",
+                "cpfCnpj": "038.913.755-30"
+              },
+              "formaEnvio": {
+                "id": "653744837",
+                "descricao": "Mercado Envios"
+              }
+            }
+          },
+          "webhookUrl": "https://n8n-n8n-start.gnnc3f.easypanel.host/webhook/5edad03d-0613-487b-99b6-6e042f586a6f",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Queue Processor (Every 10s)1": [
+      {
+        "json": {}
+      }
+    ]
+  },
+  "connections": {
+    "Add to Queue1": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Processor (Every 10s)1": {
+      "main": [
+        [
+          {
+            "node": "Get from Queue1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get from Queue1": {
+      "main": [
+        [
+          {
+            "node": "Queue Not Empty?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Not Empty?1": {
+      "main": [
+        [
+          {
+            "node": "Parse Webhook Data1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Webhook Data1": {
+      "main": [
+        [
+          {
+            "node": "Route by Company1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Company1": {
+      "main": [
+        [
+          {
+            "node": "Consulta pedido CWB1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Consulta pedido SP1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Queue Stats1": {
+      "main": [
+        [
+          {
+            "node": "Update Stats1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Stats1": {
+      "main": [
+        [
+          {
+            "node": "Save Queue Stats1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Get Queue Stats1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message1": {
+      "main": [
+        [
+          {
+            "node": "Get Queue Stats1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message2": {
+      "main": [
+        [
+          {
+            "node": "Get Queue Stats1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message3": {
+      "main": [
+        [
+          {
+            "node": "Get Queue Stats1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message4": {
+      "main": [
+        [
+          {
+            "node": "Get Queue Stats1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message5": {
+      "main": [
+        [
+          {
+            "node": "Get Queue Stats1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserir marcador CWB1": {
+      "main": [
+        [
+          {
+            "node": "Wait4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtenção id filial1": {
+      "main": [
+        [
+          {
+            "node": "Consulta estoque SP Suporte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filial SP atende o pedido?1": {
+      "main": [
+        [
+          {
+            "node": "Inserir marcador CWB Filial suporte atende1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Inserir marcador CWB Sem estoque1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar NF": {
+      "main": [
+        [
+          {
+            "node": "Adicionar a Ordem de compra2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar NF3": {
+      "main": [
+        [
+          {
+            "node": "Estorno estoque em CWB1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar NF6": {
+      "main": [
+        [
+          {
+            "node": "Adicionar a Ordem de compra3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar NF7": {
+      "main": [
+        [
+          {
+            "node": "Estorno estoque em SP1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserir marcador SP1": {
+      "main": [
+        [
+          {
+            "node": "Wait5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtenção id CWB1": {
+      "main": [
+        [
+          {
+            "node": "Wait6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estoque CWB Atende?1": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estoque SP atende?1": {
+      "main": [
+        [
+          {
+            "node": "Wait2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filial CWB atende o pedido?1": {
+      "main": [
+        [
+          {
+            "node": "Inserir marcador SP Filial suporte atende1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Inserir marcador SP Sem estoque1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out2": {
+      "main": [
+        [
+          {
+            "node": "Consulta estoque PD SP1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out3": {
+      "main": [
+        [
+          {
+            "node": "Consulta estoque PD CWB1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consulta estoque PD SP1": {
+      "main": [
+        [
+          {
+            "node": "Estoque SP atende?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consulta estoque PD CWB1": {
+      "main": [
+        [
+          {
+            "node": "Estoque CWB Atende?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar Produto com estoque SP1": {
+      "main": [
+        [
+          {
+            "node": "Send a message5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar Produto com estoque CWB1": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consulta estoque SP Suporte1": {
+      "main": [
+        [
+          {
+            "node": "Filial SP atende o pedido?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consulta estoque CWB Suporte1": {
+      "main": [
+        [
+          {
+            "node": "Filial CWB atende o pedido?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserir marcador SP Sem estoque1": {
+      "main": [
+        [
+          {
+            "node": "Gerar NF6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserir marcador CWB Sem estoque1": {
+      "main": [
+        [
+          {
+            "node": "Gerar NF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserir marcador CWB Filial suporte atende1": {
+      "main": [
+        [
+          {
+            "node": "Gerar NF3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserir marcador SP Filial suporte atende1": {
+      "main": [
+        [
+          {
+            "node": "Gerar NF7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estorno estoque em CWB1": {
+      "main": [
+        [
+          {
+            "node": "Saída estoque SP1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estorno estoque em SP1": {
+      "main": [
+        [
+          {
+            "node": "Saída estoque CWB1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Saída estoque SP1": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Saída estoque CWB1": {
+      "main": [
+        [
+          {
+            "node": "Send a message3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adicionar a Ordem de compra2": {
+      "main": [
+        [
+          {
+            "node": "Send a message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adicionar a Ordem de compra3": {
+      "main": [
+        [
+          {
+            "node": "Send a message4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consulta pedido CWB1": {
+      "main": [
+        [
+          {
+            "node": "Split Out3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consulta pedido SP1": {
+      "main": [
+        [
+          {
+            "node": "Split Out2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Add to Queue1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Inserir marcador CWB1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Obtenção id filial1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait2": {
+      "main": [
+        [
+          {
+            "node": "Inserir marcador SP1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait3": {
+      "main": [
+        [
+          {
+            "node": "Obtenção id CWB1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait4": {
+      "main": [
+        [
+          {
+            "node": "Gerar Produto com estoque CWB1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait5": {
+      "main": [
+        [
+          {
+            "node": "Gerar Produto com estoque SP1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait6": {
+      "main": [
+        [
+          {
+            "node": "Consulta estoque CWB Suporte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveExecutionProgress": true,
+    "timeSavedPerExecution": 2,
+    "errorWorkflow": "bpe1Vt20AiJmOYE2",
+    "availableInMCP": true
+  },
+  "versionId": "be6c12e4-981b-4308-9a56-f4cb9cbb2904",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "98a7f76cbff973591af08e09b5be2fed14b55b37d878782c0638229a94477203"
+  },
+  "id": "9ifHy62fJY057SrK",
+  "tags": [
+    {
+      "updatedAt": "2025-05-29T12:00:00.523Z",
+      "createdAt": "2025-05-29T12:00:00.523Z",
+      "id": "0dj0IHVI1rD2zEjS",
+      "name": "multi-filial"
+    },
+    {
+      "updatedAt": "2025-05-29T11:59:54.745Z",
+      "createdAt": "2025-05-29T11:59:54.745Z",
+      "id": "I7fqZUuVZ7u3e8BQ",
+      "name": "processamento-pedidos"
+    },
+    {
+      "updatedAt": "2025-05-28T11:31:12.033Z",
+      "createdAt": "2025-05-28T11:31:12.033Z",
+      "id": "INB3NltWoErTB9HR",
+      "name": "netair"
+    },
+    {
+      "updatedAt": "2025-05-28T11:19:58.799Z",
+      "createdAt": "2025-05-28T11:19:58.799Z",
+      "id": "obBjp8ngy3XuvM90",
+      "name": "tiny-erp"
+    },
+    {
+      "updatedAt": "2025-05-29T12:00:14.152Z",
+      "createdAt": "2025-05-29T12:00:14.152Z",
+      "id": "pblgIf94NKJ5NKpk",
+      "name": "ordem-compra"
+    },
+    {
+      "updatedAt": "2025-05-29T12:00:10.478Z",
+      "createdAt": "2025-05-29T12:00:10.478Z",
+      "id": "Vg6bIoUwuYKmeeT3",
+      "name": "estoque-inteligente"
+    }
+  ]
+}

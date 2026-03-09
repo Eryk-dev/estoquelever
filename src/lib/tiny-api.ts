@@ -86,11 +86,7 @@ export async function getPedido(
   token: string,
   pedidoId: string,
 ): Promise<TinyPedidoDetalhe> {
-  const res = await tinyFetch<{ data: TinyPedidoDetalhe }>(
-    `/pedidos/${pedidoId}`,
-    { token },
-  );
-  return res.data;
+  return tinyFetch<TinyPedidoDetalhe>(`/pedidos/${pedidoId}`, { token });
 }
 
 /** Fetch stock for a product */
@@ -98,11 +94,7 @@ export async function getEstoque(
   token: string,
   produtoId: number,
 ): Promise<TinyEstoque> {
-  const res = await tinyFetch<{ data: TinyEstoque }>(
-    `/estoque/${produtoId}`,
-    { token },
-  );
-  return res.data;
+  return tinyFetch<TinyEstoque>(`/estoque/${produtoId}`, { token });
 }
 
 /** Search product by SKU in a specific Tiny account */
@@ -110,11 +102,11 @@ export async function buscarProdutoPorSku(
   token: string,
   sku: string,
 ): Promise<TinyProdutoBusca | null> {
-  const res = await tinyFetch<{ data: { itens: TinyProdutoBusca[] } }>(
+  const res = await tinyFetch<{ itens: TinyProdutoBusca[] }>(
     `/produtos?codigo=${encodeURIComponent(sku)}&situacao=A`,
     { token },
   );
-  const itens = res.data?.itens ?? [];
+  const itens = res.itens ?? [];
   return itens.length > 0 ? itens[0] : null;
 }
 
@@ -122,18 +114,18 @@ export async function buscarProdutoPorSku(
 export async function listarDepositos(token: string): Promise<TinyDeposito[]> {
   // Tiny v3 has no /depositos endpoint — deposits come from stock queries.
   // Fetch first active product, then get its stock to discover deposits.
-  const prodRes = await tinyFetch<{ data: { itens: { id: number }[] } }>(
+  const prodRes = await tinyFetch<{ itens: { id: number }[] }>(
     "/produtos?situacao=A&limit=1",
     { token },
   );
-  const firstProduct = prodRes.data?.itens?.[0];
+  const firstProduct = prodRes.itens?.[0];
   if (!firstProduct) return [];
 
-  const stockRes = await tinyFetch<{ data: { depositos: TinyDeposito[] } }>(
+  const stockRes = await tinyFetch<{ depositos: TinyDeposito[] }>(
     `/estoque/${firstProduct.id}`,
     { token },
   );
-  return stockRes.data?.depositos ?? [];
+  return stockRes.depositos ?? [];
 }
 
 /** Post (deduct) stock for an order — calls the origin account */
@@ -176,13 +168,13 @@ export async function testarConexao(
   token: string,
 ): Promise<{ ok: boolean; nome?: string; erro?: string }> {
   try {
-    const res = await tinyFetch<{ data: { razaoSocial?: string; nomeFantasia?: string } }>(
+    const res = await tinyFetch<{ razaoSocial?: string; fantasia?: string }>(
       "/info",
       { token },
     );
     return {
       ok: true,
-      nome: res.data?.nomeFantasia ?? res.data?.razaoSocial ?? "Conectado",
+      nome: res.fantasia ?? res.razaoSocial ?? "Conectado",
     };
   } catch (err) {
     return {

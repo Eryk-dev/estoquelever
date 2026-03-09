@@ -2,6 +2,7 @@ import { createServiceClient } from "./supabase-server";
 import { getPedido, getEstoque, buscarProdutoPorSku } from "./tiny-api";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { getValidTokenByFilial } from "./tiny-oauth";
+import { registerApiCall, waitForRateLimit } from "./rate-limiter";
 import { logger } from "./logger";
 import type { TinyPedidoItem } from "./tiny-api";
 
@@ -85,6 +86,8 @@ export async function processWebhook(
     }
 
     // 2. Fetch order details from Tiny
+    await waitForRateLimit(filialOrigem);
+    await registerApiCall(filialOrigem, "GET /pedidos/{id}");
     const pedido = await getPedido(origemToken, pedidoTinyId);
 
     // 3. Load configured deposit IDs for each branch
@@ -258,6 +261,8 @@ async function enrichItem(
   let spDeposito = null;
 
   try {
+    await waitForRateLimit(filialOrigem);
+    await registerApiCall(filialOrigem, "GET /estoque/{id}");
     const estoque = await getEstoque(origemToken, item.produto.id);
     if (filialOrigem === "CWB") {
       cwbDeposito = pickDeposito(estoque.depositos, cwbDepositoId);
@@ -270,11 +275,16 @@ async function enrichItem(
 
   // Stock in support branch (need to find product by SKU first)
   if (suporteToken) {
+    const filialSup: "CWB" | "SP" = filialOrigem === "CWB" ? "SP" : "CWB";
     try {
       await sleep(500);
+      await waitForRateLimit(filialSup);
+      await registerApiCall(filialSup, "GET /produtos?codigo=");
       const produtoSuporte = await buscarProdutoPorSku(suporteToken, sku);
       if (produtoSuporte) {
         await sleep(500);
+        await waitForRateLimit(filialSup);
+        await registerApiCall(filialSup, "GET /estoque/{id}");
         const estoqueSuporte = await getEstoque(
           suporteToken,
           produtoSuporte.id,

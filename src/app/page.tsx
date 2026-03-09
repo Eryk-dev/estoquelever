@@ -66,11 +66,31 @@ export default function DashboardPage() {
   // Hide Auto tab for comprador (OC is never auto)
   const visibleTabs = cargo === "comprador" ? tabs.filter((t) => t.id !== "auto") : tabs;
 
-  async function handleAprovar(id: string, _decisao: Decisao) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+  async function handleAprovar(id: string, decisao: Decisao) {
     const pedido = pendentes.find((p) => p.id === id);
-    setPendentes((prev) => prev.filter((p) => p.id !== id));
-    toast.success(`Pedido #${pedido?.numero ?? id} aprovado`);
+    try {
+      const res = await fetch("/api/pedidos/aprovar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedidoId: id,
+          decisao,
+          operadorId: user?.id,
+          operadorNome: user?.nome,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Erro ao aprovar pedido");
+        return;
+      }
+
+      setPendentes((prev) => prev.filter((p) => p.id !== id));
+      toast.success(`Pedido #${pedido?.numero ?? id} aprovado → ${decisao}`);
+    } catch {
+      toast.error("Erro de conexão ao aprovar pedido");
+    }
   }
 
   function handleLogout() {

@@ -490,14 +490,17 @@ function ConnectionCard({
           client_secret: clientSecret,
         }),
       });
-      if (!res.ok) throw new Error("Falha ao salvar");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
       toast.success(`Credenciais ${connection.filial} salvas`);
       setEditing(false);
       setClientId("");
       setClientSecret("");
       onUpdated();
-    } catch {
-      toast.error("Erro ao salvar credenciais");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao salvar credenciais");
     } finally {
       setSaving(false);
     }

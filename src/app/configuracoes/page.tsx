@@ -354,6 +354,39 @@ function GalpaoCard({
   onRefresh: () => void;
 }) {
   const [expanded, setExpanded] = useState(true);
+  const [addingEmpresa, setAddingEmpresa] = useState(false);
+  const [newEmpresaNome, setNewEmpresaNome] = useState("");
+  const [newEmpresaCnpj, setNewEmpresaCnpj] = useState("");
+  const [savingEmpresa, setSavingEmpresa] = useState(false);
+
+  async function handleAddEmpresa() {
+    if (!newEmpresaNome.trim() || !newEmpresaCnpj.trim()) return;
+    setSavingEmpresa(true);
+    try {
+      const res = await fetch("/api/admin/empresas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nome: newEmpresaNome.trim(),
+          cnpj: newEmpresaCnpj.trim(),
+          galpao_id: galpao.id,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      toast.success(`Empresa "${newEmpresaNome}" criada`);
+      setNewEmpresaNome("");
+      setNewEmpresaCnpj("");
+      setAddingEmpresa(false);
+      onRefresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao criar empresa");
+    } finally {
+      setSavingEmpresa(false);
+    }
+  }
 
   return (
     <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700/60 dark:bg-zinc-900">
@@ -399,6 +432,56 @@ function GalpaoCard({
             <p className="px-4 py-3 text-xs text-zinc-400 italic">
               Nenhuma empresa neste galpão
             </p>
+          )}
+
+          {/* Add empresa */}
+          {addingEmpresa ? (
+            <div className="border-t border-zinc-100 px-4 py-3 dark:border-zinc-800">
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newEmpresaNome}
+                    onChange={(e) => setNewEmpresaNome(e.target.value)}
+                    placeholder="Nome da empresa"
+                    className="flex-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                    autoFocus
+                  />
+                  <input
+                    type="text"
+                    value={newEmpresaCnpj}
+                    onChange={(e) => setNewEmpresaCnpj(e.target.value)}
+                    placeholder="CNPJ"
+                    className="w-40 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 font-mono text-sm outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                    onKeyDown={(e) => e.key === "Enter" && handleAddEmpresa()}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleAddEmpresa}
+                    disabled={savingEmpresa}
+                    className="inline-flex items-center gap-1 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-700 disabled:opacity-30 dark:bg-zinc-100 dark:text-zinc-900"
+                  >
+                    {savingEmpresa ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                    Criar
+                  </button>
+                  <button
+                    onClick={() => { setAddingEmpresa(false); setNewEmpresaNome(""); setNewEmpresaCnpj(""); }}
+                    className="text-xs text-zinc-400 hover:text-zinc-600"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setAddingEmpresa(true)}
+              className="flex w-full items-center justify-center gap-1.5 border-t border-zinc-100 py-2.5 text-[11px] font-medium text-zinc-400 transition-colors hover:bg-zinc-50 hover:text-zinc-600 dark:border-zinc-800 dark:hover:bg-zinc-800/40 dark:hover:text-zinc-300"
+            >
+              <Plus className="h-3 w-3" />
+              Adicionar empresa
+            </button>
           )}
         </div>
       )}

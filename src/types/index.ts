@@ -95,6 +95,82 @@ export interface Pedido {
   erro?: string;
   /** Created at */
   criadoEm: string;
+  /** Separation operator UUID */
+  separacao_operador_id?: string | null;
+  /** When separation started */
+  separacao_iniciada_em?: string | null;
+  /** When separation completed */
+  separacao_concluida_em?: string | null;
+  /** When packing completed */
+  embalagem_concluida_em?: string | null;
+  /** Shipping label URL */
+  etiqueta_url?: string | null;
+  /** Expedition grouping ID */
+  agrupamento_expedicao_id?: string | null;
+}
+
+// ─── Separacao / Embalagem ──────────────────────────────────────────────────
+
+/** Status of the separation/packing flow */
+export type StatusSeparacao =
+  | "aguardando_nf"
+  | "aguardando_separacao"
+  | "em_separacao"
+  | "separado"
+  | "embalado"
+  | "cancelado";
+
+/** Consolidated product for wave picking */
+export interface ProdutoConsolidado {
+  produto_id: string;
+  descricao: string;
+  sku: string;
+  gtin: string | null;
+  quantidade_total: number;
+  unidade: string;
+  localizacao: string | null;
+}
+
+/** Result of a barcode scan during packing */
+export interface BipEmbalagemResult {
+  pedido_id: string;
+  produto_id: string;
+  quantidade_bipada: number;
+  bipado_completo: boolean;
+  pedido_completo: boolean;
+}
+
+/** Filter params for the separation list API */
+export interface SeparacaoFilter {
+  status_separacao?: StatusSeparacao;
+  empresa_origem_id?: string;
+  sort?: "data_pedido" | "localizacao" | "sku";
+  busca?: string;
+}
+
+/** Count of orders per separation status */
+export interface SeparacaoCounts {
+  aguardando_nf: number;
+  aguardando_separacao: number;
+  em_separacao: number;
+  separado: number;
+  embalado: number;
+}
+
+/** A row from siso_pedido_itens */
+export interface PedidoItem {
+  id: string;
+  pedido_id: string;
+  produto_id: string;
+  sku: string;
+  descricao: string;
+  quantidade: number;
+  quantidade_pedida: number;
+  gtin: string | null;
+  quantidade_bipada: number;
+  bipado_completo: boolean;
+  separacao_marcado: boolean;
+  separacao_marcado_em: string | null;
 }
 
 /** Observation/comment on an order */

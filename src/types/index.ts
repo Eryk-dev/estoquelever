@@ -134,6 +134,8 @@ export interface Usuario {
   ativo: boolean;
   criado_em: string;
   atualizado_em: string;
+  printnode_printer_id: number | null;
+  printnode_printer_nome: string | null;
 }
 
 // ─── Galpao / Empresa / Grupo ───────────────────────────────────────────────
@@ -143,6 +145,8 @@ export interface Galpao {
   nome: string;
   descricao: string | null;
   ativo: boolean;
+  printnode_printer_id: number | null;
+  printnode_printer_nome: string | null;
 }
 
 export interface Empresa {

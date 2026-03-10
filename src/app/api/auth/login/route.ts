@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { logger } from "@/lib/logger";
 
 /**
  * POST /api/auth/login
@@ -51,6 +52,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Create server-side session
+  let sessionId: string | undefined;
+  const { data: sessao, error: sessaoError } = await supabase
+    .from("siso_sessoes")
+    .insert({ usuario_id: usuario.id })
+    .select("id")
+    .single();
+
+  if (sessaoError || !sessao) {
+    logger.warn("auth/login", "Failed to create session, continuing without", {
+      usuarioId: usuario.id,
+      error: sessaoError?.message,
+    });
+  } else {
+    sessionId = sessao.id;
+  }
+
   return NextResponse.json({
     ok: true,
     usuario: {
@@ -58,5 +76,6 @@ export async function POST(request: NextRequest) {
       nome: usuario.nome,
       cargo: usuario.cargo,
     },
+    ...(sessionId && { sessionId }),
   });
 }

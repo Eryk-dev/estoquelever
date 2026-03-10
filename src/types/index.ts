@@ -107,9 +107,9 @@ export interface Observacao {
   criadoEm: string;
 }
 
-/** Tab definition for the dashboard */
+/** Tab definition for tab bars */
 export interface Tab {
-  id: "pendente" | "concluidos" | "auto";
+  id: string;
   label: string;
   count: number;
 }

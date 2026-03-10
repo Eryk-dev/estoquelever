@@ -1,269 +1,296 @@
 "use client";
 
 import { useState } from "react";
+import { Package, Printer, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
-import { Printer, RotateCcw, ChevronDown, Clock, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatTime } from "@/lib/domain-helpers";
-import type { Decisao } from "@/types";
-
-// ─── Types ──────────────────────────────────────────────────────────────────
-
-type EtiquetaStatus = "pendente" | "imprimindo" | "impresso" | "falhou";
-
-export interface PedidoEmbalado {
-  id: string;
-  numero: string;
-  cliente_nome: string;
-  nome_ecommerce: string;
-  decisao?: Decisao | null;
-  separado_por?: string | null;
-  embalado_em?: string | null;
-  etiqueta_status?: string | null;
-  itens: Array<{
-    produto_id: number;
-    descricao: string;
-    quantidade_pedida: number;
-  }>;
-}
+import { useAuth, sisoFetch } from "@/lib/auth-context";
+import { EmptyState } from "@/components/ui/empty-state";
+import type { PedidoSeparacao } from "./pedido-separacao-card";
 
 interface TabEmbaladosProps {
-  pedidos: PedidoEmbalado[];
-  onRefetch: () => void;
+  pedidos: PedidoSeparacao[];
+  onUpdated: () => void;
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+function EtiquetaBadge({ status }: { status: string | null | undefined }) {
+  if (!status) return null;
 
-function getSessionId(): string {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem("siso_session_id") ?? "";
-}
-
-async function sisoFetch(url: string, options?: RequestInit): Promise<Response> {
-  return fetch(url, {
-    ...options,
-    headers: {
-      ...options?.headers,
-      "X-Session-Id": getSessionId(),
-      "Content-Type": "application/json",
-    },
-  });
-}
-
-const ETIQUETA_BADGE: Record<
-  EtiquetaStatus,
-  { label: string; className: string }
-> = {
-  pendente: {
-    label: "Pendente",
-    className:
-      "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400",
-  },
-  imprimindo: {
-    label: "Imprimindo",
-    className:
-      "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-400",
-  },
-  impresso: {
-    label: "Impresso",
-    className:
-      "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400",
-  },
-  falhou: {
-    label: "Falhou",
-    className: "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400",
-  },
-};
-
-function EtiquetaStatusBadge({ status }: { status: string | null | undefined }) {
-  const normalized = (status ?? "pendente") as EtiquetaStatus;
-  const badge = ETIQUETA_BADGE[normalized] ?? ETIQUETA_BADGE.pendente;
-
+  const isFalhou = status === "falhou";
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-semibold",
-        badge.className,
+        "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold",
+        isFalhou
+          ? "bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300"
+          : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
       )}
     >
-      {badge.label}
+      Etiqueta: {status}
     </span>
   );
 }
 
-// ─── Pedido Row ─────────────────────────────────────────────────────────────
+export function TabEmbalados({ pedidos, onUpdated }: TabEmbaladosProps) {
+  const { user } = useAuth();
+  const isAdmin = user?.cargo === "admin";
 
-function PedidoEmbaladobRow({
-  pedido,
-  onRefetch,
-}: {
-  pedido: PedidoEmbalado;
-  onRefetch: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [reprinting, setReprinting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [reprintingIds, setReprintingIds] = useState<Set<string>>(new Set());
 
-  const etiquetaStatus = (pedido.etiqueta_status ?? "pendente") as EtiquetaStatus;
-  const isFailed = etiquetaStatus === "falhou";
-  const canReprint = etiquetaStatus === "impresso" || isFailed;
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
-  async function handleReprint() {
-    setReprinting(true);
+  function toggleAll() {
+    if (selected.size === pedidos.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(pedidos.map((p) => p.id)));
+    }
+  }
+
+  async function handleExpedir(pedidoIds: string[]) {
+    const res = await sisoFetch("/api/separacao/expedir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pedido_ids: pedidoIds }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      return data.updated as number;
+    }
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? "Erro ao expedir");
+  }
+
+  async function handleExpedirSingle(pedidoId: string) {
+    setLoadingIds((prev) => new Set(prev).add(pedidoId));
+    try {
+      await handleExpedir([pedidoId]);
+      toast.success("Pedido expedido");
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(pedidoId);
+        return next;
+      });
+      onUpdated();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Erro ao expedir pedido",
+      );
+    } finally {
+      setLoadingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(pedidoId);
+        return next;
+      });
+    }
+  }
+
+  async function handleExpedirBatch() {
+    if (selected.size === 0) return;
+    setBatchLoading(true);
+    try {
+      const count = await handleExpedir(Array.from(selected));
+      toast.success(`${count} pedido${count !== 1 ? "s" : ""} expedido${count !== 1 ? "s" : ""}`);
+      setSelected(new Set());
+      onUpdated();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Erro ao expedir pedidos",
+      );
+    } finally {
+      setBatchLoading(false);
+    }
+  }
+
+  async function handleReprint(pedidoId: string) {
+    setReprintingIds((prev) => new Set(prev).add(pedidoId));
     try {
       const res = await sisoFetch("/api/separacao/reimprimir", {
         method: "POST",
-        body: JSON.stringify({ pedido_id: pedido.id }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_id: pedidoId }),
       });
 
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data.status === "impresso") {
         toast.success("Etiqueta reimpressa");
-        onRefetch();
       } else {
         toast.error(data.error ?? "Falha ao reimprimir etiqueta");
-        onRefetch();
       }
+      onUpdated();
     } catch {
       toast.error("Falha ao reimprimir etiqueta");
     } finally {
-      setReprinting(false);
+      setReprintingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(pedidoId);
+        return next;
+      });
     }
   }
 
-  const totalItens = pedido.itens.reduce((sum, i) => sum + i.quantidade_pedida, 0);
-  const embaladoTime = formatTime(pedido.embalado_em ?? undefined);
-
-  return (
-    <div
-      className={cn(
-        "overflow-hidden rounded-lg border border-line bg-paper transition-all",
-        expanded && "rounded-xl shadow-sm",
-      )}
-    >
-      {/* Summary row */}
-      <div className="flex items-center gap-2 px-3 py-2.5">
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        >
-          <span className="shrink-0 font-mono text-sm font-bold text-ink">
-            #{pedido.numero}
-          </span>
-          <span
-            className="min-w-0 max-w-[160px] truncate text-sm text-ink-muted"
-            title={pedido.cliente_nome}
-          >
-            {pedido.cliente_nome}
-          </span>
-          <span className="shrink-0 text-[11px] text-ink-faint">
-            {totalItens} {totalItens === 1 ? "item" : "itens"}
-          </span>
-
-          <EtiquetaStatusBadge status={pedido.etiqueta_status} />
-
-          <span className="ml-auto flex shrink-0 items-center gap-1.5">
-            {pedido.separado_por && (
-              <span className="flex items-center gap-0.5 text-[11px] text-ink-faint">
-                <User className="h-3 w-3" />
-                {pedido.separado_por}
-              </span>
-            )}
-            {embaladoTime && (
-              <span className="flex items-center gap-0.5 font-mono text-xs text-ink-faint">
-                <Clock className="h-3 w-3" />
-                {embaladoTime}
-              </span>
-            )}
-            <ChevronDown
-              className={cn(
-                "h-3.5 w-3.5 text-ink-faint transition-transform duration-200",
-                expanded && "rotate-180",
-              )}
-            />
-          </span>
-        </button>
-
-        {/* Reprint / Retry buttons */}
-        {isFailed ? (
-          <button
-            type="button"
-            onClick={handleReprint}
-            disabled={reprinting}
-            className={cn(
-              "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
-              "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-950/50 dark:text-red-400 dark:hover:bg-red-900/60",
-              reprinting && "cursor-not-allowed opacity-50",
-            )}
-          >
-            <RotateCcw className={cn("h-3.5 w-3.5", reprinting && "animate-spin")} />
-            {reprinting ? "Tentando..." : "Tentar Novamente"}
-          </button>
-        ) : canReprint ? (
-          <button
-            type="button"
-            onClick={handleReprint}
-            disabled={reprinting}
-            className={cn(
-              "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
-              "bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
-              reprinting && "cursor-not-allowed opacity-50",
-            )}
-          >
-            <Printer className={cn("h-3.5 w-3.5", reprinting && "animate-spin")} />
-            {reprinting ? "Imprimindo..." : "Reimprimir Etiqueta"}
-          </button>
-        ) : null}
-      </div>
-
-      {/* Expanded items */}
-      {expanded && (
-        <>
-          <div className="mx-3 h-px bg-line" />
-          <div className="divide-y divide-line px-4">
-            {pedido.itens.map((item) => (
-              <div
-                key={item.produto_id}
-                className="flex items-center gap-2 py-2 text-sm"
-              >
-                <span className="text-ink-faint">{item.quantidade_pedida}x</span>
-                <span className="min-w-0 truncate text-ink">
-                  {item.descricao}
-                </span>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ─── Main Component ─────────────────────────────────────────────────────────
-
-export function TabEmbalados({ pedidos, onRefetch }: TabEmbaladosProps) {
   if (pedidos.length === 0) {
-    return (
-      <div className="py-12 text-center text-sm text-ink-faint">
-        Nenhum pedido embalado no momento.
-      </div>
-    );
+    return <EmptyState message="Nenhum pedido embalado" />;
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <p className="mb-1 text-xs text-ink-faint">
-        {pedidos.length} pedido{pedidos.length !== 1 ? "s" : ""} embalado
-        {pedidos.length !== 1 ? "s" : ""}
-      </p>
-      {pedidos.map((pedido) => (
-        <PedidoEmbaladobRow
-          key={pedido.id}
-          pedido={pedido}
-          onRefetch={onRefetch}
-        />
-      ))}
+    <div className="space-y-3">
+      {/* Batch actions bar */}
+      <div className="flex items-center gap-3">
+        <label className="flex items-center gap-2 text-xs text-ink-muted">
+          <input
+            type="checkbox"
+            checked={selected.size === pedidos.length && pedidos.length > 0}
+            onChange={toggleAll}
+            className="h-3.5 w-3.5 rounded border-zinc-300 accent-blue-600"
+          />
+          {selected.size > 0
+            ? `${selected.size} selecionado${selected.size !== 1 ? "s" : ""}`
+            : "Selecionar todos"}
+        </label>
+
+        <div className="flex-1" />
+
+        {!isAdmin && (
+          <button
+            type="button"
+            onClick={handleExpedirBatch}
+            disabled={selected.size === 0 || batchLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Package className="h-3.5 w-3.5" />
+            {batchLoading
+              ? "Expedindo..."
+              : `Expedir Selecionados (${selected.size})`}
+          </button>
+        )}
+      </div>
+
+      {/* Order cards */}
+      {pedidos.map((pedido) => {
+        const isLoading = loadingIds.has(pedido.id);
+        const isChecked = selected.has(pedido.id);
+        const isReprinting = reprintingIds.has(pedido.id);
+        const etiquetaStatus = pedido.etiqueta_status ?? "pendente";
+        const isFailed = etiquetaStatus === "falhou";
+        const canReprint = etiquetaStatus === "impresso" || isFailed;
+
+        return (
+          <article
+            key={pedido.id}
+            className={cn(
+              "rounded-xl border bg-paper px-4 py-3 shadow-sm transition-colors",
+              isChecked
+                ? "border-blue-300 dark:border-blue-700"
+                : "border-line",
+            )}
+            aria-label={`Pedido #${pedido.numero}`}
+          >
+            <div className="flex items-center gap-3">
+              {/* Checkbox */}
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={() => toggleSelect(pedido.id)}
+                className="h-3.5 w-3.5 shrink-0 rounded border-zinc-300 accent-blue-600"
+                aria-label={`Selecionar pedido ${pedido.numero}`}
+              />
+
+              {/* Order info */}
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <span className="shrink-0 font-mono text-sm font-bold text-ink">
+                  #{pedido.numero}
+                </span>
+
+                <span className="h-3 w-px bg-line" aria-hidden="true" />
+
+                {/* Packed time */}
+                {pedido.embalado_em && (
+                  <span className="shrink-0 text-xs text-ink-faint">
+                    Embalado às {formatTime(pedido.embalado_em)}
+                  </span>
+                )}
+
+                {/* Packed by */}
+                {pedido.separado_por && (
+                  <span className="shrink-0 text-xs text-ink-muted">
+                    por {pedido.separado_por}
+                  </span>
+                )}
+
+                {/* Etiqueta badge */}
+                <EtiquetaBadge status={pedido.etiqueta_status} />
+              </div>
+
+              {/* Actions */}
+              <div className="flex shrink-0 items-center gap-1.5">
+                {/* Reimprimir Etiqueta */}
+                {isFailed ? (
+                  <button
+                    type="button"
+                    onClick={() => handleReprint(pedido.id)}
+                    disabled={isReprinting}
+                    title="Tentar novamente"
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition-colors",
+                      "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-950/50 dark:text-red-400 dark:hover:bg-red-900/60",
+                      isReprinting && "cursor-not-allowed opacity-50",
+                    )}
+                  >
+                    <RotateCcw className={cn("h-3.5 w-3.5", isReprinting && "animate-spin")} />
+                    {isReprinting ? "Tentando..." : "Tentar Novamente"}
+                  </button>
+                ) : canReprint ? (
+                  <button
+                    type="button"
+                    onClick={() => handleReprint(pedido.id)}
+                    disabled={isReprinting}
+                    title="Reimprimir etiqueta"
+                    className={cn(
+                      "inline-flex h-7 w-7 items-center justify-center rounded-lg border border-line text-ink-faint transition-colors hover:bg-surface hover:text-ink",
+                      isReprinting && "cursor-not-allowed opacity-50",
+                    )}
+                  >
+                    <Printer className={cn("h-3.5 w-3.5", isReprinting && "animate-spin")} />
+                  </button>
+                ) : (
+                  <span
+                    title="Etiqueta pendente"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-line text-ink-faint opacity-40 cursor-not-allowed"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                  </span>
+                )}
+
+                {/* Individual expedir */}
+                {!isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleExpedirSingle(pedido.id)}
+                    disabled={isLoading}
+                    className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-muted transition-colors hover:bg-zinc-100 hover:text-ink disabled:opacity-50 dark:hover:bg-zinc-800"
+                  >
+                    {isLoading ? "Expedindo..." : "Expedir"}
+                  </button>
+                )}
+              </div>
+            </div>
+          </article>
+        );
+      })}
     </div>
   );
 }

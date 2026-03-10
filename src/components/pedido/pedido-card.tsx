@@ -169,23 +169,25 @@ function ProductRow({ item, decisao, filialOrigem }: ProductRowProps) {
 
   return (
     <div className="flex items-start gap-3 py-2.5">
-      {/* Product thumbnail */}
-      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-line bg-surface">
-        {item.imagemUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={item.imagemUrl}
-            alt={item.sku}
-            className="h-full w-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center">
-            <Package className="h-5 w-5 text-ink-faint" aria-hidden="true" />
-          </div>
-        )}
-        {/* Quantity badge */}
-        <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-zinc-900 px-1 font-mono text-[10px] font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
+      {/* Product thumbnail + quantity badge */}
+      <div className="relative shrink-0">
+        <div className="h-12 w-12 overflow-hidden rounded-lg border border-line bg-surface">
+          {item.imagemUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={item.imagemUrl}
+              alt={item.sku}
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <Package className="h-5 w-5 text-ink-faint" aria-hidden="true" />
+            </div>
+          )}
+        </div>
+        {/* Quantity badge — outside overflow-hidden container */}
+        <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-900 px-1 font-mono text-[10px] font-bold text-white ring-2 ring-paper dark:bg-zinc-100 dark:text-zinc-900">
           {item.quantidadePedida}
         </span>
       </div>

@@ -145,21 +145,43 @@ export async function getEstoque(
   return tinyFetch<TinyEstoque>(`/estoque/${produtoId}`, { token });
 }
 
-/** Fetch the first image URL for a product (from anexos) */
-export async function getProdutoImagemUrl(
+/** Product detail (tipo + image) */
+export interface TinyProdutoDetalhe {
+  tipo: string; // K=Kit, S=Simples, V=Variacoes, F=Fabricado, M=MateriaPrima
+  imagemUrl: string | null;
+}
+
+/** Fetch product detail — returns tipo and first image URL */
+export async function getProdutoDetalhe(
   token: string,
   produtoId: number,
-): Promise<string | null> {
-  try {
-    const res = await tinyFetch<{ anexos?: Array<{ url?: string | null }> }>(
-      `/produtos/${produtoId}`,
-      { token },
-    );
-    const url = res.anexos?.[0]?.url;
-    return url ?? null;
-  } catch {
-    return null;
-  }
+): Promise<TinyProdutoDetalhe> {
+  const res = await tinyFetch<{
+    tipo?: string;
+    anexos?: Array<{ url?: string | null }>;
+  }>(`/produtos/${produtoId}`, { token });
+  return {
+    tipo: res.tipo ?? "S",
+    imagemUrl: res.anexos?.[0]?.url ?? null,
+  };
+}
+
+/** Kit component from GET /produtos/{id}/kit */
+export interface TinyKitComponente {
+  produto: {
+    id: number;
+    sku: string | null;
+    descricao: string | null;
+  };
+  quantidade: number;
+}
+
+/** Fetch kit components for a product */
+export async function getProdutoKit(
+  token: string,
+  produtoId: number,
+): Promise<TinyKitComponente[]> {
+  return tinyFetch<TinyKitComponente[]>(`/produtos/${produtoId}/kit`, { token });
 }
 
 /** Search product by SKU in a specific Tiny account */

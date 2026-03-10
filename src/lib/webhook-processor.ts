@@ -1,5 +1,5 @@
 import { createServiceClient } from "./supabase-server";
-import { getPedido, getEstoque, buscarProdutoPorSku, getProdutoImagemUrl } from "./tiny-api";
+import { getPedido, getEstoque, buscarProdutoPorSku, getProdutoDetalhe, getProdutoKit } from "./tiny-api";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { registerApiCall, waitForRateLimit } from "./rate-limiter";
@@ -175,31 +175,73 @@ export async function processWebhook(
     }> = [];
 
     for (const item of pedido.itens) {
-      const { processed, estoquesPorEmpresa } = await enrichItemMultiEmpresa(
-        item,
-        empresaOrigemId,
-        galpaoOrigemId,
-        galpaoOrigemNome,
-        empresasDoGrupo,
-        empresaTokens,
-        empresaDepositoIds,
-      );
-      itensProcessados.push(processed);
+      // Check if product is a kit — expand into components
+      let expandedItems: TinyPedidoItem[] = [item];
+      let kitImagemUrl: string | null = null;
 
-      for (const est of estoquesPorEmpresa) {
-        itensEstoques.push({
-          pedido_id: pedidoTinyId,
-          produto_id: item.produto.id,
-          empresa_id: est.empresaId,
-          deposito_id: est.depositoId,
-          deposito_nome: est.depositoNome,
-          saldo: est.saldo,
-          reservado: est.reservado,
-          disponivel: est.disponivel,
-        });
+      try {
+        await waitForRateLimit(empresaOrigemId);
+        await registerApiCall(empresaOrigemId, "GET /produtos/{id}");
+        const detalhe = await getProdutoDetalhe(origemToken, item.produto.id);
+        kitImagemUrl = detalhe.imagemUrl;
+
+        if (detalhe.tipo === "K") {
+          await sleep(500);
+          await waitForRateLimit(empresaOrigemId);
+          await registerApiCall(empresaOrigemId, "GET /produtos/{id}/kit");
+          const componentes = await getProdutoKit(origemToken, item.produto.id);
+
+          if (componentes.length > 0) {
+            logger.info("processor", `Kit detected — expanding ${componentes.length} components`, {
+              pedidoId: pedidoTinyId,
+              kitProdutoId: item.produto.id,
+              kitSku: item.produto.sku,
+              componentes: componentes.map((c) => c.produto.sku),
+            });
+
+            expandedItems = componentes.map((comp) => ({
+              produto: {
+                id: comp.produto.id,
+                sku: comp.produto.sku ?? "",
+                descricao: comp.produto.descricao ?? "",
+              },
+              quantidade: comp.quantidade * item.quantidade,
+              valorUnitario: 0,
+            }));
+          }
+        }
+      } catch {
+        // Detalhe/kit fetch failed — process as normal item
       }
 
-      await sleep(500);
+      for (const expandedItem of expandedItems) {
+        const { processed, estoquesPorEmpresa } = await enrichItemMultiEmpresa(
+          expandedItem,
+          empresaOrigemId,
+          galpaoOrigemId,
+          galpaoOrigemNome,
+          empresasDoGrupo,
+          empresaTokens,
+          empresaDepositoIds,
+          kitImagemUrl,
+        );
+        itensProcessados.push(processed);
+
+        for (const est of estoquesPorEmpresa) {
+          itensEstoques.push({
+            pedido_id: pedidoTinyId,
+            produto_id: expandedItem.produto.id,
+            empresa_id: est.empresaId,
+            deposito_id: est.depositoId,
+            deposito_nome: est.depositoNome,
+            saldo: est.saldo,
+            reservado: est.reservado,
+            disponivel: est.disponivel,
+          });
+        }
+
+        await sleep(500);
+      }
     }
 
     // 6. Calculate suggestion using aggregated galpao data
@@ -368,6 +410,7 @@ async function enrichItemMultiEmpresa(
   empresasDoGrupo: EmpresaGrupo[],
   empresaTokens: Map<string, string>,
   empresaDepositoIds: Map<string, number | null>,
+  preImagemUrl?: string | null,
 ): Promise<{
   processed: ProcessedItem;
   estoquesPorEmpresa: ItemEstoqueEmpresa[];
@@ -446,16 +489,20 @@ async function enrichItemMultiEmpresa(
     await sleep(500);
   }
 
-  // Fetch product image from origin empresa (1 extra call per item)
-  let imagemUrl: string | null = null;
-  const origemToken = empresaTokens.get(empresaOrigemId);
-  if (origemToken) {
-    try {
-      await waitForRateLimit(empresaOrigemId);
-      await registerApiCall(empresaOrigemId, "GET /produtos/{id}");
-      imagemUrl = await getProdutoImagemUrl(origemToken, item.produto.id);
-    } catch {
-      // Image fetch failed — non-critical, continue
+  // Use pre-fetched image URL (fetched before kit expansion)
+  // For non-kit items, fetch it now if not provided
+  let imagemUrl: string | null = preImagemUrl ?? null;
+  if (imagemUrl === null) {
+    const origemToken = empresaTokens.get(empresaOrigemId);
+    if (origemToken) {
+      try {
+        await waitForRateLimit(empresaOrigemId);
+        await registerApiCall(empresaOrigemId, "GET /produtos/{id}");
+        const detalhe = await getProdutoDetalhe(origemToken, item.produto.id);
+        imagemUrl = detalhe.imagemUrl;
+      } catch {
+        // Image fetch failed — non-critical, continue
+      }
     }
   }
 

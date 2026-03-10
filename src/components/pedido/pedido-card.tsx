@@ -122,6 +122,7 @@ function EditableStockPill({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [localEstoque, setLocalEstoque] = useState(estoque);
+  const [tipoMov, setTipoMov] = useState<"E" | "B">("E");
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Sync local state when prop changes (e.g. from React Query refetch)
@@ -136,6 +137,7 @@ function EditableStockPill({
 
   function startEdit() {
     if (!localEstoque) return;
+    setTipoMov("E");
     setEditing(true);
   }
 
@@ -149,11 +151,7 @@ function EditableStockPill({
 
   async function handleSave(value: string) {
     const novaQtd = parseInt(value, 10);
-    if (isNaN(novaQtd) || novaQtd < 0) {
-      setEditing(false);
-      return;
-    }
-    if (novaQtd === localEstoque?.saldo) {
+    if (isNaN(novaQtd) || novaQtd < 0 || novaQtd === 0) {
       setEditing(false);
       return;
     }
@@ -164,7 +162,7 @@ function EditableStockPill({
       const res = await fetch("/api/tiny/stock/ajustar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pedidoId, produtoId, galpao, novaQuantidade: novaQtd }),
+        body: JSON.stringify({ pedidoId, produtoId, galpao, quantidade: novaQtd, tipo: tipoMov }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -177,7 +175,8 @@ function EditableStockPill({
           ? { ...prev, saldo: result.saldo, reservado: result.reservado, disponivel: result.disponivel }
           : prev,
       );
-      toast.success(`Estoque ${galpao} ajustado → ${result.disponivel} disponível`);
+      const tipoLabel = tipoMov === "E" ? "Entrada" : "Balanço";
+      toast.success(`${tipoLabel} ${galpao}: ${novaQtd} → ${result.disponivel} disponível`);
       onUpdated?.();
     } catch {
       toast.error("Erro de conexão ao ajustar estoque");
@@ -186,18 +185,48 @@ function EditableStockPill({
     }
   }
 
-  // Editing mode: inline input
+  // Editing mode: inline input with E/B toggle
   if (editing) {
     return (
       <span className="inline-flex items-center gap-1 font-mono text-xs">
         <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
           {label}
         </span>
+        {/* Tipo toggle: Entrada / Balanço */}
+        <span className="inline-flex overflow-hidden rounded border border-zinc-300 dark:border-zinc-600">
+          <button
+            type="button"
+            onClick={() => setTipoMov("E")}
+            className={cn(
+              "px-1 py-0 text-[10px] font-semibold transition-colors",
+              tipoMov === "E"
+                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300"
+                : "bg-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300",
+            )}
+            title="Entrada — adiciona ao estoque"
+          >
+            +E
+          </button>
+          <button
+            type="button"
+            onClick={() => setTipoMov("B")}
+            className={cn(
+              "px-1 py-0 text-[10px] font-semibold transition-colors",
+              tipoMov === "B"
+                ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
+                : "bg-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300",
+            )}
+            title="Balanço — define valor exato do saldo"
+          >
+            =B
+          </button>
+        </span>
         <input
           ref={inputRef}
           type="number"
           min="0"
-          defaultValue={localEstoque?.saldo ?? 0}
+          defaultValue={tipoMov === "B" ? (localEstoque?.saldo ?? 0) : ""}
+          placeholder={tipoMov === "E" ? "qtd" : "saldo"}
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSave(e.currentTarget.value);
             if (e.key === "Escape") setEditing(false);

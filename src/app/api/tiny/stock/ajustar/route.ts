@@ -8,36 +8,48 @@ import { logger } from "@/lib/logger";
 /**
  * POST /api/tiny/stock/ajustar
  *
- * Adjusts stock directly in Tiny ERP (tipo B = balanço) and updates the
- * local DB item with the new values.
+ * Adjusts stock directly in Tiny ERP and updates the local DB.
  *
  * Body: {
- *   pedidoId: string,       // siso_pedidos.id (Tiny pedido ID)
- *   produtoId: number,       // produto_id from siso_pedido_itens
- *   galpao: "CWB" | "SP",   // which galpão's stock to adjust
- *   novaQuantidade: number,  // new stock balance (saldo)
+ *   pedidoId: string,           // siso_pedidos.id (Tiny pedido ID)
+ *   produtoId: number,           // produto_id from siso_pedido_itens
+ *   galpao: "CWB" | "SP",       // which galpão's stock to adjust
+ *   quantidade: number,          // quantity (meaning depends on tipo)
+ *   tipo: "E" | "B",            // E = Entrada (add), B = Balanço (set exact)
  * }
  */
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { pedidoId, produtoId, galpao, novaQuantidade } = body as {
+    const { pedidoId, produtoId, galpao, quantidade, tipo = "E" } = body as {
       pedidoId: string;
       produtoId: number;
       galpao: "CWB" | "SP";
-      novaQuantidade: number;
+      quantidade?: number;
+      tipo?: "E" | "B";
+      // Legacy field — treat as tipo B
+      novaQuantidade?: number;
     };
 
+    // Support legacy field name
+    const qtd = quantidade ?? body.novaQuantidade;
+
     // Validate input
-    if (!pedidoId || !produtoId || !galpao || novaQuantidade == null) {
+    if (!pedidoId || !produtoId || !galpao || qtd == null) {
       return NextResponse.json(
-        { error: "Campos obrigatórios: pedidoId, produtoId, galpao, novaQuantidade" },
+        { error: "Campos obrigatórios: pedidoId, produtoId, galpao, quantidade" },
         { status: 400 },
       );
     }
-    if (novaQuantidade < 0) {
+    if (qtd < 0) {
       return NextResponse.json(
         { error: "Quantidade não pode ser negativa" },
+        { status: 400 },
+      );
+    }
+    if (tipo !== "E" && tipo !== "B") {
+      return NextResponse.json(
+        { error: "Tipo deve ser E (Entrada) ou B (Balanço)" },
         { status: 400 },
       );
     }
@@ -110,24 +122,26 @@ export async function POST(request: Request) {
     // 6. Get token for the empresa
     const { token } = await getValidTokenByEmpresa(empresa.id);
 
-    // 7. Call Tiny to adjust stock (tipo B = balanço)
+    // 7. Call Tiny to adjust stock
+    const tipoLabel = tipo === "E" ? "entrada" : "balanço";
     await waitForRateLimit(empresa.id);
-    await registerApiCall(empresa.id, "POST /estoque/{id} (balanço)");
+    await registerApiCall(empresa.id, `POST /estoque/{id} (${tipoLabel})`);
     await movimentarEstoque(token, tinyProdutoId, {
-      tipo: "B",
-      quantidade: novaQuantidade,
+      tipo,
+      quantidade: qtd,
       ...(depositoId != null && { deposito: { id: depositoId } }),
-      observacoes: `Ajuste via SISO — pedido ${pedidoId}`,
+      observacoes: `${tipo === "E" ? "Entrada" : "Balanço"} via SISO — pedido ${pedidoId}`,
     });
 
-    logger.info("stock-adjust", "Stock adjusted in Tiny", {
+    logger.info("stock-adjust", `Stock ${tipoLabel} in Tiny`, {
       pedidoId,
       produtoId,
       galpao,
       empresaId: empresa.id,
       tinyProdutoId,
       depositoId,
-      novaQuantidade,
+      tipo,
+      quantidade: qtd,
     });
 
     // 8. Re-fetch stock from Tiny to get the actual updated values
@@ -136,9 +150,9 @@ export async function POST(request: Request) {
     const estoqueAtualizado = await getEstoque(token, tinyProdutoId);
 
     // Pick the right deposit
-    let novoSaldo = novaQuantidade;
+    let novoSaldo = qtd;
     let novoReservado = 0;
-    let novoDisponivel = novaQuantidade;
+    let novoDisponivel = qtd;
 
     if (estoqueAtualizado.depositos?.length) {
       const dep = depositoId != null
@@ -188,6 +202,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       galpao,
+      tipo,
       saldo: novoSaldo,
       reservado: novoReservado,
       disponivel: novoDisponivel,

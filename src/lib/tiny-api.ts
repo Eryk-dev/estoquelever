@@ -342,6 +342,41 @@ export async function lancarEstoqueNota(
   });
 }
 
+// ─── Expedição (Shipment Groups + Labels) ───────────────────────────────────
+
+/** Response from POST /expedicao */
+export interface TinyCriarAgrupamentoResponse {
+  id: number;
+}
+
+/** Response from GET /expedicao/{idAgrupamento}/etiquetas */
+export interface TinyEtiquetasAgrupamentoResponse {
+  urls: string[];
+}
+
+/** Create a shipment group (agrupamento de expedição) from order IDs */
+export async function criarAgrupamento(
+  token: string,
+  idsPedidos: number[],
+): Promise<TinyCriarAgrupamentoResponse> {
+  return tinyFetch<TinyCriarAgrupamentoResponse>("/expedicao", {
+    token,
+    method: "POST",
+    body: { idsPedidos },
+  });
+}
+
+/** Fetch label URLs for a shipment group */
+export async function obterEtiquetasAgrupamento(
+  token: string,
+  idAgrupamento: number,
+): Promise<TinyEtiquetasAgrupamentoResponse> {
+  return tinyFetch<TinyEtiquetasAgrupamentoResponse>(
+    `/expedicao/${idAgrupamento}/etiquetas`,
+    { token },
+  );
+}
+
 /** Test connection by fetching company info */
 export async function testarConexao(
   token: string,

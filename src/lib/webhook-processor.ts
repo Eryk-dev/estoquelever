@@ -44,6 +44,7 @@ interface ProcessedItem {
   localizacao_cwb: string | null;
   localizacao_sp: string | null;
   imagem_url: string | null;
+  gtin: string | null;
 }
 
 /** Per-empresa stock data for one item */
@@ -172,18 +173,21 @@ export async function processWebhook(
       saldo: number;
       reservado: number;
       disponivel: number;
+      localizacao: string | null;
     }> = [];
 
     for (const item of pedido.itens) {
       // Check if product is a kit — expand into components
       let expandedItems: TinyPedidoItem[] = [item];
       let kitImagemUrl: string | null = null;
+      let itemGtin: string | null = null;
 
       try {
         await waitForRateLimit(empresaOrigemId);
         await registerApiCall(empresaOrigemId, "GET /produtos/{id}");
         const detalhe = await getProdutoDetalhe(origemToken, item.produto.id);
         kitImagemUrl = detalhe.imagemUrl;
+        itemGtin = detalhe.gtin;
 
         if (detalhe.tipo === "K") {
           await sleep(500);
@@ -214,6 +218,10 @@ export async function processWebhook(
         // Detalhe/kit fetch failed — process as normal item
       }
 
+      // For non-kit items, use the GTIN from the origin getProdutoDetalhe call.
+      // For kit components, GTIN is null (kit parent GTIN != component GTIN).
+      const isKit = expandedItems.length > 1 || expandedItems[0] !== item;
+
       for (const expandedItem of expandedItems) {
         const { processed, estoquesPorEmpresa } = await enrichItemMultiEmpresa(
           expandedItem,
@@ -224,6 +232,7 @@ export async function processWebhook(
           empresaTokens,
           empresaDepositoIds,
           kitImagemUrl,
+          isKit ? null : itemGtin,
         );
         itensProcessados.push(processed);
 
@@ -237,6 +246,7 @@ export async function processWebhook(
             saldo: est.saldo,
             reservado: est.reservado,
             disponivel: est.disponivel,
+            localizacao: est.localizacao,
           });
         }
 
@@ -411,6 +421,7 @@ async function enrichItemMultiEmpresa(
   empresaTokens: Map<string, string>,
   empresaDepositoIds: Map<string, number | null>,
   preImagemUrl?: string | null,
+  preGtin?: string | null,
 ): Promise<{
   processed: ProcessedItem;
   estoquesPorEmpresa: ItemEstoqueEmpresa[];
@@ -489,9 +500,10 @@ async function enrichItemMultiEmpresa(
     await sleep(500);
   }
 
-  // Use pre-fetched image URL (fetched before kit expansion)
+  // Use pre-fetched image URL and GTIN (fetched before kit expansion)
   // For non-kit items, fetch it now if not provided
   let imagemUrl: string | null = preImagemUrl ?? null;
+  let gtin: string | null = preGtin ?? null;
   if (imagemUrl === null) {
     const origemToken = empresaTokens.get(empresaOrigemId);
     if (origemToken) {
@@ -500,8 +512,9 @@ async function enrichItemMultiEmpresa(
         await registerApiCall(empresaOrigemId, "GET /produtos/{id}");
         const detalhe = await getProdutoDetalhe(origemToken, item.produto.id);
         imagemUrl = detalhe.imagemUrl;
+        if (!gtin) gtin = detalhe.gtin;
       } catch {
-        // Image fetch failed — non-critical, continue
+        // Image/GTIN fetch failed — non-critical, continue
       }
     }
   }
@@ -565,6 +578,7 @@ async function enrichItemMultiEmpresa(
     localizacao_cwb: cwbLocalizacao,
     localizacao_sp: spLocalizacao,
     imagem_url: imagemUrl,
+    gtin,
   };
 
   return { processed, estoquesPorEmpresa };

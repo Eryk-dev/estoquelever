@@ -9,6 +9,16 @@ import type { EmpresaGrupo } from "./grupo-resolver";
 import { logger } from "./logger";
 import type { TinyPedidoItem } from "./tiny-api";
 
+/** Serialize any thrown value into a readable string */
+function serializeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && err !== null && "message" in err) {
+    return String((err as { message: unknown }).message);
+  }
+  if (typeof err === "string") return err;
+  try { return JSON.stringify(err); } catch { return String(err); }
+}
+
 type Decisao = "propria" | "transferencia" | "oc";
 
 interface ProcessedItem {
@@ -86,6 +96,17 @@ export async function processWebhook(
   });
 
   try {
+    // 0. Resolve galpao name early (used for filial_origem and enrichment fallback)
+    let galpaoOrigemNome: string;
+    {
+      const { data: galpaoRow } = await supabase
+        .from("siso_galpoes")
+        .select("nome")
+        .eq("id", galpaoOrigemId)
+        .single();
+      galpaoOrigemNome = galpaoRow?.nome ?? "CWB";
+    }
+
     // 1. Get all empresas in the grupo
     const empresasDoGrupo = grupoId
       ? await getEmpresasDoGrupo(grupoId)
@@ -100,6 +121,7 @@ export async function processWebhook(
       logger.warn("processor", "Empresa sem grupo — processando somente com origem", {
         pedidoId: pedidoTinyId,
         empresaId: empresaOrigemId,
+        grupoId,
       });
     }
 
@@ -153,6 +175,7 @@ export async function processWebhook(
         item,
         empresaOrigemId,
         galpaoOrigemId,
+        galpaoOrigemNome,
         empresasDoGrupo,
         empresaTokens,
         empresaDepositoIds,
@@ -197,10 +220,7 @@ export async function processWebhook(
     const status = isAuto ? "executando" : "pendente";
     const tipoResolucao = isAuto ? "auto" : null;
 
-    // 8. Resolve galpao nome for the origin
-    const galpaoNome = empresasDoGrupo.find(
-      (e) => e.empresaId === empresaOrigemId,
-    )?.galpaoNome ?? "???";
+    // 8. Use galpaoOrigemNome (resolved at step 0)
 
     // 9. Insert into siso_pedidos
     const { error: pedidoError } = await supabase
@@ -210,7 +230,7 @@ export async function processWebhook(
           id: pedidoTinyId,
           numero: pedido.numero,
           data: formatDate(pedido.data),
-          filial_origem: galpaoNome as "CWB" | "SP",
+          filial_origem: galpaoOrigemNome as "CWB" | "SP",
           empresa_origem_id: empresaOrigemId,
           id_pedido_ecommerce: pedido.idPedidoEcommerce ?? null,
           nome_ecommerce: pedido.nomeEcommerce ?? null,
@@ -224,7 +244,7 @@ export async function processWebhook(
           tipo_resolucao: tipoResolucao,
           decisao_final: isAuto ? "propria" : null,
           processado_em: null,
-          marcadores: isAuto ? [galpaoNome] : [],
+          marcadores: isAuto ? [galpaoOrigemNome] : [],
           payload_original: pedido,
         },
         { onConflict: "id" },
@@ -237,7 +257,7 @@ export async function processWebhook(
       await supabase.from("siso_fila_execucao").insert({
         pedido_id: pedidoTinyId,
         tipo: "lancar_estoque",
-        filial_execucao: galpaoNome,
+        filial_execucao: galpaoOrigemNome,
         empresa_id: empresaOrigemId,
         decisao: "propria",
       });
@@ -319,7 +339,7 @@ export async function processWebhook(
 
     return { ok: true, pedidoId: pedidoTinyId, status, sugestao };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Erro desconhecido";
+    const msg = serializeError(err);
     await supabase
       .from("siso_webhook_logs")
       .update({ status: "erro", erro: msg, processado_em: new Date().toISOString() })
@@ -340,6 +360,7 @@ async function enrichItemMultiEmpresa(
   item: TinyPedidoItem,
   empresaOrigemId: string,
   galpaoOrigemId: string,
+  galpaoOrigemNome: string,
   empresasDoGrupo: EmpresaGrupo[],
   empresaTokens: Map<string, string>,
   empresaDepositoIds: Map<string, number | null>,
@@ -369,7 +390,7 @@ async function enrichItemMultiEmpresa(
   // Query stock in each empresa of the grupo
   const empresasParaConsultar = empresasDoGrupo.length > 0
     ? empresasDoGrupo
-    : [{ empresaId: empresaOrigemId, galpaoId: galpaoOrigemId, galpaoNome: "???", empresaNome: "???", tier: 1 }];
+    : [{ empresaId: empresaOrigemId, galpaoId: galpaoOrigemId, galpaoNome: galpaoOrigemNome, empresaNome: galpaoOrigemNome, tier: 1 }];
 
   for (const emp of empresasParaConsultar) {
     const token = empresaTokens.get(emp.empresaId);

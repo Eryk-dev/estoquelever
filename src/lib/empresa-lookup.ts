@@ -64,12 +64,19 @@ export async function getEmpresaByCnpj(
     siso_grupos: { id: string; nome: string };
   }>)?.[0];
 
+  const grupoId = grupoRel?.siso_grupos?.id ?? null;
+
+  // Log if empresa has no grupo (helps debug missing grupo relationships)
+  if (!grupoId) {
+    console.warn(`[empresa-lookup] ${empresa.nome} (${clean}) has no grupo. siso_grupo_empresas result:`, JSON.stringify(empresa.siso_grupo_empresas));
+  }
+
   const info: EmpresaInfo = {
     empresaId: empresa.id,
     empresaNome: empresa.nome,
     galpaoId: galpao.id,
     galpaoNome: galpao.nome,
-    grupoId: grupoRel?.siso_grupos?.id ?? null,
+    grupoId,
     grupoNome: grupoRel?.siso_grupos?.nome ?? null,
   };
 

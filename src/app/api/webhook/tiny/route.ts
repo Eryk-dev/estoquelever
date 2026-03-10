@@ -172,10 +172,14 @@ export async function POST(request: NextRequest) {
     empresa.galpaoId,
     empresa.grupoId,
   ).catch((err) => {
+    const msg = err instanceof Error ? err.message
+      : (typeof err === "object" && err !== null && "message" in err)
+        ? String((err as { message: unknown }).message)
+        : JSON.stringify(err);
     logger.error("webhook", `Processing task failed for pedido ${pedidoId}`, {
       pedidoId,
       empresaId: empresa.empresaId,
-      error: err instanceof Error ? err.message : String(err),
+      error: msg,
     });
   });
 

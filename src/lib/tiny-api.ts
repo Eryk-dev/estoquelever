@@ -296,6 +296,31 @@ export async function movimentarEstoque(
   });
 }
 
+// ─── Nota Fiscal (obter) ─────────────────────────────────────────────────────
+
+/** Raw response from GET /notas/{idNota} — only fields we need */
+export interface TinyNotaFiscal {
+  id: number;
+  numero?: string | null;
+  serie?: string | null;
+  chaveAcesso?: string | null;
+  dataEmissao?: string | null;
+  valor?: number | null;
+  situacao?: number | null;
+  origem?: {
+    id: string | null;
+    tipo: string | null; // "venda" | "pedido_compra" | "notafiscal" | "ordemservico" | "cobranca" | "devolucao"
+  };
+}
+
+/** Fetch invoice details by ID */
+export async function obterNotaFiscal(
+  token: string,
+  notaId: number,
+): Promise<TinyNotaFiscal> {
+  return tinyFetch<TinyNotaFiscal>(`/notas/${notaId}`, { token });
+}
+
 // ─── Marcadores + Nota Fiscal ────────────────────────────────────────────────
 
 /** Create marcadores on a Tiny order */

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { getEmpresaById } from "@/lib/empresa-lookup";
+import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
 import { processQueue } from "@/lib/execution-worker";
 import { logger } from "@/lib/logger";
 
-type Filial = "CWB" | "SP";
 type Decisao = "propria" | "transferencia" | "oc";
 
 /**
@@ -47,10 +48,10 @@ export async function POST(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Fetch the order
+  // Fetch the order (include empresa_origem_id for queue job)
   const { data: pedido, error: fetchError } = await supabase
     .from("siso_pedidos")
-    .select("id, filial_origem, status")
+    .select("id, filial_origem, empresa_origem_id, status")
     .eq("id", pedidoId)
     .single();
 
@@ -68,19 +69,53 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const filialOrigem: Filial = pedido.filial_origem;
+  if (!pedido.empresa_origem_id) {
+    return NextResponse.json(
+      { error: "Pedido sem empresa_origem_id — reprocessar webhook" },
+      { status: 422 },
+    );
+  }
 
-  // Determine which branch executes stock posting
-  let filialExecucao: Filial;
-  if (decisao === "propria") {
+  // Resolve empresa and galpão info
+  const empresaOrigem = await getEmpresaById(pedido.empresa_origem_id);
+  if (!empresaOrigem) {
+    return NextResponse.json(
+      { error: "Empresa de origem não encontrada" },
+      { status: 404 },
+    );
+  }
+
+  const filialOrigem = empresaOrigem.galpaoNome;
+
+  // Determine empresa_id and filialExecucao based on decisao
+  let empresaExecucaoId: string;
+  let filialExecucao: string;
+
+  if (decisao === "propria" || decisao === "oc") {
+    empresaExecucaoId = pedido.empresa_origem_id;
     filialExecucao = filialOrigem;
-  } else if (decisao === "transferencia") {
-    // Stock is in support branch, but order lives in origin.
-    // Worker will mark as done without API call (manual handling).
-    filialExecucao = filialOrigem === "CWB" ? "SP" : "CWB";
   } else {
-    // OC — use origin as placeholder (worker skips API call)
-    filialExecucao = filialOrigem;
+    // transferencia: find a support empresa in another galpão
+    const empresasDoGrupo = empresaOrigem.grupoId
+      ? await getEmpresasDoGrupo(empresaOrigem.grupoId)
+      : [];
+
+    const empresaSuporte = empresasDoGrupo.find(
+      (e) => e.galpaoId !== empresaOrigem.galpaoId,
+    );
+
+    if (empresaSuporte) {
+      empresaExecucaoId = empresaSuporte.empresaId;
+      filialExecucao = empresaSuporte.galpaoNome;
+    } else {
+      // Fallback: use origin (worker will handle gracefully)
+      empresaExecucaoId = pedido.empresa_origem_id;
+      filialExecucao = filialOrigem;
+      logger.warn("aprovar", "Transferência sem empresa suporte — fallback para origem", {
+        pedidoId,
+        empresaOrigemId: pedido.empresa_origem_id,
+      });
+    }
   }
 
   // Build markers
@@ -111,13 +146,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Enqueue execution job
+  // Enqueue execution job (with empresa_id for worker)
   const { error: queueError } = await supabase
     .from("siso_fila_execucao")
     .insert({
       pedido_id: pedidoId,
       tipo: "lancar_estoque",
       filial_execucao: filialExecucao,
+      empresa_id: empresaExecucaoId,
       decisao,
       operador_id: operadorId ?? null,
       operador_nome: operadorNome ?? null,
@@ -136,6 +172,7 @@ export async function POST(request: NextRequest) {
     pedidoId,
     decisao,
     filialExecucao,
+    empresaExecucaoId,
     operador: operadorNome,
   });
 
@@ -152,6 +189,7 @@ export async function POST(request: NextRequest) {
     pedidoId,
     decisao,
     filialExecucao,
+    empresaExecucaoId,
     status: "executando",
   });
 }

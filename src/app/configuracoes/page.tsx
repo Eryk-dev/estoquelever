@@ -216,7 +216,6 @@ function ConfiguracoesContent() {
         {/* ── Galpões e Empresas ────────────────────────────────────── */}
         <GalpoesEmpresasSection
           galpoes={galpoes}
-          grupos={grupos}
           connections={connections}
           loading={loading}
           onRefresh={fetchAll}
@@ -237,13 +236,11 @@ function ConfiguracoesContent() {
 
 function GalpoesEmpresasSection({
   galpoes,
-  grupos: _grupos,
   connections,
   loading,
   onRefresh,
 }: {
   galpoes: GalpaoHierarquia[];
-  grupos: GrupoInfo[];
   connections: TinyConnection[];
   loading: boolean;
   onRefresh: () => void;

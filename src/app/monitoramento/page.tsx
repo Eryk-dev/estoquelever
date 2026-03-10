@@ -36,7 +36,7 @@ interface MonitoringData {
       received: number;
       processed: number;
       errors: number;
-      duplicates: number;
+      pending: number;
     };
     avgProcessingMs: number | null;
     throughputPerHour: { hour: string; count: number }[];
@@ -371,7 +371,7 @@ export default function MonitoramentoPage() {
               <StatCard
                 label="Erros (24h)"
                 value={data.webhooks.last24h.errors}
-                sub={`${data.webhooks.last24h.duplicates} duplicados`}
+                sub={`${data.webhooks.last24h.pending} processando`}
                 icon={XCircle}
                 color={
                   data.webhooks.last24h.errors > 0

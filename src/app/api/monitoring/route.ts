@@ -46,7 +46,7 @@ export async function GET() {
       .from("siso_pedidos")
       .select("id")
       .eq("status", "pendente")
-      .gte("created_at", todayIso);
+      .gte("criado_em", todayIso);
 
     // Merge: pendentes created today (processado_em is null so not counted above)
     ordersByStatus.pendente = (pedidosPendentesHoje ?? []).length;
@@ -63,13 +63,13 @@ export async function GET() {
       received: (webhookLogs ?? []).length,
       processed: 0,
       errors: 0,
-      duplicates: 0,
+      pending: 0,
     };
 
     for (const w of webhookLogs ?? []) {
       if (w.status === "concluido") webhookStats.processed++;
       else if (w.status === "erro") webhookStats.errors++;
-      else if (w.status === "duplicado") webhookStats.duplicates++;
+      else if (w.status === "pendente" || w.status === "processando") webhookStats.pending++;
     }
 
     // Processing times (only completed entries with both timestamps)

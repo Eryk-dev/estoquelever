@@ -4,11 +4,11 @@ import {
   createContext,
   useContext,
   useState,
-  useEffect,
+  useSyncExternalStore,
   useCallback,
   type ReactNode,
 } from "react";
-import type { Cargo, Usuario } from "@/types";
+import type { Cargo } from "@/types";
 
 interface AuthUser {
   id: string;
@@ -27,22 +27,26 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_KEY = "siso_user";
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [loading, setLoading] = useState(true);
+function getStoredUser(): AuthUser | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
 
-  // Hydrate from localStorage on mount
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        setUser(JSON.parse(stored));
-      }
-    } catch {
-      // ignore
-    }
-    setLoading(false);
-  }, []);
+// Hydration gate: server=false, client=true (no mismatch via useSyncExternalStore)
+const noop = () => () => {};
+function useHydrated(): boolean {
+  return useSyncExternalStore(noop, () => true, () => false);
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(getStoredUser);
+  const hydrated = useHydrated();
+  const loading = !hydrated;
 
   const login = useCallback(async (nome: string, pin: string) => {
     const res = await fetch("/api/auth/login", {

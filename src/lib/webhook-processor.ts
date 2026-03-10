@@ -581,15 +581,7 @@ function calcularSugestaoMultiGalpao(
     }
   }
 
-  // Check: nenhum galpao tem nada?
-  const nenhumaTemNada = itens.every((item) => {
-    const totalDisponivel = itensEstoques
-      .filter((e) => e.produto_id === item.produto_id)
-      .reduce((sum, e) => sum + e.disponivel, 0);
-    return totalDisponivel < item.quantidade_pedida;
-  });
-
-  // Actually check if NONE have ANY stock at all
+  // Check: no galpao has any stock at all?
   const nenhumaTemQualquer = itens.every((item) => {
     const totalDisponivel = itensEstoques
       .filter((e) => e.produto_id === item.produto_id)

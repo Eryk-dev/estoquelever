@@ -11,6 +11,8 @@ Started: Tue Mar 10 17:15:55 -03 2026
 - `siso_pedido_itens.quantidade_bipada` defaults to 0 (integer), `bipado_completo` defaults to false
 - Operator-only endpoints guard with `if (!session.galpaoId)` → 403 (admins have null galpaoId)
 - Pedido galpão ownership check: `pedido.separacao_galpao_id !== session.galpaoId` → 403
+- Admin-only endpoints check `session.cargo !== 'admin'` → 403 (different from operator guard `!session.galpaoId`)
+- Next.js 16 dynamic route params are `Promise<{ param: string }>` — must `await params`
 
 ---
 
@@ -75,4 +77,17 @@ Started: Tue Mar 10 17:15:55 -03 2026
   - Supabase `.update()` with `.in("id", ids)` returns `count` when used — no need for separate count query
   - Batch validation pattern: fetch all, filter for violations, return specific invalid IDs in error response
   - The double-guard on update (`.in("id", ...)` + `.eq("status_separacao", "embalado")`) prevents race conditions
+---
+
+## 2026-03-11 - US-005
+- Created `src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts` with PATCH handler
+- Admin-only: validates `session.cargo === 'admin'` — 403 if not (different from galpaoId null check used by operator endpoints)
+- Validates pedido exists (404) and has `status_separacao = 'aguardando_nf'` (400 if not)
+- Updates to `pendente` with double-guard `.eq("status_separacao", "aguardando_nf")` for race safety
+- Returns `{ success: true, pedido_id: pedidoId }`
+- Files changed: `src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts`
+- **Learnings for future iterations:**
+  - Admin-only endpoints check `session.cargo !== 'admin'` → 403 (NOT `!session.galpaoId` — that's for operator-only)
+  - Next.js 16 dynamic route params are `Promise<{ pedidoId: string }>` — must `await params`
+  - Double-guard on update (`.eq("id", ...)` + `.eq("status_separacao", "aguardando_nf")`) is the standard pattern
 ---

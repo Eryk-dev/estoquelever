@@ -20,7 +20,8 @@ const SKU_RULES: { test: (sku: string) => boolean; info: FornecedorInfo }[] = [
   { test: (s) => s.startsWith("CS"), info: { fornecedor: "Delphi", filialOC: "SP" } },
 ];
 
-export function getFornecedorBySku(sku: string): FornecedorInfo | null {
+export function getFornecedorBySku(sku: string | undefined | null): FornecedorInfo | null {
+  if (!sku) return null;
   for (const rule of SKU_RULES) {
     if (rule.test(sku)) return rule.info;
   }

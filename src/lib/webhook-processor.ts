@@ -274,7 +274,7 @@ async function enrichItem(
   cwbDepositoId: number | null,
   spDepositoId: number | null,
 ): Promise<ProcessedItem> {
-  const sku = item.produto.codigo;
+  const sku = item.produto.codigo ?? "";
   const qtd = item.quantidade;
 
   // Helper: pick deposit by configured ID, or fall back to first entry when

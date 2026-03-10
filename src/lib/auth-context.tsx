@@ -14,10 +14,12 @@ interface AuthUser {
   id: string;
   nome: string;
   cargo: Cargo;
+  sessionId?: string;
 }
 
 interface AuthContextValue {
   user: AuthUser | null;
+  sessionId: string | null;
   loading: boolean;
   login: (nome: string, pin: string) => Promise<{ ok: boolean; erro?: string }>;
   logout: () => void;
@@ -62,6 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       id: data.usuario.id,
       nome: data.usuario.nome,
       cargo: data.usuario.cargo,
+      ...(data.sessionId && { sessionId: data.sessionId }),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(authUser));
     setUser(authUser);
@@ -74,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, sessionId: user?.sessionId ?? null, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -84,4 +87,18 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
+}
+
+/**
+ * Fetch wrapper that automatically adds X-Session-Id header from stored session.
+ * Falls back to regular fetch if no sessionId is stored.
+ */
+export function sisoFetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
+  const stored = getStoredUser();
+  const sessionId = stored?.sessionId;
+  if (!sessionId) return fetch(url, init);
+
+  const headers = new Headers(init?.headers);
+  headers.set("X-Session-Id", sessionId);
+  return fetch(url, { ...init, headers });
 }

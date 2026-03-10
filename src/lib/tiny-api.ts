@@ -99,6 +99,7 @@ export interface TinyDeposito {
 }
 
 export interface TinyEstoque {
+  localizacao?: string | null;
   depositos: TinyDeposito[];
 }
 

@@ -41,6 +41,8 @@ interface ProcessedItem {
   cwb_atende: boolean;
   sp_atende: boolean;
   fornecedor_oc: string | null;
+  localizacao_cwb: string | null;
+  localizacao_sp: string | null;
 }
 
 /** Per-empresa stock data for one item */
@@ -54,6 +56,7 @@ interface ItemEstoqueEmpresa {
   saldo: number;
   reservado: number;
   disponivel: number;
+  localizacao: string | null;
 }
 
 // ─── Load configured deposit ID for an empresa ─────────────────────────────
@@ -433,6 +436,7 @@ async function enrichItemMultiEmpresa(
         saldo,
         reservado,
         disponivel,
+        localizacao: estoque.localizacao ?? null,
       });
     } catch {
       // Stock query failed, continue
@@ -455,8 +459,10 @@ async function enrichItemMultiEmpresa(
   let spAgg = { disponivel: 0, saldo: 0, reservado: 0 };
   let cwbDepId: number | null = null;
   let cwbDepNome: string | null = null;
+  let cwbLocalizacao: string | null = null;
   let spDepId: number | null = null;
   let spDepNome: string | null = null;
+  let spLocalizacao: string | null = null;
 
   for (const [, agg] of porGalpao) {
     if (agg.galpaoNome === "CWB") {
@@ -464,11 +470,13 @@ async function enrichItemMultiEmpresa(
       const cwbEst = estoquesPorEmpresa.find((e) => e.galpaoNome === "CWB");
       cwbDepId = cwbEst?.depositoId ?? null;
       cwbDepNome = cwbEst?.depositoNome ?? null;
+      cwbLocalizacao = cwbEst?.localizacao ?? null;
     } else if (agg.galpaoNome === "SP") {
       spAgg = agg;
       const spEst = estoquesPorEmpresa.find((e) => e.galpaoNome === "SP");
       spDepId = spEst?.depositoId ?? null;
       spDepNome = spEst?.depositoNome ?? null;
+      spLocalizacao = spEst?.localizacao ?? null;
     }
   }
 
@@ -493,6 +501,8 @@ async function enrichItemMultiEmpresa(
     cwb_atende: cwbAgg.disponivel >= qtd,
     sp_atende: spAgg.disponivel >= qtd,
     fornecedor_oc: fornecedor?.fornecedor ?? null,
+    localizacao_cwb: cwbLocalizacao,
+    localizacao_sp: spLocalizacao,
   };
 
   return { processed, estoquesPorEmpresa };

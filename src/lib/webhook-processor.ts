@@ -368,7 +368,7 @@ async function enrichItemMultiEmpresa(
   processed: ProcessedItem;
   estoquesPorEmpresa: ItemEstoqueEmpresa[];
 }> {
-  const sku = item.produto.codigo ?? "";
+  const sku = item.produto.sku ?? "";
   const qtd = item.quantidade;
   const estoquesPorEmpresa: ItemEstoqueEmpresa[] = [];
 

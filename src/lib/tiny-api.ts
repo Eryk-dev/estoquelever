@@ -38,13 +38,38 @@ async function tinyFetch<T>(
 export interface TinyPedidoItem {
   produto: {
     id: number;
-    codigo: string; // SKU
+    sku: string; // SKU (API v3 field name)
     descricao: string;
   };
   quantidade: number;
   valorUnitario: number;
 }
 
+/** Raw Tiny API v3 response for GET /pedidos/{id} */
+interface TinyPedidoRaw {
+  id: number;
+  numeroPedido: number;
+  data: string; // "2024-01-01"
+  cliente: {
+    id: number;
+    nome: string;
+    cpfCnpj?: string;
+  };
+  ecommerce?: {
+    id: number;
+    nome: string;
+    numeroPedidoEcommerce: string;
+  };
+  transportador?: {
+    formaEnvio?: {
+      id: number;
+      nome: string;
+    };
+  };
+  itens: TinyPedidoItem[];
+}
+
+/** Normalized pedido detail (used by webhook-processor) */
 export interface TinyPedidoDetalhe {
   id: string;
   numero: string;
@@ -81,12 +106,30 @@ export interface TinyProdutoBusca {
 
 // ─── API calls ──────────────────────────────────────────────────────────────
 
-/** Fetch full order details */
+/** Fetch full order details (maps API v3 field names to normalized shape) */
 export async function getPedido(
   token: string,
   pedidoId: string,
 ): Promise<TinyPedidoDetalhe> {
-  return tinyFetch<TinyPedidoDetalhe>(`/pedidos/${pedidoId}`, { token });
+  const raw = await tinyFetch<TinyPedidoRaw>(`/pedidos/${pedidoId}`, { token });
+  return {
+    id: String(raw.id),
+    numero: String(raw.numeroPedido),
+    data: raw.data,
+    idPedidoEcommerce: raw.ecommerce?.numeroPedidoEcommerce ?? undefined,
+    nomeEcommerce: raw.ecommerce?.nome ?? undefined,
+    cliente: {
+      nome: raw.cliente?.nome ?? "Desconhecido",
+      cpfCnpj: raw.cliente?.cpfCnpj,
+    },
+    formaEnvio: raw.transportador?.formaEnvio
+      ? {
+          id: String(raw.transportador.formaEnvio.id),
+          descricao: raw.transportador.formaEnvio.nome,
+        }
+      : undefined,
+    itens: raw.itens ?? [],
+  };
 }
 
 /** Fetch stock for a product */

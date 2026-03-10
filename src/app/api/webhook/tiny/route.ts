@@ -26,12 +26,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  // Log raw payload for debugging
+  logger.info("webhook", "Raw payload received", {
+    keys: Object.keys(payload),
+    payload: JSON.stringify(payload).slice(0, 500),
+  });
+
   // Extract fields from Tiny webhook
   const tipo = payload.tipo as string | undefined;
   const cnpj = payload.cnpj as string | undefined;
   const dados = payload.dados as Record<string, unknown> | undefined;
 
   if (!tipo || !cnpj || !dados) {
+    logger.warn("webhook", "Missing required fields", { tipo, cnpj, hasDados: !!dados });
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
@@ -40,7 +47,7 @@ export async function POST(request: NextRequest) {
   const tiposAceitos = ["atualizacao_pedido", "inclusao_pedido"];
   const situacoesAceitas = ["aprovado", "cancelado"];
   if (!tiposAceitos.includes(tipo) || !situacoesAceitas.includes(codigoSituacao)) {
-    logger.info("webhook", "Ignoring non-order or non-approved/cancelled event", { tipo, codigoSituacao });
+    logger.info("webhook", "Ignoring event", { tipo, codigoSituacao, dadosKeys: Object.keys(dados) });
     return NextResponse.json({ status: "ignored", reason: "Not an approved/cancelled order event" });
   }
 

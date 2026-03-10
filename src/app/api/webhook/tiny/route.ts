@@ -111,17 +111,22 @@ export async function POST(request: NextRequest) {
   if (codigoSituacao === "cancelado") {
     const { data: existingOrder } = await supabase
       .from("siso_pedidos")
-      .select("id, status")
+      .select("id, status, status_separacao")
       .eq("id", pedidoId)
       .single();
 
     if (existingOrder) {
+      const cancelUpdate: Record<string, unknown> = {
+        status: "cancelado",
+        processado_em: new Date().toISOString(),
+      };
+      if (existingOrder.status_separacao != null) {
+        cancelUpdate.status_separacao = "cancelado";
+      }
+
       await supabase
         .from("siso_pedidos")
-        .update({
-          status: "cancelado",
-          processado_em: new Date().toISOString(),
-        })
+        .update(cancelUpdate)
         .eq("id", pedidoId);
 
       await supabase

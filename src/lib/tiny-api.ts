@@ -30,6 +30,10 @@ async function tinyFetch<T>(
     throw new Error(`Tiny API ${method} ${path} → ${res.status}: ${text}`);
   }
 
+  if (res.status === 204) {
+    return undefined as unknown as T;
+  }
+
   return res.json() as Promise<T>;
 }
 
@@ -228,6 +232,52 @@ export async function movimentarEstoque(
       ...(params.deposito && { deposito: params.deposito }),
       ...(params.observacoes && { observacoes: params.observacoes }),
     },
+  });
+}
+
+// ─── Marcadores + Nota Fiscal ────────────────────────────────────────────────
+
+/** Create marcadores on a Tiny order */
+export async function criarMarcadoresPedido(
+  token: string,
+  pedidoId: string,
+  marcadores: string[],
+): Promise<void> {
+  const body = marcadores.map((m) => ({ descricao: m }));
+  await tinyFetch<void>(`/pedidos/${pedidoId}/marcadores`, {
+    token,
+    method: "POST",
+    body,
+  });
+}
+
+/** Generate NF from an order */
+export interface NotaFiscalGerada {
+  id: number;
+  numero: number;
+  serie: number;
+}
+
+export async function gerarNotaFiscal(
+  token: string,
+  pedidoId: string,
+  modelo: number = 55,
+): Promise<NotaFiscalGerada> {
+  return tinyFetch<NotaFiscalGerada>(`/pedidos/${pedidoId}/gerar-nota-fiscal`, {
+    token,
+    method: "POST",
+    body: { modelo },
+  });
+}
+
+/** Post stock from a nota fiscal */
+export async function lancarEstoqueNota(
+  token: string,
+  notaId: number,
+): Promise<void> {
+  await tinyFetch<void>(`/notas/${notaId}/lancar-estoque`, {
+    token,
+    method: "POST",
   });
 }
 

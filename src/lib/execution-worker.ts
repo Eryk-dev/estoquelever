@@ -4,15 +4,21 @@
  * Picks pending jobs one at a time, respects Tiny API rate limits,
  * and retries with exponential backoff on failure.
  *
- * Stock posting logic:
- * - "propria": calls Tiny lancarEstoque on origin empresa (order-level deduction)
- * - "transferencia": deducts stock item-by-item from support empresas via
- *   POST /estoque/{id} with tipo="S", following tier order
- * - "oc": no stock to post. Marked as done.
+ * Stock posting flow (per decisao):
+ * - ALL: insert marcadores on Tiny order
+ * - "propria": marcadores → gerar NF → lançar estoque da NF
+ * - "transferencia": marcadores → gerar NF on origin + movimentarEstoque on support empresas
+ * - "oc": marcadores only (no NF, no stock)
  */
 
 import { createServiceClient } from "./supabase-server";
-import { lancarEstoque, movimentarEstoque, buscarProdutoPorSku } from "./tiny-api";
+import {
+  criarMarcadoresPedido,
+  gerarNotaFiscal,
+  lancarEstoqueNota,
+  movimentarEstoque,
+  buscarProdutoPorSku,
+} from "./tiny-api";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { checkRateLimit, registerApiCall, waitForRateLimit } from "./rate-limiter";
 import { getOrdemDeducao } from "./grupo-resolver";
@@ -220,19 +226,92 @@ async function executeJob(job: FilaJob): Promise<void> {
     return;
   }
 
-  logger.info("worker", `Decisão "oc" — sem lançamento de estoque`, {
+  if (job.decisao === "oc") {
+    await executarMarcadoresOnly(job);
+    return;
+  }
+
+  logger.warn("worker", `Decisão desconhecida: ${job.decisao}`, {
     pedidoId: job.pedido_id,
     decisao: job.decisao,
   });
 }
 
-/** propria: use Tiny's order-level stock posting (deducts from origin empresa) */
+// ─── Shared: insert marcadores on Tiny order (idempotent) ────────────────────
+
+async function inserirMarcadoresTiny(
+  empresaId: string,
+  token: string,
+  pedidoId: string,
+  marcadores: string[],
+): Promise<void> {
+  if (marcadores.length === 0) return;
+
+  try {
+    await waitForRateLimit(empresaId);
+    await registerApiCall(empresaId, "POST /pedidos/{id}/marcadores");
+    await criarMarcadoresPedido(token, pedidoId, marcadores);
+    logger.info("worker", "Marcadores inseridos no pedido Tiny", {
+      pedidoId,
+      marcadores,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("400")) {
+      logger.info("worker", "Marcadores já existem no pedido (idempotente)", { pedidoId });
+    } else {
+      throw err;
+    }
+  }
+}
+
+// ─── Shared: generate NF on origin empresa (idempotent via nota_fiscal_id) ───
+
+async function gerarNotaFiscalPedido(
+  empresaId: string,
+  token: string,
+  pedidoId: string,
+  notaFiscalIdExistente: number | null,
+): Promise<number | null> {
+  if (notaFiscalIdExistente) return notaFiscalIdExistente;
+
+  const supabase = createServiceClient();
+
+  try {
+    await waitForRateLimit(empresaId);
+    await registerApiCall(empresaId, "POST /pedidos/{id}/gerar-nota-fiscal");
+    const nota = await gerarNotaFiscal(token, pedidoId);
+
+    await supabase
+      .from("siso_pedidos")
+      .update({ nota_fiscal_id: nota.id })
+      .eq("id", pedidoId);
+
+    logger.info("worker", "Nota fiscal gerada", {
+      pedidoId,
+      notaId: nota.id,
+      numero: nota.numero,
+    });
+
+    return nota.id;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("400") && msg.includes("nota fiscal")) {
+      logger.warn("worker", "NF já existente externamente", { pedidoId, error: msg });
+      return null;
+    }
+    throw err;
+  }
+}
+
+// ─── propria: marcadores → gerar NF → lançar estoque da NF ──────────────────
+
 async function executarSaidaPropria(job: FilaJob): Promise<void> {
   const supabase = createServiceClient();
 
   const { data: pedido } = await supabase
     .from("siso_pedidos")
-    .select("estoque_lancado")
+    .select("estoque_lancado, marcadores, nota_fiscal_id")
     .eq("id", job.pedido_id)
     .single();
 
@@ -244,18 +323,69 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
   }
 
   const { token } = await getValidTokenByEmpresa(job.empresa_id);
+  const marcadores: string[] = pedido?.marcadores ?? [];
 
-  await registerApiCall(job.empresa_id, "POST /pedidos/{id}/lancar-estoque");
-  await lancarEstoque(token, job.pedido_id);
+  // 1. Insert marcadores on Tiny order
+  await inserirMarcadoresTiny(job.empresa_id, token, job.pedido_id, marcadores);
+  await sleep(500);
+
+  // 2. Generate NF
+  const notaId = await gerarNotaFiscalPedido(
+    job.empresa_id,
+    token,
+    job.pedido_id,
+    pedido?.nota_fiscal_id ?? null,
+  );
+
+  if (!notaId) {
+    // NF already existed externally — stock was likely already posted
+    await supabase
+      .from("siso_pedidos")
+      .update({ estoque_lancado: true })
+      .eq("id", job.pedido_id);
+    logger.warn("worker", "NF externa — marcando estoque como lançado", {
+      pedidoId: job.pedido_id,
+    });
+    return;
+  }
+
+  await sleep(500);
+
+  // 3. Post stock from NF
+  await waitForRateLimit(job.empresa_id);
+  await registerApiCall(job.empresa_id, "POST /notas/{id}/lancar-estoque");
+  await lancarEstoqueNota(token, notaId);
 
   await supabase
     .from("siso_pedidos")
     .update({ estoque_lancado: true })
     .eq("id", job.pedido_id);
 
-  logger.info("worker", "Estoque lançado no Tiny (própria)", {
+  logger.info("worker", "Estoque lançado via NF (própria)", {
     pedidoId: job.pedido_id,
+    notaId,
     empresaId: job.empresa_id,
+  });
+}
+
+// ─── oc: only insert marcadores, no NF or stock ─────────────────────────────
+
+async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
+  const supabase = createServiceClient();
+
+  const { data: pedido } = await supabase
+    .from("siso_pedidos")
+    .select("marcadores")
+    .eq("id", job.pedido_id)
+    .single();
+
+  const { token } = await getValidTokenByEmpresa(job.empresa_id);
+  const marcadores: string[] = pedido?.marcadores ?? [];
+
+  await inserirMarcadoresTiny(job.empresa_id, token, job.pedido_id, marcadores);
+
+  logger.info("worker", "Pedido OC — marcadores inseridos, sem lançamento de estoque", {
+    pedidoId: job.pedido_id,
   });
 }
 
@@ -270,7 +400,7 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
 
   const { data: pedido, error: pedidoErr } = await supabase
     .from("siso_pedidos")
-    .select("numero, empresa_origem_id")
+    .select("numero, empresa_origem_id, marcadores, nota_fiscal_id")
     .eq("id", job.pedido_id)
     .single();
 
@@ -282,6 +412,23 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
   if (!empresaOrigem) {
     throw new Error(`Empresa origem ${pedido.empresa_origem_id} não encontrada`);
   }
+
+  // ── Marcadores + NF on origin empresa ──────────────────────────────────────
+  const { token: origemToken } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
+  const marcadores: string[] = pedido.marcadores ?? [];
+
+  await inserirMarcadoresTiny(pedido.empresa_origem_id, origemToken, job.pedido_id, marcadores);
+  await sleep(500);
+
+  await gerarNotaFiscalPedido(
+    pedido.empresa_origem_id,
+    origemToken,
+    job.pedido_id,
+    pedido.nota_fiscal_id ?? null,
+  );
+  await sleep(500);
+
+  // ── Stock deduction on support empresas ────────────────────────────────────
 
   // Get items NOT yet deducted
   const { data: itens, error: itensErr } = await supabase

@@ -145,6 +145,23 @@ export async function getEstoque(
   return tinyFetch<TinyEstoque>(`/estoque/${produtoId}`, { token });
 }
 
+/** Fetch the first image URL for a product (from anexos) */
+export async function getProdutoImagemUrl(
+  token: string,
+  produtoId: number,
+): Promise<string | null> {
+  try {
+    const res = await tinyFetch<{ anexos?: Array<{ url?: string | null }> }>(
+      `/produtos/${produtoId}`,
+      { token },
+    );
+    const url = res.anexos?.[0]?.url;
+    return url ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Search product by SKU in a specific Tiny account */
 export async function buscarProdutoPorSku(
   token: string,

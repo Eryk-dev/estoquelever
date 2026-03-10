@@ -49,6 +49,8 @@ export interface EstoqueItem {
   localizacaoCWB?: string;
   /** Physical location in SP warehouse */
   localizacaoSP?: string;
+  /** Product image URL (from Tiny anexos) */
+  imagemUrl?: string;
 }
 
 /** A complete order with stock enrichment */

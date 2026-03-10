@@ -1,5 +1,5 @@
 import { createServiceClient } from "./supabase-server";
-import { getPedido, getEstoque, buscarProdutoPorSku } from "./tiny-api";
+import { getPedido, getEstoque, buscarProdutoPorSku, getProdutoImagemUrl } from "./tiny-api";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { registerApiCall, waitForRateLimit } from "./rate-limiter";
@@ -43,6 +43,7 @@ interface ProcessedItem {
   fornecedor_oc: string | null;
   localizacao_cwb: string | null;
   localizacao_sp: string | null;
+  imagem_url: string | null;
 }
 
 /** Per-empresa stock data for one item */
@@ -445,6 +446,19 @@ async function enrichItemMultiEmpresa(
     await sleep(500);
   }
 
+  // Fetch product image from origin empresa (1 extra call per item)
+  let imagemUrl: string | null = null;
+  const origemToken = empresaTokens.get(empresaOrigemId);
+  if (origemToken) {
+    try {
+      await waitForRateLimit(empresaOrigemId);
+      await registerApiCall(empresaOrigemId, "GET /produtos/{id}");
+      imagemUrl = await getProdutoImagemUrl(origemToken, item.produto.id);
+    } catch {
+      // Image fetch failed — non-critical, continue
+    }
+  }
+
   // Aggregate by galpao for legacy CWB/SP columns
   const porGalpao = agregarEstoquePorGalpao(
     estoquesPorEmpresa.map((e) => ({
@@ -503,6 +517,7 @@ async function enrichItemMultiEmpresa(
     fornecedor_oc: fornecedor?.fornecedor ?? null,
     localizacao_cwb: cwbLocalizacao,
     localizacao_sp: spLocalizacao,
+    imagem_url: imagemUrl,
   };
 
   return { processed, estoquesPorEmpresa };

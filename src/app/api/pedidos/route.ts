@@ -100,6 +100,7 @@ export async function GET(request: Request) {
         fornecedorOC: item.fornecedor_oc ?? null,
         localizacaoCWB: item.localizacao_cwb ?? undefined,
         localizacaoSP: item.localizacao_sp ?? undefined,
+        imagemUrl: item.imagem_url ?? undefined,
       })),
       sugestao: p.sugestao ?? "propria",
       sugestaoMotivo: p.sugestao_motivo ?? "",

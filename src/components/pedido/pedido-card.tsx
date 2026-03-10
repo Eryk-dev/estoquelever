@@ -169,25 +169,42 @@ function ProductRow({ item, decisao, filialOrigem }: ProductRowProps) {
 
   return (
     <div className="flex items-start gap-3 py-2.5">
-      {/* SKU tag — prominent monospace label */}
-      <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
-        <span
-          className={cn(
-            "inline-flex items-center rounded-md px-2 py-0.5",
-            "bg-zinc-900 font-mono text-xs font-bold tracking-wide text-white",
-            "dark:bg-zinc-100 dark:text-zinc-900",
-          )}
-          title={`SKU: ${item.sku}`}
-        >
-          {item.sku}
-        </span>
-        <span className="font-mono text-[11px] font-semibold text-ink-muted">
-          &times;{item.quantidadePedida}
+      {/* Product thumbnail */}
+      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-line bg-surface">
+        {item.imagemUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={item.imagemUrl}
+            alt={item.sku}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <Package className="h-5 w-5 text-ink-faint" aria-hidden="true" />
+          </div>
+        )}
+        {/* Quantity badge */}
+        <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-zinc-900 px-1 font-mono text-[10px] font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
+          {item.quantidadePedida}
         </span>
       </div>
 
-      {/* Right side: description + metadata */}
+      {/* SKU + description + metadata */}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
+        {/* SKU tag */}
+        <div className="flex items-baseline gap-2">
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5",
+              "bg-zinc-900 font-mono text-[11px] font-bold tracking-wide text-white",
+              "dark:bg-zinc-100 dark:text-zinc-900",
+            )}
+            title={`SKU: ${item.sku}`}
+          >
+            {item.sku}
+          </span>
+        </div>
         {/* Product name */}
         <span
           className="min-w-0 truncate text-sm font-medium text-ink"

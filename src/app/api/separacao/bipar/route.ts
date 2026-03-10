@@ -62,6 +62,7 @@ export async function POST(request: NextRequest) {
       status: string;
       pedido_id?: string;
       pedido_numero?: number;
+      produto_id?: number;
       sku?: string;
       bipados?: number;
       total?: number;
@@ -76,6 +77,7 @@ export async function POST(request: NextRequest) {
           status: "parcial",
           pedido_id: result.pedido_id,
           pedido_numero: result.pedido_numero,
+          produto_id: result.produto_id,
           sku: result.sku,
           bipados: result.bipados,
           total: result.total,
@@ -87,6 +89,7 @@ export async function POST(request: NextRequest) {
           status: "item_completo",
           pedido_id: result.pedido_id,
           pedido_numero: result.pedido_numero,
+          produto_id: result.produto_id,
           sku: result.sku,
           itens_faltam: result.itens_faltam,
         });

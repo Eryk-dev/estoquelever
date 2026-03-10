@@ -168,50 +168,62 @@ function ProductRow({ item, decisao, filialOrigem }: ProductRowProps) {
     decisao === "propria" ? filialOrigem === "SP" : filialOrigem !== "SP";
 
   return (
-    <div className="flex flex-col gap-0.5 py-2">
-      {/* Line 1: SKU + product name + quantity */}
-      <div className="flex items-baseline gap-2">
-        <span className="shrink-0 font-mono text-[11px] text-ink-faint">
+    <div className="flex items-start gap-3 py-2.5">
+      {/* SKU tag — prominent monospace label */}
+      <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
+        <span
+          className={cn(
+            "inline-flex items-center rounded-md px-2 py-0.5",
+            "bg-zinc-900 font-mono text-xs font-bold tracking-wide text-white",
+            "dark:bg-zinc-100 dark:text-zinc-900",
+          )}
+          title={`SKU: ${item.sku}`}
+        >
           {item.sku}
         </span>
-        <span
-          className="min-w-0 flex-1 truncate text-sm font-medium text-ink"
-          title={item.descricao}
-        >
-          {item.descricao}
-        </span>
-        <span className="shrink-0 font-mono text-xs font-semibold text-ink-muted">
+        <span className="font-mono text-[11px] font-semibold text-ink-muted">
           &times;{item.quantidadePedida}
         </span>
       </div>
 
-      {/* Line 2: location + stock numbers */}
-      <div className="flex items-center gap-3">
-        {location ? (
-          <LocationTag location={location} />
-        ) : decisao !== "oc" ? (
-          <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-600">sem local</span>
-        ) : (
-          <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[11px] text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
-            <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
-            OC
-          </span>
-        )}
+      {/* Right side: description + metadata */}
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        {/* Product name */}
+        <span
+          className="min-w-0 truncate text-sm font-medium text-ink"
+          title={item.descricao}
+        >
+          {item.descricao}
+        </span>
 
-        <span className="h-3 w-px bg-line" aria-hidden="true" />
+        {/* Location + stock numbers */}
+        <div className="flex items-center gap-3">
+          {location ? (
+            <LocationTag location={location} />
+          ) : decisao !== "oc" ? (
+            <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-600">sem local</span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[11px] text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
+              <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
+              OC
+            </span>
+          )}
 
-        <StockPill
-          label="CWB"
-          disponivel={item.estoqueCWB?.disponivel}
-          quantidadePedida={item.quantidadePedida}
-          isRelevant={cwbIsRelevant && decisao !== "oc"}
-        />
-        <StockPill
-          label="SP"
-          disponivel={item.estoqueSP?.disponivel}
-          quantidadePedida={item.quantidadePedida}
-          isRelevant={spIsRelevant && decisao !== "oc"}
-        />
+          <span className="h-3 w-px bg-line" aria-hidden="true" />
+
+          <StockPill
+            label="CWB"
+            disponivel={item.estoqueCWB?.disponivel}
+            quantidadePedida={item.quantidadePedida}
+            isRelevant={cwbIsRelevant && decisao !== "oc"}
+          />
+          <StockPill
+            label="SP"
+            disponivel={item.estoqueSP?.disponivel}
+            quantidadePedida={item.quantidadePedida}
+            isRelevant={spIsRelevant && decisao !== "oc"}
+          />
+        </div>
       </div>
     </div>
   );

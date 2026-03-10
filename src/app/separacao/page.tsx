@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { Tabs } from "@/components/ui/tabs";
 import { TabPendentes } from "@/components/separacao/tab-pendentes";
+import { TabAguardandoNf } from "@/components/separacao/tab-aguardando-nf";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CARGO_LABELS } from "@/types";
 import type { Tab } from "@/types";
@@ -198,7 +199,10 @@ export default function SeparacaoPage() {
           />
         )}
         {activeTab === "aguardando_nf" && (
-          <EmptyState message="Aba Aguardando NF — será implementada em breve" />
+          <TabAguardandoNf
+            pedidos={grouped.aguardando_nf}
+            onUpdated={() => refetch()}
+          />
         )}
         {activeTab === "embalados" && (
           <EmptyState message="Aba Embalados — será implementada em breve" />

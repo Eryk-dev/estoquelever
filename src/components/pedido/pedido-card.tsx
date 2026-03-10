@@ -11,6 +11,13 @@ import {
   Truck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  getEcommerceAbbr,
+  getEcommerceColors,
+  getDecisaoColors,
+  getDecisaoStripColor,
+  getFilialColors,
+} from "@/lib/domain-helpers";
 import type { Decisao, EstoqueItem, Filial, Pedido } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,42 +30,32 @@ interface PedidoCardProps {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Decision config
+// Decision options (card-specific: label function + icon)
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface DecisaoConfig {
+interface DecisaoOption {
   value: Decisao;
   /** Short label shown in the action row */
   label: (filialOrigem: Filial) => string;
-  /** Strip / accent color */
-  stripColor: string;
-  /** Text color for the action row label */
-  textColor: string;
 }
 
-const DECISAO_CONFIGS: DecisaoConfig[] = [
+const DECISAO_OPTIONS: DecisaoOption[] = [
   {
     value: "propria",
     label: (f) => `Própria ${f}`,
-    stripColor: "bg-emerald-500",
-    textColor: "text-emerald-700 dark:text-emerald-400",
   },
   {
     value: "transferencia",
     label: (f) => `Transferência ${f === "CWB" ? "SP" : "CWB"}`,
-    stripColor: "bg-blue-500",
-    textColor: "text-blue-700 dark:text-blue-400",
   },
   {
     value: "oc",
     label: () => "Ordem de Compra",
-    stripColor: "bg-amber-500",
-    textColor: "text-amber-700 dark:text-amber-400",
   },
 ];
 
-function getDecisaoConfig(decisao: Decisao): DecisaoConfig {
-  return DECISAO_CONFIGS.find((c) => c.value === decisao) ?? DECISAO_CONFIGS[0]!;
+function getDecisaoOption(decisao: Decisao): DecisaoOption {
+  return DECISAO_OPTIONS.find((c) => c.value === decisao) ?? DECISAO_OPTIONS[0]!;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,28 +97,6 @@ function getRelevantLocation(item: EstoqueItem, decisao: Decisao, filialOrigem: 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// E-commerce abbreviation
-// ─────────────────────────────────────────────────────────────────────────────
-
-function getEcommerceAbbr(nome: string): string {
-  if (nome.toLowerCase().includes("mercado livre")) return "ML";
-  if (nome.toLowerCase().includes("shopee")) return "SH";
-  if (nome.toLowerCase().includes("amazon")) return "AZ";
-  if (nome.toLowerCase().includes("magalu")) return "MG";
-  return nome.slice(0, 2).toUpperCase();
-}
-
-function getEcommerceColors(nome: string): string {
-  if (nome.toLowerCase().includes("mercado livre"))
-    return "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/60 dark:text-yellow-300";
-  if (nome.toLowerCase().includes("shopee"))
-    return "bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300";
-  if (nome.toLowerCase().includes("amazon"))
-    return "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300";
-  return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Stock number pill
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -152,7 +127,7 @@ function StockPill({ label, disponivel, quantidadePedida, isRelevant }: StockPil
           "text-[10px] font-medium uppercase tracking-wide",
           isRelevant
             ? "text-zinc-600 dark:text-zinc-300"
-            : "text-zinc-400 dark:text-zinc-500",
+            : "text-ink-faint",
         )}
       >
         {label}
@@ -169,7 +144,7 @@ function StockPill({ label, disponivel, quantidadePedida, isRelevant }: StockPil
 function LocationTag({ location }: { location: string }) {
   return (
     <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-      <MapPin className="h-2.5 w-2.5 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />
+      <MapPin className="h-2.5 w-2.5 shrink-0 text-ink-faint" aria-hidden="true" />
       {location}
     </span>
   );
@@ -196,16 +171,16 @@ function ProductRow({ item, decisao, filialOrigem }: ProductRowProps) {
     <div className="flex flex-col gap-0.5 py-2">
       {/* Line 1: SKU + product name + quantity */}
       <div className="flex items-baseline gap-2">
-        <span className="shrink-0 font-mono text-[11px] text-zinc-400 dark:text-zinc-500">
+        <span className="shrink-0 font-mono text-[11px] text-ink-faint">
           {item.sku}
         </span>
         <span
-          className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800 dark:text-zinc-100"
+          className="min-w-0 flex-1 truncate text-sm font-medium text-ink"
           title={item.descricao}
         >
           {item.descricao}
         </span>
-        <span className="shrink-0 font-mono text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+        <span className="shrink-0 font-mono text-xs font-semibold text-ink-muted">
           &times;{item.quantidadePedida}
         </span>
       </div>
@@ -223,7 +198,7 @@ function ProductRow({ item, decisao, filialOrigem }: ProductRowProps) {
           </span>
         )}
 
-        <span className="h-3 w-px bg-zinc-200 dark:bg-zinc-700" aria-hidden="true" />
+        <span className="h-3 w-px bg-line" aria-hidden="true" />
 
         <StockPill
           label="CWB"
@@ -266,53 +241,54 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [onClose]);
 
-  const alternatives = DECISAO_CONFIGS.filter((c) => c.value !== current);
+  const alternatives = DECISAO_OPTIONS.filter((c) => c.value !== current);
 
   return (
     <div
       ref={ref}
       className={cn(
         "absolute bottom-full left-0 z-20 mb-1 w-52 overflow-hidden rounded-lg border",
-        "border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900",
+        "border-line bg-paper shadow-lg",
         "animate-fade-in",
       )}
       role="listbox"
       aria-label="Escolher outra decisão"
     >
-      {alternatives.map((config) => {
-        const available = decisaoIsAvailable(config.value, pedido);
+      {alternatives.map((option) => {
+        const available = decisaoIsAvailable(option.value, pedido);
+        const stripColor = getDecisaoStripColor(option.value);
         return (
           <button
-            key={config.value}
+            key={option.value}
             type="button"
             role="option"
             aria-selected={false}
             disabled={!available}
             onClick={() => {
               if (available) {
-                onSelect(config.value);
+                onSelect(option.value);
                 onClose();
               }
             }}
             className={cn(
               "flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors",
               available
-                ? "hover:bg-zinc-50 dark:hover:bg-zinc-800 cursor-pointer"
+                ? "hover:bg-surface cursor-pointer"
                 : "cursor-not-allowed opacity-40",
             )}
           >
             <span
               className={cn(
                 "h-2 w-2 shrink-0 rounded-full",
-                config.stripColor,
+                stripColor,
               )}
               aria-hidden="true"
             />
-            <span className="font-medium text-zinc-800 dark:text-zinc-100">
-              {config.label(pedido.filialOrigem)}
+            <span className="font-medium text-ink">
+              {option.label(pedido.filialOrigem)}
             </span>
             {!available && (
-              <span className="ml-auto text-[10px] text-zinc-400">sem estoque</span>
+              <span className="ml-auto text-[10px] text-ink-faint">sem estoque</span>
             )}
           </button>
         );
@@ -335,7 +311,8 @@ interface ActionRowProps {
 
 function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: ActionRowProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const config = getDecisaoConfig(decisao);
+  const option = getDecisaoOption(decisao);
+  const textColor = getDecisaoColors(decisao);
 
   const DecisaoIcon =
     decisao === "propria" ? Package :
@@ -347,11 +324,11 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
       {/* Decision label + chevron toggle */}
       <div className="relative flex min-w-0 flex-1 items-center gap-1.5">
         <DecisaoIcon
-          className={cn("h-3.5 w-3.5 shrink-0", config.textColor)}
+          className={cn("h-3.5 w-3.5 shrink-0", textColor)}
           aria-hidden="true"
         />
-        <span className={cn("text-sm font-semibold truncate", config.textColor)}>
-          {config.label(pedido.filialOrigem)}
+        <span className={cn("text-sm font-semibold truncate", textColor)}>
+          {option.label(pedido.filialOrigem)}
         </span>
 
         {/* Chevron — opens dropdown to switch decision */}
@@ -362,8 +339,8 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
           onClick={() => setDropdownOpen((v) => !v)}
           className={cn(
             "ml-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors",
-            "text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200",
-            "hover:bg-zinc-100 dark:hover:bg-zinc-800",
+            "text-ink-faint hover:text-ink",
+            "hover:bg-surface",
             dropdownOpen && "bg-zinc-100 dark:bg-zinc-800",
           )}
         >
@@ -394,9 +371,8 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
         disabled={loading}
         aria-busy={loading}
         className={cn(
-          "inline-flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white",
+          "btn-primary inline-flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold",
           "transition-all duration-150 active:scale-[0.97]",
-          "bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:ring-offset-2",
           loading && "cursor-not-allowed opacity-30",
         )}
@@ -435,22 +411,22 @@ export function PedidoCard({ pedido, onAprovar }: PedidoCardProps) {
     }
   }
 
-  const config = getDecisaoConfig(decisao);
+  const stripColor = getDecisaoStripColor(decisao);
   const ecommerceAbbr = getEcommerceAbbr(pedido.nomeEcommerce);
   const ecommerceColors = getEcommerceColors(pedido.nomeEcommerce);
 
   return (
     <article
       className={cn(
-        "flex overflow-hidden rounded-xl border bg-white shadow-sm",
-        "border-zinc-200 dark:border-zinc-700/60 dark:bg-zinc-900",
+        "flex overflow-hidden rounded-xl border bg-paper shadow-sm",
+        "border-line",
         "animate-slide-up",
       )}
       aria-label={`Pedido #${pedido.numero}`}
     >
       {/* ── LEFT COLOR STRIP ─────────────────────────────────────────────── */}
       <div
-        className={cn("w-1 shrink-0 transition-colors duration-300", config.stripColor)}
+        className={cn("w-1 shrink-0 transition-colors duration-300", stripColor)}
         aria-hidden="true"
       />
 
@@ -462,7 +438,7 @@ export function PedidoCard({ pedido, onAprovar }: PedidoCardProps) {
         ──────────────────────────────────────────────────────────────────── */}
         <header className="flex items-center gap-2 px-4 py-3">
           {/* Order number */}
-          <span className="shrink-0 font-mono text-sm font-bold text-zinc-900 dark:text-zinc-50">
+          <span className="shrink-0 font-mono text-sm font-bold text-ink">
             #{pedido.numero}
           </span>
 
@@ -486,14 +462,12 @@ export function PedidoCard({ pedido, onAprovar }: PedidoCardProps) {
           </span>
 
           {/* Arrow + Filial origin */}
-          <span className="shrink-0 flex items-center gap-1 text-zinc-400 dark:text-zinc-500" aria-label={`Filial de origem: ${pedido.filialOrigem}`}>
+          <span className="shrink-0 flex items-center gap-1 text-ink-faint" aria-label={`Filial de origem: ${pedido.filialOrigem}`}>
             <ArrowRight className="h-3 w-3" aria-hidden="true" />
             <span
               className={cn(
                 "rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold",
-                pedido.filialOrigem === "CWB"
-                  ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
-                  : "bg-orange-50 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300",
+                getFilialColors(pedido.filialOrigem),
               )}
             >
               {pedido.filialOrigem}
@@ -502,10 +476,10 @@ export function PedidoCard({ pedido, onAprovar }: PedidoCardProps) {
         </header>
 
         {/* ── DIVIDER ──────────────────────────────────────────────────────── */}
-        <div className="mx-4 h-px bg-zinc-100 dark:bg-zinc-800" />
+        <div className="mx-4 h-px bg-line" />
 
         {/* ── PRODUCT ROWS ─────────────────────────────────────────────────── */}
-        <div className="divide-y divide-zinc-100 px-4 dark:divide-zinc-800">
+        <div className="divide-y divide-line px-4">
           {pedido.itens.map((item) => (
             <ProductRow
               key={item.produtoId}
@@ -517,7 +491,7 @@ export function PedidoCard({ pedido, onAprovar }: PedidoCardProps) {
         </div>
 
         {/* ── DIVIDER ──────────────────────────────────────────────────────── */}
-        <div className="mx-4 h-px bg-zinc-100 dark:bg-zinc-800" />
+        <div className="mx-4 h-px bg-line" />
 
         {/* ── ACTION ROW ───────────────────────────────────────────────────── */}
         <ActionRow

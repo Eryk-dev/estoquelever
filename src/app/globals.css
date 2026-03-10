@@ -15,8 +15,8 @@
 
   /* Surfaces */
   --color-paper:   #ffffff;
-  --color-surface: #f8fafc;
-  --color-line:    #e5e7eb;
+  --color-surface: #fafafa;
+  --color-line:    #e4e4e7;
 
   /* Status */
   --color-success: #10b981;
@@ -45,13 +45,13 @@
    ───────────────────────────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-ink:       #ededed;
-    --color-ink-muted: #9ca3af;
-    --color-ink-faint: #6b7280;
+    --color-ink:       #fafafa;
+    --color-ink-muted: #a1a1aa;
+    --color-ink-faint: #71717a;
 
-    --color-paper:   #0a0a0a;
-    --color-surface: #1a1a2e;
-    --color-line:    #2d2d3f;
+    --color-paper:   #18181b;
+    --color-surface: #09090b;
+    --color-line:    #27272a;
   }
 }
 
@@ -295,14 +295,14 @@ body {
   padding: 0.5rem 1rem;
   border-radius: 0.5rem;
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.25rem;
   white-space: nowrap;
   cursor: pointer;
   border: none;
   outline: none;
-  background-color: var(--color-cwb);
-  color: #ffffff;
+  background-color: var(--color-ink);
+  color: var(--color-paper);
   transition:
     background-color var(--duration-fast) var(--ease-out),
     transform var(--duration-fast) var(--ease-out),
@@ -311,7 +311,7 @@ body {
 }
 
 .btn-primary:hover:not(:disabled) {
-  background-color: color-mix(in srgb, var(--color-cwb) 85%, #000);
+  background-color: color-mix(in srgb, var(--color-ink) 80%, var(--color-paper));
 }
 
 .btn-primary:active:not(:disabled) {
@@ -319,7 +319,7 @@ body {
 }
 
 .btn-primary:focus-visible {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-cwb) 40%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-ink) 25%, transparent);
 }
 
 .btn-primary:disabled {

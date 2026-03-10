@@ -1,10 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  ArrowLeft,
   Check,
   Loader2,
   Plus,
@@ -12,10 +10,10 @@ import {
   Users,
   X,
 } from "lucide-react";
-import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { CARGO_LABELS, type Cargo } from "@/types";
+import { AppShell } from "@/components/app-shell";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -44,18 +42,10 @@ const CARGO_COLORS: Record<Cargo, string> = {
 // ─── Page ───────────────────────────────────────────────────────────────────
 
 export default function AdminUsuariosPage() {
-  const { user, loading: authLoading } = useAuth();
-  const router = useRouter();
+  const { user } = useAuth();
   const [usuarios, setUsuarios] = useState<UsuarioListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-
-  // Guard: only admin can access
-  useEffect(() => {
-    if (!authLoading && (!user || user.cargo !== "admin")) {
-      router.replace("/");
-    }
-  }, [user, authLoading, router]);
 
   const fetchUsuarios = useCallback(async () => {
     try {
@@ -70,89 +60,64 @@ export default function AdminUsuariosPage() {
   }, []);
 
   useEffect(() => {
-    if (user?.cargo === "admin") fetchUsuarios();
-  }, [user, fetchUsuarios]);
-
-  if (authLoading || !user || user.cargo !== "admin") {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
-      </div>
-    );
-  }
+    fetchUsuarios();
+  }, [fetchUsuarios]);
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
-          <Link
-            href="/configuracoes"
-            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Voltar
-          </Link>
-          <div>
-            <h1 className="text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-              Usuários
-            </h1>
-            <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-              Gerenciar acessos e cargos
-            </p>
-          </div>
+    <AppShell
+      title="Usuários"
+      subtitle="Gerenciar acessos e cargos"
+      backHref="/configuracoes"
+      requireAdmin={true}
+      mainClassName="space-y-4"
+    >
+      {/* Add user button */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Users className="h-4 w-4 text-ink-faint" />
+          <h2 className="text-sm font-semibold text-ink">
+            {usuarios.length} usuário{usuarios.length !== 1 ? "s" : ""}
+          </h2>
         </div>
-      </header>
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="btn-primary inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Novo Usuário
+        </button>
+      </div>
 
-      <main className="mx-auto max-w-3xl space-y-4 px-4 py-6">
-        {/* Add user button */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-zinc-400" />
-            <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">
-              {usuarios.length} usuário{usuarios.length !== 1 ? "s" : ""}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowForm(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white transition-all hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Novo Usuário
-          </button>
+      {/* New user form */}
+      {showForm && (
+        <NovoUsuarioForm
+          onCreated={() => {
+            setShowForm(false);
+            fetchUsuarios();
+          }}
+          onCancel={() => setShowForm(false)}
+        />
+      )}
+
+      {/* List */}
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-5 w-5 animate-spin text-ink-faint" />
         </div>
-
-        {/* New user form */}
-        {showForm && (
-          <NovoUsuarioForm
-            onCreated={() => {
-              setShowForm(false);
-              fetchUsuarios();
-            }}
-            onCancel={() => setShowForm(false)}
-          />
-        )}
-
-        {/* List */}
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {usuarios.map((u) => (
-              <UsuarioRow
-                key={u.id}
-                usuario={u}
-                isSelf={u.id === user.id}
-                onUpdated={fetchUsuarios}
-              />
-            ))}
-          </div>
-        )}
-      </main>
-    </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {usuarios.map((u) => (
+            <UsuarioRow
+              key={u.id}
+              usuario={u}
+              isSelf={u.id === user?.id}
+              onUpdated={fetchUsuarios}
+            />
+          ))}
+        </div>
+      )}
+    </AppShell>
   );
 }
 
@@ -197,16 +162,14 @@ function NovoUsuarioForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="animate-slide-up overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700/60 dark:bg-zinc-900"
+      className="animate-slide-up overflow-hidden rounded-xl border border-line bg-paper"
     >
-      <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
-        <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">
-          Novo Usuário
-        </span>
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <span className="text-sm font-semibold text-ink">Novo Usuário</span>
         <button
           type="button"
           onClick={onCancel}
-          className="rounded p-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+          className="rounded p-1 text-ink-faint hover:text-ink"
         >
           <X className="h-4 w-4" />
         </button>
@@ -215,7 +178,7 @@ function NovoUsuarioForm({
       <div className="space-y-3 px-4 py-4">
         {/* Nome */}
         <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
+          <label className="mb-1 block text-xs font-medium text-ink-muted">
             Nome
           </label>
           <input
@@ -224,13 +187,13 @@ function NovoUsuarioForm({
             onChange={(e) => setNome(e.target.value)}
             placeholder="Nome do usuário"
             autoFocus
-            className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+            className="w-full rounded-lg border border-line bg-zinc-50 px-3 py-2 text-sm text-ink outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:bg-zinc-800"
           />
         </div>
 
         {/* PIN */}
         <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
+          <label className="mb-1 block text-xs font-medium text-ink-muted">
             PIN (4 dígitos)
           </label>
           <input
@@ -242,13 +205,13 @@ function NovoUsuarioForm({
               setPin(e.target.value.replace(/\D/g, "").slice(0, 4))
             }
             placeholder="0000"
-            className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 font-mono text-sm tracking-widest text-zinc-700 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+            className="w-full rounded-lg border border-line bg-zinc-50 px-3 py-2 font-mono text-sm tracking-widest text-ink outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:bg-zinc-800"
           />
         </div>
 
         {/* Cargo */}
         <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
+          <label className="mb-1 block text-xs font-medium text-ink-muted">
             Cargo
           </label>
           <div className="flex flex-wrap gap-2">
@@ -275,14 +238,14 @@ function NovoUsuarioForm({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            className="rounded-lg border border-line px-3 py-1.5 text-xs text-ink-muted transition-colors hover:bg-surface"
           >
             Cancelar
           </button>
           <button
             type="submit"
             disabled={saving || !nome.trim() || pin.length !== 4}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-1.5 text-xs font-semibold text-white transition-all hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+            className="btn-primary inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-30"
           >
             {saving ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -372,21 +335,21 @@ function UsuarioRow({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-xl border bg-white dark:bg-zinc-900",
+        "overflow-hidden rounded-xl border bg-paper",
         usuario.ativo
-          ? "border-zinc-200 dark:border-zinc-700/60"
-          : "border-zinc-200 opacity-50 dark:border-zinc-700/60",
+          ? "border-line"
+          : "border-line opacity-50",
       )}
     >
       <div className="flex items-center gap-3 px-4 py-3">
         {/* Name + cargo */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+            <span className="text-sm font-semibold text-ink">
               {usuario.nome}
             </span>
             {isSelf && (
-              <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 dark:bg-zinc-800">
+              <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-faint dark:bg-zinc-800">
                 você
               </span>
             )}
@@ -414,7 +377,7 @@ function UsuarioRow({
               <button
                 type="button"
                 onClick={() => setEditingCargo(false)}
-                className="ml-1 text-[11px] text-zinc-400 hover:text-zinc-600"
+                className="ml-1 text-[11px] text-ink-faint hover:text-ink"
               >
                 cancelar
               </button>
@@ -445,7 +408,7 @@ function UsuarioRow({
               className={cn(
                 "rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors",
                 usuario.ativo
-                  ? "border-zinc-200 text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                  ? "border-line text-ink-muted hover:bg-surface"
                   : "border-emerald-200 text-emerald-600 hover:bg-emerald-50 dark:border-emerald-800 dark:hover:bg-emerald-950/30",
               )}
             >
@@ -459,7 +422,7 @@ function UsuarioRow({
               type="button"
               onClick={handleDelete}
               disabled={deleting}
-              className="rounded-lg border border-zinc-200 p-1.5 text-zinc-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-500 dark:border-zinc-700 dark:hover:border-red-800 dark:hover:bg-red-950/30"
+              className="rounded-lg border border-line p-1.5 text-ink-faint transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-500 dark:hover:border-red-800 dark:hover:bg-red-950/30"
               title="Excluir usuário"
             >
               {deleting ? (

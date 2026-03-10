@@ -46,8 +46,8 @@ export default function LoginPage() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950">
-        <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+      <div className="flex min-h-screen items-center justify-center bg-surface">
+        <Loader2 className="h-6 w-6 animate-spin text-ink-faint" />
       </div>
     );
   }
@@ -55,14 +55,14 @@ export default function LoginPage() {
   if (user) return null;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 dark:bg-zinc-950">
+    <div className="flex min-h-screen items-center justify-center bg-surface px-4">
       <div className="w-full max-w-sm animate-fade-in">
         {/* Logo */}
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <h1 className="text-2xl font-bold tracking-tight text-ink">
             SISO
           </h1>
-          <p className="mt-1 text-sm text-zinc-400 dark:text-zinc-500">
+          <p className="mt-1 text-sm text-ink-faint">
             Separação de Ordens
           </p>
         </div>
@@ -70,11 +70,11 @@ export default function LoginPage() {
         {/* Login card */}
         <form
           onSubmit={handleSubmit}
-          className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-700/60 dark:bg-zinc-900"
+          className="overflow-hidden rounded-xl border border-line bg-paper shadow-sm"
         >
-          <div className="flex items-center gap-2 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800">
-            <Lock className="h-4 w-4 text-zinc-400" />
-            <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">
+          <div className="flex items-center gap-2 border-b border-line px-5 py-4">
+            <Lock className="h-4 w-4 text-ink-faint" />
+            <span className="text-sm font-semibold text-ink">
               Entrar
             </span>
           </div>
@@ -84,7 +84,7 @@ export default function LoginPage() {
             <div>
               <label
                 htmlFor="nome"
-                className="mb-1.5 block text-xs font-medium text-zinc-500 dark:text-zinc-400"
+                className="mb-1.5 block text-xs font-medium text-ink-muted"
               >
                 Nome
               </label>
@@ -104,7 +104,7 @@ export default function LoginPage() {
             <div>
               <label
                 htmlFor="pin"
-                className="mb-1.5 block text-xs font-medium text-zinc-500 dark:text-zinc-400"
+                className="mb-1.5 block text-xs font-medium text-ink-muted"
               >
                 PIN (4 dígitos)
               </label>
@@ -143,8 +143,7 @@ export default function LoginPage() {
               type="submit"
               disabled={loading || !nome.trim() || pin.length !== 4}
               className={cn(
-                "flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all",
-                "bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white",
+                "btn-primary flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold",
                 "disabled:cursor-not-allowed disabled:opacity-30",
               )}
             >

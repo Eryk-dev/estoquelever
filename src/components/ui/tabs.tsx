@@ -19,15 +19,15 @@ export function Tabs({ tabs, activeTab, onChange }: TabsProps) {
           className={cn(
             "px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 select-none",
             activeTab === tab.id
-              ? "bg-zinc-900 text-white shadow-sm"
-              : "text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200"
+              ? "bg-ink text-paper shadow-sm"
+              : "text-ink-muted hover:text-ink hover:bg-surface"
           )}
         >
           {tab.label}{" "}
           <span
             className={cn(
               "ml-0.5 text-xs",
-              activeTab === tab.id ? "text-zinc-300" : "text-zinc-400"
+              activeTab === tab.id ? "text-ink-faint" : "text-ink-faint"
             )}
           >
             ({tab.count})

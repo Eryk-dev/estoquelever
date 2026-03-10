@@ -255,7 +255,7 @@ export async function processWebhook(
     }
 
     // 6. Calculate suggestion using aggregated galpao data
-    const { sugestao, motivo, parcial } = calcularSugestaoMultiGalpao(
+    const { sugestao, motivo, parcial, separacaoGalpaoId } = calcularSugestaoMultiGalpao(
       galpaoOrigemId,
       itensProcessados,
       empresasDoGrupo,
@@ -299,6 +299,8 @@ export async function processWebhook(
           status,
           tipo_resolucao: tipoResolucao,
           decisao_final: isAuto ? "propria" : null,
+          separacao_galpao_id: separacaoGalpaoId,
+          status_separacao: "aguardando_nf",
           processado_em: null,
           marcadores: isAuto ? [galpaoOrigemNome] : [],
           payload_original: pedido,
@@ -588,6 +590,7 @@ interface SugestaoResult {
   sugestao: Decisao;
   motivo: string;
   parcial: boolean;
+  separacaoGalpaoId: string;
 }
 
 function calcularSugestaoMultiGalpao(
@@ -610,6 +613,7 @@ function calcularSugestaoMultiGalpao(
       sugestao: "oc",
       motivo: "Pedido sem itens — verificar manualmente",
       parcial: false,
+      separacaoGalpaoId: galpaoOrigemId,
     };
   }
 
@@ -641,6 +645,7 @@ function calcularSugestaoMultiGalpao(
       sugestao: "propria",
       motivo: `${galpaoOrigemNome} tem estoque de todos os itens`,
       parcial: false,
+      separacaoGalpaoId: galpaoOrigemId,
     };
   }
 
@@ -663,6 +668,7 @@ function calcularSugestaoMultiGalpao(
         sugestao: "transferencia",
         motivo: `${galpaoOrigemNome} sem estoque. ${outroNome} tem ${itens.length === 1 ? "o item" : `todos os ${itens.length} itens`} → Transferência`,
         parcial: false,
+        separacaoGalpaoId: outroGalpaoId,
       };
     }
   }
@@ -683,6 +689,7 @@ function calcularSugestaoMultiGalpao(
       sugestao: "oc",
       motivo: `Sem estoque em nenhum galpão → Ordem de Compra${fornecedores.length > 0 ? ` (Fornecedor: ${fornecedores.join(", ")})` : ""}`,
       parcial: false,
+      separacaoGalpaoId: galpaoOrigemId,
     };
   }
 
@@ -722,6 +729,7 @@ function calcularSugestaoMultiGalpao(
       sugestao: "propria",
       motivo: `Estoque parcial. ${coverageDesc}`,
       parcial: true,
+      separacaoGalpaoId: galpaoOrigemId,
     };
   }
 
@@ -729,6 +737,7 @@ function calcularSugestaoMultiGalpao(
     sugestao: "transferencia",
     motivo: `Estoque parcial. ${coverageDesc}`,
     parcial: true,
+    separacaoGalpaoId: bestGalpaoId,
   };
 }
 

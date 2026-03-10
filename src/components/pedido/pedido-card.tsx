@@ -96,7 +96,7 @@ function getRelevantLocation(item: EstoqueItem, decisao: Decisao, filialOrigem: 
     // Picking from the OTHER filial
     return filialOrigem === "CWB" ? item.localizacaoSP : item.localizacaoCWB;
   }
-  // OC — no location relevant
+  // OC — handled separately in ProductRow (shows all galpoes)
   return undefined;
 }
 
@@ -329,15 +329,19 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
 
         {/* Location + stock numbers */}
         <div className="flex items-center gap-3">
-          {location ? (
+          {decisao === "oc" ? (
+            <>
+              <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[11px] text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
+                <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
+                OC
+              </span>
+              {item.localizacaoCWB && <LocationTag location={`CWB: ${item.localizacaoCWB}`} />}
+              {item.localizacaoSP && <LocationTag location={`SP: ${item.localizacaoSP}`} />}
+            </>
+          ) : location ? (
             <LocationTag location={location} />
-          ) : decisao !== "oc" ? (
-            <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-600">sem local</span>
           ) : (
-            <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[11px] text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
-              <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
-              OC
-            </span>
+            <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-600">sem local</span>
           )}
 
           <span className="h-3 w-px bg-line" aria-hidden="true" />
@@ -346,7 +350,7 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
             label="CWB"
             estoque={item.estoqueCWB}
             quantidadePedida={item.quantidadePedida}
-            isRelevant={cwbIsRelevant && decisao !== "oc"}
+            isRelevant={cwbIsRelevant}
             pedidoId={pedidoId}
             produtoId={item.produtoId}
             galpao="CWB"
@@ -356,7 +360,7 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
             label="SP"
             estoque={item.estoqueSP}
             quantidadePedida={item.quantidadePedida}
-            isRelevant={spIsRelevant && decisao !== "oc"}
+            isRelevant={spIsRelevant}
             pedidoId={pedidoId}
             produtoId={item.produtoId}
             galpao="SP"

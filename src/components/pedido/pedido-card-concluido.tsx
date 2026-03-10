@@ -131,18 +131,32 @@ function ProductRowReadonly({
         </span>
 
         <div className="flex items-center gap-3">
-          {location ? (
+          {decisao === "oc" ? (
+            <>
+              <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[11px] text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
+                <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
+                OC
+              </span>
+              {item.localizacaoCWB && (
+                <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  <MapPin className="h-2.5 w-2.5 shrink-0 text-ink-faint" aria-hidden="true" />
+                  CWB: {item.localizacaoCWB}
+                </span>
+              )}
+              {item.localizacaoSP && (
+                <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  <MapPin className="h-2.5 w-2.5 shrink-0 text-ink-faint" aria-hidden="true" />
+                  SP: {item.localizacaoSP}
+                </span>
+              )}
+            </>
+          ) : location ? (
             <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
               <MapPin className="h-2.5 w-2.5 shrink-0 text-ink-faint" aria-hidden="true" />
               {location}
             </span>
-          ) : decisao !== "oc" ? (
-            <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-600">sem local</span>
           ) : (
-            <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[11px] text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
-              <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
-              OC
-            </span>
+            <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-600">sem local</span>
           )}
 
           <span className="h-3 w-px bg-line" aria-hidden="true" />
@@ -151,13 +165,13 @@ function ProductRowReadonly({
             label="CWB"
             disponivel={item.estoqueCWB?.disponivel ?? null}
             quantidadePedida={item.quantidadePedida}
-            isRelevant={cwbIsRelevant && decisao !== "oc"}
+            isRelevant={cwbIsRelevant}
           />
           <StockPill
             label="SP"
             disponivel={item.estoqueSP?.disponivel ?? null}
             quantidadePedida={item.quantidadePedida}
-            isRelevant={spIsRelevant && decisao !== "oc"}
+            isRelevant={spIsRelevant}
           />
         </div>
       </div>

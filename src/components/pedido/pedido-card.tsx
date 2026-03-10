@@ -7,7 +7,7 @@ import {
   Loader2,
   MapPin,
   Package,
-  Pencil,
+
   ShoppingCart,
   Truck,
 } from "lucide-react";
@@ -101,7 +101,7 @@ function getRelevantLocation(item: EstoqueItem, decisao: Decisao, filialOrigem: 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Editable stock pill — click to adjust stock directly in Tiny
+// Editable stock pill — click the number to set the real stock in Tiny
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface EditableStockPillProps {
@@ -122,26 +122,18 @@ function EditableStockPill({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [localEstoque, setLocalEstoque] = useState(estoque);
-  const [tipoMov, setTipoMov] = useState<"E" | "B">("E");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Sync local state when prop changes (e.g. from React Query refetch)
   useEffect(() => {
     if (!editing && !saving) setLocalEstoque(estoque);
   }, [estoque, editing, saving]);
 
   const disponivel = localEstoque?.disponivel ?? null;
+  const saldo = localEstoque?.saldo ?? null;
   const isNull = disponivel == null;
   const isZero = !isNull && disponivel === 0;
   const isSufficient = !isNull && disponivel >= quantidadePedida;
 
-  function startEdit() {
-    if (!localEstoque) return;
-    setTipoMov("E");
-    setEditing(true);
-  }
-
-  // Focus input after render
   useEffect(() => {
     if (editing && inputRef.current) {
       inputRef.current.focus();
@@ -150,8 +142,12 @@ function EditableStockPill({
   }, [editing]);
 
   async function handleSave(value: string) {
-    const novaQtd = parseInt(value, 10);
-    if (isNaN(novaQtd) || novaQtd < 0 || novaQtd === 0) {
+    const novoSaldo = parseInt(value, 10);
+    if (isNaN(novoSaldo) || novoSaldo < 0) {
+      setEditing(false);
+      return;
+    }
+    if (novoSaldo === saldo) {
       setEditing(false);
       return;
     }
@@ -162,7 +158,7 @@ function EditableStockPill({
       const res = await fetch("/api/tiny/stock/ajustar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pedidoId, produtoId, galpao, quantidade: novaQtd, tipo: tipoMov }),
+        body: JSON.stringify({ pedidoId, produtoId, galpao, quantidade: novoSaldo, tipo: "B" }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -175,8 +171,7 @@ function EditableStockPill({
           ? { ...prev, saldo: result.saldo, reservado: result.reservado, disponivel: result.disponivel }
           : prev,
       );
-      const tipoLabel = tipoMov === "E" ? "Entrada" : "Balanço";
-      toast.success(`${tipoLabel} ${galpao}: ${novaQtd} → ${result.disponivel} disponível`);
+      toast.success(`${galpao} atualizado → saldo ${result.saldo}, disponível ${result.disponivel}`);
       onUpdated?.();
     } catch {
       toast.error("Erro de conexão ao ajustar estoque");
@@ -185,86 +180,42 @@ function EditableStockPill({
     }
   }
 
-  // Editing mode: inline input with E/B toggle
+  // Editing: replace the number with an input
   if (editing) {
     return (
       <span className="inline-flex items-center gap-1 font-mono text-xs">
         <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
           {label}
         </span>
-        {/* Tipo toggle: Entrada / Balanço */}
-        <span className="inline-flex overflow-hidden rounded border border-zinc-300 dark:border-zinc-600">
-          <button
-            type="button"
-            onClick={() => setTipoMov("E")}
-            className={cn(
-              "px-1 py-0 text-[10px] font-semibold transition-colors",
-              tipoMov === "E"
-                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300"
-                : "bg-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300",
-            )}
-            title="Entrada — adiciona ao estoque"
-          >
-            +E
-          </button>
-          <button
-            type="button"
-            onClick={() => setTipoMov("B")}
-            className={cn(
-              "px-1 py-0 text-[10px] font-semibold transition-colors",
-              tipoMov === "B"
-                ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
-                : "bg-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300",
-            )}
-            title="Balanço — define valor exato do saldo"
-          >
-            =B
-          </button>
-        </span>
         <input
           ref={inputRef}
           type="number"
           min="0"
-          defaultValue={tipoMov === "B" ? (localEstoque?.saldo ?? 0) : ""}
-          placeholder={tipoMov === "E" ? "qtd" : "saldo"}
+          defaultValue={saldo ?? 0}
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSave(e.currentTarget.value);
             if (e.key === "Escape") setEditing(false);
           }}
           onBlur={(e) => handleSave(e.currentTarget.value)}
-          className="w-12 rounded border border-blue-400 bg-blue-50 px-1 py-0 text-center font-mono text-xs font-semibold text-blue-700 outline-none dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-300"
+          className="w-12 rounded border border-zinc-400 bg-paper px-1 py-0 text-center font-mono text-xs font-semibold text-ink outline-none focus:border-zinc-900 dark:border-zinc-500 dark:focus:border-zinc-300"
         />
       </span>
     );
   }
 
-  // Saving mode: spinner
+  // Saving: spinner
   if (saving) {
     return (
-      <span className="inline-flex items-center gap-1 font-mono text-xs text-blue-500">
+      <span className="inline-flex items-center gap-1 font-mono text-xs text-zinc-400">
         <span className="text-[10px] font-medium uppercase tracking-wide">{label}</span>
         <Loader2 className="h-3 w-3 animate-spin" />
       </span>
     );
   }
 
-  // Default: clickable pill with pencil on hover
+  // Default: the number looks like an editable field
   return (
-    <button
-      type="button"
-      onClick={startEdit}
-      disabled={isNull}
-      className={cn(
-        "group inline-flex items-center gap-1 font-mono text-xs tabular-nums",
-        !isNull && "cursor-pointer rounded px-1 -mx-1 transition-colors hover:bg-blue-50 dark:hover:bg-blue-950/30",
-        isNull && "cursor-default",
-        isNull && "text-zinc-400 dark:text-zinc-600",
-        isZero && "text-red-500 dark:text-red-400",
-        !isNull && !isZero && isSufficient && "text-emerald-600 dark:text-emerald-400",
-        !isNull && !isZero && !isSufficient && "text-amber-600 dark:text-amber-400",
-      )}
-      title={isNull ? undefined : `Clique para ajustar saldo ${label}`}
-    >
+    <span className="inline-flex items-center gap-1 font-mono text-xs tabular-nums">
       <span
         className={cn(
           "text-[10px] font-medium uppercase tracking-wide",
@@ -273,11 +224,26 @@ function EditableStockPill({
       >
         {label}
       </span>
-      <span className="font-semibold">{isNull ? "—" : String(disponivel)}</span>
-      {!isNull && (
-        <Pencil className="h-2.5 w-2.5 opacity-0 transition-opacity group-hover:opacity-50" aria-hidden="true" />
+      {isNull ? (
+        <span className="font-semibold text-zinc-400 dark:text-zinc-600">—</span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className={cn(
+            "font-semibold tabular-nums rounded px-1 -mx-0.5 border border-dashed border-transparent transition-all",
+            "hover:border-zinc-300 hover:bg-surface dark:hover:border-zinc-600",
+            "cursor-text",
+            isZero && "text-red-500 dark:text-red-400",
+            !isZero && isSufficient && "text-emerald-600 dark:text-emerald-400",
+            !isZero && !isSufficient && "text-amber-600 dark:text-amber-400",
+          )}
+          title="Alterar saldo no Tiny"
+        >
+          {disponivel}
+        </button>
       )}
-    </button>
+    </span>
   );
 }
 

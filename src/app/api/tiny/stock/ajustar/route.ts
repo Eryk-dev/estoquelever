@@ -8,48 +8,34 @@ import { logger } from "@/lib/logger";
 /**
  * POST /api/tiny/stock/ajustar
  *
- * Adjusts stock directly in Tiny ERP and updates the local DB.
+ * Sets stock to an exact value in Tiny ERP (balanço) and updates the local DB.
  *
  * Body: {
- *   pedidoId: string,           // siso_pedidos.id (Tiny pedido ID)
+ *   pedidoId: string,           // siso_pedidos.id
  *   produtoId: number,           // produto_id from siso_pedido_itens
- *   galpao: "CWB" | "SP",       // which galpão's stock to adjust
- *   quantidade: number,          // quantity (meaning depends on tipo)
- *   tipo: "E" | "B",            // E = Entrada (add), B = Balanço (set exact)
+ *   galpao: "CWB" | "SP",       // which galpão's stock to set
+ *   quantidade: number,          // new saldo (exact value)
  * }
  */
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { pedidoId, produtoId, galpao, quantidade, tipo = "E" } = body as {
+    const { pedidoId, produtoId, galpao } = body as {
       pedidoId: string;
       produtoId: number;
       galpao: "CWB" | "SP";
-      quantidade?: number;
-      tipo?: "E" | "B";
-      // Legacy field — treat as tipo B
-      novaQuantidade?: number;
     };
+    const quantidade = body.quantidade ?? body.novaQuantidade;
 
-    // Support legacy field name
-    const qtd = quantidade ?? body.novaQuantidade;
-
-    // Validate input
-    if (!pedidoId || !produtoId || !galpao || qtd == null) {
+    if (!pedidoId || !produtoId || !galpao || quantidade == null) {
       return NextResponse.json(
         { error: "Campos obrigatórios: pedidoId, produtoId, galpao, quantidade" },
         { status: 400 },
       );
     }
-    if (qtd < 0) {
+    if (quantidade < 0) {
       return NextResponse.json(
         { error: "Quantidade não pode ser negativa" },
-        { status: 400 },
-      );
-    }
-    if (tipo !== "E" && tipo !== "B") {
-      return NextResponse.json(
-        { error: "Tipo deve ser E (Entrada) ou B (Balanço)" },
         { status: 400 },
       );
     }
@@ -122,37 +108,30 @@ export async function POST(request: Request) {
     // 6. Get token for the empresa
     const { token } = await getValidTokenByEmpresa(empresa.id);
 
-    // 7. Call Tiny to adjust stock
-    const tipoLabel = tipo === "E" ? "entrada" : "balanço";
+    // 7. Call Tiny — balanço (set exact saldo)
     await waitForRateLimit(empresa.id);
-    await registerApiCall(empresa.id, `POST /estoque/{id} (${tipoLabel})`);
+    await registerApiCall(empresa.id, "POST /estoque/{id} (balanço)");
     await movimentarEstoque(token, tinyProdutoId, {
-      tipo,
-      quantidade: qtd,
+      tipo: "B",
+      quantidade,
       ...(depositoId != null && { deposito: { id: depositoId } }),
-      observacoes: `${tipo === "E" ? "Entrada" : "Balanço"} via SISO — pedido ${pedidoId}`,
+      observacoes: `Balanço via SISO — pedido ${pedidoId}`,
     });
 
-    logger.info("stock-adjust", `Stock ${tipoLabel} in Tiny`, {
-      pedidoId,
-      produtoId,
-      galpao,
-      empresaId: empresa.id,
-      tinyProdutoId,
-      depositoId,
-      tipo,
-      quantidade: qtd,
+    logger.info("stock-adjust", "Stock balance set in Tiny", {
+      pedidoId, produtoId, galpao,
+      empresaId: empresa.id, tinyProdutoId, depositoId,
+      novoSaldo: quantidade,
     });
 
-    // 8. Re-fetch stock from Tiny to get the actual updated values
+    // 8. Re-fetch stock from Tiny to get actual values
     await waitForRateLimit(empresa.id);
     await registerApiCall(empresa.id, "GET /estoque/{id}");
     const estoqueAtualizado = await getEstoque(token, tinyProdutoId);
 
-    // Pick the right deposit
-    let novoSaldo = qtd;
+    let novoSaldo = quantidade;
     let novoReservado = 0;
-    let novoDisponivel = qtd;
+    let novoDisponivel = quantidade;
 
     if (estoqueAtualizado.depositos?.length) {
       const dep = depositoId != null
@@ -165,20 +144,21 @@ export async function POST(request: Request) {
       }
     }
 
-    // 9. Update the DB item with new stock values
+    // 9. Update DB
+    const qtdPedida = await getQuantidadePedida(supabase, pedidoId, produtoId);
     const updateFields =
       galpao === "CWB"
         ? {
             estoque_cwb_saldo: novoSaldo,
             estoque_cwb_reservado: novoReservado,
             estoque_cwb_disponivel: novoDisponivel,
-            cwb_atende: novoDisponivel >= (await getQuantidadePedida(supabase, pedidoId, produtoId)),
+            cwb_atende: novoDisponivel >= qtdPedida,
           }
         : {
             estoque_sp_saldo: novoSaldo,
             estoque_sp_reservado: novoReservado,
             estoque_sp_disponivel: novoDisponivel,
-            sp_atende: novoDisponivel >= (await getQuantidadePedida(supabase, pedidoId, produtoId)),
+            sp_atende: novoDisponivel >= qtdPedida,
           };
 
     await supabase
@@ -187,7 +167,6 @@ export async function POST(request: Request) {
       .eq("pedido_id", pedidoId)
       .eq("produto_id", produtoId);
 
-    // 10. Also update normalized per-empresa stock table
     await supabase
       .from("siso_pedido_item_estoques")
       .update({
@@ -202,7 +181,6 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       galpao,
-      tipo,
       saldo: novoSaldo,
       reservado: novoReservado,
       disponivel: novoDisponivel,
@@ -217,7 +195,6 @@ export async function POST(request: Request) {
   }
 }
 
-// Helper to get quantidade_pedida for atende calculation
 async function getQuantidadePedida(
   supabase: ReturnType<typeof createServiceClient>,
   pedidoId: string,

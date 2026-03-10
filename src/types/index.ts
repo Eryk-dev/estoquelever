@@ -97,6 +97,16 @@ export interface Pedido {
   criadoEm: string;
 }
 
+/** Observation/comment on an order */
+export interface Observacao {
+  id: string;
+  pedidoId: string;
+  usuarioId: string;
+  usuarioNome: string;
+  texto: string;
+  criadoEm: string;
+}
+
 /** Tab definition for the dashboard */
 export interface Tab {
   id: "pendente" | "concluidos" | "auto";

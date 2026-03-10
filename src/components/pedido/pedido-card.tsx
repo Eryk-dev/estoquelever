@@ -18,6 +18,7 @@ import {
   getDecisaoStripColor,
   getFilialColors,
 } from "@/lib/domain-helpers";
+import { ObservacoesTimeline } from "./observacoes-timeline";
 import type { Decisao, EstoqueItem, Filial, Pedido } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -520,6 +521,10 @@ export function PedidoCard({ pedido, onAprovar }: PedidoCardProps) {
             />
           ))}
         </div>
+
+        {/* ── OBSERVATIONS ────────────────────────────────────────────────── */}
+        <div className="mx-4 h-px bg-line" />
+        <ObservacoesTimeline pedidoId={pedido.id} />
 
         {/* ── DIVIDER ──────────────────────────────────────────────────────── */}
         <div className="mx-4 h-px bg-line" />

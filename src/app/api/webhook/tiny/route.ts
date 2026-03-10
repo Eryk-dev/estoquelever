@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getEmpresaByCnpj } from "@/lib/empresa-lookup";
 import { processWebhook } from "@/lib/webhook-processor";
+import { handleNfWebhook, type NfWebhookPayload } from "@/lib/nf-webhook-handler";
 import { logger } from "@/lib/logger";
 
 /**
@@ -39,6 +40,36 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
+  // Identify empresa by CNPJ (shared by all webhook types)
+  const empresa = await getEmpresaByCnpj(cnpj);
+  if (!empresa) {
+    logger.warn("webhook", `Received webhook from unknown CNPJ`, { cnpj, tipo });
+    return NextResponse.json(
+      { error: `Unknown CNPJ: ${cnpj}` },
+      { status: 400 },
+    );
+  }
+
+  // ─── Discriminate by tipo BEFORE validating codigoSituacao ───────────────
+  if (tipo === "nota_fiscal") {
+    const nfPayload = payload as unknown as NfWebhookPayload;
+    if (!nfPayload.dados?.idNotaFiscalTiny) {
+      logger.warn("webhook", "NF webhook missing idNotaFiscalTiny", { cnpj });
+      return NextResponse.json({ error: "Missing dados.idNotaFiscalTiny" }, { status: 400 });
+    }
+
+    handleNfWebhook(nfPayload, empresa.empresaId).catch((err) => {
+      logger.error("webhook", "NF webhook processing failed", {
+        idNotaFiscalTiny: String(nfPayload.dados.idNotaFiscalTiny),
+        empresaId: empresa.empresaId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    return NextResponse.json({ status: "queued", tipo: "nota_fiscal" });
+  }
+
+  // ─── Order webhooks (existing flow) ─────────────────────────────────────
   const codigoSituacao = (dados.codigoSituacao as string) ?? "";
   const tiposAceitos = ["atualizacao_pedido", "inclusao_pedido"];
   const situacoesAceitas = ["aprovado", "cancelado"];
@@ -50,16 +81,6 @@ export async function POST(request: NextRequest) {
   const pedidoId = dados.id as string;
   if (!pedidoId) {
     return NextResponse.json({ error: "Missing dados.id" }, { status: 400 });
-  }
-
-  // Identify empresa by CNPJ
-  const empresa = await getEmpresaByCnpj(cnpj);
-  if (!empresa) {
-    logger.warn("webhook", `Received webhook from unknown CNPJ`, { cnpj, tipo });
-    return NextResponse.json(
-      { error: `Unknown CNPJ: ${cnpj}` },
-      { status: 400 },
-    );
   }
 
   // Legacy filial name for backwards compat

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
-import { getFilialByCnpj } from "@/lib/cnpj-filial";
+import { getEmpresaByCnpj } from "@/lib/empresa-lookup";
 import { processWebhook } from "@/lib/webhook-processor";
 import { logger } from "@/lib/logger";
 
@@ -8,11 +8,10 @@ import { logger } from "@/lib/logger";
  * POST /api/webhook/tiny
  *
  * Receives webhooks from Tiny ERP when orders are updated.
- * The Tiny webhook URL should be configured to point here.
  *
  * Flow:
  * 1. Validate payload (tipo, codigoSituacao)
- * 2. Identify branch by CNPJ
+ * 2. Identify empresa by CNPJ (via siso_empresas)
  * 3. Deduplicate by pedido_id + tipo + situacao
  * 4. Respond 200 immediately
  * 5. Process asynchronously (fetch order, enrich stock, save)
@@ -26,13 +25,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  // Log raw payload for debugging
   logger.info("webhook", "Raw payload received", {
     keys: Object.keys(payload),
     payload: JSON.stringify(payload).slice(0, 500),
   });
 
-  // Extract fields from Tiny webhook
   const tipo = payload.tipo as string | undefined;
   const cnpj = payload.cnpj as string | undefined;
   const dados = payload.dados as Record<string, unknown> | undefined;
@@ -42,7 +39,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  // Only process approved or cancelled order events
   const codigoSituacao = (dados.codigoSituacao as string) ?? "";
   const tiposAceitos = ["atualizacao_pedido", "inclusao_pedido"];
   const situacoesAceitas = ["aprovado", "cancelado"];
@@ -56,9 +52,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing dados.id" }, { status: 400 });
   }
 
-  // Identify branch
-  const filial = getFilialByCnpj(cnpj);
-  if (!filial) {
+  // Identify empresa by CNPJ
+  const empresa = await getEmpresaByCnpj(cnpj);
+  if (!empresa) {
     logger.warn("webhook", `Received webhook from unknown CNPJ`, { cnpj, tipo });
     return NextResponse.json(
       { error: `Unknown CNPJ: ${cnpj}` },
@@ -66,9 +62,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Legacy filial name for backwards compat
+  const filial = empresa.galpaoNome as "CWB" | "SP";
+
   logger.info("webhook", "Webhook received", {
     pedidoId,
-    filial,
+    empresaId: empresa.empresaId,
+    empresaNome: empresa.empresaNome,
+    galpao: empresa.galpaoNome,
     codigoSituacao,
   });
 
@@ -82,21 +83,20 @@ export async function POST(request: NextRequest) {
       tipo,
       codigo_situacao: codigoSituacao,
       filial,
+      empresa_id: empresa.empresaId,
       payload,
     })
     .select("id")
     .single();
 
   if (insertError) {
-    // Duplicate — already processed
     if (insertError.code === "23505") {
-      logger.info("webhook", "Duplicate webhook ignored", { pedidoId, filial, codigoSituacao });
+      logger.info("webhook", "Duplicate webhook ignored", { pedidoId, empresaId: empresa.empresaId, codigoSituacao });
       return NextResponse.json({ status: "duplicate", pedidoId });
     }
-    console.error("Webhook log insert error:", insertError);
     logger.error("webhook", "Failed to insert webhook log", {
       pedidoId,
-      filial,
+      empresaId: empresa.empresaId,
       supabaseError: insertError.message,
     });
     return NextResponse.json(
@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
 
   const webhookLogId = logEntry.id;
 
-  // Handle cancellation: mark existing order as cancelled
+  // Handle cancellation
   if (codigoSituacao === "cancelado") {
     const { data: existingOrder } = await supabase
       .from("siso_pedidos")
@@ -124,7 +124,6 @@ export async function POST(request: NextRequest) {
         })
         .eq("id", pedidoId);
 
-      // Cancel any pending execution jobs to prevent stock posting
       await supabase
         .from("siso_fila_execucao")
         .update({
@@ -141,7 +140,7 @@ export async function POST(request: NextRequest) {
 
       logger.info("webhook", "Order cancelled", {
         pedidoId,
-        filial,
+        empresaId: empresa.empresaId,
         previousStatus: existingOrder.status,
       });
 
@@ -152,23 +151,30 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Order not in system yet — just log and ignore
     await supabase
       .from("siso_webhook_logs")
       .update({ status: "concluido", processado_em: new Date().toISOString() })
       .eq("id", webhookLogId);
 
-    logger.info("webhook", "Cancellation received for unknown order", { pedidoId, filial });
+    logger.info("webhook", "Cancellation received for unknown order", {
+      pedidoId,
+      empresaId: empresa.empresaId,
+    });
 
     return NextResponse.json({ status: "cancelled_unknown", pedidoId });
   }
 
-  // Process approved order (Easypanel = long-running, safe to await)
-  processWebhook(webhookLogId, pedidoId, filial).catch((err) => {
-    console.error(`Webhook processing failed for pedido ${pedidoId}:`, err);
+  // Process approved order
+  processWebhook(
+    webhookLogId,
+    pedidoId,
+    empresa.empresaId,
+    empresa.galpaoId,
+    empresa.grupoId,
+  ).catch((err) => {
     logger.error("webhook", `Processing task failed for pedido ${pedidoId}`, {
       pedidoId,
-      filial,
+      empresaId: empresa.empresaId,
       error: err instanceof Error ? err.message : String(err),
     });
   });
@@ -176,12 +182,12 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     status: "queued",
     pedidoId,
-    filial,
+    empresaId: empresa.empresaId,
+    galpao: empresa.galpaoNome,
     webhookLogId,
   });
 }
 
-// Also handle GET for health check / webhook URL verification
 export async function GET() {
   return NextResponse.json({
     status: "ok",

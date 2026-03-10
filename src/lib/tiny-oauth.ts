@@ -173,8 +173,33 @@ export async function getValidToken(connectionId: string): Promise<string> {
   return tokens.access_token;
 }
 
-// ─── Get valid token by filial ──────────────────────────────────────────────
+// ─── Get valid token by empresa ─────────────────────────────────────────────
 
+/**
+ * Returns a valid access_token for the given empresa (company).
+ * Looks up the connection via empresa_id in siso_tiny_connections.
+ */
+export async function getValidTokenByEmpresa(
+  empresaId: string,
+): Promise<{ token: string; connectionId: string }> {
+  const supabase = createServiceClient();
+
+  const { data: conn } = await supabase
+    .from("siso_tiny_connections")
+    .select("id")
+    .eq("empresa_id", empresaId)
+    .eq("ativo", true)
+    .single();
+
+  if (!conn) throw new Error(`No active connection for empresa ${empresaId}`);
+
+  const token = await getValidToken(conn.id);
+  return { token, connectionId: conn.id };
+}
+
+// ─── Legacy: get valid token by filial (deprecated) ─────────────────────────
+
+/** @deprecated Use getValidTokenByEmpresa instead */
 export async function getValidTokenByFilial(
   filial: "CWB" | "SP",
 ): Promise<{ token: string; connectionId: string }> {

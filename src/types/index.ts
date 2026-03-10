@@ -3,7 +3,7 @@
 // Types
 // ============================================================
 
-/** Filial origin */
+/** @deprecated Use galpaoId instead. Kept for backwards compatibility. */
 export type Filial = "CWB" | "SP";
 
 /** Possible decision for an order */
@@ -29,25 +29,25 @@ export interface DepositoEstoque {
   disponivel: number;
 }
 
-/** Stock info for one product across both filials */
+/** Stock info for one product across galpoes */
 export interface EstoqueItem {
   produtoId: number;
   sku: string;
   descricao: string;
   quantidadePedida: number;
-  /** Stock in CWB - depositos[1] on Tiny */
+  /** Stock in CWB (aggregated across empresas in that galpao) */
   estoqueCWB: DepositoEstoque | null;
-  /** Stock in SP - depositos[0] on Tiny */
+  /** Stock in SP (aggregated across empresas in that galpao) */
   estoqueSP: DepositoEstoque | null;
-  /** Whether this specific item can be fulfilled by CWB */
+  /** Whether this item can be fulfilled by CWB galpao */
   cwbAtende: boolean;
-  /** Whether this specific item can be fulfilled by SP */
+  /** Whether this item can be fulfilled by SP galpao */
   spAtende: boolean;
   /** Supplier for OC based on SKU prefix */
   fornecedorOC: string | null;
-  /** Physical location code in CWB warehouse (e.g., "A3-12") */
+  /** Physical location in CWB warehouse */
   localizacaoCWB?: string;
-  /** Physical location code in SP warehouse (e.g., "SP-A2-08") */
+  /** Physical location in SP warehouse */
   localizacaoSP?: string;
 }
 
@@ -56,8 +56,10 @@ export interface Pedido {
   id: string;
   numero: string;
   data: string;
-  /** Which filial received the order (based on CNPJ) */
+  /** Which galpao received the order (galpao name: "CWB", "SP", etc.) */
   filialOrigem: Filial;
+  /** Empresa that received the order (UUID) */
+  empresaOrigemId?: string;
   /** E-commerce order ID */
   idPedidoEcommerce: string;
   /** E-commerce name (Mercado Livre, Shopee, etc) */
@@ -120,4 +122,35 @@ export interface Usuario {
   ativo: boolean;
   criado_em: string;
   atualizado_em: string;
+}
+
+// ─── Galpao / Empresa / Grupo ───────────────────────────────────────────────
+
+export interface Galpao {
+  id: string;
+  nome: string;
+  descricao: string | null;
+  ativo: boolean;
+}
+
+export interface Empresa {
+  id: string;
+  nome: string;
+  cnpj: string;
+  galpaoId: string;
+  ativo: boolean;
+  grupoId: string | null;
+  grupoNome: string | null;
+  tier: number | null;
+}
+
+export interface Grupo {
+  id: string;
+  nome: string;
+  descricao: string | null;
+  empresas: Array<{
+    empresaId: string;
+    empresaNome: string;
+    tier: number;
+  }>;
 }

@@ -1,7 +1,7 @@
 /**
  * Rate limiter for Tiny API calls.
  *
- * Tracks API calls per branch (filial) in Supabase `siso_api_calls` table.
+ * Tracks API calls per empresa (Tiny account) in Supabase `siso_api_calls` table.
  * Both the webhook processor and the execution worker share this tracker,
  * ensuring we never exceed 60 req/min per Tiny account.
  *
@@ -21,10 +21,10 @@ export interface RateLimitStatus {
 }
 
 /**
- * Check how many calls remain in the current 60s window for a branch.
+ * Check how many calls remain in the current 60s window for an empresa.
  */
 export async function checkRateLimit(
-  filial: "CWB" | "SP",
+  empresaId: string,
 ): Promise<RateLimitStatus> {
   const supabase = createServiceClient();
   const windowStart = new Date(Date.now() - 60_000).toISOString();
@@ -32,7 +32,7 @@ export async function checkRateLimit(
   const { count } = await supabase
     .from("siso_api_calls")
     .select("*", { count: "exact", head: true })
-    .eq("filial", filial)
+    .eq("empresa_id", empresaId)
     .gte("called_at", windowStart);
 
   const used = count ?? 0;
@@ -43,7 +43,7 @@ export async function checkRateLimit(
     const { data } = await supabase
       .from("siso_api_calls")
       .select("called_at")
-      .eq("filial", filial)
+      .eq("empresa_id", empresaId)
       .gte("called_at", windowStart)
       .order("called_at", { ascending: true })
       .limit(1);
@@ -64,12 +64,12 @@ export async function checkRateLimit(
  * Call this BEFORE each Tiny API request.
  */
 export async function registerApiCall(
-  filial: "CWB" | "SP",
+  empresaId: string,
   endpoint: string,
 ): Promise<void> {
   const supabase = createServiceClient();
 
-  await supabase.from("siso_api_calls").insert({ filial, endpoint });
+  await supabase.from("siso_api_calls").insert({ empresa_id: empresaId, endpoint });
 
   // Cleanup entries older than 5 min (fire-and-forget)
   const cutoff = new Date(Date.now() - 5 * 60_000).toISOString();
@@ -85,25 +85,25 @@ export async function registerApiCall(
 }
 
 /**
- * Block until a call is allowed for the given branch.
+ * Block until a call is allowed for the given empresa.
  * Throws after 2 minutes of waiting.
  */
 export async function waitForRateLimit(
-  filial: "CWB" | "SP",
+  empresaId: string,
 ): Promise<void> {
   const maxWait = 120_000;
   const start = Date.now();
 
   while (Date.now() - start < maxWait) {
-    const status = await checkRateLimit(filial);
+    const status = await checkRateLimit(empresaId);
     if (status.allowed) return;
 
-    logger.info("rate-limiter", `Rate limited for ${filial}, waiting ${status.waitMs}ms`, {
-      filial,
+    logger.info("rate-limiter", `Rate limited for empresa ${empresaId}, waiting ${status.waitMs}ms`, {
+      empresaId,
       waitMs: status.waitMs,
     });
     await new Promise((r) => setTimeout(r, Math.min(status.waitMs, 5000)));
   }
 
-  throw new Error(`Rate limit wait timeout for ${filial} (waited ${maxWait}ms)`);
+  throw new Error(`Rate limit wait timeout for empresa ${empresaId} (waited ${maxWait}ms)`);
 }

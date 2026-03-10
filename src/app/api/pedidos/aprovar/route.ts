@@ -93,7 +93,8 @@ export async function POST(request: NextRequest) {
     .update({
       status: "executando",
       decisao_final: decisao,
-      operador: operadorNome ?? null,
+      operador_id: operadorId ?? null,
+      operador_nome: operadorNome ?? null,
       tipo_resolucao: "manual",
       marcadores,
     })

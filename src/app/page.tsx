@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Loader2, LogOut } from "lucide-react";
+import { Loader2, LogOut, RefreshCw } from "lucide-react";
 
 import { Tabs } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -17,44 +18,62 @@ import {
 } from "@/lib/filtrar-pedidos";
 import { CARGO_LABELS } from "@/types";
 
-import {
-  pedidosPendentes as initialPendentes,
-  pedidosConcluidos,
-  pedidosAuto,
-} from "@/data/mock";
-
 import type { Tab, Pedido, Decisao } from "@/types";
 import Link from "next/link";
+import { useState } from "react";
+
+async function fetchPedidos(): Promise<Pedido[]> {
+  const res = await fetch("/api/pedidos");
+  if (!res.ok) throw new Error("Erro ao carregar pedidos");
+  return res.json();
+}
 
 export default function DashboardPage() {
   const { user, loading: authLoading, logout } = useAuth();
   const router = useRouter();
-  const [pendentes, setPendentes] = useState<Pedido[]>(initialPendentes);
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab["id"]>("pendente");
 
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.replace("/login");
-    }
-  }, [user, authLoading, router]);
+  const { data: allPedidos = [], isLoading, isRefetching } = useQuery({
+    queryKey: ["pedidos"],
+    queryFn: fetchPedidos,
+    enabled: !!user,
+    refetchInterval: 30_000,
+  });
 
-  // Filter data based on user role
+  // Redirect to login if not authenticated
+  if (!authLoading && !user) {
+    router.replace("/login");
+  }
+
+  // Split into categories
+  const pendentes = useMemo(
+    () => allPedidos.filter((p) => p.status === "pendente"),
+    [allPedidos],
+  );
+  const concluidos = useMemo(
+    () => allPedidos.filter((p) => p.status === "concluido" && p.tipoResolucao !== "auto"),
+    [allPedidos],
+  );
+  const auto = useMemo(
+    () => allPedidos.filter((p) => p.tipoResolucao === "auto"),
+    [allPedidos],
+  );
+
+  // Filter by role
   const cargo = user?.cargo ?? "admin";
 
   const pendentesFiltrados = useMemo(
     () => filtrarPendentes(pendentes, cargo),
     [pendentes, cargo],
   );
-
   const concluidosFiltrados = useMemo(
-    () => filtrarConcluidos(pedidosConcluidos, cargo),
-    [cargo],
+    () => filtrarConcluidos(concluidos, cargo),
+    [concluidos, cargo],
   );
-
   const autoFiltrados = useMemo(
-    () => filtrarAuto(pedidosAuto, cargo),
-    [cargo],
+    () => filtrarAuto(auto, cargo),
+    [auto, cargo],
   );
 
   const tabs: Tab[] = [
@@ -63,7 +82,6 @@ export default function DashboardPage() {
     { id: "auto", label: "Auto", count: autoFiltrados.length },
   ];
 
-  // Hide Auto tab for comprador (OC is never auto)
   const visibleTabs = cargo === "comprador" ? tabs.filter((t) => t.id !== "auto") : tabs;
 
   async function handleAprovar(id: string, decisao: Decisao) {
@@ -86,8 +104,8 @@ export default function DashboardPage() {
         return;
       }
 
-      setPendentes((prev) => prev.filter((p) => p.id !== id));
       toast.success(`Pedido #${pedido?.numero ?? id} aprovado → ${decisao}`);
+      queryClient.invalidateQueries({ queryKey: ["pedidos"] });
     } catch {
       toast.error("Erro de conexão ao aprovar pedido");
     }
@@ -98,7 +116,7 @@ export default function DashboardPage() {
     router.replace("/login");
   }
 
-  if (authLoading) {
+  if (authLoading || (isLoading && !allPedidos.length)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950">
         <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
@@ -135,6 +153,14 @@ export default function DashboardPage() {
                 </svg>
               </Link>
             )}
+            <button
+              type="button"
+              onClick={() => queryClient.invalidateQueries({ queryKey: ["pedidos"] })}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+              title="Atualizar"
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefetching ? "animate-spin" : ""}`} />
+            </button>
             <div className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 dark:border-zinc-700 dark:bg-zinc-800">
               <span className="font-mono text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                 {user.nome}

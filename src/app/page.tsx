@@ -172,6 +172,7 @@ export default function DashboardPage() {
                 key={pedido.id}
                 pedido={pedido}
                 onAprovar={handleAprovar}
+                onStockUpdated={() => queryClient.invalidateQueries({ queryKey: ["pedidos"] })}
               />
             ))
           )}

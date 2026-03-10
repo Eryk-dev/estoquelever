@@ -7,9 +7,11 @@ import {
   Loader2,
   MapPin,
   Package,
+  Pencil,
   ShoppingCart,
   Truck,
 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
   getEcommerceAbbr,
@@ -19,7 +21,7 @@ import {
   getFilialColors,
 } from "@/lib/domain-helpers";
 import { ObservacoesTimeline } from "./observacoes-timeline";
-import type { Decisao, EstoqueItem, Filial, Pedido } from "@/types";
+import type { Decisao, DepositoEstoque, EstoqueItem, Filial, Pedido } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -28,6 +30,7 @@ import type { Decisao, EstoqueItem, Filial, Pedido } from "@/types";
 interface PedidoCardProps {
   pedido: Pedido;
   onAprovar: (id: string, decisao: Decisao) => Promise<void>;
+  onStockUpdated?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,43 +101,154 @@ function getRelevantLocation(item: EstoqueItem, decisao: Decisao, filialOrigem: 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Stock number pill
+// Editable stock pill — click to adjust stock directly in Tiny
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface StockPillProps {
+interface EditableStockPillProps {
   label: string;
-  disponivel: number | null | undefined;
+  estoque: DepositoEstoque | null;
   quantidadePedida: number;
   isRelevant?: boolean;
+  pedidoId: string;
+  produtoId: number;
+  galpao: "CWB" | "SP";
+  onUpdated?: () => void;
 }
 
-function StockPill({ label, disponivel, quantidadePedida, isRelevant }: StockPillProps) {
+function EditableStockPill({
+  label, estoque, quantidadePedida, isRelevant,
+  pedidoId, produtoId, galpao, onUpdated,
+}: EditableStockPillProps) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [localEstoque, setLocalEstoque] = useState(estoque);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Sync local state when prop changes (e.g. from React Query refetch)
+  useEffect(() => {
+    if (!editing && !saving) setLocalEstoque(estoque);
+  }, [estoque, editing, saving]);
+
+  const disponivel = localEstoque?.disponivel ?? null;
   const isNull = disponivel == null;
   const isZero = !isNull && disponivel === 0;
   const isSufficient = !isNull && disponivel >= quantidadePedida;
 
+  function startEdit() {
+    if (!localEstoque) return;
+    setEditing(true);
+  }
+
+  // Focus input after render
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  async function handleSave(value: string) {
+    const novaQtd = parseInt(value, 10);
+    if (isNaN(novaQtd) || novaQtd < 0) {
+      setEditing(false);
+      return;
+    }
+    if (novaQtd === localEstoque?.saldo) {
+      setEditing(false);
+      return;
+    }
+
+    setSaving(true);
+    setEditing(false);
+    try {
+      const res = await fetch("/api/tiny/stock/ajustar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedidoId, produtoId, galpao, novaQuantidade: novaQtd }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Erro ao ajustar estoque");
+        return;
+      }
+      const result = await res.json();
+      setLocalEstoque((prev) =>
+        prev
+          ? { ...prev, saldo: result.saldo, reservado: result.reservado, disponivel: result.disponivel }
+          : prev,
+      );
+      toast.success(`Estoque ${galpao} ajustado → ${result.disponivel} disponível`);
+      onUpdated?.();
+    } catch {
+      toast.error("Erro de conexão ao ajustar estoque");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Editing mode: inline input
+  if (editing) {
+    return (
+      <span className="inline-flex items-center gap-1 font-mono text-xs">
+        <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
+          {label}
+        </span>
+        <input
+          ref={inputRef}
+          type="number"
+          min="0"
+          defaultValue={localEstoque?.saldo ?? 0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSave(e.currentTarget.value);
+            if (e.key === "Escape") setEditing(false);
+          }}
+          onBlur={(e) => handleSave(e.currentTarget.value)}
+          className="w-12 rounded border border-blue-400 bg-blue-50 px-1 py-0 text-center font-mono text-xs font-semibold text-blue-700 outline-none dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-300"
+        />
+      </span>
+    );
+  }
+
+  // Saving mode: spinner
+  if (saving) {
+    return (
+      <span className="inline-flex items-center gap-1 font-mono text-xs text-blue-500">
+        <span className="text-[10px] font-medium uppercase tracking-wide">{label}</span>
+        <Loader2 className="h-3 w-3 animate-spin" />
+      </span>
+    );
+  }
+
+  // Default: clickable pill with pencil on hover
   return (
-    <span
+    <button
+      type="button"
+      onClick={startEdit}
+      disabled={isNull}
       className={cn(
-        "inline-flex items-center gap-1 font-mono text-xs tabular-nums",
+        "group inline-flex items-center gap-1 font-mono text-xs tabular-nums",
+        !isNull && "cursor-pointer rounded px-1 -mx-1 transition-colors hover:bg-blue-50 dark:hover:bg-blue-950/30",
+        isNull && "cursor-default",
         isNull && "text-zinc-400 dark:text-zinc-600",
         isZero && "text-red-500 dark:text-red-400",
         !isNull && !isZero && isSufficient && "text-emerald-600 dark:text-emerald-400",
         !isNull && !isZero && !isSufficient && "text-amber-600 dark:text-amber-400",
       )}
+      title={isNull ? undefined : `Clique para ajustar saldo ${label}`}
     >
       <span
         className={cn(
           "text-[10px] font-medium uppercase tracking-wide",
-          isRelevant
-            ? "text-zinc-600 dark:text-zinc-300"
-            : "text-ink-faint",
+          isRelevant ? "text-zinc-600 dark:text-zinc-300" : "text-ink-faint",
         )}
       >
         {label}
       </span>
       <span className="font-semibold">{isNull ? "—" : String(disponivel)}</span>
-    </span>
+      {!isNull && (
+        <Pencil className="h-2.5 w-2.5 opacity-0 transition-opacity group-hover:opacity-50" aria-hidden="true" />
+      )}
+    </button>
   );
 }
 
@@ -159,9 +273,11 @@ interface ProductRowProps {
   item: EstoqueItem;
   decisao: Decisao;
   filialOrigem: Filial;
+  pedidoId: string;
+  onStockUpdated?: () => void;
 }
 
-function ProductRow({ item, decisao, filialOrigem }: ProductRowProps) {
+function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: ProductRowProps) {
   const location = getRelevantLocation(item, decisao, filialOrigem);
   const cwbIsRelevant =
     decisao === "propria" ? filialOrigem === "CWB" : filialOrigem !== "CWB";
@@ -231,17 +347,25 @@ function ProductRow({ item, decisao, filialOrigem }: ProductRowProps) {
 
           <span className="h-3 w-px bg-line" aria-hidden="true" />
 
-          <StockPill
+          <EditableStockPill
             label="CWB"
-            disponivel={item.estoqueCWB?.disponivel}
+            estoque={item.estoqueCWB}
             quantidadePedida={item.quantidadePedida}
             isRelevant={cwbIsRelevant && decisao !== "oc"}
+            pedidoId={pedidoId}
+            produtoId={item.produtoId}
+            galpao="CWB"
+            onUpdated={onStockUpdated}
           />
-          <StockPill
+          <EditableStockPill
             label="SP"
-            disponivel={item.estoqueSP?.disponivel}
+            estoque={item.estoqueSP}
             quantidadePedida={item.quantidadePedida}
             isRelevant={spIsRelevant && decisao !== "oc"}
+            pedidoId={pedidoId}
+            produtoId={item.produtoId}
+            galpao="SP"
+            onUpdated={onStockUpdated}
           />
         </div>
       </div>
@@ -429,7 +553,7 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
 // Main PedidoCard — Dispatch Console style
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function PedidoCard({ pedido, onAprovar }: PedidoCardProps) {
+export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProps) {
   const [decisao, setDecisao] = useState<Decisao>(pedido.sugestao);
   const [loading, setLoading] = useState(false);
 
@@ -518,6 +642,8 @@ export function PedidoCard({ pedido, onAprovar }: PedidoCardProps) {
               item={item}
               decisao={decisao}
               filialOrigem={pedido.filialOrigem}
+              pedidoId={pedido.id}
+              onStockUpdated={onStockUpdated}
             />
           ))}
         </div>

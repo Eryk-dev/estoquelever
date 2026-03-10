@@ -218,16 +218,16 @@ export function TabEmbalados({ pedidos, onUpdated }: TabEmbaladosProps) {
                 <span className="h-3 w-px bg-line" aria-hidden="true" />
 
                 {/* Packed time */}
-                {pedido.embalado_em && (
+                {pedido.embalagem_concluida_em && (
                   <span className="shrink-0 text-xs text-ink-faint">
-                    Embalado às {formatTime(pedido.embalado_em)}
+                    Embalado às {formatTime(pedido.embalagem_concluida_em)}
                   </span>
                 )}
 
                 {/* Packed by */}
-                {pedido.separado_por && (
+                {pedido.separacao_operador_id && (
                   <span className="shrink-0 text-xs text-ink-muted">
-                    por {pedido.separado_por}
+                    por {pedido.separacao_operador_id}
                   </span>
                 )}
 

@@ -19,8 +19,8 @@ const LOG_SOURCE = "separacao-reimprimir";
  *
  * Flow:
  *   1. If etiqueta_url cached → try print directly
- *   2. If print fails (URL expired) → refetch via agrupamento_tiny_id
- *   3. If no agrupamento_tiny_id → full flow via buscarEImprimirEtiqueta
+ *   2. If print fails (URL expired) → refetch via agrupamento_expedicao_id
+ *   3. If no agrupamento_expedicao_id → full flow via buscarEImprimirEtiqueta
  */
 export async function POST(request: NextRequest) {
   // 1. Validate session
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
   const { data: pedido, error: fetchErr } = await supabase
     .from("siso_pedidos")
     .select(
-      "id, numero, empresa_origem_id, separacao_galpao_id, agrupamento_tiny_id, etiqueta_url, etiqueta_status, status_separacao, separado_por",
+      "id, numero, empresa_origem_id, separacao_galpao_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_status, status_separacao, separacao_operador_id",
     )
     .eq("id", pedidoId)
     .single();
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
   }
 
   // 5. Validate status_separacao
-  if (pedido.status_separacao !== "embalado" && pedido.status_separacao !== "expedido") {
+  if (pedido.status_separacao !== "embalado") {
     return NextResponse.json(
       { error: "pedido_nao_embalado", status_separacao: pedido.status_separacao },
       { status: 400 },
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: "falhou", error: "galpao_nao_definido" }, { status: 400 });
   }
 
-  const printer = await resolverImpressora(pedido.separado_por ?? session.id, galpaoId);
+  const printer = await resolverImpressora(pedido.separacao_operador_id ?? session.id, galpaoId);
   if (!printer) {
     await setStatus(supabase, pedidoId, "falhou");
     logger.warn(LOG_SOURCE, "Nenhuma impressora configurada", { pedidoId, galpaoId });
@@ -106,11 +106,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 8. Refetch label URL via agrupamento_tiny_id
-    if (pedido.agrupamento_tiny_id && pedido.empresa_origem_id) {
+    // 8. Refetch label URL via agrupamento_expedicao_id
+    if (pedido.agrupamento_expedicao_id && pedido.empresa_origem_id) {
       try {
         const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
-        const etiquetas = await obterEtiquetasAgrupamento(token, pedido.agrupamento_tiny_id);
+        const etiquetas = await obterEtiquetasAgrupamento(token, parseInt(pedido.agrupamento_expedicao_id, 10));
 
         if (etiquetas.urls && etiquetas.urls.length > 0) {
           const newUrl = etiquetas.urls[0];

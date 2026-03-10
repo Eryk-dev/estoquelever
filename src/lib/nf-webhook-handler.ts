@@ -3,7 +3,7 @@
  *
  * When a NF is authorized by SEFAZ, Tiny sends this webhook.
  * We match the NF to an existing pedido and transition it
- * from aguardando_nf → pendente, saving DANFE URL and chave de acesso.
+ * from aguardando_nf → aguardando_separacao, saving DANFE URL and chave de acesso.
  */
 
 import { createServiceClient } from "./supabase-server";
@@ -135,11 +135,11 @@ export async function handleNfWebhook(
     return;
   }
 
-  // Step 5 — Transition aguardando_nf → pendente (idempotent via WHERE clause)
+  // Step 5 — Transition aguardando_nf → aguardando_separacao (idempotent via WHERE clause)
   const { data: updated } = await supabase
     .from("siso_pedidos")
     .update({
-      status_separacao: "pendente",
+      status_separacao: "aguardando_separacao",
       url_danfe: urlDanfe ?? null,
       chave_acesso_nf: chaveAcesso ?? null,
     })
@@ -149,7 +149,7 @@ export async function handleNfWebhook(
     .maybeSingle();
 
   if (updated) {
-    logger.info("nf-webhook", "Pedido transitioned aguardando_nf → pendente", {
+    logger.info("nf-webhook", "Pedido transitioned aguardando_nf → aguardando_separacao", {
       pedidoId,
       idNotaFiscalTiny: String(idNotaFiscalTiny),
       empresaId,

@@ -18,10 +18,10 @@ import type { PedidoSeparacao } from "@/components/separacao/pedido-separacao-ca
 type TabId = "aguardando_nf" | "pendentes" | "embalados" | "expedidos";
 
 function statusToTab(status: string): TabId {
-  if (status === "pendente" || status === "em_separacao") return "pendentes";
+  if (status === "aguardando_separacao" || status === "em_separacao") return "pendentes";
   if (status === "aguardando_nf") return "aguardando_nf";
   if (status === "embalado") return "embalados";
-  if (status === "expedido") return "expedidos";
+  if (status === "separado") return "expedidos";
   return "pendentes";
 }
 

@@ -46,8 +46,8 @@ export async function GET(request: NextRequest) {
       .select(
         `id, numero, data, cliente_nome, id_pedido_ecommerce, nome_ecommerce,
          forma_envio_descricao, status_separacao, sugestao, decisao_final,
-         separado_por, separado_em,
-         embalado_em, etiqueta_url, etiqueta_status, url_danfe, chave_acesso_nf,
+         separacao_operador_id, separacao_iniciada_em,
+         embalagem_concluida_em, etiqueta_url, etiqueta_status, url_danfe, chave_acesso_nf,
          siso_pedido_itens(produto_id, sku, gtin, descricao, quantidade_pedida, quantidade_bipada, bipado_completo)`,
       )
       .eq("separacao_galpao_id", galpaoId)
@@ -137,9 +137,9 @@ export async function GET(request: NextRequest) {
         forma_envio_descricao: p.forma_envio_descricao,
         status_separacao: p.status_separacao,
         decisao: (p as Record<string, unknown>).decisao_final ?? (p as Record<string, unknown>).sugestao ?? null,
-        separado_por: p.separado_por,
-        separado_em: p.separado_em,
-        embalado_em: p.embalado_em,
+        separacao_operador_id: p.separacao_operador_id,
+        separacao_iniciada_em: p.separacao_iniciada_em,
+        embalagem_concluida_em: p.embalagem_concluida_em,
         etiqueta_url: p.etiqueta_url,
         etiqueta_status: p.etiqueta_status,
         url_danfe: p.url_danfe,

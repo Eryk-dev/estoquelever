@@ -61,7 +61,10 @@ export async function POST() {
       await processWebhook(log.id, log.tiny_pedido_id, empresaId, galpaoId!, grupoId);
       results.push({ pedidoId: log.tiny_pedido_id, status: "ok" });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message
+        : (typeof err === "object" && err !== null && "message" in err)
+          ? String((err as { message: unknown }).message)
+          : JSON.stringify(err);
       results.push({ pedidoId: log.tiny_pedido_id, status: "erro", erro: msg });
     }
   }

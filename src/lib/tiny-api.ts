@@ -11,30 +11,51 @@ interface TinyRequestOptions {
   body?: unknown;
 }
 
+const MAX_RETRIES = 3;
+
 async function tinyFetch<T>(
   path: string,
   { token, method = "GET", body }: TinyRequestOptions,
 ): Promise<T> {
   const url = `${TINY_BASE}${path}`;
-  const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const jsonBody = body ? JSON.stringify(body) : undefined;
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Tiny API ${method} ${path} → ${res.status}: ${text}`);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: jsonBody,
+    });
+
+    if (res.status === 429) {
+      if (attempt >= MAX_RETRIES) {
+        throw new Error(`Tiny API ${method} ${path} → 429 after ${MAX_RETRIES} retries`);
+      }
+      const retryAfter = res.headers.get("Retry-After");
+      const waitMs = retryAfter
+        ? Math.min(parseInt(retryAfter, 10) * 1000, 30_000)
+        : Math.min(2000 * 2 ** attempt, 15_000);
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Tiny API ${method} ${path} → ${res.status}: ${text}`);
+    }
+
+    if (res.status === 204) {
+      return undefined as unknown as T;
+    }
+
+    return res.json() as Promise<T>;
   }
 
-  if (res.status === 204) {
-    return undefined as unknown as T;
-  }
-
-  return res.json() as Promise<T>;
+  // Unreachable, but TypeScript needs it
+  throw new Error(`Tiny API ${method} ${path} → exhausted retries`);
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────

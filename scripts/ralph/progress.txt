@@ -60,3 +60,19 @@ Started: Tue Mar 10 17:15:55 -03 2026
   - When summing bipada after an item update, the re-read from DB already reflects the new value since we updated first
   - Admin guard pattern: `if (!session.galpaoId)` is reused across bipar and desfazer-bip endpoints
 ---
+
+## 2026-03-11 - US-004
+- Created `src/app/api/separacao/expedir/route.ts` with POST handler
+- Session validation + admin guard (403 if no galpão)
+- Validates body `{ pedido_ids: string[] }` — non-empty array of strings
+- Fetches all referenced pedidos, validates galpão ownership (403 if any don't match)
+- Validates missing pedidos (404 if any IDs not found in DB)
+- Validates all pedidos have `status_separacao = 'embalado'` — returns 400 with list of invalid IDs if not
+- Updates all to `expedido` with double-guard `.eq("status_separacao", "embalado")` for safety
+- Returns `{ updated: number }` with count of updated rows
+- Files changed: `src/app/api/separacao/expedir/route.ts`
+- **Learnings for future iterations:**
+  - Supabase `.update()` with `.in("id", ids)` returns `count` when used — no need for separate count query
+  - Batch validation pattern: fetch all, filter for violations, return specific invalid IDs in error response
+  - The double-guard on update (`.in("id", ...)` + `.eq("status_separacao", "embalado")`) prevents race conditions
+---

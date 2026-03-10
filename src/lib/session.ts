@@ -65,3 +65,56 @@ export async function getSessionUser(
     galpaoId,
   };
 }
+
+// ── Session-based rate limiter for bip endpoint ──
+
+const BIP_MAX_PER_SECOND = 2;
+const CLEANUP_INTERVAL = 100; // cleanup every N calls
+const ENTRY_TTL_MS = 60_000; // remove entries older than 60s
+
+interface RateLimitEntry {
+  count: number;
+  resetAt: number; // epoch ms
+}
+
+const bipLimits = new Map<string, RateLimitEntry>();
+let bipCallCount = 0;
+
+/**
+ * Check if a bip request is allowed for the given sessionId.
+ * Max 2 requests per second per session.
+ */
+export function checkBipRateLimit(sessionId: string): {
+  allowed: boolean;
+  retryAfterMs?: number;
+} {
+  const now = Date.now();
+
+  // Periodic cleanup
+  bipCallCount++;
+  if (bipCallCount >= CLEANUP_INTERVAL) {
+    bipCallCount = 0;
+    for (const [key, entry] of bipLimits) {
+      if (entry.resetAt < now - ENTRY_TTL_MS) {
+        bipLimits.delete(key);
+      }
+    }
+  }
+
+  const entry = bipLimits.get(sessionId);
+
+  // No entry or window expired — start new window
+  if (!entry || now >= entry.resetAt) {
+    bipLimits.set(sessionId, { count: 1, resetAt: now + 1000 });
+    return { allowed: true };
+  }
+
+  // Within window — check count
+  if (entry.count < BIP_MAX_PER_SECOND) {
+    entry.count++;
+    return { allowed: true };
+  }
+
+  // Rate limited
+  return { allowed: false, retryAfterMs: entry.resetAt - now };
+}

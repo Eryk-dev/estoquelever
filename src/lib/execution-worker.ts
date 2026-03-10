@@ -428,12 +428,12 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
   );
   await sleep(500);
 
-  // ── Stock deduction on support empresas ────────────────────────────────────
+  // ── Stock deduction: find ONE empresa that covers 100% of items ───────────
 
   // Get items NOT yet deducted
   const { data: itens, error: itensErr } = await supabase
     .from("siso_pedido_itens")
-    .select("produto_id, produto_id_suporte, sku, descricao, quantidade_pedida, estoque_saida_lancada")
+    .select("produto_id, sku, descricao, quantidade_pedida, estoque_saida_lancada")
     .eq("pedido_id", job.pedido_id)
     .or("estoque_saida_lancada.is.null,estoque_saida_lancada.eq.false");
 
@@ -448,32 +448,77 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     return;
   }
 
-  // Get deduction order: empresa_id in job is the support empresa for transfer
-  // We need to get grupo and resolve the full deduction order for the support side
+  // Get enriched stock data per empresa (captured at webhook time)
+  const { data: estoques } = await supabase
+    .from("siso_pedido_item_estoques")
+    .select("produto_id, empresa_id, disponivel")
+    .eq("pedido_id", job.pedido_id);
+
+  // Get deduction order (tier-based)
   const empresaSuporte = await getEmpresaById(job.empresa_id);
   if (!empresaSuporte || !empresaSuporte.grupoId) {
-    // Fallback: just use the single empresa
-    await deductFromSingleEmpresa(job, pedido.numero, empresaOrigem.empresaNome, itens);
-    return;
+    throw new Error(`Empresa suporte ${job.empresa_id} sem grupo — não é possível transferir`);
   }
 
-  // Get all empresas ordered for deduction (excluding origin galpao for transfers)
   const ordemDeducao = await getOrdemDeducao(
     empresaSuporte.grupoId,
     job.empresa_id,
   );
 
-  // For transfer, we only deduct from empresas that are NOT in the origin galpao
+  // Only consider empresas NOT in the origin galpao
   const empresasDeducao = ordemDeducao.filter(
     (e) => e.galpaoId !== empresaOrigem.galpaoId,
   );
 
-  if (empresasDeducao.length === 0) {
-    // Fallback
-    await deductFromSingleEmpresa(job, pedido.numero, empresaOrigem.empresaNome, itens);
-    return;
+  // Find first empresa (by tier) that covers 100% of items
+  let empresaEscolhida: typeof empresasDeducao[0] | null = null;
+
+  for (const emp of empresasDeducao) {
+    const cobreTudo = itens.every((item) => {
+      const est = estoques?.find(
+        (e) => e.empresa_id === emp.empresaId && e.produto_id === item.produto_id,
+      );
+      return est && est.disponivel >= (item.quantidade_pedida as number);
+    });
+
+    if (cobreTudo) {
+      empresaEscolhida = emp;
+      break;
+    }
   }
 
+  if (!empresaEscolhida) {
+    const cobertura = empresasDeducao.map((emp) => {
+      const cobertos = itens.filter((item) => {
+        const est = estoques?.find(
+          (e) => e.empresa_id === emp.empresaId && e.produto_id === item.produto_id,
+        );
+        return est && est.disponivel >= (item.quantidade_pedida as number);
+      }).length;
+      return `${emp.empresaNome}: ${cobertos}/${itens.length}`;
+    });
+    throw new Error(
+      `Nenhuma empresa cobre 100% dos itens para transferência (${cobertura.join(", ")})`,
+    );
+  }
+
+  logger.info("worker", `Empresa escolhida para transferência: ${empresaEscolhida.empresaNome}`, {
+    pedidoId: job.pedido_id,
+    empresaId: empresaEscolhida.empresaId,
+    totalItens: itens.length,
+  });
+
+  // Deduct all items from the chosen empresa
+  const { token: suporteToken } = await getValidTokenByEmpresa(empresaEscolhida.empresaId);
+
+  const { data: conn } = await supabase
+    .from("siso_tiny_connections")
+    .select("deposito_id")
+    .eq("empresa_id", empresaEscolhida.empresaId)
+    .eq("ativo", true)
+    .single();
+
+  const depositoId = conn?.deposito_id ?? null;
   const observacoes = `Saída para atender pedido ${pedido.numero} da ${empresaOrigem.empresaNome}`;
 
   let processed = 0;
@@ -482,67 +527,52 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
 
   for (const item of itens) {
     try {
-      let remaining = item.quantidade_pedida as number;
+      // Find product in this empresa by SKU
+      await waitForRateLimit(empresaEscolhida.empresaId);
+      await registerApiCall(empresaEscolhida.empresaId, "GET /produtos?codigo=");
+      const produto = await buscarProdutoPorSku(suporteToken, item.sku);
 
-      for (const emp of empresasDeducao) {
-        if (remaining <= 0) break;
-
-        let token: string;
-        try {
-          const result = await getValidTokenByEmpresa(emp.empresaId);
-          token = result.token;
-        } catch {
-          continue; // Skip empresa without token
-        }
-
-        // Find product in this empresa
-        await waitForRateLimit(emp.empresaId);
-        await registerApiCall(emp.empresaId, "GET /produtos?codigo=");
-        const produto = await buscarProdutoPorSku(token, item.sku);
-        if (!produto) continue;
-
-        // Get configured deposit
-        const { data: conn } = await supabase
-          .from("siso_tiny_connections")
-          .select("deposito_id")
-          .eq("empresa_id", emp.empresaId)
-          .eq("ativo", true)
-          .single();
-
-        const depositoId = conn?.deposito_id ?? null;
-
-        // Deduct stock
-        await waitForRateLimit(emp.empresaId);
-        await registerApiCall(emp.empresaId, "POST /estoque/{id}");
-
-        const qtdDeducao = remaining; // Deduct full remaining (Tiny will reject if not enough)
-        await movimentarEstoque(token, produto.id, {
-          tipo: "S",
-          quantidade: qtdDeducao,
-          deposito: depositoId ? { id: depositoId } : undefined,
-          observacoes,
-        });
-
-        remaining -= qtdDeducao;
-
-        logger.info("worker", `Saída lançada: ${item.sku} x${qtdDeducao} de ${emp.empresaNome}`, {
+      if (!produto) {
+        errors++;
+        failedSkus.push(item.sku);
+        logger.error("worker", `Produto não encontrado na empresa suporte: ${item.sku}`, {
           pedidoId: job.pedido_id,
-          sku: item.sku,
-          quantidade: qtdDeducao,
-          empresaId: emp.empresaId,
+          empresaId: empresaEscolhida.empresaId,
         });
-
-        await sleep(500);
+        continue;
       }
+
+      await sleep(500);
+
+      // Deduct stock
+      await waitForRateLimit(empresaEscolhida.empresaId);
+      await registerApiCall(empresaEscolhida.empresaId, "POST /estoque/{id}");
+      await movimentarEstoque(suporteToken, produto.id, {
+        tipo: "S",
+        quantidade: item.quantidade_pedida as number,
+        deposito: depositoId ? { id: depositoId } : undefined,
+        observacoes,
+      });
 
       // Mark item as deducted
       await supabase
         .from("siso_pedido_itens")
-        .update({ estoque_saida_lancada: true })
+        .update({
+          estoque_saida_lancada: true,
+          empresa_deducao_id: empresaEscolhida.empresaId,
+        })
         .eq("pedido_id", job.pedido_id)
         .eq("produto_id", item.produto_id);
 
       processed++;
+
+      logger.info("worker", `Saída lançada: ${item.sku} x${item.quantidade_pedida} de ${empresaEscolhida.empresaNome}`, {
+        pedidoId: job.pedido_id,
+        sku: item.sku,
+        quantidade: item.quantidade_pedida,
+        empresaId: empresaEscolhida.empresaId,
+      });
+
       await sleep(500);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -551,7 +581,7 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
       logger.error("worker", `Falha ao lançar saída: ${item.sku}`, {
         pedidoId: job.pedido_id,
         sku: item.sku,
-        empresaId: job.empresa_id,
+        empresaId: empresaEscolhida.empresaId,
         error: msg,
       });
     }
@@ -565,97 +595,11 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
 
   logger.info("worker", "Saídas de transferência concluídas", {
     pedidoId: job.pedido_id,
-    empresaId: job.empresa_id,
+    empresaId: empresaEscolhida.empresaId,
+    empresaNome: empresaEscolhida.empresaNome,
     totalItens: itens.length,
     processed,
   });
-}
-
-/** Fallback: deduct from a single empresa (backwards compat) */
-async function deductFromSingleEmpresa(
-  job: FilaJob,
-  pedidoNumero: string,
-  nomeOrigem: string,
-  itens: Array<{
-    produto_id: number;
-    produto_id_suporte: number | null;
-    sku: string;
-    descricao: string;
-    quantidade_pedida: number;
-    estoque_saida_lancada: boolean | null;
-  }>,
-): Promise<void> {
-  const supabase = createServiceClient();
-  const { token } = await getValidTokenByEmpresa(job.empresa_id);
-
-  const { data: conn } = await supabase
-    .from("siso_tiny_connections")
-    .select("deposito_id")
-    .eq("empresa_id", job.empresa_id)
-    .eq("ativo", true)
-    .single();
-
-  const depositoId = conn?.deposito_id ?? null;
-  const observacoes = `Saída para atender pedido ${pedidoNumero} da ${nomeOrigem}`;
-
-  let processed = 0;
-  let errors = 0;
-  const failedSkus: string[] = [];
-
-  for (const item of itens) {
-    try {
-      let produtoIdSuporte = item.produto_id_suporte as number | null;
-
-      if (!produtoIdSuporte) {
-        await waitForRateLimit(job.empresa_id);
-        await registerApiCall(job.empresa_id, "GET /produtos?codigo=");
-        const produto = await buscarProdutoPorSku(token, item.sku);
-        produtoIdSuporte = produto?.id ?? null;
-        if (produtoIdSuporte) await sleep(500);
-      }
-
-      if (!produtoIdSuporte) {
-        errors++;
-        failedSkus.push(item.sku);
-        continue;
-      }
-
-      await waitForRateLimit(job.empresa_id);
-      await registerApiCall(job.empresa_id, "POST /estoque/{id}");
-
-      await movimentarEstoque(token, produtoIdSuporte, {
-        tipo: "S",
-        quantidade: item.quantidade_pedida,
-        deposito: depositoId ? { id: depositoId } : undefined,
-        observacoes,
-      });
-
-      await supabase
-        .from("siso_pedido_itens")
-        .update({ estoque_saida_lancada: true })
-        .eq("pedido_id", job.pedido_id)
-        .eq("produto_id", item.produto_id);
-
-      processed++;
-      await sleep(500);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors++;
-      failedSkus.push(item.sku);
-      logger.error("worker", `Falha ao lançar saída: ${item.sku}`, {
-        pedidoId: job.pedido_id,
-        sku: item.sku,
-        empresaId: job.empresa_id,
-        error: msg,
-      });
-    }
-  }
-
-  if (errors > 0) {
-    throw new Error(
-      `Falha em ${errors} de ${errors + processed} itens (SKUs: ${failedSkus.join(", ")})`,
-    );
-  }
 }
 
 function sleep(ms: number) {

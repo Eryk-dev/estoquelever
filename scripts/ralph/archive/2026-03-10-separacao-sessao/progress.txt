@@ -1,0 +1,82 @@
+# Ralph Progress Log
+Started: Tue Mar 10 16:51:10 -03 2026
+
+## Codebase Patterns
+- PostgreSQL partial indexes cannot use `now()` — it's STABLE, not IMMUTABLE. Use regular indexes instead.
+- Migration naming: `YYYYMMDD_description.sql` in `supabase/migrations/`
+- All tables prefixed with `siso_`
+- Use `gen_random_uuid()` for uuid PKs, `timestamptz` with `DEFAULT now()` for timestamps
+- Apply migrations via Supabase MCP `apply_migration` tool (project_id: wrbrbhuhsaaupqsimkqz)
+- siso_usuarios.id is uuid type
+- Supabase FK joins in select: `table(col1, col2)` — returns object for single FK, array for multi
+- For joined results, cast with `as unknown as Type` since Supabase client lacks join type inference
+- To get auto-generated UUID back from insert: `.insert({...}).select("id").single()`
+- Non-critical side-effects (session creation, logging) should never block the primary response
+- In-memory rate limiting uses module-level Map — persists across requests in same Node.js process
+- `sisoFetch()` from `auth-context.tsx` wraps fetch with X-Session-Id header for authenticated requests
+
+---
+
+## 2026-03-11 - US-001
+- Created `supabase/migrations/20260311_create_siso_sessoes.sql`
+- Table: siso_sessoes (id uuid PK, usuario_id uuid FK→siso_usuarios, criado_em, expira_em default +12h)
+- Index: idx_sessoes_expira on (expira_em) — regular, not partial (now() is STABLE not IMMUTABLE)
+- Applied migration to Supabase successfully
+- Files changed: `supabase/migrations/20260311_create_siso_sessoes.sql`
+- **Learnings for future iterations:**
+  - Partial index `WHERE col > now()` fails in PostgreSQL — use regular index
+  - siso_usuarios has columns: id (uuid), nome (text), pin (char), cargo (text), ativo (bool), criado_em, atualizado_em
+---
+
+## 2026-03-11 - US-002
+- Created `src/lib/session.ts` with `SessionUser` interface and `getSessionUser()` function
+- Reads X-Session-Id from request headers
+- Joins siso_sessoes → siso_usuarios, filters by expira_em > now()
+- Resolves galpaoId from cargo (operador_cwb → CWB galpao, operador_sp → SP galpao, others → null)
+- Returns null for missing/expired/invalid sessions
+- Files changed: `src/lib/session.ts`
+- **Learnings for future iterations:**
+  - Supabase FK joins: use `table(col1, col2)` syntax in select, result is an object (not array) for single FK
+  - Cast joined result with `as unknown as Type` since Supabase types don't know the joined shape
+  - Use `gt("expira_em", new Date().toISOString())` to compare timestamps server-side
+---
+
+## 2026-03-11 - US-003
+- Modified `src/app/api/auth/login/route.ts` to create server-side session after PIN validation
+- Inserts into `siso_sessoes` with `usuario_id`, uses `.select("id").single()` to get generated UUID
+- Returns `sessionId` in response JSON alongside existing `usuario` object
+- Session creation is non-blocking: if insert fails, logs warning but login still succeeds (backwards compatible)
+- Files changed: `src/app/api/auth/login/route.ts`
+- **Learnings for future iterations:**
+  - Use `.insert({...}).select("id").single()` to get the auto-generated UUID back from Supabase
+  - Session creation should never block login — use conditional spread `...(sessionId && { sessionId })` to only include when available
+  - `logger` import from `@/lib/logger` for structured logging
+---
+
+## 2026-03-11 - US-004
+- Modified `src/lib/auth-context.tsx` to store and expose sessionId
+- Added `sessionId?: string` to `AuthUser` interface, `sessionId: string | null` to `AuthContextValue`
+- After login, spreads `data.sessionId` into the stored user object in localStorage
+- Exposed `sessionId` in context via `user?.sessionId ?? null`
+- Created `sisoFetch()` helper that wraps `fetch()` and adds `X-Session-Id` header from stored sessionId
+- `sisoFetch` reads from localStorage directly (not React context) so it works outside components too
+- Falls back to regular `fetch` if no sessionId is stored (backwards compatible)
+- Files changed: `src/lib/auth-context.tsx`
+- **Learnings for future iterations:**
+  - `sisoFetch` reads from `getStoredUser()` (localStorage) rather than context, making it usable in non-React code (e.g., API utilities)
+  - `new Headers(init?.headers)` correctly handles all valid HeadersInit types (object, Headers, string[][])
+  - Spread with conditional `...(val && { key: val })` is the pattern used throughout for optional fields
+---
+
+## 2026-03-11 - US-005
+- Added `checkBipRateLimit(sessionId)` function to `src/lib/session.ts`
+- In-memory `Map<sessionId, { count, resetAt }>` with 1-second sliding window
+- Max 2 requests/second per session
+- Cleanup: removes entries older than 60s every 100 calls to prevent memory leak
+- Returns `{ allowed: boolean, retryAfterMs?: number }`
+- Files changed: `src/lib/session.ts`
+- **Learnings for future iterations:**
+  - In-memory rate limiters reset on server restart — acceptable for this use case (scanner flood protection)
+  - Module-level `Map` and counter persist across requests in the same Node.js process (Next.js server)
+  - Cleanup with modular counter (every N calls) is simpler and more predictable than interval-based cleanup
+---

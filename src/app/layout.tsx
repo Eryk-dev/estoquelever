@@ -14,9 +14,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SISO - Separação de Ordens",
+  title: "SISO Platform",
   description:
-    "Sistema Inteligente de Separação de Ordens — gerencie pedidos e estoque entre filiais.",
+    "Gestão de pedidos e separação de ordens entre filiais.",
 };
 
 export default function RootLayout({

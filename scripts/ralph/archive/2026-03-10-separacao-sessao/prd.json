@@ -1,0 +1,76 @@
+{
+  "project": "SISO - Webhook de NF Autorizada",
+  "branchName": "ralph/separacao-nf-webhook",
+  "description": "Handle Tiny webhook tipo nota_fiscal to transition orders from aguardando_nf to pendente, saving DANFE URL and chave de acesso",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add obterNotaFiscal to tiny-api.ts",
+      "description": "As the system, I need to fetch invoice details from Tiny API to resolve which order a nota fiscal belongs to when the fast-path match fails.",
+      "acceptanceCriteria": [
+        "Add async function obterNotaFiscal(token: string, notaId: number) to src/lib/tiny-api.ts",
+        "Calls GET /notas/{notaId} on the Tiny v3 API",
+        "Returns object with at least: id, origem: { id: string, tipo: string }",
+        "Add corresponding TypeScript interface TinyNotaFiscal with the returned fields",
+        "Uses existing tinyFetch helper with rate limiting",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Create NF webhook handler (nf-webhook-handler.ts)",
+      "description": "As the system, I need an isolated handler for nota_fiscal webhooks that matches the NF to an order and transitions it from aguardando_nf to pendente.",
+      "acceptanceCriteria": [
+        "Create new file src/lib/nf-webhook-handler.ts",
+        "Export async function handleNfWebhook(payload, empresaId: string): Promise<void>",
+        "Define and export NfWebhookPayload interface: { cnpj: string, tipo: string, dados: { idNotaFiscalTiny: number, numero?: string, serie?: string, urlDanfe?: string, chaveAcesso?: string, dataEmissao?: string, valorNota?: number } }",
+        "Step 1 - Dedup: upsert siso_webhook_logs with dedup_key = 'nf_{idNotaFiscalTiny}', skip if already processed",
+        "Step 2 - Fast-path match: SELECT from siso_pedidos WHERE nota_fiscal_id = idNotaFiscalTiny (cast to bigint)",
+        "Step 3 - Fallback match: call obterNotaFiscal from tiny-api.ts, check origem.tipo = 'venda', then find pedido by origem.id. If origem.tipo != 'venda', log info and return (ignore non-sale invoices)",
+        "Step 4 - Race condition: if no pedido found, save webhook_log with status = 'aguardando_pedido' for later retry",
+        "Step 5 - UPDATE siso_pedidos SET status_separacao = 'pendente', url_danfe = dados.urlDanfe, chave_acesso_nf = dados.chaveAcesso WHERE id = pedido_id AND status_separacao = 'aguardando_nf' (idempotent — skips if already past aguardando_nf)",
+        "Step 6 - Update webhook_log status to 'processado'",
+        "Uses createServiceClient() for DB access, logger for logging",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Route webhook tipo nota_fiscal to NF handler",
+      "description": "As the system, I need the webhook route to discriminate by tipo BEFORE validating codigoSituacao so that nota_fiscal webhooks are routed to the NF handler.",
+      "acceptanceCriteria": [
+        "In src/app/api/webhook/tiny/route.ts, add tipo discrimination at the top of POST handler BEFORE codigoSituacao validation",
+        "If tipo === 'nota_fiscal', call handleNfWebhook and return 200 OK",
+        "Existing pedido webhook flow (codigoSituacao validation, processWebhook) remains unchanged for non-NF webhooks",
+        "CNPJ-based empresa lookup (getEmpresaByCnpj) is shared — resolve empresa before branching by tipo",
+        "Return 200 OK for both success and graceful skip (NF not matching a sale order)",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Reconcile pending NF webhooks in webhook-processor",
+      "description": "As the system, I need the webhook-processor to check for pending NF webhooks when saving a new order, handling the race condition where NF arrives before the order is saved.",
+      "acceptanceCriteria": [
+        "In src/lib/webhook-processor.ts, after saving the pedido to siso_pedidos, query siso_webhook_logs for entries with status = 'aguardando_pedido' and dedup_key LIKE 'nf_%'",
+        "Match pending NF webhooks to the just-saved pedido by nota_fiscal_id or pedido_id_tiny",
+        "If a matching pending NF webhook is found, immediately transition status_separacao from 'aguardando_nf' to 'pendente' and save url_danfe/chave_acesso_nf from the stored webhook payload",
+        "Update the matched webhook_log status from 'aguardando_pedido' to 'processado'",
+        "If no pending NF webhook found, do nothing (normal flow continues)",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

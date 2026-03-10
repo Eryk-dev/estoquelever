@@ -1,0 +1,70 @@
+# Ralph Progress Log
+Started: Tue Mar 10 17:01:42 -03 2026
+---
+
+## Codebase Patterns
+- Tiny API v3 responses do NOT have a `{ data: ... }` wrapper — tinyFetch returns the raw shape
+- `tinyFetch` already handles 429 retries, so new API functions just call it directly
+- All Tiny API types go in `src/lib/tiny-api.ts` alongside their functions
+- API JSON spec file is `api tiny.json` at project root (has spaces in name)
+- The `origem` field on nota fiscal has `tipo` with values like "venda", "pedido_compra", etc.
+- `siso_webhook_logs` dedup: set `dedup_key` on insert and catch error code 23505 (unique violation)
+- For conditional DB updates, use `.update().eq(condition).select().maybeSingle()` to check if rows matched
+- Webhook route.ts: empresa lookup is shared, then branches by `tipo` — NF webhooks skip codigoSituacao validation entirely
+- For race-condition reconciliation between async events, query pending records + match via API call in a non-critical try/catch block
+---
+
+## 2026-03-10 - US-001
+- Added `TinyNotaFiscal` interface and `obterNotaFiscal()` function to `src/lib/tiny-api.ts`
+- Calls `GET /notas/{notaId}` via existing `tinyFetch` helper
+- Interface includes: id, numero, serie, chaveAcesso, dataEmissao, valor, situacao, origem: { id, tipo }
+- Files changed: `src/lib/tiny-api.ts`
+- **Learnings for future iterations:**
+  - The `NotaFiscalOrigemModelResponse` schema shows `origem.tipo` enum: "venda", "pedido_compra", "notafiscal", "ordemservico", "cobranca", "devolucao"
+  - `origem.id` is a string (not number) in the API spec
+  - The full nota fiscal response has many tax fields — only typed what we need
+---
+
+## 2026-03-10 - US-002
+- Created `src/lib/nf-webhook-handler.ts` with `handleNfWebhook(payload, empresaId)` function
+- Exported `NfWebhookPayload` interface with dados.idNotaFiscalTiny, urlDanfe, chaveAcesso, etc.
+- Dedup via `siso_webhook_logs` with `dedup_key = 'nf_{idNotaFiscalTiny}'` (unique index)
+- Fast-path match: `siso_pedidos.nota_fiscal_id = idNotaFiscalTiny` (bigint comparison works directly)
+- Fallback: `obterNotaFiscal` API → checks `origem.tipo = "venda"` → finds pedido by `origem.id`
+- Race condition: saves webhook_log with `status = 'aguardando_pedido'` for later reconciliation
+- Conditional UPDATE with `WHERE status_separacao = 'aguardando_nf'` for idempotent transition
+- Files changed: `src/lib/nf-webhook-handler.ts` (new)
+- **Learnings for future iterations:**
+  - `siso_webhook_logs.dedup_key` has a unique index (`idx_siso_webhook_dedup`) — insert with dedup_key and catch 23505 for dedup
+  - `siso_webhook_logs.tiny_pedido_id` is NOT NULL — for NF webhooks, use the nota fiscal ID as string
+  - `siso_webhook_logs.codigo_situacao` is nullable — NF webhooks don't have this field
+  - Supabase `.update().eq().eq().select().maybeSingle()` pattern is useful for conditional updates that may match 0 rows
+  - `nota_fiscal_id` is bigint in siso_pedidos — Supabase handles numeric comparison correctly without explicit cast
+---
+
+## 2026-03-10 - US-003
+- Modified `src/app/api/webhook/tiny/route.ts` to route NF webhooks to handler
+- Moved empresa lookup (getEmpresaByCnpj) above tipo discrimination so it's shared
+- Added `if (tipo === "nota_fiscal")` branch before codigoSituacao validation
+- NF handler called fire-and-forget (same pattern as processWebhook)
+- Validates `dados.idNotaFiscalTiny` exists before calling handler
+- Files changed: `src/app/api/webhook/tiny/route.ts`
+- **Learnings for future iterations:**
+  - The route.ts uses fire-and-forget pattern (`.catch()` error logging) for both order and NF webhooks — handler runs async after 200 response
+  - Empresa lookup must come before any tipo branching since both paths need it
+  - NF webhooks don't have `codigoSituacao` — that's why tipo discrimination must come first
+---
+
+## 2026-03-10 - US-004
+- Added NF webhook reconciliation logic to `src/lib/webhook-processor.ts` after pedido is saved
+- Queries `siso_webhook_logs` for entries with `status = 'aguardando_pedido'` and `dedup_key LIKE 'nf_%'` for the same empresa
+- For each pending NF webhook, calls `obterNotaFiscal` via Tiny API to match `origem.id` to the just-saved pedido
+- If match found: transitions `status_separacao` from `aguardando_nf` → `pendente`, saves `url_danfe` and `chave_acesso_nf`, marks webhook as `processado`
+- Wrapped in try/catch — reconciliation failure is non-critical and only logs a warning
+- Files changed: `src/lib/webhook-processor.ts`
+- **Learnings for future iterations:**
+  - Reconciliation logic is defensive — in most cases there won't be pending NF webhooks when processWebhook runs
+  - The match requires a Tiny API call (`obterNotaFiscal`) because the NF webhook log only stores the NF ID, not the pedido ID
+  - `origemToken` from the processWebhook scope is reused for the API call — no need for a new token
+  - The conditional update `WHERE status_separacao = 'aguardando_nf'` ensures idempotency — if the pedido hasn't reached aguardando_nf yet, the update simply matches 0 rows
+---

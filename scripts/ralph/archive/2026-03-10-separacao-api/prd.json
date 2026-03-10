@@ -1,0 +1,125 @@
+{
+  "project": "SISO - Frontend Tela de Separação",
+  "branchName": "ralph/separacao-frontend",
+  "description": "Separation page /separacao with scan input, audio feedback, 4 tabs (Aguardando NF, Pendentes, Embalados, Expedidos), undo bip, auto-polling",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Audio feedback utility (Web Audio API)",
+      "description": "As the system, I need audio feedback functions so that operators get immediate audible confirmation of scan results in the warehouse environment.",
+      "acceptanceCriteria": [
+        "Create src/components/separacao/audio-feedback.ts",
+        "Export 4 functions: playSuccess(), playError(), playComplete(), playAlreadyDone()",
+        "playSuccess: 880Hz tone, 100ms duration (short high-pitched beep)",
+        "playError: 220Hz tone, 200ms duration played twice (low double beep)",
+        "playComplete: ascending melody 440→880→1320Hz, 150ms each note",
+        "playAlreadyDone: 440Hz tone, 200ms single beep",
+        "All functions use OscillatorNode — no audio files",
+        "AudioContext created lazily on first call (requires user interaction to initialize)",
+        "Functions are no-op if AudioContext creation fails (graceful degradation)",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Base components: item row and pedido card",
+      "description": "As an operator, I need to see each order with its items, bip progress, and location so I can find and confirm items in the warehouse.",
+      "acceptanceCriteria": [
+        "Create src/components/separacao/item-separacao-row.tsx — displays one item with: sku, gtin, descricao, localizacao (bold badge for easy reading), quantidade_bipada/quantidade_pedida progress, bipado_completo visual (green check icon when done, open circle when pending)",
+        "When localizacao is null, show 'Sem localização' with muted text and MapPinOff icon from Lucide",
+        "Create src/components/separacao/pedido-separacao-card.tsx — displays one order with: header showing numero, cliente, ecommerce, forma_envio, decisao. Progress bar showing X/Y itens bipados. List of item-separacao-row children",
+        "Both components accept typed props (define interfaces in the component files)",
+        "Use Tailwind classes directly, zinc-based palette, consistent with existing app styling",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Scan input component with undo toast",
+      "description": "As an operator, I need a scan field that auto-focuses, processes barcodes, gives audio feedback, and offers undo for mistakes.",
+      "acceptanceCriteria": [
+        "Create src/components/separacao/scan-input.tsx",
+        "Renders a text input with auto-focus on mount and after each scan",
+        "On Enter/submit, calls POST /api/separacao/bipar with { codigo } using sisoFetch (from auth-context, includes X-Session-Id header)",
+        "Clears input automatically after processing response",
+        "Calls audio feedback functions based on response: parcial/item_completo → playSuccess(), pedido_completo → playComplete(), 404 → playError(), 409 → playAlreadyDone()",
+        "On successful bip (parcial/item_completo), shows Sonner toast with 'Bip registrado — SKU (N/M)' and a 'Desfazer' action button active for 10 seconds",
+        "Desfazer button calls POST /api/separacao/desfazer-bip with { pedido_id, produto_id } from the bip response, then shows 'Bip desfeito' confirmation toast",
+        "Accepts onBipProcessed callback prop to trigger parent refetch/optimistic update",
+        "Input is disabled while processing a bip request (prevents double-scan)",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Main page with Pendentes tab and galpão filtering",
+      "description": "As an operator, I need the main separation page with tabs and auto-filtered orders for my warehouse.",
+      "acceptanceCriteria": [
+        "Create src/app/separacao/page.tsx as 'use client' page",
+        "4 pill-style tabs using existing Tabs component from src/components/ui/tabs.tsx: 'Aguardando NF', 'Pendentes', 'Embalados', 'Expedidos'",
+        "Each tab shows count badge from API response",
+        "Auto-filter by operator's galpão derived from cargo in auth context (operador_cwb → CWB, operador_sp → SP)",
+        "Admin users see a galpão selector dropdown at the top to choose which galpão to view",
+        "Create src/components/separacao/tab-pendentes.tsx — fetches GET /api/separacao?status=pendente (and em_separacao) via TanStack Query with refetchInterval: 10000",
+        "Renders scan-input at top, then list of pedido-separacao-card ordered by data ASC",
+        "Uses sisoFetch for all API calls (X-Session-Id header)",
+        "Shows empty-state component when no orders",
+        "Mobile-friendly layout (max-w-3xl)",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Aguardando NF tab",
+      "description": "As an operator, I need to see orders awaiting invoice authorization so I know what's coming next.",
+      "acceptanceCriteria": [
+        "Create src/components/separacao/tab-aguardando-nf.tsx",
+        "Fetches GET /api/separacao?status=aguardando_nf via TanStack Query with refetchInterval: 10000",
+        "Each order shows: numero, cliente, ecommerce, decisao, quantidade de itens",
+        "Orders in aguardando_nf for more than 2 hours show a yellow 'Atenção' warning badge (compare data field to current time)",
+        "Read-only — no scan input, no bip actions",
+        "Admin users see a 'Forçar Pendente' button that calls PATCH /api/separacao/{pedidoId}/forcar-pendente",
+        "Non-admin users do not see the force button",
+        "Shows empty-state when no orders",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Embalados and Expedidos tabs",
+      "description": "As an operator, I need to see packed orders and mark them as shipped, and view already-shipped orders.",
+      "acceptanceCriteria": [
+        "Create src/components/separacao/tab-embalados.tsx",
+        "Fetches GET /api/separacao?status=embalado via TanStack Query with refetchInterval: 10000",
+        "Each order shows: numero, embalado_em (formatted time), separado_por (who packed), etiqueta_status badge",
+        "Orders with etiqueta_status = 'falhou' show red badge",
+        "Individual 'Marcar como Expedido' button per order that calls POST /api/separacao/expedir with single pedido_id",
+        "Batch 'Expedir Selecionados' button with checkboxes to select multiple orders, calls POST /api/separacao/expedir with array of pedido_ids",
+        "Disabled 'Reimprimir Etiqueta' button with tooltip 'Impressão será configurada em breve' (placeholder for PRD 7)",
+        "Create src/components/separacao/tab-expedidos.tsx",
+        "Fetches GET /api/separacao?status=expedido via TanStack Query with refetchInterval: 10000",
+        "Read-only list showing: numero, data, cliente — historical view, no actions",
+        "Both tabs show empty-state when no orders",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

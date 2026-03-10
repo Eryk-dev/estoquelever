@@ -1,0 +1,88 @@
+{
+  "project": "SISO - Sessão Server-Side para Separação",
+  "branchName": "ralph/separacao-sessao",
+  "description": "Server-side session validation for the separation module: session table, login generates sessionId, getSessionUser helper, client sends X-Session-Id header, rate limiting per session",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Migration: create siso_sessoes table",
+      "description": "As the system, I need a sessions table to persist server-side session data so that user identity can be validated on every API request.",
+      "acceptanceCriteria": [
+        "Create migration file supabase/migrations/20260311_create_siso_sessoes.sql",
+        "CREATE TABLE siso_sessoes with columns: id (uuid PK default gen_random_uuid()), usuario_id (uuid NOT NULL FK siso_usuarios), criado_em (timestamptz default now()), expira_em (timestamptz default now() + interval '12 hours')",
+        "Create partial index idx_sessoes_expira ON siso_sessoes (expira_em) WHERE expira_em > now()",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Create getSessionUser helper in src/lib/session.ts",
+      "description": "As the system, I need a helper that validates a session ID from the request header and returns the authenticated user with their resolved galpão.",
+      "acceptanceCriteria": [
+        "Create new file src/lib/session.ts",
+        "Export interface SessionUser with fields: id (string), nome (string), cargo (string), galpaoId (string | null)",
+        "Export async function getSessionUser(request: Request): Promise<SessionUser | null>",
+        "Function reads X-Session-Id from request headers",
+        "Function queries siso_sessoes JOIN siso_usuarios WHERE id = sessionId AND expira_em > now()",
+        "Function resolves galpaoId from cargo: operador_cwb → query siso_galpoes WHERE nome = 'CWB', operador_sp → query siso_galpoes WHERE nome = 'SP', admin/comprador → null",
+        "Returns null if session not found, expired, or user not found",
+        "Uses createServiceClient() from supabase-server.ts for DB access",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Login endpoint generates and returns sessionId",
+      "description": "As the system, I need the login endpoint to create a server-side session so that subsequent requests can be validated.",
+      "acceptanceCriteria": [
+        "In POST /api/auth/login (src/app/api/auth/login/route.ts), after validating PIN and finding user, insert a new row into siso_sessoes with usuario_id",
+        "Add sessionId (the generated UUID) to the existing JSON response alongside id, nome, cargo",
+        "Existing login response fields (id, nome, cargo) remain unchanged — fully backwards compatible",
+        "If siso_sessoes insert fails, log warning but still return successful login (session is enhancement, not blocker)",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Client stores sessionId and sends X-Session-Id header",
+      "description": "As the system, I need the client to persist the sessionId and include it in all API requests so that the server can validate the user's identity.",
+      "acceptanceCriteria": [
+        "In auth-context.tsx, after successful login, store sessionId in localStorage as part of the siso_user object",
+        "Expose sessionId in the auth context (useAuth hook returns sessionId)",
+        "Create and export a helper function sisoFetch(url, options?) that wraps fetch and automatically adds X-Session-Id header from stored sessionId",
+        "sisoFetch falls back to regular fetch if no sessionId is stored (backwards compatible)",
+        "Existing auth flow (localStorage-based, no JWT) continues to work unchanged",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Session-based rate limiter for bip endpoint",
+      "description": "As the system, I need per-session rate limiting to prevent scanner malfunction from flooding the bip API.",
+      "acceptanceCriteria": [
+        "Create rate limiting logic in src/lib/session.ts (or export from a new utility if session.ts gets too large)",
+        "Export function checkBipRateLimit(sessionId: string): { allowed: boolean; retryAfterMs?: number }",
+        "Limit: max 2 requests per second per sessionId",
+        "Implementation: in-memory Map<sessionId, { count: number, resetAt: number }>",
+        "Cleanup: remove entries older than 60 seconds every 100 calls to prevent memory leak",
+        "Returns allowed: false with retryAfterMs when limit exceeded",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

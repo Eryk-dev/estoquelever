@@ -30,6 +30,12 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# runtime logs
+logs.txt
+
+# ralph runtime state
+scripts/ralph/.last-branch
+
 # env files (can opt-in for committing if needed)
 .env*
 

@@ -1,0 +1,76 @@
+{
+  "project": "SISO - Integração PrintNode",
+  "branchName": "ralph/separacao-printnode",
+  "description": "PrintNode integration for label printing: client lib, printer config per galpão/user, admin UI in settings page",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Migration: add PrintNode printer columns to galpoes and usuarios",
+      "description": "As the system, I need database columns to store the configured PrintNode printer for each galpão and optional user override.",
+      "acceptanceCriteria": [
+        "Create migration file supabase/migrations/20260311_add_printnode_config.sql",
+        "ALTER siso_galpoes ADD COLUMN printnode_printer_id bigint, ADD COLUMN printnode_printer_nome text",
+        "ALTER siso_usuarios ADD COLUMN printnode_printer_id bigint, ADD COLUMN printnode_printer_nome text",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "PrintNode client lib (printnode.ts)",
+      "description": "As the system, I need a PrintNode API client to test connections, list printers, send print jobs, and resolve which printer to use.",
+      "acceptanceCriteria": [
+        "Create src/lib/printnode.ts",
+        "Export async function testarConexao(apiKey: string): Promise<{ ok: boolean; email?: string; error?: string }> — calls GET /whoami",
+        "Export async function listarImpressoras(apiKey: string): Promise<PrintNodePrinter[]> — calls GET /printers, returns array with id, name, computer name, state",
+        "Export async function enviarImpressao({ apiKey, printerId, pdfUrl, titulo }): Promise<{ jobId: number }> — calls POST /printjobs with contentType 'pdf_uri', content = pdfUrl, source = 'SISO Separacao'",
+        "Export async function resolverImpressora(usuarioId: string, galpaoId: string): Promise<{ printerId: number; printerNome: string } | null> — checks usuario.printnode_printer_id first, falls back to galpao.printnode_printer_id, returns null if neither set",
+        "Auth via HTTP Basic: base64(apiKey + ':') as Authorization header",
+        "enviarImpressao has 10s timeout and retries 1x on network error",
+        "Export PrintNodePrinter interface with id (number), name (string), computer (string), state (string)",
+        "Log print jobs via logger (pedido context, printer_id, job_id — no URLs for LGPD)",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Admin API routes for PrintNode (test + list printers)",
+      "description": "As an admin, I need API endpoints to test the PrintNode connection and list available printers for configuration.",
+      "acceptanceCriteria": [
+        "Create src/app/api/admin/printnode/test/route.ts with POST handler",
+        "POST /api/admin/printnode/test reads PRINTNODE_API_KEY from process.env, calls testarConexao(), returns { ok, email } or { ok: false, error }",
+        "Create src/app/api/admin/printnode/printers/route.ts with GET handler",
+        "GET /api/admin/printnode/printers reads PRINTNODE_API_KEY from process.env, calls listarImpressoras(), returns printer array",
+        "Both endpoints return 500 { error: 'PRINTNODE_API_KEY não configurada' } if env var is missing",
+        "Both endpoints validate admin cargo (check session or simple cargo check) — return 403 if not admin",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "PrintNode configuration UI in settings page",
+      "description": "As an admin, I need a section in the settings page to test PrintNode connection and assign printers to galpões and users.",
+      "acceptanceCriteria": [
+        "Add new section 'Impressão (PrintNode)' to src/app/configuracoes/page.tsx, below existing Tiny connections section",
+        "Button 'Testar Conexão' calls POST /api/admin/printnode/test and shows status (green check with email on success, red X with error on failure)",
+        "After successful connection test, fetch and display available printers from GET /api/admin/printnode/printers",
+        "For each galpão, show dropdown 'Impressora padrão etiqueta' populated with PrintNode printers — saving updates siso_galpoes.printnode_printer_id and printnode_printer_nome via PUT /api/admin/galpoes/{id}",
+        "For each user, show optional dropdown 'Impressora override' — saving updates siso_usuarios.printnode_printer_id and printnode_printer_nome via PUT /api/admin/usuarios",
+        "When no printer is configured for a galpão, show yellow warning 'Nenhuma impressora configurada'",
+        "Section only visible to admin users",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

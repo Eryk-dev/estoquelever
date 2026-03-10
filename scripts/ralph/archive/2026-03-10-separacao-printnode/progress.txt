@@ -1,0 +1,81 @@
+# Ralph Progress Log
+Started: Tue Mar 10 17:56:26 -03 2026
+---
+
+## Codebase Patterns
+- Migration files: `supabase/migrations/YYYYMMDD_description.sql`, applied via Supabase MCP `apply_migration`
+- Types: all centralized in `src/types/index.ts`, DB column names use snake_case in TS interfaces
+- Pre-existing typecheck issue: `src/data/mock-separacao.ts` references components from another branch — ignore this error
+- Supabase project ID: `wrbrbhuhsaaupqsimkqz`
+- PrintNode lib: `src/lib/printnode.ts` — `testarConexao`, `listarImpressoras`, `enviarImpressao`, `resolverImpressora`
+- PrintNode auth: HTTP Basic with `base64(apiKey + ":")`
+- PrintNode API key comes from `process.env.PRINTNODE_API_KEY` (env var, not DB)
+- Admin API auth: use `x-siso-user-id` header → lookup cargo in DB → 401 if missing, 403 if not admin
+- Existing admin routes (galpoes, empresas, grupos, usuarios) do NOT validate auth — only PrintNode routes do
+- Galpoes GET route uses explicit column list in select — new columns must be added manually
+- Configuracoes page fetches: connections, galpoes, grupos, usuarios in parallel
+
+---
+
+## 2026-03-10 - US-001
+- Created migration `20260311_add_printnode_config.sql` adding `printnode_printer_id` (bigint) and `printnode_printer_nome` (text) to both `siso_galpoes` and `siso_usuarios`
+- Applied migration via Supabase MCP
+- Updated `Galpao` and `Usuario` interfaces in `src/types/index.ts`
+- Files changed: `supabase/migrations/20260311_add_printnode_config.sql`, `src/types/index.ts`
+- **Learnings for future iterations:**
+  - `mock-separacao.ts` is an untracked leftover from `ralph/separacao-frontend` branch — causes a typecheck error that can be ignored
+  - Galpao and Usuario interfaces now include printnode fields — any code creating/updating these objects may need to handle the new nullable fields
+---
+
+## 2026-03-10 - US-002
+- Created `src/lib/printnode.ts` with full PrintNode API client
+- Functions: `testarConexao` (GET /whoami), `listarImpressoras` (GET /printers), `enviarImpressao` (POST /printjobs with 10s timeout + 1 retry), `resolverImpressora` (user override > galpao default > null)
+- Auth via HTTP Basic (base64 of apiKey + ":")
+- `enviarImpressao` retries once on network/timeout errors only
+- `resolverImpressora` queries Supabase for usuario then galpao printnode_printer_id
+- Logging via `logger` — logs printer_id and job_id but no URLs (LGPD)
+- Files changed: `src/lib/printnode.ts`
+- **Learnings for future iterations:**
+  - PrintNode POST /printjobs returns a bare number (jobId), not a JSON object
+  - `AbortSignal.timeout(ms)` works natively in Node 18+ for fetch timeout
+  - The `printNodeFetch` helper handles generic GET/response parsing; `enviarImpressao` uses raw fetch for timeout control
+---
+
+## 2026-03-10 - US-003
+- Created `src/app/api/admin/printnode/test/route.ts` (POST) — calls `testarConexao()` with env API key
+- Created `src/app/api/admin/printnode/printers/route.ts` (GET) — calls `listarImpressoras()` with env API key
+- Both endpoints: validate admin cargo via `x-siso-user-id` header (DB lookup), return 401/403 if unauthorized
+- Both endpoints: return 500 if `PRINTNODE_API_KEY` env var missing
+- Files changed: `src/app/api/admin/printnode/test/route.ts`, `src/app/api/admin/printnode/printers/route.ts`
+- **Learnings for future iterations:**
+  - Existing admin routes have NO auth validation — this is the first set to add admin cargo check via header
+  - Frontend will need to pass `x-siso-user-id` header when calling these PrintNode endpoints (unlike other admin routes)
+  - The `testarConexao` function already handles errors gracefully (returns `{ ok: false, error }`) so no try/catch needed in the test route
+  - The `listarImpressoras` function throws on error, so the printers route wraps it in try/catch
+---
+
+## 2026-03-10 - US-004
+- Added PrintNode configuration UI section to settings page (`/configuracoes`)
+- Created `src/components/configuracoes/printnode-section.tsx` — self-contained component with:
+  - "Testar Conexão" button calling POST /api/admin/printnode/test with `x-siso-user-id` header
+  - Connection status display (green check + email or red X + error)
+  - After successful test, auto-fetches printers from GET /api/admin/printnode/printers
+  - Per-galpão dropdown to assign default printer (saves via PUT /api/admin/galpoes/{id})
+  - Per-user optional override dropdown (saves via PUT /api/admin/usuarios)
+  - Yellow warning banner when active galpões have no printer configured
+  - Section only renders for admin users (checks `useAuth().user.cargo`)
+- Updated backend routes:
+  - `GET /api/admin/galpoes` — now includes `printnode_printer_id`, `printnode_printer_nome` in select
+  - `PUT /api/admin/galpoes/{id}` — now accepts `printnode_printer_id`, `printnode_printer_nome`
+  - `GET /api/admin/usuarios` — now includes `printnode_printer_id`, `printnode_printer_nome`
+  - `PUT /api/admin/usuarios` — body type extended with printnode fields
+- Updated `src/components/configuracoes/types.ts` — added printnode fields to `GalpaoHierarquia`, new `UsuarioPrintNode` type
+- Updated `src/app/configuracoes/page.tsx` — fetches usuarios alongside other data, renders PrintNodeSection
+- Files changed: `src/components/configuracoes/printnode-section.tsx` (new), `src/components/configuracoes/types.ts`, `src/app/configuracoes/page.tsx`, `src/app/api/admin/galpoes/route.ts`, `src/app/api/admin/galpoes/[id]/route.ts`, `src/app/api/admin/usuarios/route.ts`
+- **Learnings for future iterations:**
+  - The galpoes GET route returns `...g` spread so any new columns on `siso_galpoes` must be explicitly added to the select string
+  - The usuarios PUT route uses `{ ...updates }` spread from body — any new fields on the body type are automatically passed through to Supabase
+  - PrintNode admin endpoints require `x-siso-user-id` header (other admin routes do not)
+  - The configuracoes page now fetches 4 resources in parallel: connections, galpoes, grupos, usuarios
+  - Manual browser verification needed for this UI story
+---

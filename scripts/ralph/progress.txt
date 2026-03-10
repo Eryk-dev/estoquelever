@@ -1,0 +1,69 @@
+# Ralph Progress Log
+Started: Tue Mar 10 16:34:02 -03 2026
+---
+
+## Codebase Patterns
+- Migrations use `supabase/migrations/YYYYMMDD_description.sql` naming convention
+- Apply migrations via Supabase MCP `apply_migration` tool (project_id: wrbrbhuhsaaupqsimkqz)
+- `siso_pedidos.id` is `text` (not uuid), `siso_pedido_itens.quantidade_pedida` is `numeric` (not integer)
+- `siso_pedidos.data` is `date` type (used for ordering in separation queries)
+- Existing tables have deprecated `filial` columns alongside new `empresa_id` FKs
+- Always use `IF NOT EXISTS` for index creation in shared DB environments
+- `ProcessedItem` fields are spread into `siso_pedido_itens` upsert — adding a field auto-persists it
+- `getProdutoDetalhe` is called twice: main loop (kit detection) + `enrichItemMultiEmpresa` (image fallback) — both paths should capture new fields
+
+---
+
+## 2026-03-10 - US-001
+- **What was implemented:** Database migration with all separation-related columns, partial indexes, and the `siso_processar_bip` PL/pgSQL function
+- **Files changed:**
+  - `supabase/migrations/20260311_add_separacao_columns.sql` (new)
+- **Verification:** All 10 columns on siso_pedidos, 5 on siso_pedido_itens, 1 on siso_pedido_item_estoques confirmed. 6 indexes and function confirmed via SQL queries.
+- **Learnings for future iterations:**
+  - `siso_pedido_itens` already has `localizacao_cwb` and `localizacao_sp` text columns (legacy) — new normalized `localizacao` goes in `siso_pedido_item_estoques` instead
+  - `siso_pedido_itens.produto_id` is `bigint`, `pedido_id` is `text` — JOINs with siso_pedidos use text-to-text
+  - The CHECK constraint on `status_separacao` allows NULL (for pre-module orders) — use `WHERE status_separacao IS NOT NULL` in separation queries
+---
+
+## 2026-03-10 - US-002
+- **What was implemented:** GTIN capture from Tiny API product detail and localizacao persistence in normalized stock table
+- **Files changed:**
+  - `src/lib/tiny-api.ts` — added `gtin: string | null` to `TinyProdutoDetalhe` interface and `getProdutoDetalhe` function
+  - `src/lib/webhook-processor.ts` — added `gtin` to `ProcessedItem`, capture from existing `getProdutoDetalhe` call, pass through to `enrichItemMultiEmpresa`, added `localizacao` to `itensEstoques` array for `siso_pedido_item_estoques` upsert
+- **Learnings for future iterations:**
+  - Tiny API `GET /produtos/{id}` returns `gtin` as a top-level string field (nullable)
+  - `getProdutoDetalhe` is called TWICE in the flow: once in the main loop (for kit detection) and once in `enrichItemMultiEmpresa` (for image fallback when `preImagemUrl` is null). Both now capture GTIN.
+  - Kit parent GTIN != component GTIN — pass null for kit components to avoid wrong barcode assignment
+  - `localizacao` was already captured in `estoquesPorEmpresa` (from `TinyEstoque.localizacao`) but was NOT being included in the `itensEstoques` array for the `siso_pedido_item_estoques` upsert — now it is
+  - `ProcessedItem` fields are spread directly into the `siso_pedido_itens` upsert — adding a field to `ProcessedItem` automatically includes it in the DB write
+---
+
+## 2026-03-10 - US-003
+- **What was implemented:** Calculate `separacao_galpao_id` and set `status_separacao = 'aguardando_nf'` in webhook-processor
+- **Files changed:**
+  - `src/lib/webhook-processor.ts` — added `separacaoGalpaoId` to `SugestaoResult`, returned it from all 6 return paths of `calcularSugestaoMultiGalpao`, included both fields in `siso_pedidos` upsert
+- **Learnings for future iterations:**
+  - `calcularSugestaoMultiGalpao` has 6 return paths: empty items, origin covers all, another galpao covers all, no stock anywhere, partial-origin-best, partial-other-best
+  - For `transferencia`, the winning galpao comes from different variables: `outroGalpaoId` (full coverage) vs `bestGalpaoId` (partial coverage)
+  - `status_separacao` is always `aguardando_nf` at webhook time — transitions happen later (NF webhook, separation UI)
+---
+
+## 2026-03-10 - US-004
+- **What was implemented:** Recalculate `separacao_galpao_id` on order approval based on `decisao_final`
+- **Files changed:**
+  - `src/app/api/pedidos/aprovar/route.ts` — added `separacaoGalpaoId` variable resolved alongside `empresaExecucaoId`, included in `siso_pedidos` update query
+- **Learnings for future iterations:**
+  - The approval endpoint already resolves `empresaSuporte` (with `galpaoId`) for transferencia — `separacaoGalpaoId` piggybacks on this existing logic
+  - `empresaOrigem` (from `getEmpresaById`) returns `EmpresaInfo` with `galpaoId`; `empresaSuporte` (from `getEmpresasDoGrupo`) returns `EmpresaGrupo` with `galpaoId` — both have the field needed
+  - The update always sets `separacao_galpao_id` regardless of whether decisao differs from sugestao — simpler and handles edge cases where sugestao may have been wrong
+---
+
+## 2026-03-10 - US-005
+- **What was implemented:** Cancellation webhook now sets `status_separacao = 'cancelado'` when the order has an existing non-null `status_separacao`
+- **Files changed:**
+  - `src/app/api/webhook/tiny/route.ts` — added `status_separacao` to select query, conditionally include in update
+- **Learnings for future iterations:**
+  - The cancellation handler fetches the existing order to check its status before updating — extend the select to include any new columns that need conditional cancellation logic
+  - Pre-module orders (with `status_separacao IS NULL`) are preserved by checking `!= null` before adding the field to the update object
+  - Using a `Record<string, unknown>` for the update allows conditional field inclusion without type issues
+---

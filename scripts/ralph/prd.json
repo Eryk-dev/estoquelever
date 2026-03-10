@@ -1,0 +1,84 @@
+{
+  "project": "SISO - Separação Schema + Dados Base",
+  "branchName": "ralph/separacao-schema",
+  "description": "Database migrations and webhook-processor/approval changes to persist separation tracking data (GTIN, location, separation galpão, separation status)",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Migration: separation columns, indexes, and PL/pgSQL function",
+      "description": "As the system, I need all separation-related columns, indexes, and the siso_processar_bip function created in the database so that subsequent features can use them.",
+      "acceptanceCriteria": [
+        "Create migration file supabase/migrations/20260311_add_separacao_columns.sql",
+        "ALTER siso_pedidos: add status_separacao (text with CHECK constraint for aguardando_nf/pendente/em_separacao/embalado/expedido/cancelado), separacao_galpao_id (uuid FK siso_galpoes), separado_por (uuid FK siso_usuarios), separado_em (timestamptz), embalado_em (timestamptz), agrupamento_tiny_id (bigint), etiqueta_url (text), etiqueta_status (text with CHECK for pendente/imprimindo/impresso/falhou), url_danfe (text), chave_acesso_nf (text)",
+        "ALTER siso_pedido_itens: add gtin (text), quantidade_bipada (integer default 0), bipado_completo (boolean default false), bipado_em (timestamptz), bipado_por (uuid FK siso_usuarios)",
+        "ALTER siso_pedido_item_estoques: add localizacao (text)",
+        "Create partial indexes: idx_pedidos_separacao_galpao, idx_pedidos_separacao_aguardando, idx_pedidos_separacao_embalado, idx_pedido_itens_gtin, idx_pedido_itens_sku, idx_pedidos_separacao_data — exact definitions from PRD section 6.1",
+        "Create PL/pgSQL function siso_processar_bip(p_codigo text, p_usuario_id uuid, p_galpao_id uuid) RETURNS jsonb — exact implementation from PRD section 6.2",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Migration applied to Supabase and local file created. All columns, indexes, and siso_processar_bip function verified."
+    },
+    {
+      "id": "US-002",
+      "title": "Capture GTIN and localizacao in webhook-processor",
+      "description": "As the system, I need to capture product GTIN (barcode) and stock location during webhook processing so that barcode scanning works for order separation.",
+      "acceptanceCriteria": [
+        "Update TinyProdutoDetalhe interface in src/lib/tiny-api.ts to include gtin: string | null",
+        "In webhook-processor.ts, capture gtin from the existing getProdutoDetalhe call (already made for kit detection) — no additional API call needed",
+        "Save GTIN in siso_pedido_itens.gtin during the upsert into that table",
+        "For support empresa products (fetched by SKU via buscarProdutoPorSku + getProdutoDetalhe), also capture and save GTIN",
+        "Save localizacao from stock data into siso_pedido_item_estoques.localizacao during the enrichment upsert",
+        "Existing orders without GTIN continue to work — gtin column is nullable, scan falls back to SKU",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "GTIN captured from existing getProdutoDetalhe call (no extra API calls). Localizacao added to siso_pedido_item_estoques upsert. Kit components get gtin=null (kit GTIN != component GTIN)."
+    },
+    {
+      "id": "US-003",
+      "title": "Calculate separacao_galpao_id and status_separacao in webhook-processor",
+      "description": "As the system, I need to determine the separation galpão and set the initial separation status when processing webhooks so that orders are routed to the correct physical location.",
+      "acceptanceCriteria": [
+        "In webhook-processor.ts, calculate separacao_galpao_id based on suggestion: propria or oc → empresaOrigem.galpao_id, transferencia → support empresa's galpao_id (the empresa that has stock)",
+        "Include separacao_galpao_id in the siso_pedidos upsert",
+        "Set status_separacao = 'aguardando_nf' for all processed orders (both auto-approved and pending manual review)",
+        "Include status_separacao in the siso_pedidos upsert",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Added separacaoGalpaoId to SugestaoResult. For propria/oc → galpaoOrigemId, for transferencia → the winning galpao ID. status_separacao set to aguardando_nf for all orders."
+    },
+    {
+      "id": "US-004",
+      "title": "Recalculate separacao_galpao_id on approval when decision changes",
+      "description": "As the system, I need to recalculate which galpão handles separation when an operator approves with a different decision than the original suggestion.",
+      "acceptanceCriteria": [
+        "In POST /api/pedidos/aprovar (src/app/api/pedidos/aprovar/route.ts), when decisao_final differs from the order's sugestao, recalculate separacao_galpao_id",
+        "If decisao_final is propria or oc → set separacao_galpao_id to empresaOrigem.galpao_id",
+        "If decisao_final is transferencia → set separacao_galpao_id to support empresa's galpao_id (already resolved as empresaExecucaoId in the endpoint)",
+        "Update separacao_galpao_id in the same UPDATE query that sets decisao_final and status",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Added separacaoGalpaoId variable alongside empresaExecucaoId. For propria/oc → empresaOrigem.galpaoId, for transferencia → empresaSuporte.galpaoId. Included in siso_pedidos update query."
+    },
+    {
+      "id": "US-005",
+      "title": "Set status_separacao on cancellation webhook",
+      "description": "As the system, I need to cancel the separation status when an order is cancelled via webhook so that cancelled orders don't appear in the separation queue.",
+      "acceptanceCriteria": [
+        "In the webhook cancellation handler (src/app/api/webhook/tiny/route.ts), when setting status = 'cancelado', also set status_separacao = 'cancelado' if the order's status_separacao IS NOT NULL",
+        "Orders without status_separacao (created before the separation module) are not affected",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Added status_separacao to cancellation select query. Conditionally sets status_separacao = 'cancelado' only when existing order has non-null status_separacao (preserves pre-module orders)."
+    }
+  ]
+}

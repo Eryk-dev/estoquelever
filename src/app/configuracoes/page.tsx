@@ -9,10 +9,12 @@ import { AppShell } from "@/components/app-shell";
 import { WebhookUrlCard } from "@/components/configuracoes/webhook-url-card";
 import { GalpoesEmpresasSection } from "@/components/configuracoes/galpoes-empresas-section";
 import { GruposSection } from "@/components/configuracoes/grupos-section";
+import { PrintNodeSection } from "@/components/configuracoes/printnode-section";
 import type {
   TinyConnection,
   GalpaoHierarquia,
   GrupoInfo,
+  UsuarioPrintNode,
 } from "@/components/configuracoes/types";
 
 export default function ConfiguracoesPage() {
@@ -28,23 +30,27 @@ function ConfiguracoesContent() {
   const [connections, setConnections] = useState<TinyConnection[]>([]);
   const [galpoes, setGalpoes] = useState<GalpaoHierarquia[]>([]);
   const [grupos, setGrupos] = useState<GrupoInfo[]>([]);
+  const [usuarios, setUsuarios] = useState<UsuarioPrintNode[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [connRes, galpRes, grupoRes] = await Promise.all([
+      const [connRes, galpRes, grupoRes, userRes] = await Promise.all([
         fetch("/api/tiny/connections"),
         fetch("/api/admin/galpoes"),
         fetch("/api/admin/grupos"),
+        fetch("/api/admin/usuarios"),
       ]);
-      const [connData, galpData, grupoData] = await Promise.all([
+      const [connData, galpData, grupoData, userData] = await Promise.all([
         connRes.json(),
         galpRes.json(),
         grupoRes.json(),
+        userRes.json(),
       ]);
       setConnections(Array.isArray(connData) ? connData : []);
       setGalpoes(Array.isArray(galpData) ? galpData : []);
       setGrupos(Array.isArray(grupoData) ? grupoData : []);
+      setUsuarios(Array.isArray(userData) ? userData : []);
     } catch {
       toast.error("Erro ao carregar dados");
     } finally {
@@ -121,6 +127,13 @@ function ConfiguracoesContent() {
       <GruposSection
         grupos={grupos}
         loading={loading}
+        onRefresh={fetchAll}
+      />
+
+      {/* ── PrintNode ──────────────────────────────────────────── */}
+      <PrintNodeSection
+        galpoes={galpoes}
+        usuarios={usuarios}
         onRefresh={fetchAll}
       />
     </AppShell>

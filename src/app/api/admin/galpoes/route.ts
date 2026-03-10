@@ -11,7 +11,7 @@ export async function GET() {
   const { data: galpoes, error } = await supabase
     .from("siso_galpoes")
     .select(`
-      id, nome, descricao, ativo, criado_em, atualizado_em,
+      id, nome, descricao, ativo, printnode_printer_id, printnode_printer_nome, criado_em, atualizado_em,
       siso_empresas (
         id, nome, cnpj, ativo, criado_em, atualizado_em,
         siso_grupo_empresas (

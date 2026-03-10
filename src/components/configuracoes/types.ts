@@ -47,7 +47,17 @@ export interface GalpaoHierarquia {
   nome: string;
   descricao: string | null;
   ativo: boolean;
+  printnode_printer_id: number | null;
+  printnode_printer_nome: string | null;
   siso_empresas: EmpresaHierarquia[];
+}
+
+export interface UsuarioPrintNode {
+  id: string;
+  nome: string;
+  cargo: string;
+  printnode_printer_id: number | null;
+  printnode_printer_nome: string | null;
 }
 
 export interface GrupoInfo {

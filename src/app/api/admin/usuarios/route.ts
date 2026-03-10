@@ -9,7 +9,7 @@ export async function GET() {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("siso_usuarios")
-    .select("id, nome, cargo, ativo, criado_em, atualizado_em")
+    .select("id, nome, cargo, ativo, criado_em, atualizado_em, printnode_printer_id, printnode_printer_nome")
     .order("criado_em", { ascending: true });
 
   if (error) {
@@ -82,6 +82,8 @@ export async function PUT(request: NextRequest) {
     pin?: string;
     cargo?: string;
     ativo?: boolean;
+    printnode_printer_id?: number | null;
+    printnode_printer_nome?: string | null;
   };
 
   try {

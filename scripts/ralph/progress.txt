@@ -13,6 +13,12 @@ Started: Tue Mar 10 17:30:06 -03 2026
 - GET /api/separacao returns snake_case fields (cliente_nome, not clienteNome) — match component props to API shape
 - Bipar response includes `produto_id` — needed for desfazer-bip undo flow
 - Use `inputMode="none"` on barcode scan inputs to prevent mobile keyboard from popping up
+- Avoid `setState` in `useEffect` — lint rule `react-hooks/set-state-in-effect` blocks it. Derive state with `??` fallbacks instead
+- For admin galpão filtering, use `effectiveGalpaoId = selectedGalpaoId ?? galpoes?.[0]?.id ?? null` pattern
+- GET /api/separacao without `?status=` returns ALL statuses — useful for client-side grouping + tab counts in a single query
+- Tab components receive pre-grouped `pedidos` from parent + `onUpdated`/`onBipProcessed` callback to trigger refetch
+- Expedir API always takes `{ pedido_ids: string[] }` — wrap single ID in array for individual expedir
+- Admin users can't expedir (no galpaoId in session) — hide action buttons for admin cargo
 ---
 
 ## 2026-03-10 - US-001
@@ -53,4 +59,51 @@ Started: Tue Mar 10 17:30:06 -03 2026
   - `inputMode="none"` prevents mobile keyboard on barcode scanner inputs (scanner acts as keyboard)
   - Sonner toast `action` prop takes `{ label, onClick }` — use `duration` to control how long undo is available
   - The `onBipProcessed` callback pattern allows parent to trigger refetch without tight coupling
+---
+
+## 2026-03-10 - US-004
+- Created `src/app/separacao/page.tsx` — main separation page with 4 tabs and galpão filtering
+- Created `src/components/separacao/tab-pendentes.tsx` — renders scan input + list of pedido cards
+- Updated `src/types/index.ts` — made `Tab.id` accept `string` (was restricted to dashboard-only union)
+- Updated `src/app/api/separacao/route.ts` — added `sugestao` + `decisao_final` to select, mapped as `decisao` in response
+- Updated `src/app/page.tsx` — removed `soon: true` from separacao module card
+- Architecture: single fetch for ALL statuses, client-side grouping by `status_separacao` → tab counts + active tab data
+- Admin users see galpão dropdown; operators auto-filtered by server session
+- Files changed: `src/app/separacao/page.tsx` (new), `src/components/separacao/tab-pendentes.tsx` (new), `src/app/api/separacao/route.ts`, `src/types/index.ts`, `src/app/page.tsx`
+- **Learnings for future iterations:**
+  - ESLint rule `react-hooks/set-state-in-effect` blocks setState inside useEffect. Use derived values with `??` fallbacks instead of syncing state
+  - The separacao API response now includes `decisao` field (= `decisao_final ?? sugestao`)
+  - Fetching without `?status=` param returns all orders — efficient for tab count aggregation
+  - The `Tab.id` type is now `string`, so any tab bar (dashboard, separacao) can use the Tabs component
+  - Other tabs (aguardando_nf, embalados, expedidos) render placeholder EmptyState — to be implemented in US-005/US-006
+---
+
+## 2026-03-10 - US-005
+- Created `src/components/separacao/tab-aguardando-nf.tsx` — Aguardando NF tab component
+- Wired into `src/app/separacao/page.tsx` replacing placeholder EmptyState
+- Shows read-only order cards: numero, cliente, ecommerce badge, decisao badge, item count
+- Orders older than 2 hours show yellow "Atenção" warning badge (AlertTriangle icon)
+- Admin users see "Forçar Pendente" button per order (calls PATCH /api/separacao/{id}/forcar-pendente)
+- Non-admin users do not see the force button
+- Uses sisoFetch for API calls, toast for feedback, EmptyState when no orders
+- Files changed: `src/components/separacao/tab-aguardando-nf.tsx` (new), `src/app/separacao/page.tsx` (wired tab)
+- **Learnings for future iterations:**
+  - The forcar-pendente endpoint is PATCH (not POST) — check API route file for correct method
+  - Tab components receive `pedidos` prop from parent (pre-grouped) rather than fetching independently
+  - Reuse `PedidoSeparacao` type from `pedido-separacao-card.tsx` for consistency across all tab components
+  - The `onUpdated` callback pattern (like `onBipProcessed`) allows parent to refetch when tab modifies data
+---
+
+## 2026-03-10 - US-006
+- Created `src/components/separacao/tab-embalados.tsx` — Embalados tab with checkbox selection, batch/individual expedir, etiqueta badge, disabled reimprimir button
+- Created `src/components/separacao/tab-expedidos.tsx` — read-only historical list showing numero, time, cliente
+- Wired both tabs into `src/app/separacao/page.tsx`, replacing placeholder EmptyState components
+- Removed unused EmptyState import from page (no longer needed)
+- Admin users cannot expedir (API returns 403 if no galpaoId) — expedir buttons hidden for admins
+- Files changed: `src/components/separacao/tab-embalados.tsx` (new), `src/components/separacao/tab-expedidos.tsx` (new), `src/app/separacao/page.tsx` (wired tabs)
+- **Learnings for future iterations:**
+  - Expedir API expects `{ pedido_ids: string[] }` always as array, even for single pedido
+  - Admin users can't expedir (session.galpaoId is null) — hide action buttons for admins in separacao tabs
+  - `formatTime` from domain-helpers handles undefined/null gracefully — safe for optional fields like embalado_em
+  - Checkbox multi-select pattern: use Set<string> state, toggleAll checks if all selected → deselects, otherwise selects all
 ---

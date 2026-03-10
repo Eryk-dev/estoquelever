@@ -9,7 +9,8 @@ import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { Tabs } from "@/components/ui/tabs";
 import { TabPendentes } from "@/components/separacao/tab-pendentes";
 import { TabAguardandoNf } from "@/components/separacao/tab-aguardando-nf";
-import { EmptyState } from "@/components/ui/empty-state";
+import { TabEmbalados } from "@/components/separacao/tab-embalados";
+import { TabExpedidos } from "@/components/separacao/tab-expedidos";
 import { CARGO_LABELS } from "@/types";
 import type { Tab } from "@/types";
 import type { PedidoSeparacao } from "@/components/separacao/pedido-separacao-card";
@@ -205,10 +206,13 @@ export default function SeparacaoPage() {
           />
         )}
         {activeTab === "embalados" && (
-          <EmptyState message="Aba Embalados — será implementada em breve" />
+          <TabEmbalados
+            pedidos={grouped.embalados}
+            onUpdated={() => refetch()}
+          />
         )}
         {activeTab === "expedidos" && (
-          <EmptyState message="Aba Expedidos — será implementada em breve" />
+          <TabExpedidos pedidos={grouped.expedidos} />
         )}
       </main>
     </div>

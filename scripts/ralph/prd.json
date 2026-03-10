@@ -1,0 +1,101 @@
+{
+  "project": "SISO - Etiqueta (Busca + Auto-Print + Reimpressão)",
+  "branchName": "ralph/separacao-etiqueta",
+  "description": "Auto-print shipping labels when order is packed: create Tiny shipment group, fetch label URL, send to PrintNode, track etiqueta_status, enable reprint",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Tiny API functions for shipment group and label URLs",
+      "description": "As the system, I need to create shipment groups and fetch label URLs from Tiny's expedition API to obtain the shipping label for printing.",
+      "acceptanceCriteria": [
+        "Add async function criarAgrupamento(token: string, idsPedidos: number[]): Promise<{ id: number }> to src/lib/tiny-api.ts",
+        "criarAgrupamento calls POST /expedicao with body { idsPedidos } and returns the agrupamento id",
+        "Add async function obterEtiquetasAgrupamento(token: string, idAgrupamento: number): Promise<{ urls: string[] }> to src/lib/tiny-api.ts",
+        "obterEtiquetasAgrupamento calls GET /expedicao/{idAgrupamento}/etiquetas and returns the urls array",
+        "Both functions use existing tinyFetch helper with rate limiting and retry logic",
+        "Add TypeScript interfaces for the response types",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Etiqueta service (buscarEImprimirEtiqueta)",
+      "description": "As the system, I need a service that fetches the shipping label from Tiny and sends it to PrintNode on the correct printer.",
+      "acceptanceCriteria": [
+        "Create src/lib/etiqueta-service.ts",
+        "Export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void>",
+        "Step 1: fetch pedido from DB with empresa_origem_id, agrupamento_tiny_id, etiqueta_url, etiqueta_status",
+        "Step 2: if etiqueta_status = 'impresso', return early (idempotent)",
+        "Step 3: resolve label URL — if etiqueta_url exists use it; else if agrupamento_tiny_id exists call obterEtiquetasAgrupamento; else call criarAgrupamento then obterEtiquetasAgrupamento",
+        "Step 4: save agrupamento_tiny_id and etiqueta_url (urls[0]) to siso_pedidos",
+        "Step 5: update etiqueta_status = 'imprimindo'",
+        "Step 6: resolve printer via resolverImpressora(separado_por or operator, separacao_galpao_id) from printnode.ts",
+        "Step 7: call enviarImpressao from printnode.ts with the resolved printer and PDF URL",
+        "Step 8: update etiqueta_status = 'impresso' on success, 'falhou' on any error",
+        "Use token from empresa de origem (getValidTokenByEmpresa) for Tiny API calls",
+        "If no printer configured, set etiqueta_status = 'falhou' and log warning",
+        "Never expose etiqueta_url to frontend responses (LGPD)",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Trigger auto-print on pedido_completo in bipar endpoint",
+      "description": "As the system, I need the bip endpoint to fire-and-forget the label printing when all items are scanned.",
+      "acceptanceCriteria": [
+        "In src/app/api/separacao/bipar/route.ts, after returning 200 for pedido_completo status, call buscarEImprimirEtiqueta(pedidoId) as fire-and-forget",
+        "The auto-print must NOT block the 200 response to the client",
+        "Wrap in .catch() that logs error via logger but does not throw",
+        "If buscarEImprimirEtiqueta fails, etiqueta_status remains 'pendente' or becomes 'falhou' — operator can retry via reprint",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Reprint endpoint POST /api/separacao/reimprimir",
+      "description": "As an operator, I need to reprint a shipping label for an already-packed order when the first print failed or I need another copy.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/reimprimir/route.ts with POST handler",
+        "Validate session via getSessionUser(request) — return 401 if invalid",
+        "Accept body { pedido_id: string }",
+        "Validate pedido belongs to operator's galpão — return 403 if not",
+        "Validate pedido has status_separacao = 'embalado' or 'expedido' — return 400 otherwise",
+        "If pedido has etiqueta_url, attempt to print directly via enviarImpressao",
+        "If print fails (URL expired), refetch via obterEtiquetasAgrupamento using stored agrupamento_tiny_id, update etiqueta_url, retry print",
+        "If no agrupamento_tiny_id exists, call full flow via buscarEImprimirEtiqueta",
+        "Update etiqueta_status to 'impresso' on success, 'falhou' on error",
+        "Return { status: 'impresso', jobId } on success or { status: 'falhou', error } on failure",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Enable reprint button and etiqueta_status badges in frontend",
+      "description": "As an operator, I need the reprint button to work and see live label status badges in the Embalados tab.",
+      "acceptanceCriteria": [
+        "In src/components/separacao/tab-embalados.tsx, enable the 'Reimprimir Etiqueta' button (remove disabled state and placeholder tooltip from PRD 5)",
+        "Button calls POST /api/separacao/reimprimir with { pedido_id } using sisoFetch",
+        "Show toast on success: 'Etiqueta reimpressa' and on failure: 'Falha ao reimprimir etiqueta'",
+        "Add 'Tentar Novamente' button visible only when etiqueta_status = 'falhou', calls same reprint endpoint",
+        "etiqueta_status badge colors: pendente → yellow/amber, imprimindo → blue, impresso → green, falhou → red",
+        "Badge updates on polling refetch (already 10s interval from PRD 5)",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": ""
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+# Ralph Progress Log
+Started: Tue Mar 10 18:11:57 -03 2026
+---
+
+## Codebase Patterns
+- Tiny API functions use `tinyFetch<T>` helper with rate limiting and retry on 429
+- API response types are exported interfaces prefixed with `Tiny`
+- Tiny API v3 `POST /expedicao` accepts `idsPedidos` (order IDs) not just `idsNotasFiscais`
+- `ObterEtiquetasResponseModel` returns `{ urls: string[] }`
+- Always check `api tiny.json` in project root for endpoint schemas
+- PrintNode API key from `process.env.PRINTNODE_API_KEY`, printer resolved via `resolverImpressora(usuarioId, galpaoId)`
+- pedido.id is UUID, pedido.numero is the Tiny numeric ID — use numero for Tiny API calls
+- etiqueta_url contains personal data (LGPD) — never expose to frontend
+- Fire-and-forget pattern: call async fn (no await), `.catch()` for logging, return response after — used in bipar and aprovar endpoints
+- Session validation: `getSessionUser(request)` from `src/lib/session.ts` — returns `SessionUser | null`
+- Admin bypass for galpão restrictions: check `session.cargo !== "admin"` before galpão comparison
+- Reprint pattern: try cached URL → refetch via agrupamento → full flow fallback
+- etiqueta_status values: "pendente" | "imprimindo" | "impresso" | "falhou" (masculine, not "impressa")
+- Separacao frontend components: `src/components/separacao/` — receive data as props, parent handles fetching/polling
+
+## 2026-03-10 - US-001
+- Implemented criarAgrupamento and obterEtiquetasAgrupamento in src/lib/tiny-api.ts
+- Added TinyCriarAgrupamentoResponse and TinyEtiquetasAgrupamentoResponse interfaces
+- Files changed: src/lib/tiny-api.ts
+- **Learnings for future iterations:**
+  - CriarAgrupamentoRequestModel accepts both `idsNotasFiscais` and `idsPedidos` arrays
+  - tinyFetch already handles 429 retry, so no extra rate limiting needed in API functions
+  - Follow existing pattern: export interfaces, export async functions, use tinyFetch
+---
+
+## 2026-03-10 - US-002
+- Created `src/lib/etiqueta-service.ts` with `buscarEImprimirEtiqueta(pedidoId)`
+- Full flow: fetch pedido → resolve label URL (cached / agrupamento / create new) → resolve printer → send to PrintNode → update etiqueta_status
+- Idempotent: returns early if `etiqueta_status = 'impresso'`
+- On any error: sets `etiqueta_status = 'falhou'` and logs, never throws
+- Files changed: src/lib/etiqueta-service.ts (new)
+- **Learnings for future iterations:**
+  - PrintNode API key is in `process.env.PRINTNODE_API_KEY` (env var, not DB)
+  - `resolverImpressora(usuarioId, galpaoId)` checks user override first, then galpao default
+  - `getValidTokenByEmpresa(empresaId)` returns `{ token, connectionId }` — use empresa_origem_id from pedido
+  - pedido.id is UUID in Supabase but Tiny API needs numeric IDs — use `pedido.numero` for `criarAgrupamento()`
+  - etiqueta_url is never exposed to frontend (LGPD — contains personal data)
+---
+
+## 2026-03-10 - US-003
+- Added fire-and-forget `buscarEImprimirEtiqueta` call to bipar endpoint on `pedido_completo`
+- Brought `src/lib/session.ts` from separacao-sessao branch (dependency for bipar)
+- Created `src/app/api/separacao/bipar/route.ts` with etiqueta integration
+- The promise fires before the response return, runs in background (Node.js runtime)
+- Files changed: src/app/api/separacao/bipar/route.ts (new), src/lib/session.ts (new)
+- **Learnings for future iterations:**
+  - Bipar endpoint existed on `ralph/separacao-api` branch — had to copy to this branch with etiqueta addition
+  - Fire-and-forget pattern: call async function (no await), `.catch()` for logging, then return response
+  - `session.ts` provides `getSessionUser(request)` and `checkBipRateLimit(sessionId)` — needed by all separacao API routes
+  - When branches are parallel, dependencies must be copied — merge will reconcile later
+---
+
+## 2026-03-10 - US-004
+- Created `src/app/api/separacao/reimprimir/route.ts` with POST handler
+- Session validation via `getSessionUser(request)` — returns 401 if invalid
+- Validates pedido belongs to operator's galpão (403) and has status_separacao 'embalado' or 'expedido' (400)
+- 3-tier fallback: (1) try cached etiqueta_url → (2) refetch via agrupamento_tiny_id → (3) full buscarEImprimirEtiqueta flow
+- Printer resolved via `resolverImpressora(separado_por ?? session.id, galpaoId)` — uses session user as fallback for operator override
+- Returns `{ status: 'impresso', jobId }` on success, `{ status: 'falhou', error }` on failure
+- Admins can reprint any pedido; operators restricted to their galpão
+- Files changed: src/app/api/separacao/reimprimir/route.ts (new)
+- **Learnings for future iterations:**
+  - Reprint endpoint follows same session validation pattern as bipar but doesn't need rate limiting (manual action)
+  - `enviarImpressao` throws on failure — catch to detect expired URLs and fall through to refetch
+  - After `buscarEImprimirEtiqueta`, re-read `etiqueta_status` from DB to check if it succeeded (the function doesn't return status)
+  - Admin bypass for galpão check: `session.cargo !== "admin"` before comparing galpão IDs
+---
+
+## 2026-03-10 - US-005
+- Created `src/components/separacao/tab-embalados.tsx` with full reprint functionality
+- Exports `TabEmbalados` component and `PedidoEmbalado` interface
+- etiqueta_status badge with 4 colors: pendente (amber), imprimindo (blue), impresso (green), falhou (red)
+- "Reimprimir Etiqueta" button calls `POST /api/separacao/reimprimir` with `{ pedido_id }`
+- "Tentar Novamente" button (red variant) shown only when `etiqueta_status = 'falhou'`
+- Toast feedback: success → "Etiqueta reimpressa", failure → "Falha ao reimprimir etiqueta"
+- Loading state with spinner on button during reprint
+- Expandable row showing item details
+- Fixed mock data: "impressa" → "impresso" to match backend `etiqueta_status` values
+- Badge updates automatically via polling refetch (parent passes fresh data as props)
+- Files changed: src/components/separacao/tab-embalados.tsx (new), src/data/mock-separacao.ts (fix), scripts/ralph/prd.json
+- **Learnings for future iterations:**
+  - `sisoFetch` wrapper reads `siso_session_id` from localStorage for X-Session-Id header — session creation is from PRD 2 branch
+  - Component receives data as props — parent page handles TanStack Query polling, so badge auto-updates
+  - Mock data had "impressa" (feminine) but backend uses "impresso" (masculine) — always match backend values
+  - Frontend separacao components go in `src/components/separacao/` directory
+  - `formatTime` from domain-helpers handles ISO → "HH:MM" formatting
+---

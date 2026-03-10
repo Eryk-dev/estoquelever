@@ -1,0 +1,62 @@
+# Ralph Progress Log
+Started: Tue Mar 10 17:15:55 -03 2026
+
+## Codebase Patterns
+- Session validation: `getSessionUser(request)` from `src/lib/session.ts` — returns `SessionUser | null`
+- Operators have `galpaoId` resolved from cargo; admins have `galpaoId = null` and must pass `?galpao_id=UUID`
+- Supabase FK joins: `table(col1, col2)` in select — cast result with `as unknown as Type`
+- Localizacao for separation comes from `siso_pedido_item_estoques` filtered by empresas in the operator's galpão
+- Rate limiting for bip: `checkBipRateLimit(sessionId)` from `src/lib/session.ts`
+- All API routes use `createServiceClient()` for DB, `logger` for logging, `NextResponse.json` for responses
+- `siso_pedido_itens.quantidade_bipada` defaults to 0 (integer), `bipado_completo` defaults to false
+- Operator-only endpoints guard with `if (!session.galpaoId)` → 403 (admins have null galpaoId)
+- Pedido galpão ownership check: `pedido.separacao_galpao_id !== session.galpaoId` → 403
+
+---
+
+## 2026-03-11 - US-001
+- Created `src/app/api/separacao/route.ts` with GET handler
+- Session validation via `getSessionUser(request)` — 401 if invalid
+- Accepts `?status` filter for `status_separacao` and `?galpao_id` for admin users
+- Filters by `separacao_galpao_id`, excludes `status = 'cancelado'`, orders by `data ASC`
+- Joins `siso_pedido_itens` for item data (produto_id, sku, gtin, descricao, quantidade_pedida, quantidade_bipada, bipado_completo)
+- Resolves localizacao from `siso_pedido_item_estoques` filtered by empresas in operator's galpão
+- 3 efficient queries: pedidos+items (FK join), empresas in galpão, batch localizacao
+- Files changed: `src/app/api/separacao/route.ts`
+- **Learnings for future iterations:**
+  - Branch `ralph/separacao-api` must be based on `ralph/separacao-sessao` (which has session.ts)
+  - `siso_pedido_item_estoques` has localizacao per empresa — use empresa_id IN (galpão empresas) to resolve
+  - Multiple estoques may exist per item (one per empresa) — Map with "pedidoId:produtoId" key picks first match
+---
+
+## 2026-03-11 - US-002
+- Created `src/app/api/separacao/bipar/route.ts` with POST handler
+- Session validation via `getSessionUser(request)` — 401 if invalid
+- Rate limiting via `checkBipRateLimit(sessionId)` — 429 if exceeded
+- Admins cannot bip (403) — only operators with a galpão
+- Validates `{ codigo }` body, calls `supabase.rpc('siso_processar_bip', { p_codigo, p_usuario_id, p_galpao_id })`
+- Maps PL/pgSQL return statuses to HTTP: parcial/item_completo/pedido_completo → 200, nao_encontrado → 404, ja_completo → 409
+- For `pedido_completo`, returns `etiqueta_status: "pendente"` (hardcoded from AC, not from RPC)
+- Files changed: `src/app/api/separacao/bipar/route.ts`
+- **Learnings for future iterations:**
+  - PL/pgSQL function returns JSONB — Supabase `.rpc()` returns it as a parsed JS object directly
+  - The `pedido_completo` response from PL/pgSQL includes sku/bipados/total but the AC specifies only `etiqueta_status: "pendente"` — follow AC contract
+  - Admin users have `galpaoId = null` so they cannot call bipar (needs a galpão context)
+  - `request.headers.get("X-Session-Id")!` is safe after `getSessionUser` validates session exists
+---
+
+## 2026-03-11 - US-003
+- Created `src/app/api/separacao/desfazer-bip/route.ts` with POST handler
+- Session validation + admin guard (403 if no galpão)
+- Validates body `{ pedido_id: string, produto_id: number }`
+- Validates pedido belongs to operator's galpão via `separacao_galpao_id`
+- Decrements `quantidade_bipada` by 1 (guards against ≤ 0), reverts `bipado_completo` if below `quantidade_pedida`
+- Status revert logic: embalado → em_separacao (clears embalado_em, etiqueta_status), em_separacao → pendente if SUM(bipada) = 0 (clears separado_por, separado_em)
+- Re-reads all items after update to compute accurate SUM for zero-check
+- Returns `{ pedido_id, produto_id, quantidade_bipada, bipado_completo, status_separacao }`
+- Files changed: `src/app/api/separacao/desfazer-bip/route.ts`
+- **Learnings for future iterations:**
+  - Supabase update doesn't return the updated row by default — re-query if you need fresh data after update
+  - When summing bipada after an item update, the re-read from DB already reflects the new value since we updated first
+  - Admin guard pattern: `if (!session.galpaoId)` is reused across bipar and desfazer-bip endpoints
+---

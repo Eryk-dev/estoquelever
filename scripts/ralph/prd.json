@@ -1,0 +1,99 @@
+{
+  "project": "SISO - API de Separação (Bip, Lista, Undo, Expedir)",
+  "branchName": "ralph/separacao-api",
+  "description": "API endpoints for order separation: list orders by galpão, process barcode scan (bip), undo bip, mark as shipped, force pending. All session-protected.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "GET /api/separacao — list orders by galpão with items and bip state",
+      "description": "As an operator, I need to fetch orders assigned to my galpão with their items and bip progress so that the frontend can display the separation queue.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/route.ts with GET handler",
+        "Validate session via getSessionUser(request) from src/lib/session.ts — return 401 if invalid",
+        "Accept query param status to filter by status_separacao (aguardando_nf, pendente, em_separacao, embalado, expedido)",
+        "Filter pedidos by separacao_galpao_id = session user's galpaoId",
+        "Admin (galpaoId null) can pass ?galpao_id=UUID to filter; return 400 if admin calls without galpao_id",
+        "Exclude pedidos with status = 'cancelado'",
+        "Join siso_pedido_itens for item data: produto_id, sku, gtin, descricao, quantidade_pedida, quantidade_bipada, bipado_completo",
+        "Resolve localizacao from siso_pedido_item_estoques filtered by empresas in the operator's galpão",
+        "Return array of pedidos with nested itens[], ordered by data ASC",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "POST /api/separacao/bipar — process barcode scan",
+      "description": "As an operator, I need to scan a barcode (GTIN or SKU) to confirm I picked the correct item, with the server processing the bip atomically.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/bipar/route.ts with POST handler",
+        "Validate session via getSessionUser(request) — return 401 { error: 'sessao_invalida' } if invalid",
+        "Apply rate limiting via checkBipRateLimit(sessionId) — return 429 { error: 'rate_limit' } if exceeded",
+        "Accept body { codigo: string } (SKU or GTIN)",
+        "Call supabase.rpc('siso_processar_bip', { p_codigo: codigo, p_usuario_id: session.id, p_galpao_id: session.galpaoId })",
+        "Map PL/pgSQL return status to HTTP responses: 'parcial' → 200, 'item_completo' → 200, 'pedido_completo' → 200, 'nao_encontrado' → 404 { error: 'item_nao_encontrado', codigo }, 'ja_completo' → 409 { error: 'item_ja_completo', pedido_id, sku }",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "POST /api/separacao/desfazer-bip — undo a bip",
+      "description": "As an operator, I need to undo a mistaken bip to correct errors without calling an admin.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/desfazer-bip/route.ts with POST handler",
+        "Validate session via getSessionUser(request) — return 401 if invalid",
+        "Accept body { pedido_id: string, produto_id: number }",
+        "Validate pedido belongs to operator's galpão (separacao_galpao_id = session.galpaoId) — return 403 if not",
+        "Decrement quantidade_bipada by 1 (minimum 0) on the matching siso_pedido_itens row",
+        "If quantidade_bipada < quantidade_pedida after decrement, set bipado_completo = false",
+        "If pedido status_separacao = 'embalado' after undo, revert to 'em_separacao' and clear embalado_em and etiqueta_status",
+        "If pedido status_separacao = 'em_separacao' and SUM(quantidade_bipada) across all items = 0, revert to 'pendente' and clear separado_por and separado_em",
+        "Return updated item state and pedido status_separacao",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "POST /api/separacao/expedir — mark orders as shipped",
+      "description": "As an operator, I need to mark packed orders as shipped to move them out of the active separation queue.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/expedir/route.ts with POST handler",
+        "Validate session via getSessionUser(request) — return 401 if invalid",
+        "Accept body { pedido_ids: string[] }",
+        "Validate all pedidos belong to operator's galpão — return 403 if any don't",
+        "Validate all pedidos have status_separacao = 'embalado' — return 400 with list of invalid pedido_ids if not",
+        "UPDATE siso_pedidos SET status_separacao = 'expedido' WHERE id IN (pedido_ids) AND status_separacao = 'embalado'",
+        "Return { updated: number } with count of updated rows",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "PATCH /api/separacao/{pedidoId}/forcar-pendente — admin force pending",
+      "description": "As an admin, I need to force an order from aguardando_nf to pendente when the NF webhook fails, so the order can proceed to separation.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts with PATCH handler",
+        "Validate session via getSessionUser(request) — return 401 if invalid",
+        "Validate session user cargo = 'admin' — return 403 if not admin",
+        "Validate pedido exists and has status_separacao = 'aguardando_nf' — return 400 if not",
+        "UPDATE siso_pedidos SET status_separacao = 'pendente' WHERE id = pedidoId AND status_separacao = 'aguardando_nf'",
+        "Return { success: true, pedido_id: pedidoId }",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

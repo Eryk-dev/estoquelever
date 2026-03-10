@@ -11,6 +11,16 @@ Started: Tue Mar 10 20:18:10 -03 2026
 - When renaming DB columns, update ALL source files that reference them (grep for old name in src/ — includes API routes, components, mock data, lib services)
 - PL/pgSQL functions referencing renamed columns must also be updated via CREATE OR REPLACE in the same migration
 - Status values changed: `pendente` → `aguardando_separacao`, `expedido` removed (mapped to `embalado`). Valid values: aguardando_nf, aguardando_separacao, em_separacao, separado, embalado, cancelado
+- `siso_pedidos.id` is `text` (not uuid) — all PL/pgSQL and API functions accepting pedido IDs must use `text[]`/`text`
+- `siso_pedido_itens` has no `unidade` column — default to 'UN' wherever unidade is needed
+- Localizacao is in `siso_pedido_item_estoques`, joined via pedido_id + produto_id + empresa_id (for origin empresa)
+- Filter by galpao via `empresa_origem_id` → `siso_empresas.galpao_id` join (more robust than `separacao_galpao_id`)
+- Order date column in DB is `data` (not `data_pedido`)
+- TABLE-returning PL/pgSQL functions return 0 rows for "not found" — callers check `.length === 0` or empty result
+- GET /api/separacao returns `{ counts: SeparacaoCounts, pedidos: array }` — not a raw array
+- Role-based filtering in separacao APIs uses `X-User-Cargo` header (not session-based galpao_id)
+- Supabase FK join syntax: `siso_empresas(nome)` in select — returns `{ nome }` object on each row
+- UF/cidade are NOT stored in siso_pedidos — return null (payload_original only stores Tiny order ID)
 
 ## 2026-03-10 - US-001
 - Added types: StatusSeparacao, ProdutoConsolidado, BipEmbalagemResult, SeparacaoFilter, SeparacaoCounts, PedidoItem
@@ -41,4 +51,56 @@ Started: Tue Mar 10 20:18:10 -03 2026
   - `etiqueta_url` already existed from the old migration — skip re-adding
   - The old `expedido` status and `expedir/route.ts` still exist but will be superseded by the new flow
   - Dynamic DO block is needed to drop auto-generated CHECK constraint names in PostgreSQL
+---
+
+## 2026-03-10 - US-003
+- Created PL/pgSQL function `siso_consolidar_produtos_separacao(p_pedido_ids text[], p_order_by text)`
+- Groups siso_pedido_itens by produto_id, SUMs quantidade_pedida across given pedidos
+- Joins siso_pedido_item_estoques for localizacao using origin empresa (empresa_origem_id from siso_pedidos)
+- Supports ORDER BY localizacao (default), sku, or descricao via CASE expression
+- Defaults unidade to 'UN' (no unidade column exists in siso_pedido_itens)
+- Applied migration via Supabase MCP and verified with real data
+- Files changed: supabase/migrations/20260311_fn_consolidar_produtos_separacao.sql
+- **Learnings for future iterations:**
+  - `siso_pedidos.id` is `text` not `uuid` — PL/pgSQL functions must use `text[]` for pedido_id arrays
+  - `siso_pedido_itens` has no `unidade` column — default to 'UN' in functions and APIs
+  - `produto_id` is `bigint` in DB but returned as `text` by the function (cast required)
+  - localizacao lives in `siso_pedido_item_estoques`, joined via pedido_id + produto_id + empresa_id matching siso_pedidos.empresa_origem_id
+  - When calling this function via Supabase RPC, pass `p_pedido_ids` as a text array and `p_order_by` as string
+---
+
+## 2026-03-10 - US-004
+- Created PL/pgSQL function `siso_processar_bip_embalagem(p_sku text, p_galpao_id uuid, p_quantidade int)`
+- Finds oldest `separado`-status order in galpao by joining `empresa_origem_id` → `siso_empresas.galpao_id`
+- Matches item by SKU or GTIN, locks with `FOR UPDATE OF i`
+- Increments `quantidade_bipada`, sets `bipado_completo` when `>= quantidade_pedida`
+- Checks all items complete → transitions pedido to `embalado` + sets `embalagem_concluida_em`
+- Returns TABLE(pedido_id text, produto_id text, quantidade_bipada numeric, bipado_completo boolean, pedido_completo boolean)
+- Returns empty result set (no rows) when no matching item found
+- Applied migration via Supabase MCP
+- Files changed: supabase/migrations/20260311_fn_processar_bip_embalagem.sql
+- **Learnings for future iterations:**
+  - Use `empresa_origem_id` → `siso_empresas.galpao_id` join to filter by galpao (more robust than `separacao_galpao_id` which may not be set)
+  - Order date column is `data` (not `data_pedido`) in `siso_pedidos`
+  - `FOR UPDATE OF i` locks just the item row in a joined query — specify the table alias
+  - TABLE-returning functions return empty result set (0 rows) for "not found" — callers check for empty result, not NULL
+  - When calling via Supabase RPC: `supabase.rpc('siso_processar_bip_embalagem', { p_sku, p_galpao_id, p_quantidade })`
+---
+
+## 2026-03-10 - US-005
+- Refactored GET /api/separacao to match new requirements
+- Returns `{ counts: SeparacaoCounts, pedidos: array }` instead of raw array
+- Counts use 5 parallel HEAD queries (one per status) — efficient, no data transfer
+- Role-based filtering via X-User-Cargo header: operador_cwb/operador_sp get galpao-filtered results
+- Supports query params: status_separacao, empresa_origem_id, sort, busca
+- Search via Supabase `.or()` with ilike on numero, id_pedido_ecommerce, cliente_nome
+- Each pedido includes empresa_origem_nome via Supabase FK join `siso_empresas(nome)`
+- Updated separacao/page.tsx to handle new response shape (`json.pedidos ?? json`)
+- Files changed: src/app/api/separacao/route.ts, src/app/separacao/page.tsx
+- **Learnings for future iterations:**
+  - UF and cidade are NOT stored in siso_pedidos DB — payload_original only stores the Tiny order ID, not the full order object
+  - Supabase FK join works with `siso_empresas(nome)` when there's only one FK to that table — no need for `!column_name` disambiguation
+  - Supabase `select("*", { count: "exact", head: true })` is efficient for counting — no data transferred
+  - Avoid `Function` type in TypeScript generics — ESLint will flag it; inline the logic instead
+  - When changing API response shape, update ALL consumers (page.tsx fetch functions) to avoid runtime breakage
 ---

@@ -52,8 +52,8 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pedido_id is text (not uuid) in DB — function uses text[] param. No unidade column exists; defaults to 'UN'."
     },
     {
       "id": "US-004",
@@ -72,8 +72,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pedido_id is text (not uuid) in DB — function returns text. Filters galpao via empresa_origem_id → siso_empresas.galpao_id join (more robust than separacao_galpao_id)."
     },
     {
       "id": "US-005",
@@ -91,8 +91,8 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": "Check if src/app/api/separacao/route.ts already exists from previous Ralph branch. If it does, refactor it to match the new requirements instead of creating a new file."
+      "passes": true,
+      "notes": "Refactored existing route. Response shape changed from array to { counts, pedidos }. UF/cidade not in DB — returned as null. empresa_origem_nome via Supabase FK join."
     },
     {
       "id": "US-006",

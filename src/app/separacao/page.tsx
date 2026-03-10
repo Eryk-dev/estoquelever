@@ -73,7 +73,9 @@ export default function SeparacaoPage() {
     queryFn: async () => {
       const res = await sisoFetch(`/api/separacao${galpaoParam}`);
       if (!res.ok) return [];
-      return res.json();
+      const json = await res.json();
+      // API returns { counts, pedidos } — extract pedidos array
+      return json.pedidos ?? json;
     },
     enabled: canFetch,
     refetchInterval: 10000,

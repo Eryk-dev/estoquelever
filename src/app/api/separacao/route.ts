@@ -45,7 +45,8 @@ export async function GET(request: NextRequest) {
       .from("siso_pedidos")
       .select(
         `id, numero, data, cliente_nome, id_pedido_ecommerce, nome_ecommerce,
-         forma_envio_descricao, status_separacao, separado_por, separado_em,
+         forma_envio_descricao, status_separacao, sugestao, decisao_final,
+         separado_por, separado_em,
          embalado_em, etiqueta_url, etiqueta_status, url_danfe, chave_acesso_nf,
          siso_pedido_itens(produto_id, sku, gtin, descricao, quantidade_pedida, quantidade_bipada, bipado_completo)`,
       )
@@ -135,6 +136,7 @@ export async function GET(request: NextRequest) {
         nome_ecommerce: p.nome_ecommerce,
         forma_envio_descricao: p.forma_envio_descricao,
         status_separacao: p.status_separacao,
+        decisao: (p as Record<string, unknown>).decisao_final ?? (p as Record<string, unknown>).sugestao ?? null,
         separado_por: p.separado_por,
         separado_em: p.separado_em,
         embalado_em: p.embalado_em,

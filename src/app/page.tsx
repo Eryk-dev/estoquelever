@@ -1,219 +1,156 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useQueryClient, useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { LogOut, RefreshCw, Settings } from "lucide-react";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { ClipboardList, PackageSearch, Settings, LogOut } from "lucide-react";
 import Link from "next/link";
-
-import { AppShell } from "@/components/app-shell";
-import { Tabs } from "@/components/ui/tabs";
-import { EmptyState } from "@/components/ui/empty-state";
-import { PedidoCardConcluido } from "@/components/pedido/pedido-card-concluido";
-import { PedidoCard } from "@/components/pedido/pedido-card";
 import { useAuth } from "@/lib/auth-context";
-import {
-  filtrarPendentes,
-  filtrarConcluidos,
-  filtrarAuto,
-} from "@/lib/filtrar-pedidos";
 import { CARGO_LABELS } from "@/types";
+import { cn } from "@/lib/utils";
 
-import type { Tab, Pedido, Decisao } from "@/types";
-
-async function fetchPedidos(): Promise<Pedido[]> {
-  const res = await fetch("/api/pedidos");
-  if (!res.ok) throw new Error("Erro ao carregar pedidos");
-  return res.json();
+interface Module {
+  id: string;
+  href: string;
+  title: string;
+  subtitle: string;
+  description: string;
+  icon: typeof ClipboardList;
+  color: string;
+  soon?: boolean;
 }
 
-export default function DashboardPage() {
-  const { user, logout } = useAuth();
-  const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<Tab["id"]>("pendente");
+const MODULES: Module[] = [
+  {
+    id: "siso",
+    href: "/siso",
+    title: "SISO",
+    subtitle: "Separação de Ordens",
+    description:
+      "Processamento e aprovação de pedidos entre filiais, com sugestão automática de decisão.",
+    icon: ClipboardList,
+    color: "var(--color-info)",
+  },
+  {
+    id: "separacao",
+    href: "/separacao",
+    title: "Separação",
+    subtitle: "Agregador por Galpão",
+    description:
+      "Separação física com scan de itens, localização correta por galpão e impressão automática de etiquetas.",
+    icon: PackageSearch,
+    color: "var(--color-positive)",
+  },
+];
 
-  const { data: allPedidos = [], isRefetching } = useQuery({
-    queryKey: ["pedidos"],
-    queryFn: fetchPedidos,
-    enabled: !!user,
-    refetchInterval: 30_000,
-  });
+export default function HomePage() {
+  const { user, loading, logout } = useAuth();
+  const router = useRouter();
 
-  // Split into categories
-  const pendentes = useMemo(
-    () => allPedidos.filter((p) => p.status === "pendente"),
-    [allPedidos],
-  );
-  const concluidos = useMemo(
-    () => allPedidos.filter((p) => p.status === "concluido" && p.tipoResolucao !== "auto"),
-    [allPedidos],
-  );
-  const auto = useMemo(
-    () => allPedidos.filter((p) => p.tipoResolucao === "auto"),
-    [allPedidos],
-  );
-
-  // Filter by role
-  const cargo = user?.cargo ?? "admin";
-
-  const pendentesFiltrados = useMemo(
-    () => filtrarPendentes(pendentes, cargo),
-    [pendentes, cargo],
-  );
-  const concluidosFiltrados = useMemo(
-    () => filtrarConcluidos(concluidos, cargo),
-    [concluidos, cargo],
-  );
-  const autoFiltrados = useMemo(
-    () => filtrarAuto(auto, cargo),
-    [auto, cargo],
-  );
-
-  const tabs: Tab[] = [
-    { id: "pendente", label: "Pendente", count: pendentesFiltrados.length },
-    { id: "concluidos", label: "Concluídos", count: concluidosFiltrados.length },
-    { id: "auto", label: "Auto", count: autoFiltrados.length },
-  ];
-
-  const visibleTabs = cargo === "comprador" ? tabs.filter((t) => t.id !== "auto") : tabs;
-
-  async function handleAprovar(id: string, decisao: Decisao) {
-    const pedido = pendentes.find((p) => p.id === id);
-    try {
-      const res = await fetch("/api/pedidos/aprovar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pedidoId: id,
-          decisao,
-          operadorId: user?.id,
-          operadorNome: user?.nome,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error ?? "Erro ao aprovar pedido");
-        return;
-      }
-
-      toast.success(`Pedido #${pedido?.numero ?? id} aprovado → ${decisao}`);
-      queryClient.invalidateQueries({ queryKey: ["pedidos"] });
-    } catch {
-      toast.error("Erro de conexão ao aprovar pedido");
+  useEffect(() => {
+    if (!loading && !user) {
+      router.replace("/login");
     }
-  }
+  }, [user, loading, router]);
 
-  function handleLogout() {
-    logout();
-  }
-
-  const headerRight = (
-    <>
-      {user?.cargo === "admin" && (
-        <Link
-          href="/configuracoes"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
-          title="Configurações"
-        >
-          <Settings className="h-4 w-4" />
-        </Link>
-      )}
-      <button
-        type="button"
-        onClick={() => queryClient.invalidateQueries({ queryKey: ["pedidos"] })}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
-        title="Atualizar"
-      >
-        <RefreshCw className={`h-4 w-4 ${isRefetching ? "animate-spin" : ""}`} />
-      </button>
-      <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
-        <span className="font-mono text-xs font-semibold text-ink">
-          {user?.nome}
-        </span>
-        <span className="text-[10px] text-ink-faint">
-          {user ? CARGO_LABELS[user.cargo] : ""}
-        </span>
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-ink-faint border-t-ink" />
       </div>
-      <button
-        type="button"
-        onClick={handleLogout}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
-        title="Sair"
-      >
-        <LogOut className="h-4 w-4" />
-      </button>
-    </>
-  );
+    );
+  }
+
+  if (!user) return null;
 
   return (
-    <AppShell
-      title="SISO"
-      subtitle="Separação de Ordens"
-      headerRight={headerRight}
-    >
-      {/* Tab bar */}
-      <div className="mb-5">
-        <Tabs
-          tabs={visibleTabs}
-          activeTab={activeTab}
-          onChange={(id) => setActiveTab(id as Tab["id"])}
-        />
-      </div>
-
-      {/* Pendente tab */}
-      {activeTab === "pendente" && (
-        <div className="flex flex-col gap-3">
-          {pendentesFiltrados.length === 0 ? (
-            <EmptyState message="Nenhum pedido pendente no momento." />
-          ) : (
-            pendentesFiltrados.map((pedido) => (
-              <PedidoCard
-                key={pedido.id}
-                pedido={pedido}
-                onAprovar={handleAprovar}
-                onStockUpdated={() => queryClient.invalidateQueries({ queryKey: ["pedidos"] })}
-              />
-            ))
-          )}
+    <div className="min-h-screen bg-surface">
+      {/* Header */}
+      <header className="border-b border-line bg-paper">
+        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
+          <div className="flex-1">
+            <h1 className="text-base font-bold tracking-tight text-ink">
+              SISO Platform
+            </h1>
+            <p className="text-[11px] text-ink-faint">
+              Gestão de Pedidos & Separação
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {user.cargo === "admin" && (
+              <Link
+                href="/configuracoes"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
+                title="Configurações"
+              >
+                <Settings className="h-4 w-4" />
+              </Link>
+            )}
+            <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
+              <span className="font-mono text-xs font-semibold text-ink">
+                {user.nome}
+              </span>
+              <span className="text-[10px] text-ink-faint">
+                {CARGO_LABELS[user.cargo]}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={logout}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
+              title="Sair"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
         </div>
-      )}
+      </header>
 
-      {/* Concluidos tab */}
-      {activeTab === "concluidos" && (
-        <div className="flex flex-col gap-1.5">
-          {concluidosFiltrados.length === 0 ? (
-            <EmptyState message="Nenhum pedido concluído ainda." />
-          ) : (
-            <>
-              <p className="mb-2 text-xs text-ink-faint">
-                {concluidosFiltrados.length} pedido{concluidosFiltrados.length !== 1 ? "s" : ""} concluído{concluidosFiltrados.length !== 1 ? "s" : ""}
-              </p>
-              {concluidosFiltrados.map((pedido) => (
-                <PedidoCardConcluido key={pedido.id} pedido={pedido} />
-              ))}
-            </>
-          )}
+      {/* Module cards */}
+      <main className="mx-auto max-w-3xl px-4 py-8">
+        <p className="mb-5 text-sm text-ink-muted">
+          Selecione um módulo para começar:
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {MODULES.map((mod) => {
+            const Icon = mod.icon;
+            return (
+              <Link
+                key={mod.id}
+                href={mod.soon ? "#" : mod.href}
+                aria-disabled={mod.soon}
+                className={cn(
+                  "group relative flex flex-col gap-3 rounded-xl border border-line bg-paper p-5 transition-all",
+                  mod.soon
+                    ? "pointer-events-none opacity-50"
+                    : "hover:border-ink-faint hover:shadow-sm active:scale-[0.98]",
+                )}
+              >
+                {mod.soon && (
+                  <span className="absolute right-3 top-3 rounded-full border border-line bg-surface px-2 py-0.5 text-[10px] font-semibold text-ink-faint">
+                    Em breve
+                  </span>
+                )}
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-lg"
+                  style={{
+                    backgroundColor: `color-mix(in srgb, ${mod.color} 12%, transparent)`,
+                    color: mod.color,
+                  }}
+                >
+                  <Icon className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-ink">{mod.title}</h2>
+                  <p className="text-xs text-ink-muted">{mod.subtitle}</p>
+                </div>
+                <p className="text-xs leading-relaxed text-ink-faint">
+                  {mod.description}
+                </p>
+              </Link>
+            );
+          })}
         </div>
-      )}
-
-      {/* Auto tab */}
-      {activeTab === "auto" && (
-        <div className="flex flex-col gap-1.5">
-          {autoFiltrados.length === 0 ? (
-            <EmptyState message="Nenhum pedido processado automaticamente." />
-          ) : (
-            <>
-              <p className="mb-2 text-xs text-ink-faint">
-                {autoFiltrados.length} pedido{autoFiltrados.length !== 1 ? "s" : ""} processado{autoFiltrados.length !== 1 ? "s" : ""} automaticamente
-              </p>
-              {autoFiltrados.map((pedido) => (
-                <PedidoCardConcluido key={pedido.id} pedido={pedido} />
-              ))}
-            </>
-          )}
-        </div>
-      )}
-    </AppShell>
+      </main>
+    </div>
   );
 }

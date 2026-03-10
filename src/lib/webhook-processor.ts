@@ -1,5 +1,5 @@
 import { createServiceClient } from "./supabase-server";
-import { getPedido, getEstoque, buscarProdutoPorSku, getProdutoDetalhe, getProdutoKit } from "./tiny-api";
+import { getPedido, getEstoque, buscarProdutoPorSku, getProdutoDetalhe, getProdutoKit, obterNotaFiscal } from "./tiny-api";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { registerApiCall, waitForRateLimit } from "./rate-limiter";
@@ -7,6 +7,7 @@ import { processQueue } from "./execution-worker";
 import { getEmpresasDoGrupo, agregarEstoquePorGalpao } from "./grupo-resolver";
 import type { EmpresaGrupo } from "./grupo-resolver";
 import { logger } from "./logger";
+import type { NfWebhookPayload } from "./nf-webhook-handler";
 import type { TinyPedidoItem } from "./tiny-api";
 
 /** Serialize any thrown value into a readable string */
@@ -387,6 +388,69 @@ export async function processWebhook(
         processado_em: new Date().toISOString(),
       })
       .eq("id", webhookLogId);
+
+    // 12. Reconcile pending NF webhooks (race condition: NF arrived before pedido was saved)
+    try {
+      const { data: pendingNfWebhooks } = await supabase
+        .from("siso_webhook_logs")
+        .select("id, payload")
+        .eq("status", "aguardando_pedido")
+        .eq("empresa_id", empresaOrigemId)
+        .like("dedup_key", "nf_%");
+
+      if (pendingNfWebhooks && pendingNfWebhooks.length > 0) {
+        for (const nfLog of pendingNfWebhooks) {
+          const nfPayload = nfLog.payload as NfWebhookPayload | null;
+          const idNotaFiscalTiny = nfPayload?.dados?.idNotaFiscalTiny;
+          if (!idNotaFiscalTiny) continue;
+
+          // Match this NF to the just-saved pedido via Tiny API
+          let isMatch = false;
+          try {
+            await waitForRateLimit(empresaOrigemId);
+            await registerApiCall(empresaOrigemId, "GET /notas/{id}");
+            const nf = await obterNotaFiscal(origemToken, idNotaFiscalTiny);
+            if (nf.origem?.tipo === "venda" && nf.origem?.id === pedidoTinyId) {
+              isMatch = true;
+            }
+          } catch {
+            continue;
+          }
+
+          if (!isMatch) continue;
+
+          // Transition aguardando_nf → pendente and save NF data
+          const { data: transitioned } = await supabase
+            .from("siso_pedidos")
+            .update({
+              status_separacao: "pendente",
+              url_danfe: nfPayload.dados.urlDanfe ?? null,
+              chave_acesso_nf: nfPayload.dados.chaveAcesso ?? null,
+            })
+            .eq("id", pedidoTinyId)
+            .eq("status_separacao", "aguardando_nf")
+            .select("id")
+            .maybeSingle();
+
+          // Mark NF webhook as processed
+          await supabase
+            .from("siso_webhook_logs")
+            .update({ status: "processado", processado_em: new Date().toISOString() })
+            .eq("id", nfLog.id);
+
+          logger.info("processor", "Reconciled pending NF webhook", {
+            pedidoId: pedidoTinyId,
+            idNotaFiscalTiny: String(idNotaFiscalTiny),
+            transitioned: !!transitioned,
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn("processor", "NF reconciliation check failed", {
+        pedidoId: pedidoTinyId,
+        error: serializeError(err),
+      });
+    }
 
     logger.info("processor", "Webhook processing complete", {
       pedidoId: pedidoTinyId,

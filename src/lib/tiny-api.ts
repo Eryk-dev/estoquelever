@@ -166,24 +166,27 @@ export async function getEstoque(
   return tinyFetch<TinyEstoque>(`/estoque/${produtoId}`, { token });
 }
 
-/** Product detail (tipo + image) */
+/** Product detail (tipo + image + gtin) */
 export interface TinyProdutoDetalhe {
   tipo: string; // K=Kit, S=Simples, V=Variacoes, F=Fabricado, M=MateriaPrima
   imagemUrl: string | null;
+  gtin: string | null;
 }
 
-/** Fetch product detail — returns tipo and first image URL */
+/** Fetch product detail — returns tipo, first image URL, and GTIN */
 export async function getProdutoDetalhe(
   token: string,
   produtoId: number,
 ): Promise<TinyProdutoDetalhe> {
   const res = await tinyFetch<{
     tipo?: string;
+    gtin?: string | null;
     anexos?: Array<{ url?: string | null }>;
   }>(`/produtos/${produtoId}`, { token });
   return {
     tipo: res.tipo ?? "S",
     imagemUrl: res.anexos?.[0]?.url ?? null,
+    gtin: res.gtin || null,
   };
 }
 

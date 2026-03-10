@@ -1,101 +1,84 @@
 {
-  "project": "SISO - Etiqueta (Busca + Auto-Print + Reimpressão)",
-  "branchName": "ralph/separacao-etiqueta",
-  "description": "Auto-print shipping labels when order is packed: create Tiny shipment group, fetch label URL, send to PrintNode, track etiqueta_status, enable reprint",
+  "project": "SISO - Separação Schema + Dados Base",
+  "branchName": "ralph/separacao-schema",
+  "description": "Database migrations and webhook-processor/approval changes to persist separation tracking data (GTIN, location, separation galpão, separation status)",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Tiny API functions for shipment group and label URLs",
-      "description": "As the system, I need to create shipment groups and fetch label URLs from Tiny's expedition API to obtain the shipping label for printing.",
+      "title": "Migration: separation columns, indexes, and PL/pgSQL function",
+      "description": "As the system, I need all separation-related columns, indexes, and the siso_processar_bip function created in the database so that subsequent features can use them.",
       "acceptanceCriteria": [
-        "Add async function criarAgrupamento(token: string, idsPedidos: number[]): Promise<{ id: number }> to src/lib/tiny-api.ts",
-        "criarAgrupamento calls POST /expedicao with body { idsPedidos } and returns the agrupamento id",
-        "Add async function obterEtiquetasAgrupamento(token: string, idAgrupamento: number): Promise<{ urls: string[] }> to src/lib/tiny-api.ts",
-        "obterEtiquetasAgrupamento calls GET /expedicao/{idAgrupamento}/etiquetas and returns the urls array",
-        "Both functions use existing tinyFetch helper with rate limiting and retry logic",
-        "Add TypeScript interfaces for the response types",
+        "Create migration file supabase/migrations/20260311_add_separacao_columns.sql",
+        "ALTER siso_pedidos: add status_separacao (text with CHECK constraint for aguardando_nf/pendente/em_separacao/embalado/expedido/cancelado), separacao_galpao_id (uuid FK siso_galpoes), separado_por (uuid FK siso_usuarios), separado_em (timestamptz), embalado_em (timestamptz), agrupamento_tiny_id (bigint), etiqueta_url (text), etiqueta_status (text with CHECK for pendente/imprimindo/impresso/falhou), url_danfe (text), chave_acesso_nf (text)",
+        "ALTER siso_pedido_itens: add gtin (text), quantidade_bipada (integer default 0), bipado_completo (boolean default false), bipado_em (timestamptz), bipado_por (uuid FK siso_usuarios)",
+        "ALTER siso_pedido_item_estoques: add localizacao (text)",
+        "Create partial indexes: idx_pedidos_separacao_galpao, idx_pedidos_separacao_aguardando, idx_pedidos_separacao_embalado, idx_pedido_itens_gtin, idx_pedido_itens_sku, idx_pedidos_separacao_data — exact definitions from PRD section 6.1",
+        "Create PL/pgSQL function siso_processar_bip(p_codigo text, p_usuario_id uuid, p_galpao_id uuid) RETURNS jsonb — exact implementation from PRD section 6.2",
         "Typecheck passes"
       ],
       "priority": 1,
       "passes": true,
-      "notes": ""
+      "notes": "Migration applied to Supabase and local file created. All columns, indexes, and siso_processar_bip function verified."
     },
     {
       "id": "US-002",
-      "title": "Etiqueta service (buscarEImprimirEtiqueta)",
-      "description": "As the system, I need a service that fetches the shipping label from Tiny and sends it to PrintNode on the correct printer.",
+      "title": "Capture GTIN and localizacao in webhook-processor",
+      "description": "As the system, I need to capture product GTIN (barcode) and stock location during webhook processing so that barcode scanning works for order separation.",
       "acceptanceCriteria": [
-        "Create src/lib/etiqueta-service.ts",
-        "Export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void>",
-        "Step 1: fetch pedido from DB with empresa_origem_id, agrupamento_tiny_id, etiqueta_url, etiqueta_status",
-        "Step 2: if etiqueta_status = 'impresso', return early (idempotent)",
-        "Step 3: resolve label URL — if etiqueta_url exists use it; else if agrupamento_tiny_id exists call obterEtiquetasAgrupamento; else call criarAgrupamento then obterEtiquetasAgrupamento",
-        "Step 4: save agrupamento_tiny_id and etiqueta_url (urls[0]) to siso_pedidos",
-        "Step 5: update etiqueta_status = 'imprimindo'",
-        "Step 6: resolve printer via resolverImpressora(separado_por or operator, separacao_galpao_id) from printnode.ts",
-        "Step 7: call enviarImpressao from printnode.ts with the resolved printer and PDF URL",
-        "Step 8: update etiqueta_status = 'impresso' on success, 'falhou' on any error",
-        "Use token from empresa de origem (getValidTokenByEmpresa) for Tiny API calls",
-        "If no printer configured, set etiqueta_status = 'falhou' and log warning",
-        "Never expose etiqueta_url to frontend responses (LGPD)",
+        "Update TinyProdutoDetalhe interface in src/lib/tiny-api.ts to include gtin: string | null",
+        "In webhook-processor.ts, capture gtin from the existing getProdutoDetalhe call (already made for kit detection) — no additional API call needed",
+        "Save GTIN in siso_pedido_itens.gtin during the upsert into that table",
+        "For support empresa products (fetched by SKU via buscarProdutoPorSku + getProdutoDetalhe), also capture and save GTIN",
+        "Save localizacao from stock data into siso_pedido_item_estoques.localizacao during the enrichment upsert",
+        "Existing orders without GTIN continue to work — gtin column is nullable, scan falls back to SKU",
         "Typecheck passes"
       ],
       "priority": 2,
       "passes": true,
-      "notes": ""
+      "notes": "GTIN captured from existing getProdutoDetalhe call (no extra API calls). Localizacao added to siso_pedido_item_estoques upsert. Kit components get gtin=null (kit GTIN != component GTIN)."
     },
     {
       "id": "US-003",
-      "title": "Trigger auto-print on pedido_completo in bipar endpoint",
-      "description": "As the system, I need the bip endpoint to fire-and-forget the label printing when all items are scanned.",
+      "title": "Calculate separacao_galpao_id and status_separacao in webhook-processor",
+      "description": "As the system, I need to determine the separation galpão and set the initial separation status when processing webhooks so that orders are routed to the correct physical location.",
       "acceptanceCriteria": [
-        "In src/app/api/separacao/bipar/route.ts, after returning 200 for pedido_completo status, call buscarEImprimirEtiqueta(pedidoId) as fire-and-forget",
-        "The auto-print must NOT block the 200 response to the client",
-        "Wrap in .catch() that logs error via logger but does not throw",
-        "If buscarEImprimirEtiqueta fails, etiqueta_status remains 'pendente' or becomes 'falhou' — operator can retry via reprint",
+        "In webhook-processor.ts, calculate separacao_galpao_id based on suggestion: propria or oc → empresaOrigem.galpao_id, transferencia → support empresa's galpao_id (the empresa that has stock)",
+        "Include separacao_galpao_id in the siso_pedidos upsert",
+        "Set status_separacao = 'aguardando_nf' for all processed orders (both auto-approved and pending manual review)",
+        "Include status_separacao in the siso_pedidos upsert",
         "Typecheck passes"
       ],
       "priority": 3,
       "passes": true,
-      "notes": ""
+      "notes": "Added separacaoGalpaoId to SugestaoResult. For propria/oc → galpaoOrigemId, for transferencia → the winning galpao ID. status_separacao set to aguardando_nf for all orders."
     },
     {
       "id": "US-004",
-      "title": "Reprint endpoint POST /api/separacao/reimprimir",
-      "description": "As an operator, I need to reprint a shipping label for an already-packed order when the first print failed or I need another copy.",
+      "title": "Recalculate separacao_galpao_id on approval when decision changes",
+      "description": "As the system, I need to recalculate which galpão handles separation when an operator approves with a different decision than the original suggestion.",
       "acceptanceCriteria": [
-        "Create src/app/api/separacao/reimprimir/route.ts with POST handler",
-        "Validate session via getSessionUser(request) — return 401 if invalid",
-        "Accept body { pedido_id: string }",
-        "Validate pedido belongs to operator's galpão — return 403 if not",
-        "Validate pedido has status_separacao = 'embalado' or 'expedido' — return 400 otherwise",
-        "If pedido has etiqueta_url, attempt to print directly via enviarImpressao",
-        "If print fails (URL expired), refetch via obterEtiquetasAgrupamento using stored agrupamento_tiny_id, update etiqueta_url, retry print",
-        "If no agrupamento_tiny_id exists, call full flow via buscarEImprimirEtiqueta",
-        "Update etiqueta_status to 'impresso' on success, 'falhou' on error",
-        "Return { status: 'impresso', jobId } on success or { status: 'falhou', error } on failure",
+        "In POST /api/pedidos/aprovar (src/app/api/pedidos/aprovar/route.ts), when decisao_final differs from the order's sugestao, recalculate separacao_galpao_id",
+        "If decisao_final is propria or oc → set separacao_galpao_id to empresaOrigem.galpao_id",
+        "If decisao_final is transferencia → set separacao_galpao_id to support empresa's galpao_id (already resolved as empresaExecucaoId in the endpoint)",
+        "Update separacao_galpao_id in the same UPDATE query that sets decisao_final and status",
         "Typecheck passes"
       ],
       "priority": 4,
       "passes": true,
-      "notes": ""
+      "notes": "Added separacaoGalpaoId variable alongside empresaExecucaoId. For propria/oc → empresaOrigem.galpaoId, for transferencia → empresaSuporte.galpaoId. Included in siso_pedidos update query."
     },
     {
       "id": "US-005",
-      "title": "Enable reprint button and etiqueta_status badges in frontend",
-      "description": "As an operator, I need the reprint button to work and see live label status badges in the Embalados tab.",
+      "title": "Set status_separacao on cancellation webhook",
+      "description": "As the system, I need to cancel the separation status when an order is cancelled via webhook so that cancelled orders don't appear in the separation queue.",
       "acceptanceCriteria": [
-        "In src/components/separacao/tab-embalados.tsx, enable the 'Reimprimir Etiqueta' button (remove disabled state and placeholder tooltip from PRD 5)",
-        "Button calls POST /api/separacao/reimprimir with { pedido_id } using sisoFetch",
-        "Show toast on success: 'Etiqueta reimpressa' and on failure: 'Falha ao reimprimir etiqueta'",
-        "Add 'Tentar Novamente' button visible only when etiqueta_status = 'falhou', calls same reprint endpoint",
-        "etiqueta_status badge colors: pendente → yellow/amber, imprimindo → blue, impresso → green, falhou → red",
-        "Badge updates on polling refetch (already 10s interval from PRD 5)",
+        "In the webhook cancellation handler (src/app/api/webhook/tiny/route.ts), when setting status = 'cancelado', also set status_separacao = 'cancelado' if the order's status_separacao IS NOT NULL",
+        "Orders without status_separacao (created before the separation module) are not affected",
         "Typecheck passes"
       ],
       "priority": 5,
       "passes": true,
-      "notes": ""
+      "notes": "Added status_separacao to cancellation select query. Conditionally sets status_separacao = 'cancelado' only when existing order has non-null status_separacao (preserves pre-module orders)."
     }
   ]
 }

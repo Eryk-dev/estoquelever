@@ -87,13 +87,15 @@ export async function POST(request: NextRequest) {
 
   const filialOrigem = empresaOrigem.galpaoNome;
 
-  // Determine empresa_id and filialExecucao based on decisao
+  // Determine empresa_id, filialExecucao, and separacao galpao based on decisao
   let empresaExecucaoId: string;
   let filialExecucao: string;
+  let separacaoGalpaoId: string;
 
   if (decisao === "propria" || decisao === "oc") {
     empresaExecucaoId = pedido.empresa_origem_id;
     filialExecucao = filialOrigem;
+    separacaoGalpaoId = empresaOrigem.galpaoId;
   } else {
     // transferencia: find a support empresa in another galpão
     const empresasDoGrupo = empresaOrigem.grupoId
@@ -107,10 +109,12 @@ export async function POST(request: NextRequest) {
     if (empresaSuporte) {
       empresaExecucaoId = empresaSuporte.empresaId;
       filialExecucao = empresaSuporte.galpaoNome;
+      separacaoGalpaoId = empresaSuporte.galpaoId;
     } else {
       // Fallback: use origin (worker will handle gracefully)
       empresaExecucaoId = pedido.empresa_origem_id;
       filialExecucao = filialOrigem;
+      separacaoGalpaoId = empresaOrigem.galpaoId;
       logger.warn("aprovar", "Transferência sem empresa suporte — fallback para origem", {
         pedidoId,
         empresaOrigemId: pedido.empresa_origem_id,
@@ -132,6 +136,7 @@ export async function POST(request: NextRequest) {
       operador_nome: operadorNome ?? null,
       tipo_resolucao: "manual",
       marcadores,
+      separacao_galpao_id: separacaoGalpaoId,
     })
     .eq("id", pedidoId);
 

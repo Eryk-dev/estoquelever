@@ -310,6 +310,7 @@ export async function processWebhook(
           sugestao,
           sugestao_motivo: motivoFinal,
           status,
+          status_unificado: isAuto ? "executando" : "pendente",
           tipo_resolucao: tipoResolucao,
           decisao_final: isAuto ? "propria" : null,
           separacao_galpao_id: separacaoGalpaoId,
@@ -451,6 +452,7 @@ export async function processWebhook(
             .from("siso_pedidos")
             .update({
               status_separacao: "pendente",
+              status_unificado: "aguardando_separacao",
               url_danfe: nfPayload.dados.urlDanfe ?? null,
               chave_acesso_nf: nfPayload.dados.chaveAcesso ?? null,
             })

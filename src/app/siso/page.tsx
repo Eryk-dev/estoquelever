@@ -21,8 +21,10 @@ import { CARGO_LABELS } from "@/types";
 
 import type { Tab, Pedido, Decisao } from "@/types";
 
+const SISO_STATUSES = "pendente,executando,erro,aguardando_compra,aguardando_nf,aguardando_separacao,em_separacao,separado,embalado";
+
 async function fetchPedidos(): Promise<Pedido[]> {
-  const res = await fetch("/api/pedidos");
+  const res = await fetch(`/api/pedidos?status_unificado=${SISO_STATUSES}`);
   if (!res.ok) throw new Error("Erro ao carregar pedidos");
   return res.json();
 }
@@ -39,13 +41,16 @@ export default function DashboardPage() {
     refetchInterval: 30_000,
   });
 
-  // Split into categories
+  // Split into categories using status_unificado
   const pendentes = useMemo(
-    () => allPedidos.filter((p) => p.status === "pendente"),
+    () => allPedidos.filter((p) => p.statusUnificado === "pendente"),
     [allPedidos],
   );
   const concluidos = useMemo(
-    () => allPedidos.filter((p) => p.status === "concluido" && p.tipoResolucao !== "auto"),
+    () => allPedidos.filter((p) =>
+      p.tipoResolucao === "manual" &&
+      ["aguardando_compra", "aguardando_nf", "aguardando_separacao", "em_separacao", "separado", "embalado"].includes(p.statusUnificado ?? "")
+    ),
     [allPedidos],
   );
   const auto = useMemo(

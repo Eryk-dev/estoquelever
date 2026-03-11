@@ -191,3 +191,15 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - Deposit ID lookup: `siso_pedido_item_estoques` filtered by `empresa_id` gives the right deposit for that empresa
   - For new galpoes beyond CWB/SP, only the normalized table update runs (no legacy columns exist)
 ---
+
+## 2026-03-11 - US-015
+- SISO dashboard now fetches with `?status_unificado=` instead of no filter
+- Pendente tab: filters by `statusUnificado === "pendente"`
+- Concluidos tab: `tipoResolucao === "manual"` with `statusUnificado` in [aguardando_compra, aguardando_nf, aguardando_separacao, em_separacao, separado, embalado]
+- Auto tab: `tipoResolucao === "auto"` regardless of status
+- Files changed: `src/app/siso/page.tsx`
+- **Learnings for future iterations:**
+  - SISO fetches all non-cancelled statuses in one API call, then splits client-side
+  - The `filtrarPendentes/Concluidos/Auto` functions in `filtrar-pedidos.ts` handle role-based filtering after the status split
+  - Concluidos tab uses "manual" type resolution to show operator-approved orders (not auto)
+---

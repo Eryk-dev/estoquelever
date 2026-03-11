@@ -226,7 +226,7 @@
         "Typecheck passes"
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": "Read src/app/siso/page.tsx and the filter functions in src/lib/filtrar-pedidos.ts. The Concluidos and Auto tabs may need client-side filtering on tipoResolucao after fetching a broader set."
     },
     {

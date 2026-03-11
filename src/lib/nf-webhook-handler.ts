@@ -37,9 +37,7 @@ export async function handleNfWebhook(
 ): Promise<void> {
   const supabase = createServiceClient();
   const { idNotaFiscalTiny, urlDanfe, chaveAcesso } = payload.dados;
-  const dedupKey = `nf_${idNotaFiscalTiny}`;
-
-  // Step 1 — Dedup via siso_webhook_logs unique index on dedup_key
+  // Step 1 — Dedup via siso_webhook_logs unique index on dedup_key (generated column)
   const { data: logEntry, error: insertError } = await supabase
     .from("siso_webhook_logs")
     .insert({
@@ -48,7 +46,6 @@ export async function handleNfWebhook(
       tipo: "nota_fiscal",
       empresa_id: empresaId,
       payload: payload as unknown as Record<string, unknown>,
-      dedup_key: dedupKey,
     })
     .select("id")
     .single();

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlertTriangle, ChevronDown, Loader2, LogOut, RefreshCw, Settings } from "lucide-react";
+import { LogOut, RefreshCw, Settings } from "lucide-react";
 import Link from "next/link";
 
 import { AppShell } from "@/components/app-shell";
@@ -12,7 +12,6 @@ import { Tabs } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PedidoCardConcluido } from "@/components/pedido/pedido-card-concluido";
 import { PedidoCard } from "@/components/pedido/pedido-card";
-import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import {
   filtrarPendentes,
@@ -23,64 +22,12 @@ import { CARGO_LABELS } from "@/types";
 
 import type { Tab, Pedido, Decisao } from "@/types";
 
-const SISO_STATUSES = "pendente,executando,erro,aguardando_compra,aguardando_nf,aguardando_separacao,em_separacao,separado,embalado";
+const SISO_STATUSES = "pendente,erro,aguardando_compra,aguardando_nf,aguardando_separacao,em_separacao,separado,embalado";
 
 async function fetchPedidos(): Promise<Pedido[]> {
   const res = await fetch(`/api/pedidos?status_unificado=${SISO_STATUSES}`);
   if (!res.ok) throw new Error("Erro ao carregar pedidos");
   return res.json();
-}
-
-function StatusBanner({ pedido }: { pedido: Pedido }) {
-  const [expanded, setExpanded] = useState(false);
-
-  if (pedido.statusUnificado === "erro") {
-    return (
-      <div
-        className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900 dark:bg-red-950/30"
-        role="alert"
-      >
-        <button
-          type="button"
-          onClick={() => setExpanded(v => !v)}
-          className="flex w-full items-center gap-2 text-left"
-        >
-          <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
-          <span className="text-sm font-medium text-red-700 dark:text-red-400">
-            Erro no processamento — #{pedido.numero}
-          </span>
-          <ChevronDown
-            className={cn(
-              "ml-auto h-3 w-3 text-red-400 transition-transform",
-              expanded && "rotate-180",
-            )}
-          />
-        </button>
-        {expanded && pedido.erro && (
-          <p className="mt-2 whitespace-pre-wrap font-mono text-xs text-red-600 dark:text-red-400">
-            {pedido.erro}
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  if (pedido.statusUnificado === "executando") {
-    const ts = pedido.processadoEm ?? pedido.criadoEm;
-    const elapsed = ts ? Math.floor((Date.now() - new Date(ts).getTime()) / 60000) : 0;
-    return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30">
-        <div className="flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-          <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
-            Executando... ({elapsed}min) — #{pedido.numero}
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  return null;
 }
 
 export default function DashboardPage() {
@@ -95,17 +42,10 @@ export default function DashboardPage() {
     refetchInterval: REFRESH_INTERVAL_LIST,
   });
 
-  // Split into categories using status_unificado
-  const STUCK_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
   const pendentes = useMemo(
-    () => allPedidos.filter((p) => {
-      if (p.statusUnificado === "pendente" || p.statusUnificado === "erro") return true;
-      if (p.statusUnificado === "executando") {
-        const ts = p.processadoEm ?? p.criadoEm;
-        return ts ? Date.now() - new Date(ts).getTime() > STUCK_THRESHOLD_MS : false;
-      }
-      return false;
-    }),
+    () => allPedidos.filter((p) =>
+      p.statusUnificado === "pendente" || p.statusUnificado === "erro"
+    ),
     [allPedidos],
   );
   const concluidos = useMemo(
@@ -120,7 +60,6 @@ export default function DashboardPage() {
     [allPedidos],
   );
 
-  // Filter by role
   const cargo = user?.cargo ?? "admin";
 
   const pendentesFiltrados = useMemo(
@@ -145,7 +84,14 @@ export default function DashboardPage() {
   const visibleTabs = cargo === "comprador" ? tabs.filter((t) => t.id !== "auto") : tabs;
 
   async function handleAprovar(id: string, decisao: Decisao) {
-    const pedido = pendentes.find((p) => p.id === id);
+    const pedido = allPedidos.find((p) => p.id === id);
+
+    // Optimistic: remove from list immediately
+    queryClient.setQueryData<Pedido[]>(["pedidos"], (old) =>
+      old ? old.filter((p) => p.id !== id) : [],
+    );
+    toast.success(`Pedido #${pedido?.numero ?? id} aprovado → ${decisao}`);
+
     try {
       const res = await fetch("/api/pedidos/aprovar", {
         method: "POST",
@@ -161,18 +107,15 @@ export default function DashboardPage() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         toast.error(data.error ?? "Erro ao aprovar pedido");
+        queryClient.invalidateQueries({ queryKey: ["pedidos"] });
         return;
       }
 
-      toast.success(`Pedido #${pedido?.numero ?? id} aprovado → ${decisao}`);
       queryClient.invalidateQueries({ queryKey: ["pedidos"] });
     } catch {
       toast.error("Erro de conexão ao aprovar pedido");
+      queryClient.invalidateQueries({ queryKey: ["pedidos"] });
     }
-  }
-
-  function handleLogout() {
-    logout();
   }
 
   const headerRight = (
@@ -204,7 +147,7 @@ export default function DashboardPage() {
       </div>
       <button
         type="button"
-        onClick={handleLogout}
+        onClick={() => logout()}
         className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
         title="Sair"
       >
@@ -220,7 +163,6 @@ export default function DashboardPage() {
       backHref="/"
       headerRight={headerRight}
     >
-      {/* Tab bar */}
       <div className="mb-5">
         <Tabs
           tabs={visibleTabs}
@@ -229,27 +171,23 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Pendente tab */}
       {activeTab === "pendente" && (
         <div className="flex flex-col gap-3">
           {pendentesFiltrados.length === 0 ? (
             <EmptyState message="Nenhum pedido pendente no momento." />
           ) : (
             pendentesFiltrados.map((pedido) => (
-              <div key={pedido.id} className="flex flex-col gap-1.5">
-                <StatusBanner pedido={pedido} />
-                <PedidoCard
-                  pedido={pedido}
-                  onAprovar={handleAprovar}
-                  onStockUpdated={() => queryClient.invalidateQueries({ queryKey: ["pedidos"] })}
-                />
-              </div>
+              <PedidoCard
+                key={pedido.id}
+                pedido={pedido}
+                onAprovar={handleAprovar}
+                onStockUpdated={() => queryClient.invalidateQueries({ queryKey: ["pedidos"] })}
+              />
             ))
           )}
         </div>
       )}
 
-      {/* Concluidos tab */}
       {activeTab === "concluidos" && (
         <div className="flex flex-col gap-1.5">
           {concluidosFiltrados.length === 0 ? (
@@ -267,7 +205,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Auto tab */}
       {activeTab === "auto" && (
         <div className="flex flex-col gap-1.5">
           {autoFiltrados.length === 0 ? (

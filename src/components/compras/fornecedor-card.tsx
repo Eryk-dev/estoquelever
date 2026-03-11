@@ -32,9 +32,9 @@ export function FornecedorCard({
 
   async function handleCopiar() {
     const lines = itens.map(
-      (i) => `${i.quantidade_total}x ${i.sku} - ${i.descricao}`,
+      (i) => `*${i.quantidade_total}x* ${i.sku}\n${i.descricao}`,
     );
-    const text = `*${fornecedor}* — ${itens.length} ite${itens.length !== 1 ? "ns" : "m"}\n\n${lines.join("\n")}`;
+    const text = `*${fornecedor}* — ${itens.length} ite${itens.length !== 1 ? "ns" : "m"}\n\n${lines.join("\n\n")}`;
     try {
       await navigator.clipboard.writeText(text);
       toast.success("Lista copiada para enviar no WhatsApp");

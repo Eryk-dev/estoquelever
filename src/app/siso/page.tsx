@@ -18,20 +18,13 @@ import {
   filtrarAuto,
 } from "@/lib/filtrar-pedidos";
 import { CARGO_LABELS } from "@/types";
-import {
-  pedidosPendentes as mockPendentes,
-  pedidosConcluidos as mockConcluidos,
-  pedidosAuto as mockAuto,
-} from "@/data/mock";
 
 import type { Tab, Pedido, Decisao } from "@/types";
 
 async function fetchPedidos(): Promise<Pedido[]> {
-  // TODO: replace with real API call when ready
-  // const res = await fetch("/api/pedidos");
-  // if (!res.ok) throw new Error("Erro ao carregar pedidos");
-  // return res.json();
-  return [...mockPendentes, ...mockConcluidos, ...mockAuto];
+  const res = await fetch("/api/pedidos");
+  if (!res.ok) throw new Error("Erro ao carregar pedidos");
+  return res.json();
 }
 
 export default function DashboardPage() {

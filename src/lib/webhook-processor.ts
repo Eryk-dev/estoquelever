@@ -7,6 +7,7 @@ import { processQueue } from "./execution-worker";
 import { getEmpresasDoGrupo, agregarEstoquePorGalpao } from "./grupo-resolver";
 import type { EmpresaGrupo } from "./grupo-resolver";
 import { logger } from "./logger";
+import { registrarEvento } from "./historico-service";
 import type { NfWebhookPayload } from "./nf-webhook-handler";
 import type { TinyPedidoItem } from "./tiny-api";
 
@@ -310,6 +311,21 @@ export async function processWebhook(
       );
 
     if (pedidoError) throw pedidoError;
+
+    // 9a. Record history events
+    registrarEvento({
+      pedidoId: pedidoTinyId,
+      evento: "recebido",
+      detalhes: { sugestao, empresa: galpaoOrigemNome, ecommerce: pedido.nomeEcommerce },
+    }).catch(() => {});
+
+    if (isAuto) {
+      registrarEvento({
+        pedidoId: pedidoTinyId,
+        evento: "auto_aprovado",
+        detalhes: { decisao: "propria", motivo: motivoFinal },
+      }).catch(() => {});
+    }
 
     // 9b. Auto-approved → enqueue stock posting job
     if (isAuto) {

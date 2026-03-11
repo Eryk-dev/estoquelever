@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { preCriarAgrupamentosEmLote } from "@/lib/agrupamento-service";
+import { registrarEventos } from "@/lib/historico-service";
 
 /**
  * POST /api/separacao/concluir
@@ -92,6 +93,16 @@ export async function POST(request: NextRequest) {
       separados,
       pendentes,
     });
+
+    // Record history for completed pedidos
+    if (separados.length > 0) {
+      registrarEventos(
+        separados.map((pid) => ({
+          pedidoId: pid,
+          evento: "separacao_concluida" as const,
+        })),
+      ).catch(() => {});
+    }
 
     // Fire-and-forget: pre-create Tiny agrupamentos + download ZPL labels
     // so they're cached when packing completes (cuts print delay to ~200ms)

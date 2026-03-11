@@ -308,11 +308,22 @@ export default function SeparacaoPage() {
 
   const isAdmin = user.cargo === "admin";
   const showCheckbox =
+    activeTab === "aguardando_compra" ||
     activeTab === "aguardando_separacao" ||
     activeTab === "separado" ||
     activeTab === "embalado" ||
     activeTab === "em_separacao" ||
-    (activeTab === "aguardando_nf" && isAdmin);
+    activeTab === "aguardando_nf";
+
+  const allSelected = pedidos.length > 0 && selectedIds.size === pedidos.length;
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(pedidos.map((p) => p.id)));
+    }
+  }
 
   const revertTargets = REVERT_TARGETS[activeTab];
 
@@ -414,6 +425,27 @@ export default function SeparacaoPage() {
                 </option>
               ))}
             </select>
+          </div>
+        )}
+
+        {/* Select all + count */}
+        {showCheckbox && pedidos.length > 0 && (
+          <div className="flex items-center gap-2">
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleSelectAll}
+                className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+              />
+              <span className="text-xs text-ink-faint">
+                {allSelected
+                  ? `Todos ${pedidos.length} selecionados`
+                  : selectedIds.size > 0
+                    ? `${selectedIds.size} de ${pedidos.length} selecionado(s)`
+                    : `Selecionar todos (${pedidos.length})`}
+              </span>
+            </label>
           </div>
         )}
 

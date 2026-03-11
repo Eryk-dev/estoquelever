@@ -177,3 +177,13 @@ Started: Tue Mar 10 20:18:10 -03 2026
   - The handler also manages race conditions (NF arrives before order is saved) via "aguardando_pedido" status
   - NF webhook payload uses `dados.idNotaFiscalTiny` (not `dados.id` like order webhooks)
 ---
+
+## 2026-03-10 - US-013
+- Already implemented in tiny-api.ts: `criarAgrupamento` (POST /expedicao) and `obterEtiquetasAgrupamento` (GET /expedicao/{id}/etiquetas)
+- Types `TinyCriarAgrupamentoResponse` and `TinyEtiquetasAgrupamentoResponse` co-located in tiny-api.ts
+- No code changes needed — marked as passes in PRD
+- **Learnings for future iterations:**
+  - All Tiny API types are co-located in tiny-api.ts (not types/index.ts) — this is the codebase convention
+  - All tiny-api.ts functions accept `token` (not `empresa_id`) — callers handle token retrieval via `getValidTokenByEmpresa()`
+  - Rate limiting is caller responsibility, not embedded in tiny-api.ts functions
+---

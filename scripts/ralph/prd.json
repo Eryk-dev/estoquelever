@@ -240,8 +240,8 @@
         "Typecheck passes"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": "IMPORTANT: Always consult api tiny.json for endpoint details. Tiny API v3 responses do NOT have a { data: ... } wrapper."
+      "passes": true,
+      "notes": "Already implemented in tiny-api.ts: criarAgrupamento (POST /expedicao) and obterEtiquetasAgrupamento (GET /expedicao/{id}/etiquetas). Types co-located in tiny-api.ts following codebase convention. Functions accept token (not empresa_id) matching existing pattern — callers handle token retrieval and rate limiting."
     },
     {
       "id": "US-014",

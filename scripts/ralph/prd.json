@@ -430,7 +430,7 @@
         "Typecheck passes"
       ],
       "priority": 23,
-      "passes": false,
+      "passes": true,
       "notes": "Uses supabase.ts browser client (not server client) for Realtime. Ensure Realtime is enabled on siso_pedidos table in Supabase dashboard."
     }
   ]

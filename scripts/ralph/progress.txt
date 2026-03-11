@@ -30,6 +30,7 @@ Started: Tue Mar 10 20:18:10 -03 2026
 - For embalagem page, galpao_id is derived from the first pedido's empresa — all orders on the page should share the same galpao
 - checklist-items API returns both separation AND packing fields (quantidade_bipada, bipado_completo) — reusable for both checklist and embalagem pages
 - For optimistic UI with React Query: `setQueryData` for immediate update, `invalidateQueries` for revert on error
+- Supabase Realtime hooks: use `supabase.channel().on("postgres_changes", ...).subscribe()`, cleanup with `supabase.removeChannel()`, invalidate React Query on events
 
 ## 2026-03-10 - US-001
 - Added types: StatusSeparacao, ProdutoConsolidado, BipEmbalagemResult, SeparacaoFilter, SeparacaoCounts, PedidoItem
@@ -320,4 +321,19 @@ Started: Tue Mar 10 20:18:10 -03 2026
 - **Learnings for future iterations:**
   - Some stories may already be implemented by earlier stories (US-017 covered US-022 functionality) — always check existing code before writing new code
   - The Embalar button pattern: when no selection → uses all pedidos in tab; when some selected → uses only selected IDs
+---
+
+## 2026-03-10 - US-023
+- Created `src/hooks/use-realtime-separacao.ts` — custom hook subscribing to siso_pedidos table via Supabase Realtime
+- Subscribes to all postgres_changes events (INSERT, UPDATE, DELETE) on siso_pedidos
+- On any change: invalidates all React Query cache keys starting with ["separacao"] to trigger refetch of counts + pedidos
+- Cleanup on unmount via `supabase.removeChannel()`
+- Integrated hook into `src/app/separacao/page.tsx`
+- Files changed: src/hooks/use-realtime-separacao.ts (new), src/app/separacao/page.tsx
+- **Learnings for future iterations:**
+  - `supabase.channel().on("postgres_changes", ...).subscribe()` is the pattern for Realtime subscriptions with Supabase JS v2
+  - Use `supabase.removeChannel(channel)` for cleanup (not `channel.unsubscribe()`) — it fully removes the channel
+  - `queryClient.invalidateQueries({ queryKey: ["separacao"] })` invalidates ALL queries with that prefix — covers all tab variants
+  - The page already had `refetchInterval: 10000` as fallback — Realtime makes updates near-instant but polling remains as safety net
+  - Ensure Supabase Realtime is enabled on the `siso_pedidos` table in the Supabase dashboard for this to work
 ---

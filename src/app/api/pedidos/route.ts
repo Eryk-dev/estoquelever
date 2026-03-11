@@ -8,11 +8,13 @@ import { createServiceClient } from "@/lib/supabase-server";
  * mapped to the frontend Pedido interface (camelCase).
  *
  * Query params:
- *   ?status=pendente,executando  (comma-separated filter)
+ *   ?status=pendente,executando           (comma-separated filter on old status column)
+ *   ?status_unificado=pendente,executando  (comma-separated filter on unified status column)
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const statusFilter = searchParams.get("status");
+  const statusUnificadoFilter = searchParams.get("status_unificado");
 
   const supabase = createServiceClient();
 
@@ -22,7 +24,10 @@ export async function GET(request: Request) {
     .order("criado_em", { ascending: false })
     .limit(200);
 
-  if (statusFilter) {
+  if (statusUnificadoFilter) {
+    const statuses = statusUnificadoFilter.split(",").map((s) => s.trim());
+    query = query.in("status_unificado", statuses);
+  } else if (statusFilter) {
     const statuses = statusFilter.split(",").map((s) => s.trim());
     query = query.in("status", statuses);
   }
@@ -106,6 +111,7 @@ export async function GET(request: Request) {
       sugestao: p.sugestao ?? "propria",
       sugestaoMotivo: p.sugestao_motivo ?? "",
       status: p.status ?? "pendente",
+      statusUnificado: p.status_unificado ?? undefined,
       tipoResolucao: p.tipo_resolucao ?? undefined,
       decisaoFinal: p.decisao_final ?? undefined,
       operador: p.operador_nome ?? undefined,

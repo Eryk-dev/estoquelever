@@ -1,0 +1,300 @@
+{
+  "project": "SISO - Modulo de Compras",
+  "branchName": "ralph/modulo-compras",
+  "description": "Modulo de ordens de compra para itens sem estoque. OC por fornecedor atendendo N pedidos de venda. Fluxo: aprovacao OC → comprador cria OC por fornecedor → recebimento/conferencia → entrada estoque Tiny tipo E → liberacao automatica de pedidos para separacao.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Types — Compras module types",
+      "description": "As a developer, I want all compras-related types defined in types/index.ts so that subsequent stories have full type safety.",
+      "acceptanceCriteria": [
+        "Add OrdemCompra type with fields: id (string), fornecedor (string), empresa_id (string), status ('aguardando_compra' | 'comprado' | 'parcialmente_recebido' | 'recebido' | 'cancelado'), observacao (string | null), comprado_por (string | null), comprado_em (string | null), created_at (string)",
+        "Add CompraStatus type: 'aguardando_compra' | 'comprado' | 'recebido' | 'indisponivel' | null",
+        "Update PedidoItem type adding: produto_id_tiny (number | null), fornecedor_oc (string | null), ordem_compra_id (string | null), compra_status (CompraStatus), compra_quantidade_recebida (number), comprado_em (string | null), comprado_por (string | null), recebido_em (string | null), recebido_por (string | null)",
+        "Add CompraItemAgrupado type with fields: sku (string), descricao (string), imagem (string | null), quantidade_total (number), fornecedor_oc (string), pedidos (array of {pedido_id: string, numero_pedido: string, quantidade: number}), itens_ids (string[])",
+        "Add ConferenciaItem type with fields: item_id (string), sku (string), descricao (string), imagem (string | null), quantidade_esperada (number), quantidade_ja_recebida (number), quantidade_restante (number), produto_id_tiny (number | null), pedidos (array of {pedido_id: string, numero_pedido: string, quantidade: number})",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Schema — Migration for siso_ordens_compra and siso_pedido_itens compra columns",
+      "description": "As a developer, I want the database schema updated with the ordens_compra table and compra tracking columns so that the compras module has persistence.",
+      "acceptanceCriteria": [
+        "Create migration file supabase/migrations/20260311_modulo_compras.sql",
+        "CREATE TABLE siso_ordens_compra with columns: id (uuid PK default gen_random_uuid()), fornecedor (text NOT NULL), empresa_id (uuid NOT NULL REFERENCES siso_empresas(id)), status (text NOT NULL DEFAULT 'comprado' CHECK IN ('aguardando_compra','comprado','parcialmente_recebido','recebido','cancelado')), observacao (text), comprado_por (uuid REFERENCES siso_usuarios(id)), comprado_em (timestamptz), created_at (timestamptz DEFAULT now())",
+        "ALTER TABLE siso_pedido_itens ADD COLUMNS: produto_id_tiny (bigint), fornecedor_oc (text), ordem_compra_id (uuid REFERENCES siso_ordens_compra(id)), compra_status (text), compra_quantidade_recebida (int DEFAULT 0), comprado_em (timestamptz), comprado_por (uuid), recebido_em (timestamptz), recebido_por (uuid)",
+        "CREATE INDEX idx_pedido_itens_compra_status ON siso_pedido_itens(compra_status) WHERE compra_status IS NOT NULL",
+        "CREATE INDEX idx_pedido_itens_fornecedor_oc ON siso_pedido_itens(fornecedor_oc) WHERE fornecedor_oc IS NOT NULL",
+        "CREATE INDEX idx_pedido_itens_ordem_compra_id ON siso_pedido_itens(ordem_compra_id) WHERE ordem_compra_id IS NOT NULL",
+        "CREATE INDEX idx_ordens_compra_status ON siso_ordens_compra(status)",
+        "CREATE INDEX idx_ordens_compra_fornecedor ON siso_ordens_compra(fornecedor)",
+        "Apply migration via Supabase MCP tool apply_migration",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Backend — Save produto_id_tiny during webhook enrichment",
+      "description": "As a developer, I want produto_id_tiny saved in siso_pedido_itens during webhook processing so that the conferencia can use it directly without additional Tiny API calls.",
+      "acceptanceCriteria": [
+        "In webhook-processor.ts, when stock is queried for each item via Tiny API, extract the produto ID from the response",
+        "Save produto_id_tiny in the siso_pedido_itens upsert alongside existing stock data",
+        "Also save fornecedor_oc using the existing sku-fornecedor.ts mapping (getFornecedorBySku function)",
+        "If SKU is not found in Tiny (no stock response), produto_id_tiny remains null",
+        "Log a warning when produto_id_tiny could not be resolved for an item",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Check how webhook-processor.ts currently saves items to siso_pedido_itens. The produto ID comes from the Tiny stock/product API response. Also check sku-fornecedor.ts for the SKU-to-supplier mapping function."
+    },
+    {
+      "id": "US-004",
+      "title": "Backend — Worker sets compra fields after OC approval",
+      "description": "As a developer, I want the execution worker to set compra fields on pedido items when a pedido is approved as OC, so that items appear in the compras module.",
+      "acceptanceCriteria": [
+        "In execution-worker.ts, after executarMarcadoresOnly completes (OC flow), update siso_pedidos set status_separacao = 'aguardando_compra'",
+        "Update all siso_pedido_itens of that pedido set compra_status = 'aguardando_compra'",
+        "The main pedido status field continues going to 'concluido' as before (no change there)",
+        "Log the transition: logger.info('execution-worker', 'Pedido OC enviado para modulo de compras', { pedidoId })",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Check execution-worker.ts for the OC/marcadores flow. The worker already has an executarMarcadoresOnly function. Add the compra field updates after it succeeds."
+    },
+    {
+      "id": "US-005",
+      "title": "Backend — GET /api/compras endpoint",
+      "description": "As a developer, I want a GET endpoint that returns compra items grouped by supplier and status so that the frontend can render the compras page.",
+      "acceptanceCriteria": [
+        "Create file src/app/api/compras/route.ts with GET handler",
+        "Accept query param 'status' to filter: 'aguardando_compra', 'comprado', 'indisponivel' (default: 'aguardando_compra')",
+        "For status='aguardando_compra': query siso_pedido_itens WHERE compra_status='aguardando_compra' AND ordem_compra_id IS NULL, join with siso_pedidos for pedido info, group by fornecedor_oc",
+        "For status='comprado': query siso_ordens_compra WHERE status IN ('comprado','parcialmente_recebido'), include their items from siso_pedido_itens",
+        "For status='indisponivel': query siso_pedido_itens WHERE compra_status='indisponivel'",
+        "Return counts per status for tab badges: {aguardando_compra: N, comprado: N, indisponivel: N}",
+        "For aguardando_compra: consolidate items with same SKU + fornecedor (sum quantities, collect pedido references)",
+        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Use createServiceClient() from supabase-server.ts. Auth is via localStorage session — read the pattern from existing API routes like pedidos/aprovar/route.ts. Items need pedido info (numero_pedido) from siso_pedidos join."
+    },
+    {
+      "id": "US-006",
+      "title": "Backend — POST /api/compras/ordens endpoint",
+      "description": "As a developer, I want a POST endpoint that creates an ordem de compra and links aguardando items to it, so that the buyer can track purchases.",
+      "acceptanceCriteria": [
+        "Create file src/app/api/compras/ordens/route.ts with POST handler",
+        "Accept body: { fornecedor: string, empresa_id: string, observacao?: string, usuario_id: string }",
+        "Insert new record in siso_ordens_compra with status='comprado', comprado_em=now(), comprado_por=usuario_id",
+        "Update all siso_pedido_itens WHERE fornecedor_oc = fornecedor AND compra_status = 'aguardando_compra' AND ordem_compra_id IS NULL: set ordem_compra_id, compra_status='comprado', comprado_em=now(), comprado_por=usuario_id",
+        "Return the created OC with count of linked items",
+        "If no items found for that fornecedor, return 400 error",
+        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "empresa_id comes from the frontend — the buyer selects which empresa will receive the goods. Use createServiceClient()."
+    },
+    {
+      "id": "US-007",
+      "title": "Backend — GET /api/compras/conferencia/[ordemCompraId] endpoint",
+      "description": "As a developer, I want a GET endpoint that returns OC items for the receiving/checking screen so the operator can see what to expect.",
+      "acceptanceCriteria": [
+        "Create file src/app/api/compras/conferencia/[ordemCompraId]/route.ts with GET handler",
+        "Query siso_ordens_compra by ordemCompraId, return 404 if not found",
+        "Query siso_pedido_itens WHERE ordem_compra_id = ordemCompraId AND compra_status = 'comprado'",
+        "For each item calculate: quantidade_restante = quantidade (from pedido) - compra_quantidade_recebida",
+        "Join with siso_pedidos for pedido numero_pedido reference",
+        "Return OC info + array of ConferenciaItem (sku, descricao, imagem, quantidade_esperada, quantidade_ja_recebida, quantidade_restante, produto_id_tiny, pedidos)",
+        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "quantidade_esperada is the original quantity from the pedido item. quantidade_restante = quantidade_esperada - compra_quantidade_recebida. Items with compra_status='recebido' should NOT appear (they're fully received)."
+    },
+    {
+      "id": "US-008",
+      "title": "Backend — POST /api/compras/conferir endpoint (receiving + Tiny stock entry)",
+      "description": "As a developer, I want a POST endpoint that processes the receiving confirmation: updates quantities in DB and calls Tiny movimentarEstoque type E for each item.",
+      "acceptanceCriteria": [
+        "Create file src/app/api/compras/conferir/route.ts with POST handler",
+        "Accept body: { ordem_compra_id: string, usuario_id: string, itens: Array<{ item_id: string, quantidade_recebida: number }> }",
+        "For each item with quantidade_recebida > 0 AND produto_id_tiny is not null: call movimentarEstoque in Tiny with tipo='E', using produto_id_tiny and deposito_id from siso_tiny_connections",
+        "Use waitForRateLimit + registerApiCall from rate-limiter.ts before each Tiny call",
+        "Add 500ms sleep between Tiny API calls to avoid overload",
+        "If Tiny call fails for an item, log the error and continue with remaining items (do not abort)",
+        "Update siso_pedido_itens: compra_quantidade_recebida += quantidade_recebida for each item",
+        "If compra_quantidade_recebida >= quantity from pedido: set compra_status='recebido', recebido_em=now(), recebido_por=usuario_id",
+        "If produto_id_tiny is null for an item, skip Tiny call, log warning 'SKU nao encontrado no Tiny', still update quantity in DB",
+        "Update siso_ordens_compra status: if all items 'recebido' then 'recebido', if mix then 'parcialmente_recebido'",
+        "Return summary: { processados: N, erros: N, erros_detalhe: [...], itens_sem_produto_id: N }",
+        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Use tiny-api.ts movimentarEstoque function. Get deposito_id by querying siso_tiny_connections WHERE empresa_id = OC's empresa_id. Use the observacao 'Entrada OC via SISO'. Check rate-limiter.ts for waitForRateLimit pattern used in execution-worker.ts."
+    },
+    {
+      "id": "US-009",
+      "title": "Backend — Release logic after receiving",
+      "description": "As a developer, I want pedidos de venda automatically released for picking when all their items are received across all OCs, so no manual intervention is needed.",
+      "acceptanceCriteria": [
+        "Create lib function checkAndReleasePedidos(itemIds: string[]) in a new file src/lib/compras-release.ts",
+        "From the received item IDs, get distinct pedido_ids from siso_pedido_itens",
+        "For each pedido: query ALL its items (not just OC items) — check if every item with compra_status has compra_status='recebido'",
+        "If ALL compra items of a pedido are 'recebido': release the pedido",
+        "Release means: update siso_pedidos set decisao_final='propria', status='executando', status_separacao='aguardando_nf'",
+        "Insert job in siso_fila_execucao with tipo='lancar_estoque', decisao='propria', pedido_id, empresa_id",
+        "Log: logger.info('compras-release', 'Pedido liberado apos recebimento OC', { pedidoId })",
+        "Return array of released pedido IDs",
+        "Call this function at the end of POST /api/compras/conferir after DB updates",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "Check execution-worker.ts and siso_fila_execucao table structure for the correct job format. The worker will pick up the job and run executarSaidaPropria (existing flow). Important: only check items that have compra_status set (non-null) — normal items without compra flow should not block release."
+    },
+    {
+      "id": "US-010",
+      "title": "Backend — Item action APIs (devolver, indisponivel, trocar-fornecedor)",
+      "description": "As a developer, I want API endpoints for the buyer to handle unavailable items: return to queue, mark unavailable, or change supplier.",
+      "acceptanceCriteria": [
+        "Create src/app/api/compras/itens/[itemId]/devolver/route.ts with POST handler: set compra_status='aguardando_compra', ordem_compra_id=null. If OC has no more items after this, set OC status='cancelado'",
+        "Create src/app/api/compras/itens/[itemId]/indisponivel/route.ts with POST handler: set compra_status='indisponivel'. Log warning with pedido info.",
+        "Create src/app/api/compras/itens/[itemId]/trocar-fornecedor/route.ts with POST handler: accept { novo_fornecedor: string, nova_ordem_compra_id?: string }. Update fornecedor_oc, move to new OC if provided or remove from current OC (set ordem_compra_id=null, compra_status='aguardando_compra')",
+        "All three endpoints: auth check for cargo 'admin' or 'comprador'",
+        "All three endpoints: return updated item",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "When removing an item from an OC, check if OC still has items. If empty, set OC status to 'cancelado'. Use createServiceClient()."
+    },
+    {
+      "id": "US-011",
+      "title": "Backend — Webhook cancellation handler for compras",
+      "description": "As a developer, I want the cancellation webhook to detect and clean up compras items so that cancelled orders don't waste purchasing effort.",
+      "acceptanceCriteria": [
+        "In webhook-processor.ts (or the cancellation handler), when a pedido is cancelled, check if status_separacao is 'aguardando_compra' or 'comprado'",
+        "If yes: set compra_status=null and ordem_compra_id=null for all items of that pedido",
+        "Set status_separacao='cancelado' on the pedido",
+        "For each affected OC: recheck if OC still has items, if empty set OC status='cancelado'",
+        "If any item had compra_quantidade_recebida > 0 (stock already entered in Tiny): log a warning with level 'warn' including SKU and quantity that was already entered",
+        "Store a flag or field on the pedido indicating 'compra_estoque_lancado_alerta' = true when stock was already entered, so the UI can show a visible alert",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "Check how the existing webhook cancellation flow works in webhook-processor.ts or the webhook route. The stock that was already entered in Tiny stays — no reversal. The alert is just informational."
+    },
+    {
+      "id": "US-012",
+      "title": "Frontend — /compras page layout with tabs and data fetching",
+      "description": "As a developer, I want the /compras page skeleton with tabs and React Query data fetching so that the compras module has a home.",
+      "acceptanceCriteria": [
+        "Create file src/app/compras/page.tsx as a 'use client' page",
+        "Add page to navigation (if there's a nav component, add 'Compras' link)",
+        "Use the existing Tabs component (src/components/ui/tabs.tsx) with 3 tabs: 'Aguardando Compra', 'Comprado', 'Indisponiveis'",
+        "Each tab shows a counter badge from the API response counts",
+        "Use React Query (useQuery) to fetch GET /api/compras with the active tab's status as query param",
+        "Refetch every 30 seconds (refetchInterval: 30000) — but NOT on the conferencia page",
+        "Show LoadingSpinner while loading, EmptyState when no items",
+        "Auth guard: redirect to /login if no user in localStorage, show 'Acesso negado' if cargo is not admin/comprador",
+        "Follow existing page patterns (zinc palette, max-w-3xl on mobile, Outfit font)",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "Follow the same pattern as src/app/page.tsx (dashboard) for page structure, auth check, and React Query usage. Use the existing tabs component from src/components/ui/tabs.tsx."
+    },
+    {
+      "id": "US-013",
+      "title": "Frontend — Aguardando Compra tab with supplier cards",
+      "description": "As a developer, I want the Aguardando Compra tab to show items grouped by supplier with consolidation and a 'Marcar como Comprado' button.",
+      "acceptanceCriteria": [
+        "Create component src/components/compras/fornecedor-card.tsx for the supplier card",
+        "Card shows: fornecedor name as header, list of SKUs with descricao + quantidade (consolidated across pedidos), pedido numbers as small badges",
+        "Items with same SKU from different pedidos show summed quantity with breakdown on hover/expand",
+        "'Copiar SKUs' button copies tab-separated text (SKU, descricao, quantidade) to clipboard via navigator.clipboard.writeText, show toast.success on copy",
+        "'Marcar como Comprado' button opens a small form: textarea for observacao (optional), confirm button",
+        "On confirm: POST /api/compras/ordens with fornecedor + empresa_id + observacao + usuario_id, invalidate React Query cache, show toast.success",
+        "Use Lucide icons: Package for supplier, Copy for copy button, ShoppingCart for comprar",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "empresa_id: for now use the empresa_id from the first item's pedido (empresa_origem_id from siso_pedidos). The consolidation groups items by SKU within a supplier — same SKU from pedido #100 (2un) and #101 (1un) shows as '3un' with breakdown."
+    },
+    {
+      "id": "US-014",
+      "title": "Frontend — Comprado tab with OC cards",
+      "description": "As a developer, I want the Comprado tab to show individual OC cards with their items and a 'Conferir Recebimento' button.",
+      "acceptanceCriteria": [
+        "Create component src/components/compras/ordem-compra-card.tsx",
+        "Card shows: 'OC #N — {fornecedor}' as header, observacao text, 'Comprado por {nome} em {data}', 'Ha X dias' relative time",
+        "List of items in the OC: SKU, descricao, quantidade, status badge (comprado/parcialmente recebido/recebido)",
+        "If OC status is 'parcialmente_recebido', show progress indicator (X de Y itens recebidos)",
+        "'Conferir Recebimento' button navigates to /compras/conferencia/[ordemCompraId]",
+        "Multiple OCs from the same fornecedor appear as separate cards",
+        "Use Lucide icons: Truck for delivery, ClipboardCheck for conferir",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": "The API returns OCs with their items for status='comprado'. Use Next.js router.push for navigation to conferencia page."
+    },
+    {
+      "id": "US-015",
+      "title": "Frontend — Conferencia page (receiving form)",
+      "description": "As a developer, I want the conferencia page where the operator enters received quantities and confirms, triggering Tiny stock entry.",
+      "acceptanceCriteria": [
+        "Create file src/app/compras/conferencia/[ordemCompraId]/page.tsx as 'use client' page",
+        "Fetch OC data via GET /api/compras/conferencia/[ordemCompraId] using React Query",
+        "Show OC info header: fornecedor, observacao, data da compra",
+        "For each item: show SKU, descricao, imagem (if available), quantidade_restante as 'Esperado', number input for 'Recebido' pre-filled with quantidade_restante",
+        "Show pedido numbers linked to each item as small badges",
+        "Number input: min=0, no max (allows > expected), step=1, integer only",
+        "Do NOT auto-refresh this page (no refetchInterval) to avoid losing typed values",
+        "'Confirmar Recebimento' button: disabled when all quantities are 0, shows loading state during POST",
+        "On confirm: POST /api/compras/conferir, show results toast with processados/erros counts and released pedidos",
+        "After successful confirm: navigate back to /compras",
+        "If there were errors: show error details (which items failed) before navigating",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": "Use controlled inputs with useState for quantities. The confirm POST may take a while (multiple Tiny API calls with sleeps) so show a good loading state. Use Sonner toast for feedback."
+    },
+    {
+      "id": "US-016",
+      "title": "Frontend — Item actions and Indisponiveis tab",
+      "description": "As a developer, I want item-level actions (devolver, indisponivel, trocar fornecedor) in OC cards and an Indisponiveis tab for visibility.",
+      "acceptanceCriteria": [
+        "In ordem-compra-card.tsx: add a dropdown menu (or action buttons) per item with 3 options: 'Devolver pra fila', 'Marcar indisponivel', 'Trocar fornecedor'",
+        "'Devolver pra fila': POST /api/compras/itens/[itemId]/devolver, invalidate cache, toast.success('Item devolvido para fila de compras')",
+        "'Marcar indisponivel': confirm dialog, POST /api/compras/itens/[itemId]/indisponivel, invalidate cache, toast.success",
+        "'Trocar fornecedor': small modal/form with text input for new fornecedor name, POST /api/compras/itens/[itemId]/trocar-fornecedor with { novo_fornecedor }, invalidate cache",
+        "Indisponiveis tab: simple list of items with compra_status='indisponivel', showing SKU, descricao, fornecedor original, pedido number, and a badge 'Indisponivel'",
+        "Use Lucide icons: RotateCcw for devolver, XCircle for indisponivel, ArrowRightLeft for trocar",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "The trocar-fornecedor action on the backend sets ordem_compra_id=null and compra_status='aguardando_compra' with the new fornecedor. The item will appear in Aguardando Compra under the new supplier name."
+    }
+  ]
+}

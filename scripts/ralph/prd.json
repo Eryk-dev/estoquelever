@@ -318,7 +318,7 @@
         "Typecheck passes"
       ],
       "priority": 21,
-      "passes": false,
+      "passes": true,
       "notes": "The monitoring types may be inline in monitoramento/page.tsx or in types/index.ts. Check both."
     },
     {

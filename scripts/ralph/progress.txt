@@ -268,3 +268,14 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - To set per-page browser tab title in Next.js App Router with "use client" pages, create a sibling `layout.tsx` (server component) that exports metadata
   - The `.next/dev/types` cache can cause false TS errors when adding new layouts — delete `.next/dev/types` to fix
 ---
+## 2026-03-11 - US-021
+- Replaced `filial: string | null` with `empresaNome: string | null` in MonitoringData type (inline in monitoramento/page.tsx)
+- In monitoring API route, after fetching errors from siso_logs, resolves filial (galpao name) → empresa name via siso_galpoes + siso_empresas joins
+- Frontend renders `err.empresaNome` badge instead of `err.filial`
+- Zero references to `filial` remain in monitoramento/page.tsx
+- Files changed: `src/app/api/monitoring/route.ts`, `src/app/monitoramento/page.tsx`
+- **Learnings for future iterations:**
+  - `siso_logs` has `filial` column (galpao name, e.g., "CWB") but no `empresa_id` — resolution requires galpao→empresa lookup
+  - Current setup has 1 empresa per galpao so the mapping is clean, but if multiple empresas per galpao exist in the future, the first empresa name is used
+  - The monitoring API builds a `filialToEmpresa` lookup map from distinct filial values to avoid N+1 queries
+---

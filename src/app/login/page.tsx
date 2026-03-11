@@ -96,7 +96,7 @@ export default function LoginPage() {
                 placeholder="Seu nome"
                 autoComplete="username"
                 autoFocus
-                className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-700 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:focus:border-zinc-500"
+                className="w-full rounded-lg border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none transition-colors focus:border-ink-muted focus:ring-1 focus:ring-ink-muted"
               />
             </div>
 
@@ -123,10 +123,10 @@ export default function LoginPage() {
                 placeholder="0000"
                 autoComplete="current-password"
                 className={cn(
-                  "w-full rounded-lg border bg-zinc-50 px-3 py-2.5 text-center font-mono text-lg tracking-[0.5em] text-zinc-700 outline-none transition-colors focus:ring-1 dark:bg-zinc-800 dark:text-zinc-300",
+                  "w-full rounded-lg border bg-surface px-3 py-2.5 text-center font-mono text-lg tracking-[0.5em] text-ink outline-none transition-colors focus:ring-1",
                   erro
                     ? "border-red-300 focus:border-red-400 focus:ring-red-400 dark:border-red-700"
-                    : "border-zinc-200 focus:border-zinc-400 focus:ring-zinc-400 dark:border-zinc-700 dark:focus:border-zinc-500",
+                    : "border-line focus:border-ink-muted focus:ring-ink-muted",
                 )}
               />
             </div>

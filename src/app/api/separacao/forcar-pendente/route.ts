@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     // Update only pedidos that are currently aguardando_nf
     const { data: updated, error: updateError } = await supabase
       .from("siso_pedidos")
-      .update({ status_separacao: "aguardando_separacao" })
+      .update({ status_separacao: "aguardando_separacao", status_unificado: "aguardando_separacao" })
       .in("id", pedido_ids)
       .eq("status_separacao", "aguardando_nf")
       .select("id");

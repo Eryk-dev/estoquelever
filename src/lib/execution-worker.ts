@@ -130,10 +130,16 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
         })
         .eq("id", job.id);
 
+      // Determine status_unificado based on decisao:
+      // propria/transferencia → aguardando_nf (waiting for NF authorization)
+      // oc → aguardando_compra (waiting for purchase)
+      const statusUnificado = job.decisao === "oc" ? "aguardando_compra" : "aguardando_nf";
+
       await supabase
         .from("siso_pedidos")
         .update({
           status: "concluido",
+          status_unificado: statusUnificado,
           processado_em: new Date().toISOString(),
         })
         .eq("id", job.pedido_id)
@@ -182,6 +188,7 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
           .from("siso_pedidos")
           .update({
             status: "erro",
+            status_unificado: "erro",
             erro: `Falha após ${tentativas} tentativas: ${errorMsg}`,
           })
           .eq("id", job.pedido_id);
@@ -387,7 +394,10 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
   // Set compra fields so items appear in the compras module
   await supabase
     .from("siso_pedidos")
-    .update({ status_separacao: "aguardando_compra" })
+    .update({
+      status_separacao: "aguardando_compra",
+      status_unificado: "aguardando_compra",
+    })
     .eq("id", job.pedido_id);
 
   await supabase

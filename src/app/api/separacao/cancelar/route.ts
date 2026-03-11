@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
       .from("siso_pedidos")
       .update({
         status_separacao: "aguardando_separacao",
+        status_unificado: "aguardando_separacao",
         separacao_operador_id: null,
         separacao_iniciada_em: null,
       })

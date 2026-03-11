@@ -1,259 +1,298 @@
 # Ralph Progress Log
-Started: Wed Mar 11 12:11:58 -03 2026
+Started: Wed Mar 11 16:48:51 -03 2026
 ---
 
 ## Codebase Patterns
-- All types go in `src/types/index.ts` — no barrel exports, import directly
-- PedidoItem interface maps 1:1 to siso_pedido_itens columns (snake_case)
-- Domain types use Portuguese names, technical types use English
-- Typecheck: `npx tsc --noEmit` (silent output = pass)
-- `siso_pedido_itens.id` is `bigint` (not uuid) — string representation in TypeScript
-- `fornecedor_oc` already existed on siso_pedido_itens — always verify columns before migrations
-- `status_separacao` CHECK constraint name: `siso_pedidos_status_separacao_check`
-- Supabase apply_migration is transactional — all-or-nothing
-- `ProcessedItem` fields in webhook-processor.ts are spread directly into siso_pedido_itens upsert — add a field there to auto-persist to DB
-- `fornecedor_oc` is already populated during webhook enrichment via `getFornecedorBySku()`
-- Supabase `.select()` with FK join uses `table_name(columns)` syntax — e.g. `siso_pedidos(numero)`
-- GET API routes in this codebase don't enforce server-side auth (PIN auth is client-side only). Add `cargo` query param for lightweight checks.
-- `siso_fila_execucao` insert requires: pedido_id, tipo, empresa_id, decisao (filial_execucao/operador are optional)
-- Use `{ count: "exact", head: true }` for count-only queries in Supabase
-- Supabase `.single()` returns error code `PGRST116` when no rows found — use for 404 detection
-- Next.js 16 dynamic route params are a Promise — `const { param } = await params`
-- AppShell handles login redirect + loading state; for custom cargo checks, add logic inside AppShell children
-- GET /api/compras returns `{ counts, data }` — counts has all 3 tab badge numbers regardless of requested status
-
----
+- Always use `IF NOT EXISTS` for ADD COLUMN and CREATE INDEX in migrations
+- Migration files follow naming: `YYYYMMDD_description.sql` in `supabase/migrations/`
+- Supabase project ID: `wrbrbhuhsaaupqsimkqz`
+- CHECK constraints on siso_pedidos use named constraints (e.g., `siso_pedidos_status_separacao_check`)
+- Old status_separacao constraint was last updated in `20260311_modulo_compras.sql` to include `aguardando_compra`
+- Backfill migrations should handle NULL values explicitly (e.g., `status=concluido AND status_separacao IS NULL`)
+- Cancellation logic is in `src/app/api/webhook/tiny/route.ts`, NOT in `webhook-processor.ts`
+- For dual-write: search `.update()` and `.upsert()` on `siso_pedidos` for `status` or `status_separacao` fields
+- execution-worker generic success sets status=concluido for ALL decisoes; status_unificado varies by decisao (aguardando_nf for propria/transferencia, aguardando_compra for oc)
+- `bipar-embalagem` uses PL/pgSQL RPC `siso_processar_bip_embalagem` — dual-write for that path requires a DB function update, not TypeScript
+- `expedir/route.ts` sets `expedido` which is NOT in StatusUnificado CHECK constraint — needs separate handling when expedido is added to the unified model
 
 ## 2026-03-11 - US-001
-- Added compras module types: OrdemCompra, OrdemCompraStatus, CompraStatus, CompraItemAgrupado, ConferenciaItem
-- Updated PedidoItem with 8 new compra-related fields (produto_id_tiny, fornecedor_oc, ordem_compra_id, compra_status, compra_quantidade_recebida, comprado_em, comprado_por, recebido_em, recebido_por)
-- Files changed: `src/types/index.ts`
+- Created migration `supabase/migrations/20260311_status_unificado.sql`
+- Added `status_unificado` column with CHECK constraint (10 valid values) and DEFAULT 'pendente'
+- Backfilled all existing rows mapping status+status_separacao → status_unificado
+- Created index `idx_siso_pedidos_status_unificado`
+- Applied migration via Supabase MCP successfully
+- Typecheck passes
+- Files changed: `supabase/migrations/20260311_status_unificado.sql`
 - **Learnings for future iterations:**
-  - PedidoItem fields are snake_case matching DB columns directly
-  - CompraStatus includes `null` as a union member (not optional — explicitly null when no compra flow)
-  - OrdemCompraStatus is separate from CompraStatus (OC has 'parcialmente_recebido', item doesn't)
+  - The inline CHECK constraint syntax `ADD COLUMN ... CHECK (...)` works without needing a separate `ADD CONSTRAINT` statement
+  - `status=concluido` with `status_separacao IS NULL` defaults to `aguardando_separacao` per PRD notes
+  - Old `status` and `status_separacao` columns are kept deprecated — do NOT delete them
 ---
 
 ## 2026-03-11 - US-002
-- Created migration `supabase/migrations/20260311_modulo_compras.sql`
-- Created table `siso_ordens_compra` with status CHECK constraint, FK to siso_empresas and siso_usuarios
-- Added 8 compra columns to `siso_pedido_itens` (produto_id_tiny, ordem_compra_id, compra_status, compra_quantidade_recebida, comprado_em, comprado_por, recebido_em, recebido_por)
-- Created 5 indexes (2 on ordens_compra, 3 partial on pedido_itens)
-- Updated `status_separacao` CHECK constraint on siso_pedidos to include 'aguardando_compra'
-- Applied via Supabase MCP apply_migration
-- Files changed: `supabase/migrations/20260311_modulo_compras.sql`
+- Added `StatusUnificado` type (10 values) to `src/types/index.ts`
+- Added `GalpaoEstoque` interface with dynamic galpao stock fields
+- Added optional `statusUnificado?: StatusUnificado` to `Pedido` interface
+- Kept all existing types untouched (StatusPedido, StatusSeparacao, EstoqueItem legacy fields)
+- Files changed: `src/types/index.ts`
 - **Learnings for future iterations:**
-  - `fornecedor_oc` column already existed on siso_pedido_itens from original schema — always check existing columns before ALTER TABLE ADD COLUMN
-  - Supabase apply_migration runs as a transaction — if any statement fails, the whole migration rolls back
-  - `siso_pedido_itens.id` is `bigint`, not `uuid` — item references use string representation of bigint
-  - `status_separacao` on siso_pedidos has a named CHECK constraint `siso_pedidos_status_separacao_check` — must DROP IF EXISTS before re-adding
+  - Types are all centralized in `src/types/index.ts` — no barrel exports, import directly
+  - New types are additive-only during transition — mark optional with `?` so existing code doesn't break
+  - `GalpaoEstoque` uses `string | undefined` for localizacao (not `string | null`) matching existing EstoqueItem pattern
 ---
 
 ## 2026-03-11 - US-003
-- Added `produto_id_tiny` field to `ProcessedItem` interface in webhook-processor.ts
-- Set `produto_id_tiny = item.produto.id` (origin empresa's Tiny product ID) during enrichment
-- Added warning log when `produto_id_tiny` cannot be resolved
-- `fornecedor_oc` was already being saved via `ProcessedItem` (line 659 in enrichment, spread into upsert)
-- Files changed: `src/lib/webhook-processor.ts`
+- Added `status_unificado` dual-write to webhook-processor.ts and route.ts
+- 3 write locations updated:
+  1. `webhook-processor.ts` main upsert: `status_unificado: isAuto ? "executando" : "pendente"`
+  2. `webhook-processor.ts` NF reconciliation: `status_unificado: "aguardando_separacao"`
+  3. `route.ts` cancellation handler: `status_unificado: "cancelado"`
+- Files changed: `src/lib/webhook-processor.ts`, `src/app/api/webhook/tiny/route.ts`
 - **Learnings for future iterations:**
-  - `ProcessedItem` fields are spread directly into the `siso_pedido_itens` upsert — adding a field to `ProcessedItem` automatically persists it to DB
-  - `produto_id_tiny` = `item.produto.id` for origin empresa items (same Tiny product ID as `produto_id`)
-  - `fornecedor_oc` was already being populated by `getFornecedorBySku()` before this story — no extra work needed
-  - For kit components, each expanded item gets its own `produto_id_tiny` from the kit component's Tiny product ID
+  - Cancellation logic is in `route.ts` NOT in `webhook-processor.ts` — the processor handles creation, the route handles cancellation
+  - The NF reconciliation (race condition handler) in webhook-processor.ts sets `status_separacao: "pendente"` which is NOT a valid StatusSeparacao type — this is a pre-existing issue
+  - For dual-write stories (US-003 through US-008), search for ALL `.update()` and `.upsert()` calls on `siso_pedidos` that touch `status` or `status_separacao`
 ---
 
 ## 2026-03-11 - US-004
-- After `executarMarcadoresOnly` (OC flow), added DB updates: set `status_separacao='aguardando_compra'` on siso_pedidos and `compra_status='aguardando_compra'` on all siso_pedido_itens
-- Main pedido `status` still goes to 'concluido' (handled by processQueue after executeJob returns)
-- Changed log source from 'worker' to 'execution-worker' per AC requirement
+- Added `status_unificado` dual-write to execution-worker.ts
+- 3 write locations updated:
+  1. Generic success handler: `status_unificado` based on decisao — propria/transferencia → "aguardando_nf", oc → "aguardando_compra"
+  2. Max retries error handler: `status_unificado: "erro"`
+  3. OC flow (`executarMarcadoresOnly`): `status_unificado: "aguardando_compra"` alongside `status_separacao`
 - Files changed: `src/lib/execution-worker.ts`
 - **Learnings for future iterations:**
-  - The pedido `status='concluido'` update happens in `processQueue` (lines 133-140), NOT inside `executeJob` — so adding updates inside `executarMarcadoresOnly` doesn't interfere with the main status flow
-  - `status_separacao` is separate from `status` — it tracks the separacao/compra lifecycle while `status` tracks the overall pedido lifecycle
-  - The OC flow (`executarMarcadoresOnly`) is much simpler than propria/transferencia — just marcadores, no NF or stock posting
+  - The worker does NOT set status=executando on siso_pedidos — that's done by /api/pedidos/aprovar (US-005)
+  - The generic success handler (after executeJob) sets status=concluido for ALL decisoes, but status_unificado differs by decisao
+  - For propria/transferencia, NF is generated but not yet authorized → status_unificado = "aguardando_nf"
+  - The executarMarcadoresOnly (OC) function sets status_separacao on siso_pedidos before the generic handler sets status=concluido
 ---
 
 ## 2026-03-11 - US-005
-- Created `src/app/api/compras/route.ts` with GET handler
-- Three status modes: aguardando_compra (grouped by fornecedor, consolidated by SKU), comprado (OCs with items), indisponivel (flat list)
-- Returns `{ counts, data }` — counts has tab badge numbers for all 3 statuses
-- Aguardando compra consolidates same SKU+fornecedor across pedidos (sums quantities, collects pedido references)
-- Comprado fetches OCs with joined items and usuario name
-- Auth check via `cargo` query param (lightweight — matches codebase's client-side auth pattern)
-- Files changed: `src/app/api/compras/route.ts`
+- Added `status_unificado: "executando"` to the approval update query in `/api/pedidos/aprovar/route.ts`
+- 1 write location updated: the `.update()` call at line ~133 that sets `status: "executando"`
+- Files changed: `src/app/api/pedidos/aprovar/route.ts`
 - **Learnings for future iterations:**
-  - Supabase FK join syntax: `siso_pedidos(numero, empresa_origem_id)` in `.select()` — returns nested object
-  - For named FK joins (when multiple FKs to same table): `siso_usuarios:comprado_por(nome)` — use `table:column(fields)` syntax
-  - `{ count: "exact", head: true }` returns only the count without data — good for badge counts
-  - Raw Supabase types need `as unknown as T[]` cast due to generic typing — define local interfaces for raw DB shapes
-  - The `items` result from Supabase join queries have complex nested types — cast to explicit interfaces rather than fighting TS inference
+  - The approval route is the ONLY place that sets status=executando on siso_pedidos (worker does NOT do this)
+  - The approval route also sets decisao_final, operador info, tipo_resolucao, marcadores, and separacao_galpao_id in the same update
+  - There's only ONE update to siso_pedidos in this route — simple dual-write
 ---
 
 ## 2026-03-11 - US-006
-- Created `src/app/api/compras/ordens/route.ts` with POST handler
-- Creates an OC in `siso_ordens_compra` (status='comprado') and links all `aguardando_compra` items for that fornecedor
-- Validates: required fields (fornecedor, empresa_id, usuario_id), auth (admin/comprador), items exist for fornecedor
-- Returns 400 if no items found for the given fornecedor
-- Returns created OC + count of linked items
-- Files changed: `src/app/api/compras/ordens/route.ts`
+- Added `status_unificado` dual-write to all separacao API routes that update `status_separacao` on `siso_pedidos`
+- 9 files updated, 10 write locations:
+  1. `cancelar/route.ts`: status_unificado = "aguardando_separacao"
+  2. `iniciar/route.ts`: status_unificado = "em_separacao"
+  3. `concluir/route.ts`: status_unificado = "separado"
+  4. `forcar-pendente/route.ts` (batch): status_unificado = "aguardando_separacao"
+  5. `[pedidoId]/forcar-pendente/route.ts`: status_unificado = "aguardando_separacao"
+  6. `voltar-etapa/route.ts`: status_unificado = novoStatus (dynamic)
+  7. `produto-esgotado/route.ts`: status_unificado = "aguardando_compra"
+  8. `desfazer-bip/route.ts` (2 locations): em_separacao or aguardando_separacao
+  9. `confirmar-item-embalagem/route.ts`: status_unificado = "embalado"
+- Files changed: `src/app/api/separacao/{cancelar,iniciar,concluir,forcar-pendente,[pedidoId]/forcar-pendente,voltar-etapa,produto-esgotado,desfazer-bip,confirmar-item-embalagem}/route.ts`
 - **Learnings for future iterations:**
-  - POST endpoints follow same pattern: parse JSON body, validate, auth check via `cargo` field, createServiceClient(), try/catch with logger
-  - Supabase `.update().select("id")` returns updated rows — use `.length` for count of affected rows
-  - OC creation and item linking are two separate operations (insert OC, then update items) — not transactional but acceptable for this volume
+  - `expedir/route.ts` sets status_separacao="expedido" which is NOT in StatusUnificado — skipped (expedido not yet in the unified model)
+  - `bipar-embalagem/route.ts` uses PL/pgSQL RPC `siso_processar_bip_embalagem` for atomic updates — dual-write needs a DB migration to update the function, not TypeScript
+  - `reiniciar/route.ts` does NOT update status_separacao on siso_pedidos — it only resets item-level fields
+  - `voltar-etapa/route.ts` status values come from StatusSeparacao which are all valid StatusUnificado values (aguardando_nf, aguardando_separacao, em_separacao, separado, embalado)
+  - `desfazer-bip/route.ts` has conditional status writes (embalado→em_separacao or em_separacao→aguardando_separacao depending on context)
 ---
 
 ## 2026-03-11 - US-007
-- Created `src/app/api/compras/conferencia/[ordemCompraId]/route.ts` with GET handler
-- Fetches OC by ID (404 if not found via PGRST116 error code), then fetches items with compra_status='comprado'
-- Calculates quantidade_restante = quantidade - compra_quantidade_recebida for each item
-- Joins with siso_pedidos for numero_pedido reference
-- Returns OC info (with comprado_por_nome from siso_usuarios join) + ConferenciaItem array
-- Auth check via cargo query param (admin/comprador)
-- Files changed: `src/app/api/compras/conferencia/[ordemCompraId]/route.ts`
+- Added `status_unificado: "executando"` dual-write to `compras-release.ts` release update
+- Only 1 write location: the `.update()` call in `checkAndReleasePedidos` that sets status="executando" + status_separacao="aguardando_nf"
+- No compras API routes (`src/app/api/compras/`) directly update status_separacao on siso_pedidos — they only update siso_pedido_itens and siso_ordens_compra
+- Files changed: `src/lib/compras-release.ts`
 - **Learnings for future iterations:**
-  - Supabase `.single()` returns error code `PGRST116` when no rows found — use this for 404 detection
-  - Next.js 16 dynamic route params are a Promise — use `const { param } = await params`
-  - ConferenciaItem maps 1:1 to each siso_pedido_itens row (no consolidation like aguardando_compra) — each item has its own pedido reference
+  - compras-release sets status="executando" (not concluido) because the pedido re-enters the execution queue — the worker will later set it to concluido+aguardando_nf
+  - All compras API routes (conferir, ordens, itens actions) operate on siso_pedido_itens and siso_ordens_compra — only compras-release.ts touches siso_pedidos status
 ---
 
 ## 2026-03-11 - US-008
-- Created `src/app/api/compras/conferir/route.ts` with POST handler
-- Processes receiving: for each item with quantidade_recebida > 0, calls Tiny movimentarEstoque tipo='E' if produto_id_tiny exists
-- Uses waitForRateLimit + registerApiCall before each Tiny call, 500ms sleep between calls
-- If Tiny call fails for an item, logs error and continues with remaining items (no abort)
-- Updates compra_quantidade_recebida in DB; sets compra_status='recebido' when fully received
-- Items without produto_id_tiny: logs warning, skips Tiny call, still updates DB quantity
-- Updates OC status: all items recebido → 'recebido', mix → 'parcialmente_recebido'
-- Returns summary: { processados, erros, erros_detalhe, itens_sem_produto_id }
-- Auth check via cargo field (admin/comprador)
-- Files changed: `src/app/api/compras/conferir/route.ts`
+- Added `status_unificado: "aguardando_separacao"` dual-write to nf-webhook-handler.ts
+- 1 write location: Step 5 transition `aguardando_nf → aguardando_separacao` (line 140)
+- Files changed: `src/lib/nf-webhook-handler.ts`
 - **Learnings for future iterations:**
-  - `movimentarEstoque` in tiny-api.ts accepts `deposito: { id: number }` (object, not just ID) — match this format when passing deposito
-  - Get deposito_id from `siso_tiny_connections WHERE empresa_id AND ativo=true` — same pattern as execution-worker.ts
-  - For conferir, fetch items individually by ID to get current `compra_quantidade_recebida` (not stale) before incrementing
-  - Sleep between Tiny calls uses index check `idx < length - 1` to avoid unnecessary sleep after last item
+  - nf-webhook-handler.ts has only ONE status_separacao write on siso_pedidos — the aguardando_nf → aguardando_separacao transition
+  - The update is idempotent via `.eq("status_separacao", "aguardando_nf")` WHERE clause — only transitions pedidos currently in aguardando_nf
+  - This completes all dual-write stories (US-003 through US-008) — every status/status_separacao write now also writes status_unificado
 ---
 
 ## 2026-03-11 - US-009
-- Created `src/lib/compras-release.ts` with `checkAndReleasePedidos(itemIds)` function
-- Logic: from item IDs → get distinct pedido_ids → for each pedido check if ALL compra_status items are 'recebido' → if yes, release pedido
-- Release = update siso_pedidos (decisao_final='propria', status='executando', status_separacao='aguardando_nf') + insert job in siso_fila_execucao (tipo='lancar_estoque', decisao='propria')
-- Integrated into POST /api/compras/conferir: tracks processedItemIds, calls checkAndReleasePedidos after OC status update
-- Response now includes `pedidos_liberados` array
-- Only items with non-null compra_status are checked — normal items don't block release
-- Skip pedidos not in 'aguardando_compra' or 'comprado' status_separacao to avoid double-release
-- Files changed: `src/lib/compras-release.ts` (new), `src/app/api/compras/conferir/route.ts`
+- Added `statusUnificado: p.status_unificado ?? undefined` to response mapping in `/api/pedidos/route.ts`
+- Added `?status_unificado=` query param support — when present, filters on `status_unificado` column instead of `status`
+- Old `?status=` filter still works for backwards compatibility (status_unificado takes precedence if both provided)
+- Files changed: `src/app/api/pedidos/route.ts`
 - **Learnings for future iterations:**
-  - `siso_fila_execucao` insert needs: pedido_id, tipo, empresa_id, decisao — filial_execucao and operador fields are optional
-  - Release uses decisao='propria' because after OC receiving, the stock is now local — the existing executarSaidaPropria flow handles NF + stock posting
-  - Filter by `status_separacao IN ('aguardando_compra', 'comprado')` to prevent re-releasing already released pedidos
-  - Use `.not("compra_status", "is", null)` in Supabase to filter for non-null values
+  - The pedidos API returns a flat array (not `{ data }` wrapper) — just `NextResponse.json(result)`
+  - Response mapping is in-line in the `.map()` callback — add new fields there
+  - `status_unificado` filter takes precedence over `status` when both are provided (else-if chain)
 ---
 
 ## 2026-03-11 - US-010
-- Created 3 item action endpoints under `/api/compras/itens/[itemId]/`:
-  - `devolver/route.ts` — returns item to "Aguardando Compra" queue, unlinks from OC
-  - `indisponivel/route.ts` — marks item as unavailable, unlinks from OC
-  - `trocar-fornecedor/route.ts` — changes item's fornecedor_oc, optionally moves to new OC or back to queue
-- All three check if old OC becomes empty after removal → sets OC status to 'cancelado'
-- All three follow same auth pattern (cargo check) and error handling
-- Files changed: `src/app/api/compras/itens/[itemId]/devolver/route.ts` (new), `src/app/api/compras/itens/[itemId]/indisponivel/route.ts` (new), `src/app/api/compras/itens/[itemId]/trocar-fornecedor/route.ts` (new)
+- US-010 was already implemented in a prior iteration (code in route.ts already fetches siso_pedido_item_estoques, joins with empresas/galpoes, aggregates by galpao, returns estoquesPorGalpao)
+- Verified typecheck passes, marked as passes: true
+- Files changed: none (code already present)
 - **Learnings for future iterations:**
-  - Next.js 16 dynamic route params: `{ params }: { params: Promise<{ itemId: string }> }` — always await params
-  - All item action endpoints share same OC cleanup pattern: after unlinking item, count remaining items in OC, cancel if 0
-  - `indisponivel` also unlinks from OC (sets ordem_compra_id=null) so the item doesn't appear in OC conferencia
-  - `trocar-fornecedor` with `nova_ordem_compra_id` moves directly to another OC; without it, item goes back to aguardando_compra with new fornecedor
+  - The stock aggregation uses a Map<string, Map<string, GalpaoStockAgg>> keyed by `${pedido_id}::${produto_id}` → galpaoId
+  - `atende` boolean is calculated server-side as `disponivel >= quantidadePedida`
+  - Legacy CWB/SP fields are kept alongside the new estoquesPorGalpao array
 ---
 
 ## 2026-03-11 - US-011
-- Added compras cleanup to the cancellation handler in `src/app/api/webhook/tiny/route.ts`
-- When a pedido with `status_separacao` = 'aguardando_compra' or 'comprado' is cancelled:
-  - Clears `compra_status` and `ordem_compra_id` on all pedido items with compra data
-  - Checks for items with `compra_quantidade_recebida > 0` (stock already entered in Tiny) — logs warning per item
-  - Sets `compra_estoque_lancado_alerta = true` on the pedido for UI alerting
-  - Checks each affected OC — cancels OC if no remaining items
-- Created migration `20260311_add_compra_estoque_lancado_alerta.sql` adding boolean column to siso_pedidos
-- Added `compra_estoque_lancado_alerta` to Pedido type in `src/types/index.ts`
-- Files changed: `src/app/api/webhook/tiny/route.ts`, `src/types/index.ts`, `supabase/migrations/20260311_add_compra_estoque_lancado_alerta.sql` (new)
+- Added `estoquesPorGalpao?: GalpaoEstoque[]` to `EstoqueItem` interface in `src/types/index.ts`
+- Field is optional (?) to maintain backwards compatibility during transition
+- Files changed: `src/types/index.ts`
 - **Learnings for future iterations:**
-  - Cancellation handler is in `src/app/api/webhook/tiny/route.ts` (not webhook-processor.ts) — lines 131+
-  - `status_separacao` check values for compras flow: 'aguardando_compra' or 'comprado' (not the OC statuses)
-  - Compras cleanup must happen BEFORE the pedido status update (so the item query still finds correct pedido)
-  - Same OC emptiness check pattern as item action endpoints: count remaining items, cancel if 0
-  - No stock reversal on cancellation — stock entered in Tiny stays, only an informational alert is stored
+  - GalpaoEstoque interface already existed (added in US-002), just needed to be referenced in EstoqueItem
+  - Keep legacy fields (estoqueCWB, estoqueSP, cwbAtende, spAtende) until frontend fully migrates to dynamic rendering
 ---
 
 ## 2026-03-11 - US-012
-- Replaced existing pre-approval compras page with new post-approval compras module
-- New page uses tabs (Aguardando Compra, Comprado, Indisponíveis) with counter badges from GET /api/compras
-- React Query fetches data with 30s refetchInterval, passing active tab status as query param
-- Auth guard: shows "Acesso negado" if cargo is not admin/comprador (AppShell handles login redirect)
-- Uses AppShell, Tabs, EmptyState, LoadingSpinner — all existing components
-- Placeholder content (JSON pre) for tab data — real components will be added in US-013, US-014, US-016
-- Files changed: `src/app/compras/page.tsx`
+- PedidoCard now renders dynamic stock pills from `estoquesPorGalpao` when available
+- EditableStockPill accepts `galpao: string` + `galpaoId?: string` instead of hardcoded `"CWB" | "SP"`
+- ProductRow uses `hasDynamic` flag to branch between dynamic and legacy rendering
+- Location resolution uses dynamic galpao data (matching by `galpaoNome === filialOrigem`)
+- OC locations render all galpao locations dynamically
+- Legacy CWB/SP fallback preserved for old data without estoquesPorGalpao
+- Files changed: `src/components/pedido/pedido-card.tsx`
 - **Learnings for future iterations:**
-  - AppShell handles login redirect and loading state — no need to duplicate that logic in pages
-  - AppShell has `requireAdmin` but no generic `requireCargo` — for custom cargo checks, add a check inside the children
-  - The GET /api/compras response is `{ counts, data }` — counts has all 3 tab badge numbers regardless of which status is requested
-  - CompraTab type aligns with API status param values: 'aguardando_compra' | 'comprado' | 'indisponivel'
-  - The old compras page was a pre-approval OC view (fetching pending pedidos); the new one is post-approval (fetching from siso_ordens_compra and siso_pedido_itens compra fields)
+  - `filialOrigem` is the galpao name (e.g., "CWB", "SP") — can match against `galpaoNome` in estoquesPorGalpao
+  - `DepositoEstoque` can be constructed from `GalpaoEstoque` for the EditableStockPill (id=depositoId, nome=depositoNome)
+  - The `galpaoId` is passed to the stock adjustment API body for forward compat (US-014 will make the API use it)
+  - `isRelevant` for stock pills: propria = origin galpao, transferencia = non-origin, oc = all relevant
 ---
 
 ## 2026-03-11 - US-013
-- Created `src/components/compras/fornecedor-card.tsx` — supplier card with SKU list, consolidated quantities, pedido badges
-- Card features: expandable SKU breakdown (click to see per-pedido quantities), "Copiar SKUs" (tab-separated clipboard), "Marcar como Comprado" with observacao form
-- Updated `src/app/compras/page.tsx` to render FornecedorCard for aguardando_compra tab; other tabs still show JSON placeholder
-- Files changed: `src/components/compras/fornecedor-card.tsx` (new), `src/app/compras/page.tsx`
+- `decisaoIsAvailable()` now checks estoquesPorGalpao dynamically: propria = origin galpao atende ALL items, transferencia = any non-origin galpao atende ALL items
+- Replaced `DECISAO_OPTIONS` (with label functions) with `DECISAO_VALUES` array + `getDecisaoLabel()` function
+- `getDecisaoLabel()` for transferencia shows actual target galpao name from dynamic data (e.g., "Transferência SP")
+- `getBestAlternativeGalpao()` helper extracts non-origin galpao names from estoquesPorGalpao
+- Legacy CWB/SP fallback preserved in both `decisaoIsAvailable` and `getDecisaoLabel`
+- No `as "CWB" | "SP"` casts in the new code path
+- Files changed: `src/components/pedido/pedido-card.tsx`
 - **Learnings for future iterations:**
-  - API returns aguardando_compra data as `FornecedorGroup[]` — each group has `{ fornecedor, empresa_id, itens: CompraItemAgrupado[] }`
-  - FornecedorCard receives `usuario_id` and `cargo` from the page (from useAuth) — needed for POST /api/compras/ordens
-  - Use `queryClient.invalidateQueries({ queryKey: ["compras"] })` to refresh all compras tabs after mutation
-  - Copiar SKUs uses tab-separated format: `SKU\tdescricao\tquantidade` per line
+  - The decision availability for transferencia checks ALL non-origin galpoes — if ANY single galpao atende ALL items, transferencia is available
+  - `DECISAO_VALUES` is just a plain array of Decisao values; labels are computed by `getDecisaoLabel(decisao, pedido)`
+  - `getDecisaoOption()` was removed; `ActionRow` calls `getDecisaoLabel(decisao, pedido)` directly
 ---
 
 ## 2026-03-11 - US-014
-- Created `src/components/compras/ordem-compra-card.tsx` — OC card with item list, status badges, progress indicator, and conferir button
-- Card shows: OC header with fornecedor, meta (comprado por / data / relative time), observacao, item list with status badges, conferir button
-- Parcialmente recebido OCs show progress indicator (X/Y recebidos) in header
-- Items show individual status badges (Comprado/Parcial/Recebido) and pedido number badges
-- Conferir Recebimento button navigates to `/compras/conferencia/[id]` via router.push
-- Updated `src/app/compras/page.tsx` to render OrdemCompraCard for comprado tab (indisponivel still placeholder for US-016)
-- Files changed: `src/components/compras/ordem-compra-card.tsx` (new), `src/app/compras/page.tsx`
+- Stock adjustment endpoint now accepts `galpaoId` (UUID) in addition to `galpao` (name string)
+- When `galpaoId` provided: looks up empresa by `galpao_id`, resolves deposit from `siso_pedido_item_estoques`
+- When only `galpao` provided: backwards compat — looks up by galpao name (existing behavior)
+- `resolvedGalpaoName` used throughout instead of raw `galpao` param
+- Legacy DB update (CWB/SP columns) only runs when `resolvedGalpaoName` is "CWB" or "SP"
+- Normalized table (`siso_pedido_item_estoques`) always updated regardless of galpao name
+- Files changed: `src/app/api/tiny/stock/ajustar/route.ts`
 - **Learnings for future iterations:**
-  - API returns OC data with `comprado_por_nome` (string from siso_usuarios join) — not the UUID
-  - OC sequential number (#N) is derived from list index (idx+1) since the DB uses UUIDs
-  - Status badge mapping: `comprado` → amber, `parcialmente_recebido` → blue, `recebido` → emerald
-  - `useRouter` from `next/navigation` for programmatic navigation in App Router
+  - The endpoint uses `produto_id_suporte` for non-origin galpao Tiny lookups — each empresa may have a different product ID in Tiny
+  - Deposit ID lookup: `siso_pedido_item_estoques` filtered by `empresa_id` gives the right deposit for that empresa
+  - For new galpoes beyond CWB/SP, only the normalized table update runs (no legacy columns exist)
 ---
 
 ## 2026-03-11 - US-015
-- Created `src/app/compras/conferencia/[ordemCompraId]/page.tsx` — receiving/checking form page
-- Fetches OC data via GET /api/compras/conferencia/[ordemCompraId] using React Query (no refetchInterval)
-- Shows OC header with fornecedor, comprado por, date, observacao
-- Each item shows: SKU, descricao, pedido badges with quantities, "Esperado" count, number input pre-filled with quantidade_restante
-- Already-received items show blue "Já recebido: N" indicator
-- Confirm button: disabled when all quantities are 0, loading state with spinner during POST
-- On success: toast with processados count + pedidos liberados, navigates to /compras
-- On errors: toast.error with error details (duration 8000ms for readability)
-- Empty state when all items already received
-- Auth guard matches compras page pattern (AppShell + cargo check)
-- Files changed: `src/app/compras/conferencia/[ordemCompraId]/page.tsx` (new)
+- SISO dashboard now fetches with `?status_unificado=` instead of no filter
+- Pendente tab: filters by `statusUnificado === "pendente"`
+- Concluidos tab: `tipoResolucao === "manual"` with `statusUnificado` in [aguardando_compra, aguardando_nf, aguardando_separacao, em_separacao, separado, embalado]
+- Auto tab: `tipoResolucao === "auto"` regardless of status
+- Files changed: `src/app/siso/page.tsx`
 - **Learnings for future iterations:**
-  - `useParams<{ ordemCompraId: string }>()` for dynamic route params in Next.js 16 client components — no await needed (unlike server-side params)
-  - Use controlled state for quantity inputs: initialize from API data via getQuantity helper, track user changes in Record<string, number>
-  - Don't use refetchInterval on forms with user input — it would reset typed values
-  - POST /api/compras/conferir response includes `pedidos_liberados` array — show count in success toast
+  - SISO fetches all non-cancelled statuses in one API call, then splits client-side
+  - The `filtrarPendentes/Concluidos/Auto` functions in `filtrar-pedidos.ts` handle role-based filtering after the status split
+  - Concluidos tab uses "manual" type resolution to show operator-approved orders (not auto)
 ---
 
 ## 2026-03-11 - US-016
-- Added per-item action dropdown in `ordem-compra-card.tsx` with 3 options: Devolver pra fila, Marcar indisponível, Trocar fornecedor
-- Dropdown uses MoreVertical icon with backdrop-close pattern, inline trocar-fornecedor form
-- Each action calls the corresponding POST /api/compras/itens/[itemId]/ endpoint, invalidates React Query cache, shows toast
-- Replaced indisponivel tab JSON placeholder in `compras/page.tsx` with proper item list showing SKU, descricao, fornecedor, quantidade, pedido badge, and red "Indisponível" badge
-- Files changed: `src/components/compras/ordem-compra-card.tsx`, `src/app/compras/page.tsx`
+- Error orders (`statusUnificado=erro`) now appear in Pendente tab with red error banner
+- Error banner is clickable to expand full error text from `pedido.erro`
+- Stuck executing orders (`statusUnificado=executando` > 2min) show amber "Executando..." banner with elapsed time
+- `StatusBanner` component handles both error and stuck states
+- Pendentes filter includes `erro` and stuck `executando` orders alongside `pendente`
+- Files changed: `src/app/siso/page.tsx`
 - **Learnings for future iterations:**
-  - Dropdown menus: use fixed backdrop div + absolute positioned menu for click-outside-to-close pattern (no external library needed)
-  - Item action endpoints accept `{ cargo }` in body for auth check — same pattern as POST endpoints
-  - `confirm()` is acceptable for destructive actions (indisponivel) in this codebase — no custom modal needed
-  - Trocar fornecedor inline form within dropdown: use autoFocus + Enter key handler for quick interaction
+  - `pedido.erro` contains the error message string from the worker
+  - `processadoEm` is when the order was approved/started executing; `criadoEm` is fallback
+  - The 2-minute threshold is checked client-side with `Date.now() - timestamp > 2 * 60 * 1000`
+  - StatusBanner returns null for normal `pendente` orders (no banner needed)
+---
+
+## 2026-03-11 - US-017
+- Separacao page now uses `<AppShell>` instead of manual header markup
+- Added `maxWidth` prop to AppShell (default "max-w-3xl", Separacao uses "max-w-5xl")
+- `mainClassName="space-y-4 py-4"` preserves the existing spacing
+- User badge + logout moved to `headerRight` prop
+- Removed manual loading/auth redirect (AppShell handles it)
+- Removed unused imports: `useEffect`, `Home`, `Link`
+- Files changed: `src/components/app-shell.tsx`, `src/app/separacao/page.tsx`
+- **Learnings for future iterations:**
+  - AppShell's `maxWidth` prop applies to BOTH the header and main containers
+  - AppShell handles auth redirect internally — pages don't need `useEffect` for login redirect
+  - `mainClassName` is applied after `maxWidth` so it can override padding/spacing but not width
+---
+
+## 2026-03-11 - US-018
+- Replaced all hardcoded `zinc-*` classes in login page with semantic design tokens
+- `border-zinc-200` → `border-line`, `bg-zinc-50` → `bg-surface`, `text-zinc-700` → `text-ink`
+- Focus states: `focus:border-zinc-400` → `focus:border-ink-muted`, `focus:ring-zinc-400` → `focus:ring-ink-muted`
+- Dark mode overrides removed (tokens handle light/dark via CSS variables)
+- Error styling (red) kept as-is (already semantic)
+- Zero `zinc-*` classes remaining in login/page.tsx
+- Files changed: `src/app/login/page.tsx`
+- **Learnings for future iterations:**
+  - Design tokens are defined in globals.css as CSS custom properties (--color-ink, --color-surface, etc.)
+  - Tailwind v4 auto-generates all color utilities from CSS variables (bg-*, text-*, border-*, ring-*, etc.)
+  - No need for separate dark: overrides when using design tokens — the CSS variables handle it
+---
+
+## 2026-03-11 - US-019
+- Added `pedido_ids` query parameter to `/api/separacao/route.ts` — filters pedidos by `.in("id", pedidoIdsFilter)` when provided
+- Updated embalagem page to pass `pedido_ids=${pedidoIds.join(",")}` in the fetch URL alongside `status_separacao=separado`
+- Removed client-side filter (`allPedidos.filter(p => pedidoIds.includes(p.id))`) — no longer needed since API returns only requested pedidos
+- Files changed: `src/app/api/separacao/route.ts`, `src/app/separacao/embalagem/page.tsx`
+- **Learnings for future iterations:**
+  - The `/api/separacao` route supports multiple filter params that combine: `status_separacao`, `empresa_origem_id`, `pedido_ids`, `busca`
+  - `pedido_ids` filter is applied before `status_separacao` in the query chain (both work together)
+  - Embalagem page gets `pedidoIds` from URL search params (`?pedidos=id1,id2,id3`), already had them available — just needed to pass to API
+---
+
+## 2026-03-11 - US-020
+- Renamed platform: layout.tsx title "SISO Platform" → "Gestão de Pedidos"
+- Home page header: "SISO Platform" → "Gestão de Pedidos", subtitle "Plataforma de operações"
+- SISO module card subtitle: "Separação de Ordens" → "Separação Inteligente de Ordens"
+- Created `src/app/siso/layout.tsx` with `metadata.title = "SISO"` for browser tab on module page
+- siso/page.tsx already had `title="SISO"` in AppShell — no change needed
+- Files changed: `src/app/layout.tsx`, `src/app/page.tsx`, `src/app/siso/layout.tsx` (new)
+- **Learnings for future iterations:**
+  - To set per-page browser tab title in Next.js App Router with "use client" pages, create a sibling `layout.tsx` (server component) that exports metadata
+  - The `.next/dev/types` cache can cause false TS errors when adding new layouts — delete `.next/dev/types` to fix
+---
+## 2026-03-11 - US-021
+- Replaced `filial: string | null` with `empresaNome: string | null` in MonitoringData type (inline in monitoramento/page.tsx)
+- In monitoring API route, after fetching errors from siso_logs, resolves filial (galpao name) → empresa name via siso_galpoes + siso_empresas joins
+- Frontend renders `err.empresaNome` badge instead of `err.filial`
+- Zero references to `filial` remain in monitoramento/page.tsx
+- Files changed: `src/app/api/monitoring/route.ts`, `src/app/monitoramento/page.tsx`
+- **Learnings for future iterations:**
+  - `siso_logs` has `filial` column (galpao name, e.g., "CWB") but no `empresa_id` — resolution requires galpao→empresa lookup
+  - Current setup has 1 empresa per galpao so the mapping is clean, but if multiple empresas per galpao exist in the future, the first empresa name is used
+  - The monitoring API builds a `filialToEmpresa` lookup map from distinct filial values to avoid N+1 queries
+---
+## 2026-03-11 - US-022
+- Created `src/lib/constants.ts` with three named refresh interval constants:
+  - `REFRESH_INTERVAL_LIST = 30_000` (SISO, Separacao, Compras)
+  - `REFRESH_INTERVAL_ACTIVE = 10_000` (Embalagem — Checklist has no interval)
+  - `REFRESH_INTERVAL_MONITORING = 30_000` (Monitoramento)
+- Updated 5 pages to use the constants:
+  - `src/app/siso/page.tsx`: 30_000 → REFRESH_INTERVAL_LIST
+  - `src/app/compras/page.tsx`: 30_000 → REFRESH_INTERVAL_LIST
+  - `src/app/separacao/page.tsx`: 10000 → REFRESH_INTERVAL_LIST (was 10s, now 30s per spec)
+  - `src/app/separacao/embalagem/page.tsx`: 5000 → REFRESH_INTERVAL_ACTIVE (was 5s, now 10s per spec)
+  - `src/app/monitoramento/page.tsx`: 30_000 → REFRESH_INTERVAL_MONITORING (setInterval, not refetchInterval)
+- Files changed: `src/lib/constants.ts` (new), 5 page files
+- **Learnings for future iterations:**
+  - Monitoramento uses raw `setInterval` + `useEffect` instead of React Query `refetchInterval` — different pattern but same constant works
+  - Checklist page has no refresh interval — it only loads once
+  - The Separacao page had a faster interval (10s) than other list pages because it was originally considered an active workflow page, now standardized to 30s
 ---

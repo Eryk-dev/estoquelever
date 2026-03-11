@@ -24,7 +24,7 @@ const MODULES: Module[] = [
     id: "siso",
     href: "/siso",
     title: "SISO",
-    subtitle: "Separação de Ordens",
+    subtitle: "Separação Inteligente de Ordens",
     description:
       "Processamento e aprovação de pedidos entre filiais, com sugestão automática de decisão.",
     icon: ClipboardList,
@@ -79,10 +79,10 @@ export default function HomePage() {
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
           <div className="flex-1">
             <h1 className="text-base font-bold tracking-tight text-ink">
-              SISO Platform
+              Gestão de Pedidos
             </h1>
             <p className="text-[11px] text-ink-faint">
-              Gestão de Pedidos & Separação
+              Plataforma de operações
             </p>
           </div>
           <div className="flex items-center gap-2">

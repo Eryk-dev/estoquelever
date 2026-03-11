@@ -111,12 +111,43 @@ export async function GET() {
       .map(([hour, count]) => ({ hour, count }));
 
     // ── 3. Recent errors (last 10) ───────────────────────────────────────────
-    const { data: recentErrors } = await supabase
+    const { data: recentErrorsRaw } = await supabase
       .from("siso_logs")
       .select("id, timestamp, source, message, metadata, pedido_id, filial")
       .eq("level", "error")
       .order("timestamp", { ascending: false })
       .limit(10);
+
+    // Resolve filial (galpao name) → empresa name for display
+    const distinctFiliais = [...new Set((recentErrorsRaw ?? []).map(e => e.filial).filter(Boolean))] as string[];
+    const filialToEmpresa: Record<string, string> = {};
+    if (distinctFiliais.length > 0) {
+      const { data: galpoes } = await supabase
+        .from("siso_galpoes")
+        .select("id, nome")
+        .in("nome", distinctFiliais);
+      if (galpoes && galpoes.length > 0) {
+        const galpaoIds = galpoes.map(g => g.id);
+        const { data: empresas } = await supabase
+          .from("siso_empresas")
+          .select("nome, galpao_id")
+          .in("galpao_id", galpaoIds);
+        for (const g of galpoes) {
+          const emp = empresas?.find(e => e.galpao_id === g.id);
+          filialToEmpresa[g.nome] = emp?.nome ?? g.nome;
+        }
+      }
+    }
+
+    const recentErrors = (recentErrorsRaw ?? []).map(e => ({
+      id: e.id,
+      timestamp: e.timestamp,
+      source: e.source,
+      message: e.message,
+      metadata: e.metadata,
+      pedido_id: e.pedido_id,
+      empresaNome: e.filial ? (filialToEmpresa[e.filial] ?? e.filial) : null,
+    }));
 
     // ── 4. System health ─────────────────────────────────────────────────────
     const { data: lastWebhook } = await supabase

@@ -164,7 +164,7 @@
         "Typecheck passes"
       ],
       "priority": 11,
-      "passes": true,
+      "passes": false,
       "notes": "Simple additive type change. The field is optional during transition."
     },
     {
@@ -180,7 +180,7 @@
         "Typecheck passes"
       ],
       "priority": 12,
-      "passes": true,
+      "passes": false,
       "notes": "Read pedido-card.tsx carefully. The hardcoded CWB/SP logic is in: cwbAtendeTudo(), spAtendeTudo(), decisaoIsAvailable(), getRelevantLocation(), and the JSX rendering. Add a new code path that uses estoquesPorGalpao when present, keeping the old path as fallback."
     },
     {
@@ -196,7 +196,7 @@
         "Typecheck passes"
       ],
       "priority": 13,
-      "passes": true,
+      "passes": false,
       "notes": "The origin galpao is determined by pedido.empresaOrigemId → find which galpao that empresa belongs to. In estoquesPorGalpao, match by galpaoId. The 'best alternative' galpao for transferencia is the non-origin galpao that atende the most items."
     },
     {
@@ -210,7 +210,7 @@
         "Typecheck passes"
       ],
       "priority": 14,
-      "passes": true,
+      "passes": false,
       "notes": "Find the stock adjustment endpoint. It may be at src/app/api/tiny/stock/ajustar/route.ts or similar. The key change is accepting UUID and resolving empresa/token from it."
     },
     {
@@ -226,7 +226,7 @@
         "Typecheck passes"
       ],
       "priority": 15,
-      "passes": true,
+      "passes": false,
       "notes": "Read src/app/siso/page.tsx and the filter functions in src/lib/filtrar-pedidos.ts. The Concluidos and Auto tabs may need client-side filtering on tipoResolucao after fetching a broader set."
     },
     {
@@ -241,7 +241,7 @@
         "Typecheck passes"
       ],
       "priority": 16,
-      "passes": true,
+      "passes": false,
       "notes": "The erro and executando orders should appear mixed into the Pendente tab, not in a separate tab. Use the pedido's erro field for the error message. For stuck detection, compare Date.now() with the processadoEm timestamp."
     },
     {
@@ -258,7 +258,7 @@
         "Typecheck passes"
       ],
       "priority": 17,
-      "passes": true,
+      "passes": false,
       "notes": "Check if AppShell already exists in src/components/. If not, extract the common header pattern from other pages and create it. Separacao needs max-w-5xl while others use max-w-3xl, so AppShell needs a maxWidth prop or similar."
     },
     {
@@ -272,7 +272,7 @@
         "Typecheck passes"
       ],
       "priority": 18,
-      "passes": true,
+      "passes": false,
       "notes": "Check globals.css or tailwind config for existing design tokens. If tokens like bg-surface, text-ink etc don't exist yet, define them as CSS custom properties and add to Tailwind config."
     },
     {
@@ -287,7 +287,7 @@
         "Typecheck passes"
       ],
       "priority": 19,
-      "passes": true,
+      "passes": false,
       "notes": "Read embalagem/page.tsx to understand how pedido_ids are passed (likely from URL search params or state). Then modify the fetch to pass them as query params."
     },
     {
@@ -303,7 +303,7 @@
         "Typecheck passes"
       ],
       "priority": 20,
-      "passes": true,
+      "passes": false,
       "notes": "Simple text changes across layout.tsx, page.tsx, and siso/page.tsx."
     },
     {
@@ -318,7 +318,7 @@
         "Typecheck passes"
       ],
       "priority": 21,
-      "passes": true,
+      "passes": false,
       "notes": "The monitoring types may be inline in monitoramento/page.tsx or in types/index.ts. Check both."
     },
     {
@@ -334,7 +334,7 @@
         "Typecheck passes"
       ],
       "priority": 22,
-      "passes": true,
+      "passes": false,
       "notes": "Search for refetchInterval across all page files to find current values and update them to use the constants."
     }
   ]

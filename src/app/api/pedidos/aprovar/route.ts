@@ -132,6 +132,7 @@ export async function POST(request: NextRequest) {
     .from("siso_pedidos")
     .update({
       status: "executando",
+      status_unificado: "executando",
       decisao_final: decisao,
       operador_id: operadorId ?? null,
       operador_nome: operadorNome ?? null,

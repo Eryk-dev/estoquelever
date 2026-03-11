@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppShell } from "@/components/app-shell";
+import { REFRESH_INTERVAL_MONITORING } from "@/lib/constants";
 import { formatRelativeTime, formatMs } from "@/lib/domain-helpers";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ interface MonitoringData {
     message: string;
     metadata: Record<string, unknown>;
     pedido_id: string | null;
-    filial: string | null;
+    empresaNome: string | null;
   }[];
   health: {
     lastWebhookReceivedAt: string | null;
@@ -200,7 +201,7 @@ export default function MonitoramentoPage() {
   // Initial fetch + auto-refresh every 30s
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30_000);
+    const interval = setInterval(fetchData, REFRESH_INTERVAL_MONITORING);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -393,9 +394,9 @@ export default function MonitoramentoPage() {
                           <span className="rounded bg-red-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-red-600 dark:bg-red-950/40 dark:text-red-400">
                             {err.source}
                           </span>
-                          {err.filial && (
+                          {err.empresaNome && (
                             <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-ink-muted dark:bg-zinc-800 dark:text-zinc-400">
-                              {err.filial}
+                              {err.empresaNome}
                             </span>
                           )}
                           {err.pedido_id && (

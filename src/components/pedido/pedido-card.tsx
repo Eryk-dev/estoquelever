@@ -37,29 +37,31 @@ interface PedidoCardProps {
 // Decision options (card-specific: label function + icon)
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface DecisaoOption {
-  value: Decisao;
-  /** Short label shown in the action row */
-  label: (filialOrigem: Filial) => string;
+const DECISAO_VALUES: Decisao[] = ["propria", "transferencia", "oc"];
+
+/** Returns the best alternative (non-origin) galpao name from dynamic stock data */
+function getBestAlternativeGalpao(pedido: Pedido): string | undefined {
+  const originGalpao = pedido.filialOrigem;
+  const altGalpoes = new Set<string>();
+  for (const item of pedido.itens) {
+    for (const g of item.estoquesPorGalpao ?? []) {
+      if (g.galpaoNome !== originGalpao) altGalpoes.add(g.galpaoNome);
+    }
+  }
+  return [...altGalpoes][0];
 }
 
-const DECISAO_OPTIONS: DecisaoOption[] = [
-  {
-    value: "propria",
-    label: (f) => `Própria ${f}`,
-  },
-  {
-    value: "transferencia",
-    label: (f) => `Transferência ${f === "CWB" ? "SP" : "CWB"}`,
-  },
-  {
-    value: "oc",
-    label: () => "Ordem de Compra",
-  },
-];
-
-function getDecisaoOption(decisao: Decisao): DecisaoOption {
-  return DECISAO_OPTIONS.find((c) => c.value === decisao) ?? DECISAO_OPTIONS[0]!;
+function getDecisaoLabel(decisao: Decisao, pedido: Pedido): string {
+  if (decisao === "propria") return `Própria ${pedido.filialOrigem}`;
+  if (decisao === "transferencia") {
+    const hasDynamic = pedido.itens.some(i => i.estoquesPorGalpao?.length);
+    if (hasDynamic) {
+      const altName = getBestAlternativeGalpao(pedido) ?? "Outro";
+      return `Transferência ${altName}`;
+    }
+    return `Transferência ${pedido.filialOrigem === "CWB" ? "SP" : "CWB"}`;
+  }
+  return "Ordem de Compra";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,12 +78,39 @@ function spAtendeTudo(itens: EstoqueItem[]): boolean {
 
 function decisaoIsAvailable(decisao: Decisao, pedido: Pedido): boolean {
   if (decisao === "oc") return true;
+
+  const hasDynamic = pedido.itens.some(i => i.estoquesPorGalpao?.length);
+
+  if (hasDynamic) {
+    if (decisao === "propria") {
+      // Origin galpao must atende ALL items
+      return pedido.itens.every(item => {
+        const originStock = item.estoquesPorGalpao?.find(g => g.galpaoNome === pedido.filialOrigem);
+        return originStock?.atende ?? false;
+      });
+    }
+    // transferencia: any non-origin galpao must atende ALL items
+    const originGalpao = pedido.filialOrigem;
+    const altGalpoes = new Set<string>();
+    for (const item of pedido.itens) {
+      for (const g of item.estoquesPorGalpao ?? []) {
+        if (g.galpaoNome !== originGalpao) altGalpoes.add(g.galpaoNome);
+      }
+    }
+    return [...altGalpoes].some(galpaoNome =>
+      pedido.itens.every(item => {
+        const stock = item.estoquesPorGalpao?.find(g => g.galpaoNome === galpaoNome);
+        return stock?.atende ?? false;
+      })
+    );
+  }
+
+  // Legacy fallback
   if (decisao === "propria") {
     return pedido.filialOrigem === "CWB"
       ? cwbAtendeTudo(pedido.itens)
       : spAtendeTudo(pedido.itens);
   }
-  // transferencia
   return pedido.filialOrigem === "CWB"
     ? spAtendeTudo(pedido.itens)
     : cwbAtendeTudo(pedido.itens);
@@ -111,13 +140,14 @@ interface EditableStockPillProps {
   isRelevant?: boolean;
   pedidoId: string;
   produtoId: number;
-  galpao: "CWB" | "SP";
+  galpao: string;
+  galpaoId?: string;
   onUpdated?: () => void;
 }
 
 function EditableStockPill({
   label, estoque, quantidadePedida, isRelevant,
-  pedidoId, produtoId, galpao, onUpdated,
+  pedidoId, produtoId, galpao, galpaoId, onUpdated,
 }: EditableStockPillProps) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -158,7 +188,7 @@ function EditableStockPill({
       const res = await fetch("/api/tiny/stock/ajustar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pedidoId, produtoId, galpao, quantidade: novoSaldo, tipo: "B" }),
+        body: JSON.stringify({ pedidoId, produtoId, galpao, galpaoId, quantidade: novoSaldo, tipo: "B" }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -273,11 +303,20 @@ interface ProductRowProps {
 }
 
 function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: ProductRowProps) {
-  const location = getRelevantLocation(item, decisao, filialOrigem);
-  const cwbIsRelevant =
-    decisao === "propria" ? filialOrigem === "CWB" : filialOrigem !== "CWB";
-  const spIsRelevant =
-    decisao === "propria" ? filialOrigem === "SP" : filialOrigem !== "SP";
+  const hasDynamic = item.estoquesPorGalpao && item.estoquesPorGalpao.length > 0;
+
+  // Resolve location for the current decision
+  let location: string | undefined;
+  if (hasDynamic) {
+    const estoques = item.estoquesPorGalpao!;
+    if (decisao === "propria") {
+      location = estoques.find(g => g.galpaoNome === filialOrigem)?.localizacao;
+    } else if (decisao === "transferencia") {
+      location = estoques.find(g => g.galpaoNome !== filialOrigem)?.localizacao;
+    }
+  } else {
+    location = getRelevantLocation(item, decisao, filialOrigem);
+  }
 
   return (
     <div className="flex items-start gap-3 py-2.5">
@@ -335,8 +374,16 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
                 <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
                 OC
               </span>
-              {item.localizacaoCWB && <LocationTag location={`CWB: ${item.localizacaoCWB}`} />}
-              {item.localizacaoSP && <LocationTag location={`SP: ${item.localizacaoSP}`} />}
+              {hasDynamic ? (
+                item.estoquesPorGalpao!.map(g => g.localizacao ? (
+                  <LocationTag key={g.galpaoId} location={`${g.galpaoNome}: ${g.localizacao}`} />
+                ) : null)
+              ) : (
+                <>
+                  {item.localizacaoCWB && <LocationTag location={`CWB: ${item.localizacaoCWB}`} />}
+                  {item.localizacaoSP && <LocationTag location={`SP: ${item.localizacaoSP}`} />}
+                </>
+              )}
             </>
           ) : location ? (
             <LocationTag location={location} />
@@ -346,26 +393,56 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
 
           <span className="h-3 w-px bg-line" aria-hidden="true" />
 
-          <EditableStockPill
-            label="CWB"
-            estoque={item.estoqueCWB}
-            quantidadePedida={item.quantidadePedida}
-            isRelevant={cwbIsRelevant}
-            pedidoId={pedidoId}
-            produtoId={item.produtoId}
-            galpao="CWB"
-            onUpdated={onStockUpdated}
-          />
-          <EditableStockPill
-            label="SP"
-            estoque={item.estoqueSP}
-            quantidadePedida={item.quantidadePedida}
-            isRelevant={spIsRelevant}
-            pedidoId={pedidoId}
-            produtoId={item.produtoId}
-            galpao="SP"
-            onUpdated={onStockUpdated}
-          />
+          {hasDynamic ? (
+            item.estoquesPorGalpao!.map(g => {
+              const isOrigin = g.galpaoNome === filialOrigem;
+              const isRelevant = decisao === "oc" || (decisao === "propria" ? isOrigin : !isOrigin);
+              const estoque: DepositoEstoque = {
+                id: g.depositoId ?? 0,
+                nome: g.depositoNome ?? "",
+                saldo: g.saldo,
+                reservado: g.reservado,
+                disponivel: g.disponivel,
+              };
+              return (
+                <EditableStockPill
+                  key={g.galpaoId}
+                  label={g.galpaoNome}
+                  estoque={estoque}
+                  quantidadePedida={item.quantidadePedida}
+                  isRelevant={isRelevant}
+                  pedidoId={pedidoId}
+                  produtoId={item.produtoId}
+                  galpao={g.galpaoNome}
+                  galpaoId={g.galpaoId}
+                  onUpdated={onStockUpdated}
+                />
+              );
+            })
+          ) : (
+            <>
+              <EditableStockPill
+                label="CWB"
+                estoque={item.estoqueCWB}
+                quantidadePedida={item.quantidadePedida}
+                isRelevant={decisao === "propria" ? filialOrigem === "CWB" : filialOrigem !== "CWB"}
+                pedidoId={pedidoId}
+                produtoId={item.produtoId}
+                galpao="CWB"
+                onUpdated={onStockUpdated}
+              />
+              <EditableStockPill
+                label="SP"
+                estoque={item.estoqueSP}
+                quantidadePedida={item.quantidadePedida}
+                isRelevant={decisao === "propria" ? filialOrigem === "SP" : filialOrigem !== "SP"}
+                pedidoId={pedidoId}
+                produtoId={item.produtoId}
+                galpao="SP"
+                onUpdated={onStockUpdated}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -396,7 +473,7 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [onClose]);
 
-  const alternatives = DECISAO_OPTIONS.filter((c) => c.value !== current);
+  const alternatives = DECISAO_VALUES.filter((v) => v !== current);
 
   return (
     <div
@@ -409,19 +486,19 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
       role="listbox"
       aria-label="Escolher outra decisão"
     >
-      {alternatives.map((option) => {
-        const available = decisaoIsAvailable(option.value, pedido);
-        const stripColor = getDecisaoStripColor(option.value);
+      {alternatives.map((d) => {
+        const available = decisaoIsAvailable(d, pedido);
+        const stripColor = getDecisaoStripColor(d);
         return (
           <button
-            key={option.value}
+            key={d}
             type="button"
             role="option"
             aria-selected={false}
             disabled={!available}
             onClick={() => {
               if (available) {
-                onSelect(option.value);
+                onSelect(d);
                 onClose();
               }
             }}
@@ -440,7 +517,7 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
               aria-hidden="true"
             />
             <span className="font-medium text-ink">
-              {option.label(pedido.filialOrigem)}
+              {getDecisaoLabel(d, pedido)}
             </span>
             {!available && (
               <span className="ml-auto text-[10px] text-ink-faint">sem estoque</span>
@@ -466,7 +543,6 @@ interface ActionRowProps {
 
 function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: ActionRowProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const option = getDecisaoOption(decisao);
   const textColor = getDecisaoColors(decisao);
 
   const DecisaoIcon =
@@ -483,7 +559,7 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
           aria-hidden="true"
         />
         <span className={cn("text-sm font-semibold truncate", textColor)}>
-          {option.label(pedido.filialOrigem)}
+          {getDecisaoLabel(decisao, pedido)}
         </span>
 
         {/* Chevron — opens dropdown to switch decision */}

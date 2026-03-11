@@ -60,7 +60,7 @@ export async function PATCH(
     // 3. Update to aguardando_separacao
     const { error: updateError } = await supabase
       .from("siso_pedidos")
-      .update({ status_separacao: "aguardando_separacao" })
+      .update({ status_separacao: "aguardando_separacao", status_unificado: "aguardando_separacao" })
       .eq("id", pedidoId)
       .eq("status_separacao", "aguardando_nf");
 

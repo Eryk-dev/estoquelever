@@ -95,6 +95,7 @@ export async function checkAndReleasePedidos(
         decisao_final: "propria",
         status: "executando",
         status_separacao: "aguardando_nf",
+        status_unificado: "executando",
       })
       .eq("id", pedidoId);
 

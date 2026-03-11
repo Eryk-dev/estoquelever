@@ -14,6 +14,8 @@ import {
   CheckCircle2,
   RotateCcw,
   X,
+  XCircle,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -82,6 +84,7 @@ function ChecklistPage() {
   const [scanValue, setScanValue] = useState("");
   const [highlightedSku, setHighlightedSku] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [esgotadoLoading, setEsgotadoLoading] = useState<string | null>(null);
   const scanRef = useRef<HTMLInputElement>(null);
 
   // Auth redirect
@@ -362,6 +365,40 @@ function ChecklistPage() {
     }
   }
 
+  // Handle esgotado (product out of stock)
+  async function handleEsgotado(sku: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (
+      !window.confirm(
+        `Marcar SKU ${sku} como esgotado?\n\nTODOS os pedidos em separacao com este produto serao movidos para Aguardando OC.`,
+      )
+    )
+      return;
+
+    setEsgotadoLoading(sku);
+    try {
+      const res = await sisoFetch("/api/separacao/produto-esgotado", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(
+          `SKU ${sku} esgotado — ${data.pedidos_afetados} pedido(s) movido(s) para Aguardando OC`,
+        );
+        queryClient.invalidateQueries({ queryKey });
+        queryClient.invalidateQueries({ queryKey: ["separacao"] });
+      } else {
+        toast.error(data.error ?? "Erro ao marcar como esgotado");
+      }
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setEsgotadoLoading(null);
+    }
+  }
+
   // ─── Render ──────────────────────────────────────────────────
 
   if (loading) {
@@ -584,6 +621,24 @@ function ChecklistPage() {
                     <MapPinOff className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600" />
                   )}
                 </div>
+
+                {/* Esgotado button */}
+                {!product.all_marcado && (
+                  <button
+                    type="button"
+                    disabled={esgotadoLoading !== null}
+                    onClick={(e) => handleEsgotado(product.sku, e)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-40 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
+                    title={`Marcar ${product.sku} como esgotado`}
+                  >
+                    {esgotadoLoading === product.sku ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <XCircle className="h-3 w-3" />
+                    )}
+                    Esgotado
+                  </button>
+                )}
               </button>
             ))}
           </div>

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { sisoFetch } from "@/lib/auth-context";
-import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin, XCircle } from "lucide-react";
+import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin } from "lucide-react";
 import { PedidoTimeline } from "./pedido-timeline";
 import type { StatusSeparacao } from "@/types";
 
@@ -84,42 +84,10 @@ export function SeparacaoCard({
   const [items, setItems] = useState<ItemDetail[] | null>(null);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
-  const [esgotadoLoading, setEsgotadoLoading] = useState<string | null>(null);
   const isEmbalado = pedido.status_separacao === "embalado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
   const isAguardandoOC = pedido.status_separacao === "aguardando_compra";
   const cs = pedido.compra_stats;
-  const showEsgotado =
-    pedido.status_separacao === "aguardando_nf" ||
-    pedido.status_separacao === "aguardando_separacao" ||
-    pedido.status_separacao === "em_separacao";
-
-  async function handleEsgotado(sku: string) {
-    if (!confirm(`Marcar SKU ${sku} como esgotado?\n\nTODOS os pedidos em separacao com este produto serao movidos para Aguardando OC.`)) {
-      return;
-    }
-    setEsgotadoLoading(sku);
-    try {
-      const res = await sisoFetch("/api/separacao/produto-esgotado", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sku }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        toast.success(
-          `SKU ${sku} esgotado — ${data.pedidos_afetados} pedido(s) movido(s) para Aguardando OC`,
-        );
-        onRefetch?.();
-      } else {
-        toast.error(data.error ?? "Erro ao marcar como esgotado");
-      }
-    } catch {
-      toast.error("Erro de conexao");
-    } finally {
-      setEsgotadoLoading(null);
-    }
-  }
 
   // Fetch items when expanded
   useEffect(() => {
@@ -462,9 +430,6 @@ export function SeparacaoCard({
                       {isEmSeparacao && (
                         <th className="px-2 py-1.5 font-medium text-center">Separado</th>
                       )}
-                      {showEsgotado && (
-                        <th className="px-2 py-1.5 font-medium text-center w-[70px]" />
-                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -502,24 +467,6 @@ export function SeparacaoCard({
                             ) : (
                               <span className="text-ink-faint">—</span>
                             )}
-                          </td>
-                        )}
-                        {showEsgotado && (
-                          <td className="px-2 py-1.5 text-center">
-                            <button
-                              type="button"
-                              disabled={esgotadoLoading !== null}
-                              onClick={() => handleEsgotado(item.sku)}
-                              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-950/30"
-                              title={`Marcar ${item.sku} como esgotado`}
-                            >
-                              {esgotadoLoading === item.sku ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <XCircle className="h-3 w-3" />
-                              )}
-                              Esgotado
-                            </button>
                           </td>
                         )}
                       </tr>

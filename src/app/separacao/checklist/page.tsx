@@ -609,18 +609,14 @@ function ChecklistPage() {
                 </span>
 
                 {/* Location */}
-                <div className="flex shrink-0 items-center gap-1">
-                  {product.localizacao ? (
-                    <>
-                      <MapPin className="h-3.5 w-3.5 text-ink-faint" />
-                      <span className="text-xs text-ink-faint">
-                        {product.localizacao}
-                      </span>
-                    </>
-                  ) : (
-                    <MapPinOff className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600" />
-                  )}
-                </div>
+                {product.localizacao ? (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-blue-50 px-2 py-1 font-mono text-xs font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                    <MapPin className="h-3 w-3" />
+                    {product.localizacao}
+                  </span>
+                ) : (
+                  <MapPinOff className="h-3.5 w-3.5 shrink-0 text-zinc-300 dark:text-zinc-600" />
+                )}
 
                 {/* Esgotado button */}
                 {!product.all_marcado && (

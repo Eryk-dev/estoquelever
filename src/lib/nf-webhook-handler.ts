@@ -11,6 +11,7 @@ import { obterNotaFiscal } from "./tiny-api";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { waitForRateLimit, registerApiCall } from "./rate-limiter";
 import { logger } from "./logger";
+import { registrarEvento } from "./historico-service";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -149,6 +150,12 @@ export async function handleNfWebhook(
     .maybeSingle();
 
   if (updated) {
+    registrarEvento({
+      pedidoId,
+      evento: "nf_autorizada",
+      detalhes: { idNotaFiscalTiny, chaveAcesso },
+    }).catch(() => {});
+
     logger.info("nf-webhook", "Pedido transitioned aguardando_nf → aguardando_separacao", {
       pedidoId,
       idNotaFiscalTiny: String(idNotaFiscalTiny),

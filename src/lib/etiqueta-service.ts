@@ -17,6 +17,7 @@ import { enviarImpressaoZpl } from "@/lib/printnode";
 import { resolverImpressora } from "@/lib/printnode";
 import { getConfig } from "@/lib/config";
 import { logger } from "@/lib/logger";
+import { registrarEvento } from "@/lib/historico-service";
 
 const LOG_SOURCE = "etiqueta-service";
 
@@ -96,6 +97,11 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
     });
 
     await setStatus(supabase, pedidoId, "impresso");
+    registrarEvento({
+      pedidoId,
+      evento: "etiqueta_impressa",
+      detalhes: { printerId: printer.printerId, cached: !!pedido.etiqueta_zpl },
+    }).catch(() => {});
     logger.info(LOG_SOURCE, "Etiqueta ZPL impressa", {
       pedidoId,
       printerId: String(printer.printerId),
@@ -103,6 +109,11 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
     });
   } catch (err) {
     await setStatus(supabase, pedidoId, "falhou");
+    registrarEvento({
+      pedidoId,
+      evento: "etiqueta_falhou",
+      detalhes: { error: err instanceof Error ? err.message : String(err) },
+    }).catch(() => {});
     logger.error(LOG_SOURCE, "Falha ao imprimir etiqueta", {
       pedidoId,
       error: err instanceof Error ? err.message : String(err),

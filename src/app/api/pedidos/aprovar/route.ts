@@ -4,6 +4,7 @@ import { getEmpresaById } from "@/lib/empresa-lookup";
 import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
 import { processQueue } from "@/lib/execution-worker";
 import { logger } from "@/lib/logger";
+import { registrarEvento } from "@/lib/historico-service";
 
 type Decisao = "propria" | "transferencia" | "oc";
 
@@ -172,6 +173,14 @@ export async function POST(request: NextRequest) {
     });
     // Don't fail — the order status is already updated
   }
+
+  registrarEvento({
+    pedidoId,
+    evento: "aprovado",
+    usuarioId: operadorId,
+    usuarioNome: operadorNome,
+    detalhes: { decisao, filialExecucao, empresaExecucaoId },
+  }).catch(() => {});
 
   logger.info("aprovar", "Pedido aprovado", {
     pedidoId,

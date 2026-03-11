@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
+import { registrarEventos } from "@/lib/historico-service";
 import type { ProdutoConsolidado } from "@/types";
 
 /**
@@ -132,6 +133,16 @@ export async function POST(request: NextRequest) {
         localizacao: p.localizacao ? String(p.localizacao) : null,
       }),
     );
+
+    registrarEventos(
+      pedido_ids.map((pid) => ({
+        pedidoId: pid,
+        evento: "separacao_iniciada" as const,
+        usuarioId: operador_id,
+        usuarioNome: session.nome,
+        detalhes: { qtdPedidos: pedido_ids.length, qtdProdutos: consolidados.length },
+      })),
+    ).catch(() => {});
 
     logger.info("separacao-iniciar", "Separação iniciada", {
       pedido_ids,

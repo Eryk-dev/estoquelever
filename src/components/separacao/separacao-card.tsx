@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Truck, Calendar } from "lucide-react";
+import { CheckCircle2, Truck, Calendar, History } from "lucide-react";
+import { PedidoTimeline } from "./pedido-timeline";
 import type { StatusSeparacao } from "@/types";
 
 export interface SeparacaoPedido {
@@ -45,6 +47,7 @@ export function SeparacaoCard({
   checked,
   onToggle,
 }: SeparacaoCardProps) {
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const isEmbalado = pedido.status_separacao === "embalado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
 
@@ -80,7 +83,7 @@ export function SeparacaoCard({
 
         {/* Main content */}
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          {/* Row 1: Order number + client */}
+          {/* Row 1: Order number + client + timeline toggle */}
           <div className="flex items-center gap-2">
             {isEmbalado && (
               <CheckCircle2
@@ -98,6 +101,23 @@ export function SeparacaoCard({
             >
               {pedido.cliente ?? "—"}
             </span>
+
+            {/* Timeline toggle */}
+            <button
+              type="button"
+              onClick={() => setTimelineOpen((v) => !v)}
+              className={cn(
+                "shrink-0 rounded p-1 transition-colors",
+                timelineOpen
+                  ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                  : "text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300",
+              )}
+              title="Ver histórico"
+              aria-label="Ver histórico do pedido"
+              aria-expanded={timelineOpen}
+            >
+              <History className="h-3.5 w-3.5" />
+            </button>
           </div>
 
           {/* Row 2: Metadata badges */}
@@ -175,6 +195,14 @@ export function SeparacaoCard({
           )}
         </div>
       </div>
+
+      {/* Timeline (expandable) */}
+      {timelineOpen && (
+        <>
+          <div className="mx-4 h-px bg-line" />
+          <PedidoTimeline pedidoId={pedido.id} open={timelineOpen} />
+        </>
+      )}
     </article>
   );
 }

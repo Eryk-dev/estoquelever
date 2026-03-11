@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
+import { registrarEventos } from "@/lib/historico-service";
 
 /**
  * POST /api/separacao/forcar-pendente
@@ -63,6 +64,18 @@ export async function POST(request: NextRequest) {
     }
 
     const updatedIds = (updated ?? []).map((p) => p.id);
+
+    if (updatedIds.length > 0) {
+      registrarEventos(
+        updatedIds.map((pid) => ({
+          pedidoId: pid,
+          evento: "nf_autorizada" as const,
+          usuarioId: session.id,
+          usuarioNome: session.nome,
+          detalhes: { forcado: true },
+        })),
+      ).catch(() => {});
+    }
 
     logger.info("separacao", "NF forcada por admin", {
       pedido_ids: updatedIds,

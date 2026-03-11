@@ -106,7 +106,7 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Search src/app/api/compras/ and src/lib/compras-release.ts for updates to status_separacao on siso_pedidos."
     },
     {

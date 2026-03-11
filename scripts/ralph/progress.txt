@@ -98,3 +98,13 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - `voltar-etapa/route.ts` status values come from StatusSeparacao which are all valid StatusUnificado values (aguardando_nf, aguardando_separacao, em_separacao, separado, embalado)
   - `desfazer-bip/route.ts` has conditional status writes (embalado→em_separacao or em_separacao→aguardando_separacao depending on context)
 ---
+
+## 2026-03-11 - US-007
+- Added `status_unificado: "executando"` dual-write to `compras-release.ts` release update
+- Only 1 write location: the `.update()` call in `checkAndReleasePedidos` that sets status="executando" + status_separacao="aguardando_nf"
+- No compras API routes (`src/app/api/compras/`) directly update status_separacao on siso_pedidos — they only update siso_pedido_itens and siso_ordens_compra
+- Files changed: `src/lib/compras-release.ts`
+- **Learnings for future iterations:**
+  - compras-release sets status="executando" (not concluido) because the pedido re-enters the execution queue — the worker will later set it to concluido+aguardando_nf
+  - All compras API routes (conferir, ordens, itens actions) operate on siso_pedido_itens and siso_ordens_compra — only compras-release.ts touches siso_pedidos status
+---

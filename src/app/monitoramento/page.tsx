@@ -46,7 +46,7 @@ interface MonitoringData {
     message: string;
     metadata: Record<string, unknown>;
     pedido_id: string | null;
-    filial: string | null;
+    empresaNome: string | null;
   }[];
   health: {
     lastWebhookReceivedAt: string | null;
@@ -393,9 +393,9 @@ export default function MonitoramentoPage() {
                           <span className="rounded bg-red-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-red-600 dark:bg-red-950/40 dark:text-red-400">
                             {err.source}
                           </span>
-                          {err.filial && (
+                          {err.empresaNome && (
                             <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-ink-muted dark:bg-zinc-800 dark:text-zinc-400">
-                              {err.filial}
+                              {err.empresaNome}
                             </span>
                           )}
                           {err.pedido_id && (

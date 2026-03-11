@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     const { data: items, error: itemsError } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em",
+        "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em, quantidade_bipada, bipado_completo",
       )
       .in("pedido_id", pedido_ids);
 
@@ -88,6 +88,8 @@ export async function GET(request: NextRequest) {
       quantidade: item.quantidade_pedida,
       separacao_marcado: item.separacao_marcado ?? false,
       separacao_marcado_em: item.separacao_marcado_em,
+      quantidade_bipada: item.quantidade_bipada ?? 0,
+      bipado_completo: item.bipado_completo ?? false,
       localizacao:
         locMap.get(`${item.pedido_id}:${item.produto_id}`) ?? null,
     }));

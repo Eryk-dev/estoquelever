@@ -9,6 +9,12 @@ import {
   ScanBarcode,
   CheckCircle2,
   Circle,
+  ChevronDown,
+  ChevronUp,
+  Plus,
+  Minus,
+  Save,
+  RotateCcw,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -28,6 +34,19 @@ interface LastScannedItem {
   pedido_completo: boolean;
 }
 
+interface PedidoItem {
+  id: string;
+  pedido_id: string;
+  produto_id: string;
+  sku: string;
+  gtin: string | null;
+  descricao: string;
+  quantidade: number;
+  quantidade_bipada: number;
+  bipado_completo: boolean;
+  localizacao: string | null;
+}
+
 // --- Page ---
 
 export default function EmbalagemPage() {
@@ -44,7 +63,11 @@ export default function EmbalagemPage() {
   const [scanValue, setScanValue] = useState("");
   const [scanQty, setScanQty] = useState(1);
   const [lastScanned, setLastScanned] = useState<LastScannedItem | null>(null);
-  const [highlightedPedidoId, setHighlightedPedidoId] = useState<string | null>(null);
+  const [highlightedPedidoId, setHighlightedPedidoId] = useState<
+    string | null
+  >(null);
+  const [expandedPedidoId, setExpandedPedidoId] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
   const scanRef = useRef<HTMLInputElement>(null);
 
   // Auth redirect
@@ -53,15 +76,14 @@ export default function EmbalagemPage() {
   }, [user, loading, router]);
 
   // Fetch pedidos from API
-  const queryKey = useMemo(
+  const pedidosQueryKey = useMemo(
     () => ["embalagem-pedidos", pedidoIds.join(",")],
     [pedidoIds],
   );
 
   const { data, isLoading } = useQuery<{ pedidos: SeparacaoPedido[] }>({
-    queryKey,
+    queryKey: pedidosQueryKey,
     queryFn: async () => {
-      // Fetch separado orders — the embalagem page shows these
       const res = await sisoFetch("/api/separacao?status_separacao=separado");
       if (!res.ok) return { pedidos: [] };
       const json = await res.json();
@@ -71,8 +93,36 @@ export default function EmbalagemPage() {
     refetchInterval: 5000,
   });
 
+  // Fetch items for expanded pedido
+  const itemsQueryKey = useMemo(
+    () => ["embalagem-items", pedidoIds.join(",")],
+    [pedidoIds],
+  );
+
+  const { data: itemsData } = useQuery<{ items: PedidoItem[] }>({
+    queryKey: itemsQueryKey,
+    queryFn: async () => {
+      const res = await sisoFetch(
+        `/api/separacao/checklist-items?pedidos=${pedidoIds.join(",")}`,
+      );
+      if (!res.ok) return { items: [] };
+      return res.json();
+    },
+    enabled: !!user && pedidoIds.length > 0,
+  });
+
+  // Group items by pedido_id
+  const itemsByPedido = useMemo(() => {
+    const map = new Map<string, PedidoItem[]>();
+    for (const item of itemsData?.items ?? []) {
+      const list = map.get(item.pedido_id) ?? [];
+      list.push(item);
+      map.set(item.pedido_id, list);
+    }
+    return map;
+  }, [itemsData]);
+
   // Filter pedidos to only the ones from URL params
-  // Also include any that transitioned to 'embalado' during this session
   const allPedidos = useMemo(() => data?.pedidos ?? [], [data?.pedidos]);
 
   const pedidos = useMemo(() => {
@@ -89,6 +139,18 @@ export default function EmbalagemPage() {
 
   // Track completed pedidos (transitioned to embalado during this session)
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
+
+  // Handle pedido completion (shared between scan and manual)
+  const handlePedidoComplete = useCallback(
+    (pedidoId: string) => {
+      setCompletedIds((prev) => new Set(prev).add(pedidoId));
+      toast.success("Pedido embalado — etiqueta enviada");
+      setExpandedPedidoId(null);
+      queryClient.invalidateQueries({ queryKey: pedidosQueryKey });
+      queryClient.invalidateQueries({ queryKey: itemsQueryKey });
+    },
+    [queryClient, pedidosQueryKey, itemsQueryKey],
+  );
 
   // Scan handler
   const handleScan = useCallback(async () => {
@@ -125,32 +187,161 @@ export default function EmbalagemPage() {
 
       const result = await res.json();
 
-      // Update "Ultimo item lido"
       setLastScanned({
-        descricao: sku, // We use SKU as description since the API doesn't return it
+        descricao: sku,
         sku,
         quantidade_bipada: result.quantidade_bipada,
         pedido_id: result.pedido_id,
         pedido_completo: result.pedido_completo,
       });
 
-      // Highlight matched order
       setHighlightedPedidoId(result.pedido_id);
       setTimeout(() => setHighlightedPedidoId(null), 2000);
 
       if (result.pedido_completo) {
-        setCompletedIds((prev) => new Set(prev).add(result.pedido_id));
-        toast.success("Pedido embalado — etiqueta enviada");
+        handlePedidoComplete(result.pedido_id);
+      } else {
+        queryClient.invalidateQueries({ queryKey: pedidosQueryKey });
+        queryClient.invalidateQueries({ queryKey: itemsQueryKey });
       }
-
-      // Refresh data to update progress
-      queryClient.invalidateQueries({ queryKey });
     } catch {
       toast.error("Erro de conexao");
     } finally {
       scanRef.current?.focus();
     }
-  }, [scanValue, scanQty, galpaoId, queryClient, queryKey]);
+  }, [
+    scanValue,
+    scanQty,
+    galpaoId,
+    queryClient,
+    pedidosQueryKey,
+    itemsQueryKey,
+    handlePedidoComplete,
+  ]);
+
+  // Manual +/- handler with optimistic UI
+  const handleConfirmItem = useCallback(
+    async (item: PedidoItem, delta: number) => {
+      const optimisticBipada = Math.max(0, item.quantidade_bipada + delta);
+      const optimisticComplete = optimisticBipada >= item.quantidade;
+
+      // Optimistic update
+      queryClient.setQueryData<{ items: PedidoItem[] }>(
+        itemsQueryKey,
+        (old) => {
+          if (!old) return old;
+          return {
+            items: old.items.map((i) =>
+              i.id === item.id
+                ? {
+                    ...i,
+                    quantidade_bipada: optimisticBipada,
+                    bipado_completo: optimisticComplete,
+                  }
+                : i,
+            ),
+          };
+        },
+      );
+
+      try {
+        const res = await sisoFetch(
+          "/api/separacao/confirmar-item-embalagem",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pedido_item_id: item.id,
+              quantidade: delta,
+            }),
+          },
+        );
+
+        if (!res.ok) {
+          // Revert optimistic update
+          queryClient.invalidateQueries({ queryKey: itemsQueryKey });
+          const body = await res.json().catch(() => ({}));
+          toast.error(body.error ?? "Erro ao confirmar item");
+          return;
+        }
+
+        const result = await res.json();
+
+        if (result.pedido_completo) {
+          handlePedidoComplete(item.pedido_id);
+        } else {
+          // Sync with server response
+          queryClient.setQueryData<{ items: PedidoItem[] }>(
+            itemsQueryKey,
+            (old) => {
+              if (!old) return old;
+              return {
+                items: old.items.map((i) =>
+                  i.id === item.id
+                    ? {
+                        ...i,
+                        quantidade_bipada: result.quantidade_bipada,
+                        bipado_completo: result.bipado_completo,
+                      }
+                    : i,
+                ),
+              };
+            },
+          );
+          queryClient.invalidateQueries({ queryKey: pedidosQueryKey });
+        }
+      } catch {
+        // Revert optimistic update
+        queryClient.invalidateQueries({ queryKey: itemsQueryKey });
+        toast.error("Erro de conexao");
+      }
+    },
+    [
+      queryClient,
+      itemsQueryKey,
+      pedidosQueryKey,
+      handlePedidoComplete,
+    ],
+  );
+
+  // Reiniciar progresso handler
+  const handleReiniciar = useCallback(async () => {
+    const activePedidoIds = pedidoIds.filter((id) => !completedIds.has(id));
+    if (activePedidoIds.length === 0) return;
+
+    if (
+      !window.confirm(
+        "Reiniciar progresso de embalagem? Todas as bipagens serao zeradas.",
+      )
+    )
+      return;
+
+    setActionLoading(true);
+    try {
+      const res = await sisoFetch("/api/separacao/reiniciar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedido_ids: activePedidoIds,
+          etapa: "embalagem",
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao reiniciar");
+        return;
+      }
+
+      toast.success("Progresso reiniciado");
+      queryClient.invalidateQueries({ queryKey: pedidosQueryKey });
+      queryClient.invalidateQueries({ queryKey: itemsQueryKey });
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [pedidoIds, completedIds, queryClient, pedidosQueryKey, itemsQueryKey]);
 
   // --- Render ---
 
@@ -297,6 +488,14 @@ export default function EmbalagemPage() {
                     key={pedido.id}
                     pedido={pedido}
                     highlighted={highlightedPedidoId === pedido.id}
+                    expanded={expandedPedidoId === pedido.id}
+                    onToggleExpand={() =>
+                      setExpandedPedidoId(
+                        expandedPedidoId === pedido.id ? null : pedido.id,
+                      )
+                    }
+                    items={itemsByPedido.get(pedido.id) ?? []}
+                    onConfirmItem={handleConfirmItem}
                   />
                 ))}
               </div>
@@ -314,27 +513,59 @@ export default function EmbalagemPage() {
                     pedido={pedido}
                     highlighted={false}
                     completed
+                    expanded={false}
+                    onToggleExpand={() => {}}
+                    items={[]}
+                    onConfirmItem={handleConfirmItem}
                   />
                 ))}
               </div>
             )}
           </div>
         )}
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-3 border-t border-line pt-4">
+          <button
+            onClick={() => router.push("/separacao")}
+            disabled={actionLoading}
+            className="inline-flex items-center gap-2 rounded-xl border border-line bg-paper px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-surface disabled:opacity-50"
+          >
+            <Save className="h-4 w-4" />
+            Salvar para depois
+          </button>
+          <button
+            onClick={handleReiniciar}
+            disabled={actionLoading || activePedidos.length === 0}
+            className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-paper px-4 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/20"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Reiniciar progresso
+          </button>
+        </div>
       </main>
     </div>
   );
 }
 
-// --- Order Row Component ---
+// --- Order Row Component (expandable) ---
 
 function EmbalagemOrderRow({
   pedido,
   highlighted,
   completed,
+  expanded,
+  onToggleExpand,
+  items,
+  onConfirmItem,
 }: {
   pedido: SeparacaoPedido;
   highlighted: boolean;
   completed?: boolean;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  items: PedidoItem[];
+  onConfirmItem: (item: PedidoItem, delta: number) => void;
 }) {
   const totalItens = pedido.total_itens || 0;
   const itensBipados = pedido.itens_bipados || 0;
@@ -343,7 +574,7 @@ function EmbalagemOrderRow({
   return (
     <article
       className={cn(
-        "flex items-center gap-3 rounded-xl border px-4 py-3 transition-all duration-300",
+        "overflow-hidden rounded-xl border transition-all duration-300",
         isComplete
           ? "border-emerald-200 bg-emerald-50/30 dark:border-emerald-800 dark:bg-emerald-950/10"
           : "border-line bg-paper",
@@ -351,54 +582,167 @@ function EmbalagemOrderRow({
           "ring-2 ring-blue-400 border-blue-300 bg-blue-50/50 dark:ring-blue-500 dark:border-blue-600 dark:bg-blue-950/20",
       )}
     >
-      {/* Status dot */}
-      <div className="shrink-0">
-        {isComplete ? (
-          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-        ) : itensBipados > 0 ? (
-          <Circle className="h-5 w-5 fill-amber-400 text-amber-400" />
-        ) : (
-          <Circle className="h-5 w-5 text-zinc-300 dark:text-zinc-600" />
+      {/* Clickable header */}
+      <button
+        type="button"
+        onClick={!isComplete ? onToggleExpand : undefined}
+        className={cn(
+          "flex w-full items-center gap-3 px-4 py-3 text-left",
+          !isComplete && "cursor-pointer hover:bg-zinc-50/50 dark:hover:bg-zinc-800/20",
         )}
-      </div>
-
-      {/* Order info */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-sm font-bold text-ink">
-            #{pedido.numero_pedido}
-          </span>
-          <span className="h-3 w-px bg-line" aria-hidden="true" />
-          <span
-            className="min-w-0 flex-1 truncate text-sm text-zinc-600 dark:text-zinc-300"
-            title={pedido.cliente ?? ""}
-          >
-            {pedido.cliente ?? "---"}
-          </span>
+      >
+        {/* Status dot */}
+        <div className="shrink-0">
+          {isComplete ? (
+            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+          ) : itensBipados > 0 ? (
+            <Circle className="h-5 w-5 fill-amber-400 text-amber-400" />
+          ) : (
+            <Circle className="h-5 w-5 text-zinc-300 dark:text-zinc-600" />
+          )}
         </div>
-        {pedido.empresa_origem_nome && (
-          <span className="mt-0.5 inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-            {pedido.empresa_origem_nome}
+
+        {/* Order info */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-bold text-ink">
+              #{pedido.numero_pedido}
+            </span>
+            <span className="h-3 w-px bg-line" aria-hidden="true" />
+            <span
+              className="min-w-0 flex-1 truncate text-sm text-zinc-600 dark:text-zinc-300"
+              title={pedido.cliente ?? ""}
+            >
+              {pedido.cliente ?? "---"}
+            </span>
+          </div>
+          {pedido.empresa_origem_nome && (
+            <span className="mt-0.5 inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+              {pedido.empresa_origem_nome}
+            </span>
+          )}
+        </div>
+
+        {/* Progress */}
+        <div className="shrink-0 text-right">
+          <span
+            className={cn(
+              "font-mono text-sm font-semibold tabular-nums",
+              isComplete
+                ? "text-emerald-600 dark:text-emerald-400"
+                : itensBipados > 0
+                  ? "text-amber-600 dark:text-amber-400"
+                  : "text-ink-faint",
+            )}
+          >
+            {itensBipados}/{totalItens}
           </span>
+          <p className="text-[10px] text-ink-faint">itens</p>
+        </div>
+
+        {/* Expand icon */}
+        {!isComplete && (
+          <div className="shrink-0 text-ink-faint">
+            {expanded ? (
+              <ChevronUp className="h-4 w-4" />
+            ) : (
+              <ChevronDown className="h-4 w-4" />
+            )}
+          </div>
         )}
+      </button>
+
+      {/* Expanded items */}
+      {expanded && !isComplete && items.length > 0 && (
+        <div className="border-t border-line">
+          {items.map((item) => (
+            <EmbalagemItemRow
+              key={item.id}
+              item={item}
+              onConfirm={onConfirmItem}
+            />
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+// --- Item Row Component (with +/- buttons) ---
+
+function EmbalagemItemRow({
+  item,
+  onConfirm,
+}: {
+  item: PedidoItem;
+  onConfirm: (item: PedidoItem, delta: number) => void;
+}) {
+  const isDone = item.bipado_completo;
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 border-b border-line/50 px-4 py-2.5 last:border-b-0",
+        isDone && "bg-emerald-50/30 dark:bg-emerald-950/10",
+      )}
+      style={{ minHeight: "44px" }}
+    >
+      {/* Item info */}
+      <div className="min-w-0 flex-1">
+        <p
+          className={cn(
+            "truncate text-sm",
+            isDone
+              ? "text-emerald-700 dark:text-emerald-400"
+              : "text-ink",
+          )}
+          title={item.descricao}
+        >
+          {item.descricao}
+        </p>
+        <p className="text-[11px] text-ink-faint">
+          <span className="font-mono">{item.sku}</span>
+          {item.localizacao && (
+            <span className="ml-2">Loc: {item.localizacao}</span>
+          )}
+        </p>
       </div>
 
-      {/* Progress */}
-      <div className="shrink-0 text-right">
+      {/* Progress + buttons */}
+      <div className="flex shrink-0 items-center gap-2">
         <span
           className={cn(
-            "font-mono text-sm font-semibold tabular-nums",
-            isComplete
+            "min-w-[3.5rem] text-center font-mono text-sm font-semibold tabular-nums",
+            isDone
               ? "text-emerald-600 dark:text-emerald-400"
-              : itensBipados > 0
+              : item.quantidade_bipada > 0
                 ? "text-amber-600 dark:text-amber-400"
                 : "text-ink-faint",
           )}
         >
-          {itensBipados}/{totalItens}
+          {item.quantidade_bipada}/{item.quantidade}
         </span>
-        <p className="text-[10px] text-ink-faint">itens</p>
+
+        <button
+          type="button"
+          onClick={() => onConfirm(item, -1)}
+          disabled={item.quantidade_bipada <= 0}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-ink-faint transition-colors hover:bg-zinc-100 hover:text-ink disabled:opacity-30 dark:hover:bg-zinc-800"
+          aria-label="Diminuir quantidade"
+        >
+          <Minus className="h-4 w-4" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onConfirm(item, 1)}
+          disabled={isDone}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-ink-faint transition-colors hover:bg-zinc-100 hover:text-ink disabled:opacity-30 dark:hover:bg-zinc-800"
+          aria-label="Aumentar quantidade"
+        >
+          <Plus className="h-4 w-4" />
+        </button>
       </div>
-    </article>
+    </div>
   );
 }

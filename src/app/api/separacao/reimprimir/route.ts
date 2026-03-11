@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
-import { obterEtiquetasAgrupamento } from "@/lib/tiny-api";
+import { concluirAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
 import { enviarImpressao, resolverImpressora } from "@/lib/printnode";
 import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
 import { getConfig } from "@/lib/config";
@@ -111,7 +111,9 @@ export async function POST(request: NextRequest) {
     if (pedido.agrupamento_expedicao_id && pedido.empresa_origem_id) {
       try {
         const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
-        const etiquetas = await obterEtiquetasAgrupamento(token, parseInt(pedido.agrupamento_expedicao_id, 10));
+        const agrupId = parseInt(pedido.agrupamento_expedicao_id, 10);
+        await concluirAgrupamento(token, agrupId).catch(() => {});
+        const etiquetas = await obterEtiquetasAgrupamento(token, agrupId);
 
         if (etiquetas.urls && etiquetas.urls.length > 0) {
           const newUrl = etiquetas.urls[0];

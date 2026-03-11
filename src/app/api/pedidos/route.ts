@@ -49,6 +49,56 @@ export async function GET(request: Request) {
     .select("*")
     .in("pedido_id", pedidoIds);
 
+  // Fetch normalized stock data from siso_pedido_item_estoques with empresa→galpao join
+  const { data: itemEstoques } = await supabase
+    .from("siso_pedido_item_estoques")
+    .select("pedido_id, produto_id, empresa_id, deposito_id, deposito_nome, saldo, reservado, disponivel, localizacao, siso_empresas(galpao_id, siso_galpoes(id, nome))")
+    .in("pedido_id", pedidoIds);
+
+  // Group stock by (pedido_id, produto_id, galpao_id) and aggregate
+  type GalpaoStockAgg = {
+    galpaoId: string;
+    galpaoNome: string;
+    disponivel: number;
+    saldo: number;
+    reservado: number;
+    depositoId: number | null;
+    depositoNome: string | null;
+    localizacao: string | undefined;
+  };
+  const stockByPedidoItem = new Map<string, Map<string, GalpaoStockAgg>>();
+  for (const row of itemEstoques ?? []) {
+    const empresa = row.siso_empresas as unknown as { galpao_id: string; siso_galpoes: { id: string; nome: string } | null } | null;
+    if (!empresa?.siso_galpoes) continue;
+    const galpaoId = empresa.siso_galpoes.id;
+    const galpaoNome = empresa.siso_galpoes.nome;
+    const key = `${row.pedido_id}::${row.produto_id}`;
+
+    let byGalpao = stockByPedidoItem.get(key);
+    if (!byGalpao) {
+      byGalpao = new Map();
+      stockByPedidoItem.set(key, byGalpao);
+    }
+
+    const existing = byGalpao.get(galpaoId);
+    if (existing) {
+      existing.disponivel += Number(row.disponivel ?? 0);
+      existing.saldo += Number(row.saldo ?? 0);
+      existing.reservado += Number(row.reservado ?? 0);
+    } else {
+      byGalpao.set(galpaoId, {
+        galpaoId,
+        galpaoNome,
+        disponivel: Number(row.disponivel ?? 0),
+        saldo: Number(row.saldo ?? 0),
+        reservado: Number(row.reservado ?? 0),
+        depositoId: row.deposito_id ?? null,
+        depositoNome: row.deposito_nome ?? null,
+        localizacao: row.localizacao ?? undefined,
+      });
+    }
+  }
+
   // Group items by pedido_id
   const itensByPedido = new Map<string, typeof itens>();
   for (const item of itens ?? []) {
@@ -78,36 +128,49 @@ export async function GET(request: Request) {
         id: p.forma_envio_id ?? "",
         descricao: p.forma_envio_descricao ?? "",
       },
-      itens: dbItens.map((item) => ({
-        produtoId: item.produto_id,
-        sku: item.sku ?? "",
-        descricao: item.descricao ?? "",
-        quantidadePedida: item.quantidade_pedida ?? 0,
-        estoqueCWB: item.estoque_cwb_deposito_id != null
-          ? {
-              id: item.estoque_cwb_deposito_id,
-              nome: item.estoque_cwb_deposito_nome ?? "",
-              saldo: item.estoque_cwb_saldo ?? 0,
-              reservado: item.estoque_cwb_reservado ?? 0,
-              disponivel: item.estoque_cwb_disponivel ?? 0,
-            }
-          : null,
-        estoqueSP: item.estoque_sp_deposito_id != null
-          ? {
-              id: item.estoque_sp_deposito_id,
-              nome: item.estoque_sp_deposito_nome ?? "",
-              saldo: item.estoque_sp_saldo ?? 0,
-              reservado: item.estoque_sp_reservado ?? 0,
-              disponivel: item.estoque_sp_disponivel ?? 0,
-            }
-          : null,
-        cwbAtende: item.cwb_atende ?? false,
-        spAtende: item.sp_atende ?? false,
-        fornecedorOC: item.fornecedor_oc ?? null,
-        localizacaoCWB: item.localizacao_cwb ?? undefined,
-        localizacaoSP: item.localizacao_sp ?? undefined,
-        imagemUrl: item.imagem_url ?? undefined,
-      })),
+      itens: dbItens.map((item) => {
+        const quantidadePedida = item.quantidade_pedida ?? 0;
+        const stockKey = `${p.id}::${item.produto_id}`;
+        const galpaoMap = stockByPedidoItem.get(stockKey);
+        const estoquesPorGalpao = galpaoMap
+          ? Array.from(galpaoMap.values()).map((g) => ({
+              ...g,
+              atende: g.disponivel >= quantidadePedida,
+            }))
+          : undefined;
+
+        return {
+          produtoId: item.produto_id,
+          sku: item.sku ?? "",
+          descricao: item.descricao ?? "",
+          quantidadePedida,
+          estoqueCWB: item.estoque_cwb_deposito_id != null
+            ? {
+                id: item.estoque_cwb_deposito_id,
+                nome: item.estoque_cwb_deposito_nome ?? "",
+                saldo: item.estoque_cwb_saldo ?? 0,
+                reservado: item.estoque_cwb_reservado ?? 0,
+                disponivel: item.estoque_cwb_disponivel ?? 0,
+              }
+            : null,
+          estoqueSP: item.estoque_sp_deposito_id != null
+            ? {
+                id: item.estoque_sp_deposito_id,
+                nome: item.estoque_sp_deposito_nome ?? "",
+                saldo: item.estoque_sp_saldo ?? 0,
+                reservado: item.estoque_sp_reservado ?? 0,
+                disponivel: item.estoque_sp_disponivel ?? 0,
+              }
+            : null,
+          cwbAtende: item.cwb_atende ?? false,
+          spAtende: item.sp_atende ?? false,
+          fornecedorOC: item.fornecedor_oc ?? null,
+          localizacaoCWB: item.localizacao_cwb ?? undefined,
+          localizacaoSP: item.localizacao_sp ?? undefined,
+          imagemUrl: item.imagem_url ?? undefined,
+          estoquesPorGalpao,
+        };
+      }),
       sugestao: p.sugestao ?? "propria",
       sugestaoMotivo: p.sugestao_motivo ?? "",
       status: p.status ?? "pendente",

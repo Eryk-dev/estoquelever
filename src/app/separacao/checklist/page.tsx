@@ -10,6 +10,10 @@ import {
   MapPinOff,
   Check,
   Package,
+  ScanBarcode,
+  CheckCircle2,
+  RotateCcw,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -65,6 +69,10 @@ export default function ChecklistPage() {
   }, [searchParams]);
 
   const [sort, setSort] = useState<string>("localizacao");
+  const [scanValue, setScanValue] = useState("");
+  const [highlightedSku, setHighlightedSku] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const scanRef = useRef<HTMLInputElement>(null);
 
   // Auth redirect
   useEffect(() => {
@@ -200,6 +208,149 @@ export default function ChecklistPage() {
     }
   }
 
+  // Handle barcode scan
+  async function handleScan() {
+    const sku = scanValue.trim();
+    setScanValue("");
+    if (!sku) return;
+
+    try {
+      const res = await sisoFetch("/api/separacao/bipar-checklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku, pedido_ids: pedidoIds }),
+      });
+
+      if (res.status === 404) {
+        toast.error("SKU nao encontrado");
+        return;
+      }
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao bipar");
+        return;
+      }
+
+      // Optimistic: mark matching items in cache
+      queryClient.setQueryData<{ items: ChecklistItem[] }>(queryKey, (old) => {
+        if (!old) return old;
+        return {
+          items: old.items.map((item) =>
+            (item.sku === sku || item.gtin === sku) && !item.separacao_marcado
+              ? { ...item, separacao_marcado: true, separacao_marcado_em: new Date().toISOString() }
+              : item,
+          ),
+        };
+      });
+
+      // Brief highlight animation
+      const matchedProduct = consolidated.find(
+        (p) => p.sku === sku || p.gtin === sku,
+      );
+      if (matchedProduct) {
+        setHighlightedSku(matchedProduct.produto_id);
+        setTimeout(() => setHighlightedSku(null), 1500);
+      }
+
+      toast.success(`Item marcado: ${sku}`);
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      scanRef.current?.focus();
+    }
+  }
+
+  // Handle concluir
+  async function handleConcluir() {
+    setActionLoading(true);
+    try {
+      const res = await sisoFetch("/api/separacao/concluir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_ids: pedidoIds }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao concluir");
+        return;
+      }
+
+      const { separados, pendentes } = (await res.json()) as {
+        separados: string[];
+        pendentes: string[];
+      };
+
+      const parts: string[] = [];
+      if (separados.length > 0) parts.push(`${separados.length} separado(s)`);
+      if (pendentes.length > 0) parts.push(`${pendentes.length} pendente(s)`);
+      toast.success(parts.join(", "));
+
+      queryClient.invalidateQueries({ queryKey: ["separacao"] });
+      router.push("/separacao");
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  // Handle reiniciar
+  async function handleReiniciar() {
+    if (!window.confirm("Reiniciar progresso? Todas as marcacoes serao desmarcadas.")) return;
+
+    setActionLoading(true);
+    try {
+      const res = await sisoFetch("/api/separacao/reiniciar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_ids: pedidoIds, etapa: "separacao" }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao reiniciar");
+        return;
+      }
+
+      toast.success("Progresso reiniciado");
+      queryClient.invalidateQueries({ queryKey });
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  // Handle cancelar
+  async function handleCancelar() {
+    if (!window.confirm("Cancelar separacao? Pedidos voltarao para Aguardando Separacao.")) return;
+
+    setActionLoading(true);
+    try {
+      const res = await sisoFetch("/api/separacao/cancelar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_ids: pedidoIds }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao cancelar");
+        return;
+      }
+
+      toast.success("Separacao cancelada");
+      queryClient.invalidateQueries({ queryKey: ["separacao"] });
+      router.push("/separacao");
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   // ─── Render ──────────────────────────────────────────────────
 
   if (loading) {
@@ -280,6 +431,26 @@ export default function ChecklistPage() {
           </div>
         </div>
 
+        {/* Barcode scan input */}
+        <div className="relative">
+          <ScanBarcode className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+          <input
+            ref={scanRef}
+            type="text"
+            value={scanValue}
+            onChange={(e) => setScanValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleScan();
+              }
+            }}
+            placeholder="Bipar SKU ou GTIN..."
+            autoFocus
+            className="h-10 w-full rounded-xl border border-line bg-paper pl-10 pr-3 text-sm text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+          />
+        </div>
+
         {/* Sort dropdown */}
         <div className="flex items-center gap-2">
           <span className="text-xs text-ink-faint">Ordenar por:</span>
@@ -309,10 +480,12 @@ export default function ChecklistPage() {
                 type="button"
                 onClick={() => handleToggle(product)}
                 className={cn(
-                  "flex w-full min-h-[44px] items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors",
+                  "flex w-full min-h-[44px] items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all duration-300",
                   product.all_marcado
                     ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
                     : "border-line bg-paper hover:bg-surface",
+                  highlightedSku === product.produto_id &&
+                    "ring-2 ring-blue-400 border-blue-300 bg-blue-50/50 dark:ring-blue-500 dark:border-blue-600 dark:bg-blue-950/20",
                 )}
               >
                 {/* Checkbox visual */}
@@ -385,6 +558,41 @@ export default function ChecklistPage() {
                 </div>
               </button>
             ))}
+          </div>
+        )}
+
+        {/* Action buttons */}
+        {!isLoading && consolidated.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
+            <button
+              type="button"
+              onClick={handleConcluir}
+              disabled={actionLoading}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              {actionLoading ? "Processando..." : "Concluir"}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleReiniciar}
+              disabled={actionLoading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-paper px-4 py-2 text-xs font-semibold text-ink transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reiniciar progresso
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCancelar}
+              disabled={actionLoading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300 dark:hover:bg-red-950/50"
+            >
+              <X className="h-3.5 w-3.5" />
+              Cancelar
+            </button>
           </div>
         )}
       </main>

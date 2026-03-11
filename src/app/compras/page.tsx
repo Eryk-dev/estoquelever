@@ -8,9 +8,10 @@ import { AppShell } from "@/components/app-shell";
 import { Tabs } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { FornecedorCard } from "@/components/compras/fornecedor-card";
 import { useAuth } from "@/lib/auth-context";
 
-import type { Tab } from "@/types";
+import type { Tab, CompraItemAgrupado } from "@/types";
 
 type CompraTab = "aguardando_compra" | "comprado" | "indisponivel";
 
@@ -18,6 +19,12 @@ interface ComprasCounts {
   aguardando_compra: number;
   comprado: number;
   indisponivel: number;
+}
+
+interface FornecedorGroup {
+  fornecedor: string;
+  empresa_id: string | null;
+  itens: CompraItemAgrupado[];
 }
 
 interface ComprasResponse {
@@ -129,10 +136,23 @@ export default function ComprasPage() {
                     ? `fornecedor${items.length !== 1 ? "es" : ""}`
                     : `item${items.length !== 1 ? "s" : ""}`}
               </p>
-              {/* Content components will be rendered by US-013, US-014, US-016 */}
-              <pre className="rounded-lg border border-line bg-paper p-4 text-xs text-ink-muted overflow-auto max-h-[60vh]">
-                {JSON.stringify(items, null, 2)}
-              </pre>
+              {activeTab === "aguardando_compra" &&
+                (items as FornecedorGroup[]).map((group) => (
+                  <FornecedorCard
+                    key={group.fornecedor}
+                    fornecedor={group.fornecedor}
+                    empresa_id={group.empresa_id}
+                    itens={group.itens}
+                    usuario_id={user!.id}
+                    cargo={cargo}
+                  />
+                ))}
+              {/* Comprado and Indisponivel tabs: US-014, US-016 */}
+              {activeTab !== "aguardando_compra" && (
+                <pre className="rounded-lg border border-line bg-paper p-4 text-xs text-ink-muted overflow-auto max-h-[60vh]">
+                  {JSON.stringify(items, null, 2)}
+                </pre>
+              )}
             </div>
           )}
         </>

@@ -77,6 +77,8 @@ export interface EstoqueItem {
   localizacaoSP?: string;
   /** Product image URL (from Tiny anexos) */
   imagemUrl?: string;
+  /** Dynamic stock per galpao (aggregated across empresas in that galpao) — replaces legacy CWB/SP fields */
+  estoquesPorGalpao?: GalpaoEstoque[];
 }
 
 /** A complete order with stock enrichment */

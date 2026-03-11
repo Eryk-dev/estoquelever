@@ -129,3 +129,22 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - Response mapping is in-line in the `.map()` callback — add new fields there
   - `status_unificado` filter takes precedence over `status` when both are provided (else-if chain)
 ---
+
+## 2026-03-11 - US-010
+- US-010 was already implemented in a prior iteration (code in route.ts already fetches siso_pedido_item_estoques, joins with empresas/galpoes, aggregates by galpao, returns estoquesPorGalpao)
+- Verified typecheck passes, marked as passes: true
+- Files changed: none (code already present)
+- **Learnings for future iterations:**
+  - The stock aggregation uses a Map<string, Map<string, GalpaoStockAgg>> keyed by `${pedido_id}::${produto_id}` → galpaoId
+  - `atende` boolean is calculated server-side as `disponivel >= quantidadePedida`
+  - Legacy CWB/SP fields are kept alongside the new estoquesPorGalpao array
+---
+
+## 2026-03-11 - US-011
+- Added `estoquesPorGalpao?: GalpaoEstoque[]` to `EstoqueItem` interface in `src/types/index.ts`
+- Field is optional (?) to maintain backwards compatibility during transition
+- Files changed: `src/types/index.ts`
+- **Learnings for future iterations:**
+  - GalpaoEstoque interface already existed (added in US-002), just needed to be referenced in EstoqueItem
+  - Keep legacy fields (estoqueCWB, estoqueSP, cwbAtende, spAtende) until frontend fully migrates to dynamic rendering
+---

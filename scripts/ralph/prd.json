@@ -150,7 +150,7 @@
         "Typecheck passes"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "siso_pedido_item_estoques has columns: pedido_id, produto_id, empresa_id, deposito_id, deposito_nome, saldo, reservado, disponivel, localizacao. Join with siso_empresas to get galpao_id, then with siso_galpoes to get galpao nome. Aggregate by galpao."
     },
     {
@@ -164,7 +164,7 @@
         "Typecheck passes"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "Simple additive type change. The field is optional during transition."
     },
     {

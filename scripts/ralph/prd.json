@@ -303,7 +303,7 @@
         "Typecheck passes"
       ],
       "priority": 20,
-      "passes": false,
+      "passes": true,
       "notes": "Simple text changes across layout.tsx, page.tsx, and siso/page.tsx."
     },
     {

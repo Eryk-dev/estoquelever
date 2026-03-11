@@ -256,3 +256,15 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - `pedido_ids` filter is applied before `status_separacao` in the query chain (both work together)
   - Embalagem page gets `pedidoIds` from URL search params (`?pedidos=id1,id2,id3`), already had them available — just needed to pass to API
 ---
+
+## 2026-03-11 - US-020
+- Renamed platform: layout.tsx title "SISO Platform" → "Gestão de Pedidos"
+- Home page header: "SISO Platform" → "Gestão de Pedidos", subtitle "Plataforma de operações"
+- SISO module card subtitle: "Separação de Ordens" → "Separação Inteligente de Ordens"
+- Created `src/app/siso/layout.tsx` with `metadata.title = "SISO"` for browser tab on module page
+- siso/page.tsx already had `title="SISO"` in AppShell — no change needed
+- Files changed: `src/app/layout.tsx`, `src/app/page.tsx`, `src/app/siso/layout.tsx` (new)
+- **Learnings for future iterations:**
+  - To set per-page browser tab title in Next.js App Router with "use client" pages, create a sibling `layout.tsx` (server component) that exports metadata
+  - The `.next/dev/types` cache can cause false TS errors when adding new layouts — delete `.next/dev/types` to fix
+---

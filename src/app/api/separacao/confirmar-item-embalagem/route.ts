@@ -118,6 +118,7 @@ export async function POST(request: NextRequest) {
         .from("siso_pedidos")
         .update({
           status_separacao: "embalado",
+          status_unificado: "embalado",
           embalagem_concluida_em: new Date().toISOString(),
         })
         .eq("id", item.pedido_id);

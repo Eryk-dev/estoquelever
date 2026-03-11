@@ -123,6 +123,7 @@ export async function POST(request: NextRequest) {
       // Revert embalado → em_separacao
       newStatusSeparacao = "em_separacao";
       pedidoUpdates.status_separacao = "em_separacao";
+      pedidoUpdates.status_unificado = "em_separacao";
       pedidoUpdates.embalagem_concluida_em = null;
       pedidoUpdates.etiqueta_status = null;
     } else if (pedido.status_separacao === "em_separacao") {
@@ -141,6 +142,7 @@ export async function POST(request: NextRequest) {
       if (totalBipada === 0) {
         newStatusSeparacao = "aguardando_separacao";
         pedidoUpdates.status_separacao = "aguardando_separacao";
+        pedidoUpdates.status_unificado = "aguardando_separacao";
         pedidoUpdates.separacao_operador_id = null;
         pedidoUpdates.separacao_iniciada_em = null;
       }

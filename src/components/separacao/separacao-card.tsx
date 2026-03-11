@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Truck, Calendar, History } from "lucide-react";
+import { sisoFetch } from "@/lib/auth-context";
+import { CheckCircle2, Truck, Calendar, History, Printer, Loader2 } from "lucide-react";
 import { PedidoTimeline } from "./pedido-timeline";
 import type { StatusSeparacao } from "@/types";
 
@@ -48,6 +50,7 @@ export function SeparacaoCard({
   onToggle,
 }: SeparacaoCardProps) {
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const isEmbalado = pedido.status_separacao === "embalado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
 
@@ -101,6 +104,43 @@ export function SeparacaoCard({
             >
               {pedido.cliente ?? "—"}
             </span>
+
+            {/* Print label (embalado only) */}
+            {isEmbalado && (
+              <button
+                type="button"
+                disabled={printing}
+                onClick={async () => {
+                  setPrinting(true);
+                  try {
+                    const res = await sisoFetch("/api/separacao/reimprimir", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ pedido_id: pedido.id }),
+                    });
+                    const body = await res.json().catch(() => ({}));
+                    if (res.ok && body.status === "impresso") {
+                      toast.success(`Etiqueta #${pedido.numero_pedido} enviada`);
+                    } else {
+                      toast.error(body.error ?? "Falha ao imprimir etiqueta");
+                    }
+                  } catch {
+                    toast.error("Erro de conexao");
+                  } finally {
+                    setPrinting(false);
+                  }
+                }}
+                className="shrink-0 rounded p-1 text-emerald-500 transition-colors hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50 dark:hover:bg-emerald-950/30"
+                title="Imprimir etiqueta"
+                aria-label="Imprimir etiqueta"
+              >
+                {printing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Printer className="h-3.5 w-3.5" />
+                )}
+              </button>
+            )}
 
             {/* Timeline toggle */}
             <button

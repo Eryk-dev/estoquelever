@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import { AppShell } from "@/components/app-shell";
+import { REFRESH_INTERVAL_LIST } from "@/lib/constants";
 import { Tabs } from "@/components/ui/tabs";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -143,7 +144,7 @@ export default function SeparacaoPage() {
       return res.json();
     },
     enabled: canFetch,
-    refetchInterval: 10000,
+    refetchInterval: REFRESH_INTERVAL_LIST,
   });
 
   const counts = data?.counts ?? EMPTY_COUNTS;

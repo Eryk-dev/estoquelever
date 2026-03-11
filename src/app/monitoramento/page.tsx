@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppShell } from "@/components/app-shell";
+import { REFRESH_INTERVAL_MONITORING } from "@/lib/constants";
 import { formatRelativeTime, formatMs } from "@/lib/domain-helpers";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -200,7 +201,7 @@ export default function MonitoramentoPage() {
   // Initial fetch + auto-refresh every 30s
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30_000);
+    const interval = setInterval(fetchData, REFRESH_INTERVAL_MONITORING);
     return () => clearInterval(interval);
   }, [fetchData]);
 

@@ -11,6 +11,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { FornecedorCard } from "@/components/compras/fornecedor-card";
 import { OrdemCompraCard } from "@/components/compras/ordem-compra-card";
 import { useAuth } from "@/lib/auth-context";
+import { REFRESH_INTERVAL_LIST } from "@/lib/constants";
 
 import type { Tab, CompraItemAgrupado } from "@/types";
 
@@ -78,7 +79,7 @@ export default function ComprasPage() {
     queryKey: ["compras", activeTab, cargo],
     queryFn: () => fetchCompras(activeTab, cargo),
     enabled: !!user && allowed,
-    refetchInterval: 30_000,
+    refetchInterval: REFRESH_INTERVAL_LIST,
   });
 
   const counts = data?.counts ?? {

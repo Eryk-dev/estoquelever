@@ -7,6 +7,7 @@ import { AlertTriangle, ChevronDown, Loader2, LogOut, RefreshCw, Settings } from
 import Link from "next/link";
 
 import { AppShell } from "@/components/app-shell";
+import { REFRESH_INTERVAL_LIST } from "@/lib/constants";
 import { Tabs } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PedidoCardConcluido } from "@/components/pedido/pedido-card-concluido";
@@ -91,7 +92,7 @@ export default function DashboardPage() {
     queryKey: ["pedidos"],
     queryFn: fetchPedidos,
     enabled: !!user,
-    refetchInterval: 30_000,
+    refetchInterval: REFRESH_INTERVAL_LIST,
   });
 
   // Split into categories using status_unificado

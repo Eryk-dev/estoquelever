@@ -23,6 +23,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CARGO_LABELS } from "@/types";
 import type { SeparacaoPedido } from "@/components/separacao/separacao-card";
+import { REFRESH_INTERVAL_ACTIVE } from "@/lib/constants";
 
 // --- Types ---
 
@@ -98,7 +99,7 @@ function EmbalagemPage() {
       return { pedidos: json.pedidos ?? [] };
     },
     enabled: !!user && pedidoIds.length > 0,
-    refetchInterval: 5000,
+    refetchInterval: REFRESH_INTERVAL_ACTIVE,
   });
 
   // Fetch items for expanded pedido

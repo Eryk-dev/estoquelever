@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { LogOut, RefreshCw, Settings } from "lucide-react";
@@ -35,6 +35,9 @@ export default function DashboardPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab["id"]>("pendente");
 
+  // IDs approved this session — survives refetches so cards never come back
+  const approvedIdsRef = useRef(new Set<string>());
+
   const { data: allPedidos = [], isRefetching } = useQuery({
     queryKey: ["pedidos"],
     queryFn: fetchPedidos,
@@ -44,7 +47,8 @@ export default function DashboardPage() {
 
   const pendentes = useMemo(
     () => allPedidos.filter((p) =>
-      p.statusUnificado === "pendente" || p.statusUnificado === "erro"
+      !approvedIdsRef.current.has(p.id) &&
+      (p.statusUnificado === "pendente" || p.statusUnificado === "erro")
     ),
     [allPedidos],
   );
@@ -83,42 +87,41 @@ export default function DashboardPage() {
 
   const visibleTabs = cargo === "comprador" ? tabs.filter((t) => t.id !== "auto") : tabs;
 
-  async function handleAprovar(id: string, decisao: Decisao) {
-    const pedido = allPedidos.find((p) => p.id === id);
+  const handleAprovar = useCallback(
+    (id: string, decisao: Decisao) => {
+      const pedido = allPedidos.find((p) => p.id === id);
 
-    // Cancel in-flight refetches so they don't overwrite the optimistic removal
-    await queryClient.cancelQueries({ queryKey: ["pedidos"] });
+      // Mark as approved locally — card never comes back regardless of refetches
+      approvedIdsRef.current.add(id);
 
-    // Optimistic: remove from list immediately
-    queryClient.setQueryData<Pedido[]>(["pedidos"], (old) =>
-      old ? old.filter((p) => p.id !== id) : [],
-    );
-    toast.success(`Pedido #${pedido?.numero ?? id} aprovado → ${decisao}`);
+      // Force re-render so the card disappears immediately
+      queryClient.setQueryData<Pedido[]>(["pedidos"], (old) => old ? [...old] : []);
+      toast.success(`Pedido #${pedido?.numero ?? id} aprovado → ${decisao}`);
 
-    // Fire-and-forget: API call runs in background
-    fetch("/api/pedidos/aprovar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pedidoId: id,
-        decisao,
-        operadorId: user?.id,
-        operadorNome: user?.nome,
-      }),
-    })
-      .then((res) => {
-        if (!res.ok && res.status !== 409) {
-          res.json().catch(() => ({})).then((data) => {
-            toast.error(data.error ?? "Erro ao aprovar pedido");
-          });
-        }
-        queryClient.invalidateQueries({ queryKey: ["pedidos"] });
+      // Fire-and-forget: API call runs in background
+      fetch("/api/pedidos/aprovar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedidoId: id,
+          decisao,
+          operadorId: user?.id,
+          operadorNome: user?.nome,
+        }),
       })
-      .catch(() => {
-        toast.error("Erro de conexão ao aprovar pedido");
-        queryClient.invalidateQueries({ queryKey: ["pedidos"] });
-      });
-  }
+        .then((res) => {
+          if (!res.ok && res.status !== 409) {
+            res.json().catch(() => ({})).then((data) => {
+              toast.error(data.error ?? "Erro ao aprovar pedido");
+            });
+          }
+        })
+        .catch(() => {
+          toast.error("Erro de conexão ao aprovar pedido");
+        });
+    },
+    [allPedidos, queryClient, user],
+  );
 
   const headerRight = (
     <>

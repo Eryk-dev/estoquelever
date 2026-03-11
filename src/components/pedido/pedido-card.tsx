@@ -29,7 +29,7 @@ import type { Decisao, DepositoEstoque, EstoqueItem, Filial, Pedido } from "@/ty
 
 interface PedidoCardProps {
   pedido: Pedido;
-  onAprovar: (id: string, decisao: Decisao) => Promise<void>;
+  onAprovar: (id: string, decisao: Decisao) => void;
   onStockUpdated?: () => void;
 }
 

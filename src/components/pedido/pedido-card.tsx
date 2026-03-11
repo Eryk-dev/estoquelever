@@ -536,12 +536,11 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
 interface ActionRowProps {
   pedido: Pedido;
   decisao: Decisao;
-  loading: boolean;
   onSelectDecisao: (d: Decisao) => void;
   onAprovar: () => void;
 }
 
-function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: ActionRowProps) {
+function ActionRow({ pedido, decisao, onSelectDecisao, onAprovar }: ActionRowProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const textColor = getDecisaoColors(decisao);
 
@@ -552,7 +551,6 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
 
   return (
     <div className="flex items-center gap-2 px-4 py-3">
-      {/* Decision label + chevron toggle */}
       <div className="relative flex min-w-0 flex-1 items-center gap-1.5">
         <DecisaoIcon
           className={cn("h-3.5 w-3.5 shrink-0", textColor)}
@@ -562,7 +560,6 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
           {getDecisaoLabel(decisao, pedido)}
         </span>
 
-        {/* Chevron — opens dropdown to switch decision */}
         <button
           type="button"
           aria-label="Mudar decisão"
@@ -584,7 +581,6 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
           />
         </button>
 
-        {/* Dropdown popover */}
         {dropdownOpen && (
           <DecisaoDropdown
             pedido={pedido}
@@ -595,30 +591,17 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
         )}
       </div>
 
-      {/* Approve button */}
       <button
         type="button"
         onClick={onAprovar}
-        disabled={loading}
-        aria-busy={loading}
         className={cn(
           "btn-primary inline-flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold",
           "transition-all duration-150 active:scale-[0.97]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:ring-offset-2",
-          loading && "cursor-not-allowed opacity-30",
         )}
       >
-        {loading ? (
-          <>
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            <span>Aprovando</span>
-          </>
-        ) : (
-          <>
-            <span>Aprovar</span>
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-          </>
-        )}
+        <span>Aprovar</span>
+        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
     </div>
   );
@@ -630,16 +613,9 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
 
 export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProps) {
   const [decisao, setDecisao] = useState<Decisao>(pedido.sugestao);
-  const [loading, setLoading] = useState(false);
 
-  async function handleAprovar() {
-    if (loading) return;
-    setLoading(true);
-    try {
-      await onAprovar(pedido.id, decisao);
-    } finally {
-      setLoading(false);
-    }
+  function handleAprovar() {
+    onAprovar(pedido.id, decisao);
   }
 
   const stripColor = getDecisaoStripColor(decisao);
@@ -741,7 +717,6 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
         <ActionRow
           pedido={pedido}
           decisao={decisao}
-          loading={loading}
           onSelectDecisao={setDecisao}
           onAprovar={handleAprovar}
         />

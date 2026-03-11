@@ -86,41 +86,38 @@ export default function DashboardPage() {
   async function handleAprovar(id: string, decisao: Decisao) {
     const pedido = allPedidos.find((p) => p.id === id);
 
+    // Cancel in-flight refetches so they don't overwrite the optimistic removal
+    await queryClient.cancelQueries({ queryKey: ["pedidos"] });
+
     // Optimistic: remove from list immediately
     queryClient.setQueryData<Pedido[]>(["pedidos"], (old) =>
       old ? old.filter((p) => p.id !== id) : [],
     );
     toast.success(`Pedido #${pedido?.numero ?? id} aprovado → ${decisao}`);
 
-    try {
-      const res = await fetch("/api/pedidos/aprovar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pedidoId: id,
-          decisao,
-          operadorId: user?.id,
-          operadorNome: user?.nome,
-        }),
-      });
-
-      if (!res.ok) {
-        // 409 = already approved/executing — not an error, keep card removed
-        if (res.status === 409) {
-          queryClient.invalidateQueries({ queryKey: ["pedidos"] });
-          return;
+    // Fire-and-forget: API call runs in background
+    fetch("/api/pedidos/aprovar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pedidoId: id,
+        decisao,
+        operadorId: user?.id,
+        operadorNome: user?.nome,
+      }),
+    })
+      .then((res) => {
+        if (!res.ok && res.status !== 409) {
+          res.json().catch(() => ({})).then((data) => {
+            toast.error(data.error ?? "Erro ao aprovar pedido");
+          });
         }
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error ?? "Erro ao aprovar pedido");
         queryClient.invalidateQueries({ queryKey: ["pedidos"] });
-        return;
-      }
-
-      queryClient.invalidateQueries({ queryKey: ["pedidos"] });
-    } catch {
-      toast.error("Erro de conexão ao aprovar pedido");
-      queryClient.invalidateQueries({ queryKey: ["pedidos"] });
-    }
+      })
+      .catch(() => {
+        toast.error("Erro de conexão ao aprovar pedido");
+        queryClient.invalidateQueries({ queryKey: ["pedidos"] });
+      });
   }
 
   const headerRight = (

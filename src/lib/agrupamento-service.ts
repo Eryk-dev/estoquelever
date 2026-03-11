@@ -116,12 +116,21 @@ async function processarEmpresa(
       .in("id", allPedidoIds);
 
     // 2. Complete the agrupamento (required before labels are available)
-    await concluirAgrupamento(token, agrupamentoId);
-
-    logger.info(LOG_SOURCE, "Agrupamento concluído", {
-      empresaId,
-      agrupamentoId: String(agrupamentoId),
-    });
+    //    Non-fatal: Mercado Envios orders auto-request pickup, so concluir
+    //    may return 400. We still attempt to fetch labels regardless.
+    try {
+      await concluirAgrupamento(token, agrupamentoId);
+      logger.info(LOG_SOURCE, "Agrupamento concluído", {
+        empresaId,
+        agrupamentoId: String(agrupamentoId),
+      });
+    } catch (err) {
+      logger.warn(LOG_SOURCE, "Não foi possível concluir agrupamento (tentando etiquetas mesmo assim)", {
+        empresaId,
+        agrupamentoId: String(agrupamentoId),
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     // 3. Fetch etiqueta URLs
     const etiquetas = await obterEtiquetasAgrupamento(token, agrupamentoId);

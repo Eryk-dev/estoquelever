@@ -1,42 +1,100 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Home, LogOut, ChevronDown } from "lucide-react";
+import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert } from "lucide-react";
 import Link from "next/link";
+import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
+import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import { Tabs } from "@/components/ui/tabs";
-import { TabPendentes } from "@/components/separacao/tab-pendentes";
-import { TabAguardandoNf } from "@/components/separacao/tab-aguardando-nf";
-import { TabEmbalados } from "@/components/separacao/tab-embalados";
-import { TabExpedidos } from "@/components/separacao/tab-expedidos";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  SeparacaoCard,
+  type SeparacaoPedido,
+} from "@/components/separacao/separacao-card";
 import { CARGO_LABELS } from "@/types";
-import type { Tab } from "@/types";
-import type { PedidoSeparacao } from "@/components/separacao/pedido-separacao-card";
+import type { Tab, StatusSeparacao, SeparacaoCounts } from "@/types";
 
-type TabId = "aguardando_nf" | "pendentes" | "embalados" | "expedidos";
+// 5 tabs mapping 1:1 to StatusSeparacao values
+const TAB_CONFIG: {
+  id: StatusSeparacao;
+  label: string;
+  emptyMessage: string;
+}[] = [
+  {
+    id: "aguardando_nf",
+    label: "Aguardando NF",
+    emptyMessage: "Nenhum pedido aguardando nota fiscal",
+  },
+  {
+    id: "aguardando_separacao",
+    label: "Aguardando Separacao",
+    emptyMessage: "Nenhum pedido aguardando separacao",
+  },
+  {
+    id: "em_separacao",
+    label: "Em Separacao",
+    emptyMessage: "Nenhum pedido em separacao",
+  },
+  {
+    id: "separado",
+    label: "Separados",
+    emptyMessage: "Nenhum pedido separado",
+  },
+  {
+    id: "embalado",
+    label: "Embalados",
+    emptyMessage: "Nenhum pedido embalado",
+  },
+];
 
-function statusToTab(status: string): TabId {
-  if (status === "pendente" || status === "em_separacao") return "pendentes";
-  if (status === "aguardando_nf") return "aguardando_nf";
-  if (status === "embalado") return "embalados";
-  if (status === "expedido") return "expedidos";
-  return "pendentes";
-}
+const EMPTY_COUNTS: SeparacaoCounts = {
+  aguardando_nf: 0,
+  aguardando_separacao: 0,
+  em_separacao: 0,
+  separado: 0,
+  embalado: 0,
+};
 
-interface GalpaoOption {
-  id: string;
-  nome: string;
+const SORT_OPTIONS = [
+  { value: "data_pedido", label: "Data" },
+  { value: "localizacao", label: "Localizacao" },
+  { value: "sku", label: "SKU" },
+] as const;
+
+interface SeparacaoResponse {
+  counts: SeparacaoCounts;
+  pedidos: SeparacaoPedido[];
 }
 
 export default function SeparacaoPage() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<TabId>("pendentes");
-  const [selectedGalpaoId, setSelectedGalpaoId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<StatusSeparacao>("aguardando_separacao");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  const isAdmin = user?.cargo === "admin";
+  // Filter state (only applies to aguardando_separacao tab)
+  const [empresaFilter, setEmpresaFilter] = useState("");
+  const [sortFilter, setSortFilter] = useState("data_pedido");
+  const [busca, setBusca] = useState("");
+
+  // Action loading states
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // Realtime: auto-refresh when other operators change order statuses
+  useRealtimeSeparacao();
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!loading && !user) {
@@ -44,64 +102,117 @@ export default function SeparacaoPage() {
     }
   }, [user, loading, router]);
 
-  // Fetch galpões for admin selector
-  const { data: galpoes } = useQuery<GalpaoOption[]>({
-    queryKey: ["galpoes-list"],
-    queryFn: async () => {
-      const res = await sisoFetch("/api/admin/galpoes");
-      if (!res.ok) return [];
-      const data = await res.json();
-      return data.map((g: { id: string; nome: string }) => ({
-        id: g.id,
-        nome: g.nome,
-      }));
-    },
-    enabled: isAdmin,
-  });
-
-  // Derive effective galpão: use explicit selection or default to first loaded
-  const effectiveGalpaoId = selectedGalpaoId ?? galpoes?.[0]?.id ?? null;
+  const canFetch = !loading && !!user;
 
   // Build query params
-  const galpaoParam =
-    isAdmin && effectiveGalpaoId ? `?galpao_id=${effectiveGalpaoId}` : "";
-  const canFetch = !loading && !!user && (!isAdmin || !!effectiveGalpaoId);
+  const queryParams = useMemo(() => {
+    const params = new URLSearchParams({ status_separacao: activeTab });
+    if (activeTab === "aguardando_separacao") {
+      if (empresaFilter) params.set("empresa_origem_id", empresaFilter);
+      if (sortFilter !== "data_pedido") params.set("sort", sortFilter);
+      if (busca.trim()) params.set("busca", busca.trim());
+    }
+    return params.toString();
+  }, [activeTab, empresaFilter, sortFilter, busca]);
 
-  // Fetch all orders (no status filter) — group on client for tab counts
-  const { data: allPedidos, refetch } = useQuery<PedidoSeparacao[]>({
-    queryKey: ["separacao-all", galpaoParam],
+  // Fetch pedidos for active tab + counts for all tabs
+  const {
+    data,
+    isLoading: isFetching,
+    refetch,
+  } = useQuery<SeparacaoResponse>({
+    queryKey: ["separacao", queryParams],
     queryFn: async () => {
-      const res = await sisoFetch(`/api/separacao${galpaoParam}`);
-      if (!res.ok) return [];
+      const res = await sisoFetch(`/api/separacao?${queryParams}`);
+      if (!res.ok) return { counts: EMPTY_COUNTS, pedidos: [] };
       return res.json();
     },
     enabled: canFetch,
     refetchInterval: 10000,
   });
 
-  // Group pedidos by tab
-  const grouped: Record<TabId, PedidoSeparacao[]> = {
-    aguardando_nf: [],
-    pendentes: [],
-    embalados: [],
-    expedidos: [],
-  };
+  const counts = data?.counts ?? EMPTY_COUNTS;
+  const pedidos = useMemo(() => data?.pedidos ?? [], [data?.pedidos]);
 
-  for (const p of allPedidos ?? []) {
-    const tab = statusToTab(p.status_separacao);
-    grouped[tab].push(p);
+  // Extract distinct empresa names for the dropdown
+  const empresaOptions = useMemo(() => {
+    const seen = new Set<string>();
+    for (const p of pedidos) {
+      if (p.empresa_origem_nome) seen.add(p.empresa_origem_nome);
+    }
+    return Array.from(seen).sort();
+  }, [pedidos]);
+
+  const activeConfig = TAB_CONFIG.find((t) => t.id === activeTab)!;
+
+  const tabs: Tab[] = TAB_CONFIG.map((t) => ({
+    id: t.id,
+    label: t.label,
+    count: counts[t.id as keyof SeparacaoCounts] ?? 0,
+  }));
+
+  // --- Action handlers ---
+
+  async function handleSepararSelecionados() {
+    if (selectedIds.size === 0 || !user) return;
+    setActionLoading(true);
+    try {
+      const res = await sisoFetch("/api/separacao/iniciar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedido_ids: Array.from(selectedIds),
+          operador_id: user.id,
+        }),
+      });
+      if (res.ok) {
+        const ids = Array.from(selectedIds).join(",");
+        toast.success(`Separacao iniciada para ${selectedIds.size} pedido(s)`);
+        router.push(`/separacao/checklist?pedidos=${ids}`);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao iniciar separacao");
+      }
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setActionLoading(false);
+    }
   }
 
-  const tabs: Tab[] = [
-    {
-      id: "aguardando_nf",
-      label: "Aguardando NF",
-      count: grouped.aguardando_nf.length,
-    },
-    { id: "pendentes", label: "Pendentes", count: grouped.pendentes.length },
-    { id: "embalados", label: "Embalados", count: grouped.embalados.length },
-    { id: "expedidos", label: "Expedidos", count: grouped.expedidos.length },
-  ];
+  function handleEmbalarSelecionados() {
+    const ids =
+      selectedIds.size > 0
+        ? Array.from(selectedIds)
+        : pedidos.map((p) => p.id);
+    if (ids.length === 0) return;
+    router.push(`/separacao/embalagem?pedidos=${ids.join(",")}`);
+  }
+
+  async function handleForcarPendente() {
+    if (selectedIds.size === 0) return;
+    setActionLoading(true);
+    try {
+      const res = await sisoFetch("/api/separacao/forcar-pendente", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_ids: Array.from(selectedIds) }),
+      });
+      if (res.ok) {
+        const body = await res.json();
+        toast.success(`${body.total ?? selectedIds.size} pedido(s) movido(s) para Aguardando Separacao`);
+        setSelectedIds(new Set());
+        refetch();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao forcar pendente");
+      }
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setActionLoading(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -113,24 +224,30 @@ export default function SeparacaoPage() {
 
   if (!user) return null;
 
+  const isAdmin = user.cargo === "admin";
+  const showCheckbox =
+    activeTab === "aguardando_separacao" ||
+    activeTab === "separado" ||
+    (activeTab === "aguardando_nf" && isAdmin);
+
   return (
     <div className="min-h-screen bg-surface">
       {/* Header */}
       <header className="border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
           <Link
             href="/"
             className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
-            title="Início"
+            title="Inicio"
           >
             <Home className="h-4 w-4" />
           </Link>
           <div className="flex-1">
             <h1 className="text-base font-bold tracking-tight text-ink">
-              Separação
+              Separacao
             </h1>
             <p className="text-[11px] text-ink-faint">
-              Separação física por galpão
+              Separacao fisica por galpao
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -154,65 +271,145 @@ export default function SeparacaoPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-4 px-4 py-4">
-        {/* Admin galpão selector */}
-        {isAdmin && galpoes && galpoes.length > 0 && (
-          <div className="flex items-center gap-2">
-            <label
-              htmlFor="galpao-select"
-              className="text-xs font-medium text-ink-muted"
-            >
-              Galpão:
-            </label>
-            <div className="relative">
+      <main className="mx-auto max-w-5xl space-y-4 px-4 py-4">
+        {/* Tabs */}
+        <div className="overflow-x-auto">
+          <Tabs
+            tabs={tabs}
+            activeTab={activeTab}
+            onChange={(id) => {
+              setActiveTab(id as StatusSeparacao);
+              setSelectedIds(new Set());
+            }}
+          />
+        </div>
+
+        {/* Filter bar — Aguardando Separacao tab only */}
+        {activeTab === "aguardando_separacao" && (
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Search */}
+            <div className="relative flex-1 min-w-[180px]">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint" />
+              <input
+                type="text"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                placeholder="Buscar pedido, cliente..."
+                className="h-8 w-full rounded-lg border border-line bg-paper pl-8 pr-3 text-xs text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+              />
+            </div>
+
+            {/* Empresa dropdown */}
+            {empresaOptions.length > 0 && (
               <select
-                id="galpao-select"
-                value={effectiveGalpaoId ?? ""}
-                onChange={(e) => setSelectedGalpaoId(e.target.value)}
-                className="appearance-none rounded-lg border border-line bg-paper py-1.5 pl-3 pr-8 text-sm font-semibold text-ink focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                value={empresaFilter}
+                onChange={(e) => setEmpresaFilter(e.target.value)}
+                className="h-8 rounded-lg border border-line bg-paper px-2 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
               >
-                {galpoes.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.nome}
+                <option value="">Todas empresas</option>
+                {empresaOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
                   </option>
                 ))}
               </select>
-              <ChevronDown
-                className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint"
-                aria-hidden="true"
-              />
-            </div>
+            )}
+
+            {/* Sort dropdown */}
+            <select
+              value={sortFilter}
+              onChange={(e) => setSortFilter(e.target.value)}
+              className="h-8 rounded-lg border border-line bg-paper px-2 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+            >
+              {SORT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
         )}
 
-        {/* Tabs */}
-        <Tabs
-          tabs={tabs}
-          activeTab={activeTab}
-          onChange={(id) => setActiveTab(id as TabId)}
-        />
+        {/* Action buttons per tab */}
+        {activeTab === "aguardando_separacao" && pedidos.length > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-ink-faint">
+              {selectedIds.size > 0
+                ? `${selectedIds.size} selecionado(s)`
+                : `${pedidos.length} pedido(s)`}
+            </span>
+            <button
+              type="button"
+              onClick={handleSepararSelecionados}
+              disabled={selectedIds.size === 0 || actionLoading}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            >
+              <Play className="h-3.5 w-3.5" />
+              {actionLoading
+                ? "Iniciando..."
+                : `Separar ${selectedIds.size} pedido(s)`}
+            </button>
+          </div>
+        )}
+
+        {activeTab === "separado" && pedidos.length > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-ink-faint">
+              {selectedIds.size > 0
+                ? `${selectedIds.size} selecionado(s)`
+                : `${pedidos.length} pedido(s)`}
+            </span>
+            <button
+              type="button"
+              onClick={handleEmbalarSelecionados}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            >
+              <PackageCheck className="h-3.5 w-3.5" />
+              {selectedIds.size > 0
+                ? `Embalar ${selectedIds.size} pedido(s)`
+                : `Embalar ${pedidos.length} pedido(s)`}
+            </button>
+          </div>
+        )}
+
+        {activeTab === "aguardando_nf" && isAdmin && pedidos.length > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-ink-faint">
+              {selectedIds.size > 0
+                ? `${selectedIds.size} selecionado(s)`
+                : `${pedidos.length} pedido(s)`}
+            </span>
+            <button
+              type="button"
+              onClick={handleForcarPendente}
+              disabled={selectedIds.size === 0 || actionLoading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
+            >
+              <ShieldAlert className="h-3.5 w-3.5" />
+              {actionLoading
+                ? "Movendo..."
+                : `Forcar pendente (${selectedIds.size})`}
+            </button>
+          </div>
+        )}
 
         {/* Tab content */}
-        {activeTab === "pendentes" && (
-          <TabPendentes
-            pedidos={grouped.pendentes}
-            onBipProcessed={() => refetch()}
-          />
-        )}
-        {activeTab === "aguardando_nf" && (
-          <TabAguardandoNf
-            pedidos={grouped.aguardando_nf}
-            onUpdated={() => refetch()}
-          />
-        )}
-        {activeTab === "embalados" && (
-          <TabEmbalados
-            pedidos={grouped.embalados}
-            onUpdated={() => refetch()}
-          />
-        )}
-        {activeTab === "expedidos" && (
-          <TabExpedidos pedidos={grouped.expedidos} />
+        {isFetching ? (
+          <LoadingSpinner message="Carregando pedidos..." />
+        ) : pedidos.length === 0 ? (
+          <EmptyState message={activeConfig.emptyMessage} />
+        ) : (
+          <div className="space-y-2">
+            {pedidos.map((pedido) => (
+              <SeparacaoCard
+                key={pedido.id}
+                pedido={pedido}
+                checkbox={showCheckbox}
+                checked={selectedIds.has(pedido.id)}
+                onToggle={toggleSelected}
+              />
+            ))}
+          </div>
         )}
       </main>
     </div>

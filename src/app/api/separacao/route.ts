@@ -1,64 +1,137 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
-import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
+import type { SeparacaoCounts, StatusSeparacao } from "@/types";
+
+const VALID_STATUSES: StatusSeparacao[] = [
+  "aguardando_nf",
+  "aguardando_separacao",
+  "em_separacao",
+  "separado",
+  "embalado",
+  "cancelado",
+];
+
+const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
+  "aguardando_nf",
+  "aguardando_separacao",
+  "em_separacao",
+  "separado",
+  "embalado",
+];
 
 /**
  * GET /api/separacao
  *
- * List orders assigned to the operator's galpão with items and bip state.
+ * List orders filtered by separation status with search, sorting, and role-based filtering.
+ * Returns { counts: SeparacaoCounts, pedidos: array }
  *
  * Query params:
- *   status  — filter by status_separacao (aguardando_nf, pendente, em_separacao, embalado, expedido)
- *   galpao_id — required for admin users (who have no implicit galpão)
+ *   status_separacao — filter by status
+ *   empresa_origem_id — filter by origin empresa
+ *   sort — data_pedido (default) | localizacao | sku
+ *   busca — search string (matches numero, id_pedido_ecommerce, cliente_nome)
+ *
+ * Role-based filtering via X-User-Cargo header:
+ *   operador_cwb — sees only pedidos where empresa galpao = CWB
+ *   operador_sp — sees only pedidos where empresa galpao = SP
+ *   admin (default) — sees all
  */
 export async function GET(request: NextRequest) {
-  const session = await getSessionUser(request);
-  if (!session) {
-    return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
-  }
-
   const { searchParams } = new URL(request.url);
-  const statusFilter = searchParams.get("status");
-  const galpaoIdParam = searchParams.get("galpao_id");
+  const statusFilter = searchParams.get(
+    "status_separacao",
+  ) as StatusSeparacao | null;
+  const empresaFilter = searchParams.get("empresa_origem_id");
+  const busca = searchParams.get("busca");
 
-  // Resolve galpaoId: operators use their own, admins must pass ?galpao_id
-  let galpaoId: string;
-  if (session.galpaoId) {
-    galpaoId = session.galpaoId;
-  } else {
-    // Admin or other role without implicit galpão
-    if (!galpaoIdParam) {
-      return NextResponse.json(
-        { error: "galpao_id é obrigatório para admin" },
-        { status: 400 },
-      );
-    }
-    galpaoId = galpaoIdParam;
+  if (statusFilter && !VALID_STATUSES.includes(statusFilter)) {
+    return NextResponse.json(
+      { error: `Status inválido. Use: ${VALID_STATUSES.join(", ")}` },
+      { status: 400 },
+    );
   }
 
   const supabase = createServiceClient();
 
+  // Role-based filtering: resolve allowed empresa IDs from cargo
+  const cargo = request.headers.get("X-User-Cargo") ?? "admin";
+  let allowedEmpresaIds: string[] | null = null; // null = no restriction
+
+  if (cargo === "operador_cwb" || cargo === "operador_sp") {
+    const galpaoNome = cargo === "operador_cwb" ? "CWB" : "SP";
+    const { data: galpao } = await supabase
+      .from("siso_galpoes")
+      .select("id")
+      .eq("nome", galpaoNome)
+      .single();
+
+    if (galpao) {
+      const { data: empresas } = await supabase
+        .from("siso_empresas")
+        .select("id")
+        .eq("galpao_id", galpao.id);
+      allowedEmpresaIds = empresas?.map((e) => e.id) ?? [];
+    } else {
+      allowedEmpresaIds = [];
+    }
+  }
+
+  // No empresas for this role — return empty
+  if (allowedEmpresaIds !== null && allowedEmpresaIds.length === 0) {
+    const emptyCounts: SeparacaoCounts = {
+      aguardando_nf: 0,
+      aguardando_separacao: 0,
+      em_separacao: 0,
+      separado: 0,
+      embalado: 0,
+    };
+    return NextResponse.json({ counts: emptyCounts, pedidos: [] });
+  }
+
   try {
-    // 1. Fetch pedidos with nested items
-    let query = supabase
+    // 1. Counts — parallel HEAD queries per status (efficient, no data transferred)
+    const countPromises = COUNT_STATUSES.map((status) => {
+      let q = supabase
+        .from("siso_pedidos")
+        .select("*", { count: "exact", head: true })
+        .eq("status_separacao", status);
+      if (allowedEmpresaIds) q = q.in("empresa_origem_id", allowedEmpresaIds);
+      if (empresaFilter) q = q.eq("empresa_origem_id", empresaFilter);
+      return q;
+    });
+
+    // 2. Pedidos query
+    let pedidosQuery = supabase
       .from("siso_pedidos")
       .select(
-        `id, numero, data, cliente_nome, id_pedido_ecommerce, nome_ecommerce,
-         forma_envio_descricao, status_separacao, sugestao, decisao_final,
-         separado_por, separado_em,
-         embalado_em, etiqueta_url, etiqueta_status, url_danfe, chave_acesso_nf,
-         siso_pedido_itens(produto_id, sku, gtin, descricao, quantidade_pedida, quantidade_bipada, bipado_completo)`,
+        `id, numero, data, id_pedido_ecommerce, cliente_nome,
+         forma_envio_descricao, status_separacao, marcadores,
+         empresa_origem_id, siso_empresas(nome, galpao_id)`,
       )
-      .eq("separacao_galpao_id", galpaoId)
-      .neq("status", "cancelado")
-      .order("data", { ascending: true });
+      .not("status_separacao", "is", null);
 
-    if (statusFilter) {
-      query = query.eq("status_separacao", statusFilter);
+    if (allowedEmpresaIds) {
+      pedidosQuery = pedidosQuery.in("empresa_origem_id", allowedEmpresaIds);
+    }
+    if (empresaFilter) {
+      pedidosQuery = pedidosQuery.eq("empresa_origem_id", empresaFilter);
     }
 
-    const { data: pedidos, error: pedidosError } = await query;
+    if (statusFilter) {
+      pedidosQuery = pedidosQuery.eq("status_separacao", statusFilter);
+    }
+    if (busca) {
+      pedidosQuery = pedidosQuery.or(
+        `numero.ilike.%${busca}%,id_pedido_ecommerce.ilike.%${busca}%,cliente_nome.ilike.%${busca}%`,
+      );
+    }
+
+    pedidosQuery = pedidosQuery.order("data", { ascending: true });
+
+    // Execute counts + pedidos in parallel
+    const [countResults, { data: pedidos, error: pedidosError }] =
+      await Promise.all([Promise.all(countPromises), pedidosQuery]);
 
     if (pedidosError) {
       logger.error("separacao-list", "Failed to fetch pedidos", {
@@ -70,85 +143,63 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (!pedidos || pedidos.length === 0) {
-      return NextResponse.json([]);
-    }
+    // Build counts
+    const counts: SeparacaoCounts = {
+      aguardando_nf: countResults[0].count ?? 0,
+      aguardando_separacao: countResults[1].count ?? 0,
+      em_separacao: countResults[2].count ?? 0,
+      separado: countResults[3].count ?? 0,
+      embalado: countResults[4].count ?? 0,
+    };
 
-    // 2. Get empresas in this galpão (for localizacao resolution)
-    const { data: empresas } = await supabase
-      .from("siso_empresas")
-      .select("id")
-      .eq("galpao_id", galpaoId);
+    // 3. Fetch item stats for progress display (separation + packing counts)
+    const pedidoIds = (pedidos ?? []).map((p) => p.id);
+    const itemStats: Record<
+      string,
+      { total: number; marcados: number; bipados: number }
+    > = {};
 
-    const empresaIds = empresas?.map((e) => e.id) ?? [];
+    if (pedidoIds.length > 0) {
+      const { data: items } = await supabase
+        .from("siso_pedido_itens")
+        .select("pedido_id, separacao_marcado, bipado_completo")
+        .in("pedido_id", pedidoIds);
 
-    // 3. Batch-fetch localizacao from siso_pedido_item_estoques
-    const pedidoIds = pedidos.map((p) => p.id);
-    let locMap = new Map<string, string>(); // "pedidoId:produtoId" → localizacao
-
-    if (empresaIds.length > 0 && pedidoIds.length > 0) {
-      const { data: estoques } = await supabase
-        .from("siso_pedido_item_estoques")
-        .select("pedido_id, produto_id, localizacao")
-        .in("pedido_id", pedidoIds)
-        .in("empresa_id", empresaIds)
-        .not("localizacao", "is", null);
-
-      if (estoques) {
-        locMap = new Map(
-          estoques.map((e) => [
-            `${e.pedido_id}:${e.produto_id}`,
-            e.localizacao as string,
-          ]),
-        );
+      for (const item of items ?? []) {
+        if (!itemStats[item.pedido_id]) {
+          itemStats[item.pedido_id] = { total: 0, marcados: 0, bipados: 0 };
+        }
+        itemStats[item.pedido_id].total++;
+        if (item.separacao_marcado) itemStats[item.pedido_id].marcados++;
+        if (item.bipado_completo) itemStats[item.pedido_id].bipados++;
       }
     }
 
-    // 4. Shape response — merge localizacao into items
-    const result = pedidos.map((p) => {
-      const itens = (
-        p.siso_pedido_itens as unknown as Array<{
-          produto_id: number;
-          sku: string;
-          gtin: string | null;
-          descricao: string;
-          quantidade_pedida: number;
-          quantidade_bipada: number;
-          bipado_completo: boolean;
-        }>
-      ).map((item) => ({
-        produto_id: item.produto_id,
-        sku: item.sku,
-        gtin: item.gtin,
-        descricao: item.descricao,
-        quantidade_pedida: item.quantidade_pedida,
-        quantidade_bipada: item.quantidade_bipada ?? 0,
-        bipado_completo: item.bipado_completo ?? false,
-        localizacao: locMap.get(`${p.id}:${item.produto_id}`) ?? null,
-      }));
-
+    // Shape response
+    const result = (pedidos ?? []).map((p) => {
+      const empresa = p.siso_empresas as unknown as { nome: string; galpao_id: string } | null;
+      const stats = itemStats[p.id] ?? { total: 0, marcados: 0, bipados: 0 };
       return {
         id: p.id,
-        numero: p.numero,
-        data: p.data,
-        cliente_nome: p.cliente_nome,
-        id_pedido_ecommerce: p.id_pedido_ecommerce,
-        nome_ecommerce: p.nome_ecommerce,
-        forma_envio_descricao: p.forma_envio_descricao,
+        numero_nf: p.numero,
+        numero_ec: p.id_pedido_ecommerce,
+        numero_pedido: p.numero,
+        cliente: p.cliente_nome,
+        uf: null,
+        cidade: null,
+        forma_envio: p.forma_envio_descricao,
+        data_pedido: p.data,
+        empresa_origem_nome: empresa?.nome ?? null,
+        galpao_id: empresa?.galpao_id ?? null,
         status_separacao: p.status_separacao,
-        decisao: (p as Record<string, unknown>).decisao_final ?? (p as Record<string, unknown>).sugestao ?? null,
-        separado_por: p.separado_por,
-        separado_em: p.separado_em,
-        embalado_em: p.embalado_em,
-        etiqueta_url: p.etiqueta_url,
-        etiqueta_status: p.etiqueta_status,
-        url_danfe: p.url_danfe,
-        chave_acesso_nf: p.chave_acesso_nf,
-        itens,
+        marcadores: p.marcadores ?? [],
+        total_itens: stats.total,
+        itens_marcados: stats.marcados,
+        itens_bipados: stats.bipados,
       };
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ counts, pedidos: result });
   } catch (err) {
     logger.error("separacao-list", "Unexpected error", {
       error: err instanceof Error ? err.message : String(err),

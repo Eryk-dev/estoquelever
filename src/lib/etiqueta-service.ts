@@ -32,7 +32,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
   const { data: pedido, error: fetchErr } = await supabase
     .from("siso_pedidos")
     .select(
-      "id, numero, empresa_origem_id, agrupamento_tiny_id, etiqueta_url, etiqueta_status, separacao_galpao_id, separado_por"
+      "id, numero, empresa_origem_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_status, separacao_galpao_id, separacao_operador_id"
     )
     .eq("id", pedidoId)
     .single();
@@ -75,7 +75,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
       return;
     }
 
-    const usuarioId = pedido.separado_por;
+    const usuarioId = pedido.separacao_operador_id;
     const galpaoId = pedido.separacao_galpao_id;
 
     if (!galpaoId) {
@@ -120,10 +120,10 @@ interface PedidoRow {
   id: string;
   numero: string;
   empresa_origem_id: string;
-  agrupamento_tiny_id: number | null;
+  agrupamento_expedicao_id: string | null;
   etiqueta_url: string | null;
   separacao_galpao_id: string | null;
-  separado_por: string | null;
+  separacao_operador_id: string | null;
 }
 
 type SupabaseClient = ReturnType<typeof createServiceClient>;
@@ -142,10 +142,10 @@ async function setStatus(
 /**
  * Resolve the label URL for a pedido:
  *   1. If etiqueta_url already cached → return it
- *   2. If agrupamento_tiny_id exists → GET etiquetas
+ *   2. If agrupamento_expedicao_id exists → GET etiquetas
  *   3. Otherwise → POST to create agrupamento, then GET etiquetas
  *
- * Saves agrupamento_tiny_id and etiqueta_url to DB for reuse.
+ * Saves agrupamento_expedicao_id and etiqueta_url to DB for reuse.
  */
 async function resolverEtiquetaUrl(
   supabase: SupabaseClient,
@@ -158,7 +158,7 @@ async function resolverEtiquetaUrl(
 
   const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
 
-  let agrupamentoId = pedido.agrupamento_tiny_id;
+  let agrupamentoId: number | null = pedido.agrupamento_expedicao_id ? parseInt(pedido.agrupamento_expedicao_id, 10) : null;
 
   // Create agrupamento if needed
   if (!agrupamentoId) {
@@ -179,10 +179,10 @@ async function resolverEtiquetaUrl(
       agrupamentoId = res.id;
     }
 
-    // Save agrupamento_tiny_id
+    // Save agrupamento_expedicao_id
     await supabase
       .from("siso_pedidos")
-      .update({ agrupamento_tiny_id: agrupamentoId })
+      .update({ agrupamento_expedicao_id: String(agrupamentoId) })
       .eq("id", pedido.id);
   }
 

@@ -19,8 +19,8 @@ export interface PedidoSeparacao {
   forma_envio_descricao: string;
   status_separacao: string;
   decisao?: Decisao | null;
-  separado_por?: string | null;
-  embalado_em?: string | null;
+  separacao_operador_id?: string | null;
+  embalagem_concluida_em?: string | null;
   etiqueta_status?: string | null;
   itens: SeparacaoItem[];
 }

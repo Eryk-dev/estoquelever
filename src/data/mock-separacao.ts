@@ -20,8 +20,8 @@ interface PedidoSeparacaoMock {
   forma_envio_descricao: string;
   status_separacao: string;
   decisao?: Decisao | null;
-  separado_por?: string | null;
-  embalado_em?: string | null;
+  separacao_operador_id?: string | null;
+  embalagem_concluida_em?: string | null;
   etiqueta_status?: string | null;
   itens: MockSeparacaoItem[];
 }
@@ -91,7 +91,7 @@ export const mockSeparacaoPedidos: PedidoSeparacaoMock[] = [
     cliente_nome: "Ricardo José Santos",
     nome_ecommerce: "Mercado Livre",
     forma_envio_descricao: "Mercado Envios Coleta",
-    status_separacao: "pendente",
+    status_separacao: "aguardando_separacao",
     decisao: "propria",
     itens: [
       {
@@ -133,7 +133,7 @@ export const mockSeparacaoPedidos: PedidoSeparacaoMock[] = [
     cliente_nome: "Luciana Aparecida Ferreira",
     nome_ecommerce: "Mercado Livre",
     forma_envio_descricao: "Mercado Envios Full",
-    status_separacao: "pendente",
+    status_separacao: "aguardando_separacao",
     decisao: "propria",
     itens: [
       {
@@ -197,7 +197,7 @@ export const mockSeparacaoPedidos: PedidoSeparacaoMock[] = [
     cliente_nome: "Camila Rodrigues Lima",
     nome_ecommerce: "Mercado Livre",
     forma_envio_descricao: "Mercado Envios Full",
-    status_separacao: "pendente",
+    status_separacao: "aguardando_separacao",
     decisao: "transferencia",
     itens: [
       {
@@ -223,8 +223,8 @@ export const mockSeparacaoPedidos: PedidoSeparacaoMock[] = [
     forma_envio_descricao: "Mercado Envios Full",
     status_separacao: "embalado",
     decisao: "propria",
-    separado_por: "Eryk",
-    embalado_em: "2026-03-10T09:45:00Z",
+    separacao_operador_id: "Eryk",
+    embalagem_concluida_em: "2026-03-10T09:45:00Z",
     etiqueta_status: "impresso",
     itens: [
       {
@@ -248,8 +248,8 @@ export const mockSeparacaoPedidos: PedidoSeparacaoMock[] = [
     forma_envio_descricao: "Shopee Envios Standard",
     status_separacao: "embalado",
     decisao: "propria",
-    separado_por: "Eryk",
-    embalado_em: "2026-03-10T10:10:00Z",
+    separacao_operador_id: "Eryk",
+    embalagem_concluida_em: "2026-03-10T10:10:00Z",
     etiqueta_status: "falhou",
     itens: [
       {
@@ -283,8 +283,8 @@ export const mockSeparacaoPedidos: PedidoSeparacaoMock[] = [
     forma_envio_descricao: "Mercado Envios Coleta",
     status_separacao: "embalado",
     decisao: "transferencia",
-    separado_por: "Eryk",
-    embalado_em: "2026-03-10T10:30:00Z",
+    separacao_operador_id: "Eryk",
+    embalagem_concluida_em: "2026-03-10T10:30:00Z",
     etiqueta_status: "impresso",
     itens: [
       {
@@ -308,10 +308,10 @@ export const mockSeparacaoPedidos: PedidoSeparacaoMock[] = [
     cliente_nome: "Maria Helena Campos",
     nome_ecommerce: "Mercado Livre",
     forma_envio_descricao: "Mercado Envios Full",
-    status_separacao: "expedido",
+    status_separacao: "embalado",
     decisao: "propria",
-    separado_por: "Eryk",
-    embalado_em: "2026-03-10T07:45:00Z",
+    separacao_operador_id: "Eryk",
+    embalagem_concluida_em: "2026-03-10T07:45:00Z",
     etiqueta_status: "impresso",
     itens: [
       {
@@ -333,10 +333,10 @@ export const mockSeparacaoPedidos: PedidoSeparacaoMock[] = [
     cliente_nome: "José Carlos Ribeiro",
     nome_ecommerce: "Mercado Livre",
     forma_envio_descricao: "Mercado Envios Coleta",
-    status_separacao: "expedido",
+    status_separacao: "embalado",
     decisao: "propria",
-    separado_por: "Eryk",
-    embalado_em: "2026-03-10T08:00:00Z",
+    separacao_operador_id: "Eryk",
+    embalagem_concluida_em: "2026-03-10T08:00:00Z",
     etiqueta_status: "impresso",
     itens: [
       {

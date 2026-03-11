@@ -6,7 +6,7 @@ import { logger } from "@/lib/logger";
 /**
  * PATCH /api/separacao/{pedidoId}/forcar-pendente
  *
- * Admin-only: force an order from aguardando_nf → pendente
+ * Admin-only: force an order from aguardando_nf → aguardando_separacao
  * when the NF webhook fails and the order needs to proceed.
  *
  * Headers: X-Session-Id
@@ -57,10 +57,10 @@ export async function PATCH(
       );
     }
 
-    // 3. Update to pendente
+    // 3. Update to aguardando_separacao
     const { error: updateError } = await supabase
       .from("siso_pedidos")
-      .update({ status_separacao: "pendente" })
+      .update({ status_separacao: "aguardando_separacao" })
       .eq("id", pedidoId)
       .eq("status_separacao", "aguardando_nf");
 
@@ -75,7 +75,7 @@ export async function PATCH(
       );
     }
 
-    logger.info("separacao-forcar-pendente", "Pedido forçado para pendente", {
+    logger.info("separacao-forcar-pendente", "Pedido forçado para aguardando_separacao", {
       pedidoId,
       admin: session.nome,
     });

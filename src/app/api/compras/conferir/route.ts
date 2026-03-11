@@ -24,7 +24,7 @@ interface RawItem {
   id: string;
   sku: string;
   descricao: string;
-  quantidade: number;
+  quantidade_pedida: number;
   compra_quantidade_recebida: number;
   produto_id_tiny: number | null;
   compra_status: string | null;
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
       // Fetch the item from DB
       const { data: dbItem, error: itemError } = await supabase
         .from("siso_pedido_itens")
-        .select("id, sku, descricao, quantidade, compra_quantidade_recebida, produto_id_tiny, compra_status, pedido_id")
+        .select("id, sku, descricao, quantidade_pedida, compra_quantidade_recebida, produto_id_tiny, compra_status, pedido_id")
         .eq("id", input.item_id)
         .eq("ordem_compra_id", ordem_compra_id)
         .single();
@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
 
       // Update quantity in DB (even if Tiny call was skipped)
       const novaQuantidadeRecebida = item.compra_quantidade_recebida + input.quantidade_recebida;
-      const totalmenteRecebido = novaQuantidadeRecebida >= item.quantidade;
+      const totalmenteRecebido = novaQuantidadeRecebida >= item.quantidade_pedida;
 
       const updateFields: Record<string, unknown> = {
         compra_quantidade_recebida: novaQuantidadeRecebida,

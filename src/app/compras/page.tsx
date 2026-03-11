@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, ShoppingCart } from "lucide-react";
+import { RefreshCw, ShoppingCart, XCircle } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { Tabs } from "@/components/ui/tabs";
@@ -185,12 +185,49 @@ export default function ComprasPage() {
                     itens={oc.itens}
                   />
                 ))}
-              {/* Indisponivel tab: US-016 */}
-              {activeTab === "indisponivel" && (
-                <pre className="rounded-lg border border-line bg-paper p-4 text-xs text-ink-muted overflow-auto max-h-[60vh]">
-                  {JSON.stringify(items, null, 2)}
-                </pre>
-              )}
+              {activeTab === "indisponivel" &&
+                (
+                  items as Array<{
+                    id: string;
+                    sku: string;
+                    descricao: string;
+                    quantidade: number;
+                    fornecedor_oc: string | null;
+                    pedido_id: string;
+                    numero_pedido: string;
+                  }>
+                ).map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-line bg-paper px-4 py-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-ink truncate">
+                        {item.sku}
+                      </p>
+                      <p className="text-xs text-ink-muted truncate">
+                        {item.descricao}
+                      </p>
+                      {item.fornecedor_oc && (
+                        <p className="text-xs text-ink-faint mt-0.5">
+                          Fornecedor: {item.fornecedor_oc}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-sm font-semibold text-ink tabular-nums">
+                        {item.quantidade}un
+                      </span>
+                      <span className="inline-flex items-center rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
+                        #{item.numero_pedido}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">
+                        <XCircle className="h-3 w-3" />
+                        Indisponível
+                      </span>
+                    </div>
+                  </div>
+                ))}
             </div>
           )}
         </>

@@ -1,7 +1,18 @@
 "use client";
 
-import { Truck, ClipboardCheck } from "lucide-react";
+import { useState } from "react";
+import {
+  Truck,
+  ClipboardCheck,
+  MoreVertical,
+  RotateCcw,
+  XCircle,
+  ArrowRightLeft,
+  Loader2,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 interface OcItem {
@@ -62,6 +73,205 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   },
 };
 
+function ItemActions({
+  item,
+  onActionComplete,
+}: {
+  item: OcItem;
+  onActionComplete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [showTrocar, setShowTrocar] = useState(false);
+  const [novoFornecedor, setNovoFornecedor] = useState("");
+
+  async function handleDevolver() {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/compras/itens/${item.id}/devolver`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cargo: "admin" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "Erro" }));
+        throw new Error(data.error ?? "Erro ao devolver item");
+      }
+      toast.success("Item devolvido para fila de compras");
+      onActionComplete();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao devolver item");
+    } finally {
+      setLoading(false);
+      setOpen(false);
+    }
+  }
+
+  async function handleIndisponivel() {
+    if (!confirm("Marcar este item como indisponível?")) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/compras/itens/${item.id}/indisponivel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cargo: "admin" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "Erro" }));
+        throw new Error(data.error ?? "Erro ao marcar indisponível");
+      }
+      toast.success("Item marcado como indisponível");
+      onActionComplete();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Erro ao marcar indisponível",
+      );
+    } finally {
+      setLoading(false);
+      setOpen(false);
+    }
+  }
+
+  async function handleTrocarFornecedor() {
+    if (!novoFornecedor.trim()) {
+      toast.error("Informe o novo fornecedor");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/compras/itens/${item.id}/trocar-fornecedor`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            novo_fornecedor: novoFornecedor.trim(),
+            cargo: "admin",
+          }),
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "Erro" }));
+        throw new Error(data.error ?? "Erro ao trocar fornecedor");
+      }
+      toast.success("Fornecedor alterado — item volta para fila");
+      onActionComplete();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Erro ao trocar fornecedor",
+      );
+    } finally {
+      setLoading(false);
+      setOpen(false);
+      setShowTrocar(false);
+      setNovoFornecedor("");
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-1">
+        <Loader2 className="h-4 w-4 animate-spin text-ink-faint" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => {
+          setOpen(!open);
+          setShowTrocar(false);
+          setNovoFornecedor("");
+        }}
+        className="rounded p-1 text-ink-faint hover:bg-surface hover:text-ink transition-colors"
+        title="Ações"
+      >
+        <MoreVertical className="h-4 w-4" />
+      </button>
+
+      {open && (
+        <>
+          {/* Backdrop to close on outside click */}
+          <div
+            className="fixed inset-0 z-10"
+            onClick={() => {
+              setOpen(false);
+              setShowTrocar(false);
+            }}
+          />
+
+          <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-lg border border-line bg-paper shadow-lg overflow-hidden">
+            {!showTrocar ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleDevolver}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface transition-colors"
+                >
+                  <RotateCcw className="h-3.5 w-3.5 text-ink-muted" />
+                  Devolver pra fila
+                </button>
+                <button
+                  type="button"
+                  onClick={handleIndisponivel}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface transition-colors"
+                >
+                  <XCircle className="h-3.5 w-3.5 text-ink-muted" />
+                  Marcar indisponível
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowTrocar(true)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface transition-colors"
+                >
+                  <ArrowRightLeft className="h-3.5 w-3.5 text-ink-muted" />
+                  Trocar fornecedor
+                </button>
+              </>
+            ) : (
+              <div className="p-3 space-y-2">
+                <p className="text-xs font-medium text-ink">Novo fornecedor</p>
+                <input
+                  type="text"
+                  value={novoFornecedor}
+                  onChange={(e) => setNovoFornecedor(e.target.value)}
+                  placeholder="Nome do fornecedor..."
+                  className="w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleTrocarFornecedor();
+                  }}
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTrocarFornecedor}
+                    className="rounded-md bg-ink px-3 py-1 text-xs font-medium text-paper hover:bg-ink/90 transition-colors"
+                  >
+                    Confirmar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowTrocar(false);
+                      setNovoFornecedor("");
+                    }}
+                    className="text-xs text-ink-muted hover:text-ink transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function OrdemCompraCard({
   id,
   index,
@@ -75,7 +285,12 @@ export function OrdemCompraCard({
   itens,
 }: OrdemCompraCardProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const isParcial = status === "parcialmente_recebido";
+
+  function handleActionComplete() {
+    queryClient.invalidateQueries({ queryKey: ["compras"] });
+  }
 
   return (
     <div className="rounded-xl border border-line bg-paper overflow-hidden">
@@ -148,6 +363,10 @@ export function OrdemCompraCard({
                     {badge.label}
                   </span>
                 )}
+                <ItemActions
+                  item={item}
+                  onActionComplete={handleActionComplete}
+                />
               </div>
             </div>
           );

@@ -218,7 +218,7 @@
         "Typecheck passes"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "Follow the same pattern as src/app/page.tsx (dashboard) for page structure, auth check, and React Query usage. Use the existing tabs component from src/components/ui/tabs.tsx."
     },
     {
@@ -236,7 +236,7 @@
         "Typecheck passes"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "empresa_id: for now use the empresa_id from the first item's pedido (empresa_origem_id from siso_pedidos). The consolidation groups items by SKU within a supplier — same SKU from pedido #100 (2un) and #101 (1un) shows as '3un' with breakdown."
     },
     {
@@ -254,7 +254,7 @@
         "Typecheck passes"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "The API returns OCs with their items for status='comprado'. Use Next.js router.push for navigation to conferencia page."
     },
     {
@@ -276,7 +276,7 @@
         "Typecheck passes"
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": "Use controlled inputs with useState for quantities. The confirm POST may take a while (multiple Tiny API calls with sleeps) so show a good loading state. Use Sonner toast for feedback."
     },
     {
@@ -293,7 +293,7 @@
         "Typecheck passes"
       ],
       "priority": 16,
-      "passes": false,
+      "passes": true,
       "notes": "The trocar-fornecedor action on the backend sets ordem_compra_id=null and compra_status='aguardando_compra' with the new fornecedor. The item will appear in Aguardando Compra under the new supplier name."
     }
   ]

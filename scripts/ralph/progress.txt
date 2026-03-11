@@ -19,6 +19,8 @@ Started: Wed Mar 11 12:11:58 -03 2026
 - Use `{ count: "exact", head: true }` for count-only queries in Supabase
 - Supabase `.single()` returns error code `PGRST116` when no rows found — use for 404 detection
 - Next.js 16 dynamic route params are a Promise — `const { param } = await params`
+- AppShell handles login redirect + loading state; for custom cargo checks, add logic inside AppShell children
+- GET /api/compras returns `{ counts, data }` — counts has all 3 tab badge numbers regardless of requested status
 
 ---
 
@@ -179,4 +181,79 @@ Started: Wed Mar 11 12:11:58 -03 2026
   - Compras cleanup must happen BEFORE the pedido status update (so the item query still finds correct pedido)
   - Same OC emptiness check pattern as item action endpoints: count remaining items, cancel if 0
   - No stock reversal on cancellation — stock entered in Tiny stays, only an informational alert is stored
+---
+
+## 2026-03-11 - US-012
+- Replaced existing pre-approval compras page with new post-approval compras module
+- New page uses tabs (Aguardando Compra, Comprado, Indisponíveis) with counter badges from GET /api/compras
+- React Query fetches data with 30s refetchInterval, passing active tab status as query param
+- Auth guard: shows "Acesso negado" if cargo is not admin/comprador (AppShell handles login redirect)
+- Uses AppShell, Tabs, EmptyState, LoadingSpinner — all existing components
+- Placeholder content (JSON pre) for tab data — real components will be added in US-013, US-014, US-016
+- Files changed: `src/app/compras/page.tsx`
+- **Learnings for future iterations:**
+  - AppShell handles login redirect and loading state — no need to duplicate that logic in pages
+  - AppShell has `requireAdmin` but no generic `requireCargo` — for custom cargo checks, add a check inside the children
+  - The GET /api/compras response is `{ counts, data }` — counts has all 3 tab badge numbers regardless of which status is requested
+  - CompraTab type aligns with API status param values: 'aguardando_compra' | 'comprado' | 'indisponivel'
+  - The old compras page was a pre-approval OC view (fetching pending pedidos); the new one is post-approval (fetching from siso_ordens_compra and siso_pedido_itens compra fields)
+---
+
+## 2026-03-11 - US-013
+- Created `src/components/compras/fornecedor-card.tsx` — supplier card with SKU list, consolidated quantities, pedido badges
+- Card features: expandable SKU breakdown (click to see per-pedido quantities), "Copiar SKUs" (tab-separated clipboard), "Marcar como Comprado" with observacao form
+- Updated `src/app/compras/page.tsx` to render FornecedorCard for aguardando_compra tab; other tabs still show JSON placeholder
+- Files changed: `src/components/compras/fornecedor-card.tsx` (new), `src/app/compras/page.tsx`
+- **Learnings for future iterations:**
+  - API returns aguardando_compra data as `FornecedorGroup[]` — each group has `{ fornecedor, empresa_id, itens: CompraItemAgrupado[] }`
+  - FornecedorCard receives `usuario_id` and `cargo` from the page (from useAuth) — needed for POST /api/compras/ordens
+  - Use `queryClient.invalidateQueries({ queryKey: ["compras"] })` to refresh all compras tabs after mutation
+  - Copiar SKUs uses tab-separated format: `SKU\tdescricao\tquantidade` per line
+---
+
+## 2026-03-11 - US-014
+- Created `src/components/compras/ordem-compra-card.tsx` — OC card with item list, status badges, progress indicator, and conferir button
+- Card shows: OC header with fornecedor, meta (comprado por / data / relative time), observacao, item list with status badges, conferir button
+- Parcialmente recebido OCs show progress indicator (X/Y recebidos) in header
+- Items show individual status badges (Comprado/Parcial/Recebido) and pedido number badges
+- Conferir Recebimento button navigates to `/compras/conferencia/[id]` via router.push
+- Updated `src/app/compras/page.tsx` to render OrdemCompraCard for comprado tab (indisponivel still placeholder for US-016)
+- Files changed: `src/components/compras/ordem-compra-card.tsx` (new), `src/app/compras/page.tsx`
+- **Learnings for future iterations:**
+  - API returns OC data with `comprado_por_nome` (string from siso_usuarios join) — not the UUID
+  - OC sequential number (#N) is derived from list index (idx+1) since the DB uses UUIDs
+  - Status badge mapping: `comprado` → amber, `parcialmente_recebido` → blue, `recebido` → emerald
+  - `useRouter` from `next/navigation` for programmatic navigation in App Router
+---
+
+## 2026-03-11 - US-015
+- Created `src/app/compras/conferencia/[ordemCompraId]/page.tsx` — receiving/checking form page
+- Fetches OC data via GET /api/compras/conferencia/[ordemCompraId] using React Query (no refetchInterval)
+- Shows OC header with fornecedor, comprado por, date, observacao
+- Each item shows: SKU, descricao, pedido badges with quantities, "Esperado" count, number input pre-filled with quantidade_restante
+- Already-received items show blue "Já recebido: N" indicator
+- Confirm button: disabled when all quantities are 0, loading state with spinner during POST
+- On success: toast with processados count + pedidos liberados, navigates to /compras
+- On errors: toast.error with error details (duration 8000ms for readability)
+- Empty state when all items already received
+- Auth guard matches compras page pattern (AppShell + cargo check)
+- Files changed: `src/app/compras/conferencia/[ordemCompraId]/page.tsx` (new)
+- **Learnings for future iterations:**
+  - `useParams<{ ordemCompraId: string }>()` for dynamic route params in Next.js 16 client components — no await needed (unlike server-side params)
+  - Use controlled state for quantity inputs: initialize from API data via getQuantity helper, track user changes in Record<string, number>
+  - Don't use refetchInterval on forms with user input — it would reset typed values
+  - POST /api/compras/conferir response includes `pedidos_liberados` array — show count in success toast
+---
+
+## 2026-03-11 - US-016
+- Added per-item action dropdown in `ordem-compra-card.tsx` with 3 options: Devolver pra fila, Marcar indisponível, Trocar fornecedor
+- Dropdown uses MoreVertical icon with backdrop-close pattern, inline trocar-fornecedor form
+- Each action calls the corresponding POST /api/compras/itens/[itemId]/ endpoint, invalidates React Query cache, shows toast
+- Replaced indisponivel tab JSON placeholder in `compras/page.tsx` with proper item list showing SKU, descricao, fornecedor, quantidade, pedido badge, and red "Indisponível" badge
+- Files changed: `src/components/compras/ordem-compra-card.tsx`, `src/app/compras/page.tsx`
+- **Learnings for future iterations:**
+  - Dropdown menus: use fixed backdrop div + absolute positioned menu for click-outside-to-close pattern (no external library needed)
+  - Item action endpoints accept `{ cargo }` in body for auth check — same pattern as POST endpoints
+  - `confirm()` is acceptable for destructive actions (indisponivel) in this codebase — no custom modal needed
+  - Trocar fornecedor inline form within dropdown: use autoFocus + Enter key handler for quick interaction
 ---

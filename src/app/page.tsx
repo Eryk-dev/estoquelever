@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ClipboardList, PackageSearch, Settings, LogOut } from "lucide-react";
+import { ClipboardList, PackageSearch, ShoppingCart, Settings, LogOut } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { CARGO_LABELS } from "@/types";
@@ -39,6 +39,16 @@ const MODULES: Module[] = [
       "Separação física com scan de itens, localização correta por galpão e impressão automática de etiquetas.",
     icon: PackageSearch,
     color: "var(--color-positive)",
+  },
+  {
+    id: "compras",
+    href: "/compras",
+    title: "Compras",
+    subtitle: "Ordens de Compra",
+    description:
+      "Pedidos sem estoque agrupados por fornecedor para formular ordens de compra rapidamente.",
+    icon: ShoppingCart,
+    color: "var(--color-caution)",
   },
 ];
 

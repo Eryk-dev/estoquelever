@@ -7,6 +7,7 @@ import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert } from "lucide-re
 import Link from "next/link";
 import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
+import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import { Tabs } from "@/components/ui/tabs";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -82,6 +83,9 @@ export default function SeparacaoPage() {
 
   // Action loading states
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Realtime: auto-refresh when other operators change order statuses
+  useRealtimeSeparacao();
 
   function toggleSelected(id: string) {
     setSelectedIds((prev) => {

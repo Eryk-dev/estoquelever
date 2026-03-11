@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { movimentarEstoque } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { waitForRateLimit, registerApiCall } from "@/lib/rate-limiter";
+import { checkAndReleasePedidos } from "@/lib/compras-release";
 
 const ALLOWED_CARGOS = ["admin", "comprador"];
 
@@ -100,6 +101,7 @@ export async function POST(request: NextRequest) {
     let erros = 0;
     const errosDetalhe: string[] = [];
     let itensSemProdutoId = 0;
+    const processedItemIds: string[] = [];
 
     for (let idx = 0; idx < itensParaProcessar.length; idx++) {
       const input = itensParaProcessar[idx];
@@ -179,6 +181,7 @@ export async function POST(request: NextRequest) {
         .eq("id", item.id);
 
       processados++;
+      processedItemIds.push(item.id);
 
       // Sleep 500ms between Tiny API calls
       if (idx < itensParaProcessar.length - 1) {
@@ -213,11 +216,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Check if any pedidos can be released after receiving
+    const releasedPedidos = await checkAndReleasePedidos(processedItemIds);
+
     logger.info("compras-conferir", "Conferência processada", {
       ordemCompraId: ordem_compra_id,
       processados,
       erros,
       itensSemProdutoId,
+      pedidosLiberados: releasedPedidos.length,
     });
 
     return NextResponse.json({
@@ -225,6 +232,7 @@ export async function POST(request: NextRequest) {
       erros,
       erros_detalhe: errosDetalhe,
       itens_sem_produto_id: itensSemProdutoId,
+      pedidos_liberados: releasedPedidos,
     });
   } catch (err) {
     logger.error("compras-conferir", "Erro ao processar conferência", {

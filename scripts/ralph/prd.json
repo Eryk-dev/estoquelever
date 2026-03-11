@@ -52,7 +52,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Check how webhook-processor.ts currently saves items to siso_pedido_itens. The produto ID comes from the Tiny stock/product API response. Also check sku-fornecedor.ts for the SKU-to-supplier mapping function."
     },
     {
@@ -67,7 +67,7 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Check execution-worker.ts for the OC/marcadores flow. The worker already has an executarMarcadoresOnly function. Add the compra field updates after it succeeds."
     },
     {
@@ -86,7 +86,7 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Use createServiceClient() from supabase-server.ts. Auth is via localStorage session — read the pattern from existing API routes like pedidos/aprovar/route.ts. Items need pedido info (numero_pedido) from siso_pedidos join."
     },
     {
@@ -104,7 +104,7 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "empresa_id comes from the frontend — the buyer selects which empresa will receive the goods. Use createServiceClient()."
     },
     {
@@ -122,7 +122,7 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "quantidade_esperada is the original quantity from the pedido item. quantidade_restante = quantidade_esperada - compra_quantidade_recebida. Items with compra_status='recebido' should NOT appear (they're fully received)."
     },
     {
@@ -145,7 +145,7 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "Use tiny-api.ts movimentarEstoque function. Get deposito_id by querying siso_tiny_connections WHERE empresa_id = OC's empresa_id. Use the observacao 'Entrada OC via SISO'. Check rate-limiter.ts for waitForRateLimit pattern used in execution-worker.ts."
     },
     {
@@ -165,7 +165,7 @@
         "Typecheck passes"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "Check execution-worker.ts and siso_fila_execucao table structure for the correct job format. The worker will pick up the job and run executarSaidaPropria (existing flow). Important: only check items that have compra_status set (non-null) — normal items without compra flow should not block release."
     },
     {

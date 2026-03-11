@@ -171,6 +171,24 @@ export interface PedidoItem {
   bipado_completo: boolean;
   separacao_marcado: boolean;
   separacao_marcado_em: string | null;
+  /** Tiny product ID for direct stock API calls */
+  produto_id_tiny: number | null;
+  /** Supplier for OC based on SKU prefix */
+  fornecedor_oc: string | null;
+  /** Linked purchase order ID */
+  ordem_compra_id: string | null;
+  /** Purchase status of this item */
+  compra_status: CompraStatus;
+  /** Quantity already received */
+  compra_quantidade_recebida: number;
+  /** When the item was purchased */
+  comprado_em: string | null;
+  /** Who purchased it */
+  comprado_por: string | null;
+  /** When the item was received */
+  recebido_em: string | null;
+  /** Who received it */
+  recebido_por: string | null;
 }
 
 /** Observation/comment on an order */
@@ -188,6 +206,68 @@ export interface Tab {
   id: string;
   label: string;
   count: number;
+}
+
+// ─── Compras (Ordens de Compra) ─────────────────────────────────────────────
+
+/** Status of a purchase order */
+export type OrdemCompraStatus =
+  | "aguardando_compra"
+  | "comprado"
+  | "parcialmente_recebido"
+  | "recebido"
+  | "cancelado";
+
+/** Status of an individual item in the purchase flow */
+export type CompraStatus =
+  | "aguardando_compra"
+  | "comprado"
+  | "recebido"
+  | "indisponivel"
+  | null;
+
+/** A purchase order (OC) for a specific supplier */
+export interface OrdemCompra {
+  id: string;
+  fornecedor: string;
+  empresa_id: string;
+  status: OrdemCompraStatus;
+  observacao: string | null;
+  comprado_por: string | null;
+  comprado_em: string | null;
+  created_at: string;
+}
+
+/** Consolidated item for the Aguardando Compra view (grouped by SKU + fornecedor) */
+export interface CompraItemAgrupado {
+  sku: string;
+  descricao: string;
+  imagem: string | null;
+  quantidade_total: number;
+  fornecedor_oc: string;
+  pedidos: Array<{
+    pedido_id: string;
+    numero_pedido: string;
+    quantidade: number;
+  }>;
+  itens_ids: string[];
+}
+
+/** Item for the conferencia (receiving) screen */
+export interface ConferenciaItem {
+  item_id: string;
+  sku: string;
+  descricao: string;
+  imagem: string | null;
+  quantidade_esperada: number;
+  quantidade_ja_recebida: number;
+  quantidade_restante: number;
+  produto_id_tiny: number | null;
+  pedidos: Array<{
+    pedido_id: string;
+    numero_pedido: string;
+    quantidade: number;
+  }>;
 }
 
 // ─── Auth / Usuarios ────────────────────────────────────────────────────────

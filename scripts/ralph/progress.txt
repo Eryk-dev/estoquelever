@@ -104,3 +104,76 @@ Started: Tue Mar 10 20:18:10 -03 2026
   - Avoid `Function` type in TypeScript generics — ESLint will flag it; inline the logic instead
   - When changing API response shape, update ALL consumers (page.tsx fetch functions) to avoid runtime breakage
 ---
+
+## 2026-03-10 - US-006
+- Already committed (aa0c86f) — marked passes: true in PRD
+---
+
+## 2026-03-10 - US-008
+- Created POST /api/separacao/concluir/route.ts: checks each pedido's items, moves to 'separado' only if ALL items have separacao_marcado = true, returns { separados, pendentes }
+- Created POST /api/separacao/cancelar/route.ts: resets all item checkmarks (separacao_marcado=false, separacao_marcado_em=null), resets pedidos to aguardando_separacao with null operador/iniciada_em
+- Files changed: src/app/api/separacao/concluir/route.ts, src/app/api/separacao/cancelar/route.ts
+- **Learnings for future iterations:**
+  - concluir groups items by pedido_id in memory (Map) to check completeness per pedido — more efficient than N separate queries
+  - cancelar updates items first, then pedidos — order doesn't matter since it's not transactional, but items-first is safer (no orphaned state)
+  - Both use `.in("pedido_id", pedido_ids)` for batch operations on siso_pedido_itens
+---
+
+## 2026-03-10 - US-007
+- Created POST /api/separacao/marcar-item/route.ts: toggles separacao_marcado on a single item, validates parent pedido is em_separacao
+- Created POST /api/separacao/bipar-checklist/route.ts: finds items by SKU or GTIN across given pedido_ids where separacao_marcado = false, marks all matches
+- Files changed: src/app/api/separacao/marcar-item/route.ts, src/app/api/separacao/bipar-checklist/route.ts
+- **Learnings for future iterations:**
+  - `siso_pedido_itens.id` is bigint — API can accept string, Supabase `.eq("id", stringValue)` handles coercion
+  - Use `.or(\`sku.eq.${value},gtin.eq.${value}\`)` for matching by either SKU or GTIN in Supabase
+  - marcar-item validates parent pedido status before allowing update — pattern for item-level APIs
+---
+
+## 2026-03-10 - US-009
+- Created POST /api/separacao/bipar-embalagem/route.ts
+- Calls Supabase RPC `siso_processar_bip_embalagem` with { p_sku, p_galpao_id, p_quantidade }
+- Returns 404 when RPC returns empty array (TABLE-returning function pattern)
+- Maps raw RPC response to typed BipEmbalagemResult
+- Validates sku (string, trimmed) and galpao_id (string), defaults quantidade to 1
+- Files changed: src/app/api/separacao/bipar-embalagem/route.ts
+- **Learnings for future iterations:**
+  - TABLE-returning PL/pgSQL functions return `[]` (empty array) not null — check `.length === 0`
+  - Supabase RPC returns array for TABLE-returning functions — extract first element with `data[0]`
+  - Follow existing pattern: parse body with `.catch(() => null)`, validate required fields, try/catch with logger
+---
+
+## 2026-03-10 - US-010
+- Created POST /api/separacao/confirmar-item-embalagem/route.ts
+- Accepts { pedido_item_id: string, quantidade: number }, validates pedido status is 'separado'
+- Increments quantidade_bipada (min 0), sets bipado_completo when >= quantidade_pedida
+- Checks ALL items of pedido for completion → transitions to 'embalado' + sets embalagem_concluida_em
+- Returns { pedido_item_id, quantidade_bipada, bipado_completo, pedido_completo }
+- Files changed: src/app/api/separacao/confirmar-item-embalagem/route.ts
+- **Learnings for future iterations:**
+  - For manual +/- confirmation, use `Math.max(0, current + delta)` to prevent negative quantities
+  - Validate pedido status is 'separado' (not 'em_separacao') for packing operations — packing happens after separation is complete
+  - Use head-only count query `select("*", { count: "exact", head: true })` + `.eq("bipado_completo", false)` to efficiently check remaining items
+  - Pattern: fetch item → validate parent pedido status → update item → check all siblings → maybe update pedido status
+---
+
+## 2026-03-10 - US-011
+- Created POST /api/separacao/reiniciar/route.ts: resets item progress for separacao (separacao_marcado) or embalagem (quantidade_bipada/bipado_completo)
+- Created POST /api/separacao/forcar-pendente/route.ts: admin-only bulk force from aguardando_nf → aguardando_separacao
+- Files changed: src/app/api/separacao/reiniciar/route.ts, src/app/api/separacao/forcar-pendente/route.ts
+- **Learnings for future iterations:**
+  - An existing single-pedido PATCH endpoint exists at `[pedidoId]/forcar-pendente` — the new POST at `/forcar-pendente` handles bulk operations (multiple pedido_ids)
+  - reiniciar validates status before resetting: em_separacao for separacao etapa, separado for embalagem etapa — returns 400 with invalid pedidos list
+  - forcar-pendente uses `getSessionUser(request)` from `@/lib/session` for auth + admin check, matching the pattern in iniciar and other protected routes
+  - Bulk update with `.eq("status_separacao", "aguardando_nf")` acts as a guard — only updates matching rows, `.select("id")` returns actually affected IDs
+---
+
+## 2026-03-10 - US-012
+- Already implemented during US-002 (committed fc78b0e and d54bc85)
+- `src/lib/nf-webhook-handler.ts` handles full NF webhook flow: dedup, fast-path match via nota_fiscal_id, fallback via Tiny API, idempotent transition aguardando_nf → aguardando_separacao, stores url_danfe + chave_acesso_nf
+- `src/app/api/webhook/tiny/route.ts` discriminates `tipo === "nota_fiscal"` before order webhook logic (line 54)
+- No code changes needed — marked as passes in PRD
+- **Learnings for future iterations:**
+  - NF webhook handler was built proactively during US-002 migration — check existing code before implementing
+  - The handler also manages race conditions (NF arrives before order is saved) via "aguardando_pedido" status
+  - NF webhook payload uses `dados.idNotaFiscalTiny` (not `dados.id` like order webhooks)
+---

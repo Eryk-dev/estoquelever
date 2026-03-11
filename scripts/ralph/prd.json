@@ -108,8 +108,8 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Already committed aa0c86f. Uses getSessionUser from session.ts for auth."
     },
     {
       "id": "US-007",
@@ -130,8 +130,8 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "siso_pedido_itens.id is bigint — API accepts string, Supabase handles coercion. bipar-checklist uses .or() with sku.eq and gtin.eq."
     },
     {
       "id": "US-008",
@@ -150,8 +150,8 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "concluir checks per-pedido item completeness before transitioning. cancelar resets items + pedido status atomically."
     },
     {
       "id": "US-009",
@@ -166,8 +166,8 @@
         "Typecheck passes"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Calls siso_processar_bip_embalagem RPC. Returns 404 when no matching item found (empty array from TABLE-returning function)."
     },
     {
       "id": "US-010",
@@ -184,8 +184,8 @@
         "Typecheck passes"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Validates pedido status is 'separado'. Handles decrement (minimum 0). Checks all items complete → transitions to 'embalado'."
     },
     {
       "id": "US-011",
@@ -205,8 +205,8 @@
         "Typecheck passes"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "reiniciar validates status (em_separacao for separacao, separado for embalagem) before resetting. forcar-pendente uses session auth + admin check, bulk updates with .select() to return affected IDs."
     },
     {
       "id": "US-012",
@@ -222,8 +222,8 @@
         "Typecheck passes"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": "Check api tiny.json in project root for the exact NF webhook event type and payload structure before implementing."
+      "passes": true,
+      "notes": "Already implemented in nf-webhook-handler.ts (committed in US-002). Webhook tipo 'nota_fiscal' handled in route.ts, full handler in nf-webhook-handler.ts with dedup, fast-path match, Tiny API fallback, idempotent transition, and DANFE/chave storage."
     },
     {
       "id": "US-013",

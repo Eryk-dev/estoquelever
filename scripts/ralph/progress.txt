@@ -245,3 +245,14 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - Tailwind v4 auto-generates all color utilities from CSS variables (bg-*, text-*, border-*, ring-*, etc.)
   - No need for separate dark: overrides when using design tokens — the CSS variables handle it
 ---
+
+## 2026-03-11 - US-019
+- Added `pedido_ids` query parameter to `/api/separacao/route.ts` — filters pedidos by `.in("id", pedidoIdsFilter)` when provided
+- Updated embalagem page to pass `pedido_ids=${pedidoIds.join(",")}` in the fetch URL alongside `status_separacao=separado`
+- Removed client-side filter (`allPedidos.filter(p => pedidoIds.includes(p.id))`) — no longer needed since API returns only requested pedidos
+- Files changed: `src/app/api/separacao/route.ts`, `src/app/separacao/embalagem/page.tsx`
+- **Learnings for future iterations:**
+  - The `/api/separacao` route supports multiple filter params that combine: `status_separacao`, `empresa_origem_id`, `pedido_ids`, `busca`
+  - `pedido_ids` filter is applied before `status_separacao` in the query chain (both work together)
+  - Embalagem page gets `pedidoIds` from URL search params (`?pedidos=id1,id2,id3`), already had them available — just needed to pass to API
+---

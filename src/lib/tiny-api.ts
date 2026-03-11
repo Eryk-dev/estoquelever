@@ -51,7 +51,12 @@ async function tinyFetch<T>(
       return undefined as unknown as T;
     }
 
-    return res.json() as Promise<T>;
+    const text = await res.text();
+    if (!text) {
+      return undefined as unknown as T;
+    }
+
+    return JSON.parse(text) as T;
   }
 
   // Unreachable, but TypeScript needs it

@@ -12,6 +12,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { criarAgrupamento, concluirAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
+import { baixarZpl } from "@/lib/etiqueta-download";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "agrupamento-service";
@@ -185,39 +186,6 @@ async function processarEmpresa(
       pedidoIds: pedidos.map((p) => p.id),
       error: err instanceof Error ? err.message : String(err),
     });
-  }
-}
-
-/**
- * Download ZPL content from a Tiny etiqueta URL.
- * Returns the raw ZPL text, or null on failure.
- */
-async function baixarZpl(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) {
-      logger.warn(LOG_SOURCE, "Falha ao baixar ZPL", {
-        url,
-        status: String(res.status),
-      });
-      return null;
-    }
-    const text = await res.text();
-    if (!text || !text.trimStart().startsWith("^")) {
-      logger.warn(LOG_SOURCE, "Conteúdo baixado não é ZPL válido", {
-        url,
-        contentLength: String(text?.length ?? 0),
-        preview: text?.substring(0, 100) ?? "(vazio)",
-      });
-      return null;
-    }
-    return text;
-  } catch (err) {
-    logger.warn(LOG_SOURCE, "Erro de rede ao baixar ZPL", {
-      url,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
   }
 }
 

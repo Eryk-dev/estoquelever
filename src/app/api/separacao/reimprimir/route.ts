@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { concluirAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
+import { baixarZpl } from "@/lib/etiqueta-download";
 import { enviarImpressaoZpl, resolverImpressora } from "@/lib/printnode";
 import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
 import { getConfig } from "@/lib/config";
@@ -125,10 +126,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (zplUrl) {
-      const res = await fetch(zplUrl, { signal: AbortSignal.timeout(15_000) });
-      if (res.ok) {
-        const zpl = await res.text();
-
+      const zpl = await baixarZpl(zplUrl);
+      if (zpl) {
         // Cache for future reprints
         await supabase
           .from("siso_pedidos")

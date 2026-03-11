@@ -13,6 +13,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { criarAgrupamento, concluirAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
+import { baixarZpl } from "@/lib/etiqueta-download";
 import { enviarImpressaoZpl } from "@/lib/printnode";
 import { resolverImpressora } from "@/lib/printnode";
 import { getConfig } from "@/lib/config";
@@ -194,27 +195,9 @@ async function resolverZplFallback(
     url = etiquetas.urls[0];
   }
 
-  // Download ZPL
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) {
-    logger.warn(LOG_SOURCE, "Falha ao baixar ZPL da URL", {
-      pedidoId: pedido.id,
-      url,
-      status: String(res.status),
-    });
-    return null;
-  }
-  const zpl = await res.text();
-
-  if (!zpl || !zpl.trimStart().startsWith("^")) {
-    logger.error(LOG_SOURCE, "Conteúdo baixado não é ZPL válido", {
-      pedidoId: pedido.id,
-      url,
-      contentLength: String(zpl?.length ?? 0),
-      preview: zpl?.substring(0, 100) ?? "(vazio)",
-    });
-    return null;
-  }
+  // Download and extract ZPL from ZIP
+  const zpl = await baixarZpl(url);
+  if (!zpl) return null;
 
   // Cache for future use
   await supabase

@@ -377,8 +377,8 @@
         "Typecheck and lint pass"
       ],
       "priority": 20,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Embalagem page with scan input, quantity field, ultimo-item-lido section, order list with progress dots (green=complete, yellow=partial, gray=pending). galpao_id derived from first pedido's empresa FK. Fetches from GET /api/separacao?status_separacao=separado and filters client-side by URL pedido_ids."
     },
     {
       "id": "US-021",

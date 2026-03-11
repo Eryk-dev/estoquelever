@@ -240,3 +240,32 @@ Started: Tue Mar 10 20:18:10 -03 2026
   - Selected IDs state (Set<string>) should be cleared when switching tabs to avoid stale selections
   - The old `pedido-separacao-card.tsx` still exists (uses different PedidoSeparacao type with `itens[]` array) — it's a different component for the old flow, not replaced by the new card
 ---
+
+## 2026-03-10 - US-017
+- Already committed (49bc550) — marked passes: true in PRD
+- Filter bar with search, empresa dropdown, sort dropdown on aguardando_separacao tab
+- Separar N pedidos button, Embalar N pedidos button, Forcar pendente (admin) button
+---
+
+## 2026-03-10 - US-018
+- Already committed (1e2f40a) — marked passes: true in PRD
+- Checklist page with consolidated products, auto-save checkboxes, progress bar
+---
+
+## 2026-03-10 - US-019
+- Added barcode scan input at top of checklist page (auto-focused, ScanBarcode icon)
+- On Enter: calls POST /api/separacao/bipar-checklist with { sku, pedido_ids }
+- On success: optimistic cache update + brief blue ring highlight animation (1.5s) on matched product
+- On 404: toast.error('SKU nao encontrado')
+- Scan field clears after each attempt, re-focuses input
+- Added Concluir button: POST /api/separacao/concluir → toast with summary (N separados, M pendentes) → navigate to /separacao
+- Added Reiniciar progresso button: window.confirm → POST /api/separacao/reiniciar with etapa=separacao → invalidate cache
+- Added Cancelar button: window.confirm → POST /api/separacao/cancelar → navigate to /separacao
+- All buttons disabled during actionLoading
+- Files changed: src/app/separacao/checklist/page.tsx
+- **Learnings for future iterations:**
+  - Use `highlightedSku` state with `setTimeout` for brief highlight animation on scanned items — lightweight alternative to CSS animations
+  - `window.confirm()` is acceptable for confirmation dialogs in this codebase (no modal component exists)
+  - bipar-checklist returns the updated items array, but optimistic update via cache is smoother UX
+  - Action buttons at bottom use border-t separator for visual grouping
+---

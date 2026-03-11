@@ -317,8 +317,8 @@
         "Typecheck and lint pass"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Already committed 49bc550. Filter bar with search/empresa/sort on aguardando_separacao tab. Separar button, Embalar button, Forcar pendente (admin only). All use sisoFetch + sonner toasts."
     },
     {
       "id": "US-018",
@@ -337,8 +337,8 @@
         "Typecheck and lint pass"
       ],
       "priority": 18,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Already committed 1e2f40a. Checklist page with consolidated products, auto-save checkboxes, progress bar, sort by localizacao/sku/nome, touch-friendly rows."
     },
     {
       "id": "US-019",
@@ -356,8 +356,8 @@
         "Typecheck and lint pass"
       ],
       "priority": 19,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Barcode scan input (auto-focused, Enter to submit), bipar-checklist API call with highlight animation, Concluir/Reiniciar/Cancelar action buttons with confirmation dialogs and toast feedback."
     },
     {
       "id": "US-020",

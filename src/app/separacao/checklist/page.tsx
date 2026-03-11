@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -56,7 +56,15 @@ const SORT_OPTIONS = [
 
 // ─── Page ────────────────────────────────────────────────────
 
-export default function ChecklistPage() {
+export default function ChecklistPageWrapper() {
+  return (
+    <Suspense fallback={<LoadingSpinner />}>
+      <ChecklistPage />
+    </Suspense>
+  );
+}
+
+function ChecklistPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -49,7 +49,15 @@ interface PedidoItem {
 
 // --- Page ---
 
-export default function EmbalagemPage() {
+export default function EmbalagemPageWrapper() {
+  return (
+    <Suspense fallback={<LoadingSpinner />}>
+      <EmbalagemPage />
+    </Suspense>
+  );
+}
+
+function EmbalagemPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();

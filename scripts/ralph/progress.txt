@@ -309,3 +309,15 @@ Started: Tue Mar 10 20:18:10 -03 2026
   - The `handlePedidoComplete` callback is shared between scan and manual +/- flows — keeps completion behavior consistent
   - window.confirm() is the codebase standard for confirmation dialogs (no modal component)
 ---
+
+## 2026-03-10 - US-022
+- Already implemented in US-017 (commit 49bc550) — all acceptance criteria met in existing code
+- Separados tab: checkbox enabled via `showCheckbox` condition, `selectedIds` state tracks selections
+- Embalar button shows total separado count when none selected, selected count when some checked
+- `handleEmbalarSelecionados` navigates to `/separacao/embalagem?pedidos=id1,id2,...` with selected or all IDs
+- No code changes needed — marked as passes in PRD
+- Files changed: scripts/ralph/prd.json (passes: true)
+- **Learnings for future iterations:**
+  - Some stories may already be implemented by earlier stories (US-017 covered US-022 functionality) — always check existing code before writing new code
+  - The Embalar button pattern: when no selection → uses all pedidos in tab; when some selected → uses only selected IDs
+---

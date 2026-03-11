@@ -411,8 +411,8 @@
         "Typecheck passes"
       ],
       "priority": 22,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Already implemented in US-017 commit (49bc550). Separados tab has checkbox, selected tracking, Embalar button with dynamic count, and navigation to /separacao/embalagem with pedido_ids."
     },
     {
       "id": "US-023",

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
 import type { BipEmbalagemResult } from "@/types";
 
 /**
@@ -78,6 +79,16 @@ export async function POST(request: NextRequest) {
       galpao_id,
       ...result,
     });
+
+    // Fire-and-forget: trigger label print when packing is complete
+    if (result.pedido_completo) {
+      buscarEImprimirEtiqueta(result.pedido_id).catch((err) => {
+        logger.error("bipar-embalagem", "Label print trigger failed", {
+          pedido_id: result.pedido_id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
 
     return NextResponse.json(result);
   } catch (err) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
 
 /**
  * POST /api/separacao/confirmar-item-embalagem
@@ -134,6 +135,16 @@ export async function POST(request: NextRequest) {
       bipado_completo,
       pedido_completo,
     });
+
+    // Fire-and-forget: trigger label print when packing is complete
+    if (pedido_completo) {
+      buscarEImprimirEtiqueta(item.pedido_id).catch((err) => {
+        logger.error("confirmar-item-embalagem", "Label print trigger failed", {
+          pedido_id: item.pedido_id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
 
     return NextResponse.json({
       pedido_item_id,

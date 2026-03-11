@@ -187,3 +187,15 @@ Started: Tue Mar 10 20:18:10 -03 2026
   - All tiny-api.ts functions accept `token` (not `empresa_id`) — callers handle token retrieval via `getValidTokenByEmpresa()`
   - Rate limiting is caller responsibility, not embedded in tiny-api.ts functions
 ---
+
+## 2026-03-10 - US-014
+- Label service already existed as `src/lib/etiqueta-service.ts` (buscarEImprimirEtiqueta)
+- Added fire-and-forget trigger to `bipar-embalagem/route.ts` — calls buscarEImprimirEtiqueta when pedido_completo = true
+- Added fire-and-forget trigger to `confirmar-item-embalagem/route.ts` — same pattern
+- Files changed: src/app/api/separacao/bipar-embalagem/route.ts, src/app/api/separacao/confirmar-item-embalagem/route.ts, scripts/ralph/prd.json
+- **Learnings for future iterations:**
+  - Label service is `etiqueta-service.ts` (not `print-label.ts` as PRD suggests) — uses buscarEImprimirEtiqueta()
+  - The service handles full flow: create agrupamento → get labels → PrintNode printing → status tracking
+  - Fire-and-forget pattern: `.catch(err => logger.error(...))` — never await, never throw
+  - etiqueta-service.ts is idempotent (checks etiqueta_status === 'impresso' before proceeding)
+---

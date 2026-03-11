@@ -259,8 +259,8 @@
         "Typecheck passes"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": "PrintNode integration is deferred. For now we just store etiqueta_url. The frontend can show a download/print button using that URL."
+      "passes": true,
+      "notes": "Label service exists as etiqueta-service.ts (richer than PRD's print-label.ts — includes PrintNode integration). Fire-and-forget triggers added to bipar-embalagem and confirmar-item-embalagem routes."
     },
     {
       "id": "US-015",

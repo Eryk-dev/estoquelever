@@ -134,7 +134,7 @@
         "Typecheck passes"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "This is additive — both old and new filter params work. Frontend will switch to the new param gradually."
     },
     {

@@ -118,3 +118,14 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - The update is idempotent via `.eq("status_separacao", "aguardando_nf")` WHERE clause — only transitions pedidos currently in aguardando_nf
   - This completes all dual-write stories (US-003 through US-008) — every status/status_separacao write now also writes status_unificado
 ---
+
+## 2026-03-11 - US-009
+- Added `statusUnificado: p.status_unificado ?? undefined` to response mapping in `/api/pedidos/route.ts`
+- Added `?status_unificado=` query param support — when present, filters on `status_unificado` column instead of `status`
+- Old `?status=` filter still works for backwards compatibility (status_unificado takes precedence if both provided)
+- Files changed: `src/app/api/pedidos/route.ts`
+- **Learnings for future iterations:**
+  - The pedidos API returns a flat array (not `{ data }` wrapper) — just `NextResponse.json(result)`
+  - Response mapping is in-line in the `.map()` callback — add new fields there
+  - `status_unificado` filter takes precedence over `status` when both are provided (else-if chain)
+---

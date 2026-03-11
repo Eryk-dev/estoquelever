@@ -11,7 +11,7 @@
 
 import { createServiceClient } from "@/lib/supabase-server";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
-import { criarAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
+import { criarAgrupamento, concluirAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "agrupamento-service";
@@ -115,7 +115,15 @@ async function processarEmpresa(
       .update({ agrupamento_expedicao_id: String(agrupamentoId) })
       .in("id", allPedidoIds);
 
-    // 2. Fetch etiqueta URLs
+    // 2. Complete the agrupamento (required before labels are available)
+    await concluirAgrupamento(token, agrupamentoId);
+
+    logger.info(LOG_SOURCE, "Agrupamento concluído", {
+      empresaId,
+      agrupamentoId: String(agrupamentoId),
+    });
+
+    // 3. Fetch etiqueta URLs
     const etiquetas = await obterEtiquetasAgrupamento(token, agrupamentoId);
 
     if (!etiquetas.urls || etiquetas.urls.length === 0) {

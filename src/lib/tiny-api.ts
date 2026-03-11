@@ -394,6 +394,17 @@ export async function criarAgrupamento(
   });
 }
 
+/** Complete (concluir) a shipment group so labels become available */
+export async function concluirAgrupamento(
+  token: string,
+  idAgrupamento: number,
+): Promise<void> {
+  await tinyFetch<void>(`/expedicao/${idAgrupamento}/concluir`, {
+    token,
+    method: "POST",
+  });
+}
+
 /** Fetch label URLs for a shipment group */
 export async function obterEtiquetasAgrupamento(
   token: string,

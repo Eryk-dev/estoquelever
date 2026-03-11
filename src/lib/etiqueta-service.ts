@@ -12,7 +12,7 @@
 
 import { createServiceClient } from "@/lib/supabase-server";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
-import { criarAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
+import { criarAgrupamento, concluirAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
 import { enviarImpressaoZpl } from "@/lib/printnode";
 import { resolverImpressora } from "@/lib/printnode";
 import { getConfig } from "@/lib/config";
@@ -179,6 +179,11 @@ async function resolverZplFallback(
       .from("siso_pedidos")
       .update({ agrupamento_expedicao_id: String(agrupamentoId) })
       .eq("id", pedido.id);
+
+    await concluirAgrupamento(token, agrupamentoId);
+  } else {
+    // Agrupamento exists but may not be concluded yet — ensure it is
+    await concluirAgrupamento(token, agrupamentoId).catch(() => {});
   }
 
   // Fetch URL

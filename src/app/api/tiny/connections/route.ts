@@ -46,6 +46,63 @@ export async function GET() {
 }
 
 /**
+ * POST /api/tiny/connections
+ * Create a new Tiny connection for an empresa.
+ */
+export async function POST(request: NextRequest) {
+  const body = (await request.json()) as { empresa_id?: string };
+
+  if (!body.empresa_id) {
+    return NextResponse.json({ error: "Missing empresa_id" }, { status: 400 });
+  }
+
+  const supabase = createServiceClient();
+
+  // Fetch empresa with galpao to derive filial
+  const { data: empresa } = await supabase
+    .from("siso_empresas")
+    .select("id, nome, cnpj, siso_galpoes(nome)")
+    .eq("id", body.empresa_id)
+    .single();
+
+  if (!empresa) {
+    return NextResponse.json({ error: "Empresa não encontrada" }, { status: 404 });
+  }
+
+  const galpao = empresa.siso_galpoes as unknown as { nome: string } | null;
+  const filial = galpao?.nome === "SP" ? "SP" : "CWB";
+
+  // Check if connection already exists
+  const { data: existing } = await supabase
+    .from("siso_tiny_connections")
+    .select("id")
+    .eq("empresa_id", body.empresa_id)
+    .maybeSingle();
+
+  if (existing) {
+    return NextResponse.json({ error: "Conexão já existe para esta empresa" }, { status: 409 });
+  }
+
+  const { data: created, error } = await supabase
+    .from("siso_tiny_connections")
+    .insert({
+      empresa_id: empresa.id,
+      filial,
+      nome_empresa: empresa.nome,
+      cnpj: empresa.cnpj,
+      token: "",
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ id: created.id });
+}
+
+/**
  * PUT /api/tiny/connections
  * Update OAuth2 client credentials (client_id + client_secret).
  */

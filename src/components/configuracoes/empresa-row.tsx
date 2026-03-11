@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, ChevronDown, Unplug } from "lucide-react";
+import { toast } from "sonner";
+import { Building2, ChevronDown, Loader2, PlugZap, Unplug } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ConnectionCard } from "./connection-card";
 import type { EmpresaHierarquia, TinyConnection } from "./types";
@@ -16,6 +17,28 @@ export function EmpresaRow({
   onRefresh: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  async function handleCreateConnection() {
+    setCreating(true);
+    try {
+      const res = await fetch("/api/tiny/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ empresa_id: empresa.id }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      toast.success("Conexão Tiny criada — configure as credenciais OAuth2");
+      onRefresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao criar conexão");
+    } finally {
+      setCreating(false);
+    }
+  }
 
   return (
     <div className="border-b border-line/50 last:border-b-0">
@@ -56,16 +79,26 @@ export function EmpresaRow({
         />
       </button>
 
-      {/* Expanded: show connection card */}
+      {/* Expanded: show connection card or create button */}
       {expanded && connection && (
         <div className="mx-4 mb-3">
           <ConnectionCard connection={connection} onUpdated={onRefresh} />
         </div>
       )}
       {expanded && !connection && (
-        <p className="px-4 pb-3 text-xs italic text-ink-faint">
-          Conexão Tiny não configurada para esta empresa.
-        </p>
+        <div className="px-4 pb-3">
+          <p className="mb-2 text-xs italic text-ink-faint">
+            Conexão Tiny não configurada para esta empresa.
+          </p>
+          <button
+            onClick={handleCreateConnection}
+            disabled={creating}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-40"
+          >
+            {creating ? <Loader2 className="h-3 w-3 animate-spin" /> : <PlugZap className="h-3 w-3" />}
+            Conectar Tiny
+          </button>
+        </div>
       )}
     </div>
   );

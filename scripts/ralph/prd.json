@@ -272,7 +272,7 @@
         "Typecheck passes"
       ],
       "priority": 18,
-      "passes": false,
+      "passes": true,
       "notes": "Check globals.css or tailwind config for existing design tokens. If tokens like bg-surface, text-ink etc don't exist yet, define them as CSS custom properties and add to Tailwind config."
     },
     {

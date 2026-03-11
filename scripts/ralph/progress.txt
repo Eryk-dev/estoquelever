@@ -231,3 +231,17 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - AppShell handles auth redirect internally — pages don't need `useEffect` for login redirect
   - `mainClassName` is applied after `maxWidth` so it can override padding/spacing but not width
 ---
+
+## 2026-03-11 - US-018
+- Replaced all hardcoded `zinc-*` classes in login page with semantic design tokens
+- `border-zinc-200` → `border-line`, `bg-zinc-50` → `bg-surface`, `text-zinc-700` → `text-ink`
+- Focus states: `focus:border-zinc-400` → `focus:border-ink-muted`, `focus:ring-zinc-400` → `focus:ring-ink-muted`
+- Dark mode overrides removed (tokens handle light/dark via CSS variables)
+- Error styling (red) kept as-is (already semantic)
+- Zero `zinc-*` classes remaining in login/page.tsx
+- Files changed: `src/app/login/page.tsx`
+- **Learnings for future iterations:**
+  - Design tokens are defined in globals.css as CSS custom properties (--color-ink, --color-surface, etc.)
+  - Tailwind v4 auto-generates all color utilities from CSS variables (bg-*, text-*, border-*, ring-*, etc.)
+  - No need for separate dark: overrides when using design tokens — the CSS variables handle it
+---

@@ -2,17 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
-import { registrarEvento } from "@/lib/historico-service";
+import { registrarEventos } from "@/lib/historico-service";
 import type { StatusSeparacao } from "@/types";
 
 /**
  * POST /api/separacao/voltar-etapa
  *
- * Admin-only: revert a pedido to a previous separation stage.
+ * Admin-only: revert one or more pedidos to a previous separation stage.
  * Cleans up item-level data for the reverted stages.
  *
  * Headers: X-Session-Id
- * Body: { pedido_id: string, novo_status: StatusSeparacao }
+ * Body: { pedido_ids: string[], novo_status: StatusSeparacao }
  */
 
 const STATUS_ORDER: StatusSeparacao[] = [
@@ -34,38 +34,43 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => null);
-  if (!body?.pedido_id || typeof body.pedido_id !== "string" || !body?.novo_status) {
+
+  // Accept both pedido_ids (array) and pedido_id (single) for backwards compat
+  const pedidoIds: string[] = body?.pedido_ids ?? (body?.pedido_id ? [body.pedido_id] : []);
+  const novoStatus: StatusSeparacao | undefined = body?.novo_status;
+
+  if (pedidoIds.length === 0 || !pedidoIds.every((id: unknown) => typeof id === "string") || !novoStatus) {
     return NextResponse.json(
-      { error: "'pedido_id' e 'novo_status' são obrigatórios" },
+      { error: "'pedido_ids' (string[]) e 'novo_status' são obrigatórios" },
       { status: 400 },
     );
   }
 
-  const { pedido_id, novo_status } = body as { pedido_id: string; novo_status: StatusSeparacao };
-
-  if (!STATUS_ORDER.includes(novo_status)) {
+  if (!STATUS_ORDER.includes(novoStatus)) {
     return NextResponse.json({ error: "status inválido" }, { status: 400 });
   }
 
+  const targetIdx = STATUS_ORDER.indexOf(novoStatus);
   const supabase = createServiceClient();
 
-  // Fetch current pedido
-  const { data: pedido, error: fetchErr } = await supabase
+  // Fetch current pedidos
+  const { data: pedidos, error: fetchErr } = await supabase
     .from("siso_pedidos")
     .select("id, numero, status_separacao")
-    .eq("id", pedido_id)
-    .single();
+    .in("id", pedidoIds);
 
-  if (fetchErr || !pedido) {
-    return NextResponse.json({ error: "pedido_nao_encontrado" }, { status: 404 });
+  if (fetchErr || !pedidos || pedidos.length === 0) {
+    return NextResponse.json({ error: "pedidos_nao_encontrados" }, { status: 404 });
   }
 
-  const currentIdx = STATUS_ORDER.indexOf(pedido.status_separacao as StatusSeparacao);
-  const targetIdx = STATUS_ORDER.indexOf(novo_status);
+  // Filter only pedidos that are ahead of the target status
+  const validIds = pedidos
+    .filter((p) => STATUS_ORDER.indexOf(p.status_separacao as StatusSeparacao) > targetIdx)
+    .map((p) => p.id);
 
-  if (targetIdx >= currentIdx) {
+  if (validIds.length === 0) {
     return NextResponse.json(
-      { error: "novo_status deve ser anterior ao status atual", atual: pedido.status_separacao },
+      { error: "nenhum pedido pode ser revertido para esse status" },
       { status: 400 },
     );
   }
@@ -73,42 +78,37 @@ export async function POST(request: NextRequest) {
   try {
     // Build update for siso_pedidos
     const pedidoUpdate: Record<string, unknown> = {
-      status_separacao: novo_status,
+      status_separacao: novoStatus,
     };
 
-    // If reverting past separação stage, clear separation timestamps
     if (targetIdx <= STATUS_ORDER.indexOf("aguardando_separacao")) {
       pedidoUpdate.separacao_iniciada_em = null;
       pedidoUpdate.separacao_concluida_em = null;
       pedidoUpdate.separacao_operador_id = null;
     }
 
-    // If reverting past separado, clear concluida timestamp
-    if (targetIdx < STATUS_ORDER.indexOf("separado") && currentIdx >= STATUS_ORDER.indexOf("separado")) {
+    if (targetIdx < STATUS_ORDER.indexOf("separado")) {
       pedidoUpdate.separacao_concluida_em = null;
     }
 
-    // If reverting past embalado, clear etiqueta data
-    if (currentIdx >= STATUS_ORDER.indexOf("embalado")) {
-      pedidoUpdate.etiqueta_status = null;
-      pedidoUpdate.etiqueta_url = null;
-      pedidoUpdate.etiqueta_zpl = null;
-    }
+    // Clear etiqueta data when reverting from embalado
+    pedidoUpdate.etiqueta_status = null;
+    pedidoUpdate.etiqueta_url = null;
+    pedidoUpdate.etiqueta_zpl = null;
 
-    // Update pedido
+    // Update pedidos
     const { error: updateErr } = await supabase
       .from("siso_pedidos")
       .update(pedidoUpdate)
-      .eq("id", pedido_id);
+      .in("id", validIds);
 
     if (updateErr) {
-      logger.error("voltar-etapa", "Failed to update pedido", { error: updateErr.message });
+      logger.error("voltar-etapa", "Failed to update pedidos", { error: updateErr.message });
       return NextResponse.json({ error: updateErr.message }, { status: 500 });
     }
 
-    // Clean up item-level data based on how far back we're going
+    // Clean up item-level data
     if (targetIdx <= STATUS_ORDER.indexOf("aguardando_separacao")) {
-      // Going back to before separation: reset all item marks and bips
       await supabase
         .from("siso_pedido_itens")
         .update({
@@ -118,9 +118,8 @@ export async function POST(request: NextRequest) {
           bipado_em: null,
           bipado_por: null,
         })
-        .eq("pedido_id", pedido_id);
-    } else if (targetIdx === STATUS_ORDER.indexOf("em_separacao")) {
-      // Going back to em_separacao: keep separation marks, reset bips
+        .in("pedido_id", validIds);
+    } else if (targetIdx <= STATUS_ORDER.indexOf("separado")) {
       await supabase
         .from("siso_pedido_itens")
         .update({
@@ -128,43 +127,38 @@ export async function POST(request: NextRequest) {
           bipado_em: null,
           bipado_por: null,
         })
-        .eq("pedido_id", pedido_id);
-    } else if (targetIdx === STATUS_ORDER.indexOf("separado")) {
-      // Going back to separado: reset bips only
-      await supabase
-        .from("siso_pedido_itens")
-        .update({
-          bipado_completo: false,
-          bipado_em: null,
-          bipado_por: null,
-        })
-        .eq("pedido_id", pedido_id);
+        .in("pedido_id", validIds);
     }
 
     // Record in history
-    registrarEvento({
-      pedidoId: pedido_id,
-      evento: "status_revertido",
-      usuarioId: session.id,
-      usuarioNome: session.nome,
-      detalhes: {
-        de: pedido.status_separacao,
-        para: novo_status,
-      },
-    }).catch(() => {});
+    registrarEventos(
+      validIds.map((pid) => {
+        const original = pedidos.find((p) => p.id === pid);
+        return {
+          pedidoId: pid,
+          evento: "status_revertido" as const,
+          usuarioId: session.id,
+          usuarioNome: session.nome,
+          detalhes: {
+            de: original?.status_separacao ?? "desconhecido",
+            para: novoStatus,
+          },
+        };
+      }),
+    ).catch(() => {});
 
-    logger.info("voltar-etapa", "Status revertido", {
-      pedido_id,
-      de: pedido.status_separacao,
-      para: novo_status,
+    logger.info("voltar-etapa", "Status revertido em lote", {
+      pedido_ids: validIds,
+      novo_status: novoStatus,
+      total: String(validIds.length),
       admin: session.nome,
     });
 
     return NextResponse.json({
       ok: true,
-      pedido_id,
-      status_anterior: pedido.status_separacao,
-      novo_status,
+      pedidos_revertidos: validIds,
+      total: validIds.length,
+      novo_status: novoStatus,
     });
   } catch (err) {
     logger.error("voltar-etapa", "Unexpected error", {

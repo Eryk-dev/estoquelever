@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert } from "lucide-react";
+import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -65,6 +65,21 @@ const SORT_OPTIONS = [
   { value: "sku", label: "SKU" },
 ] as const;
 
+// Revert target options per current tab
+const REVERT_TARGETS: Partial<Record<StatusSeparacao, { value: StatusSeparacao; label: string }[]>> = {
+  embalado: [
+    { value: "separado", label: "Separado" },
+    { value: "aguardando_separacao", label: "Aguardando Separacao" },
+  ],
+  separado: [
+    { value: "em_separacao", label: "Em Separacao" },
+    { value: "aguardando_separacao", label: "Aguardando Separacao" },
+  ],
+  em_separacao: [
+    { value: "aguardando_separacao", label: "Aguardando Separacao" },
+  ],
+};
+
 interface SeparacaoResponse {
   counts: SeparacaoCounts;
   pedidos: SeparacaoPedido[];
@@ -83,6 +98,7 @@ export default function SeparacaoPage() {
 
   // Action loading states
   const [actionLoading, setActionLoading] = useState(false);
+  const [revertMenuOpen, setRevertMenuOpen] = useState(false);
 
   // Realtime: auto-refresh when other operators change order statuses
   useRealtimeSeparacao();
@@ -214,6 +230,62 @@ export default function SeparacaoPage() {
     }
   }
 
+  async function handleImprimirSelecionados() {
+    if (selectedIds.size === 0) return;
+    setActionLoading(true);
+    const ids = Array.from(selectedIds);
+    let ok = 0;
+    let fail = 0;
+    // Fire all in parallel
+    const results = await Promise.allSettled(
+      ids.map(async (id) => {
+        const res = await sisoFetch("/api/separacao/reimprimir", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pedido_id: id }),
+        });
+        const body = await res.json().catch(() => ({}));
+        return res.ok && body.status === "impresso";
+      }),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value) ok++;
+      else fail++;
+    }
+    if (ok > 0) toast.success(`${ok} etiqueta(s) enviada(s)`);
+    if (fail > 0) toast.error(`${fail} etiqueta(s) falharam`);
+    setActionLoading(false);
+  }
+
+  async function handleVoltarEtapa(novoStatus: StatusSeparacao) {
+    if (selectedIds.size === 0) return;
+    setActionLoading(true);
+    setRevertMenuOpen(false);
+    try {
+      const res = await sisoFetch("/api/separacao/voltar-etapa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedido_ids: Array.from(selectedIds),
+          novo_status: novoStatus,
+        }),
+      });
+      if (res.ok) {
+        const body = await res.json();
+        toast.success(`${body.total} pedido(s) revertido(s)`);
+        setSelectedIds(new Set());
+        refetch();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao voltar etapa");
+      }
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface">
@@ -228,7 +300,11 @@ export default function SeparacaoPage() {
   const showCheckbox =
     activeTab === "aguardando_separacao" ||
     activeTab === "separado" ||
+    activeTab === "embalado" ||
+    activeTab === "em_separacao" ||
     (activeTab === "aguardando_nf" && isAdmin);
+
+  const revertTargets = REVERT_TARGETS[activeTab];
 
   return (
     <div className="min-h-screen bg-surface">
@@ -280,6 +356,7 @@ export default function SeparacaoPage() {
             onChange={(id) => {
               setActiveTab(id as StatusSeparacao);
               setSelectedIds(new Set());
+              setRevertMenuOpen(false);
             }}
           />
         </div>
@@ -359,16 +436,81 @@ export default function SeparacaoPage() {
                 ? `${selectedIds.size} selecionado(s)`
                 : `${pedidos.length} pedido(s)`}
             </span>
-            <button
-              type="button"
-              onClick={handleEmbalarSelecionados}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-            >
-              <PackageCheck className="h-3.5 w-3.5" />
+            <div className="flex items-center gap-2">
+              {isAdmin && revertTargets && selectedIds.size > 0 && (
+                <RevertButton
+                  targets={revertTargets}
+                  open={revertMenuOpen}
+                  onToggle={() => setRevertMenuOpen((v) => !v)}
+                  onSelect={handleVoltarEtapa}
+                  disabled={actionLoading}
+                  count={selectedIds.size}
+                />
+              )}
+              <button
+                type="button"
+                onClick={handleEmbalarSelecionados}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              >
+                <PackageCheck className="h-3.5 w-3.5" />
+                {selectedIds.size > 0
+                  ? `Embalar ${selectedIds.size} pedido(s)`
+                  : `Embalar ${pedidos.length} pedido(s)`}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "embalado" && pedidos.length > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-ink-faint">
               {selectedIds.size > 0
-                ? `Embalar ${selectedIds.size} pedido(s)`
-                : `Embalar ${pedidos.length} pedido(s)`}
-            </button>
+                ? `${selectedIds.size} selecionado(s)`
+                : `${pedidos.length} pedido(s)`}
+            </span>
+            <div className="flex items-center gap-2">
+              {isAdmin && revertTargets && selectedIds.size > 0 && (
+                <RevertButton
+                  targets={revertTargets}
+                  open={revertMenuOpen}
+                  onToggle={() => setRevertMenuOpen((v) => !v)}
+                  onSelect={handleVoltarEtapa}
+                  disabled={actionLoading}
+                  count={selectedIds.size}
+                />
+              )}
+              <button
+                type="button"
+                onClick={handleImprimirSelecionados}
+                disabled={selectedIds.size === 0 || actionLoading}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                {actionLoading
+                  ? "Imprimindo..."
+                  : `Imprimir ${selectedIds.size || pedidos.length} etiqueta(s)`}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "em_separacao" && pedidos.length > 0 && isAdmin && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-ink-faint">
+              {selectedIds.size > 0
+                ? `${selectedIds.size} selecionado(s)`
+                : `${pedidos.length} pedido(s)`}
+            </span>
+            {revertTargets && selectedIds.size > 0 && (
+              <RevertButton
+                targets={revertTargets}
+                open={revertMenuOpen}
+                onToggle={() => setRevertMenuOpen((v) => !v)}
+                onSelect={handleVoltarEtapa}
+                disabled={actionLoading}
+                count={selectedIds.size}
+              />
+            )}
           </div>
         )}
 
@@ -407,13 +549,60 @@ export default function SeparacaoPage() {
                 checkbox={showCheckbox}
                 checked={selectedIds.has(pedido.id)}
                 onToggle={toggleSelected}
-                isAdmin={isAdmin}
-                onStatusChange={() => refetch()}
               />
             ))}
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+// ─── Revert dropdown button (page-level, no overflow issues) ─────────────────
+
+function RevertButton({
+  targets,
+  open,
+  onToggle,
+  onSelect,
+  disabled,
+  count,
+}: {
+  targets: { value: StatusSeparacao; label: string }[];
+  open: boolean;
+  onToggle: () => void;
+  onSelect: (status: StatusSeparacao) => void;
+  disabled: boolean;
+  count: number;
+}) {
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={disabled}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
+      >
+        <Undo2 className="h-3.5 w-3.5" />
+        Voltar {count} pedido(s)
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 min-w-[200px] rounded-lg border border-line bg-paper py-1 shadow-lg">
+          <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+            Voltar para
+          </p>
+          {targets.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink transition-colors hover:bg-surface"
+              onClick={() => onSelect(t.value)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

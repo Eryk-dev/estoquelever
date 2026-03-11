@@ -4,25 +4,9 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { sisoFetch } from "@/lib/auth-context";
-import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, Undo2 } from "lucide-react";
+import { CheckCircle2, Truck, Calendar, History, Printer, Loader2 } from "lucide-react";
 import { PedidoTimeline } from "./pedido-timeline";
 import type { StatusSeparacao } from "@/types";
-
-const STATUS_LABELS: Partial<Record<StatusSeparacao, string>> = {
-  aguardando_nf: "Aguardando NF",
-  aguardando_separacao: "Aguardando Separacao",
-  em_separacao: "Em Separacao",
-  separado: "Separado",
-  embalado: "Embalado",
-};
-
-const STATUS_ORDER: StatusSeparacao[] = [
-  "aguardando_nf",
-  "aguardando_separacao",
-  "em_separacao",
-  "separado",
-  "embalado",
-];
 
 export interface SeparacaoPedido {
   id: string;
@@ -48,8 +32,6 @@ interface SeparacaoCardProps {
   checkbox?: boolean;
   checked?: boolean;
   onToggle?: (id: string) => void;
-  isAdmin?: boolean;
-  onStatusChange?: () => void;
 }
 
 function formatDate(iso: string): string {
@@ -66,13 +48,9 @@ export function SeparacaoCard({
   checkbox,
   checked,
   onToggle,
-  isAdmin,
-  onStatusChange,
 }: SeparacaoCardProps) {
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [printing, setPrinting] = useState(false);
-  const [revertOpen, setRevertOpen] = useState(false);
-  const [reverting, setReverting] = useState(false);
   const isEmbalado = pedido.status_separacao === "embalado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
 
@@ -108,7 +86,7 @@ export function SeparacaoCard({
 
         {/* Main content */}
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          {/* Row 1: Order number + client + timeline toggle */}
+          {/* Row 1: Order number + client + actions */}
           <div className="flex items-center gap-2">
             {isEmbalado && (
               <CheckCircle2
@@ -162,77 +140,6 @@ export function SeparacaoCard({
                   <Printer className="h-3.5 w-3.5" />
                 )}
               </button>
-            )}
-
-            {/* Revert status (admin only) */}
-            {isAdmin && STATUS_ORDER.indexOf(pedido.status_separacao) > 0 && (
-              <div className="relative shrink-0">
-                <button
-                  type="button"
-                  disabled={reverting}
-                  onClick={() => setRevertOpen((v) => !v)}
-                  className={cn(
-                    "rounded p-1 transition-colors",
-                    revertOpen
-                      ? "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
-                      : "text-zinc-400 hover:text-amber-600 dark:hover:text-amber-400",
-                    reverting && "opacity-50",
-                  )}
-                  title="Voltar etapa"
-                  aria-label="Voltar etapa do pedido"
-                >
-                  {reverting ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Undo2 className="h-3.5 w-3.5" />
-                  )}
-                </button>
-                {revertOpen && !reverting && (
-                  <div className="absolute right-0 top-full z-20 mt-1 min-w-[180px] rounded-lg border border-line bg-paper py-1 shadow-lg">
-                    <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
-                      Voltar para
-                    </p>
-                    {STATUS_ORDER.slice(0, STATUS_ORDER.indexOf(pedido.status_separacao)).map(
-                      (status) => (
-                        <button
-                          key={status}
-                          type="button"
-                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-ink transition-colors hover:bg-surface whitespace-nowrap"
-                          onClick={async () => {
-                            setReverting(true);
-                            setRevertOpen(false);
-                            try {
-                              const res = await sisoFetch("/api/separacao/voltar-etapa", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                  pedido_id: pedido.id,
-                                  novo_status: status,
-                                }),
-                              });
-                              const data = await res.json().catch(() => ({}));
-                              if (res.ok && data.ok) {
-                                toast.success(
-                                  `#${pedido.numero_pedido} voltou para ${STATUS_LABELS[status] ?? status}`,
-                                );
-                                onStatusChange?.();
-                              } else {
-                                toast.error(data.error ?? "Erro ao voltar etapa");
-                              }
-                            } catch {
-                              toast.error("Erro de conexao");
-                            } finally {
-                              setReverting(false);
-                            }
-                          }}
-                        >
-                          {STATUS_LABELS[status] ?? status}
-                        </button>
-                      ),
-                    )}
-                  </div>
-                )}
-              </div>
             )}
 
             {/* Timeline toggle */}

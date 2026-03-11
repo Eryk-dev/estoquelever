@@ -202,7 +202,16 @@ async function baixarZpl(url: string): Promise<string | null> {
       });
       return null;
     }
-    return await res.text();
+    const text = await res.text();
+    if (!text || !text.trimStart().startsWith("^")) {
+      logger.warn(LOG_SOURCE, "Conteúdo baixado não é ZPL válido", {
+        url,
+        contentLength: String(text?.length ?? 0),
+        preview: text?.substring(0, 100) ?? "(vazio)",
+      });
+      return null;
+    }
+    return text;
   } catch (err) {
     logger.warn(LOG_SOURCE, "Erro de rede ao baixar ZPL", {
       url,

@@ -196,8 +196,25 @@ async function resolverZplFallback(
 
   // Download ZPL
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    logger.warn(LOG_SOURCE, "Falha ao baixar ZPL da URL", {
+      pedidoId: pedido.id,
+      url,
+      status: String(res.status),
+    });
+    return null;
+  }
   const zpl = await res.text();
+
+  if (!zpl || !zpl.trimStart().startsWith("^")) {
+    logger.error(LOG_SOURCE, "Conteúdo baixado não é ZPL válido", {
+      pedidoId: pedido.id,
+      url,
+      contentLength: String(zpl?.length ?? 0),
+      preview: zpl?.substring(0, 100) ?? "(vazio)",
+    });
+    return null;
+  }
 
   // Cache for future use
   await supabase

@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
       .from("siso_pedido_itens")
       .update({
         compra_status: "aguardando_compra",
-        fornecedor_oc: fornecedorInfo?.fornecedor ?? "Desconhecido",
+        fornecedor_oc: fornecedorInfo.fornecedor,
       })
       .in("id", itemIds);
 

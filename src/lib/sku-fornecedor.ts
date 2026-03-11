@@ -22,10 +22,10 @@ const SKU_RULES: { test: (sku: string) => boolean; info: FornecedorInfo }[] = [
   { test: (s) => s.startsWith("CS"), info: { fornecedor: "Delphi", filialOC: "SP" } },
 ];
 
-export function getFornecedorBySku(sku: string | undefined | null): FornecedorInfo | null {
-  if (!sku) return null;
+export function getFornecedorBySku(sku: string | undefined | null): FornecedorInfo {
+  if (!sku) return { fornecedor: "Diversos", filialOC: "CWB" };
   for (const rule of SKU_RULES) {
     if (rule.test(sku)) return rule.info;
   }
-  return null;
+  return { fornecedor: "Diversos", filialOC: "CWB" };
 }

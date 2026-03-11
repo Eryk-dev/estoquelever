@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { LogOut, RefreshCw, Settings } from "lucide-react";
+import { AlertTriangle, ChevronDown, Loader2, LogOut, RefreshCw, Settings } from "lucide-react";
 import Link from "next/link";
 
 import { AppShell } from "@/components/app-shell";
@@ -11,6 +11,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PedidoCardConcluido } from "@/components/pedido/pedido-card-concluido";
 import { PedidoCard } from "@/components/pedido/pedido-card";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import {
   filtrarPendentes,
@@ -29,6 +30,58 @@ async function fetchPedidos(): Promise<Pedido[]> {
   return res.json();
 }
 
+function StatusBanner({ pedido }: { pedido: Pedido }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (pedido.statusUnificado === "erro") {
+    return (
+      <div
+        className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900 dark:bg-red-950/30"
+        role="alert"
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          className="flex w-full items-center gap-2 text-left"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
+          <span className="text-sm font-medium text-red-700 dark:text-red-400">
+            Erro no processamento — #{pedido.numero}
+          </span>
+          <ChevronDown
+            className={cn(
+              "ml-auto h-3 w-3 text-red-400 transition-transform",
+              expanded && "rotate-180",
+            )}
+          />
+        </button>
+        {expanded && pedido.erro && (
+          <p className="mt-2 whitespace-pre-wrap font-mono text-xs text-red-600 dark:text-red-400">
+            {pedido.erro}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (pedido.statusUnificado === "executando") {
+    const ts = pedido.processadoEm ?? pedido.criadoEm;
+    const elapsed = ts ? Math.floor((Date.now() - new Date(ts).getTime()) / 60000) : 0;
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+          <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
+            Executando... ({elapsed}min) — #{pedido.numero}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 export default function DashboardPage() {
   const { user, logout } = useAuth();
   const queryClient = useQueryClient();
@@ -42,8 +95,16 @@ export default function DashboardPage() {
   });
 
   // Split into categories using status_unificado
+  const STUCK_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
   const pendentes = useMemo(
-    () => allPedidos.filter((p) => p.statusUnificado === "pendente"),
+    () => allPedidos.filter((p) => {
+      if (p.statusUnificado === "pendente" || p.statusUnificado === "erro") return true;
+      if (p.statusUnificado === "executando") {
+        const ts = p.processadoEm ?? p.criadoEm;
+        return ts ? Date.now() - new Date(ts).getTime() > STUCK_THRESHOLD_MS : false;
+      }
+      return false;
+    }),
     [allPedidos],
   );
   const concluidos = useMemo(
@@ -174,12 +235,14 @@ export default function DashboardPage() {
             <EmptyState message="Nenhum pedido pendente no momento." />
           ) : (
             pendentesFiltrados.map((pedido) => (
-              <PedidoCard
-                key={pedido.id}
-                pedido={pedido}
-                onAprovar={handleAprovar}
-                onStockUpdated={() => queryClient.invalidateQueries({ queryKey: ["pedidos"] })}
-              />
+              <div key={pedido.id} className="flex flex-col gap-1.5">
+                <StatusBanner pedido={pedido} />
+                <PedidoCard
+                  pedido={pedido}
+                  onAprovar={handleAprovar}
+                  onStockUpdated={() => queryClient.invalidateQueries({ queryKey: ["pedidos"] })}
+                />
+              </div>
             ))
           )}
         </div>

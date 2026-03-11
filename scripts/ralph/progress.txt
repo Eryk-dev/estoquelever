@@ -203,3 +203,17 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - The `filtrarPendentes/Concluidos/Auto` functions in `filtrar-pedidos.ts` handle role-based filtering after the status split
   - Concluidos tab uses "manual" type resolution to show operator-approved orders (not auto)
 ---
+
+## 2026-03-11 - US-016
+- Error orders (`statusUnificado=erro`) now appear in Pendente tab with red error banner
+- Error banner is clickable to expand full error text from `pedido.erro`
+- Stuck executing orders (`statusUnificado=executando` > 2min) show amber "Executando..." banner with elapsed time
+- `StatusBanner` component handles both error and stuck states
+- Pendentes filter includes `erro` and stuck `executando` orders alongside `pendente`
+- Files changed: `src/app/siso/page.tsx`
+- **Learnings for future iterations:**
+  - `pedido.erro` contains the error message string from the worker
+  - `processadoEm` is when the order was approved/started executing; `criadoEm` is fallback
+  - The 2-minute threshold is checked client-side with `Date.now() - timestamp > 2 * 60 * 1000`
+  - StatusBanner returns null for normal `pendente` orders (no banner needed)
+---

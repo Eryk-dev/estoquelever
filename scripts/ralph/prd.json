@@ -241,7 +241,7 @@
         "Typecheck passes"
       ],
       "priority": 16,
-      "passes": false,
+      "passes": true,
       "notes": "The erro and executando orders should appear mixed into the Pendente tab, not in a separate tab. Use the pedido's erro field for the error message. For stuck detection, compare Date.now() with the processadoEm timestamp."
     },
     {

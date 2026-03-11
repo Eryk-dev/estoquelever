@@ -31,12 +31,13 @@ export function FornecedorCard({
   const totalItens = itens.reduce((sum, i) => sum + i.quantidade_total, 0);
 
   async function handleCopiar() {
-    const text = itens
-      .map((i) => `${i.sku}\t${i.descricao}\t${i.quantidade_total}`)
-      .join("\n");
+    const lines = itens.map(
+      (i) => `${i.quantidade_total}x ${i.sku} - ${i.descricao}`,
+    );
+    const text = `*${fornecedor}* — ${itens.length} ite${itens.length !== 1 ? "ns" : "m"}\n\n${lines.join("\n")}`;
     try {
       await navigator.clipboard.writeText(text);
-      toast.success("SKUs copiados para a área de transferência");
+      toast.success("Lista copiada para enviar no WhatsApp");
     } catch {
       toast.error("Erro ao copiar");
     }

@@ -10,6 +10,7 @@ interface FornecedorInfo {
 
 const SKU_RULES: { test: (sku: string) => boolean; info: FornecedorInfo }[] = [
   { test: (s) => s.startsWith("19"), info: { fornecedor: "Diversos", filialOC: "CWB" } },
+  { test: (s) => s.startsWith("EW"), info: { fornecedor: "EW", filialOC: "SP" } },
   { test: (s) => s.startsWith("LD"), info: { fornecedor: "LDRU", filialOC: "SP" } },
   { test: (s) => s.startsWith("TH"), info: { fornecedor: "Tiger", filialOC: "SP" } },
   { test: (s) => s.startsWith("L0"), info: { fornecedor: "LEFS", filialOC: "SP" } },

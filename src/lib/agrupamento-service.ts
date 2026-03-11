@@ -85,11 +85,10 @@ async function processarEmpresa(
     const pedidoPorTinyId = new Map<number, string>(); // tinyId → pedido UUID
 
     for (const p of pedidos) {
-      const tinyId = parseInt(p.numero, 10);
+      const tinyId = parseInt(p.id, 10);
       if (isNaN(tinyId)) {
-        logger.warn(LOG_SOURCE, "Pedido sem numero numérico, skip", {
+        logger.warn(LOG_SOURCE, "Pedido com id não numérico, skip", {
           pedidoId: p.id,
-          numero: p.numero,
         });
         continue;
       }

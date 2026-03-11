@@ -167,12 +167,12 @@ async function resolverZplFallback(
     : null;
 
   if (!agrupamentoId) {
-    const numero = parseInt(pedido.numero, 10);
-    if (isNaN(numero)) {
-      logger.error(LOG_SOURCE, "Pedido sem numero numérico", { pedidoId: pedido.id });
+    const pedidoTinyId = parseInt(pedido.id, 10);
+    if (isNaN(pedidoTinyId)) {
+      logger.error(LOG_SOURCE, "Pedido com id não numérico", { pedidoId: pedido.id });
       return null;
     }
-    const res = await criarAgrupamento(token, [numero]);
+    const res = await criarAgrupamento(token, [pedidoTinyId]);
     agrupamentoId = res.id;
 
     await supabase

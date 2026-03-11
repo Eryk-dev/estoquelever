@@ -407,6 +407,8 @@ export default function SeparacaoPage() {
                 checkbox={showCheckbox}
                 checked={selectedIds.has(pedido.id)}
                 onToggle={toggleSelected}
+                isAdmin={isAdmin}
+                onStatusChange={() => refetch()}
               />
             ))}
           </div>

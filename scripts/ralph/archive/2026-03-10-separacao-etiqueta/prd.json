@@ -317,7 +317,7 @@
         "Typecheck and lint pass"
       ],
       "priority": 17,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -337,7 +337,7 @@
         "Typecheck and lint pass"
       ],
       "priority": 18,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

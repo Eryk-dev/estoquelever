@@ -109,11 +109,24 @@ export async function POST(request: NextRequest) {
 
     // Clean up item-level data
     if (targetIdx <= STATUS_ORDER.indexOf("aguardando_separacao")) {
+      // Full reset: both separacao and embalagem progress
       await supabase
         .from("siso_pedido_itens")
         .update({
           separacao_marcado: false,
           separacao_marcado_em: null,
+          quantidade_bipada: 0,
+          bipado_completo: false,
+          bipado_em: null,
+          bipado_por: null,
+        })
+        .in("pedido_id", validIds);
+    } else if (targetIdx <= STATUS_ORDER.indexOf("em_separacao")) {
+      // Reset embalagem progress only
+      await supabase
+        .from("siso_pedido_itens")
+        .update({
+          quantidade_bipada: 0,
           bipado_completo: false,
           bipado_em: null,
           bipado_por: null,

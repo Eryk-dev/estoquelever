@@ -170,21 +170,25 @@ export default function SeparacaoPage() {
   // --- Action handlers ---
 
   async function handleSepararSelecionados() {
-    if (selectedIds.size === 0 || !user) return;
+    if (!user) return;
+    const ids =
+      selectedIds.size > 0
+        ? Array.from(selectedIds)
+        : pedidos.map((p) => p.id);
+    if (ids.length === 0) return;
     setActionLoading(true);
     try {
       const res = await sisoFetch("/api/separacao/iniciar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          pedido_ids: Array.from(selectedIds),
+          pedido_ids: ids,
           operador_id: user.id,
         }),
       });
       if (res.ok) {
-        const ids = Array.from(selectedIds).join(",");
-        toast.success(`Separacao iniciada para ${selectedIds.size} pedido(s)`);
-        router.push(`/separacao/checklist?pedidos=${ids}`);
+        toast.success(`Separacao iniciada para ${ids.length} pedido(s)`);
+        router.push(`/separacao/checklist?pedidos=${ids.join(",")}`);
       } else {
         const body = await res.json().catch(() => ({}));
         toast.error(body.error ?? "Erro ao iniciar separacao");
@@ -418,13 +422,13 @@ export default function SeparacaoPage() {
             <button
               type="button"
               onClick={handleSepararSelecionados}
-              disabled={selectedIds.size === 0 || actionLoading}
+              disabled={actionLoading}
               className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
             >
               <Play className="h-3.5 w-3.5" />
               {actionLoading
                 ? "Iniciando..."
-                : `Separar ${selectedIds.size} pedido(s)`}
+                : `Separar ${selectedIds.size > 0 ? selectedIds.size : pedidos.length} pedido(s)`}
             </button>
           </div>
         )}
@@ -494,23 +498,36 @@ export default function SeparacaoPage() {
           </div>
         )}
 
-        {activeTab === "em_separacao" && pedidos.length > 0 && isAdmin && (
+        {activeTab === "em_separacao" && pedidos.length > 0 && (
           <div className="flex items-center justify-between">
             <span className="text-xs text-ink-faint">
               {selectedIds.size > 0
                 ? `${selectedIds.size} selecionado(s)`
                 : `${pedidos.length} pedido(s)`}
             </span>
-            {revertTargets && selectedIds.size > 0 && (
-              <RevertButton
-                targets={revertTargets}
-                open={revertMenuOpen}
-                onToggle={() => setRevertMenuOpen((v) => !v)}
-                onSelect={handleVoltarEtapa}
+            <div className="flex items-center gap-2">
+              {isAdmin && revertTargets && selectedIds.size > 0 && (
+                <RevertButton
+                  targets={revertTargets}
+                  open={revertMenuOpen}
+                  onToggle={() => setRevertMenuOpen((v) => !v)}
+                  onSelect={handleVoltarEtapa}
+                  disabled={actionLoading}
+                  count={selectedIds.size}
+                />
+              )}
+              <button
+                type="button"
+                onClick={handleSepararSelecionados}
                 disabled={actionLoading}
-                count={selectedIds.size}
-              />
-            )}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              >
+                <Play className="h-3.5 w-3.5" />
+                {actionLoading
+                  ? "Iniciando..."
+                  : `Separar ${selectedIds.size > 0 ? selectedIds.size : pedidos.length} pedido(s)`}
+              </button>
+            </div>
           </div>
         )}
 

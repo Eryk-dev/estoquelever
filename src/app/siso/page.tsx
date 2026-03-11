@@ -105,6 +105,11 @@ export default function DashboardPage() {
       });
 
       if (!res.ok) {
+        // 409 = already approved/executing — not an error, keep card removed
+        if (res.status === 409) {
+          queryClient.invalidateQueries({ queryKey: ["pedidos"] });
+          return;
+        }
         const data = await res.json().catch(() => ({}));
         toast.error(data.error ?? "Erro ao aprovar pedido");
         queryClient.invalidateQueries({ queryKey: ["pedidos"] });

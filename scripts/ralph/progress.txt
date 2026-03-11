@@ -108,3 +108,13 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - compras-release sets status="executando" (not concluido) because the pedido re-enters the execution queue — the worker will later set it to concluido+aguardando_nf
   - All compras API routes (conferir, ordens, itens actions) operate on siso_pedido_itens and siso_ordens_compra — only compras-release.ts touches siso_pedidos status
 ---
+
+## 2026-03-11 - US-008
+- Added `status_unificado: "aguardando_separacao"` dual-write to nf-webhook-handler.ts
+- 1 write location: Step 5 transition `aguardando_nf → aguardando_separacao` (line 140)
+- Files changed: `src/lib/nf-webhook-handler.ts`
+- **Learnings for future iterations:**
+  - nf-webhook-handler.ts has only ONE status_separacao write on siso_pedidos — the aguardando_nf → aguardando_separacao transition
+  - The update is idempotent via `.eq("status_separacao", "aguardando_nf")` WHERE clause — only transitions pedidos currently in aguardando_nf
+  - This completes all dual-write stories (US-003 through US-008) — every status/status_separacao write now also writes status_unificado
+---

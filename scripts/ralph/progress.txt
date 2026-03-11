@@ -28,6 +28,8 @@ Started: Tue Mar 10 20:18:10 -03 2026
 - SeparacaoPedido API fields: numero_nf, numero_ec, numero_pedido, cliente, uf (null), cidade (null), forma_envio, data_pedido, empresa_origem_nome, status_separacao, marcadores, galpao_id
 - GET /api/separacao now includes `galpao_id` per pedido via `siso_empresas(nome, galpao_id)` FK join — needed for bipar-embalagem calls
 - For embalagem page, galpao_id is derived from the first pedido's empresa — all orders on the page should share the same galpao
+- checklist-items API returns both separation AND packing fields (quantidade_bipada, bipado_completo) — reusable for both checklist and embalagem pages
+- For optimistic UI with React Query: `setQueryData` for immediate update, `invalidateQueries` for revert on error
 
 ## 2026-03-10 - US-001
 - Added types: StatusSeparacao, ProdutoConsolidado, BipEmbalagemResult, SeparacaoFilter, SeparacaoCounts, PedidoItem
@@ -288,4 +290,22 @@ Started: Tue Mar 10 20:18:10 -03 2026
   - Embalagem page uses `completedIds` Set state to track orders that transitioned to embalado during the session, since API refetch may remove them from separado results
   - bipar-embalagem API returns product_id but not descricao — the "Ultimo item lido" section uses the scanned SKU as display value
   - SeparacaoPedido.itens_bipados tracks packing progress at order level (computed from siso_pedido_itens.bipado_completo)
+---
+
+## 2026-03-10 - US-021
+- Extended `GET /api/separacao/checklist-items` to return `quantidade_bipada` and `bipado_completo` fields
+- Rewrote `src/app/separacao/embalagem/page.tsx` with expandable order rows, +/- buttons, and action buttons
+- Click on order row expands to show all items with descricao, SKU, localizacao, quantidade progress
+- Each item has +/- buttons calling POST /api/separacao/confirmar-item-embalagem with optimistic UI
+- Optimistic updates via `queryClient.setQueryData` on items cache; reverts on error via `invalidateQueries`
+- pedido_completo triggers same toast + visual transition as barcode scan
+- Added "Salvar para depois" button (navigates to /separacao, progress already persisted)
+- Added "Reiniciar progresso" button with window.confirm, calls POST /api/separacao/reiniciar with etapa=embalagem
+- Files changed: src/app/api/separacao/checklist-items/route.ts, src/app/separacao/embalagem/page.tsx
+- **Learnings for future iterations:**
+  - checklist-items API now returns both separation AND packing fields — reusable for both checklist and embalagem pages
+  - For optimistic UI with React Query, use `setQueryData` for immediate update and `invalidateQueries` for revert on error
+  - Items query is fetched once and grouped client-side by pedido_id via Map — avoids per-pedido API calls when expanding
+  - The `handlePedidoComplete` callback is shared between scan and manual +/- flows — keeps completion behavior consistent
+  - window.confirm() is the codebase standard for confirmation dialogs (no modal component)
 ---

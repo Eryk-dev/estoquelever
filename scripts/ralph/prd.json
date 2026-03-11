@@ -395,8 +395,8 @@
         "Typecheck and lint pass"
       ],
       "priority": 21,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Expandable order rows via click with chevron icons. Items fetched from checklist-items API (extended with quantidade_bipada/bipado_completo). +/- buttons call confirmar-item-embalagem with optimistic UI (setQueryData). pedido_completo triggers same toast/visual as scan. Salvar para depois navigates to /separacao. Reiniciar progresso calls reiniciar API with etapa=embalagem after window.confirm."
     },
     {
       "id": "US-022",

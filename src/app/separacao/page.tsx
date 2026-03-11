@@ -9,6 +9,10 @@ import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { Tabs } from "@/components/ui/tabs";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
+import {
+  SeparacaoCard,
+  type SeparacaoPedido,
+} from "@/components/separacao/separacao-card";
 import { CARGO_LABELS } from "@/types";
 import type { Tab, StatusSeparacao, SeparacaoCounts } from "@/types";
 
@@ -53,21 +57,6 @@ const EMPTY_COUNTS: SeparacaoCounts = {
   embalado: 0,
 };
 
-interface SeparacaoPedido {
-  id: string;
-  numero_nf: string;
-  numero_ec: string | null;
-  numero_pedido: string;
-  cliente: string | null;
-  uf: string | null;
-  cidade: string | null;
-  forma_envio: string | null;
-  data_pedido: string;
-  empresa_origem_nome: string | null;
-  status_separacao: string;
-  marcadores: string[];
-}
-
 interface SeparacaoResponse {
   counts: SeparacaoCounts;
   pedidos: SeparacaoPedido[];
@@ -77,6 +66,16 @@ export default function SeparacaoPage() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<StatusSeparacao>("aguardando_separacao");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!loading && !user) {
@@ -170,7 +169,10 @@ export default function SeparacaoPage() {
           <Tabs
             tabs={tabs}
             activeTab={activeTab}
-            onChange={(id) => setActiveTab(id as StatusSeparacao)}
+            onChange={(id) => {
+              setActiveTab(id as StatusSeparacao);
+              setSelectedIds(new Set());
+            }}
           />
         </div>
 
@@ -181,38 +183,20 @@ export default function SeparacaoPage() {
           <EmptyState message={activeConfig.emptyMessage} />
         ) : (
           <div className="space-y-2">
-            {pedidos.map((pedido) => (
-              <article
-                key={pedido.id}
-                className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper px-4 py-3 shadow-sm"
-                aria-label={`Pedido #${pedido.numero_pedido}`}
-              >
-                <span className="shrink-0 font-mono text-sm font-bold text-ink">
-                  #{pedido.numero_pedido}
-                </span>
-
-                <span className="h-3 w-px bg-line" aria-hidden="true" />
-
-                <span
-                  className="min-w-0 flex-1 truncate text-sm text-zinc-600 dark:text-zinc-300"
-                  title={pedido.cliente ?? ""}
-                >
-                  {pedido.cliente ?? "—"}
-                </span>
-
-                {pedido.empresa_origem_nome && (
-                  <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-                    {pedido.empresa_origem_nome}
-                  </span>
-                )}
-
-                {pedido.forma_envio && (
-                  <span className="shrink-0 text-[11px] text-ink-faint">
-                    {pedido.forma_envio}
-                  </span>
-                )}
-              </article>
-            ))}
+            {pedidos.map((pedido) => {
+              const showCheckbox =
+                activeTab === "aguardando_separacao" ||
+                activeTab === "separado";
+              return (
+                <SeparacaoCard
+                  key={pedido.id}
+                  pedido={pedido}
+                  checkbox={showCheckbox}
+                  checked={selectedIds.has(pedido.id)}
+                  onToggle={toggleSelected}
+                />
+              );
+            })}
           </div>
         )}
       </main>

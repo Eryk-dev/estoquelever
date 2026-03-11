@@ -21,6 +21,11 @@ Started: Tue Mar 10 20:18:10 -03 2026
 - Role-based filtering in separacao APIs uses `X-User-Cargo` header (not session-based galpao_id)
 - Supabase FK join syntax: `siso_empresas(nome)` in select — returns `{ nome }` object on each row
 - UF/cidade are NOT stored in siso_pedidos — return null (payload_original only stores Tiny order ID)
+- GET /api/separacao returns `{ counts, pedidos }` — counts always have ALL 5 statuses regardless of filter; pedidos filtered by `status_separacao` param
+- GET /api/separacao also returns `total_itens`, `itens_marcados`, `itens_bipados` per pedido — batch computed from siso_pedido_itens
+- `SeparacaoPedido` type lives in `src/components/separacao/separacao-card.tsx` — import from there, not from types/index.ts
+- `StatusSeparacao` includes `cancelado` but `SeparacaoCounts` does not — use `as keyof SeparacaoCounts` with `?? 0` fallback
+- SeparacaoPedido API fields: numero_nf, numero_ec, numero_pedido, cliente, uf (null), cidade (null), forma_envio, data_pedido, empresa_origem_nome, status_separacao, marcadores
 
 ## 2026-03-10 - US-001
 - Added types: StatusSeparacao, ProdutoConsolidado, BipEmbalagemResult, SeparacaoFilter, SeparacaoCounts, PedidoItem
@@ -198,4 +203,40 @@ Started: Tue Mar 10 20:18:10 -03 2026
   - The service handles full flow: create agrupamento → get labels → PrintNode printing → status tracking
   - Fire-and-forget pattern: `.catch(err => logger.error(...))` — never await, never throw
   - etiqueta-service.ts is idempotent (checks etiqueta_status === 'impresso' before proceeding)
+---
+
+## 2026-03-10 - US-015
+- Rewrote `src/app/separacao/page.tsx` with 5 tabs mapping 1:1 to StatusSeparacao values
+- Tabs: Aguardando NF, Aguardando Separação, Em Separação, Separados, Embalados
+- API-driven counts (from `GET /api/separacao` response `counts` field) instead of client-side grouping
+- Per-tab fetch with `status_separacao` query param (active tab only, not all orders)
+- Default active tab = `aguardando_separacao`
+- Container changed from `max-w-3xl` to `max-w-5xl`
+- Uses `LoadingSpinner` while fetching, `EmptyState` when tab is empty
+- Removed old galpão admin selector (API has no `galpao_id` param — role-based filtering handles it)
+- Basic order rows as placeholder — US-016 will add `separacao-card.tsx`
+- Horizontal scroll wrapper on tabs for mobile overflow
+- Files changed: src/app/separacao/page.tsx
+- **Learnings for future iterations:**
+  - `StatusSeparacao` includes `cancelado` but `SeparacaoCounts` does not — use `as keyof SeparacaoCounts` with `?? 0` fallback when indexing counts by status
+  - The old tab components (tab-pendentes, tab-aguardando-nf, etc.) used `PedidoSeparacao` type from pedido-separacao-card.tsx which expected `itens[]` array — the new API response doesn't include items, so old components are incompatible with the new data shape
+  - GET /api/separacao always returns all counts regardless of status_separacao filter — one request gives tab badges + filtered pedidos
+  - API response `SeparacaoPedido` fields: `numero_nf`, `numero_ec`, `numero_pedido`, `cliente`, `uf` (null), `cidade` (null), `forma_envio`, `data_pedido`, `empresa_origem_nome`, `status_separacao`, `marcadores`
+  - Navigation link to /separacao already exists in home page MODULES array
+---
+
+## 2026-03-10 - US-016
+- Created `src/components/separacao/separacao-card.tsx` with SeparacaoPedido type and SeparacaoCard component
+- Card displays: numero_pedido, cliente, empresa_origem_nome, numero_ec, forma_envio, data_pedido, marcadores
+- Checkbox prop enabled for aguardando_separacao and separado tabs; selectedIds tracked as Set in page state
+- Em Separacao cards show progress bar (itens_marcados / total_itens percentage)
+- Embalados cards show green border + CheckCircle2 icon
+- Extended GET /api/separacao to return `total_itens`, `itens_marcados`, `itens_bipados` per pedido via batch siso_pedido_itens query
+- Updated separacao/page.tsx to import SeparacaoCard, removed inline article elements, added selection state with tab-switch clearing
+- Files changed: src/components/separacao/separacao-card.tsx (new), src/app/api/separacao/route.ts, src/app/separacao/page.tsx, scripts/ralph/prd.json
+- **Learnings for future iterations:**
+  - `SeparacaoPedido` type is exported from `separacao-card.tsx` and imported by `page.tsx` — single source of truth for the card's data shape
+  - API response now includes `total_itens`, `itens_marcados`, `itens_bipados` — computed via a batch query on siso_pedido_itens after fetching pedidos (efficient: one query for all IDs)
+  - Selected IDs state (Set<string>) should be cleared when switching tabs to avoid stale selections
+  - The old `pedido-separacao-card.tsx` still exists (uses different PedidoSeparacao type with `itens[]` array) — it's a different component for the old flow, not replaced by the new card
 ---

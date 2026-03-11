@@ -152,9 +152,33 @@ export async function GET(request: NextRequest) {
       embalado: countResults[4].count ?? 0,
     };
 
+    // 3. Fetch item stats for progress display (separation + packing counts)
+    const pedidoIds = (pedidos ?? []).map((p) => p.id);
+    const itemStats: Record<
+      string,
+      { total: number; marcados: number; bipados: number }
+    > = {};
+
+    if (pedidoIds.length > 0) {
+      const { data: items } = await supabase
+        .from("siso_pedido_itens")
+        .select("pedido_id, separacao_marcado, bipado_completo")
+        .in("pedido_id", pedidoIds);
+
+      for (const item of items ?? []) {
+        if (!itemStats[item.pedido_id]) {
+          itemStats[item.pedido_id] = { total: 0, marcados: 0, bipados: 0 };
+        }
+        itemStats[item.pedido_id].total++;
+        if (item.separacao_marcado) itemStats[item.pedido_id].marcados++;
+        if (item.bipado_completo) itemStats[item.pedido_id].bipados++;
+      }
+    }
+
     // Shape response
     const result = (pedidos ?? []).map((p) => {
       const empresa = p.siso_empresas as unknown as { nome: string } | null;
+      const stats = itemStats[p.id] ?? { total: 0, marcados: 0, bipados: 0 };
       return {
         id: p.id,
         numero_nf: p.numero,
@@ -168,6 +192,9 @@ export async function GET(request: NextRequest) {
         empresa_origem_nome: empresa?.nome ?? null,
         status_separacao: p.status_separacao,
         marcadores: p.marcadores ?? [],
+        total_itens: stats.total,
+        itens_marcados: stats.marcados,
+        itens_bipados: stats.bipados,
       };
     });
 

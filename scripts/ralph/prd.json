@@ -279,8 +279,8 @@
         "Typecheck and lint pass"
       ],
       "priority": 15,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Rewrote page with 5 tabs (1:1 status mapping), API-driven counts, per-tab fetch, default aguardando_separacao, max-w-5xl. Removed old galpão admin selector (API doesn't support galpao_id param). Basic order rows as placeholder — US-016 adds proper card component."
     },
     {
       "id": "US-016",
@@ -297,8 +297,8 @@
         "Typecheck and lint pass"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "SeparacaoPedido type exported from separacao-card.tsx (shared with page). API extended to return total_itens, itens_marcados, itens_bipados per pedido. Checkbox on aguardando_separacao and separado tabs. Progress bar on em_separacao. Green check icon on embalado."
     },
     {
       "id": "US-017",

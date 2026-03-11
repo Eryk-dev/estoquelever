@@ -210,7 +210,7 @@
         "Typecheck passes"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "Find the stock adjustment endpoint. It may be at src/app/api/tiny/stock/ajustar/route.ts or similar. The key change is accepting UUID and resolving empresa/token from it."
     },
     {

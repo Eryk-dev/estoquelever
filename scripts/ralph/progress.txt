@@ -177,3 +177,17 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - `DECISAO_VALUES` is just a plain array of Decisao values; labels are computed by `getDecisaoLabel(decisao, pedido)`
   - `getDecisaoOption()` was removed; `ActionRow` calls `getDecisaoLabel(decisao, pedido)` directly
 ---
+
+## 2026-03-11 - US-014
+- Stock adjustment endpoint now accepts `galpaoId` (UUID) in addition to `galpao` (name string)
+- When `galpaoId` provided: looks up empresa by `galpao_id`, resolves deposit from `siso_pedido_item_estoques`
+- When only `galpao` provided: backwards compat — looks up by galpao name (existing behavior)
+- `resolvedGalpaoName` used throughout instead of raw `galpao` param
+- Legacy DB update (CWB/SP columns) only runs when `resolvedGalpaoName` is "CWB" or "SP"
+- Normalized table (`siso_pedido_item_estoques`) always updated regardless of galpao name
+- Files changed: `src/app/api/tiny/stock/ajustar/route.ts`
+- **Learnings for future iterations:**
+  - The endpoint uses `produto_id_suporte` for non-origin galpao Tiny lookups — each empresa may have a different product ID in Tiny
+  - Deposit ID lookup: `siso_pedido_item_estoques` filtered by `empresa_id` gives the right deposit for that empresa
+  - For new galpoes beyond CWB/SP, only the normalized table update runs (no legacy columns exist)
+---

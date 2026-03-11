@@ -111,13 +111,14 @@ interface EditableStockPillProps {
   isRelevant?: boolean;
   pedidoId: string;
   produtoId: number;
-  galpao: "CWB" | "SP";
+  galpao: string;
+  galpaoId?: string;
   onUpdated?: () => void;
 }
 
 function EditableStockPill({
   label, estoque, quantidadePedida, isRelevant,
-  pedidoId, produtoId, galpao, onUpdated,
+  pedidoId, produtoId, galpao, galpaoId, onUpdated,
 }: EditableStockPillProps) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -158,7 +159,7 @@ function EditableStockPill({
       const res = await fetch("/api/tiny/stock/ajustar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pedidoId, produtoId, galpao, quantidade: novoSaldo, tipo: "B" }),
+        body: JSON.stringify({ pedidoId, produtoId, galpao, galpaoId, quantidade: novoSaldo, tipo: "B" }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -273,11 +274,20 @@ interface ProductRowProps {
 }
 
 function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: ProductRowProps) {
-  const location = getRelevantLocation(item, decisao, filialOrigem);
-  const cwbIsRelevant =
-    decisao === "propria" ? filialOrigem === "CWB" : filialOrigem !== "CWB";
-  const spIsRelevant =
-    decisao === "propria" ? filialOrigem === "SP" : filialOrigem !== "SP";
+  const hasDynamic = item.estoquesPorGalpao && item.estoquesPorGalpao.length > 0;
+
+  // Resolve location for the current decision
+  let location: string | undefined;
+  if (hasDynamic) {
+    const estoques = item.estoquesPorGalpao!;
+    if (decisao === "propria") {
+      location = estoques.find(g => g.galpaoNome === filialOrigem)?.localizacao;
+    } else if (decisao === "transferencia") {
+      location = estoques.find(g => g.galpaoNome !== filialOrigem)?.localizacao;
+    }
+  } else {
+    location = getRelevantLocation(item, decisao, filialOrigem);
+  }
 
   return (
     <div className="flex items-start gap-3 py-2.5">
@@ -335,8 +345,16 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
                 <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
                 OC
               </span>
-              {item.localizacaoCWB && <LocationTag location={`CWB: ${item.localizacaoCWB}`} />}
-              {item.localizacaoSP && <LocationTag location={`SP: ${item.localizacaoSP}`} />}
+              {hasDynamic ? (
+                item.estoquesPorGalpao!.map(g => g.localizacao ? (
+                  <LocationTag key={g.galpaoId} location={`${g.galpaoNome}: ${g.localizacao}`} />
+                ) : null)
+              ) : (
+                <>
+                  {item.localizacaoCWB && <LocationTag location={`CWB: ${item.localizacaoCWB}`} />}
+                  {item.localizacaoSP && <LocationTag location={`SP: ${item.localizacaoSP}`} />}
+                </>
+              )}
             </>
           ) : location ? (
             <LocationTag location={location} />
@@ -346,26 +364,56 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
 
           <span className="h-3 w-px bg-line" aria-hidden="true" />
 
-          <EditableStockPill
-            label="CWB"
-            estoque={item.estoqueCWB}
-            quantidadePedida={item.quantidadePedida}
-            isRelevant={cwbIsRelevant}
-            pedidoId={pedidoId}
-            produtoId={item.produtoId}
-            galpao="CWB"
-            onUpdated={onStockUpdated}
-          />
-          <EditableStockPill
-            label="SP"
-            estoque={item.estoqueSP}
-            quantidadePedida={item.quantidadePedida}
-            isRelevant={spIsRelevant}
-            pedidoId={pedidoId}
-            produtoId={item.produtoId}
-            galpao="SP"
-            onUpdated={onStockUpdated}
-          />
+          {hasDynamic ? (
+            item.estoquesPorGalpao!.map(g => {
+              const isOrigin = g.galpaoNome === filialOrigem;
+              const isRelevant = decisao === "oc" || (decisao === "propria" ? isOrigin : !isOrigin);
+              const estoque: DepositoEstoque = {
+                id: g.depositoId ?? 0,
+                nome: g.depositoNome ?? "",
+                saldo: g.saldo,
+                reservado: g.reservado,
+                disponivel: g.disponivel,
+              };
+              return (
+                <EditableStockPill
+                  key={g.galpaoId}
+                  label={g.galpaoNome}
+                  estoque={estoque}
+                  quantidadePedida={item.quantidadePedida}
+                  isRelevant={isRelevant}
+                  pedidoId={pedidoId}
+                  produtoId={item.produtoId}
+                  galpao={g.galpaoNome}
+                  galpaoId={g.galpaoId}
+                  onUpdated={onStockUpdated}
+                />
+              );
+            })
+          ) : (
+            <>
+              <EditableStockPill
+                label="CWB"
+                estoque={item.estoqueCWB}
+                quantidadePedida={item.quantidadePedida}
+                isRelevant={decisao === "propria" ? filialOrigem === "CWB" : filialOrigem !== "CWB"}
+                pedidoId={pedidoId}
+                produtoId={item.produtoId}
+                galpao="CWB"
+                onUpdated={onStockUpdated}
+              />
+              <EditableStockPill
+                label="SP"
+                estoque={item.estoqueSP}
+                quantidadePedida={item.quantidadePedida}
+                isRelevant={decisao === "propria" ? filialOrigem === "SP" : filialOrigem !== "SP"}
+                pedidoId={pedidoId}
+                produtoId={item.produtoId}
+                galpao="SP"
+                onUpdated={onStockUpdated}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>

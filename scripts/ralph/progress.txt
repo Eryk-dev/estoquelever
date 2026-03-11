@@ -148,3 +148,18 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - GalpaoEstoque interface already existed (added in US-002), just needed to be referenced in EstoqueItem
   - Keep legacy fields (estoqueCWB, estoqueSP, cwbAtende, spAtende) until frontend fully migrates to dynamic rendering
 ---
+
+## 2026-03-11 - US-012
+- PedidoCard now renders dynamic stock pills from `estoquesPorGalpao` when available
+- EditableStockPill accepts `galpao: string` + `galpaoId?: string` instead of hardcoded `"CWB" | "SP"`
+- ProductRow uses `hasDynamic` flag to branch between dynamic and legacy rendering
+- Location resolution uses dynamic galpao data (matching by `galpaoNome === filialOrigem`)
+- OC locations render all galpao locations dynamically
+- Legacy CWB/SP fallback preserved for old data without estoquesPorGalpao
+- Files changed: `src/components/pedido/pedido-card.tsx`
+- **Learnings for future iterations:**
+  - `filialOrigem` is the galpao name (e.g., "CWB", "SP") — can match against `galpaoNome` in estoquesPorGalpao
+  - `DepositoEstoque` can be constructed from `GalpaoEstoque` for the EditableStockPill (id=depositoId, nome=depositoNome)
+  - The `galpaoId` is passed to the stock adjustment API body for forward compat (US-014 will make the API use it)
+  - `isRelevant` for stock pills: propria = origin galpao, transferencia = non-origin, oc = all relevant
+---

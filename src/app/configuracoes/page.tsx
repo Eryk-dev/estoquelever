@@ -126,6 +126,7 @@ function ConfiguracoesContent() {
       {/* ── Grupos ────────────────────────────────────────────────── */}
       <GruposSection
         grupos={grupos}
+        galpoes={galpoes}
         loading={loading}
         onRefresh={fetchAll}
       />

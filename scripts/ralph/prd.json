@@ -1,300 +1,341 @@
 {
-  "project": "SISO - Modulo de Compras",
-  "branchName": "ralph/modulo-compras",
-  "description": "Modulo de ordens de compra para itens sem estoque. OC por fornecedor atendendo N pedidos de venda. Fluxo: aprovacao OC → comprador cria OC por fornecedor → recebimento/conferencia → entrada estoque Tiny tipo E → liberacao automatica de pedidos para separacao.",
+  "project": "SISO - Coesao da Plataforma",
+  "branchName": "ralph/coesao-plataforma",
+  "description": "Resolver inconsistencias estruturais: eliminar hardcode CWB/SP, unificar dual status tracks, dar visibilidade a erros do worker, padronizar UI, otimizar queries.",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Types — Compras module types",
-      "description": "As a developer, I want all compras-related types defined in types/index.ts so that subsequent stories have full type safety.",
+      "title": "DB Migration — Add status_unificado column",
+      "description": "As a developer, I want a new status_unificado column on siso_pedidos so that all lifecycle states live in one field.",
       "acceptanceCriteria": [
-        "Add OrdemCompra type with fields: id (string), fornecedor (string), empresa_id (string), status ('aguardando_compra' | 'comprado' | 'parcialmente_recebido' | 'recebido' | 'cancelado'), observacao (string | null), comprado_por (string | null), comprado_em (string | null), created_at (string)",
-        "Add CompraStatus type: 'aguardando_compra' | 'comprado' | 'recebido' | 'indisponivel' | null",
-        "Update PedidoItem type adding: produto_id_tiny (number | null), fornecedor_oc (string | null), ordem_compra_id (string | null), compra_status (CompraStatus), compra_quantidade_recebida (number), comprado_em (string | null), comprado_por (string | null), recebido_em (string | null), recebido_por (string | null)",
-        "Add CompraItemAgrupado type with fields: sku (string), descricao (string), imagem (string | null), quantidade_total (number), fornecedor_oc (string), pedidos (array of {pedido_id: string, numero_pedido: string, quantidade: number}), itens_ids (string[])",
-        "Add ConferenciaItem type with fields: item_id (string), sku (string), descricao (string), imagem (string | null), quantidade_esperada (number), quantidade_ja_recebida (number), quantidade_restante (number), produto_id_tiny (number | null), pedidos (array of {pedido_id: string, numero_pedido: string, quantidade: number})",
+        "Create migration file supabase/migrations/20260311_status_unificado.sql",
+        "ALTER TABLE siso_pedidos ADD COLUMN status_unificado TEXT",
+        "ADD CHECK constraint for valid values: pendente, executando, aguardando_compra, aguardando_nf, aguardando_separacao, em_separacao, separado, embalado, cancelado, erro",
+        "ADD DEFAULT 'pendente'",
+        "Backfill existing rows: status=pendente→pendente, status=executando→executando, status=concluido + status_separacao=aguardando_compra→aguardando_compra, status=concluido + status_separacao=aguardando_nf→aguardando_nf, status=concluido + status_separacao=aguardando_separacao→aguardando_separacao, status=concluido + status_separacao=em_separacao→em_separacao, status=concluido + status_separacao=separado→separado, status=concluido + status_separacao=embalado→embalado, status=cancelado→cancelado, status=erro→erro",
+        "CREATE INDEX idx_siso_pedidos_status_unificado ON siso_pedidos(status_unificado)",
+        "Old status and status_separacao columns are NOT deleted (kept deprecated)",
+        "Apply migration via Supabase MCP tool apply_migration",
         "Typecheck passes"
       ],
       "priority": 1,
       "passes": true,
-      "notes": ""
+      "notes": "This is the foundation for US-003 through US-008. The backfill handles all combinations of status + status_separacao. For rows where status=concluido but status_separacao is null, default to aguardando_separacao."
     },
     {
       "id": "US-002",
-      "title": "Schema — Migration for siso_ordens_compra and siso_pedido_itens compra columns",
-      "description": "As a developer, I want the database schema updated with the ordens_compra table and compra tracking columns so that the compras module has persistence.",
+      "title": "Types — Add StatusUnificado and GalpaoEstoque types",
+      "description": "As a developer, I want the new unified status type and dynamic stock types defined so subsequent stories have type safety.",
       "acceptanceCriteria": [
-        "Create migration file supabase/migrations/20260311_modulo_compras.sql",
-        "CREATE TABLE siso_ordens_compra with columns: id (uuid PK default gen_random_uuid()), fornecedor (text NOT NULL), empresa_id (uuid NOT NULL REFERENCES siso_empresas(id)), status (text NOT NULL DEFAULT 'comprado' CHECK IN ('aguardando_compra','comprado','parcialmente_recebido','recebido','cancelado')), observacao (text), comprado_por (uuid REFERENCES siso_usuarios(id)), comprado_em (timestamptz), created_at (timestamptz DEFAULT now())",
-        "ALTER TABLE siso_pedido_itens ADD COLUMNS: produto_id_tiny (bigint), fornecedor_oc (text), ordem_compra_id (uuid REFERENCES siso_ordens_compra(id)), compra_status (text), compra_quantidade_recebida (int DEFAULT 0), comprado_em (timestamptz), comprado_por (uuid), recebido_em (timestamptz), recebido_por (uuid)",
-        "CREATE INDEX idx_pedido_itens_compra_status ON siso_pedido_itens(compra_status) WHERE compra_status IS NOT NULL",
-        "CREATE INDEX idx_pedido_itens_fornecedor_oc ON siso_pedido_itens(fornecedor_oc) WHERE fornecedor_oc IS NOT NULL",
-        "CREATE INDEX idx_pedido_itens_ordem_compra_id ON siso_pedido_itens(ordem_compra_id) WHERE ordem_compra_id IS NOT NULL",
-        "CREATE INDEX idx_ordens_compra_status ON siso_ordens_compra(status)",
-        "CREATE INDEX idx_ordens_compra_fornecedor ON siso_ordens_compra(fornecedor)",
-        "Apply migration via Supabase MCP tool apply_migration",
+        "In src/types/index.ts, add StatusUnificado type with values: pendente, executando, aguardando_compra, aguardando_nf, aguardando_separacao, em_separacao, separado, embalado, cancelado, erro",
+        "Add GalpaoEstoque interface with fields: galpaoId (string), galpaoNome (string), disponivel (number), saldo (number), reservado (number), depositoId (number | null), depositoNome (string | null), localizacao (string | undefined), atende (boolean)",
+        "Add statusUnificado field to Pedido interface as optional (statusUnificado?: StatusUnificado) — optional during transition",
+        "Keep existing StatusPedido and StatusSeparacao types (not deleted yet)",
+        "Keep existing EstoqueItem fields (not changed yet — that comes in US-011)",
         "Typecheck passes"
       ],
       "priority": 2,
       "passes": true,
-      "notes": ""
+      "notes": "This only ADDS new types. It does NOT remove or change existing types yet. That comes later when read paths switch over."
     },
     {
       "id": "US-003",
-      "title": "Backend — Save produto_id_tiny during webhook enrichment",
-      "description": "As a developer, I want produto_id_tiny saved in siso_pedido_itens during webhook processing so that the conferencia can use it directly without additional Tiny API calls.",
+      "title": "Backend dual-write — webhook-processor writes status_unificado",
+      "description": "As a developer, I want webhook-processor.ts to write status_unificado alongside old fields so new and old columns stay in sync.",
       "acceptanceCriteria": [
-        "In webhook-processor.ts, when stock is queried for each item via Tiny API, extract the produto ID from the response",
-        "Save produto_id_tiny in the siso_pedido_itens upsert alongside existing stock data",
-        "Also save fornecedor_oc using the existing sku-fornecedor.ts mapping (getFornecedorBySku function)",
-        "If SKU is not found in Tiny (no stock response), produto_id_tiny remains null",
-        "Log a warning when produto_id_tiny could not be resolved for an item",
+        "In webhook-processor.ts, every place that writes status or status_separacao to siso_pedidos must ALSO write status_unificado with the corresponding unified value",
+        "When processor saves a new pedido with status=pendente, also set status_unificado=pendente",
+        "When cancellation sets status=cancelado, also set status_unificado=cancelado",
+        "Import StatusUnificado type if needed for type safety",
         "Typecheck passes"
       ],
       "priority": 3,
       "passes": true,
-      "notes": "Check how webhook-processor.ts currently saves items to siso_pedido_itens. The produto ID comes from the Tiny stock/product API response. Also check sku-fornecedor.ts for the SKU-to-supplier mapping function."
+      "notes": "Read webhook-processor.ts carefully to find ALL places where status or status_separacao is written. The processor primarily writes status=pendente for new orders and status=cancelado for cancellations."
     },
     {
       "id": "US-004",
-      "title": "Backend — Worker sets compra fields after OC approval",
-      "description": "As a developer, I want the execution worker to set compra fields on pedido items when a pedido is approved as OC, so that items appear in the compras module.",
+      "title": "Backend dual-write — execution-worker writes status_unificado",
+      "description": "As a developer, I want execution-worker.ts to write status_unificado alongside old fields.",
       "acceptanceCriteria": [
-        "In execution-worker.ts, after executarMarcadoresOnly completes (OC flow), update siso_pedidos set status_separacao = 'aguardando_compra'",
-        "Update all siso_pedido_itens of that pedido set compra_status = 'aguardando_compra'",
-        "The main pedido status field continues going to 'concluido' as before (no change there)",
-        "Log the transition: logger.info('execution-worker', 'Pedido OC enviado para modulo de compras', { pedidoId })",
+        "In execution-worker.ts, every update to status or status_separacao must ALSO write status_unificado",
+        "executando state: status_unificado=executando",
+        "concluido + aguardando_nf: status_unificado=aguardando_nf",
+        "concluido + aguardando_compra: status_unificado=aguardando_compra",
+        "concluido + aguardando_separacao: status_unificado=aguardando_separacao",
+        "erro state: status_unificado=erro",
         "Typecheck passes"
       ],
       "priority": 4,
       "passes": true,
-      "notes": "Check execution-worker.ts for the OC/marcadores flow. The worker already has an executarMarcadoresOnly function. Add the compra field updates after it succeeds."
+      "notes": "Read execution-worker.ts to find ALL places where status or status_separacao is updated. The worker handles propria (NF + stock), transferencia (NF + deduct), and OC (marcadores only) flows."
     },
     {
       "id": "US-005",
-      "title": "Backend — GET /api/compras endpoint",
-      "description": "As a developer, I want a GET endpoint that returns compra items grouped by supplier and status so that the frontend can render the compras page.",
+      "title": "Backend dual-write — approval route writes status_unificado",
+      "description": "As a developer, I want /api/pedidos/aprovar to write status_unificado=executando alongside the old status field.",
       "acceptanceCriteria": [
-        "Create file src/app/api/compras/route.ts with GET handler",
-        "Accept query param 'status' to filter: 'aguardando_compra', 'comprado', 'indisponivel' (default: 'aguardando_compra')",
-        "For status='aguardando_compra': query siso_pedido_itens WHERE compra_status='aguardando_compra' AND ordem_compra_id IS NULL, join with siso_pedidos for pedido info, group by fornecedor_oc",
-        "For status='comprado': query siso_ordens_compra WHERE status IN ('comprado','parcialmente_recebido'), include their items from siso_pedido_itens",
-        "For status='indisponivel': query siso_pedido_itens WHERE compra_status='indisponivel'",
-        "Return counts per status for tab badges: {aguardando_compra: N, comprado: N, indisponivel: N}",
-        "For aguardando_compra: consolidate items with same SKU + fornecedor (sum quantities, collect pedido references)",
-        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "In src/app/api/pedidos/aprovar/route.ts, when setting status=executando also set status_unificado=executando",
         "Typecheck passes"
       ],
       "priority": 5,
       "passes": true,
-      "notes": "Use createServiceClient() from supabase-server.ts. Auth is via localStorage session — read the pattern from existing API routes like pedidos/aprovar/route.ts. Items need pedido info (numero_pedido) from siso_pedidos join."
+      "notes": "Simple change — find the update query and add status_unificado to it."
     },
     {
       "id": "US-006",
-      "title": "Backend — POST /api/compras/ordens endpoint",
-      "description": "As a developer, I want a POST endpoint that creates an ordem de compra and links aguardando items to it, so that the buyer can track purchases.",
+      "title": "Backend dual-write — separacao APIs write status_unificado",
+      "description": "As a developer, I want all separacao API routes to write status_unificado alongside status_separacao.",
       "acceptanceCriteria": [
-        "Create file src/app/api/compras/ordens/route.ts with POST handler",
-        "Accept body: { fornecedor: string, empresa_id: string, observacao?: string, usuario_id: string }",
-        "Insert new record in siso_ordens_compra with status='comprado', comprado_em=now(), comprado_por=usuario_id",
-        "Update all siso_pedido_itens WHERE fornecedor_oc = fornecedor AND compra_status = 'aguardando_compra' AND ordem_compra_id IS NULL: set ordem_compra_id, compra_status='comprado', comprado_em=now(), comprado_por=usuario_id",
-        "Return the created OC with count of linked items",
-        "If no items found for that fornecedor, return 400 error",
-        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "Find ALL API routes under src/app/api/separacao/ that update status_separacao on siso_pedidos",
+        "Each update must also set status_unificado to the same value (aguardando_separacao, em_separacao, separado, embalado)",
         "Typecheck passes"
       ],
       "priority": 6,
       "passes": true,
-      "notes": "empresa_id comes from the frontend — the buyer selects which empresa will receive the goods. Use createServiceClient()."
+      "notes": "Search for all files in src/app/api/separacao/ that do .update() on siso_pedidos with status_separacao. Each one needs a parallel status_unificado write."
     },
     {
       "id": "US-007",
-      "title": "Backend — GET /api/compras/conferencia/[ordemCompraId] endpoint",
-      "description": "As a developer, I want a GET endpoint that returns OC items for the receiving/checking screen so the operator can see what to expect.",
+      "title": "Backend dual-write — compras APIs write status_unificado",
+      "description": "As a developer, I want compras API routes to write status_unificado alongside status_separacao.",
       "acceptanceCriteria": [
-        "Create file src/app/api/compras/conferencia/[ordemCompraId]/route.ts with GET handler",
-        "Query siso_ordens_compra by ordemCompraId, return 404 if not found",
-        "Query siso_pedido_itens WHERE ordem_compra_id = ordemCompraId AND compra_status = 'comprado'",
-        "For each item calculate: quantidade_restante = quantidade (from pedido) - compra_quantidade_recebida",
-        "Join with siso_pedidos for pedido numero_pedido reference",
-        "Return OC info + array of ConferenciaItem (sku, descricao, imagem, quantidade_esperada, quantidade_ja_recebida, quantidade_restante, produto_id_tiny, pedidos)",
-        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "Find ALL API routes under src/app/api/compras/ that update status_separacao on siso_pedidos",
+        "Each update must also set status_unificado to the corresponding value",
+        "The compras-release.ts function must also set status_unificado when releasing pedidos",
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": true,
-      "notes": "quantidade_esperada is the original quantity from the pedido item. quantidade_restante = quantidade_esperada - compra_quantidade_recebida. Items with compra_status='recebido' should NOT appear (they're fully received)."
+      "passes": false,
+      "notes": "Search src/app/api/compras/ and src/lib/compras-release.ts for updates to status_separacao on siso_pedidos."
     },
     {
       "id": "US-008",
-      "title": "Backend — POST /api/compras/conferir endpoint (receiving + Tiny stock entry)",
-      "description": "As a developer, I want a POST endpoint that processes the receiving confirmation: updates quantities in DB and calls Tiny movimentarEstoque type E for each item.",
+      "title": "Backend dual-write — NF webhook handler writes status_unificado",
+      "description": "As a developer, I want nf-webhook-handler.ts to write status_unificado alongside status_separacao.",
       "acceptanceCriteria": [
-        "Create file src/app/api/compras/conferir/route.ts with POST handler",
-        "Accept body: { ordem_compra_id: string, usuario_id: string, itens: Array<{ item_id: string, quantidade_recebida: number }> }",
-        "For each item with quantidade_recebida > 0 AND produto_id_tiny is not null: call movimentarEstoque in Tiny with tipo='E', using produto_id_tiny and deposito_id from siso_tiny_connections",
-        "Use waitForRateLimit + registerApiCall from rate-limiter.ts before each Tiny call",
-        "Add 500ms sleep between Tiny API calls to avoid overload",
-        "If Tiny call fails for an item, log the error and continue with remaining items (do not abort)",
-        "Update siso_pedido_itens: compra_quantidade_recebida += quantidade_recebida for each item",
-        "If compra_quantidade_recebida >= quantity from pedido: set compra_status='recebido', recebido_em=now(), recebido_por=usuario_id",
-        "If produto_id_tiny is null for an item, skip Tiny call, log warning 'SKU nao encontrado no Tiny', still update quantity in DB",
-        "Update siso_ordens_compra status: if all items 'recebido' then 'recebido', if mix then 'parcialmente_recebido'",
-        "Return summary: { processados: N, erros: N, erros_detalhe: [...], itens_sem_produto_id: N }",
-        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "In src/lib/nf-webhook-handler.ts, every update to status_separacao must also set status_unificado",
+        "When transitioning aguardando_nf → aguardando_separacao: set status_unificado=aguardando_separacao",
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": true,
-      "notes": "Use tiny-api.ts movimentarEstoque function. Get deposito_id by querying siso_tiny_connections WHERE empresa_id = OC's empresa_id. Use the observacao 'Entrada OC via SISO'. Check rate-limiter.ts for waitForRateLimit pattern used in execution-worker.ts."
+      "passes": false,
+      "notes": "Read nf-webhook-handler.ts to find all status_separacao writes."
     },
     {
       "id": "US-009",
-      "title": "Backend — Release logic after receiving",
-      "description": "As a developer, I want pedidos de venda automatically released for picking when all their items are received across all OCs, so no manual intervention is needed.",
+      "title": "API — /api/pedidos reads status_unificado and returns it",
+      "description": "As a developer, I want the pedidos API to return statusUnificado so the frontend can start consuming it.",
       "acceptanceCriteria": [
-        "Create lib function checkAndReleasePedidos(itemIds: string[]) in a new file src/lib/compras-release.ts",
-        "From the received item IDs, get distinct pedido_ids from siso_pedido_itens",
-        "For each pedido: query ALL its items (not just OC items) — check if every item with compra_status has compra_status='recebido'",
-        "If ALL compra items of a pedido are 'recebido': release the pedido",
-        "Release means: update siso_pedidos set decisao_final='propria', status='executando', status_separacao='aguardando_nf'",
-        "Insert job in siso_fila_execucao with tipo='lancar_estoque', decisao='propria', pedido_id, empresa_id",
-        "Log: logger.info('compras-release', 'Pedido liberado apos recebimento OC', { pedidoId })",
-        "Return array of released pedido IDs",
-        "Call this function at the end of POST /api/compras/conferir after DB updates",
+        "In src/app/api/pedidos/route.ts, add statusUnificado to the response mapping: statusUnificado: p.status_unificado ?? undefined",
+        "Accept ?status_unificado= query param as alternative filter (comma-separated)",
+        "When status_unificado filter is present, use .in('status_unificado', values) instead of .in('status', values)",
+        "Keep existing ?status= filter working for backwards compatibility",
         "Typecheck passes"
       ],
       "priority": 9,
-      "passes": true,
-      "notes": "Check execution-worker.ts and siso_fila_execucao table structure for the correct job format. The worker will pick up the job and run executarSaidaPropria (existing flow). Important: only check items that have compra_status set (non-null) — normal items without compra flow should not block release."
+      "passes": false,
+      "notes": "This is additive — both old and new filter params work. Frontend will switch to the new param gradually."
     },
     {
       "id": "US-010",
-      "title": "Backend — Item action APIs (devolver, indisponivel, trocar-fornecedor)",
-      "description": "As a developer, I want API endpoints for the buyer to handle unavailable items: return to queue, mark unavailable, or change supplier.",
+      "title": "API — /api/pedidos returns dynamic stock from siso_pedido_item_estoques",
+      "description": "As a developer, I want the pedidos API to return stock data from the normalized table instead of legacy CWB/SP columns.",
       "acceptanceCriteria": [
-        "Create src/app/api/compras/itens/[itemId]/devolver/route.ts with POST handler: set compra_status='aguardando_compra', ordem_compra_id=null. If OC has no more items after this, set OC status='cancelado'",
-        "Create src/app/api/compras/itens/[itemId]/indisponivel/route.ts with POST handler: set compra_status='indisponivel'. Log warning with pedido info.",
-        "Create src/app/api/compras/itens/[itemId]/trocar-fornecedor/route.ts with POST handler: accept { novo_fornecedor: string, nova_ordem_compra_id?: string }. Update fornecedor_oc, move to new OC if provided or remove from current OC (set ordem_compra_id=null, compra_status='aguardando_compra')",
-        "All three endpoints: auth check for cargo 'admin' or 'comprador'",
-        "All three endpoints: return updated item",
+        "In src/app/api/pedidos/route.ts, after fetching pedido items, also fetch from siso_pedido_item_estoques for all pedido_ids",
+        "JOIN siso_pedido_item_estoques with siso_empresas (for empresa name) and siso_empresas.galpao_id with siso_galpoes (for galpao name)",
+        "Group stock data by (pedido_id, produto_id, galpao_id) — aggregate: sum disponivel, sum saldo, sum reservado across empresas in same galpao",
+        "Add estoquesPorGalpao array to each item in the response, with fields: galpaoId, galpaoNome, disponivel, saldo, reservado, depositoId (first empresa's), depositoNome (first empresa's), localizacao, atende (disponivel >= quantidadePedida)",
+        "KEEP legacy estoqueCWB, estoqueSP, cwbAtende, spAtende fields in the response (not removed yet)",
         "Typecheck passes"
       ],
       "priority": 10,
-      "passes": true,
-      "notes": "When removing an item from an OC, check if OC still has items. If empty, set OC status to 'cancelado'. Use createServiceClient()."
+      "passes": false,
+      "notes": "siso_pedido_item_estoques has columns: pedido_id, produto_id, empresa_id, deposito_id, deposito_nome, saldo, reservado, disponivel, localizacao. Join with siso_empresas to get galpao_id, then with siso_galpoes to get galpao nome. Aggregate by galpao."
     },
     {
       "id": "US-011",
-      "title": "Backend — Webhook cancellation handler for compras",
-      "description": "As a developer, I want the cancellation webhook to detect and clean up compras items so that cancelled orders don't waste purchasing effort.",
+      "title": "Types — Add estoquesPorGalpao to EstoqueItem",
+      "description": "As a developer, I want EstoqueItem to have the dynamic estoquesPorGalpao array so the frontend can render N galpoes.",
       "acceptanceCriteria": [
-        "In webhook-processor.ts (or the cancellation handler), when a pedido is cancelled, check if status_separacao is 'aguardando_compra' or 'comprado'",
-        "If yes: set compra_status=null and ordem_compra_id=null for all items of that pedido",
-        "Set status_separacao='cancelado' on the pedido",
-        "For each affected OC: recheck if OC still has items, if empty set OC status='cancelado'",
-        "If any item had compra_quantidade_recebida > 0 (stock already entered in Tiny): log a warning with level 'warn' including SKU and quantity that was already entered",
-        "Store a flag or field on the pedido indicating 'compra_estoque_lancado_alerta' = true when stock was already entered, so the UI can show a visible alert",
+        "In src/types/index.ts, add estoquesPorGalpao?: GalpaoEstoque[] to EstoqueItem interface",
+        "Keep ALL legacy fields (estoqueCWB, estoqueSP, cwbAtende, spAtende, localizacaoCWB, localizacaoSP) — they are NOT removed yet",
+        "The field is optional (?) because old API consumers may not have it yet",
         "Typecheck passes"
       ],
       "priority": 11,
-      "passes": true,
-      "notes": "Check how the existing webhook cancellation flow works in webhook-processor.ts or the webhook route. The stock that was already entered in Tiny stays — no reversal. The alert is just informational."
+      "passes": false,
+      "notes": "Simple additive type change. The field is optional during transition."
     },
     {
       "id": "US-012",
-      "title": "Frontend — /compras page layout with tabs and data fetching",
-      "description": "As a developer, I want the /compras page skeleton with tabs and React Query data fetching so that the compras module has a home.",
+      "title": "Frontend — PedidoCard renders dynamic stock pills",
+      "description": "As a developer, I want PedidoCard to render one stock pill per galpao from estoquesPorGalpao instead of hardcoded CWB/SP.",
       "acceptanceCriteria": [
-        "Create file src/app/compras/page.tsx as a 'use client' page",
-        "Add page to navigation (if there's a nav component, add 'Compras' link)",
-        "Use the existing Tabs component (src/components/ui/tabs.tsx) with 3 tabs: 'Aguardando Compra', 'Comprado', 'Indisponiveis'",
-        "Each tab shows a counter badge from the API response counts",
-        "Use React Query (useQuery) to fetch GET /api/compras with the active tab's status as query param",
-        "Refetch every 30 seconds (refetchInterval: 30000) — but NOT on the conferencia page",
-        "Show LoadingSpinner while loading, EmptyState when no items",
-        "Auth guard: redirect to /login if no user in localStorage, show 'Acesso negado' if cargo is not admin/comprador",
-        "Follow existing page patterns (zinc palette, max-w-3xl on mobile, Outfit font)",
+        "In src/components/pedido/pedido-card.tsx, when estoquesPorGalpao is available, render one EditableStockPill per galpao (not hardcoded 2)",
+        "EditableStockPill receives galpaoId and galpaoNome instead of literal 'CWB'/'SP'",
+        "When estoquesPorGalpao is NOT available (legacy data), fall back to existing CWB/SP rendering",
+        "Stock pill label shows the actual galpao name (e.g., 'CWB', 'SP', or any future name)",
+        "The relevance check (which pills to show) uses estoquesPorGalpao data when available",
         "Typecheck passes"
       ],
       "priority": 12,
-      "passes": true,
-      "notes": "Follow the same pattern as src/app/page.tsx (dashboard) for page structure, auth check, and React Query usage. Use the existing tabs component from src/components/ui/tabs.tsx."
+      "passes": false,
+      "notes": "Read pedido-card.tsx carefully. The hardcoded CWB/SP logic is in: cwbAtendeTudo(), spAtendeTudo(), decisaoIsAvailable(), getRelevantLocation(), and the JSX rendering. Add a new code path that uses estoquesPorGalpao when present, keeping the old path as fallback."
     },
     {
       "id": "US-013",
-      "title": "Frontend — Aguardando Compra tab with supplier cards",
-      "description": "As a developer, I want the Aguardando Compra tab to show items grouped by supplier with consolidation and a 'Marcar como Comprado' button.",
+      "title": "Frontend — Decision logic uses dynamic galpao data",
+      "description": "As a developer, I want decisaoIsAvailable and decision dropdown labels to use dynamic galpao data.",
       "acceptanceCriteria": [
-        "Create component src/components/compras/fornecedor-card.tsx for the supplier card",
-        "Card shows: fornecedor name as header, list of SKUs with descricao + quantidade (consolidated across pedidos), pedido numbers as small badges",
-        "Items with same SKU from different pedidos show summed quantity with breakdown on hover/expand",
-        "'Copiar SKUs' button copies tab-separated text (SKU, descricao, quantidade) to clipboard via navigator.clipboard.writeText, show toast.success on copy",
-        "'Marcar como Comprado' button opens a small form: textarea for observacao (optional), confirm button",
-        "On confirm: POST /api/compras/ordens with fornecedor + empresa_id + observacao + usuario_id, invalidate React Query cache, show toast.success",
-        "Use Lucide icons: Package for supplier, Copy for copy button, ShoppingCart for comprar",
+        "In pedido-card.tsx, decisaoIsAvailable() checks dynamically when estoquesPorGalpao is available: propria = origin galpao atende all items, transferencia = any OTHER galpao atende all items",
+        "Decision dropdown label for transferencia shows actual target galpao name (e.g., 'Transferencia SP') not hardcoded",
+        "getRelevantLocation() uses origin galpao from estoquesPorGalpao when available",
+        "Falls back to existing CWB/SP logic when estoquesPorGalpao is not available",
+        "No 'as \"CWB\" | \"SP\"' type casts in the new code path",
         "Typecheck passes"
       ],
       "priority": 13,
-      "passes": true,
-      "notes": "empresa_id: for now use the empresa_id from the first item's pedido (empresa_origem_id from siso_pedidos). The consolidation groups items by SKU within a supplier — same SKU from pedido #100 (2un) and #101 (1un) shows as '3un' with breakdown."
+      "passes": false,
+      "notes": "The origin galpao is determined by pedido.empresaOrigemId → find which galpao that empresa belongs to. In estoquesPorGalpao, match by galpaoId. The 'best alternative' galpao for transferencia is the non-origin galpao that atende the most items."
     },
     {
       "id": "US-014",
-      "title": "Frontend — Comprado tab with OC cards",
-      "description": "As a developer, I want the Comprado tab to show individual OC cards with their items and a 'Conferir Recebimento' button.",
+      "title": "API — Stock adjustment endpoint uses galpaoId",
+      "description": "As a developer, I want /api/tiny/stock/ajustar to receive galpao_id UUID instead of galpao string.",
       "acceptanceCriteria": [
-        "Create component src/components/compras/ordem-compra-card.tsx",
-        "Card shows: 'OC #N — {fornecedor}' as header, observacao text, 'Comprado por {nome} em {data}', 'Ha X dias' relative time",
-        "List of items in the OC: SKU, descricao, quantidade, status badge (comprado/parcialmente recebido/recebido)",
-        "If OC status is 'parcialmente_recebido', show progress indicator (X de Y itens recebidos)",
-        "'Conferir Recebimento' button navigates to /compras/conferencia/[ordemCompraId]",
-        "Multiple OCs from the same fornecedor appear as separate cards",
-        "Use Lucide icons: Truck for delivery, ClipboardCheck for conferir",
+        "In the stock adjustment endpoint (find it under src/app/api/tiny/stock/), accept galpao_id (UUID) instead of or in addition to galpao ('CWB'|'SP')",
+        "Resolve empresa and Tiny token internally: query siso_empresas WHERE galpao_id = param, then get token via siso_tiny_connections",
+        "If galpao_id is provided, use it. If old galpao string is provided, look up the galpao by name for backwards compat",
         "Typecheck passes"
       ],
       "priority": 14,
-      "passes": true,
-      "notes": "The API returns OCs with their items for status='comprado'. Use Next.js router.push for navigation to conferencia page."
+      "passes": false,
+      "notes": "Find the stock adjustment endpoint. It may be at src/app/api/tiny/stock/ajustar/route.ts or similar. The key change is accepting UUID and resolving empresa/token from it."
     },
     {
       "id": "US-015",
-      "title": "Frontend — Conferencia page (receiving form)",
-      "description": "As a developer, I want the conferencia page where the operator enters received quantities and confirms, triggering Tiny stock entry.",
+      "title": "Frontend — SISO dashboard filters by status_unificado",
+      "description": "As a developer, I want the SISO dashboard (src/app/siso/page.tsx) to filter using status_unificado instead of the old status field.",
       "acceptanceCriteria": [
-        "Create file src/app/compras/conferencia/[ordemCompraId]/page.tsx as 'use client' page",
-        "Fetch OC data via GET /api/compras/conferencia/[ordemCompraId] using React Query",
-        "Show OC info header: fornecedor, observacao, data da compra",
-        "For each item: show SKU, descricao, imagem (if available), quantidade_restante as 'Esperado', number input for 'Recebido' pre-filled with quantidade_restante",
-        "Show pedido numbers linked to each item as small badges",
-        "Number input: min=0, no max (allows > expected), step=1, integer only",
-        "Do NOT auto-refresh this page (no refetchInterval) to avoid losing typed values",
-        "'Confirmar Recebimento' button: disabled when all quantities are 0, shows loading state during POST",
-        "On confirm: POST /api/compras/conferir, show results toast with processados/erros counts and released pedidos",
-        "After successful confirm: navigate back to /compras",
-        "If there were errors: show error details (which items failed) before navigating",
+        "SISO page fetches with ?status_unificado= instead of ?status=",
+        "Pendente tab: status_unificado=pendente",
+        "Concluidos tab: shows manually-approved pedidos (tipoResolucao=manual) with status_unificado in aguardando_nf, aguardando_separacao, em_separacao, separado, embalado",
+        "Auto tab: shows pedidos with tipoResolucao=auto regardless of current status_unificado",
+        "Tab counts update correctly",
         "Typecheck passes"
       ],
       "priority": 15,
-      "passes": true,
-      "notes": "Use controlled inputs with useState for quantities. The confirm POST may take a while (multiple Tiny API calls with sleeps) so show a good loading state. Use Sonner toast for feedback."
+      "passes": false,
+      "notes": "Read src/app/siso/page.tsx and the filter functions in src/lib/filtrar-pedidos.ts. The Concluidos and Auto tabs may need client-side filtering on tipoResolucao after fetching a broader set."
     },
     {
       "id": "US-016",
-      "title": "Frontend — Item actions and Indisponiveis tab",
-      "description": "As a developer, I want item-level actions (devolver, indisponivel, trocar fornecedor) in OC cards and an Indisponiveis tab for visibility.",
+      "title": "Frontend — Worker error feedback in SISO dashboard",
+      "description": "As a developer, I want operators to see when orders are stuck executing or have errors.",
       "acceptanceCriteria": [
-        "In ordem-compra-card.tsx: add a dropdown menu (or action buttons) per item with 3 options: 'Devolver pra fila', 'Marcar indisponivel', 'Trocar fornecedor'",
-        "'Devolver pra fila': POST /api/compras/itens/[itemId]/devolver, invalidate cache, toast.success('Item devolvido para fila de compras')",
-        "'Marcar indisponivel': confirm dialog, POST /api/compras/itens/[itemId]/indisponivel, invalidate cache, toast.success",
-        "'Trocar fornecedor': small modal/form with text input for new fornecedor name, POST /api/compras/itens/[itemId]/trocar-fornecedor with { novo_fornecedor }, invalidate cache",
-        "Indisponiveis tab: simple list of items with compra_status='indisponivel', showing SKU, descricao, fornecedor original, pedido number, and a badge 'Indisponivel'",
-        "Use Lucide icons: RotateCcw for devolver, XCircle for indisponivel, ArrowRightLeft for trocar",
+        "Orders with statusUnificado=erro appear in the Pendente tab with a red error badge showing the error message",
+        "Error badge is clickable and shows full error text in an expanded section",
+        "Orders with statusUnificado=executando for more than 2 minutes show an amber 'Executando...' badge with elapsed time",
+        "The 2-minute check uses criadoEm or processadoEm timestamp compared to current time",
         "Typecheck passes"
       ],
       "priority": 16,
-      "passes": true,
-      "notes": "The trocar-fornecedor action on the backend sets ordem_compra_id=null and compra_status='aguardando_compra' with the new fornecedor. The item will appear in Aguardando Compra under the new supplier name."
+      "passes": false,
+      "notes": "The erro and executando orders should appear mixed into the Pendente tab, not in a separate tab. Use the pedido's erro field for the error message. For stuck detection, compare Date.now() with the processadoEm timestamp."
+    },
+    {
+      "id": "US-017",
+      "title": "UI — Separacao page uses AppShell",
+      "description": "As a developer, I want the Separacao page to use AppShell like all other pages.",
+      "acceptanceCriteria": [
+        "Find or create AppShell component that other pages use for header/layout",
+        "Replace manual header markup in src/app/separacao/page.tsx with AppShell",
+        "AppShell supports headerRight prop for extra elements (user badge, logout) that Separacao needs",
+        "max-w-5xl is preserved (Separacao uses wider layout)",
+        "Header matches visual pattern of other pages (Compras, Configuracoes, Monitoramento)",
+        "No visual regression in the separacao page",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "Check if AppShell already exists in src/components/. If not, extract the common header pattern from other pages and create it. Separacao needs max-w-5xl while others use max-w-3xl, so AppShell needs a maxWidth prop or similar."
+    },
+    {
+      "id": "US-018",
+      "title": "UI — Login page uses design tokens",
+      "description": "As a developer, I want the login page to use CSS variable-based design tokens instead of hardcoded zinc classes.",
+      "acceptanceCriteria": [
+        "In src/app/login/page.tsx, replace all border-zinc-200 with border-line, bg-zinc-50 with bg-surface, bg-zinc-100 with bg-paper, text-zinc-700 with text-ink, text-zinc-500 with text-ink-muted, and similar semantic token classes",
+        "Verify that the design token CSS variables exist in the global stylesheet (globals.css or similar). If they don't exist, create them with values matching the current zinc palette",
+        "Login page renders identically in light mode after the change",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": "Check globals.css or tailwind config for existing design tokens. If tokens like bg-surface, text-ink etc don't exist yet, define them as CSS custom properties and add to Tailwind config."
+    },
+    {
+      "id": "US-019",
+      "title": "Performance — Embalagem fetches only selected pedidos",
+      "description": "As a developer, I want the embalagem page to fetch only the selected pedidos, not all separado orders.",
+      "acceptanceCriteria": [
+        "In src/app/separacao/embalagem/page.tsx, pass pedido_ids as query parameter to the API instead of fetching all separado orders",
+        "The API (src/app/api/separacao/ or dedicated endpoint) accepts pedido_ids filter and returns only those orders",
+        "No full-table scan of all separado orders for embalagem",
+        "Embalagem page still works correctly (pedidos load, scan works, completion works)",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": "Read embalagem/page.tsx to understand how pedido_ids are passed (likely from URL search params or state). Then modify the fetch to pass them as query params."
+    },
+    {
+      "id": "US-020",
+      "title": "UI — Rename platform to Gestao de Pedidos",
+      "description": "As a developer, I want the platform name distinct from the SISO module name.",
+      "acceptanceCriteria": [
+        "In src/app/layout.tsx, metadata title changed from 'SISO Platform' to 'Gestao de Pedidos'",
+        "Home page (src/app/page.tsx) header shows 'Gestao de Pedidos' as platform name",
+        "The SISO module card keeps title 'SISO' with subtitle 'Separacao Inteligente de Ordens'",
+        "src/app/siso/page.tsx header keeps 'SISO' as module name",
+        "Browser tab shows 'Gestao de Pedidos' on home, 'SISO' on the module page",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": "Simple text changes across layout.tsx, page.tsx, and siso/page.tsx."
+    },
+    {
+      "id": "US-021",
+      "title": "UI — Monitoring shows empresa_nome instead of filial",
+      "description": "As a developer, I want the monitoring page to show empresa name instead of the deprecated filial field.",
+      "acceptanceCriteria": [
+        "In the monitoring types, replace filial: string | null with empresaNome: string | null",
+        "In src/app/api/monitoring/route.ts, join siso_empresas to resolve empresa name instead of using filial",
+        "Monitoring UI renders empresa name badge instead of filial badge",
+        "No references to filial in monitoring code",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": "The monitoring types may be inline in monitoramento/page.tsx or in types/index.ts. Check both."
+    },
+    {
+      "id": "US-022",
+      "title": "Cleanup — Standardize refresh intervals",
+      "description": "As a developer, I want consistent auto-refresh intervals defined as named constants.",
+      "acceptanceCriteria": [
+        "Create or update src/lib/constants.ts with named constants: REFRESH_INTERVAL_LIST = 30000 (for list pages), REFRESH_INTERVAL_ACTIVE = 10000 (for active workflow pages), REFRESH_INTERVAL_MONITORING = 30000",
+        "Add comments explaining the rationale for each interval",
+        "Update SISO page, Separacao page, Compras page to use REFRESH_INTERVAL_LIST",
+        "Update Checklist and Embalagem pages to use REFRESH_INTERVAL_ACTIVE",
+        "Update Monitoramento to use REFRESH_INTERVAL_MONITORING",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": "Search for refetchInterval across all page files to find current values and update them to use the constants."
     }
   ]
 }

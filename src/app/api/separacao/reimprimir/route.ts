@@ -5,6 +5,7 @@ import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { obterEtiquetasAgrupamento } from "@/lib/tiny-api";
 import { enviarImpressao, resolverImpressora } from "@/lib/printnode";
 import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
+import { getConfig } from "@/lib/config";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "separacao-reimprimir";
@@ -68,7 +69,7 @@ export async function POST(request: NextRequest) {
   }
 
   // 6. Resolve printer
-  const printNodeApiKey = process.env.PRINTNODE_API_KEY;
+  const printNodeApiKey = await getConfig("PRINTNODE_API_KEY");
   if (!printNodeApiKey) {
     logger.error(LOG_SOURCE, "PRINTNODE_API_KEY não configurada");
     return NextResponse.json({ status: "falhou", error: "impressora_nao_configurada" }, { status: 500 });

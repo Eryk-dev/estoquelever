@@ -15,6 +15,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { criarAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
 import { enviarImpressao, resolverImpressora } from "@/lib/printnode";
+import { getConfig } from "@/lib/config";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "etiqueta-service";
@@ -68,7 +69,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
     await setStatus(supabase, pedidoId, "imprimindo");
 
     // 5. Resolve printer
-    const printNodeApiKey = process.env.PRINTNODE_API_KEY;
+    const printNodeApiKey = await getConfig("PRINTNODE_API_KEY");
     if (!printNodeApiKey) {
       await setStatus(supabase, pedidoId, "falhou");
       logger.error(LOG_SOURCE, "PRINTNODE_API_KEY não configurada", { pedidoId });

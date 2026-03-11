@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { listarImpressoras } from "@/lib/printnode";
+import { getConfig } from "@/lib/config";
 
 /**
  * GET /api/admin/printnode/printers
@@ -25,12 +26,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Acesso restrito a administradores" }, { status: 403 });
   }
 
-  // Check env var
-  const apiKey = process.env.PRINTNODE_API_KEY;
+  const apiKey = await getConfig("PRINTNODE_API_KEY");
   if (!apiKey) {
     return NextResponse.json(
-      { error: "PRINTNODE_API_KEY não configurada" },
-      { status: 500 },
+      { error: "API Key do PrintNode não configurada. Adicione na seção Impressão." },
+      { status: 400 },
     );
   }
 

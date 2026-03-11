@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import {
   Check,
+  Copy,
   ExternalLink,
   Eye,
   EyeOff,
@@ -66,6 +67,15 @@ export function ConnectionCard({
   const [testing, setTesting] = useState(false);
 
   const hasCredentials = connection.has_client_id && connection.has_client_secret;
+
+  const redirectUrl = typeof window !== "undefined"
+    ? `${window.location.origin}/api/tiny/oauth/callback`
+    : "";
+
+  function handleCopyRedirectUrl() {
+    navigator.clipboard.writeText(redirectUrl);
+    toast.success("URL copiada!");
+  }
 
   async function handleSaveCredentials() {
     if (!clientId.trim() || !clientSecret.trim()) {
@@ -208,6 +218,26 @@ export function ConnectionCard({
                 {hasCredentials ? "Alterar" : "Configurar"}
               </button>
             </div>
+            {!connection.is_authorized && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-800 dark:bg-blue-950/30">
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                  URL de redirecionamento (cadastrar no Tiny)
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <code className="flex-1 break-all rounded bg-white px-2 py-1 font-mono text-[11px] text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                    {redirectUrl}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={handleCopyRedirectUrl}
+                    className="shrink-0 rounded p-1 text-blue-500 transition-colors hover:bg-blue-100 dark:hover:bg-blue-900"
+                    title="Copiar URL"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               {hasCredentials && !connection.is_authorized && (
                 <button

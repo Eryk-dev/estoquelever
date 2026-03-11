@@ -217,3 +217,17 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - The 2-minute threshold is checked client-side with `Date.now() - timestamp > 2 * 60 * 1000`
   - StatusBanner returns null for normal `pendente` orders (no banner needed)
 ---
+
+## 2026-03-11 - US-017
+- Separacao page now uses `<AppShell>` instead of manual header markup
+- Added `maxWidth` prop to AppShell (default "max-w-3xl", Separacao uses "max-w-5xl")
+- `mainClassName="space-y-4 py-4"` preserves the existing spacing
+- User badge + logout moved to `headerRight` prop
+- Removed manual loading/auth redirect (AppShell handles it)
+- Removed unused imports: `useEffect`, `Home`, `Link`
+- Files changed: `src/components/app-shell.tsx`, `src/app/separacao/page.tsx`
+- **Learnings for future iterations:**
+  - AppShell's `maxWidth` prop applies to BOTH the header and main containers
+  - AppShell handles auth redirect internally — pages don't need `useEffect` for login redirect
+  - `mainClassName` is applied after `maxWidth` so it can override padding/spacing but not width
+---

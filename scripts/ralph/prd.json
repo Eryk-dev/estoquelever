@@ -258,7 +258,7 @@
         "Typecheck passes"
       ],
       "priority": 17,
-      "passes": false,
+      "passes": true,
       "notes": "Check if AppShell already exists in src/components/. If not, extract the common header pattern from other pages and create it. Separacao needs max-w-5xl while others use max-w-3xl, so AppShell needs a maxWidth prop or similar."
     },
     {

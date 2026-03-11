@@ -9,6 +9,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { FornecedorCard } from "@/components/compras/fornecedor-card";
+import { OrdemCompraCard } from "@/components/compras/ordem-compra-card";
 import { useAuth } from "@/lib/auth-context";
 
 import type { Tab, CompraItemAgrupado } from "@/types";
@@ -25,6 +26,27 @@ interface FornecedorGroup {
   fornecedor: string;
   empresa_id: string | null;
   itens: CompraItemAgrupado[];
+}
+
+interface OcData {
+  id: string;
+  fornecedor: string;
+  status: string;
+  observacao: string | null;
+  comprado_por_nome: string | null;
+  comprado_em: string | null;
+  total_itens: number;
+  itens_recebidos: number;
+  itens: Array<{
+    id: string;
+    sku: string;
+    descricao: string;
+    quantidade: number;
+    compra_status: string | null;
+    compra_quantidade_recebida: number;
+    pedido_id: string;
+    numero_pedido: string;
+  }>;
 }
 
 interface ComprasResponse {
@@ -147,8 +169,24 @@ export default function ComprasPage() {
                     cargo={cargo}
                   />
                 ))}
-              {/* Comprado and Indisponivel tabs: US-014, US-016 */}
-              {activeTab !== "aguardando_compra" && (
+              {activeTab === "comprado" &&
+                (items as OcData[]).map((oc, idx) => (
+                  <OrdemCompraCard
+                    key={oc.id}
+                    id={oc.id}
+                    index={idx + 1}
+                    fornecedor={oc.fornecedor}
+                    status={oc.status}
+                    observacao={oc.observacao}
+                    comprado_por_nome={oc.comprado_por_nome}
+                    comprado_em={oc.comprado_em}
+                    total_itens={oc.total_itens}
+                    itens_recebidos={oc.itens_recebidos}
+                    itens={oc.itens}
+                  />
+                ))}
+              {/* Indisponivel tab: US-016 */}
+              {activeTab === "indisponivel" && (
                 <pre className="rounded-lg border border-line bg-paper p-4 text-xs text-ink-muted overflow-auto max-h-[60vh]">
                   {JSON.stringify(items, null, 2)}
                 </pre>

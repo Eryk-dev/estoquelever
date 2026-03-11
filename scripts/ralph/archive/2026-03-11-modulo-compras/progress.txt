@@ -1,0 +1,275 @@
+# Ralph Progress Log
+Started: Wed Mar 11 12:11:58 -03 2026
+---
+
+## Codebase Patterns
+- All types go in `src/types/index.ts` — no barrel exports, import directly
+- PedidoItem interface maps 1:1 to siso_pedido_itens columns (snake_case)
+- Domain types use Portuguese names, technical types use English
+- Typecheck: `npx tsc --noEmit` (silent output = pass)
+- `siso_pedido_itens.id` is `bigint` (not uuid) — string representation in TypeScript
+- `fornecedor_oc` already existed on siso_pedido_itens — always verify columns before migrations
+- `status_separacao` CHECK constraint name: `siso_pedidos_status_separacao_check`
+- Supabase apply_migration is transactional — all-or-nothing
+- `ProcessedItem` fields in webhook-processor.ts are spread directly into siso_pedido_itens upsert — add a field there to auto-persist to DB
+- `fornecedor_oc` is already populated during webhook enrichment via `getFornecedorBySku()`
+- Supabase `.select()` with FK join uses `table_name(columns)` syntax — e.g. `siso_pedidos(numero)`
+- GET API routes in this codebase don't enforce server-side auth (PIN auth is client-side only). Add `cargo` query param for lightweight checks.
+- `siso_fila_execucao` insert requires: pedido_id, tipo, empresa_id, decisao (filial_execucao/operador are optional)
+- Use `{ count: "exact", head: true }` for count-only queries in Supabase
+- Supabase `.single()` returns error code `PGRST116` when no rows found — use for 404 detection
+- Next.js 16 dynamic route params are a Promise — `const { param } = await params`
+- AppShell handles login redirect + loading state; for custom cargo checks, add logic inside AppShell children
+- GET /api/compras returns `{ counts, data }` — counts has all 3 tab badge numbers regardless of requested status
+- Supabase nested FK joins work 2+ levels deep: `table(col, nested_table(col))` — cast result with `as unknown as T`
+- `siso_pedido_item_estoques` numeric columns need `Number()` conversion for JS arithmetic
+
+---
+
+## 2026-03-11 - US-001
+- Added compras module types: OrdemCompra, OrdemCompraStatus, CompraStatus, CompraItemAgrupado, ConferenciaItem
+- Updated PedidoItem with 8 new compra-related fields (produto_id_tiny, fornecedor_oc, ordem_compra_id, compra_status, compra_quantidade_recebida, comprado_em, comprado_por, recebido_em, recebido_por)
+- Files changed: `src/types/index.ts`
+- **Learnings for future iterations:**
+  - PedidoItem fields are snake_case matching DB columns directly
+  - CompraStatus includes `null` as a union member (not optional — explicitly null when no compra flow)
+  - OrdemCompraStatus is separate from CompraStatus (OC has 'parcialmente_recebido', item doesn't)
+---
+
+## 2026-03-11 - US-002
+- Created migration `supabase/migrations/20260311_modulo_compras.sql`
+- Created table `siso_ordens_compra` with status CHECK constraint, FK to siso_empresas and siso_usuarios
+- Added 8 compra columns to `siso_pedido_itens` (produto_id_tiny, ordem_compra_id, compra_status, compra_quantidade_recebida, comprado_em, comprado_por, recebido_em, recebido_por)
+- Created 5 indexes (2 on ordens_compra, 3 partial on pedido_itens)
+- Updated `status_separacao` CHECK constraint on siso_pedidos to include 'aguardando_compra'
+- Applied via Supabase MCP apply_migration
+- Files changed: `supabase/migrations/20260311_modulo_compras.sql`
+- **Learnings for future iterations:**
+  - `fornecedor_oc` column already existed on siso_pedido_itens from original schema — always check existing columns before ALTER TABLE ADD COLUMN
+  - Supabase apply_migration runs as a transaction — if any statement fails, the whole migration rolls back
+  - `siso_pedido_itens.id` is `bigint`, not `uuid` — item references use string representation of bigint
+  - `status_separacao` on siso_pedidos has a named CHECK constraint `siso_pedidos_status_separacao_check` — must DROP IF EXISTS before re-adding
+---
+
+## 2026-03-11 - US-003
+- Added `produto_id_tiny` field to `ProcessedItem` interface in webhook-processor.ts
+- Set `produto_id_tiny = item.produto.id` (origin empresa's Tiny product ID) during enrichment
+- Added warning log when `produto_id_tiny` cannot be resolved
+- `fornecedor_oc` was already being saved via `ProcessedItem` (line 659 in enrichment, spread into upsert)
+- Files changed: `src/lib/webhook-processor.ts`
+- **Learnings for future iterations:**
+  - `ProcessedItem` fields are spread directly into the `siso_pedido_itens` upsert — adding a field to `ProcessedItem` automatically persists it to DB
+  - `produto_id_tiny` = `item.produto.id` for origin empresa items (same Tiny product ID as `produto_id`)
+  - `fornecedor_oc` was already being populated by `getFornecedorBySku()` before this story — no extra work needed
+  - For kit components, each expanded item gets its own `produto_id_tiny` from the kit component's Tiny product ID
+---
+
+## 2026-03-11 - US-004
+- After `executarMarcadoresOnly` (OC flow), added DB updates: set `status_separacao='aguardando_compra'` on siso_pedidos and `compra_status='aguardando_compra'` on all siso_pedido_itens
+- Main pedido `status` still goes to 'concluido' (handled by processQueue after executeJob returns)
+- Changed log source from 'worker' to 'execution-worker' per AC requirement
+- Files changed: `src/lib/execution-worker.ts`
+- **Learnings for future iterations:**
+  - The pedido `status='concluido'` update happens in `processQueue` (lines 133-140), NOT inside `executeJob` — so adding updates inside `executarMarcadoresOnly` doesn't interfere with the main status flow
+  - `status_separacao` is separate from `status` — it tracks the separacao/compra lifecycle while `status` tracks the overall pedido lifecycle
+  - The OC flow (`executarMarcadoresOnly`) is much simpler than propria/transferencia — just marcadores, no NF or stock posting
+---
+
+## 2026-03-11 - US-005
+- Created `src/app/api/compras/route.ts` with GET handler
+- Three status modes: aguardando_compra (grouped by fornecedor, consolidated by SKU), comprado (OCs with items), indisponivel (flat list)
+- Returns `{ counts, data }` — counts has tab badge numbers for all 3 statuses
+- Aguardando compra consolidates same SKU+fornecedor across pedidos (sums quantities, collects pedido references)
+- Comprado fetches OCs with joined items and usuario name
+- Auth check via `cargo` query param (lightweight — matches codebase's client-side auth pattern)
+- Files changed: `src/app/api/compras/route.ts`
+- **Learnings for future iterations:**
+  - Supabase FK join syntax: `siso_pedidos(numero, empresa_origem_id)` in `.select()` — returns nested object
+  - For named FK joins (when multiple FKs to same table): `siso_usuarios:comprado_por(nome)` — use `table:column(fields)` syntax
+  - `{ count: "exact", head: true }` returns only the count without data — good for badge counts
+  - Raw Supabase types need `as unknown as T[]` cast due to generic typing — define local interfaces for raw DB shapes
+  - The `items` result from Supabase join queries have complex nested types — cast to explicit interfaces rather than fighting TS inference
+---
+
+## 2026-03-11 - US-006
+- Created `src/app/api/compras/ordens/route.ts` with POST handler
+- Creates an OC in `siso_ordens_compra` (status='comprado') and links all `aguardando_compra` items for that fornecedor
+- Validates: required fields (fornecedor, empresa_id, usuario_id), auth (admin/comprador), items exist for fornecedor
+- Returns 400 if no items found for the given fornecedor
+- Returns created OC + count of linked items
+- Files changed: `src/app/api/compras/ordens/route.ts`
+- **Learnings for future iterations:**
+  - POST endpoints follow same pattern: parse JSON body, validate, auth check via `cargo` field, createServiceClient(), try/catch with logger
+  - Supabase `.update().select("id")` returns updated rows — use `.length` for count of affected rows
+  - OC creation and item linking are two separate operations (insert OC, then update items) — not transactional but acceptable for this volume
+---
+
+## 2026-03-11 - US-007
+- Created `src/app/api/compras/conferencia/[ordemCompraId]/route.ts` with GET handler
+- Fetches OC by ID (404 if not found via PGRST116 error code), then fetches items with compra_status='comprado'
+- Calculates quantidade_restante = quantidade - compra_quantidade_recebida for each item
+- Joins with siso_pedidos for numero_pedido reference
+- Returns OC info (with comprado_por_nome from siso_usuarios join) + ConferenciaItem array
+- Auth check via cargo query param (admin/comprador)
+- Files changed: `src/app/api/compras/conferencia/[ordemCompraId]/route.ts`
+- **Learnings for future iterations:**
+  - Supabase `.single()` returns error code `PGRST116` when no rows found — use this for 404 detection
+  - Next.js 16 dynamic route params are a Promise — use `const { param } = await params`
+  - ConferenciaItem maps 1:1 to each siso_pedido_itens row (no consolidation like aguardando_compra) — each item has its own pedido reference
+---
+
+## 2026-03-11 - US-008
+- Created `src/app/api/compras/conferir/route.ts` with POST handler
+- Processes receiving: for each item with quantidade_recebida > 0, calls Tiny movimentarEstoque tipo='E' if produto_id_tiny exists
+- Uses waitForRateLimit + registerApiCall before each Tiny call, 500ms sleep between calls
+- If Tiny call fails for an item, logs error and continues with remaining items (no abort)
+- Updates compra_quantidade_recebida in DB; sets compra_status='recebido' when fully received
+- Items without produto_id_tiny: logs warning, skips Tiny call, still updates DB quantity
+- Updates OC status: all items recebido → 'recebido', mix → 'parcialmente_recebido'
+- Returns summary: { processados, erros, erros_detalhe, itens_sem_produto_id }
+- Auth check via cargo field (admin/comprador)
+- Files changed: `src/app/api/compras/conferir/route.ts`
+- **Learnings for future iterations:**
+  - `movimentarEstoque` in tiny-api.ts accepts `deposito: { id: number }` (object, not just ID) — match this format when passing deposito
+  - Get deposito_id from `siso_tiny_connections WHERE empresa_id AND ativo=true` — same pattern as execution-worker.ts
+  - For conferir, fetch items individually by ID to get current `compra_quantidade_recebida` (not stale) before incrementing
+  - Sleep between Tiny calls uses index check `idx < length - 1` to avoid unnecessary sleep after last item
+---
+
+## 2026-03-11 - US-009
+- Created `src/lib/compras-release.ts` with `checkAndReleasePedidos(itemIds)` function
+- Logic: from item IDs → get distinct pedido_ids → for each pedido check if ALL compra_status items are 'recebido' → if yes, release pedido
+- Release = update siso_pedidos (decisao_final='propria', status='executando', status_separacao='aguardando_nf') + insert job in siso_fila_execucao (tipo='lancar_estoque', decisao='propria')
+- Integrated into POST /api/compras/conferir: tracks processedItemIds, calls checkAndReleasePedidos after OC status update
+- Response now includes `pedidos_liberados` array
+- Only items with non-null compra_status are checked — normal items don't block release
+- Skip pedidos not in 'aguardando_compra' or 'comprado' status_separacao to avoid double-release
+- Files changed: `src/lib/compras-release.ts` (new), `src/app/api/compras/conferir/route.ts`
+- **Learnings for future iterations:**
+  - `siso_fila_execucao` insert needs: pedido_id, tipo, empresa_id, decisao — filial_execucao and operador fields are optional
+  - Release uses decisao='propria' because after OC receiving, the stock is now local — the existing executarSaidaPropria flow handles NF + stock posting
+  - Filter by `status_separacao IN ('aguardando_compra', 'comprado')` to prevent re-releasing already released pedidos
+  - Use `.not("compra_status", "is", null)` in Supabase to filter for non-null values
+---
+
+## 2026-03-11 - US-010
+- Created 3 item action endpoints under `/api/compras/itens/[itemId]/`:
+  - `devolver/route.ts` — returns item to "Aguardando Compra" queue, unlinks from OC
+  - `indisponivel/route.ts` — marks item as unavailable, unlinks from OC
+  - `trocar-fornecedor/route.ts` — changes item's fornecedor_oc, optionally moves to new OC or back to queue
+- All three check if old OC becomes empty after removal → sets OC status to 'cancelado'
+- All three follow same auth pattern (cargo check) and error handling
+- Files changed: `src/app/api/compras/itens/[itemId]/devolver/route.ts` (new), `src/app/api/compras/itens/[itemId]/indisponivel/route.ts` (new), `src/app/api/compras/itens/[itemId]/trocar-fornecedor/route.ts` (new)
+- **Learnings for future iterations:**
+  - Next.js 16 dynamic route params: `{ params }: { params: Promise<{ itemId: string }> }` — always await params
+  - All item action endpoints share same OC cleanup pattern: after unlinking item, count remaining items in OC, cancel if 0
+  - `indisponivel` also unlinks from OC (sets ordem_compra_id=null) so the item doesn't appear in OC conferencia
+  - `trocar-fornecedor` with `nova_ordem_compra_id` moves directly to another OC; without it, item goes back to aguardando_compra with new fornecedor
+---
+
+## 2026-03-11 - US-011
+- Added compras cleanup to the cancellation handler in `src/app/api/webhook/tiny/route.ts`
+- When a pedido with `status_separacao` = 'aguardando_compra' or 'comprado' is cancelled:
+  - Clears `compra_status` and `ordem_compra_id` on all pedido items with compra data
+  - Checks for items with `compra_quantidade_recebida > 0` (stock already entered in Tiny) — logs warning per item
+  - Sets `compra_estoque_lancado_alerta = true` on the pedido for UI alerting
+  - Checks each affected OC — cancels OC if no remaining items
+- Created migration `20260311_add_compra_estoque_lancado_alerta.sql` adding boolean column to siso_pedidos
+- Added `compra_estoque_lancado_alerta` to Pedido type in `src/types/index.ts`
+- Files changed: `src/app/api/webhook/tiny/route.ts`, `src/types/index.ts`, `supabase/migrations/20260311_add_compra_estoque_lancado_alerta.sql` (new)
+- **Learnings for future iterations:**
+  - Cancellation handler is in `src/app/api/webhook/tiny/route.ts` (not webhook-processor.ts) — lines 131+
+  - `status_separacao` check values for compras flow: 'aguardando_compra' or 'comprado' (not the OC statuses)
+  - Compras cleanup must happen BEFORE the pedido status update (so the item query still finds correct pedido)
+  - Same OC emptiness check pattern as item action endpoints: count remaining items, cancel if 0
+  - No stock reversal on cancellation — stock entered in Tiny stays, only an informational alert is stored
+---
+
+## 2026-03-11 - US-012
+- Replaced existing pre-approval compras page with new post-approval compras module
+- New page uses tabs (Aguardando Compra, Comprado, Indisponíveis) with counter badges from GET /api/compras
+- React Query fetches data with 30s refetchInterval, passing active tab status as query param
+- Auth guard: shows "Acesso negado" if cargo is not admin/comprador (AppShell handles login redirect)
+- Uses AppShell, Tabs, EmptyState, LoadingSpinner — all existing components
+- Placeholder content (JSON pre) for tab data — real components will be added in US-013, US-014, US-016
+- Files changed: `src/app/compras/page.tsx`
+- **Learnings for future iterations:**
+  - AppShell handles login redirect and loading state — no need to duplicate that logic in pages
+  - AppShell has `requireAdmin` but no generic `requireCargo` — for custom cargo checks, add a check inside the children
+  - The GET /api/compras response is `{ counts, data }` — counts has all 3 tab badge numbers regardless of which status is requested
+  - CompraTab type aligns with API status param values: 'aguardando_compra' | 'comprado' | 'indisponivel'
+  - The old compras page was a pre-approval OC view (fetching pending pedidos); the new one is post-approval (fetching from siso_ordens_compra and siso_pedido_itens compra fields)
+---
+
+## 2026-03-11 - US-013
+- Created `src/components/compras/fornecedor-card.tsx` — supplier card with SKU list, consolidated quantities, pedido badges
+- Card features: expandable SKU breakdown (click to see per-pedido quantities), "Copiar SKUs" (tab-separated clipboard), "Marcar como Comprado" with observacao form
+- Updated `src/app/compras/page.tsx` to render FornecedorCard for aguardando_compra tab; other tabs still show JSON placeholder
+- Files changed: `src/components/compras/fornecedor-card.tsx` (new), `src/app/compras/page.tsx`
+- **Learnings for future iterations:**
+  - API returns aguardando_compra data as `FornecedorGroup[]` — each group has `{ fornecedor, empresa_id, itens: CompraItemAgrupado[] }`
+  - FornecedorCard receives `usuario_id` and `cargo` from the page (from useAuth) — needed for POST /api/compras/ordens
+  - Use `queryClient.invalidateQueries({ queryKey: ["compras"] })` to refresh all compras tabs after mutation
+  - Copiar SKUs uses tab-separated format: `SKU\tdescricao\tquantidade` per line
+---
+
+## 2026-03-11 - US-014
+- Created `src/components/compras/ordem-compra-card.tsx` — OC card with item list, status badges, progress indicator, and conferir button
+- Card shows: OC header with fornecedor, meta (comprado por / data / relative time), observacao, item list with status badges, conferir button
+- Parcialmente recebido OCs show progress indicator (X/Y recebidos) in header
+- Items show individual status badges (Comprado/Parcial/Recebido) and pedido number badges
+- Conferir Recebimento button navigates to `/compras/conferencia/[id]` via router.push
+- Updated `src/app/compras/page.tsx` to render OrdemCompraCard for comprado tab (indisponivel still placeholder for US-016)
+- Files changed: `src/components/compras/ordem-compra-card.tsx` (new), `src/app/compras/page.tsx`
+- **Learnings for future iterations:**
+  - API returns OC data with `comprado_por_nome` (string from siso_usuarios join) — not the UUID
+  - OC sequential number (#N) is derived from list index (idx+1) since the DB uses UUIDs
+  - Status badge mapping: `comprado` → amber, `parcialmente_recebido` → blue, `recebido` → emerald
+  - `useRouter` from `next/navigation` for programmatic navigation in App Router
+---
+
+## 2026-03-11 - US-015
+- Created `src/app/compras/conferencia/[ordemCompraId]/page.tsx` — receiving/checking form page
+- Fetches OC data via GET /api/compras/conferencia/[ordemCompraId] using React Query (no refetchInterval)
+- Shows OC header with fornecedor, comprado por, date, observacao
+- Each item shows: SKU, descricao, pedido badges with quantities, "Esperado" count, number input pre-filled with quantidade_restante
+- Already-received items show blue "Já recebido: N" indicator
+- Confirm button: disabled when all quantities are 0, loading state with spinner during POST
+- On success: toast with processados count + pedidos liberados, navigates to /compras
+- On errors: toast.error with error details (duration 8000ms for readability)
+- Empty state when all items already received
+- Auth guard matches compras page pattern (AppShell + cargo check)
+- Files changed: `src/app/compras/conferencia/[ordemCompraId]/page.tsx` (new)
+- **Learnings for future iterations:**
+  - `useParams<{ ordemCompraId: string }>()` for dynamic route params in Next.js 16 client components — no await needed (unlike server-side params)
+  - Use controlled state for quantity inputs: initialize from API data via getQuantity helper, track user changes in Record<string, number>
+  - Don't use refetchInterval on forms with user input — it would reset typed values
+  - POST /api/compras/conferir response includes `pedidos_liberados` array — show count in success toast
+---
+
+## 2026-03-11 - US-016
+- Added per-item action dropdown in `ordem-compra-card.tsx` with 3 options: Devolver pra fila, Marcar indisponível, Trocar fornecedor
+- Dropdown uses MoreVertical icon with backdrop-close pattern, inline trocar-fornecedor form
+- Each action calls the corresponding POST /api/compras/itens/[itemId]/ endpoint, invalidates React Query cache, shows toast
+- Replaced indisponivel tab JSON placeholder in `compras/page.tsx` with proper item list showing SKU, descricao, fornecedor, quantidade, pedido badge, and red "Indisponível" badge
+- Files changed: `src/components/compras/ordem-compra-card.tsx`, `src/app/compras/page.tsx`
+- **Learnings for future iterations:**
+  - Dropdown menus: use fixed backdrop div + absolute positioned menu for click-outside-to-close pattern (no external library needed)
+  - Item action endpoints accept `{ cargo }` in body for auth check — same pattern as POST endpoints
+  - `confirm()` is acceptable for destructive actions (indisponivel) in this codebase — no custom modal needed
+  - Trocar fornecedor inline form within dropdown: use autoFocus + Enter key handler for quick interaction
+---
+
+## 2026-03-11 - US-010 (Coesao PRD)
+- Added dynamic stock fetching from `siso_pedido_item_estoques` in GET /api/pedidos
+- Fetches with nested FK join: `siso_pedido_item_estoques → siso_empresas → siso_galpoes`
+- Groups stock by (pedido_id, produto_id, galpao_id) and aggregates disponivel/saldo/reservado across empresas in same galpao
+- Each item now includes `estoquesPorGalpao` array with galpaoId, galpaoNome, disponivel, saldo, reservado, depositoId, depositoNome, localizacao, atende
+- Legacy estoqueCWB/estoqueSP/cwbAtende/spAtende fields kept in response
+- Files changed: `src/app/api/pedidos/route.ts`
+- **Learnings for future iterations:**
+  - Supabase nested FK join syntax: `siso_pedido_item_estoques.select("..., siso_empresas(galpao_id, siso_galpoes(id, nome))")` — works for 2-level deep joins
+  - `siso_pedido_item_estoques` saldo/reservado/disponivel are `numeric` type — use `Number()` to convert
+  - For aggregation by galpao: use `Map<string, Map<string, Agg>>` keyed by `pedido_id::produto_id` → galpao_id
+  - `atende` is computed per-item: `disponivel >= quantidadePedida` (the item's ordered quantity)
+---

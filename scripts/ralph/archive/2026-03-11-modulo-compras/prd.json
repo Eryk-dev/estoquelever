@@ -1,0 +1,341 @@
+{
+  "project": "SISO - Coesao da Plataforma",
+  "branchName": "ralph/coesao-plataforma",
+  "description": "Resolver inconsistencias estruturais: eliminar hardcode CWB/SP, unificar dual status tracks, dar visibilidade a erros do worker, padronizar UI, otimizar queries.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "DB Migration — Add status_unificado column",
+      "description": "As a developer, I want a new status_unificado column on siso_pedidos so that all lifecycle states live in one field.",
+      "acceptanceCriteria": [
+        "Create migration file supabase/migrations/20260311_status_unificado.sql",
+        "ALTER TABLE siso_pedidos ADD COLUMN status_unificado TEXT",
+        "ADD CHECK constraint for valid values: pendente, executando, aguardando_compra, aguardando_nf, aguardando_separacao, em_separacao, separado, embalado, cancelado, erro",
+        "ADD DEFAULT 'pendente'",
+        "Backfill existing rows: status=pendente→pendente, status=executando→executando, status=concluido + status_separacao=aguardando_compra→aguardando_compra, status=concluido + status_separacao=aguardando_nf→aguardando_nf, status=concluido + status_separacao=aguardando_separacao→aguardando_separacao, status=concluido + status_separacao=em_separacao→em_separacao, status=concluido + status_separacao=separado→separado, status=concluido + status_separacao=embalado→embalado, status=cancelado→cancelado, status=erro→erro",
+        "CREATE INDEX idx_siso_pedidos_status_unificado ON siso_pedidos(status_unificado)",
+        "Old status and status_separacao columns are NOT deleted (kept deprecated)",
+        "Apply migration via Supabase MCP tool apply_migration",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "This is the foundation for US-003 through US-008. The backfill handles all combinations of status + status_separacao. For rows where status=concluido but status_separacao is null, default to aguardando_separacao."
+    },
+    {
+      "id": "US-002",
+      "title": "Types — Add StatusUnificado and GalpaoEstoque types",
+      "description": "As a developer, I want the new unified status type and dynamic stock types defined so subsequent stories have type safety.",
+      "acceptanceCriteria": [
+        "In src/types/index.ts, add StatusUnificado type with values: pendente, executando, aguardando_compra, aguardando_nf, aguardando_separacao, em_separacao, separado, embalado, cancelado, erro",
+        "Add GalpaoEstoque interface with fields: galpaoId (string), galpaoNome (string), disponivel (number), saldo (number), reservado (number), depositoId (number | null), depositoNome (string | null), localizacao (string | undefined), atende (boolean)",
+        "Add statusUnificado field to Pedido interface as optional (statusUnificado?: StatusUnificado) — optional during transition",
+        "Keep existing StatusPedido and StatusSeparacao types (not deleted yet)",
+        "Keep existing EstoqueItem fields (not changed yet — that comes in US-011)",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "This only ADDS new types. It does NOT remove or change existing types yet. That comes later when read paths switch over."
+    },
+    {
+      "id": "US-003",
+      "title": "Backend dual-write — webhook-processor writes status_unificado",
+      "description": "As a developer, I want webhook-processor.ts to write status_unificado alongside old fields so new and old columns stay in sync.",
+      "acceptanceCriteria": [
+        "In webhook-processor.ts, every place that writes status or status_separacao to siso_pedidos must ALSO write status_unificado with the corresponding unified value",
+        "When processor saves a new pedido with status=pendente, also set status_unificado=pendente",
+        "When cancellation sets status=cancelado, also set status_unificado=cancelado",
+        "Import StatusUnificado type if needed for type safety",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Read webhook-processor.ts carefully to find ALL places where status or status_separacao is written. The processor primarily writes status=pendente for new orders and status=cancelado for cancellations."
+    },
+    {
+      "id": "US-004",
+      "title": "Backend dual-write — execution-worker writes status_unificado",
+      "description": "As a developer, I want execution-worker.ts to write status_unificado alongside old fields.",
+      "acceptanceCriteria": [
+        "In execution-worker.ts, every update to status or status_separacao must ALSO write status_unificado",
+        "executando state: status_unificado=executando",
+        "concluido + aguardando_nf: status_unificado=aguardando_nf",
+        "concluido + aguardando_compra: status_unificado=aguardando_compra",
+        "concluido + aguardando_separacao: status_unificado=aguardando_separacao",
+        "erro state: status_unificado=erro",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Read execution-worker.ts to find ALL places where status or status_separacao is updated. The worker handles propria (NF + stock), transferencia (NF + deduct), and OC (marcadores only) flows."
+    },
+    {
+      "id": "US-005",
+      "title": "Backend dual-write — approval route writes status_unificado",
+      "description": "As a developer, I want /api/pedidos/aprovar to write status_unificado=executando alongside the old status field.",
+      "acceptanceCriteria": [
+        "In src/app/api/pedidos/aprovar/route.ts, when setting status=executando also set status_unificado=executando",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Simple change — find the update query and add status_unificado to it."
+    },
+    {
+      "id": "US-006",
+      "title": "Backend dual-write — separacao APIs write status_unificado",
+      "description": "As a developer, I want all separacao API routes to write status_unificado alongside status_separacao.",
+      "acceptanceCriteria": [
+        "Find ALL API routes under src/app/api/separacao/ that update status_separacao on siso_pedidos",
+        "Each update must also set status_unificado to the same value (aguardando_separacao, em_separacao, separado, embalado)",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Search for all files in src/app/api/separacao/ that do .update() on siso_pedidos with status_separacao. Each one needs a parallel status_unificado write."
+    },
+    {
+      "id": "US-007",
+      "title": "Backend dual-write — compras APIs write status_unificado",
+      "description": "As a developer, I want compras API routes to write status_unificado alongside status_separacao.",
+      "acceptanceCriteria": [
+        "Find ALL API routes under src/app/api/compras/ that update status_separacao on siso_pedidos",
+        "Each update must also set status_unificado to the corresponding value",
+        "The compras-release.ts function must also set status_unificado when releasing pedidos",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Search src/app/api/compras/ and src/lib/compras-release.ts for updates to status_separacao on siso_pedidos."
+    },
+    {
+      "id": "US-008",
+      "title": "Backend dual-write — NF webhook handler writes status_unificado",
+      "description": "As a developer, I want nf-webhook-handler.ts to write status_unificado alongside status_separacao.",
+      "acceptanceCriteria": [
+        "In src/lib/nf-webhook-handler.ts, every update to status_separacao must also set status_unificado",
+        "When transitioning aguardando_nf → aguardando_separacao: set status_unificado=aguardando_separacao",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Read nf-webhook-handler.ts to find all status_separacao writes."
+    },
+    {
+      "id": "US-009",
+      "title": "API — /api/pedidos reads status_unificado and returns it",
+      "description": "As a developer, I want the pedidos API to return statusUnificado so the frontend can start consuming it.",
+      "acceptanceCriteria": [
+        "In src/app/api/pedidos/route.ts, add statusUnificado to the response mapping: statusUnificado: p.status_unificado ?? undefined",
+        "Accept ?status_unificado= query param as alternative filter (comma-separated)",
+        "When status_unificado filter is present, use .in('status_unificado', values) instead of .in('status', values)",
+        "Keep existing ?status= filter working for backwards compatibility",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "This is additive — both old and new filter params work. Frontend will switch to the new param gradually."
+    },
+    {
+      "id": "US-010",
+      "title": "API — /api/pedidos returns dynamic stock from siso_pedido_item_estoques",
+      "description": "As a developer, I want the pedidos API to return stock data from the normalized table instead of legacy CWB/SP columns.",
+      "acceptanceCriteria": [
+        "In src/app/api/pedidos/route.ts, after fetching pedido items, also fetch from siso_pedido_item_estoques for all pedido_ids",
+        "JOIN siso_pedido_item_estoques with siso_empresas (for empresa name) and siso_empresas.galpao_id with siso_galpoes (for galpao name)",
+        "Group stock data by (pedido_id, produto_id, galpao_id) — aggregate: sum disponivel, sum saldo, sum reservado across empresas in same galpao",
+        "Add estoquesPorGalpao array to each item in the response, with fields: galpaoId, galpaoNome, disponivel, saldo, reservado, depositoId (first empresa's), depositoNome (first empresa's), localizacao, atende (disponivel >= quantidadePedida)",
+        "KEEP legacy estoqueCWB, estoqueSP, cwbAtende, spAtende fields in the response (not removed yet)",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "siso_pedido_item_estoques has columns: pedido_id, produto_id, empresa_id, deposito_id, deposito_nome, saldo, reservado, disponivel, localizacao. Join with siso_empresas to get galpao_id, then with siso_galpoes to get galpao nome. Aggregate by galpao."
+    },
+    {
+      "id": "US-011",
+      "title": "Types — Add estoquesPorGalpao to EstoqueItem",
+      "description": "As a developer, I want EstoqueItem to have the dynamic estoquesPorGalpao array so the frontend can render N galpoes.",
+      "acceptanceCriteria": [
+        "In src/types/index.ts, add estoquesPorGalpao?: GalpaoEstoque[] to EstoqueItem interface",
+        "Keep ALL legacy fields (estoqueCWB, estoqueSP, cwbAtende, spAtende, localizacaoCWB, localizacaoSP) — they are NOT removed yet",
+        "The field is optional (?) because old API consumers may not have it yet",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "Simple additive type change. The field is optional during transition."
+    },
+    {
+      "id": "US-012",
+      "title": "Frontend — PedidoCard renders dynamic stock pills",
+      "description": "As a developer, I want PedidoCard to render one stock pill per galpao from estoquesPorGalpao instead of hardcoded CWB/SP.",
+      "acceptanceCriteria": [
+        "In src/components/pedido/pedido-card.tsx, when estoquesPorGalpao is available, render one EditableStockPill per galpao (not hardcoded 2)",
+        "EditableStockPill receives galpaoId and galpaoNome instead of literal 'CWB'/'SP'",
+        "When estoquesPorGalpao is NOT available (legacy data), fall back to existing CWB/SP rendering",
+        "Stock pill label shows the actual galpao name (e.g., 'CWB', 'SP', or any future name)",
+        "The relevance check (which pills to show) uses estoquesPorGalpao data when available",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "Read pedido-card.tsx carefully. The hardcoded CWB/SP logic is in: cwbAtendeTudo(), spAtendeTudo(), decisaoIsAvailable(), getRelevantLocation(), and the JSX rendering. Add a new code path that uses estoquesPorGalpao when present, keeping the old path as fallback."
+    },
+    {
+      "id": "US-013",
+      "title": "Frontend — Decision logic uses dynamic galpao data",
+      "description": "As a developer, I want decisaoIsAvailable and decision dropdown labels to use dynamic galpao data.",
+      "acceptanceCriteria": [
+        "In pedido-card.tsx, decisaoIsAvailable() checks dynamically when estoquesPorGalpao is available: propria = origin galpao atende all items, transferencia = any OTHER galpao atende all items",
+        "Decision dropdown label for transferencia shows actual target galpao name (e.g., 'Transferencia SP') not hardcoded",
+        "getRelevantLocation() uses origin galpao from estoquesPorGalpao when available",
+        "Falls back to existing CWB/SP logic when estoquesPorGalpao is not available",
+        "No 'as \"CWB\" | \"SP\"' type casts in the new code path",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "The origin galpao is determined by pedido.empresaOrigemId → find which galpao that empresa belongs to. In estoquesPorGalpao, match by galpaoId. The 'best alternative' galpao for transferencia is the non-origin galpao that atende the most items."
+    },
+    {
+      "id": "US-014",
+      "title": "API — Stock adjustment endpoint uses galpaoId",
+      "description": "As a developer, I want /api/tiny/stock/ajustar to receive galpao_id UUID instead of galpao string.",
+      "acceptanceCriteria": [
+        "In the stock adjustment endpoint (find it under src/app/api/tiny/stock/), accept galpao_id (UUID) instead of or in addition to galpao ('CWB'|'SP')",
+        "Resolve empresa and Tiny token internally: query siso_empresas WHERE galpao_id = param, then get token via siso_tiny_connections",
+        "If galpao_id is provided, use it. If old galpao string is provided, look up the galpao by name for backwards compat",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": "Find the stock adjustment endpoint. It may be at src/app/api/tiny/stock/ajustar/route.ts or similar. The key change is accepting UUID and resolving empresa/token from it."
+    },
+    {
+      "id": "US-015",
+      "title": "Frontend — SISO dashboard filters by status_unificado",
+      "description": "As a developer, I want the SISO dashboard (src/app/siso/page.tsx) to filter using status_unificado instead of the old status field.",
+      "acceptanceCriteria": [
+        "SISO page fetches with ?status_unificado= instead of ?status=",
+        "Pendente tab: status_unificado=pendente",
+        "Concluidos tab: shows manually-approved pedidos (tipoResolucao=manual) with status_unificado in aguardando_nf, aguardando_separacao, em_separacao, separado, embalado",
+        "Auto tab: shows pedidos with tipoResolucao=auto regardless of current status_unificado",
+        "Tab counts update correctly",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": "Read src/app/siso/page.tsx and the filter functions in src/lib/filtrar-pedidos.ts. The Concluidos and Auto tabs may need client-side filtering on tipoResolucao after fetching a broader set."
+    },
+    {
+      "id": "US-016",
+      "title": "Frontend — Worker error feedback in SISO dashboard",
+      "description": "As a developer, I want operators to see when orders are stuck executing or have errors.",
+      "acceptanceCriteria": [
+        "Orders with statusUnificado=erro appear in the Pendente tab with a red error badge showing the error message",
+        "Error badge is clickable and shows full error text in an expanded section",
+        "Orders with statusUnificado=executando for more than 2 minutes show an amber 'Executando...' badge with elapsed time",
+        "The 2-minute check uses criadoEm or processadoEm timestamp compared to current time",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "The erro and executando orders should appear mixed into the Pendente tab, not in a separate tab. Use the pedido's erro field for the error message. For stuck detection, compare Date.now() with the processadoEm timestamp."
+    },
+    {
+      "id": "US-017",
+      "title": "UI — Separacao page uses AppShell",
+      "description": "As a developer, I want the Separacao page to use AppShell like all other pages.",
+      "acceptanceCriteria": [
+        "Find or create AppShell component that other pages use for header/layout",
+        "Replace manual header markup in src/app/separacao/page.tsx with AppShell",
+        "AppShell supports headerRight prop for extra elements (user badge, logout) that Separacao needs",
+        "max-w-5xl is preserved (Separacao uses wider layout)",
+        "Header matches visual pattern of other pages (Compras, Configuracoes, Monitoramento)",
+        "No visual regression in the separacao page",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "Check if AppShell already exists in src/components/. If not, extract the common header pattern from other pages and create it. Separacao needs max-w-5xl while others use max-w-3xl, so AppShell needs a maxWidth prop or similar."
+    },
+    {
+      "id": "US-018",
+      "title": "UI — Login page uses design tokens",
+      "description": "As a developer, I want the login page to use CSS variable-based design tokens instead of hardcoded zinc classes.",
+      "acceptanceCriteria": [
+        "In src/app/login/page.tsx, replace all border-zinc-200 with border-line, bg-zinc-50 with bg-surface, bg-zinc-100 with bg-paper, text-zinc-700 with text-ink, text-zinc-500 with text-ink-muted, and similar semantic token classes",
+        "Verify that the design token CSS variables exist in the global stylesheet (globals.css or similar). If they don't exist, create them with values matching the current zinc palette",
+        "Login page renders identically in light mode after the change",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": "Check globals.css or tailwind config for existing design tokens. If tokens like bg-surface, text-ink etc don't exist yet, define them as CSS custom properties and add to Tailwind config."
+    },
+    {
+      "id": "US-019",
+      "title": "Performance — Embalagem fetches only selected pedidos",
+      "description": "As a developer, I want the embalagem page to fetch only the selected pedidos, not all separado orders.",
+      "acceptanceCriteria": [
+        "In src/app/separacao/embalagem/page.tsx, pass pedido_ids as query parameter to the API instead of fetching all separado orders",
+        "The API (src/app/api/separacao/ or dedicated endpoint) accepts pedido_ids filter and returns only those orders",
+        "No full-table scan of all separado orders for embalagem",
+        "Embalagem page still works correctly (pedidos load, scan works, completion works)",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": "Read embalagem/page.tsx to understand how pedido_ids are passed (likely from URL search params or state). Then modify the fetch to pass them as query params."
+    },
+    {
+      "id": "US-020",
+      "title": "UI — Rename platform to Gestao de Pedidos",
+      "description": "As a developer, I want the platform name distinct from the SISO module name.",
+      "acceptanceCriteria": [
+        "In src/app/layout.tsx, metadata title changed from 'SISO Platform' to 'Gestao de Pedidos'",
+        "Home page (src/app/page.tsx) header shows 'Gestao de Pedidos' as platform name",
+        "The SISO module card keeps title 'SISO' with subtitle 'Separacao Inteligente de Ordens'",
+        "src/app/siso/page.tsx header keeps 'SISO' as module name",
+        "Browser tab shows 'Gestao de Pedidos' on home, 'SISO' on the module page",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": "Simple text changes across layout.tsx, page.tsx, and siso/page.tsx."
+    },
+    {
+      "id": "US-021",
+      "title": "UI — Monitoring shows empresa_nome instead of filial",
+      "description": "As a developer, I want the monitoring page to show empresa name instead of the deprecated filial field.",
+      "acceptanceCriteria": [
+        "In the monitoring types, replace filial: string | null with empresaNome: string | null",
+        "In src/app/api/monitoring/route.ts, join siso_empresas to resolve empresa name instead of using filial",
+        "Monitoring UI renders empresa name badge instead of filial badge",
+        "No references to filial in monitoring code",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": "The monitoring types may be inline in monitoramento/page.tsx or in types/index.ts. Check both."
+    },
+    {
+      "id": "US-022",
+      "title": "Cleanup — Standardize refresh intervals",
+      "description": "As a developer, I want consistent auto-refresh intervals defined as named constants.",
+      "acceptanceCriteria": [
+        "Create or update src/lib/constants.ts with named constants: REFRESH_INTERVAL_LIST = 30000 (for list pages), REFRESH_INTERVAL_ACTIVE = 10000 (for active workflow pages), REFRESH_INTERVAL_MONITORING = 30000",
+        "Add comments explaining the rationale for each interval",
+        "Update SISO page, Separacao page, Compras page to use REFRESH_INTERVAL_LIST",
+        "Update Checklist and Embalagem pages to use REFRESH_INTERVAL_ACTIVE",
+        "Update Monitoramento to use REFRESH_INTERVAL_MONITORING",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": "Search for refetchInterval across all page files to find current values and update them to use the constants."
+    }
+  ]
+}

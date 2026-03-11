@@ -147,3 +147,36 @@ Started: Wed Mar 11 12:11:58 -03 2026
   - Filter by `status_separacao IN ('aguardando_compra', 'comprado')` to prevent re-releasing already released pedidos
   - Use `.not("compra_status", "is", null)` in Supabase to filter for non-null values
 ---
+
+## 2026-03-11 - US-010
+- Created 3 item action endpoints under `/api/compras/itens/[itemId]/`:
+  - `devolver/route.ts` — returns item to "Aguardando Compra" queue, unlinks from OC
+  - `indisponivel/route.ts` — marks item as unavailable, unlinks from OC
+  - `trocar-fornecedor/route.ts` — changes item's fornecedor_oc, optionally moves to new OC or back to queue
+- All three check if old OC becomes empty after removal → sets OC status to 'cancelado'
+- All three follow same auth pattern (cargo check) and error handling
+- Files changed: `src/app/api/compras/itens/[itemId]/devolver/route.ts` (new), `src/app/api/compras/itens/[itemId]/indisponivel/route.ts` (new), `src/app/api/compras/itens/[itemId]/trocar-fornecedor/route.ts` (new)
+- **Learnings for future iterations:**
+  - Next.js 16 dynamic route params: `{ params }: { params: Promise<{ itemId: string }> }` — always await params
+  - All item action endpoints share same OC cleanup pattern: after unlinking item, count remaining items in OC, cancel if 0
+  - `indisponivel` also unlinks from OC (sets ordem_compra_id=null) so the item doesn't appear in OC conferencia
+  - `trocar-fornecedor` with `nova_ordem_compra_id` moves directly to another OC; without it, item goes back to aguardando_compra with new fornecedor
+---
+
+## 2026-03-11 - US-011
+- Added compras cleanup to the cancellation handler in `src/app/api/webhook/tiny/route.ts`
+- When a pedido with `status_separacao` = 'aguardando_compra' or 'comprado' is cancelled:
+  - Clears `compra_status` and `ordem_compra_id` on all pedido items with compra data
+  - Checks for items with `compra_quantidade_recebida > 0` (stock already entered in Tiny) — logs warning per item
+  - Sets `compra_estoque_lancado_alerta = true` on the pedido for UI alerting
+  - Checks each affected OC — cancels OC if no remaining items
+- Created migration `20260311_add_compra_estoque_lancado_alerta.sql` adding boolean column to siso_pedidos
+- Added `compra_estoque_lancado_alerta` to Pedido type in `src/types/index.ts`
+- Files changed: `src/app/api/webhook/tiny/route.ts`, `src/types/index.ts`, `supabase/migrations/20260311_add_compra_estoque_lancado_alerta.sql` (new)
+- **Learnings for future iterations:**
+  - Cancellation handler is in `src/app/api/webhook/tiny/route.ts` (not webhook-processor.ts) — lines 131+
+  - `status_separacao` check values for compras flow: 'aguardando_compra' or 'comprado' (not the OC statuses)
+  - Compras cleanup must happen BEFORE the pedido status update (so the item query still finds correct pedido)
+  - Same OC emptiness check pattern as item action endpoints: count remaining items, cancel if 0
+  - No stock reversal on cancellation — stock entered in Tiny stays, only an informational alert is stored
+---

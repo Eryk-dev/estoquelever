@@ -145,6 +145,79 @@ export async function POST(request: NextRequest) {
         cancelUpdate.status_separacao = "cancelado";
       }
 
+      // --- Compras cleanup ---
+      const isInComprasFlow =
+        existingOrder.status_separacao === "aguardando_compra" ||
+        existingOrder.status_separacao === "comprado";
+
+      if (isInComprasFlow) {
+        // Fetch items with compra data
+        const { data: compraItems } = await supabase
+          .from("siso_pedido_itens")
+          .select("id, sku, ordem_compra_id, compra_status, compra_quantidade_recebida")
+          .eq("pedido_id", pedidoId)
+          .not("compra_status", "is", null);
+
+        if (compraItems && compraItems.length > 0) {
+          // Check if any item had stock already entered in Tiny
+          const itemsComEstoqueLancado = compraItems.filter(
+            (item) => (item.compra_quantidade_recebida ?? 0) > 0
+          );
+
+          if (itemsComEstoqueLancado.length > 0) {
+            cancelUpdate.compra_estoque_lancado_alerta = true;
+
+            for (const item of itemsComEstoqueLancado) {
+              logger.warn("webhook", "Cancelled pedido had stock already entered in Tiny", {
+                pedidoId,
+                sku: item.sku,
+                quantidade_ja_lancada: item.compra_quantidade_recebida,
+              });
+            }
+          }
+
+          // Collect distinct OC IDs before clearing
+          const affectedOcIds = [
+            ...new Set(
+              compraItems
+                .map((item) => item.ordem_compra_id)
+                .filter((id): id is string => id != null)
+            ),
+          ];
+
+          // Clear compra fields on all items
+          await supabase
+            .from("siso_pedido_itens")
+            .update({
+              compra_status: null,
+              ordem_compra_id: null,
+            })
+            .eq("pedido_id", pedidoId)
+            .not("compra_status", "is", null);
+
+          // Check each affected OC — cancel if empty
+          for (const ocId of affectedOcIds) {
+            const { count } = await supabase
+              .from("siso_pedido_itens")
+              .select("id", { count: "exact", head: true })
+              .eq("ordem_compra_id", ocId);
+
+            if (count === 0) {
+              await supabase
+                .from("siso_ordens_compra")
+                .update({ status: "cancelado" })
+                .eq("id", ocId);
+
+              logger.info("webhook", "OC cancelled (no remaining items after pedido cancellation)", {
+                ocId,
+                pedidoId,
+              });
+            }
+          }
+        }
+      }
+      // --- End compras cleanup ---
+
       await supabase
         .from("siso_pedidos")
         .update(cancelUpdate)
@@ -168,6 +241,7 @@ export async function POST(request: NextRequest) {
         pedidoId,
         empresaId: empresa.empresaId,
         previousStatus: existingOrder.status,
+        hadComprasCleanup: isInComprasFlow,
       });
 
       return NextResponse.json({

@@ -107,6 +107,8 @@ export interface Pedido {
   etiqueta_url?: string | null;
   /** Expedition grouping ID */
   agrupamento_expedicao_id?: string | null;
+  /** Alert: stock was already entered in Tiny before cancellation */
+  compra_estoque_lancado_alerta?: boolean;
 }
 
 // ─── Separacao / Embalagem ──────────────────────────────────────────────────

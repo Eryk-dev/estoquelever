@@ -605,6 +605,13 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
             {pedido.cliente.nome}
           </span>
 
+          {/* Empresa badge */}
+          {pedido.empresaOrigemNome && (
+            <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+              {pedido.empresaOrigemNome}
+            </span>
+          )}
+
           {/* E-commerce abbreviation badge */}
           <span
             className={cn(

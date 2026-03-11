@@ -62,6 +62,8 @@ export interface Pedido {
   filialOrigem: Filial;
   /** Empresa that received the order (UUID) */
   empresaOrigemId?: string;
+  /** Empresa name (e.g. "NetAir") */
+  empresaOrigemNome?: string;
   /** E-commerce order ID */
   idPedidoEcommerce: string;
   /** E-commerce name (Mercado Livre, Shopee, etc) */

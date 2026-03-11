@@ -18,7 +18,7 @@ export async function GET(request: Request) {
 
   let query = supabase
     .from("siso_pedidos")
-    .select("*")
+    .select("*, siso_empresas(nome)")
     .order("criado_em", { ascending: false })
     .limit(200);
 
@@ -62,6 +62,7 @@ export async function GET(request: Request) {
       data: p.data ?? "",
       filialOrigem: p.filial_origem ?? "CWB",
       empresaOrigemId: p.empresa_origem_id ?? undefined,
+      empresaOrigemNome: (p.siso_empresas as unknown as { nome: string } | null)?.nome ?? undefined,
       idPedidoEcommerce: p.id_pedido_ecommerce ?? "",
       nomeEcommerce: p.nome_ecommerce ?? "",
       cliente: {

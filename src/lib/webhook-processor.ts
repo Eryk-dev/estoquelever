@@ -26,6 +26,7 @@ type Decisao = "propria" | "transferencia" | "oc";
 interface ProcessedItem {
   produto_id: number;
   produto_id_suporte: number | null;
+  produto_id_tiny: number | null;
   sku: string;
   descricao: string;
   quantidade_pedida: number;
@@ -237,6 +238,14 @@ export async function processWebhook(
           isKit ? null : itemGtin,
         );
         itensProcessados.push(processed);
+
+        if (!processed.produto_id_tiny) {
+          logger.warn("processor", "produto_id_tiny not resolved for item", {
+            pedidoId: pedidoTinyId,
+            sku: processed.sku,
+            produtoId: expandedItem.produto.id,
+          });
+        }
 
         for (const est of estoquesPorEmpresa) {
           itensEstoques.push({
@@ -641,6 +650,7 @@ async function enrichItemMultiEmpresa(
   const processed: ProcessedItem = {
     produto_id: item.produto.id,
     produto_id_suporte: produtoIdSuporte,
+    produto_id_tiny: item.produto.id,
     sku,
     descricao: item.produto.descricao,
     quantidade_pedida: qtd,

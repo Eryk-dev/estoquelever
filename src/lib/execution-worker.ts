@@ -384,7 +384,18 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
 
   await inserirMarcadoresTiny(job.empresa_id, token, job.pedido_id, marcadores);
 
-  logger.info("worker", "Pedido OC — marcadores inseridos, sem lançamento de estoque", {
+  // Set compra fields so items appear in the compras module
+  await supabase
+    .from("siso_pedidos")
+    .update({ status_separacao: "aguardando_compra" })
+    .eq("id", job.pedido_id);
+
+  await supabase
+    .from("siso_pedido_itens")
+    .update({ compra_status: "aguardando_compra" })
+    .eq("pedido_id", job.pedido_id);
+
+  logger.info("execution-worker", "Pedido OC enviado para modulo de compras", {
     pedidoId: job.pedido_id,
   });
 }

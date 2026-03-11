@@ -1,0 +1,437 @@
+{
+  "project": "SISO - Fluxo de Separacao e Embalagem",
+  "branchName": "ralph/separacao-embalagem",
+  "description": "Fluxo pos-aprovacao: separacao fisica no galpao (wave picking) e embalagem com conferencia na bancada. Nova pagina /separacao com 5 abas de status, checklist de separacao em onda, embalagem por produto com bipagem, e impressao automatica de etiqueta.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Types — StatusSeparacao and related types",
+      "description": "As a developer, I want all new types defined in types/index.ts so that subsequent stories have full type safety.",
+      "acceptanceCriteria": [
+        "Add StatusSeparacao type: 'aguardando_nf' | 'aguardando_separacao' | 'em_separacao' | 'separado' | 'embalado' | 'cancelado'",
+        "Add ProdutoConsolidado type with fields: produto_id (string), descricao (string), sku (string), gtin (string | null), quantidade_total (number), unidade (string), localizacao (string | null)",
+        "Add BipEmbalagemResult type with fields: pedido_id (string), produto_id (string), quantidade_bipada (number), bipado_completo (boolean), pedido_completo (boolean)",
+        "Add SeparacaoFilter type with fields: status_separacao (StatusSeparacao, optional), empresa_origem_id (string, optional), sort ('data_pedido' | 'localizacao' | 'sku', optional), busca (string, optional)",
+        "Add SeparacaoCounts type with fields: aguardando_nf (number), aguardando_separacao (number), em_separacao (number), separado (number), embalado (number)",
+        "Update PedidoItem type adding: separacao_marcado (boolean), separacao_marcado_em (string | null)",
+        "Update Pedido type adding: separacao_operador_id (string | null), separacao_iniciada_em (string | null), separacao_concluida_em (string | null), embalagem_concluida_em (string | null), etiqueta_url (string | null), agrupamento_expedicao_id (string | null)",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Schema — Migration for new separation statuses and columns",
+      "description": "As a developer, I want the database schema updated with new separation statuses and tracking columns so that the entire flow can be persisted.",
+      "acceptanceCriteria": [
+        "Create migration file supabase/migrations/20260311_separacao_status_columns.sql",
+        "ALTER siso_pedidos: drop old CHECK constraint on status_separacao, add new CHECK with values: aguardando_nf, aguardando_separacao, em_separacao, separado, embalado, cancelado",
+        "UPDATE existing rows: SET status_separacao = 'aguardando_separacao' WHERE status_separacao = 'pendente'",
+        "ADD columns to siso_pedidos: separacao_operador_id (uuid REFERENCES siso_usuarios(id) NULL), separacao_iniciada_em (timestamptz NULL), separacao_concluida_em (timestamptz NULL), embalagem_concluida_em (timestamptz NULL), etiqueta_url (text NULL), agrupamento_expedicao_id (text NULL)",
+        "ADD columns to siso_pedido_itens: separacao_marcado (boolean DEFAULT false), separacao_marcado_em (timestamptz NULL)",
+        "CREATE INDEX idx_siso_pedidos_status_empresa ON siso_pedidos(status_separacao, empresa_origem_id)",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "PL/pgSQL — Consolidate products for wave picking",
+      "description": "As a developer, I want a database function that consolidates products across multiple orders into a single wave-picking list grouped by produto_id with summed quantities.",
+      "acceptanceCriteria": [
+        "Create migration file supabase/migrations/20260311_fn_consolidar_produtos_separacao.sql",
+        "CREATE FUNCTION siso_consolidar_produtos_separacao(p_pedido_ids uuid[], p_order_by text DEFAULT 'localizacao')",
+        "Function queries siso_pedido_itens for the given pedido_ids, groups by produto_id",
+        "Returns TABLE(produto_id text, descricao text, sku text, gtin text, quantidade_total numeric, unidade text, localizacao text)",
+        "Gets localizacao from siso_pedido_item_estoques joining on pedido_id + produto_id for the origin empresa",
+        "Supports p_order_by values: 'localizacao' (default), 'sku', 'descricao'",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "PL/pgSQL — Process barcode scan during packing",
+      "description": "As a developer, I want a database function that processes a barcode scan during packing, finds the oldest order with that item pending, and updates quantities atomically.",
+      "acceptanceCriteria": [
+        "Create migration file supabase/migrations/20260311_fn_processar_bip_embalagem.sql",
+        "CREATE FUNCTION siso_processar_bip_embalagem(p_sku text, p_galpao_id uuid, p_quantidade int DEFAULT 1)",
+        "Finds the oldest separado-status pedido (ORDER BY data_pedido ASC) in the given galpao with the scanned SKU where bipado_completo = false",
+        "Uses SELECT ... FOR UPDATE on the matching siso_pedido_itens row to prevent race conditions",
+        "Increments quantidade_bipada by p_quantidade on the matched row",
+        "Sets bipado_completo = true when quantidade_bipada >= quantidade",
+        "Checks if ALL items of that pedido have bipado_completo = true; if so, updates status_separacao to 'embalado' and sets embalagem_concluida_em = now()",
+        "Returns TABLE(pedido_id uuid, produto_id text, quantidade_bipada numeric, bipado_completo boolean, pedido_completo boolean)",
+        "RETURNS NULL if no matching item found",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "API — GET /api/separacao list orders by status",
+      "description": "As an operator, I want to fetch orders filtered by separation status with search and sorting so that each tab shows the right data.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/route.ts with GET handler (do NOT conflict with existing files — check first)",
+        "Accepts query params: status_separacao, empresa_origem_id, sort (data_pedido|localizacao|sku), busca (search string)",
+        "Queries siso_pedidos with filters, joins siso_empresas via empresa_origem_id for empresa name",
+        "Returns JSON: { counts: SeparacaoCounts, pedidos: array }",
+        "Counts query: SELECT status_separacao, count(*) FROM siso_pedidos GROUP BY status_separacao",
+        "Each pedido in array includes: id, numero_nf, numero_ec, numero_pedido, cliente, uf, cidade, forma_envio, data_pedido, empresa_origem_nome, status_separacao, marcadores",
+        "Role-based filtering: read cargo from X-User-Cargo header or session; operador_cwb sees only pedidos where empresa galpao nome = 'CWB', operador_sp sees only 'SP'",
+        "Uses createServiceClient() from supabase-server.ts",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Check if src/app/api/separacao/route.ts already exists from previous Ralph branch. If it does, refactor it to match the new requirements instead of creating a new file."
+    },
+    {
+      "id": "US-006",
+      "title": "API — POST /api/separacao/iniciar start separation",
+      "description": "As an operator, I want to start separation for selected orders so that they move to em_separacao and I get a consolidated product checklist.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/iniciar/route.ts with POST handler",
+        "Accepts JSON body: { pedido_ids: string[], operador_id: string }",
+        "Validates all pedidos have status_separacao = 'aguardando_separacao'; returns 400 with error if any don't",
+        "Updates all matching pedidos: status_separacao = 'em_separacao', separacao_operador_id = operador_id, separacao_iniciada_em = now()",
+        "Calls Supabase RPC siso_consolidar_produtos_separacao with the pedido_ids to get consolidated product list",
+        "Returns JSON: { pedido_ids: string[], produtos: ProdutoConsolidado[] }",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "API — POST marcar-item and bipar-checklist for separation",
+      "description": "As an operator, I want to check items in the separation checklist via checkbox or barcode scan with immediate save.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/marcar-item/route.ts with POST handler",
+        "Accepts JSON body: { pedido_item_id: string, marcado: boolean }",
+        "Updates siso_pedido_itens row: separacao_marcado = marcado, separacao_marcado_em = marcado ? now() : null",
+        "Validates parent pedido has status_separacao = 'em_separacao'; returns 400 if not",
+        "Returns the updated item row as JSON",
+        "Create src/app/api/separacao/bipar-checklist/route.ts with POST handler",
+        "Accepts JSON body: { sku: string, pedido_ids: string[] }",
+        "Finds siso_pedido_itens rows matching sku (or gtin column) within the given pedido_ids where separacao_marcado = false",
+        "Sets separacao_marcado = true, separacao_marcado_em = now() on all matched items",
+        "Returns 404 if no matching items found",
+        "Returns the updated items as JSON array",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Routes already existed from previous iteration with full implementation."
+    },
+    {
+      "id": "US-008",
+      "title": "API — POST concluir and cancelar separation",
+      "description": "As an operator, I want to finish or cancel a separation so that orders move to the correct status.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/concluir/route.ts with POST handler",
+        "Accepts JSON body: { pedido_ids: string[] }",
+        "For each pedido: query its siso_pedido_itens; if ALL have separacao_marcado = true, update status to 'separado' and set separacao_concluida_em = now()",
+        "Pedidos with ANY unchecked item remain as 'em_separacao'",
+        "Returns JSON: { separados: string[], pendentes: string[] }",
+        "Create src/app/api/separacao/cancelar/route.ts with POST handler",
+        "Accepts JSON body: { pedido_ids: string[] }",
+        "Resets all siso_pedido_itens for given pedidos: separacao_marcado = false, separacao_marcado_em = null",
+        "Updates pedidos: status_separacao = 'aguardando_separacao', separacao_operador_id = null, separacao_iniciada_em = null",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Already implemented from previous iteration."
+    },
+    {
+      "id": "US-009",
+      "title": "API — POST bipar-embalagem for packing scan",
+      "description": "As an operator, I want to scan a barcode during packing so that the system finds the oldest pending order and tracks my packing progress.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/bipar-embalagem/route.ts with POST handler",
+        "Accepts JSON body: { sku: string, galpao_id: string, quantidade?: number }",
+        "Calls Supabase RPC siso_processar_bip_embalagem with the params",
+        "If RPC returns null/empty, return 404 with error message",
+        "Returns JSON: BipEmbalagemResult { pedido_id, produto_id, quantidade_bipada, bipado_completo, pedido_completo }",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Already implemented from previous iteration."
+    },
+    {
+      "id": "US-010",
+      "title": "API — POST confirmar-item-embalagem manual packing",
+      "description": "As an operator, I want to manually confirm item quantities during packing using +/- buttons without a barcode scanner.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/confirmar-item-embalagem/route.ts with POST handler",
+        "Accepts JSON body: { pedido_item_id: string, quantidade: number }",
+        "Fetches the siso_pedido_itens row, increments quantidade_bipada by the given quantidade",
+        "Sets bipado_completo = true when quantidade_bipada >= the item's total quantidade",
+        "After updating the item, checks if ALL items of that pedido have bipado_completo = true",
+        "If all complete: updates pedido status_separacao = 'embalado', sets embalagem_concluida_em = now()",
+        "Returns JSON: { pedido_item_id, quantidade_bipada, bipado_completo, pedido_completo }",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Already implemented from previous iteration."
+    },
+    {
+      "id": "US-011",
+      "title": "API — POST reiniciar progress and forcar-pendente admin",
+      "description": "As an operator, I want to reset checklist/packing progress; as an admin, I want to force orders past aguardando_nf.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/reiniciar/route.ts with POST handler",
+        "Accepts JSON body: { pedido_ids: string[], etapa: 'separacao' | 'embalagem' }",
+        "For etapa 'separacao': update siso_pedido_itens SET separacao_marcado = false, separacao_marcado_em = null WHERE pedido_id IN pedido_ids",
+        "For etapa 'embalagem': update siso_pedido_itens SET quantidade_bipada = 0, bipado_completo = false WHERE pedido_id IN pedido_ids",
+        "Validates pedidos are in correct status (em_separacao for separacao, separado for embalagem); returns 400 if not",
+        "Create src/app/api/separacao/forcar-pendente/route.ts with POST handler",
+        "Accepts JSON body: { pedido_ids: string[] }",
+        "Validates caller has admin role (from request headers or session); returns 403 if not",
+        "Updates matching pedidos: status_separacao from 'aguardando_nf' to 'aguardando_separacao'",
+        "Logs the override via logger.info('separacao', 'NF forcada por admin', { pedido_ids, admin })",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Already implemented from previous iteration."
+    },
+    {
+      "id": "US-012",
+      "title": "Webhook — NF autorizada transition handler",
+      "description": "As a system, I want to move orders from aguardando_nf to aguardando_separacao when the NF is authorized by SEFAZ via Tiny webhook.",
+      "acceptanceCriteria": [
+        "Modify src/app/api/webhook/tiny/route.ts to handle NF authorization events",
+        "When the webhook payload indicates NF authorization (check api tiny.json for event type): find the matching pedido in siso_pedidos",
+        "Update status_separacao from 'aguardando_nf' to 'aguardando_separacao'",
+        "If the pedido has danfe_url or chave_acesso_nf fields in the webhook data, store them on the pedido row",
+        "Idempotent: if pedido is already 'aguardando_separacao' or later status, skip without error",
+        "Log the transition via logger.info",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Already implemented from previous iteration."
+    },
+    {
+      "id": "US-013",
+      "title": "Tiny API — Expedition grouping and label functions",
+      "description": "As a developer, I want expedition API functions in tiny-api.ts so that the system can create shipment groups and fetch shipping labels from Tiny.",
+      "acceptanceCriteria": [
+        "Add createExpeditionGroup function to src/lib/tiny-api.ts: calls POST on Tiny API expedition grouping endpoint",
+        "Add getExpeditionLabels function to src/lib/tiny-api.ts: calls GET to fetch label URLs for a grouping",
+        "Both functions accept empresa_id parameter and use getValidTokenByEmpresa() for auth",
+        "Both functions go through rate-limiter.ts to respect per-empresa limits",
+        "Consult api tiny.json in project root for exact endpoint paths, request body shape, and response shape",
+        "Add TypeScript types for expedition request/response payloads in types/index.ts",
+        "Follow existing patterns in tiny-api.ts for error handling and logging",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "Already implemented from previous iteration."
+    },
+    {
+      "id": "US-014",
+      "title": "Auto-print — Trigger label print on packing completion",
+      "description": "As a system, I want to automatically create a Tiny expedition grouping and store the label URL when a pedido is fully packed.",
+      "acceptanceCriteria": [
+        "Create src/lib/print-label.ts with async function triggerLabelPrint(pedidoId: string): Promise<void>",
+        "triggerLabelPrint: fetches the pedido from DB to get empresa_origem_id and NF data",
+        "Calls createExpeditionGroup from tiny-api.ts to create the shipment group",
+        "Calls getExpeditionLabels to get the label URL",
+        "Stores etiqueta_url and agrupamento_expedicao_id on the siso_pedidos row",
+        "Entire function is wrapped in try/catch: errors logged via logger.error but never thrown (fire-and-forget)",
+        "Modify src/app/api/separacao/bipar-embalagem/route.ts: when pedido_completo = true in response, call triggerLabelPrint(pedidoId) without await (fire-and-forget)",
+        "Modify src/app/api/separacao/confirmar-item-embalagem/route.ts: same fire-and-forget trigger when pedido_completo = true",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "Already implemented from previous iteration."
+    },
+    {
+      "id": "US-015",
+      "title": "Frontend — /separacao page with 5 tabs and counts",
+      "description": "As an operator, I want a separation page with 5 status tabs showing order counts so that I can navigate the separation flow.",
+      "acceptanceCriteria": [
+        "Create src/app/separacao/page.tsx as 'use client' component",
+        "Add 'Separacao' link to the app navigation (check layout.tsx or existing nav for pattern)",
+        "Render 5 pill-style tabs using existing src/components/ui/tabs.tsx: Aguardando NF, Aguardando Separacao, Em Separacao, Separados, Embalados",
+        "Each tab shows count badge fetched from GET /api/separacao counts response",
+        "Use TanStack React Query (useQuery) to fetch from GET /api/separacao with status_separacao matching active tab",
+        "Default active tab is 'Aguardando Separacao'",
+        "Show loading-spinner.tsx while fetching",
+        "Show empty-state.tsx when tab has no orders",
+        "Mobile-first layout: max-w-5xl container, zinc-based design matching existing app",
+        "Typecheck and lint pass"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "Already implemented from previous iteration."
+    },
+    {
+      "id": "US-016",
+      "title": "Frontend — Order cards for separation tabs",
+      "description": "As an operator, I want to see order details in each tab as card components showing key information.",
+      "acceptanceCriteria": [
+        "Create src/components/separacao/separacao-card.tsx component",
+        "Card displays: numero_nf, numero_ec, numero_pedido, cliente, UF/cidade, forma_envio, data_pedido, empresa_origem_nome",
+        "Card has an optional checkbox prop (enabled for Aguardando Separacao and Separados tabs)",
+        "Em Separacao cards show separation progress bar (percentage of items with separacao_marcado)",
+        "Embalados cards show green completed styling (check icon from Lucide)",
+        "Use Tailwind classes directly, zinc-based palette, Lucide icons, consistent with existing app",
+        "Integrate cards into separacao/page.tsx replacing placeholder content in each tab",
+        "Typecheck and lint pass"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "Already implemented from previous iteration."
+    },
+    {
+      "id": "US-017",
+      "title": "Frontend — Filters, search, sort, and action buttons",
+      "description": "As an operator, I want filters and action buttons on the separation page so that I can search orders and initiate separation or packing.",
+      "acceptanceCriteria": [
+        "Add filter bar above order list on Aguardando Separacao tab: empresa dropdown, sort dropdown (Data/Localizacao/SKU), search text input",
+        "Empresa dropdown populated from distinct empresa names in the data (or from admin API)",
+        "Filters update React Query params and trigger refetch",
+        "Add 'Separar N pedidos' button on Aguardando Separacao tab; N = count of selected checkboxes; disabled when 0 selected",
+        "Clicking 'Separar' calls POST /api/separacao/iniciar with selected pedido_ids + current user id, then navigates to /separacao/checklist with pedido_ids as URL search params",
+        "Add 'Embalar N pedidos' button on Separados tab; shows total count when none selected, selected count when some checked",
+        "Add 'Forcar pendente' button on Aguardando NF tab; only visible when user cargo === 'admin' (from useAuth context)",
+        "Forcar pendente calls POST /api/separacao/forcar-pendente and shows success toast",
+        "Use sonner toast for all feedback (success/error)",
+        "Typecheck and lint pass"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Frontend — Checklist page with consolidated list and auto-save",
+      "description": "As an operator, I want a wave-picking checklist screen showing consolidated products with auto-saving checkboxes for tablet use.",
+      "acceptanceCriteria": [
+        "Create src/app/separacao/checklist/page.tsx as 'use client' component",
+        "Read pedido_ids from URL search params (e.g., ?pedidos=id1,id2,id3)",
+        "On mount: call POST /api/separacao/iniciar if orders not yet em_separacao, or fetch current checklist state if resuming",
+        "Display consolidated product list as a table/list: checkbox, descricao, SKU/GTIN, quantidade_total, localizacao",
+        "Default sort by localizacao; sort dropdown with options: Localizacao, SKU, Nome",
+        "Each checkbox click immediately calls POST /api/separacao/marcar-item with optimistic UI update",
+        "Checked items show dimmed/green background styling",
+        "Progress indicator at top: 'X de Y itens marcados' with progress bar",
+        "Touch-friendly: minimum 44px height for each row, large checkbox tap targets",
+        "Typecheck and lint pass"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "Frontend — Checklist barcode scan and action buttons",
+      "description": "As an operator, I want a barcode scan field and action buttons on the checklist to scan items and finish separation.",
+      "acceptanceCriteria": [
+        "Add barcode scan text input at the top of checklist page (auto-focused on mount)",
+        "On Enter in scan field: call POST /api/separacao/bipar-checklist with scanned value and pedido_ids",
+        "On success: matched item highlights with brief animation, checkbox toggles to checked",
+        "On 404: show toast.error('SKU nao encontrado')",
+        "Clear scan field after each scan attempt",
+        "Add 'Concluir' button at bottom: calls POST /api/separacao/concluir, shows toast with summary ('N separados, M pendentes'), navigates to /separacao",
+        "Add 'Reiniciar progresso' button: shows confirmation dialog before calling POST /api/separacao/reiniciar with etapa=separacao",
+        "Add 'Cancelar' button: shows confirmation dialog ('Pedidos voltarao para Aguardando Separacao'), calls POST /api/separacao/cancelar, navigates to /separacao",
+        "Typecheck and lint pass"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Frontend — Embalagem page with order list and barcode scan",
+      "description": "As an operator, I want a packing screen where I can scan barcodes to pack orders with the system finding the right order automatically.",
+      "acceptanceCriteria": [
+        "Create src/app/separacao/embalagem/page.tsx as 'use client' component",
+        "Read pedido_ids from URL search params; fetch those pedidos with their items from GET /api/separacao",
+        "Scan input at top (auto-focused): SKU/GTIN text field + quantity input (default 1)",
+        "'Ultimo item lido' section below scan field: shows descricao, SKU, quantidade of last scanned item (empty initially)",
+        "Order list below: each pedido shows numero_nf, cliente, progress 'X/Y itens' with color dot (yellow=pending, green=complete)",
+        "On scan submit: call POST /api/separacao/bipar-embalagem with { sku, galpao_id (from user context), quantidade }",
+        "On success: update UI to highlight matched order, show scanned item in 'Ultimo item lido'",
+        "If pedido_completo: show toast.success('Pedido embalado — etiqueta enviada'), move order to completed section with green styling",
+        "On 404: show toast.error('Nenhum pedido com este SKU pendente')",
+        "Clear scan field after each attempt",
+        "Typecheck and lint pass"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "Frontend — Embalagem manual mode and completion actions",
+      "description": "As an operator, I want to manually confirm items with +/- buttons and have save/reset actions on the packing screen.",
+      "acceptanceCriteria": [
+        "Clicking on an order in embalagem list expands it showing all items: descricao, SKU, quantidade needed, quantidade_bipada progress",
+        "Each expanded item has + and - buttons that call POST /api/separacao/confirmar-item-embalagem",
+        "+ button sends quantidade: 1, - button sends quantidade: -1 (API handles decrement, minimum 0)",
+        "Optimistic UI: update quantidade_bipada immediately, revert on error",
+        "When pedido reaches 100% via manual confirmation: same toast and visual as barcode scan completion",
+        "Add 'Salvar para depois' button: navigates back to /separacao (progress is already persisted via API calls)",
+        "Add 'Reiniciar progresso' button with confirmation: calls POST /api/separacao/reiniciar with etapa=embalagem, resets all item progress in UI",
+        "Typecheck and lint pass"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "Frontend — Selective packing on Separados tab",
+      "description": "As an operator, I want to select specific orders for packing or pack all separated orders at once.",
+      "acceptanceCriteria": [
+        "Separados tab renders separacao-card components with checkbox enabled",
+        "Track selected pedido_ids state in the Separados tab",
+        "When no checkboxes selected: 'Embalar' button shows total separado count",
+        "When some checkboxes selected: button text changes to 'Embalar X pedidos' with selected count",
+        "Clicking 'Embalar' navigates to /separacao/embalagem?pedidos=id1,id2,... with appropriate IDs",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "Frontend — Supabase Realtime subscriptions",
+      "description": "As an operator, I want the separation page to update in real-time when other operators change order statuses.",
+      "acceptanceCriteria": [
+        "Create src/hooks/use-realtime-separacao.ts custom hook",
+        "Hook subscribes to siso_pedidos table changes using Supabase Realtime (supabase.channel().on('postgres_changes', ...))",
+        "Filter on status_separacao column changes (INSERT, UPDATE, DELETE events)",
+        "On receiving an event: invalidate React Query cache keys for /api/separacao to trigger refetch",
+        "Tab count badges update automatically when orders change status",
+        "Handle channel disconnect: re-subscribe automatically",
+        "Cleanup subscription on component unmount (return cleanup function from useEffect)",
+        "Integrate hook into separacao/page.tsx",
+        "Typecheck passes"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": "Uses supabase.ts browser client (not server client) for Realtime. Ensure Realtime is enabled on siso_pedidos table in Supabase dashboard."
+    }
+  ]
+}

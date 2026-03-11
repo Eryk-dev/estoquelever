@@ -3,40 +3,80 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Home, LogOut, ChevronDown } from "lucide-react";
+import { Home, LogOut } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { Tabs } from "@/components/ui/tabs";
-import { TabPendentes } from "@/components/separacao/tab-pendentes";
-import { TabAguardandoNf } from "@/components/separacao/tab-aguardando-nf";
-import { TabEmbalados } from "@/components/separacao/tab-embalados";
-import { TabExpedidos } from "@/components/separacao/tab-expedidos";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { EmptyState } from "@/components/ui/empty-state";
 import { CARGO_LABELS } from "@/types";
-import type { Tab } from "@/types";
-import type { PedidoSeparacao } from "@/components/separacao/pedido-separacao-card";
+import type { Tab, StatusSeparacao, SeparacaoCounts } from "@/types";
 
-type TabId = "aguardando_nf" | "pendentes" | "embalados" | "expedidos";
+// 5 tabs mapping 1:1 to StatusSeparacao values
+const TAB_CONFIG: {
+  id: StatusSeparacao;
+  label: string;
+  emptyMessage: string;
+}[] = [
+  {
+    id: "aguardando_nf",
+    label: "Aguardando NF",
+    emptyMessage: "Nenhum pedido aguardando nota fiscal",
+  },
+  {
+    id: "aguardando_separacao",
+    label: "Aguardando Separação",
+    emptyMessage: "Nenhum pedido aguardando separação",
+  },
+  {
+    id: "em_separacao",
+    label: "Em Separação",
+    emptyMessage: "Nenhum pedido em separação",
+  },
+  {
+    id: "separado",
+    label: "Separados",
+    emptyMessage: "Nenhum pedido separado",
+  },
+  {
+    id: "embalado",
+    label: "Embalados",
+    emptyMessage: "Nenhum pedido embalado",
+  },
+];
 
-function statusToTab(status: string): TabId {
-  if (status === "aguardando_separacao" || status === "em_separacao") return "pendentes";
-  if (status === "aguardando_nf") return "aguardando_nf";
-  if (status === "embalado") return "embalados";
-  if (status === "separado") return "expedidos";
-  return "pendentes";
+const EMPTY_COUNTS: SeparacaoCounts = {
+  aguardando_nf: 0,
+  aguardando_separacao: 0,
+  em_separacao: 0,
+  separado: 0,
+  embalado: 0,
+};
+
+interface SeparacaoPedido {
+  id: string;
+  numero_nf: string;
+  numero_ec: string | null;
+  numero_pedido: string;
+  cliente: string | null;
+  uf: string | null;
+  cidade: string | null;
+  forma_envio: string | null;
+  data_pedido: string;
+  empresa_origem_nome: string | null;
+  status_separacao: string;
+  marcadores: string[];
 }
 
-interface GalpaoOption {
-  id: string;
-  nome: string;
+interface SeparacaoResponse {
+  counts: SeparacaoCounts;
+  pedidos: SeparacaoPedido[];
 }
 
 export default function SeparacaoPage() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<TabId>("pendentes");
-  const [selectedGalpaoId, setSelectedGalpaoId] = useState<string | null>(null);
-
-  const isAdmin = user?.cargo === "admin";
+  const [activeTab, setActiveTab] = useState<StatusSeparacao>("aguardando_separacao");
 
   useEffect(() => {
     if (!loading && !user) {
@@ -44,66 +84,34 @@ export default function SeparacaoPage() {
     }
   }, [user, loading, router]);
 
-  // Fetch galpões for admin selector
-  const { data: galpoes } = useQuery<GalpaoOption[]>({
-    queryKey: ["galpoes-list"],
+  const canFetch = !loading && !!user;
+
+  // Fetch pedidos for active tab + counts for all tabs
+  const {
+    data,
+    isLoading: isFetching,
+  } = useQuery<SeparacaoResponse>({
+    queryKey: ["separacao", activeTab],
     queryFn: async () => {
-      const res = await sisoFetch("/api/admin/galpoes");
-      if (!res.ok) return [];
-      const data = await res.json();
-      return data.map((g: { id: string; nome: string }) => ({
-        id: g.id,
-        nome: g.nome,
-      }));
-    },
-    enabled: isAdmin,
-  });
-
-  // Derive effective galpão: use explicit selection or default to first loaded
-  const effectiveGalpaoId = selectedGalpaoId ?? galpoes?.[0]?.id ?? null;
-
-  // Build query params
-  const galpaoParam =
-    isAdmin && effectiveGalpaoId ? `?galpao_id=${effectiveGalpaoId}` : "";
-  const canFetch = !loading && !!user && (!isAdmin || !!effectiveGalpaoId);
-
-  // Fetch all orders (no status filter) — group on client for tab counts
-  const { data: allPedidos, refetch } = useQuery<PedidoSeparacao[]>({
-    queryKey: ["separacao-all", galpaoParam],
-    queryFn: async () => {
-      const res = await sisoFetch(`/api/separacao${galpaoParam}`);
-      if (!res.ok) return [];
-      const json = await res.json();
-      // API returns { counts, pedidos } — extract pedidos array
-      return json.pedidos ?? json;
+      const params = new URLSearchParams({ status_separacao: activeTab });
+      const res = await sisoFetch(`/api/separacao?${params}`);
+      if (!res.ok) return { counts: EMPTY_COUNTS, pedidos: [] };
+      return res.json();
     },
     enabled: canFetch,
     refetchInterval: 10000,
   });
 
-  // Group pedidos by tab
-  const grouped: Record<TabId, PedidoSeparacao[]> = {
-    aguardando_nf: [],
-    pendentes: [],
-    embalados: [],
-    expedidos: [],
-  };
+  const counts = data?.counts ?? EMPTY_COUNTS;
+  const pedidos = data?.pedidos ?? [];
 
-  for (const p of allPedidos ?? []) {
-    const tab = statusToTab(p.status_separacao);
-    grouped[tab].push(p);
-  }
+  const activeConfig = TAB_CONFIG.find((t) => t.id === activeTab)!;
 
-  const tabs: Tab[] = [
-    {
-      id: "aguardando_nf",
-      label: "Aguardando NF",
-      count: grouped.aguardando_nf.length,
-    },
-    { id: "pendentes", label: "Pendentes", count: grouped.pendentes.length },
-    { id: "embalados", label: "Embalados", count: grouped.embalados.length },
-    { id: "expedidos", label: "Expedidos", count: grouped.expedidos.length },
-  ];
+  const tabs: Tab[] = TAB_CONFIG.map((t) => ({
+    id: t.id,
+    label: t.label,
+    count: counts[t.id as keyof SeparacaoCounts] ?? 0,
+  }));
 
   if (loading) {
     return (
@@ -119,7 +127,7 @@ export default function SeparacaoPage() {
     <div className="min-h-screen bg-surface">
       {/* Header */}
       <header className="border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
           <Link
             href="/"
             className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
@@ -156,65 +164,56 @@ export default function SeparacaoPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-4 px-4 py-4">
-        {/* Admin galpão selector */}
-        {isAdmin && galpoes && galpoes.length > 0 && (
-          <div className="flex items-center gap-2">
-            <label
-              htmlFor="galpao-select"
-              className="text-xs font-medium text-ink-muted"
-            >
-              Galpão:
-            </label>
-            <div className="relative">
-              <select
-                id="galpao-select"
-                value={effectiveGalpaoId ?? ""}
-                onChange={(e) => setSelectedGalpaoId(e.target.value)}
-                className="appearance-none rounded-lg border border-line bg-paper py-1.5 pl-3 pr-8 text-sm font-semibold text-ink focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              >
-                {galpoes.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.nome}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown
-                className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint"
-                aria-hidden="true"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Tabs */}
-        <Tabs
-          tabs={tabs}
-          activeTab={activeTab}
-          onChange={(id) => setActiveTab(id as TabId)}
-        />
+      <main className="mx-auto max-w-5xl space-y-4 px-4 py-4">
+        {/* Tabs — horizontal scroll on mobile */}
+        <div className="overflow-x-auto">
+          <Tabs
+            tabs={tabs}
+            activeTab={activeTab}
+            onChange={(id) => setActiveTab(id as StatusSeparacao)}
+          />
+        </div>
 
         {/* Tab content */}
-        {activeTab === "pendentes" && (
-          <TabPendentes
-            pedidos={grouped.pendentes}
-            onBipProcessed={() => refetch()}
-          />
-        )}
-        {activeTab === "aguardando_nf" && (
-          <TabAguardandoNf
-            pedidos={grouped.aguardando_nf}
-            onUpdated={() => refetch()}
-          />
-        )}
-        {activeTab === "embalados" && (
-          <TabEmbalados
-            pedidos={grouped.embalados}
-            onUpdated={() => refetch()}
-          />
-        )}
-        {activeTab === "expedidos" && (
-          <TabExpedidos pedidos={grouped.expedidos} />
+        {isFetching ? (
+          <LoadingSpinner message="Carregando pedidos..." />
+        ) : pedidos.length === 0 ? (
+          <EmptyState message={activeConfig.emptyMessage} />
+        ) : (
+          <div className="space-y-2">
+            {pedidos.map((pedido) => (
+              <article
+                key={pedido.id}
+                className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper px-4 py-3 shadow-sm"
+                aria-label={`Pedido #${pedido.numero_pedido}`}
+              >
+                <span className="shrink-0 font-mono text-sm font-bold text-ink">
+                  #{pedido.numero_pedido}
+                </span>
+
+                <span className="h-3 w-px bg-line" aria-hidden="true" />
+
+                <span
+                  className="min-w-0 flex-1 truncate text-sm text-zinc-600 dark:text-zinc-300"
+                  title={pedido.cliente ?? ""}
+                >
+                  {pedido.cliente ?? "—"}
+                </span>
+
+                {pedido.empresa_origem_nome && (
+                  <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                    {pedido.empresa_origem_nome}
+                  </span>
+                )}
+
+                {pedido.forma_envio && (
+                  <span className="shrink-0 text-[11px] text-ink-faint">
+                    {pedido.forma_envio}
+                  </span>
+                )}
+              </article>
+            ))}
+          </div>
         )}
       </main>
     </div>

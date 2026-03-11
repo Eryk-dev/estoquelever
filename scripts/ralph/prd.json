@@ -334,7 +334,7 @@
         "Typecheck passes"
       ],
       "priority": 22,
-      "passes": false,
+      "passes": true,
       "notes": "Search for refetchInterval across all page files to find current values and update them to use the constants."
     }
   ]

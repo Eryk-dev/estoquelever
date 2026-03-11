@@ -279,3 +279,20 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - Current setup has 1 empresa per galpao so the mapping is clean, but if multiple empresas per galpao exist in the future, the first empresa name is used
   - The monitoring API builds a `filialToEmpresa` lookup map from distinct filial values to avoid N+1 queries
 ---
+## 2026-03-11 - US-022
+- Created `src/lib/constants.ts` with three named refresh interval constants:
+  - `REFRESH_INTERVAL_LIST = 30_000` (SISO, Separacao, Compras)
+  - `REFRESH_INTERVAL_ACTIVE = 10_000` (Embalagem — Checklist has no interval)
+  - `REFRESH_INTERVAL_MONITORING = 30_000` (Monitoramento)
+- Updated 5 pages to use the constants:
+  - `src/app/siso/page.tsx`: 30_000 → REFRESH_INTERVAL_LIST
+  - `src/app/compras/page.tsx`: 30_000 → REFRESH_INTERVAL_LIST
+  - `src/app/separacao/page.tsx`: 10000 → REFRESH_INTERVAL_LIST (was 10s, now 30s per spec)
+  - `src/app/separacao/embalagem/page.tsx`: 5000 → REFRESH_INTERVAL_ACTIVE (was 5s, now 10s per spec)
+  - `src/app/monitoramento/page.tsx`: 30_000 → REFRESH_INTERVAL_MONITORING (setInterval, not refetchInterval)
+- Files changed: `src/lib/constants.ts` (new), 5 page files
+- **Learnings for future iterations:**
+  - Monitoramento uses raw `setInterval` + `useEffect` instead of React Query `refetchInterval` — different pattern but same constant works
+  - Checklist page has no refresh interval — it only loads once
+  - The Separacao page had a faster interval (10s) than other list pages because it was originally considered an active workflow page, now standardized to 30s
+---

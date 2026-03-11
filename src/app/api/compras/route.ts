@@ -99,7 +99,7 @@ interface RawAguardandoItem {
   id: string;
   sku: string;
   descricao: string;
-  quantidade: number;
+  quantidade_pedida: number;
   fornecedor_oc: string | null;
   pedido_id: string;
   siso_pedidos: {
@@ -114,7 +114,7 @@ async function fetchAguardandoCompra(
   const { data: items, error } = await supabase
     .from("siso_pedido_itens")
     .select(
-      "id, sku, descricao, quantidade, fornecedor_oc, pedido_id, siso_pedidos(numero, empresa_origem_id)",
+      "id, sku, descricao, quantidade_pedida, fornecedor_oc, pedido_id, siso_pedidos(numero, empresa_origem_id)",
     )
     .eq("compra_status", "aguardando_compra")
     .is("ordem_compra_id", null)
@@ -149,11 +149,11 @@ async function fetchAguardandoCompra(
     }
 
     const agrupado = skuMap.get(item.sku)!;
-    agrupado.quantidade_total += item.quantidade;
+    agrupado.quantidade_total += item.quantidade_pedida;
     agrupado.pedidos.push({
       pedido_id: item.pedido_id,
       numero_pedido: numeroPedido,
-      quantidade: item.quantidade,
+      quantidade: item.quantidade_pedida,
     });
     agrupado.itens_ids.push(String(item.id));
   }
@@ -197,7 +197,7 @@ interface RawCompradoItem {
   id: string;
   sku: string;
   descricao: string;
-  quantidade: number;
+  quantidade_pedida: number;
   compra_status: string | null;
   compra_quantidade_recebida: number;
   pedido_id: string;
@@ -222,7 +222,7 @@ async function fetchComprado(
   // Fetch items for these OCs
   const { data: items, error: itemsError } = await supabase
     .from("siso_pedido_itens")
-    .select("id, sku, descricao, quantidade, compra_status, compra_quantidade_recebida, pedido_id, ordem_compra_id, siso_pedidos(numero)")
+    .select("id, sku, descricao, quantidade_pedida, compra_status, compra_quantidade_recebida, pedido_id, ordem_compra_id, siso_pedidos(numero)")
     .in("ordem_compra_id", ocIds);
 
   if (itemsError) throw new Error(`Erro ao buscar itens OC: ${itemsError.message}`);
@@ -255,7 +255,7 @@ async function fetchComprado(
         id: String(item.id),
         sku: item.sku,
         descricao: item.descricao,
-        quantidade: item.quantidade,
+        quantidade: item.quantidade_pedida,
         compra_status: item.compra_status,
         compra_quantidade_recebida: item.compra_quantidade_recebida,
         pedido_id: item.pedido_id,
@@ -272,7 +272,7 @@ async function fetchIndisponivel(
 ) {
   const { data: items, error } = await supabase
     .from("siso_pedido_itens")
-    .select("id, sku, descricao, quantidade, fornecedor_oc, pedido_id, siso_pedidos(numero)")
+    .select("id, sku, descricao, quantidade_pedida, fornecedor_oc, pedido_id, siso_pedidos(numero)")
     .eq("compra_status", "indisponivel");
 
   if (error) throw new Error(`Erro ao buscar itens indisponiveis: ${error.message}`);
@@ -281,7 +281,7 @@ async function fetchIndisponivel(
     id: String(item.id),
     sku: item.sku,
     descricao: item.descricao,
-    quantidade: item.quantidade,
+    quantidade: item.quantidade_pedida,
     fornecedor_oc: item.fornecedor_oc,
     pedido_id: item.pedido_id,
     numero_pedido: item.siso_pedidos?.numero ?? "?",

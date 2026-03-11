@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { concluirAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
-import { enviarImpressao, resolverImpressora } from "@/lib/printnode";
+import { enviarImpressaoZpl, resolverImpressora } from "@/lib/printnode";
 import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
 import { getConfig } from "@/lib/config";
 import { logger } from "@/lib/logger";
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   const { data: pedido, error: fetchErr } = await supabase
     .from("siso_pedidos")
     .select(
-      "id, numero, empresa_origem_id, separacao_galpao_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_status, status_separacao, separacao_operador_id",
+      "id, numero, empresa_origem_id, separacao_galpao_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_zpl, etiqueta_status, status_separacao, separacao_operador_id",
     )
     .eq("id", pedidoId)
     .single();
@@ -88,58 +88,63 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // 7. Attempt to print using cached URL
-    if (pedido.etiqueta_url) {
-      try {
-        const { jobId } = await enviarImpressao({
-          apiKey: printNodeApiKey,
-          printerId: printer.printerId,
-          pdfUrl: pedido.etiqueta_url,
-          titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId} (reimpressão)`,
-        });
+    const titulo = `Etiqueta Pedido #${pedido.numero ?? pedidoId} (reimpressão)`;
 
-        await setStatus(supabase, pedidoId, "impresso");
-        logger.info(LOG_SOURCE, "Reimpressão com URL cacheada", { pedidoId, jobId: String(jobId) });
-        return NextResponse.json({ status: "impresso", jobId });
-      } catch {
-        // URL may have expired — try to refetch below
-        logger.warn(LOG_SOURCE, "URL cacheada falhou, tentando refetch", { pedidoId });
-      }
+    // 7. Fast path: use cached ZPL
+    if (pedido.etiqueta_zpl) {
+      const { jobId } = await enviarImpressaoZpl({
+        apiKey: printNodeApiKey,
+        printerId: printer.printerId,
+        zpl: pedido.etiqueta_zpl,
+        titulo,
+      });
+
+      await setStatus(supabase, pedidoId, "impresso");
+      logger.info(LOG_SOURCE, "Reimpressão com ZPL cacheado", { pedidoId, jobId: String(jobId) });
+      return NextResponse.json({ status: "impresso", jobId });
     }
 
-    // 8. Refetch label URL via agrupamento_expedicao_id
-    if (pedido.agrupamento_expedicao_id && pedido.empresa_origem_id) {
+    // 8. Download ZPL from cached URL or refetch via agrupamento
+    let zplUrl = pedido.etiqueta_url;
+
+    if (!zplUrl && pedido.agrupamento_expedicao_id && pedido.empresa_origem_id) {
       try {
         const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
         const agrupId = parseInt(pedido.agrupamento_expedicao_id, 10);
         await concluirAgrupamento(token, agrupId).catch(() => {});
         const etiquetas = await obterEtiquetasAgrupamento(token, agrupId);
-
-        if (etiquetas.urls && etiquetas.urls.length > 0) {
-          const newUrl = etiquetas.urls[0];
-
-          // Update cached URL
-          await supabase
-            .from("siso_pedidos")
-            .update({ etiqueta_url: newUrl })
-            .eq("id", pedidoId);
-
-          const { jobId } = await enviarImpressao({
-            apiKey: printNodeApiKey,
-            printerId: printer.printerId,
-            pdfUrl: newUrl,
-            titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId} (reimpressão)`,
-          });
-
-          await setStatus(supabase, pedidoId, "impresso");
-          logger.info(LOG_SOURCE, "Reimpressão com URL refetchada", { pedidoId, jobId: String(jobId) });
-          return NextResponse.json({ status: "impresso", jobId });
+        if (etiquetas.urls?.length > 0) {
+          zplUrl = etiquetas.urls[0];
         }
       } catch (err) {
         logger.warn(LOG_SOURCE, "Refetch via agrupamento falhou", {
           pedidoId,
           error: err instanceof Error ? err.message : String(err),
         });
+      }
+    }
+
+    if (zplUrl) {
+      const res = await fetch(zplUrl, { signal: AbortSignal.timeout(15_000) });
+      if (res.ok) {
+        const zpl = await res.text();
+
+        // Cache for future reprints
+        await supabase
+          .from("siso_pedidos")
+          .update({ etiqueta_url: zplUrl, etiqueta_zpl: zpl })
+          .eq("id", pedidoId);
+
+        const { jobId } = await enviarImpressaoZpl({
+          apiKey: printNodeApiKey,
+          printerId: printer.printerId,
+          zpl,
+          titulo,
+        });
+
+        await setStatus(supabase, pedidoId, "impresso");
+        logger.info(LOG_SOURCE, "Reimpressão com ZPL baixado", { pedidoId, jobId: String(jobId) });
+        return NextResponse.json({ status: "impresso", jobId });
       }
     }
 

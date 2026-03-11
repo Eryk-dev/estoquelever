@@ -92,7 +92,7 @@ function EmbalagemPage() {
   const { data, isLoading } = useQuery<{ pedidos: SeparacaoPedido[] }>({
     queryKey: pedidosQueryKey,
     queryFn: async () => {
-      const res = await sisoFetch("/api/separacao?status_separacao=separado");
+      const res = await sisoFetch(`/api/separacao?status_separacao=separado&pedido_ids=${pedidoIds.join(",")}`);
       if (!res.ok) return { pedidos: [] };
       const json = await res.json();
       return { pedidos: json.pedidos ?? [] };
@@ -130,12 +130,7 @@ function EmbalagemPage() {
     return map;
   }, [itemsData]);
 
-  // Filter pedidos to only the ones from URL params
-  const allPedidos = useMemo(() => data?.pedidos ?? [], [data?.pedidos]);
-
-  const pedidos = useMemo(() => {
-    return allPedidos.filter((p) => pedidoIds.includes(p.id));
-  }, [allPedidos, pedidoIds]);
+  const pedidos = useMemo(() => data?.pedidos ?? [], [data?.pedidos]);
 
   // Derive galpao_id from first pedido
   const galpaoId = useMemo(() => {

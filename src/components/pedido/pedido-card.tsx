@@ -37,29 +37,31 @@ interface PedidoCardProps {
 // Decision options (card-specific: label function + icon)
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface DecisaoOption {
-  value: Decisao;
-  /** Short label shown in the action row */
-  label: (filialOrigem: Filial) => string;
+const DECISAO_VALUES: Decisao[] = ["propria", "transferencia", "oc"];
+
+/** Returns the best alternative (non-origin) galpao name from dynamic stock data */
+function getBestAlternativeGalpao(pedido: Pedido): string | undefined {
+  const originGalpao = pedido.filialOrigem;
+  const altGalpoes = new Set<string>();
+  for (const item of pedido.itens) {
+    for (const g of item.estoquesPorGalpao ?? []) {
+      if (g.galpaoNome !== originGalpao) altGalpoes.add(g.galpaoNome);
+    }
+  }
+  return [...altGalpoes][0];
 }
 
-const DECISAO_OPTIONS: DecisaoOption[] = [
-  {
-    value: "propria",
-    label: (f) => `Própria ${f}`,
-  },
-  {
-    value: "transferencia",
-    label: (f) => `Transferência ${f === "CWB" ? "SP" : "CWB"}`,
-  },
-  {
-    value: "oc",
-    label: () => "Ordem de Compra",
-  },
-];
-
-function getDecisaoOption(decisao: Decisao): DecisaoOption {
-  return DECISAO_OPTIONS.find((c) => c.value === decisao) ?? DECISAO_OPTIONS[0]!;
+function getDecisaoLabel(decisao: Decisao, pedido: Pedido): string {
+  if (decisao === "propria") return `Própria ${pedido.filialOrigem}`;
+  if (decisao === "transferencia") {
+    const hasDynamic = pedido.itens.some(i => i.estoquesPorGalpao?.length);
+    if (hasDynamic) {
+      const altName = getBestAlternativeGalpao(pedido) ?? "Outro";
+      return `Transferência ${altName}`;
+    }
+    return `Transferência ${pedido.filialOrigem === "CWB" ? "SP" : "CWB"}`;
+  }
+  return "Ordem de Compra";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,12 +78,39 @@ function spAtendeTudo(itens: EstoqueItem[]): boolean {
 
 function decisaoIsAvailable(decisao: Decisao, pedido: Pedido): boolean {
   if (decisao === "oc") return true;
+
+  const hasDynamic = pedido.itens.some(i => i.estoquesPorGalpao?.length);
+
+  if (hasDynamic) {
+    if (decisao === "propria") {
+      // Origin galpao must atende ALL items
+      return pedido.itens.every(item => {
+        const originStock = item.estoquesPorGalpao?.find(g => g.galpaoNome === pedido.filialOrigem);
+        return originStock?.atende ?? false;
+      });
+    }
+    // transferencia: any non-origin galpao must atende ALL items
+    const originGalpao = pedido.filialOrigem;
+    const altGalpoes = new Set<string>();
+    for (const item of pedido.itens) {
+      for (const g of item.estoquesPorGalpao ?? []) {
+        if (g.galpaoNome !== originGalpao) altGalpoes.add(g.galpaoNome);
+      }
+    }
+    return [...altGalpoes].some(galpaoNome =>
+      pedido.itens.every(item => {
+        const stock = item.estoquesPorGalpao?.find(g => g.galpaoNome === galpaoNome);
+        return stock?.atende ?? false;
+      })
+    );
+  }
+
+  // Legacy fallback
   if (decisao === "propria") {
     return pedido.filialOrigem === "CWB"
       ? cwbAtendeTudo(pedido.itens)
       : spAtendeTudo(pedido.itens);
   }
-  // transferencia
   return pedido.filialOrigem === "CWB"
     ? spAtendeTudo(pedido.itens)
     : cwbAtendeTudo(pedido.itens);
@@ -444,7 +473,7 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [onClose]);
 
-  const alternatives = DECISAO_OPTIONS.filter((c) => c.value !== current);
+  const alternatives = DECISAO_VALUES.filter((v) => v !== current);
 
   return (
     <div
@@ -457,19 +486,19 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
       role="listbox"
       aria-label="Escolher outra decisão"
     >
-      {alternatives.map((option) => {
-        const available = decisaoIsAvailable(option.value, pedido);
-        const stripColor = getDecisaoStripColor(option.value);
+      {alternatives.map((d) => {
+        const available = decisaoIsAvailable(d, pedido);
+        const stripColor = getDecisaoStripColor(d);
         return (
           <button
-            key={option.value}
+            key={d}
             type="button"
             role="option"
             aria-selected={false}
             disabled={!available}
             onClick={() => {
               if (available) {
-                onSelect(option.value);
+                onSelect(d);
                 onClose();
               }
             }}
@@ -488,7 +517,7 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
               aria-hidden="true"
             />
             <span className="font-medium text-ink">
-              {option.label(pedido.filialOrigem)}
+              {getDecisaoLabel(d, pedido)}
             </span>
             {!available && (
               <span className="ml-auto text-[10px] text-ink-faint">sem estoque</span>
@@ -514,7 +543,6 @@ interface ActionRowProps {
 
 function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: ActionRowProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const option = getDecisaoOption(decisao);
   const textColor = getDecisaoColors(decisao);
 
   const DecisaoIcon =
@@ -531,7 +559,7 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
           aria-hidden="true"
         />
         <span className={cn("text-sm font-semibold truncate", textColor)}>
-          {option.label(pedido.filialOrigem)}
+          {getDecisaoLabel(decisao, pedido)}
         </span>
 
         {/* Chevron — opens dropdown to switch decision */}

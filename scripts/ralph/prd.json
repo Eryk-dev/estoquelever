@@ -196,7 +196,7 @@
         "Typecheck passes"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "The origin galpao is determined by pedido.empresaOrigemId → find which galpao that empresa belongs to. In estoquesPorGalpao, match by galpaoId. The 'best alternative' galpao for transferencia is the non-origin galpao that atende the most items."
     },
     {

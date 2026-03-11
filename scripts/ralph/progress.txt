@@ -163,3 +163,17 @@ Started: Wed Mar 11 16:48:51 -03 2026
   - The `galpaoId` is passed to the stock adjustment API body for forward compat (US-014 will make the API use it)
   - `isRelevant` for stock pills: propria = origin galpao, transferencia = non-origin, oc = all relevant
 ---
+
+## 2026-03-11 - US-013
+- `decisaoIsAvailable()` now checks estoquesPorGalpao dynamically: propria = origin galpao atende ALL items, transferencia = any non-origin galpao atende ALL items
+- Replaced `DECISAO_OPTIONS` (with label functions) with `DECISAO_VALUES` array + `getDecisaoLabel()` function
+- `getDecisaoLabel()` for transferencia shows actual target galpao name from dynamic data (e.g., "Transferência SP")
+- `getBestAlternativeGalpao()` helper extracts non-origin galpao names from estoquesPorGalpao
+- Legacy CWB/SP fallback preserved in both `decisaoIsAvailable` and `getDecisaoLabel`
+- No `as "CWB" | "SP"` casts in the new code path
+- Files changed: `src/components/pedido/pedido-card.tsx`
+- **Learnings for future iterations:**
+  - The decision availability for transferencia checks ALL non-origin galpoes — if ANY single galpao atende ALL items, transferencia is available
+  - `DECISAO_VALUES` is just a plain array of Decisao values; labels are computed by `getDecisaoLabel(decisao, pedido)`
+  - `getDecisaoOption()` was removed; `ActionRow` calls `getDecisaoLabel(decisao, pedido)` directly
+---

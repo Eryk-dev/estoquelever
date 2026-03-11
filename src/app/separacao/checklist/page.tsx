@@ -35,6 +35,7 @@ interface ChecklistItem {
   separacao_marcado: boolean;
   separacao_marcado_em: string | null;
   localizacao: string | null;
+  imagem_url: string | null;
 }
 
 interface ConsolidatedProduct {
@@ -44,6 +45,7 @@ interface ConsolidatedProduct {
   descricao: string;
   quantidade_total: number;
   localizacao: string | null;
+  imagem_url: string | null;
   item_ids: string[];
   all_marcado: boolean;
 }
@@ -143,6 +145,7 @@ function ChecklistPage() {
           descricao: item.descricao,
           quantidade_total: item.quantidade,
           localizacao: item.localizacao,
+          imagem_url: item.imagem_url,
           item_ids: [item.id],
           all_marcado: item.separacao_marcado,
         });
@@ -506,6 +509,23 @@ function ChecklistPage() {
                   )}
                 >
                   {product.all_marcado && <Check className="h-4 w-4" />}
+                </div>
+
+                {/* Product thumbnail */}
+                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-line bg-surface">
+                  {product.imagem_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={product.imagem_url}
+                      alt={product.sku}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center">
+                      <Package className="h-4 w-4 text-ink-faint" aria-hidden="true" />
+                    </div>
+                  )}
                 </div>
 
                 {/* Content */}

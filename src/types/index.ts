@@ -115,6 +115,7 @@ export interface Pedido {
 
 /** Status of the separation/packing flow */
 export type StatusSeparacao =
+  | "aguardando_compra"
   | "aguardando_nf"
   | "aguardando_separacao"
   | "em_separacao"
@@ -152,6 +153,7 @@ export interface SeparacaoFilter {
 
 /** Count of orders per separation status */
 export interface SeparacaoCounts {
+  aguardando_compra: number;
   aguardando_nf: number;
   aguardando_separacao: number;
   em_separacao: number;

@@ -226,6 +226,8 @@ export async function processWebhook(
       const isKit = expandedItems.length > 1 || expandedItems[0] !== item;
 
       for (const expandedItem of expandedItems) {
+        // For kit components, pass null so each component fetches its own image.
+        // kitImagemUrl is the parent kit's image — not the component's.
         const { processed, estoquesPorEmpresa } = await enrichItemMultiEmpresa(
           expandedItem,
           empresaOrigemId,
@@ -234,7 +236,7 @@ export async function processWebhook(
           empresasDoGrupo,
           empresaTokens,
           empresaDepositoIds,
-          kitImagemUrl,
+          isKit ? null : kitImagemUrl,
           isKit ? null : itemGtin,
         );
         itensProcessados.push(processed);

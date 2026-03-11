@@ -1,12 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { sisoFetch } from "@/lib/auth-context";
-import { CheckCircle2, Truck, Calendar, History, Printer, Loader2 } from "lucide-react";
+import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin } from "lucide-react";
 import { PedidoTimeline } from "./pedido-timeline";
 import type { StatusSeparacao } from "@/types";
+
+export interface CompraStatsData {
+  total: number;
+  aguardando: number;
+  comprado: number;
+  recebido: number;
+  indisponivel: number;
+  itens: Array<{
+    sku: string;
+    descricao: string;
+    quantidade: number;
+    compra_status: string | null;
+    fornecedor_oc: string | null;
+  }>;
+}
 
 export interface SeparacaoPedido {
   id: string;
@@ -25,6 +40,7 @@ export interface SeparacaoPedido {
   itens_marcados: number;
   itens_bipados: number;
   galpao_id: string | null;
+  compra_stats: CompraStatsData | null;
 }
 
 interface SeparacaoCardProps {
@@ -43,6 +59,18 @@ function formatDate(iso: string): string {
   }
 }
 
+interface ItemDetail {
+  id: string;
+  pedido_id: string;
+  produto_id: string;
+  sku: string;
+  gtin: string | null;
+  descricao: string;
+  quantidade: number;
+  separacao_marcado: boolean;
+  localizacao: string | null;
+}
+
 export function SeparacaoCard({
   pedido,
   checkbox,
@@ -50,9 +78,33 @@ export function SeparacaoCard({
   onToggle,
 }: SeparacaoCardProps) {
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [items, setItems] = useState<ItemDetail[] | null>(null);
+  const [itemsLoading, setItemsLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
   const isEmbalado = pedido.status_separacao === "embalado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
+  const isAguardandoOC = pedido.status_separacao === "aguardando_compra";
+  const cs = pedido.compra_stats;
+
+  // Fetch items when expanded
+  useEffect(() => {
+    if (!expanded || items !== null) return;
+    let cancelled = false;
+    setItemsLoading(true);
+    sisoFetch(`/api/separacao/checklist-items?pedidos=${pedido.id}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) setItems(data.items ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setItems([]);
+      })
+      .finally(() => {
+        if (!cancelled) setItemsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [expanded, items, pedido.id]);
 
   // Separation progress (for em_separacao)
   const progressPct =
@@ -66,7 +118,9 @@ export function SeparacaoCard({
         "overflow-hidden rounded-xl border bg-paper shadow-sm transition-colors",
         isEmbalado
           ? "border-emerald-200 dark:border-emerald-800"
-          : "border-line",
+          : isAguardandoOC
+            ? "border-amber-200 dark:border-amber-800"
+            : "border-line",
         checkbox && checked && "ring-2 ring-zinc-900/10 dark:ring-zinc-100/10",
       )}
       aria-label={`Pedido #${pedido.numero_pedido}`}
@@ -74,7 +128,7 @@ export function SeparacaoCard({
       <div className="flex items-start gap-3 px-4 py-3">
         {/* Checkbox */}
         {checkbox && (
-          <label className="flex shrink-0 cursor-pointer items-center pt-0.5">
+          <label className="flex shrink-0 cursor-pointer items-center pt-0.5" onClick={(e) => e.stopPropagation()}>
             <input
               type="checkbox"
               checked={checked}
@@ -87,7 +141,13 @@ export function SeparacaoCard({
         {/* Main content */}
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           {/* Row 1: Order number + client + actions */}
-          <div className="flex items-center gap-2">
+          <div
+            className="flex cursor-pointer items-center gap-2"
+            onClick={() => setExpanded((v) => !v)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded((v) => !v); } }}
+          >
             {isEmbalado && (
               <CheckCircle2
                 className="h-4 w-4 shrink-0 text-emerald-500"
@@ -110,7 +170,8 @@ export function SeparacaoCard({
               <button
                 type="button"
                 disabled={printing}
-                onClick={async () => {
+                onClick={async (e) => {
+                  e.stopPropagation();
                   setPrinting(true);
                   try {
                     const res = await sisoFetch("/api/separacao/reimprimir", {
@@ -145,7 +206,7 @@ export function SeparacaoCard({
             {/* Timeline toggle */}
             <button
               type="button"
-              onClick={() => setTimelineOpen((v) => !v)}
+              onClick={(e) => { e.stopPropagation(); setTimelineOpen((v) => !v); }}
               className={cn(
                 "shrink-0 rounded p-1 transition-colors",
                 timelineOpen
@@ -158,6 +219,15 @@ export function SeparacaoCard({
             >
               <History className="h-3.5 w-3.5" />
             </button>
+
+            {/* Expand chevron */}
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 shrink-0 text-zinc-400 transition-transform duration-200",
+                expanded && "rotate-180",
+              )}
+              aria-hidden="true"
+            />
           </div>
 
           {/* Row 2: Metadata badges */}
@@ -233,8 +303,183 @@ export function SeparacaoCard({
               ))}
             </div>
           )}
+
+          {/* Aguardando OC: compra progress + item list */}
+          {isAguardandoOC && cs && (
+            <div className="mt-1.5 space-y-2">
+              {/* Progress summary */}
+              <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                {cs.aguardando > 0 && (
+                  <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                    <Clock className="h-3 w-3" />
+                    {cs.aguardando} aguardando
+                  </span>
+                )}
+                {cs.comprado > 0 && (
+                  <span className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                    <ShoppingCart className="h-3 w-3" />
+                    {cs.comprado} comprado{cs.comprado !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {cs.recebido > 0 && (
+                  <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                    <Package className="h-3 w-3" />
+                    {cs.recebido} recebido{cs.recebido !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {cs.indisponivel > 0 && (
+                  <span className="inline-flex items-center gap-1 text-red-500 dark:text-red-400">
+                    <AlertTriangle className="h-3 w-3" />
+                    {cs.indisponivel} indisponivel
+                  </span>
+                )}
+              </div>
+
+              {/* Progress bar */}
+              {cs.total > 0 && (
+                <div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                    <div className="flex h-full">
+                      {cs.recebido > 0 && (
+                        <div
+                          className="h-full bg-emerald-500"
+                          style={{ width: `${(cs.recebido / cs.total) * 100}%` }}
+                        />
+                      )}
+                      {cs.comprado > 0 && (
+                        <div
+                          className="h-full bg-blue-500"
+                          style={{ width: `${(cs.comprado / cs.total) * 100}%` }}
+                        />
+                      )}
+                      {cs.aguardando > 0 && (
+                        <div
+                          className="h-full bg-amber-400"
+                          style={{ width: `${(cs.aguardando / cs.total) * 100}%` }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Item list */}
+              <div className="rounded-lg border border-line bg-surface">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="border-b border-line text-left text-ink-faint">
+                      <th className="px-2 py-1 font-medium">SKU</th>
+                      <th className="px-2 py-1 font-medium">Descricao</th>
+                      <th className="px-2 py-1 font-medium text-center">Qtd</th>
+                      <th className="px-2 py-1 font-medium">Fornecedor</th>
+                      <th className="px-2 py-1 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cs.itens.map((item, idx) => (
+                      <tr
+                        key={`${item.sku}-${idx}`}
+                        className="border-b border-line/50 last:border-0"
+                      >
+                        <td className="px-2 py-1 font-mono font-medium text-ink">
+                          {item.sku}
+                        </td>
+                        <td className="max-w-[200px] truncate px-2 py-1 text-ink-faint" title={item.descricao}>
+                          {item.descricao}
+                        </td>
+                        <td className="px-2 py-1 text-center font-mono text-ink">
+                          {item.quantidade}
+                        </td>
+                        <td className="px-2 py-1 text-ink-faint">
+                          {item.fornecedor_oc ?? "—"}
+                        </td>
+                        <td className="px-2 py-1">
+                          <CompraStatusBadge status={item.compra_status} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Expanded items panel */}
+      {expanded && (
+        <>
+          <div className="mx-4 h-px bg-line" />
+          <div className="px-4 py-3">
+            {itemsLoading ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-4 w-4 animate-spin text-ink-faint" />
+                <span className="ml-2 text-xs text-ink-faint">Carregando itens...</span>
+              </div>
+            ) : items && items.length > 0 ? (
+              <div className="rounded-lg border border-line bg-surface">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="border-b border-line text-left text-ink-faint">
+                      <th className="px-2 py-1.5 font-medium">SKU</th>
+                      <th className="px-2 py-1.5 font-medium">Descricao</th>
+                      <th className="px-2 py-1.5 font-medium text-center">Qtd</th>
+                      <th className="px-2 py-1.5 font-medium">Localizacao</th>
+                      {isEmSeparacao && (
+                        <th className="px-2 py-1.5 font-medium text-center">Separado</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item) => (
+                      <tr
+                        key={item.id}
+                        className={cn(
+                          "border-b border-line/50 last:border-0",
+                          item.separacao_marcado && "bg-emerald-50/50 dark:bg-emerald-950/10",
+                        )}
+                      >
+                        <td className="px-2 py-1.5 font-mono font-medium text-ink">
+                          {item.sku}
+                        </td>
+                        <td className="max-w-[200px] truncate px-2 py-1.5 text-ink-faint" title={item.descricao}>
+                          {item.descricao}
+                        </td>
+                        <td className="px-2 py-1.5 text-center font-mono text-ink">
+                          {item.quantidade}
+                        </td>
+                        <td className="px-2 py-1.5">
+                          {item.localizacao ? (
+                            <span className="inline-flex items-center gap-1 text-ink-faint">
+                              <MapPin className="h-3 w-3" />
+                              {item.localizacao}
+                            </span>
+                          ) : (
+                            <span className="text-ink-faint">—</span>
+                          )}
+                        </td>
+                        {isEmSeparacao && (
+                          <td className="px-2 py-1.5 text-center">
+                            {item.separacao_marcado ? (
+                              <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-emerald-500" />
+                            ) : (
+                              <span className="text-ink-faint">—</span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="py-2 text-center text-xs text-ink-faint">
+                Nenhum item encontrado
+              </p>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Timeline (expandable) */}
       {timelineOpen && (
@@ -244,5 +489,37 @@ export function SeparacaoCard({
         </>
       )}
     </article>
+  );
+}
+
+// ─── Compra status badge ─────────────────────────────────────────────────────
+
+const COMPRA_STATUS_MAP: Record<string, { label: string; className: string }> = {
+  aguardando_compra: {
+    label: "Aguardando",
+    className: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400",
+  },
+  comprado: {
+    label: "Comprado",
+    className: "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400",
+  },
+  recebido: {
+    label: "Recebido",
+    className: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400",
+  },
+  indisponivel: {
+    label: "Indisponivel",
+    className: "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400",
+  },
+};
+
+function CompraStatusBadge({ status }: { status: string | null }) {
+  if (!status) return <span className="text-ink-faint">—</span>;
+  const cfg = COMPRA_STATUS_MAP[status];
+  if (!cfg) return <span className="text-ink-faint">{status}</span>;
+  return (
+    <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold", cfg.className)}>
+      {cfg.label}
+    </span>
   );
 }

@@ -18,12 +18,17 @@ import {
 import { CARGO_LABELS } from "@/types";
 import type { Tab, StatusSeparacao, SeparacaoCounts } from "@/types";
 
-// 5 tabs mapping 1:1 to StatusSeparacao values
+// 6 tabs mapping 1:1 to StatusSeparacao values
 const TAB_CONFIG: {
   id: StatusSeparacao;
   label: string;
   emptyMessage: string;
 }[] = [
+  {
+    id: "aguardando_compra",
+    label: "Aguardando OC",
+    emptyMessage: "Nenhum pedido aguardando ordem de compra",
+  },
   {
     id: "aguardando_nf",
     label: "Aguardando NF",
@@ -52,6 +57,7 @@ const TAB_CONFIG: {
 ];
 
 const EMPTY_COUNTS: SeparacaoCounts = {
+  aguardando_compra: 0,
   aguardando_nf: 0,
   aguardando_separacao: 0,
   em_separacao: 0,

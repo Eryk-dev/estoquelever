@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import type { SeparacaoCounts, StatusSeparacao } from "@/types";
 
 const VALID_STATUSES: StatusSeparacao[] = [
+  "aguardando_compra",
   "aguardando_nf",
   "aguardando_separacao",
   "em_separacao",
@@ -13,6 +14,7 @@ const VALID_STATUSES: StatusSeparacao[] = [
 ];
 
 const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
+  "aguardando_compra",
   "aguardando_nf",
   "aguardando_separacao",
   "em_separacao",
@@ -80,6 +82,7 @@ export async function GET(request: NextRequest) {
   // No empresas for this role — return empty
   if (allowedEmpresaIds !== null && allowedEmpresaIds.length === 0) {
     const emptyCounts: SeparacaoCounts = {
+      aguardando_compra: 0,
       aguardando_nf: 0,
       aguardando_separacao: 0,
       em_separacao: 0,
@@ -145,11 +148,12 @@ export async function GET(request: NextRequest) {
 
     // Build counts
     const counts: SeparacaoCounts = {
-      aguardando_nf: countResults[0].count ?? 0,
-      aguardando_separacao: countResults[1].count ?? 0,
-      em_separacao: countResults[2].count ?? 0,
-      separado: countResults[3].count ?? 0,
-      embalado: countResults[4].count ?? 0,
+      aguardando_compra: countResults[0].count ?? 0,
+      aguardando_nf: countResults[1].count ?? 0,
+      aguardando_separacao: countResults[2].count ?? 0,
+      em_separacao: countResults[3].count ?? 0,
+      separado: countResults[4].count ?? 0,
+      embalado: countResults[5].count ?? 0,
     };
 
     // 3. Fetch item stats for progress display (separation + packing counts)
@@ -158,11 +162,29 @@ export async function GET(request: NextRequest) {
       string,
       { total: number; marcados: number; bipados: number }
     > = {};
+    // Compra stats per pedido (for aguardando_compra tab)
+    const compraStats: Record<
+      string,
+      {
+        total: number;
+        aguardando: number;
+        comprado: number;
+        recebido: number;
+        indisponivel: number;
+        itens: Array<{
+          sku: string;
+          descricao: string;
+          quantidade: number;
+          compra_status: string | null;
+          fornecedor_oc: string | null;
+        }>;
+      }
+    > = {};
 
     if (pedidoIds.length > 0) {
       const { data: items } = await supabase
         .from("siso_pedido_itens")
-        .select("pedido_id, separacao_marcado, bipado_completo")
+        .select("pedido_id, separacao_marcado, bipado_completo, compra_status, fornecedor_oc, sku, descricao, quantidade_pedida")
         .in("pedido_id", pedidoIds);
 
       for (const item of items ?? []) {
@@ -172,6 +194,33 @@ export async function GET(request: NextRequest) {
         itemStats[item.pedido_id].total++;
         if (item.separacao_marcado) itemStats[item.pedido_id].marcados++;
         if (item.bipado_completo) itemStats[item.pedido_id].bipados++;
+
+        // Build compra stats for OC orders
+        if (item.compra_status) {
+          if (!compraStats[item.pedido_id]) {
+            compraStats[item.pedido_id] = {
+              total: 0,
+              aguardando: 0,
+              comprado: 0,
+              recebido: 0,
+              indisponivel: 0,
+              itens: [],
+            };
+          }
+          const cs = compraStats[item.pedido_id];
+          cs.total++;
+          if (item.compra_status === "aguardando_compra") cs.aguardando++;
+          else if (item.compra_status === "comprado") cs.comprado++;
+          else if (item.compra_status === "recebido") cs.recebido++;
+          else if (item.compra_status === "indisponivel") cs.indisponivel++;
+          cs.itens.push({
+            sku: item.sku,
+            descricao: item.descricao,
+            quantidade: item.quantidade_pedida,
+            compra_status: item.compra_status,
+            fornecedor_oc: item.fornecedor_oc,
+          });
+        }
       }
     }
 
@@ -179,6 +228,7 @@ export async function GET(request: NextRequest) {
     const result = (pedidos ?? []).map((p) => {
       const empresa = p.siso_empresas as unknown as { nome: string; galpao_id: string } | null;
       const stats = itemStats[p.id] ?? { total: 0, marcados: 0, bipados: 0 };
+      const cs = compraStats[p.id] ?? null;
       return {
         id: p.id,
         numero_nf: p.numero,
@@ -196,6 +246,7 @@ export async function GET(request: NextRequest) {
         total_itens: stats.total,
         itens_marcados: stats.marcados,
         itens_bipados: stats.bipados,
+        compra_stats: cs,
       };
     });
 

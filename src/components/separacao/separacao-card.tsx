@@ -20,6 +20,7 @@ export interface SeparacaoPedido {
   total_itens: number;
   itens_marcados: number;
   itens_bipados: number;
+  galpao_id: string | null;
 }
 
 interface SeparacaoCardProps {

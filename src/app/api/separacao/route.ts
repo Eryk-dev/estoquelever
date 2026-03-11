@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
       .select(
         `id, numero, data, id_pedido_ecommerce, cliente_nome,
          forma_envio_descricao, status_separacao, marcadores,
-         empresa_origem_id, siso_empresas(nome)`,
+         empresa_origem_id, siso_empresas(nome, galpao_id)`,
       )
       .not("status_separacao", "is", null);
 
@@ -177,7 +177,7 @@ export async function GET(request: NextRequest) {
 
     // Shape response
     const result = (pedidos ?? []).map((p) => {
-      const empresa = p.siso_empresas as unknown as { nome: string } | null;
+      const empresa = p.siso_empresas as unknown as { nome: string; galpao_id: string } | null;
       const stats = itemStats[p.id] ?? { total: 0, marcados: 0, bipados: 0 };
       return {
         id: p.id,
@@ -190,6 +190,7 @@ export async function GET(request: NextRequest) {
         forma_envio: p.forma_envio_descricao,
         data_pedido: p.data,
         empresa_origem_nome: empresa?.nome ?? null,
+        galpao_id: empresa?.galpao_id ?? null,
         status_separacao: p.status_separacao,
         marcadores: p.marcadores ?? [],
         total_itens: stats.total,

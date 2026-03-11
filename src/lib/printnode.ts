@@ -4,6 +4,7 @@
  * - testarConexao: validates API key via GET /whoami
  * - listarImpressoras: lists available printers via GET /printers
  * - enviarImpressao: sends a PDF print job via POST /printjobs (10s timeout, 1 retry)
+ * - enviarImpressaoZpl: sends raw ZPL content via POST /printjobs (raw_base64)
  * - resolverImpressora: resolves printer for a user/galpao (user override > galpao default)
  */
 
@@ -160,6 +161,73 @@ export async function enviarImpressao(params: {
   }
 
   logger.info("printnode", "Print job sent", {
+    printerId: String(printerId),
+    jobId: String(jobId),
+  });
+
+  return { jobId };
+}
+
+/**
+ * Send a raw ZPL print job to PrintNode.
+ * ZPL content is sent as base64-encoded raw data — PrintNode forwards it
+ * directly to the thermal printer without any rendering.
+ * - 10s timeout
+ * - 1 retry on network error
+ */
+export async function enviarImpressaoZpl(params: {
+  apiKey: string;
+  printerId: number;
+  zpl: string;
+  titulo: string;
+}): Promise<{ jobId: number }> {
+  const { apiKey, printerId, zpl, titulo } = params;
+
+  const zplBase64 = Buffer.from(zpl).toString("base64");
+
+  const body = JSON.stringify({
+    printerId,
+    contentType: "raw_base64",
+    content: zplBase64,
+    title: titulo,
+    source: "SISO Separacao",
+  });
+
+  const doRequest = async (): Promise<number> => {
+    const res = await fetch(`${PRINTNODE_BASE}/printjobs`, {
+      method: "POST",
+      headers: {
+        Authorization: getAuthHeader(apiKey),
+        "Content-Type": "application/json",
+      },
+      body,
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`PrintNode ${res.status}: ${text}`);
+    }
+
+    return res.json() as Promise<number>;
+  };
+
+  let jobId: number;
+  try {
+    jobId = await doRequest();
+  } catch (err) {
+    const isNetworkError =
+      err instanceof TypeError ||
+      (err instanceof Error && err.name === "AbortError");
+    if (!isNetworkError) throw err;
+
+    logger.warn("printnode", "Retrying ZPL print job after network error", {
+      printerId: String(printerId),
+    });
+    jobId = await doRequest();
+  }
+
+  logger.info("printnode", "ZPL print job sent", {
     printerId: String(printerId),
     jobId: String(jobId),
   });

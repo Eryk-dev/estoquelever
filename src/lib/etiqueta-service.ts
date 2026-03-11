@@ -1,39 +1,38 @@
 /**
  * Etiqueta (shipping label) service.
  *
- * Fetches shipping labels from Tiny via expedição/agrupamento,
- * sends them to PrintNode for printing, and tracks etiqueta_status.
+ * Prints a ZPL label for a packed order. Two paths:
  *
- * Flow:
- *   1. Resolve label URL (cached or via Tiny API)
- *   2. Resolve printer (user override > galpão default)
- *   3. Send to PrintNode
- *   4. Update etiqueta_status
+ * FAST PATH (normal): ZPL was pre-cached by agrupamento-service at separation time.
+ *   → Just send cached ZPL to PrintNode (~200ms)
+ *
+ * SLOW PATH (fallback): ZPL not cached (e.g. manual override, race condition).
+ *   → Create agrupamento in Tiny → fetch URL → download ZPL → send to PrintNode (~3-5s)
  */
 
 import { createServiceClient } from "@/lib/supabase-server";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { criarAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
-import { enviarImpressao, resolverImpressora } from "@/lib/printnode";
+import { enviarImpressaoZpl } from "@/lib/printnode";
+import { resolverImpressora } from "@/lib/printnode";
 import { getConfig } from "@/lib/config";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "etiqueta-service";
 
 /**
- * Fetch, cache, and print the shipping label for a packed order.
+ * Print the shipping label for a packed order.
  *
  * Idempotent: returns early if etiqueta_status is already 'impresso'.
- * On any error, sets etiqueta_status = 'falhou' and logs (never throws to caller).
+ * On any error, sets etiqueta_status = 'falhou' (never throws to caller).
  */
 export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
   const supabase = createServiceClient();
 
-  // 1. Fetch pedido
   const { data: pedido, error: fetchErr } = await supabase
     .from("siso_pedidos")
     .select(
-      "id, numero, empresa_origem_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_status, separacao_galpao_id, separacao_operador_id"
+      "id, numero, empresa_origem_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_zpl, etiqueta_status, separacao_galpao_id, separacao_operador_id"
     )
     .eq("id", pedidoId)
     .single();
@@ -43,7 +42,6 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
     return;
   }
 
-  // 2. Idempotent — skip if already printed
   if (pedido.etiqueta_status === "impresso") {
     logger.info(LOG_SOURCE, "Etiqueta já impressa, skip", { pedidoId });
     return;
@@ -56,19 +54,18 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
   }
 
   try {
-    // 3. Resolve label URL
-    const etiquetaUrl = await resolverEtiquetaUrl(supabase, pedido);
+    // Resolve ZPL content (fast path: cached, slow path: fetch from Tiny)
+    const zpl = pedido.etiqueta_zpl ?? (await resolverZplFallback(supabase, pedido));
 
-    if (!etiquetaUrl) {
+    if (!zpl) {
       await setStatus(supabase, pedidoId, "falhou");
-      logger.error(LOG_SOURCE, "Não foi possível obter URL da etiqueta", { pedidoId });
+      logger.error(LOG_SOURCE, "Não foi possível obter ZPL", { pedidoId });
       return;
     }
 
-    // 4. Update status to 'imprimindo'
     await setStatus(supabase, pedidoId, "imprimindo");
 
-    // 5. Resolve printer
+    // Resolve printer
     const printNodeApiKey = await getConfig("PRINTNODE_API_KEY");
     if (!printNodeApiKey) {
       await setStatus(supabase, pedidoId, "falhou");
@@ -76,35 +73,33 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
       return;
     }
 
-    const usuarioId = pedido.separacao_operador_id;
     const galpaoId = pedido.separacao_galpao_id;
-
     if (!galpaoId) {
       await setStatus(supabase, pedidoId, "falhou");
       logger.error(LOG_SOURCE, "Pedido sem separacao_galpao_id", { pedidoId });
       return;
     }
 
-    const printer = await resolverImpressora(usuarioId ?? galpaoId, galpaoId);
+    const printer = await resolverImpressora(pedido.separacao_operador_id ?? galpaoId, galpaoId);
     if (!printer) {
       await setStatus(supabase, pedidoId, "falhou");
       logger.warn(LOG_SOURCE, "Nenhuma impressora configurada", { pedidoId, galpaoId });
       return;
     }
 
-    // 6. Send to PrintNode
-    await enviarImpressao({
+    // Send ZPL directly to PrintNode
+    await enviarImpressaoZpl({
       apiKey: printNodeApiKey,
       printerId: printer.printerId,
-      pdfUrl: etiquetaUrl,
+      zpl,
       titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId}`,
     });
 
-    // 7. Success
     await setStatus(supabase, pedidoId, "impresso");
-    logger.info(LOG_SOURCE, "Etiqueta impressa com sucesso", {
+    logger.info(LOG_SOURCE, "Etiqueta ZPL impressa", {
       pedidoId,
       printerId: String(printer.printerId),
+      cached: String(!!pedido.etiqueta_zpl),
     });
   } catch (err) {
     await setStatus(supabase, pedidoId, "falhou");
@@ -115,7 +110,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
   }
 }
 
-// ─── Internal helpers ──────────────────────────────────────────────────────
+// ─── Internal ────────────────────────────────────────────────────────────────
 
 interface PedidoRow {
   id: string;
@@ -123,6 +118,7 @@ interface PedidoRow {
   empresa_origem_id: string;
   agrupamento_expedicao_id: string | null;
   etiqueta_url: string | null;
+  etiqueta_zpl: string | null;
   separacao_galpao_id: string | null;
   separacao_operador_id: string | null;
 }
@@ -141,70 +137,57 @@ async function setStatus(
 }
 
 /**
- * Resolve the label URL for a pedido:
- *   1. If etiqueta_url already cached → return it
- *   2. If agrupamento_expedicao_id exists → GET etiquetas
- *   3. Otherwise → POST to create agrupamento, then GET etiquetas
- *
- * Saves agrupamento_expedicao_id and etiqueta_url to DB for reuse.
+ * Slow fallback: ZPL not pre-cached. Create agrupamento if needed,
+ * fetch etiqueta URL, download ZPL, and cache for future use.
  */
-async function resolverEtiquetaUrl(
+async function resolverZplFallback(
   supabase: SupabaseClient,
   pedido: PedidoRow,
 ): Promise<string | null> {
-  // Already cached
-  if (pedido.etiqueta_url) {
-    return pedido.etiqueta_url;
-  }
+  logger.warn(LOG_SOURCE, "ZPL não cacheado, fallback via Tiny API", {
+    pedidoId: pedido.id,
+  });
 
   const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
 
-  let agrupamentoId: number | null = pedido.agrupamento_expedicao_id ? parseInt(pedido.agrupamento_expedicao_id, 10) : null;
+  // Resolve or create agrupamento
+  let agrupamentoId = pedido.agrupamento_expedicao_id
+    ? parseInt(pedido.agrupamento_expedicao_id, 10)
+    : null;
 
-  // Create agrupamento if needed
   if (!agrupamentoId) {
-    const pedidoNumerico = parseInt(pedido.id, 10);
-    if (isNaN(pedidoNumerico)) {
-      // id is UUID — need the Tiny numeric ID. Use numero field.
-      const numero = parseInt(pedido.numero, 10);
-      if (isNaN(numero)) {
-        logger.error(LOG_SOURCE, "Pedido sem ID numérico para criar agrupamento", {
-          pedidoId: pedido.id,
-        });
-        return null;
-      }
-      const res = await criarAgrupamento(token, [numero]);
-      agrupamentoId = res.id;
-    } else {
-      const res = await criarAgrupamento(token, [pedidoNumerico]);
-      agrupamentoId = res.id;
+    const numero = parseInt(pedido.numero, 10);
+    if (isNaN(numero)) {
+      logger.error(LOG_SOURCE, "Pedido sem numero numérico", { pedidoId: pedido.id });
+      return null;
     }
+    const res = await criarAgrupamento(token, [numero]);
+    agrupamentoId = res.id;
 
-    // Save agrupamento_expedicao_id
     await supabase
       .from("siso_pedidos")
       .update({ agrupamento_expedicao_id: String(agrupamentoId) })
       .eq("id", pedido.id);
   }
 
-  // Fetch label URLs
-  const etiquetas = await obterEtiquetasAgrupamento(token, agrupamentoId);
-
-  if (!etiquetas.urls || etiquetas.urls.length === 0) {
-    logger.warn(LOG_SOURCE, "Nenhuma URL de etiqueta retornada", {
-      pedidoId: pedido.id,
-      agrupamentoId: String(agrupamentoId),
-    });
-    return null;
+  // Fetch URL
+  let url = pedido.etiqueta_url;
+  if (!url) {
+    const etiquetas = await obterEtiquetasAgrupamento(token, agrupamentoId);
+    if (!etiquetas.urls || etiquetas.urls.length === 0) return null;
+    url = etiquetas.urls[0];
   }
 
-  const url = etiquetas.urls[0];
+  // Download ZPL
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) return null;
+  const zpl = await res.text();
 
-  // Cache URL (never exposed to frontend — LGPD)
+  // Cache for future use
   await supabase
     .from("siso_pedidos")
-    .update({ etiqueta_url: url })
+    .update({ etiqueta_url: url, etiqueta_zpl: zpl })
     .eq("id", pedido.id);
 
-  return url;
+  return zpl;
 }

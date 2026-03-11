@@ -89,6 +89,7 @@ const REVERT_TARGETS: Partial<Record<StatusSeparacao, { value: StatusSeparacao; 
 interface SeparacaoResponse {
   counts: SeparacaoCounts;
   pedidos: SeparacaoPedido[];
+  empresas: { id: string; nome: string }[];
 }
 
 export default function SeparacaoPage() {
@@ -126,14 +127,12 @@ export default function SeparacaoPage() {
 
   const canFetch = !loading && !!user;
 
-  // Build query params
+  // Build query params — filters apply to all tabs
   const queryParams = useMemo(() => {
     const params = new URLSearchParams({ status_separacao: activeTab });
-    if (activeTab === "aguardando_separacao") {
-      if (empresaFilter) params.set("empresa_origem_id", empresaFilter);
-      if (sortFilter !== "data_pedido") params.set("sort", sortFilter);
-      if (busca.trim()) params.set("busca", busca.trim());
-    }
+    if (empresaFilter) params.set("empresa_origem_id", empresaFilter);
+    if (sortFilter !== "data_pedido") params.set("sort", sortFilter);
+    if (busca.trim()) params.set("busca", busca.trim());
     return params.toString();
   }, [activeTab, empresaFilter, sortFilter, busca]);
 
@@ -156,14 +155,8 @@ export default function SeparacaoPage() {
   const counts = data?.counts ?? EMPTY_COUNTS;
   const pedidos = useMemo(() => data?.pedidos ?? [], [data?.pedidos]);
 
-  // Extract distinct empresa names for the dropdown
-  const empresaOptions = useMemo(() => {
-    const seen = new Set<string>();
-    for (const p of pedidos) {
-      if (p.empresa_origem_nome) seen.add(p.empresa_origem_nome);
-    }
-    return Array.from(seen).sort();
-  }, [pedidos]);
+  // Empresa options from API (stable, not affected by filters)
+  const empresaOptions = data?.empresas ?? [];
 
   const activeConfig = TAB_CONFIG.find((t) => t.id === activeTab)!;
 
@@ -382,51 +375,49 @@ export default function SeparacaoPage() {
           />
         </div>
 
-        {/* Filter bar — Aguardando Separacao tab only */}
-        {activeTab === "aguardando_separacao" && (
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Search */}
-            <div className="relative flex-1 min-w-[180px]">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint" />
-              <input
-                type="text"
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar pedido, cliente..."
-                className="h-8 w-full rounded-lg border border-line bg-paper pl-8 pr-3 text-xs text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
-              />
-            </div>
+        {/* Filter bar — all tabs */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint" />
+            <input
+              type="text"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar pedido, cliente..."
+              className="h-8 w-full rounded-lg border border-line bg-paper pl-8 pr-3 text-xs text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+            />
+          </div>
 
-            {/* Empresa dropdown */}
-            {empresaOptions.length > 0 && (
-              <select
-                value={empresaFilter}
-                onChange={(e) => setEmpresaFilter(e.target.value)}
-                className="h-8 rounded-lg border border-line bg-paper px-2 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
-              >
-                <option value="">Todas empresas</option>
-                {empresaOptions.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            {/* Sort dropdown */}
+          {/* Empresa dropdown */}
+          {empresaOptions.length > 0 && (
             <select
-              value={sortFilter}
-              onChange={(e) => setSortFilter(e.target.value)}
+              value={empresaFilter}
+              onChange={(e) => setEmpresaFilter(e.target.value)}
               className="h-8 rounded-lg border border-line bg-paper px-2 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
             >
-              {SORT_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
+              <option value="">Todas empresas</option>
+              {empresaOptions.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.nome}
                 </option>
               ))}
             </select>
-          </div>
-        )}
+          )}
+
+          {/* Sort dropdown */}
+          <select
+            value={sortFilter}
+            onChange={(e) => setSortFilter(e.target.value)}
+            className="h-8 rounded-lg border border-line bg-paper px-2 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+          >
+            {SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         {/* Select all + count */}
         {showCheckbox && pedidos.length > 0 && (

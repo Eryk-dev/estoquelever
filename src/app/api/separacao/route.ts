@@ -45,6 +45,7 @@ export async function GET(request: NextRequest) {
     "status_separacao",
   ) as StatusSeparacao | null;
   const empresaFilter = searchParams.get("empresa_origem_id");
+  const sortParam = searchParams.get("sort") ?? "data_pedido";
   const busca = searchParams.get("busca");
 
   if (statusFilter && !VALID_STATUSES.includes(statusFilter)) {
@@ -93,16 +94,21 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // 1. Counts — parallel HEAD queries per status (efficient, no data transferred)
+    // 1. Counts — parallel HEAD queries per status (NOT affected by empresa/busca filters)
     const countPromises = COUNT_STATUSES.map((status) => {
       let q = supabase
         .from("siso_pedidos")
         .select("*", { count: "exact", head: true })
         .eq("status_separacao", status);
       if (allowedEmpresaIds) q = q.in("empresa_origem_id", allowedEmpresaIds);
-      if (empresaFilter) q = q.eq("empresa_origem_id", empresaFilter);
       return q;
     });
+
+    // 1b. Fetch distinct empresas that have pedidos (for dropdown)
+    const empresasPromise = supabase
+      .from("siso_empresas")
+      .select("id, nome")
+      .order("nome");
 
     // 2. Pedidos query
     let pedidosQuery = supabase
@@ -132,9 +138,9 @@ export async function GET(request: NextRequest) {
 
     pedidosQuery = pedidosQuery.order("data", { ascending: true });
 
-    // Execute counts + pedidos in parallel
-    const [countResults, { data: pedidos, error: pedidosError }] =
-      await Promise.all([Promise.all(countPromises), pedidosQuery]);
+    // Execute counts + pedidos + empresas in parallel
+    const [countResults, { data: pedidos, error: pedidosError }, { data: empresasList }] =
+      await Promise.all([Promise.all(countPromises), pedidosQuery, empresasPromise]);
 
     if (pedidosError) {
       logger.error("separacao-list", "Failed to fetch pedidos", {
@@ -250,7 +256,13 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({ counts, pedidos: result });
+    // Build empresas list (filtered by role if applicable)
+    let empresas = (empresasList ?? []).map((e) => ({ id: e.id, nome: e.nome }));
+    if (allowedEmpresaIds) {
+      empresas = empresas.filter((e) => allowedEmpresaIds!.includes(e.id));
+    }
+
+    return NextResponse.json({ counts, pedidos: result, empresas });
   } catch (err) {
     logger.error("separacao-list", "Unexpected error", {
       error: err instanceof Error ? err.message : String(err),

@@ -12,7 +12,7 @@ import {
   formatTime,
   DECISAO_LABELS,
 } from "@/lib/domain-helpers";
-import type { Decisao, EstoqueItem, Filial, Pedido } from "@/types";
+import type { Decisao, EstoqueItem, Pedido } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only stock pill
@@ -72,19 +72,17 @@ function ProductRowReadonly({
 }: {
   item: EstoqueItem;
   decisao: Decisao;
-  filialOrigem: Filial;
+  filialOrigem: string;
 }) {
-  const location =
-    decisao === "propria"
-      ? filialOrigem === "CWB" ? item.localizacaoCWB : item.localizacaoSP
-      : decisao === "transferencia"
-        ? filialOrigem === "CWB" ? item.localizacaoSP : item.localizacaoCWB
-        : undefined;
+  const estoques = item.estoquesPorGalpao ?? [];
 
-  const cwbIsRelevant =
-    decisao === "propria" ? filialOrigem === "CWB" : filialOrigem !== "CWB";
-  const spIsRelevant =
-    decisao === "propria" ? filialOrigem === "SP" : filialOrigem !== "SP";
+  // Resolve location for the current decision
+  let location: string | undefined;
+  if (decisao === "propria") {
+    location = estoques.find(g => g.galpaoNome === filialOrigem)?.localizacao;
+  } else if (decisao === "transferencia") {
+    location = estoques.find(g => g.galpaoNome !== filialOrigem)?.localizacao;
+  }
 
   return (
     <div className="flex items-start gap-3 py-2.5">
@@ -137,18 +135,12 @@ function ProductRowReadonly({
                 <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
                 OC
               </span>
-              {item.localizacaoCWB && (
-                <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+              {estoques.map(g => g.localizacao ? (
+                <span key={g.galpaoId} className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                   <MapPin className="h-2.5 w-2.5 shrink-0 text-ink-faint" aria-hidden="true" />
-                  CWB: {item.localizacaoCWB}
+                  {g.galpaoNome}: {g.localizacao}
                 </span>
-              )}
-              {item.localizacaoSP && (
-                <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                  <MapPin className="h-2.5 w-2.5 shrink-0 text-ink-faint" aria-hidden="true" />
-                  SP: {item.localizacaoSP}
-                </span>
-              )}
+              ) : null)}
             </>
           ) : location ? (
             <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
@@ -161,18 +153,19 @@ function ProductRowReadonly({
 
           <span className="h-3 w-px bg-line" aria-hidden="true" />
 
-          <StockPill
-            label="CWB"
-            disponivel={item.estoqueCWB?.disponivel ?? null}
-            quantidadePedida={item.quantidadePedida}
-            isRelevant={cwbIsRelevant}
-          />
-          <StockPill
-            label="SP"
-            disponivel={item.estoqueSP?.disponivel ?? null}
-            quantidadePedida={item.quantidadePedida}
-            isRelevant={spIsRelevant}
-          />
+          {estoques.map(g => {
+            const isOrigin = g.galpaoNome === filialOrigem;
+            const isRelevant = decisao === "oc" || (decisao === "propria" ? isOrigin : !isOrigin);
+            return (
+              <StockPill
+                key={g.galpaoId}
+                label={g.galpaoNome}
+                disponivel={g.disponivel}
+                quantidadePedida={item.quantidadePedida}
+                isRelevant={isRelevant}
+              />
+            );
+          })}
         </div>
       </div>
     </div>

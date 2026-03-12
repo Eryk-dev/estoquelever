@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { LogOut, RefreshCw, Settings } from "lucide-react";
@@ -44,6 +44,14 @@ export default function DashboardPage() {
     enabled: !!user,
     refetchInterval: REFRESH_INTERVAL_LIST,
   });
+
+  // Clean up approvedIds that no longer exist on the server (e.g. reprocessed)
+  useEffect(() => {
+    const serverIds = new Set(allPedidos.map((p) => p.id));
+    for (const id of approvedIdsRef.current) {
+      if (!serverIds.has(id)) approvedIdsRef.current.delete(id);
+    }
+  }, [allPedidos]);
 
   const pendentes = useMemo(
     () => allPedidos.filter((p) =>

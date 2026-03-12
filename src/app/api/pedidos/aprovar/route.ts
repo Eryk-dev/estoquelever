@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getEmpresaById } from "@/lib/empresa-lookup";
 import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
@@ -63,7 +63,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (pedido.status !== "pendente") {
+  const statusesAprovaveis = ["pendente", "erro"];
+  if (!statusesAprovaveis.includes(pedido.status)) {
     return NextResponse.json(
       { error: `Pedido não está pendente (status: ${pedido.status})` },
       { status: 409 },
@@ -191,12 +192,16 @@ export async function POST(request: NextRequest) {
     operador: operadorNome,
   });
 
-  // Kick the worker immediately (fire-and-forget)
-  processQueue(1).catch((err) => {
-    logger.error("aprovar", "Worker kick failed", {
-      pedidoId,
-      error: err instanceof Error ? err.message : String(err),
-    });
+  // Kick the worker after response is sent (survives serverless shutdown)
+  after(async () => {
+    try {
+      await processQueue(1);
+    } catch (err) {
+      logger.error("aprovar", "Worker kick failed", {
+        pedidoId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   });
 
   return NextResponse.json({

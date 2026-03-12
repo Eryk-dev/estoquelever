@@ -29,6 +29,7 @@ export async function GET() {
 
     const ordersByStatus = {
       pendente: 0,
+      executando: 0,
       concluido: 0,
       cancelado: 0,
       erro: 0,
@@ -41,15 +42,23 @@ export async function GET() {
       }
     }
 
-    // Also count pedidos created today that are still pending (processado_em may be null)
+    // Count pedidos created today that are still pending (processado_em may be null)
     const { data: pedidosPendentesHoje } = await supabase
       .from("siso_pedidos")
       .select("id")
       .eq("status", "pendente")
       .gte("criado_em", todayIso);
 
-    // Merge: pendentes created today (processado_em is null so not counted above)
     ordersByStatus.pendente = (pedidosPendentesHoje ?? []).length;
+
+    // Count pedidos currently executing (processado_em is null)
+    const { data: pedidosExecutandoHoje } = await supabase
+      .from("siso_pedidos")
+      .select("id")
+      .eq("status", "executando")
+      .gte("criado_em", todayIso);
+
+    ordersByStatus.executando = (pedidosExecutandoHoje ?? []).length;
 
     const totalOrders = Object.values(ordersByStatus).reduce((a, b) => a + b, 0);
 

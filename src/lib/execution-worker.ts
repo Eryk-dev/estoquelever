@@ -396,7 +396,6 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
     .from("siso_pedidos")
     .update({
       status_separacao: "aguardando_compra",
-      status_unificado: "aguardando_compra",
     })
     .eq("id", job.pedido_id);
 

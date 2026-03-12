@@ -4,7 +4,7 @@
 // ============================================================
 
 /** @deprecated Use galpaoId instead. Kept for backwards compatibility. */
-export type Filial = "CWB" | "SP";
+export type Filial = string;
 
 /** Possible decision for an order */
 export type Decisao = "propria" | "transferencia" | "oc";

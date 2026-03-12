@@ -21,7 +21,7 @@ import {
   getFilialColors,
 } from "@/lib/domain-helpers";
 import { ObservacoesTimeline } from "./observacoes-timeline";
-import type { Decisao, DepositoEstoque, EstoqueItem, Filial, Pedido } from "@/types";
+import type { Decisao, DepositoEstoque, EstoqueItem, Pedido } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -54,12 +54,8 @@ function getBestAlternativeGalpao(pedido: Pedido): string | undefined {
 function getDecisaoLabel(decisao: Decisao, pedido: Pedido): string {
   if (decisao === "propria") return `Própria ${pedido.filialOrigem}`;
   if (decisao === "transferencia") {
-    const hasDynamic = pedido.itens.some(i => i.estoquesPorGalpao?.length);
-    if (hasDynamic) {
-      const altName = getBestAlternativeGalpao(pedido) ?? "Outro";
-      return `Transferência ${altName}`;
-    }
-    return `Transferência ${pedido.filialOrigem === "CWB" ? "SP" : "CWB"}`;
+    const altName = getBestAlternativeGalpao(pedido) ?? "Outro";
+    return `Transferência ${altName}`;
   }
   return "Ordem de Compra";
 }
@@ -68,65 +64,30 @@ function getDecisaoLabel(decisao: Decisao, pedido: Pedido): string {
 // Domain helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function cwbAtendeTudo(itens: EstoqueItem[]): boolean {
-  return itens.every((item) => item.cwbAtende);
-}
-
-function spAtendeTudo(itens: EstoqueItem[]): boolean {
-  return itens.every((item) => item.spAtende);
-}
-
 function decisaoIsAvailable(decisao: Decisao, pedido: Pedido): boolean {
   if (decisao === "oc") return true;
 
-  const hasDynamic = pedido.itens.some(i => i.estoquesPorGalpao?.length);
-
-  if (hasDynamic) {
-    if (decisao === "propria") {
-      // Origin galpao must atende ALL items
-      return pedido.itens.every(item => {
-        const originStock = item.estoquesPorGalpao?.find(g => g.galpaoNome === pedido.filialOrigem);
-        return originStock?.atende ?? false;
-      });
-    }
-    // transferencia: any non-origin galpao must atende ALL items
-    const originGalpao = pedido.filialOrigem;
-    const altGalpoes = new Set<string>();
-    for (const item of pedido.itens) {
-      for (const g of item.estoquesPorGalpao ?? []) {
-        if (g.galpaoNome !== originGalpao) altGalpoes.add(g.galpaoNome);
-      }
-    }
-    return [...altGalpoes].some(galpaoNome =>
-      pedido.itens.every(item => {
-        const stock = item.estoquesPorGalpao?.find(g => g.galpaoNome === galpaoNome);
-        return stock?.atende ?? false;
-      })
-    );
-  }
-
-  // Legacy fallback
   if (decisao === "propria") {
-    return pedido.filialOrigem === "CWB"
-      ? cwbAtendeTudo(pedido.itens)
-      : spAtendeTudo(pedido.itens);
+    return pedido.itens.every(item => {
+      const originStock = item.estoquesPorGalpao?.find(g => g.galpaoNome === pedido.filialOrigem);
+      return originStock?.atende ?? false;
+    });
   }
-  return pedido.filialOrigem === "CWB"
-    ? spAtendeTudo(pedido.itens)
-    : cwbAtendeTudo(pedido.itens);
-}
 
-/** Returns the relevant physical location for an item given the chosen decision */
-function getRelevantLocation(item: EstoqueItem, decisao: Decisao, filialOrigem: Filial): string | undefined {
-  if (decisao === "propria") {
-    return filialOrigem === "CWB" ? item.localizacaoCWB : item.localizacaoSP;
+  // transferencia: any non-origin galpao must atende ALL items
+  const originGalpao = pedido.filialOrigem;
+  const altGalpoes = new Set<string>();
+  for (const item of pedido.itens) {
+    for (const g of item.estoquesPorGalpao ?? []) {
+      if (g.galpaoNome !== originGalpao) altGalpoes.add(g.galpaoNome);
+    }
   }
-  if (decisao === "transferencia") {
-    // Picking from the OTHER filial
-    return filialOrigem === "CWB" ? item.localizacaoSP : item.localizacaoCWB;
-  }
-  // OC — handled separately in ProductRow (shows all galpoes)
-  return undefined;
+  return [...altGalpoes].some(galpaoNome =>
+    pedido.itens.every(item => {
+      const stock = item.estoquesPorGalpao?.find(g => g.galpaoNome === galpaoNome);
+      return stock?.atende ?? false;
+    })
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -297,25 +258,20 @@ function LocationTag({ location }: { location: string }) {
 interface ProductRowProps {
   item: EstoqueItem;
   decisao: Decisao;
-  filialOrigem: Filial;
+  filialOrigem: string;
   pedidoId: string;
   onStockUpdated?: () => void;
 }
 
 function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: ProductRowProps) {
-  const hasDynamic = item.estoquesPorGalpao && item.estoquesPorGalpao.length > 0;
+  const estoques = item.estoquesPorGalpao ?? [];
 
   // Resolve location for the current decision
   let location: string | undefined;
-  if (hasDynamic) {
-    const estoques = item.estoquesPorGalpao!;
-    if (decisao === "propria") {
-      location = estoques.find(g => g.galpaoNome === filialOrigem)?.localizacao;
-    } else if (decisao === "transferencia") {
-      location = estoques.find(g => g.galpaoNome !== filialOrigem)?.localizacao;
-    }
-  } else {
-    location = getRelevantLocation(item, decisao, filialOrigem);
+  if (decisao === "propria") {
+    location = estoques.find(g => g.galpaoNome === filialOrigem)?.localizacao;
+  } else if (decisao === "transferencia") {
+    location = estoques.find(g => g.galpaoNome !== filialOrigem)?.localizacao;
   }
 
   return (
@@ -374,16 +330,9 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
                 <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
                 OC
               </span>
-              {hasDynamic ? (
-                item.estoquesPorGalpao!.map(g => g.localizacao ? (
-                  <LocationTag key={g.galpaoId} location={`${g.galpaoNome}: ${g.localizacao}`} />
-                ) : null)
-              ) : (
-                <>
-                  {item.localizacaoCWB && <LocationTag location={`CWB: ${item.localizacaoCWB}`} />}
-                  {item.localizacaoSP && <LocationTag location={`SP: ${item.localizacaoSP}`} />}
-                </>
-              )}
+              {estoques.map(g => g.localizacao ? (
+                <LocationTag key={g.galpaoId} location={`${g.galpaoNome}: ${g.localizacao}`} />
+              ) : null)}
             </>
           ) : location ? (
             <LocationTag location={location} />
@@ -393,56 +342,31 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
 
           <span className="h-3 w-px bg-line" aria-hidden="true" />
 
-          {hasDynamic ? (
-            item.estoquesPorGalpao!.map(g => {
-              const isOrigin = g.galpaoNome === filialOrigem;
-              const isRelevant = decisao === "oc" || (decisao === "propria" ? isOrigin : !isOrigin);
-              const estoque: DepositoEstoque = {
-                id: g.depositoId ?? 0,
-                nome: g.depositoNome ?? "",
-                saldo: g.saldo,
-                reservado: g.reservado,
-                disponivel: g.disponivel,
-              };
-              return (
-                <EditableStockPill
-                  key={g.galpaoId}
-                  label={g.galpaoNome}
-                  estoque={estoque}
-                  quantidadePedida={item.quantidadePedida}
-                  isRelevant={isRelevant}
-                  pedidoId={pedidoId}
-                  produtoId={item.produtoId}
-                  galpao={g.galpaoNome}
-                  galpaoId={g.galpaoId}
-                  onUpdated={onStockUpdated}
-                />
-              );
-            })
-          ) : (
-            <>
+          {estoques.map(g => {
+            const isOrigin = g.galpaoNome === filialOrigem;
+            const isRelevant = decisao === "oc" || (decisao === "propria" ? isOrigin : !isOrigin);
+            const estoque: DepositoEstoque = {
+              id: g.depositoId ?? 0,
+              nome: g.depositoNome ?? "",
+              saldo: g.saldo,
+              reservado: g.reservado,
+              disponivel: g.disponivel,
+            };
+            return (
               <EditableStockPill
-                label="CWB"
-                estoque={item.estoqueCWB}
+                key={g.galpaoId}
+                label={g.galpaoNome}
+                estoque={estoque}
                 quantidadePedida={item.quantidadePedida}
-                isRelevant={decisao === "propria" ? filialOrigem === "CWB" : filialOrigem !== "CWB"}
+                isRelevant={isRelevant}
                 pedidoId={pedidoId}
                 produtoId={item.produtoId}
-                galpao="CWB"
+                galpao={g.galpaoNome}
+                galpaoId={g.galpaoId}
                 onUpdated={onStockUpdated}
               />
-              <EditableStockPill
-                label="SP"
-                estoque={item.estoqueSP}
-                quantidadePedida={item.quantidadePedida}
-                isRelevant={decisao === "propria" ? filialOrigem === "SP" : filialOrigem !== "SP"}
-                pedidoId={pedidoId}
-                produtoId={item.produtoId}
-                galpao="SP"
-                onUpdated={onStockUpdated}
-              />
-            </>
-          )}
+            );
+          })}
         </div>
       </div>
     </div>

@@ -73,7 +73,6 @@ export async function POST(request: NextRequest) {
         .from("siso_pedidos")
         .update({
           status_separacao: "separado",
-          status_unificado: "separado",
           separacao_concluida_em: new Date().toISOString(),
         })
         .in("id", separados)

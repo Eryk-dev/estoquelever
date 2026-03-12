@@ -79,7 +79,6 @@ export async function POST(request: NextRequest) {
     // Build update for siso_pedidos
     const pedidoUpdate: Record<string, unknown> = {
       status_separacao: novoStatus,
-      status_unificado: novoStatus,
     };
 
     if (targetIdx <= STATUS_ORDER.indexOf("aguardando_separacao")) {

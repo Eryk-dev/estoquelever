@@ -1,14 +1,13 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2 } from "lucide-react";
+import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2 } from "lucide-react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
-import { AppShell } from "@/components/app-shell";
-import { REFRESH_INTERVAL_LIST } from "@/lib/constants";
 import { Tabs } from "@/components/ui/tabs";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -120,6 +119,12 @@ export default function SeparacaoPage() {
     });
   }
 
+  useEffect(() => {
+    if (!loading && !user) {
+      router.replace("/login");
+    }
+  }, [user, loading, router]);
+
   const canFetch = !loading && !!user;
 
   // Build query params — filters apply to all tabs
@@ -144,7 +149,7 @@ export default function SeparacaoPage() {
       return res.json();
     },
     enabled: canFetch,
-    refetchInterval: REFRESH_INTERVAL_LIST,
+    refetchInterval: 10000,
   });
 
   const counts = data?.counts ?? EMPTY_COUNTS;
@@ -284,7 +289,17 @@ export default function SeparacaoPage() {
     }
   }
 
-  const isAdmin = user?.cargo === "admin";
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-ink-faint border-t-ink" />
+      </div>
+    );
+  }
+
+  if (!user) return null;
+
+  const isAdmin = user.cargo === "admin";
   const showCheckbox =
     activeTab === "aguardando_compra" ||
     activeTab === "aguardando_separacao" ||
@@ -305,36 +320,48 @@ export default function SeparacaoPage() {
 
   const revertTargets = REVERT_TARGETS[activeTab];
 
-  const headerRight = (
-    <>
-      <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
-        <span className="font-mono text-xs font-semibold text-ink">
-          {user?.nome}
-        </span>
-        <span className="text-[10px] text-ink-faint">
-          {user ? CARGO_LABELS[user.cargo] : ""}
-        </span>
-      </div>
-      <button
-        type="button"
-        onClick={logout}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
-        title="Sair"
-      >
-        <LogOut className="h-4 w-4" />
-      </button>
-    </>
-  );
-
   return (
-    <AppShell
-      title="Separacao"
-      subtitle="Separacao fisica por galpao"
-      backHref="/"
-      maxWidth="max-w-5xl"
-      mainClassName="space-y-4 py-4"
-      headerRight={headerRight}
-    >
+    <div className="min-h-screen bg-surface">
+      {/* Header */}
+      <header className="border-b border-line bg-paper">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
+          <Link
+            href="/"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
+            title="Inicio"
+          >
+            <Home className="h-4 w-4" />
+          </Link>
+          <div className="flex-1">
+            <h1 className="text-base font-bold tracking-tight text-ink">
+              Separacao
+            </h1>
+            <p className="text-[11px] text-ink-faint">
+              Separacao fisica por galpao
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
+              <span className="font-mono text-xs font-semibold text-ink">
+                {user.nome}
+              </span>
+              <span className="text-[10px] text-ink-faint">
+                {CARGO_LABELS[user.cargo]}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={logout}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
+              title="Sair"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-5xl space-y-4 px-4 py-4">
         {/* Tabs */}
         <div className="overflow-x-auto">
           <Tabs
@@ -573,7 +600,8 @@ export default function SeparacaoPage() {
             ))}
           </div>
         )}
-    </AppShell>
+      </main>
+    </div>
   );
 }
 

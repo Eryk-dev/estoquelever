@@ -139,7 +139,6 @@ export async function POST(request: NextRequest) {
     if (existingOrder) {
       const cancelUpdate: Record<string, unknown> = {
         status: "cancelado",
-        status_unificado: "cancelado",
         processado_em: new Date().toISOString(),
       };
       if (existingOrder.status_separacao != null) {
@@ -265,7 +264,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: "cancelled_unknown", pedidoId });
   }
 
-  // Process approved order (fire-and-forget)
+  // Process approved order
   processWebhook(
     webhookLogId,
     pedidoId,

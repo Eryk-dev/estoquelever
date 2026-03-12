@@ -63,8 +63,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const statusesAprovaveis = ["pendente", "erro"];
-  if (!statusesAprovaveis.includes(pedido.status)) {
+  if (pedido.status !== "pendente") {
     return NextResponse.json(
       { error: `Pedido não está pendente (status: ${pedido.status})` },
       { status: 409 },
@@ -133,7 +132,6 @@ export async function POST(request: NextRequest) {
     .from("siso_pedidos")
     .update({
       status: "executando",
-      status_unificado: "executando",
       decisao_final: decisao,
       operador_id: operadorId ?? null,
       operador_nome: operadorNome ?? null,

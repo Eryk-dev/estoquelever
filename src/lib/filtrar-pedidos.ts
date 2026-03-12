@@ -1,4 +1,4 @@
-import type { Cargo, Decisao, Pedido } from "@/types";
+import type { Cargo, Decisao, Filial, Pedido } from "@/types";
 
 /**
  * Filters pending orders based on user role.
@@ -15,7 +15,7 @@ export function filtrarPendentes(pedidos: Pedido[], cargo: Cargo): Pedido[] {
     return pedidos.filter((p) => p.sugestao === "oc");
   }
 
-  const filial = cargo === "operador_cwb" ? "CWB" : "SP";
+  const filial: Filial = cargo === "operador_cwb" ? "CWB" : "SP";
   return pedidos.filter((p) => p.filialOrigem === filial);
 }
 
@@ -34,7 +34,7 @@ export function filtrarConcluidos(pedidos: Pedido[], cargo: Cargo): Pedido[] {
     return pedidos.filter((p) => (p.decisaoFinal ?? p.sugestao) === "oc");
   }
 
-  const filial = cargo === "operador_cwb" ? "CWB" : "SP";
+  const filial: Filial = cargo === "operador_cwb" ? "CWB" : "SP";
   return pedidos.filter((p) => {
     const decisao: Decisao = p.decisaoFinal ?? p.sugestao;
     if (decisao === "propria") return p.filialOrigem === filial;
@@ -55,6 +55,6 @@ export function filtrarAuto(pedidos: Pedido[], cargo: Cargo): Pedido[] {
   if (cargo === "admin") return pedidos;
   if (cargo === "comprador") return [];
 
-  const filial = cargo === "operador_cwb" ? "CWB" : "SP";
+  const filial: Filial = cargo === "operador_cwb" ? "CWB" : "SP";
   return pedidos.filter((p) => p.filialOrigem === filial);
 }

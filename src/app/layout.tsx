@@ -14,7 +14,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Gestão de Pedidos",
+  title: "SISO Platform",
   description:
     "Gestão de pedidos e separação de ordens entre filiais.",
 };

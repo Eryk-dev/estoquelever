@@ -21,7 +21,7 @@ import {
   getFilialColors,
 } from "@/lib/domain-helpers";
 import { ObservacoesTimeline } from "./observacoes-timeline";
-import type { Decisao, DepositoEstoque, EstoqueItem, Pedido } from "@/types";
+import type { Decisao, DepositoEstoque, EstoqueItem, Filial, Pedido } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -29,7 +29,7 @@ import type { Decisao, DepositoEstoque, EstoqueItem, Pedido } from "@/types";
 
 interface PedidoCardProps {
   pedido: Pedido;
-  onAprovar: (id: string, decisao: Decisao) => void;
+  onAprovar: (id: string, decisao: Decisao) => Promise<void>;
   onStockUpdated?: () => void;
 }
 
@@ -37,57 +37,67 @@ interface PedidoCardProps {
 // Decision options (card-specific: label function + icon)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DECISAO_VALUES: Decisao[] = ["propria", "transferencia", "oc"];
-
-/** Returns the best alternative (non-origin) galpao name from dynamic stock data */
-function getBestAlternativeGalpao(pedido: Pedido): string | undefined {
-  const originGalpao = pedido.filialOrigem;
-  const altGalpoes = new Set<string>();
-  for (const item of pedido.itens) {
-    for (const g of item.estoquesPorGalpao ?? []) {
-      if (g.galpaoNome !== originGalpao) altGalpoes.add(g.galpaoNome);
-    }
-  }
-  return [...altGalpoes][0];
+interface DecisaoOption {
+  value: Decisao;
+  /** Short label shown in the action row */
+  label: (filialOrigem: Filial) => string;
 }
 
-function getDecisaoLabel(decisao: Decisao, pedido: Pedido): string {
-  if (decisao === "propria") return `Própria ${pedido.filialOrigem}`;
-  if (decisao === "transferencia") {
-    const altName = getBestAlternativeGalpao(pedido) ?? "Outro";
-    return `Transferência ${altName}`;
-  }
-  return "Ordem de Compra";
+const DECISAO_OPTIONS: DecisaoOption[] = [
+  {
+    value: "propria",
+    label: (f) => `Própria ${f}`,
+  },
+  {
+    value: "transferencia",
+    label: (f) => `Transferência ${f === "CWB" ? "SP" : "CWB"}`,
+  },
+  {
+    value: "oc",
+    label: () => "Ordem de Compra",
+  },
+];
+
+function getDecisaoOption(decisao: Decisao): DecisaoOption {
+  return DECISAO_OPTIONS.find((c) => c.value === decisao) ?? DECISAO_OPTIONS[0]!;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+function cwbAtendeTudo(itens: EstoqueItem[]): boolean {
+  return itens.every((item) => item.cwbAtende);
+}
+
+function spAtendeTudo(itens: EstoqueItem[]): boolean {
+  return itens.every((item) => item.spAtende);
+}
+
 function decisaoIsAvailable(decisao: Decisao, pedido: Pedido): boolean {
   if (decisao === "oc") return true;
-
   if (decisao === "propria") {
-    return pedido.itens.every(item => {
-      const originStock = item.estoquesPorGalpao?.find(g => g.galpaoNome === pedido.filialOrigem);
-      return originStock?.atende ?? false;
-    });
+    return pedido.filialOrigem === "CWB"
+      ? cwbAtendeTudo(pedido.itens)
+      : spAtendeTudo(pedido.itens);
   }
+  // transferencia
+  return pedido.filialOrigem === "CWB"
+    ? spAtendeTudo(pedido.itens)
+    : cwbAtendeTudo(pedido.itens);
+}
 
-  // transferencia: any non-origin galpao must atende ALL items
-  const originGalpao = pedido.filialOrigem;
-  const altGalpoes = new Set<string>();
-  for (const item of pedido.itens) {
-    for (const g of item.estoquesPorGalpao ?? []) {
-      if (g.galpaoNome !== originGalpao) altGalpoes.add(g.galpaoNome);
-    }
+/** Returns the relevant physical location for an item given the chosen decision */
+function getRelevantLocation(item: EstoqueItem, decisao: Decisao, filialOrigem: Filial): string | undefined {
+  if (decisao === "propria") {
+    return filialOrigem === "CWB" ? item.localizacaoCWB : item.localizacaoSP;
   }
-  return [...altGalpoes].some(galpaoNome =>
-    pedido.itens.every(item => {
-      const stock = item.estoquesPorGalpao?.find(g => g.galpaoNome === galpaoNome);
-      return stock?.atende ?? false;
-    })
-  );
+  if (decisao === "transferencia") {
+    // Picking from the OTHER filial
+    return filialOrigem === "CWB" ? item.localizacaoSP : item.localizacaoCWB;
+  }
+  // OC — handled separately in ProductRow (shows all galpoes)
+  return undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,14 +111,13 @@ interface EditableStockPillProps {
   isRelevant?: boolean;
   pedidoId: string;
   produtoId: number;
-  galpao: string;
-  galpaoId?: string;
+  galpao: "CWB" | "SP";
   onUpdated?: () => void;
 }
 
 function EditableStockPill({
   label, estoque, quantidadePedida, isRelevant,
-  pedidoId, produtoId, galpao, galpaoId, onUpdated,
+  pedidoId, produtoId, galpao, onUpdated,
 }: EditableStockPillProps) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -149,7 +158,7 @@ function EditableStockPill({
       const res = await fetch("/api/tiny/stock/ajustar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pedidoId, produtoId, galpao, galpaoId, quantidade: novoSaldo, tipo: "B" }),
+        body: JSON.stringify({ pedidoId, produtoId, galpao, quantidade: novoSaldo, tipo: "B" }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -258,21 +267,17 @@ function LocationTag({ location }: { location: string }) {
 interface ProductRowProps {
   item: EstoqueItem;
   decisao: Decisao;
-  filialOrigem: string;
+  filialOrigem: Filial;
   pedidoId: string;
   onStockUpdated?: () => void;
 }
 
 function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: ProductRowProps) {
-  const estoques = item.estoquesPorGalpao ?? [];
-
-  // Resolve location for the current decision
-  let location: string | undefined;
-  if (decisao === "propria") {
-    location = estoques.find(g => g.galpaoNome === filialOrigem)?.localizacao;
-  } else if (decisao === "transferencia") {
-    location = estoques.find(g => g.galpaoNome !== filialOrigem)?.localizacao;
-  }
+  const location = getRelevantLocation(item, decisao, filialOrigem);
+  const cwbIsRelevant =
+    decisao === "propria" ? filialOrigem === "CWB" : filialOrigem !== "CWB";
+  const spIsRelevant =
+    decisao === "propria" ? filialOrigem === "SP" : filialOrigem !== "SP";
 
   return (
     <div className="flex items-start gap-3 py-2.5">
@@ -330,9 +335,8 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
                 <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
                 OC
               </span>
-              {estoques.map(g => g.localizacao ? (
-                <LocationTag key={g.galpaoId} location={`${g.galpaoNome}: ${g.localizacao}`} />
-              ) : null)}
+              {item.localizacaoCWB && <LocationTag location={`CWB: ${item.localizacaoCWB}`} />}
+              {item.localizacaoSP && <LocationTag location={`SP: ${item.localizacaoSP}`} />}
             </>
           ) : location ? (
             <LocationTag location={location} />
@@ -342,31 +346,26 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
 
           <span className="h-3 w-px bg-line" aria-hidden="true" />
 
-          {estoques.map(g => {
-            const isOrigin = g.galpaoNome === filialOrigem;
-            const isRelevant = decisao === "oc" || (decisao === "propria" ? isOrigin : !isOrigin);
-            const estoque: DepositoEstoque = {
-              id: g.depositoId ?? 0,
-              nome: g.depositoNome ?? "",
-              saldo: g.saldo,
-              reservado: g.reservado,
-              disponivel: g.disponivel,
-            };
-            return (
-              <EditableStockPill
-                key={g.galpaoId}
-                label={g.galpaoNome}
-                estoque={estoque}
-                quantidadePedida={item.quantidadePedida}
-                isRelevant={isRelevant}
-                pedidoId={pedidoId}
-                produtoId={item.produtoId}
-                galpao={g.galpaoNome}
-                galpaoId={g.galpaoId}
-                onUpdated={onStockUpdated}
-              />
-            );
-          })}
+          <EditableStockPill
+            label="CWB"
+            estoque={item.estoqueCWB}
+            quantidadePedida={item.quantidadePedida}
+            isRelevant={cwbIsRelevant}
+            pedidoId={pedidoId}
+            produtoId={item.produtoId}
+            galpao="CWB"
+            onUpdated={onStockUpdated}
+          />
+          <EditableStockPill
+            label="SP"
+            estoque={item.estoqueSP}
+            quantidadePedida={item.quantidadePedida}
+            isRelevant={spIsRelevant}
+            pedidoId={pedidoId}
+            produtoId={item.produtoId}
+            galpao="SP"
+            onUpdated={onStockUpdated}
+          />
         </div>
       </div>
     </div>
@@ -397,7 +396,7 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [onClose]);
 
-  const alternatives = DECISAO_VALUES.filter((v) => v !== current);
+  const alternatives = DECISAO_OPTIONS.filter((c) => c.value !== current);
 
   return (
     <div
@@ -410,19 +409,19 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
       role="listbox"
       aria-label="Escolher outra decisão"
     >
-      {alternatives.map((d) => {
-        const available = decisaoIsAvailable(d, pedido);
-        const stripColor = getDecisaoStripColor(d);
+      {alternatives.map((option) => {
+        const available = decisaoIsAvailable(option.value, pedido);
+        const stripColor = getDecisaoStripColor(option.value);
         return (
           <button
-            key={d}
+            key={option.value}
             type="button"
             role="option"
             aria-selected={false}
             disabled={!available}
             onClick={() => {
               if (available) {
-                onSelect(d);
+                onSelect(option.value);
                 onClose();
               }
             }}
@@ -441,7 +440,7 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
               aria-hidden="true"
             />
             <span className="font-medium text-ink">
-              {getDecisaoLabel(d, pedido)}
+              {option.label(pedido.filialOrigem)}
             </span>
             {!available && (
               <span className="ml-auto text-[10px] text-ink-faint">sem estoque</span>
@@ -460,12 +459,14 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
 interface ActionRowProps {
   pedido: Pedido;
   decisao: Decisao;
+  loading: boolean;
   onSelectDecisao: (d: Decisao) => void;
   onAprovar: () => void;
 }
 
-function ActionRow({ pedido, decisao, onSelectDecisao, onAprovar }: ActionRowProps) {
+function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: ActionRowProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const option = getDecisaoOption(decisao);
   const textColor = getDecisaoColors(decisao);
 
   const DecisaoIcon =
@@ -475,15 +476,17 @@ function ActionRow({ pedido, decisao, onSelectDecisao, onAprovar }: ActionRowPro
 
   return (
     <div className="flex items-center gap-2 px-4 py-3">
+      {/* Decision label + chevron toggle */}
       <div className="relative flex min-w-0 flex-1 items-center gap-1.5">
         <DecisaoIcon
           className={cn("h-3.5 w-3.5 shrink-0", textColor)}
           aria-hidden="true"
         />
         <span className={cn("text-sm font-semibold truncate", textColor)}>
-          {getDecisaoLabel(decisao, pedido)}
+          {option.label(pedido.filialOrigem)}
         </span>
 
+        {/* Chevron — opens dropdown to switch decision */}
         <button
           type="button"
           aria-label="Mudar decisão"
@@ -505,6 +508,7 @@ function ActionRow({ pedido, decisao, onSelectDecisao, onAprovar }: ActionRowPro
           />
         </button>
 
+        {/* Dropdown popover */}
         {dropdownOpen && (
           <DecisaoDropdown
             pedido={pedido}
@@ -515,17 +519,30 @@ function ActionRow({ pedido, decisao, onSelectDecisao, onAprovar }: ActionRowPro
         )}
       </div>
 
+      {/* Approve button */}
       <button
         type="button"
         onClick={onAprovar}
+        disabled={loading}
+        aria-busy={loading}
         className={cn(
           "btn-primary inline-flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold",
           "transition-all duration-150 active:scale-[0.97]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 focus-visible:ring-offset-2",
+          loading && "cursor-not-allowed opacity-30",
         )}
       >
-        <span>Aprovar</span>
-        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+        {loading ? (
+          <>
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            <span>Aprovando</span>
+          </>
+        ) : (
+          <>
+            <span>Aprovar</span>
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </>
+        )}
       </button>
     </div>
   );
@@ -537,9 +554,16 @@ function ActionRow({ pedido, decisao, onSelectDecisao, onAprovar }: ActionRowPro
 
 export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProps) {
   const [decisao, setDecisao] = useState<Decisao>(pedido.sugestao);
+  const [loading, setLoading] = useState(false);
 
-  function handleAprovar() {
-    onAprovar(pedido.id, decisao);
+  async function handleAprovar() {
+    if (loading) return;
+    setLoading(true);
+    try {
+      await onAprovar(pedido.id, decisao);
+    } finally {
+      setLoading(false);
+    }
   }
 
   const stripColor = getDecisaoStripColor(decisao);
@@ -641,6 +665,7 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
         <ActionRow
           pedido={pedido}
           decisao={decisao}
+          loading={loading}
           onSelectDecisao={setDecisao}
           onAprovar={handleAprovar}
         />

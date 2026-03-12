@@ -29,7 +29,6 @@ export async function GET() {
 
     const ordersByStatus = {
       pendente: 0,
-      executando: 0,
       concluido: 0,
       cancelado: 0,
       erro: 0,
@@ -42,23 +41,15 @@ export async function GET() {
       }
     }
 
-    // Count pedidos created today that are still pending (processado_em may be null)
+    // Also count pedidos created today that are still pending (processado_em may be null)
     const { data: pedidosPendentesHoje } = await supabase
       .from("siso_pedidos")
       .select("id")
       .eq("status", "pendente")
       .gte("criado_em", todayIso);
 
+    // Merge: pendentes created today (processado_em is null so not counted above)
     ordersByStatus.pendente = (pedidosPendentesHoje ?? []).length;
-
-    // Count pedidos currently executing (processado_em is null)
-    const { data: pedidosExecutandoHoje } = await supabase
-      .from("siso_pedidos")
-      .select("id")
-      .eq("status", "executando")
-      .gte("criado_em", todayIso);
-
-    ordersByStatus.executando = (pedidosExecutandoHoje ?? []).length;
 
     const totalOrders = Object.values(ordersByStatus).reduce((a, b) => a + b, 0);
 
@@ -120,43 +111,12 @@ export async function GET() {
       .map(([hour, count]) => ({ hour, count }));
 
     // ── 3. Recent errors (last 10) ───────────────────────────────────────────
-    const { data: recentErrorsRaw } = await supabase
+    const { data: recentErrors } = await supabase
       .from("siso_logs")
       .select("id, timestamp, source, message, metadata, pedido_id, filial")
       .eq("level", "error")
       .order("timestamp", { ascending: false })
       .limit(10);
-
-    // Resolve filial (galpao name) → empresa name for display
-    const distinctFiliais = [...new Set((recentErrorsRaw ?? []).map(e => e.filial).filter(Boolean))] as string[];
-    const filialToEmpresa: Record<string, string> = {};
-    if (distinctFiliais.length > 0) {
-      const { data: galpoes } = await supabase
-        .from("siso_galpoes")
-        .select("id, nome")
-        .in("nome", distinctFiliais);
-      if (galpoes && galpoes.length > 0) {
-        const galpaoIds = galpoes.map(g => g.id);
-        const { data: empresas } = await supabase
-          .from("siso_empresas")
-          .select("nome, galpao_id")
-          .in("galpao_id", galpaoIds);
-        for (const g of galpoes) {
-          const emp = empresas?.find(e => e.galpao_id === g.id);
-          filialToEmpresa[g.nome] = emp?.nome ?? g.nome;
-        }
-      }
-    }
-
-    const recentErrors = (recentErrorsRaw ?? []).map(e => ({
-      id: e.id,
-      timestamp: e.timestamp,
-      source: e.source,
-      message: e.message,
-      metadata: e.metadata,
-      pedido_id: e.pedido_id,
-      empresaNome: e.filial ? (filialToEmpresa[e.filial] ?? e.filial) : null,
-    }));
 
     // ── 4. System health ─────────────────────────────────────────────────────
     const { data: lastWebhook } = await supabase

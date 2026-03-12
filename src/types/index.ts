@@ -4,7 +4,7 @@
 // ============================================================
 
 /** @deprecated Use galpaoId instead. Kept for backwards compatibility. */
-export type Filial = string;
+export type Filial = "CWB" | "SP";
 
 /** Possible decision for an order */
 export type Decisao = "propria" | "transferencia" | "oc";
@@ -17,34 +17,8 @@ export type StatusPedido =
   | "cancelado"
   | "erro";
 
-/** Unified status combining old status + status_separacao into a single lifecycle field */
-export type StatusUnificado =
-  | "pendente"
-  | "executando"
-  | "aguardando_compra"
-  | "aguardando_nf"
-  | "aguardando_separacao"
-  | "em_separacao"
-  | "separado"
-  | "embalado"
-  | "cancelado"
-  | "erro";
-
 /** How the order was resolved */
 export type TipoResolucao = "auto" | "manual";
-
-/** Stock info for a single galpao (aggregated across empresas in that galpao) */
-export interface GalpaoEstoque {
-  galpaoId: string;
-  galpaoNome: string;
-  disponivel: number;
-  saldo: number;
-  reservado: number;
-  depositoId: number | null;
-  depositoNome: string | null;
-  localizacao: string | undefined;
-  atende: boolean;
-}
 
 /** Stock info for a single deposit */
 export interface DepositoEstoque {
@@ -77,8 +51,6 @@ export interface EstoqueItem {
   localizacaoSP?: string;
   /** Product image URL (from Tiny anexos) */
   imagemUrl?: string;
-  /** Dynamic stock per galpao (aggregated across empresas in that galpao) — replaces legacy CWB/SP fields */
-  estoquesPorGalpao?: GalpaoEstoque[];
 }
 
 /** A complete order with stock enrichment */
@@ -111,8 +83,6 @@ export interface Pedido {
   sugestaoMotivo: string;
   /** Current status */
   status: StatusPedido;
-  /** Unified lifecycle status (replaces status + status_separacao) */
-  statusUnificado?: StatusUnificado;
   /** How it was resolved */
   tipoResolucao?: TipoResolucao;
   /** Decision taken by operator */

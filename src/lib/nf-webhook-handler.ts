@@ -138,7 +138,6 @@ export async function handleNfWebhook(
     .from("siso_pedidos")
     .update({
       status_separacao: "aguardando_separacao",
-      status_unificado: "aguardando_separacao",
       url_danfe: urlDanfe ?? null,
       chave_acesso_nf: chaveAcesso ?? null,
     })

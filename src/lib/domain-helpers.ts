@@ -1,4 +1,4 @@
-import type { Decisao } from "@/types";
+import type { Decisao, Filial } from "@/types";
 
 // ─── E-commerce ─────────────────────────────────────────────────────────────
 
@@ -42,10 +42,10 @@ export function getDecisaoStripColor(decisao: Decisao): string {
 
 // ─── Filial ─────────────────────────────────────────────────────────────────
 
-export function getFilialColors(filial: string): string {
-  if (filial === "CWB") return "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300";
-  if (filial === "SP") return "bg-orange-50 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300";
-  return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+export function getFilialColors(filial: Filial): string {
+  return filial === "CWB"
+    ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+    : "bg-orange-50 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300";
 }
 
 // ─── Formatting ─────────────────────────────────────────────────────────────

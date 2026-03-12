@@ -31,7 +31,6 @@ const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
  * Query params:
  *   status_separacao — filter by status
  *   empresa_origem_id — filter by origin empresa
- *   pedido_ids — comma-separated pedido UUIDs to filter by (e.g., embalagem page)
  *   sort — data_pedido (default) | localizacao | sku
  *   busca — search string (matches numero, id_pedido_ecommerce, cliente_nome)
  *
@@ -48,8 +47,6 @@ export async function GET(request: NextRequest) {
   const empresaFilter = searchParams.get("empresa_origem_id");
   const sortParam = searchParams.get("sort") ?? "data_pedido";
   const busca = searchParams.get("busca");
-  const pedidoIdsParam = searchParams.get("pedido_ids");
-  const pedidoIdsFilter = pedidoIdsParam ? pedidoIdsParam.split(",").filter(Boolean) : null;
 
   if (statusFilter && !VALID_STATUSES.includes(statusFilter)) {
     return NextResponse.json(
@@ -130,9 +127,6 @@ export async function GET(request: NextRequest) {
       pedidosQuery = pedidosQuery.eq("empresa_origem_id", empresaFilter);
     }
 
-    if (pedidoIdsFilter && pedidoIdsFilter.length > 0) {
-      pedidosQuery = pedidosQuery.in("id", pedidoIdsFilter);
-    }
     if (statusFilter) {
       pedidosQuery = pedidosQuery.eq("status_separacao", statusFilter);
     }

@@ -23,7 +23,6 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CARGO_LABELS } from "@/types";
 import type { SeparacaoPedido } from "@/components/separacao/separacao-card";
-import { REFRESH_INTERVAL_ACTIVE } from "@/lib/constants";
 
 // --- Types ---
 
@@ -93,13 +92,13 @@ function EmbalagemPage() {
   const { data, isLoading } = useQuery<{ pedidos: SeparacaoPedido[] }>({
     queryKey: pedidosQueryKey,
     queryFn: async () => {
-      const res = await sisoFetch(`/api/separacao?status_separacao=separado&pedido_ids=${pedidoIds.join(",")}`);
+      const res = await sisoFetch("/api/separacao?status_separacao=separado");
       if (!res.ok) return { pedidos: [] };
       const json = await res.json();
       return { pedidos: json.pedidos ?? [] };
     },
     enabled: !!user && pedidoIds.length > 0,
-    refetchInterval: REFRESH_INTERVAL_ACTIVE,
+    refetchInterval: 5000,
   });
 
   // Fetch items for expanded pedido
@@ -131,7 +130,12 @@ function EmbalagemPage() {
     return map;
   }, [itemsData]);
 
-  const pedidos = useMemo(() => data?.pedidos ?? [], [data?.pedidos]);
+  // Filter pedidos to only the ones from URL params
+  const allPedidos = useMemo(() => data?.pedidos ?? [], [data?.pedidos]);
+
+  const pedidos = useMemo(() => {
+    return allPedidos.filter((p) => pedidoIds.includes(p.id));
+  }, [allPedidos, pedidoIds]);
 
   // Derive galpao_id from first pedido
   const galpaoId = useMemo(() => {

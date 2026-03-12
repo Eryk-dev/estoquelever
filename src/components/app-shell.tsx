@@ -14,8 +14,6 @@ interface AppShellProps {
   headerRight?: React.ReactNode;
   children: React.ReactNode;
   mainClassName?: string;
-  /** Override the default max-w-3xl for wider pages (e.g., "max-w-5xl") */
-  maxWidth?: string;
   requireAdmin?: boolean;
 }
 
@@ -26,7 +24,6 @@ export function AppShell({
   headerRight,
   children,
   mainClassName,
-  maxWidth,
   requireAdmin = false,
 }: AppShellProps) {
   const { user, loading } = useAuth();
@@ -55,7 +52,7 @@ export function AppShell({
   return (
     <div className="min-h-screen bg-surface">
       <header className="sticky top-0 z-10 border-b border-line bg-paper">
-        <div className={cn("mx-auto flex items-center gap-3 px-4 py-3", maxWidth ?? "max-w-3xl")}>
+        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
           {backHref && (
             <Link
               href={backHref}
@@ -78,7 +75,7 @@ export function AppShell({
           )}
         </div>
       </header>
-      <main className={cn("mx-auto px-4 py-6", maxWidth ?? "max-w-3xl", mainClassName)}>
+      <main className={cn("mx-auto max-w-3xl px-4 py-6", mainClassName)}>
         {children}
       </main>
     </div>

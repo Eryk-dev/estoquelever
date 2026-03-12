@@ -1,13 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { LogOut, RefreshCw, Settings } from "lucide-react";
 import Link from "next/link";
 
 import { AppShell } from "@/components/app-shell";
-import { REFRESH_INTERVAL_LIST } from "@/lib/constants";
 import { Tabs } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PedidoCardConcluido } from "@/components/pedido/pedido-card-concluido";
@@ -22,10 +21,8 @@ import { CARGO_LABELS } from "@/types";
 
 import type { Tab, Pedido, Decisao } from "@/types";
 
-const SISO_STATUSES = "pendente,erro,aguardando_compra,aguardando_nf,aguardando_separacao,em_separacao,separado,embalado";
-
 async function fetchPedidos(): Promise<Pedido[]> {
-  const res = await fetch(`/api/pedidos?status_unificado=${SISO_STATUSES}`);
+  const res = await fetch("/api/pedidos");
   if (!res.ok) throw new Error("Erro ao carregar pedidos");
   return res.json();
 }
@@ -35,36 +32,20 @@ export default function DashboardPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab["id"]>("pendente");
 
-  // IDs approved this session — survives refetches so cards never come back
-  const approvedIdsRef = useRef(new Set<string>());
-
   const { data: allPedidos = [], isRefetching } = useQuery({
     queryKey: ["pedidos"],
     queryFn: fetchPedidos,
     enabled: !!user,
-    refetchInterval: REFRESH_INTERVAL_LIST,
+    refetchInterval: 30_000,
   });
 
-  // Clean up approvedIds that no longer exist on the server (e.g. reprocessed)
-  useEffect(() => {
-    const serverIds = new Set(allPedidos.map((p) => p.id));
-    for (const id of approvedIdsRef.current) {
-      if (!serverIds.has(id)) approvedIdsRef.current.delete(id);
-    }
-  }, [allPedidos]);
-
+  // Split into categories
   const pendentes = useMemo(
-    () => allPedidos.filter((p) =>
-      !approvedIdsRef.current.has(p.id) &&
-      (p.statusUnificado === "pendente" || p.statusUnificado === "erro")
-    ),
+    () => allPedidos.filter((p) => p.status === "pendente"),
     [allPedidos],
   );
   const concluidos = useMemo(
-    () => allPedidos.filter((p) =>
-      p.tipoResolucao === "manual" &&
-      ["aguardando_compra", "aguardando_nf", "aguardando_separacao", "em_separacao", "separado", "embalado"].includes(p.statusUnificado ?? "")
-    ),
+    () => allPedidos.filter((p) => p.status === "concluido" && p.tipoResolucao !== "auto"),
     [allPedidos],
   );
   const auto = useMemo(
@@ -72,6 +53,7 @@ export default function DashboardPage() {
     [allPedidos],
   );
 
+  // Filter by role
   const cargo = user?.cargo ?? "admin";
 
   const pendentesFiltrados = useMemo(
@@ -95,19 +77,10 @@ export default function DashboardPage() {
 
   const visibleTabs = cargo === "comprador" ? tabs.filter((t) => t.id !== "auto") : tabs;
 
-  const handleAprovar = useCallback(
-    (id: string, decisao: Decisao) => {
-      const pedido = allPedidos.find((p) => p.id === id);
-
-      // Mark as approved locally — card never comes back regardless of refetches
-      approvedIdsRef.current.add(id);
-
-      // Force re-render so the card disappears immediately
-      queryClient.setQueryData<Pedido[]>(["pedidos"], (old) => old ? [...old] : []);
-      toast.success(`Pedido #${pedido?.numero ?? id} aprovado → ${decisao}`);
-
-      // Fire-and-forget: API call runs in background
-      fetch("/api/pedidos/aprovar", {
+  async function handleAprovar(id: string, decisao: Decisao) {
+    const pedido = pendentes.find((p) => p.id === id);
+    try {
+      const res = await fetch("/api/pedidos/aprovar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -116,20 +89,24 @@ export default function DashboardPage() {
           operadorId: user?.id,
           operadorNome: user?.nome,
         }),
-      })
-        .then((res) => {
-          if (!res.ok && res.status !== 409) {
-            res.json().catch(() => ({})).then((data) => {
-              toast.error(data.error ?? "Erro ao aprovar pedido");
-            });
-          }
-        })
-        .catch(() => {
-          toast.error("Erro de conexão ao aprovar pedido");
-        });
-    },
-    [allPedidos, queryClient, user],
-  );
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Erro ao aprovar pedido");
+        return;
+      }
+
+      toast.success(`Pedido #${pedido?.numero ?? id} aprovado → ${decisao}`);
+      queryClient.invalidateQueries({ queryKey: ["pedidos"] });
+    } catch {
+      toast.error("Erro de conexão ao aprovar pedido");
+    }
+  }
+
+  function handleLogout() {
+    logout();
+  }
 
   const headerRight = (
     <>
@@ -160,7 +137,7 @@ export default function DashboardPage() {
       </div>
       <button
         type="button"
-        onClick={() => logout()}
+        onClick={handleLogout}
         className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
         title="Sair"
       >
@@ -176,6 +153,7 @@ export default function DashboardPage() {
       backHref="/"
       headerRight={headerRight}
     >
+      {/* Tab bar */}
       <div className="mb-5">
         <Tabs
           tabs={visibleTabs}
@@ -184,6 +162,7 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* Pendente tab */}
       {activeTab === "pendente" && (
         <div className="flex flex-col gap-3">
           {pendentesFiltrados.length === 0 ? (
@@ -201,6 +180,7 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Concluidos tab */}
       {activeTab === "concluidos" && (
         <div className="flex flex-col gap-1.5">
           {concluidosFiltrados.length === 0 ? (
@@ -218,6 +198,7 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Auto tab */}
       {activeTab === "auto" && (
         <div className="flex flex-col gap-1.5">
           {autoFiltrados.length === 0 ? (

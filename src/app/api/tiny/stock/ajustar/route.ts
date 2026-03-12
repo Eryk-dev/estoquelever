@@ -13,25 +13,23 @@ import { logger } from "@/lib/logger";
  * Body: {
  *   pedidoId: string,           // siso_pedidos.id
  *   produtoId: number,           // produto_id from siso_pedido_itens
- *   galpao?: string,             // galpão name (backwards compat)
- *   galpaoId?: string,           // galpão UUID (preferred)
+ *   galpao: "CWB" | "SP",       // which galpão's stock to set
  *   quantidade: number,          // new saldo (exact value)
  * }
  */
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { pedidoId, produtoId, galpao, galpaoId } = body as {
+    const { pedidoId, produtoId, galpao } = body as {
       pedidoId: string;
       produtoId: number;
-      galpao?: string;
-      galpaoId?: string;
+      galpao: "CWB" | "SP";
     };
     const quantidade = body.quantidade ?? body.novaQuantidade;
 
-    if (!pedidoId || !produtoId || (!galpao && !galpaoId) || quantidade == null) {
+    if (!pedidoId || !produtoId || !galpao || quantidade == null) {
       return NextResponse.json(
-        { error: "Campos obrigatórios: pedidoId, produtoId, galpao ou galpaoId, quantidade" },
+        { error: "Campos obrigatórios: pedidoId, produtoId, galpao, quantidade" },
         { status: 400 },
       );
     }
@@ -73,63 +71,39 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Find the empresa in the target galpão (by galpaoId or galpao name)
-    let empresaQuery = supabase
+    // 3. Find the empresa in the target galpão
+    const { data: empresa } = await supabase
       .from("siso_empresas")
-      .select("id, nome, galpao_id, siso_galpoes!inner(id, nome)")
+      .select("id, nome, galpao_id, siso_galpoes!inner(nome)")
+      .eq("siso_galpoes.nome", galpao)
       .eq("ativo", true)
-      .limit(1);
-
-    if (galpaoId) {
-      empresaQuery = empresaQuery.eq("galpao_id", galpaoId);
-    } else {
-      empresaQuery = empresaQuery.eq("siso_galpoes.nome", galpao!);
-    }
-
-    const { data: empresa } = await empresaQuery.single();
+      .limit(1)
+      .single();
 
     if (!empresa) {
       return NextResponse.json(
-        { error: `Nenhuma empresa ativa encontrada no galpão ${galpaoId ?? galpao}` },
+        { error: `Nenhuma empresa ativa encontrada no galpão ${galpao}` },
         { status: 404 },
       );
     }
 
-    const resolvedGalpaoName = (empresa.siso_galpoes as unknown as { nome: string }).nome;
-
     // 4. Determine which product ID to use in Tiny
-    const isOrigemGalpao = pedido.filial_origem === resolvedGalpaoName;
+    const isOrigemGalpao = pedido.filial_origem === galpao;
     const tinyProdutoId = isOrigemGalpao
       ? item.produto_id
       : item.produto_id_suporte;
 
     if (!tinyProdutoId) {
       return NextResponse.json(
-        { error: `Produto não encontrado no Tiny da empresa ${resolvedGalpaoName}. Não é possível ajustar.` },
+        { error: `Produto não encontrado no Tiny da empresa ${galpao}. Não é possível ajustar.` },
         { status: 400 },
       );
     }
 
-    // 5. Get deposit ID for this galpão — try normalized table first, fall back to legacy columns
-    let depositoId: number | null = null;
-    if (galpaoId) {
-      const { data: estRow } = await supabase
-        .from("siso_pedido_item_estoques")
-        .select("deposito_id")
-        .eq("pedido_id", pedidoId)
-        .eq("produto_id", produtoId)
-        .eq("empresa_id", empresa.id)
-        .limit(1)
-        .maybeSingle();
-      depositoId = estRow?.deposito_id ?? null;
-    }
-    if (depositoId == null) {
-      depositoId = resolvedGalpaoName === "CWB"
-        ? item.estoque_cwb_deposito_id
-        : resolvedGalpaoName === "SP"
-          ? item.estoque_sp_deposito_id
-          : null;
-    }
+    // 5. Get deposit ID for this galpão
+    const depositoId = galpao === "CWB"
+      ? item.estoque_cwb_deposito_id
+      : item.estoque_sp_deposito_id;
 
     // 6. Get token for the empresa
     const { token } = await getValidTokenByEmpresa(empresa.id);
@@ -145,7 +119,7 @@ export async function POST(request: Request) {
     });
 
     logger.info("stock-adjust", "Stock balance set in Tiny", {
-      pedidoId, produtoId, galpao: resolvedGalpaoName,
+      pedidoId, produtoId, galpao,
       empresaId: empresa.id, tinyProdutoId, depositoId,
       novoSaldo: quantidade,
     });
@@ -170,31 +144,28 @@ export async function POST(request: Request) {
       }
     }
 
-    // 9. Update DB — legacy columns (only for CWB/SP) + normalized table
+    // 9. Update DB
     const qtdPedida = await getQuantidadePedida(supabase, pedidoId, produtoId);
+    const updateFields =
+      galpao === "CWB"
+        ? {
+            estoque_cwb_saldo: novoSaldo,
+            estoque_cwb_reservado: novoReservado,
+            estoque_cwb_disponivel: novoDisponivel,
+            cwb_atende: novoDisponivel >= qtdPedida,
+          }
+        : {
+            estoque_sp_saldo: novoSaldo,
+            estoque_sp_reservado: novoReservado,
+            estoque_sp_disponivel: novoDisponivel,
+            sp_atende: novoDisponivel >= qtdPedida,
+          };
 
-    if (resolvedGalpaoName === "CWB" || resolvedGalpaoName === "SP") {
-      const updateFields =
-        resolvedGalpaoName === "CWB"
-          ? {
-              estoque_cwb_saldo: novoSaldo,
-              estoque_cwb_reservado: novoReservado,
-              estoque_cwb_disponivel: novoDisponivel,
-              cwb_atende: novoDisponivel >= qtdPedida,
-            }
-          : {
-              estoque_sp_saldo: novoSaldo,
-              estoque_sp_reservado: novoReservado,
-              estoque_sp_disponivel: novoDisponivel,
-              sp_atende: novoDisponivel >= qtdPedida,
-            };
-
-      await supabase
-        .from("siso_pedido_itens")
-        .update(updateFields)
-        .eq("pedido_id", pedidoId)
-        .eq("produto_id", produtoId);
-    }
+    await supabase
+      .from("siso_pedido_itens")
+      .update(updateFields)
+      .eq("pedido_id", pedidoId)
+      .eq("produto_id", produtoId);
 
     await supabase
       .from("siso_pedido_item_estoques")
@@ -209,7 +180,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      galpao: resolvedGalpaoName,
+      galpao,
       saldo: novoSaldo,
       reservado: novoReservado,
       disponivel: novoDisponivel,

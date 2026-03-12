@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getEmpresaByCnpj } from "@/lib/empresa-lookup";
 import { processWebhook } from "@/lib/webhook-processor";
@@ -265,27 +265,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: "cancelled_unknown", pedidoId });
   }
 
-  // Process approved order (after response is sent — survives serverless shutdown)
-  after(async () => {
-    try {
-      await processWebhook(
-        webhookLogId,
-        pedidoId,
-        empresa.empresaId,
-        empresa.galpaoId,
-        empresa.grupoId,
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message
-        : (typeof err === "object" && err !== null && "message" in err)
-          ? String((err as { message: unknown }).message)
-          : JSON.stringify(err);
-      logger.error("webhook", `Processing task failed for pedido ${pedidoId}`, {
-        pedidoId,
-        empresaId: empresa.empresaId,
-        error: msg,
-      });
-    }
+  // Process approved order (fire-and-forget)
+  processWebhook(
+    webhookLogId,
+    pedidoId,
+    empresa.empresaId,
+    empresa.galpaoId,
+    empresa.grupoId,
+  ).catch((err) => {
+    const msg = err instanceof Error ? err.message
+      : (typeof err === "object" && err !== null && "message" in err)
+        ? String((err as { message: unknown }).message)
+        : JSON.stringify(err);
+    logger.error("webhook", `Processing task failed for pedido ${pedidoId}`, {
+      pedidoId,
+      empresaId: empresa.empresaId,
+      error: msg,
+    });
   });
 
   return NextResponse.json({

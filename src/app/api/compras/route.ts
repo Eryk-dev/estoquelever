@@ -100,6 +100,7 @@ interface RawAguardandoItem {
   descricao: string;
   quantidade_pedida: number;
   fornecedor_oc: string | null;
+  imagem_url: string | null;
   pedido_id: string;
   ordem_compra_id: string | null;
   siso_pedidos: {
@@ -114,7 +115,7 @@ async function fetchAguardandoCompra(
   const { data: items, error } = await supabase
     .from("siso_pedido_itens")
     .select(
-      "id, sku, descricao, quantidade_pedida, fornecedor_oc, pedido_id, ordem_compra_id, siso_pedidos(numero, empresa_origem_id)",
+      "id, sku, descricao, quantidade_pedida, fornecedor_oc, imagem_url, pedido_id, ordem_compra_id, siso_pedidos(numero, empresa_origem_id)",
     )
     .eq("compra_status", "aguardando_compra")
     .order("fornecedor_oc");
@@ -139,7 +140,7 @@ async function fetchAguardandoCompra(
       skuMap.set(item.sku, {
         sku: item.sku,
         descricao: item.descricao,
-        imagem: null,
+        imagem: item.imagem_url ?? null,
         quantidade_total: 0,
         fornecedor_oc: fornecedor,
         pedidos: [],
@@ -199,6 +200,7 @@ interface RawCompradoItem {
   quantidade_pedida: number;
   compra_status: string | null;
   compra_quantidade_recebida: number;
+  imagem_url: string | null;
   pedido_id: string;
   siso_pedidos: { numero: string } | null;
 }
@@ -221,7 +223,7 @@ async function fetchComprado(
   // Fetch items for these OCs
   const { data: items, error: itemsError } = await supabase
     .from("siso_pedido_itens")
-    .select("id, sku, descricao, quantidade_pedida, compra_status, compra_quantidade_recebida, pedido_id, ordem_compra_id, siso_pedidos(numero)")
+    .select("id, sku, descricao, quantidade_pedida, compra_status, compra_quantidade_recebida, imagem_url, pedido_id, ordem_compra_id, siso_pedidos(numero)")
     .in("ordem_compra_id", ocIds);
 
   if (itemsError) throw new Error(`Erro ao buscar itens OC: ${itemsError.message}`);
@@ -254,6 +256,7 @@ async function fetchComprado(
         id: String(item.id),
         sku: item.sku,
         descricao: item.descricao,
+        imagem: item.imagem_url ?? null,
         quantidade: item.quantidade_pedida,
         compra_status: item.compra_status,
         compra_quantidade_recebida: item.compra_quantidade_recebida,
@@ -271,7 +274,7 @@ async function fetchIndisponivel(
 ) {
   const { data: items, error } = await supabase
     .from("siso_pedido_itens")
-    .select("id, sku, descricao, quantidade_pedida, fornecedor_oc, pedido_id, siso_pedidos(numero)")
+    .select("id, sku, descricao, quantidade_pedida, fornecedor_oc, imagem_url, pedido_id, siso_pedidos(numero)")
     .eq("compra_status", "indisponivel");
 
   if (error) throw new Error(`Erro ao buscar itens indisponiveis: ${error.message}`);
@@ -280,6 +283,7 @@ async function fetchIndisponivel(
     id: String(item.id),
     sku: item.sku,
     descricao: item.descricao,
+    imagem: item.imagem_url ?? null,
     quantidade: item.quantidade_pedida,
     fornecedor_oc: item.fornecedor_oc,
     pedido_id: item.pedido_id,

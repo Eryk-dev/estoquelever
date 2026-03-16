@@ -123,6 +123,13 @@ export function FornecedorCard({
                     : undefined
                 }
               >
+                {item.imagem && (
+                  <img
+                    src={item.imagem}
+                    alt={item.sku}
+                    className="h-10 w-10 shrink-0 rounded-md border border-line object-cover bg-surface"
+                  />
+                )}
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-ink truncate">
                     {item.sku}

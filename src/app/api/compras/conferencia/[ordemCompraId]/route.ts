@@ -12,6 +12,7 @@ interface RawConferenciaItem {
   quantidade_pedida: number;
   compra_status: string | null;
   compra_quantidade_recebida: number;
+  imagem_url: string | null;
   produto_id_tiny: number | null;
   pedido_id: string;
   siso_pedidos: { numero: string } | null;
@@ -62,7 +63,7 @@ export async function GET(
     const { data: items, error: itemsError } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, sku, descricao, quantidade_pedida, compra_status, compra_quantidade_recebida, produto_id_tiny, pedido_id, siso_pedidos(numero)",
+        "id, sku, descricao, quantidade_pedida, compra_status, compra_quantidade_recebida, imagem_url, produto_id_tiny, pedido_id, siso_pedidos(numero)",
       )
       .eq("ordem_compra_id", ordemCompraId)
       .eq("compra_status", "comprado");
@@ -77,7 +78,7 @@ export async function GET(
       item_id: String(item.id),
       sku: item.sku,
       descricao: item.descricao,
-      imagem: null,
+      imagem: item.imagem_url ?? null,
       quantidade_esperada: item.quantidade_pedida,
       quantidade_ja_recebida: item.compra_quantidade_recebida,
       quantidade_restante: item.quantidade_pedida - item.compra_quantidade_recebida,

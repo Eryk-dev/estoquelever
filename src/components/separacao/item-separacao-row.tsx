@@ -12,6 +12,7 @@ export interface SeparacaoItem {
   quantidade_bipada: number;
   bipado_completo: boolean;
   localizacao: string | null;
+  imagem_url?: string | null;
 }
 
 interface ItemSeparacaoRowProps {

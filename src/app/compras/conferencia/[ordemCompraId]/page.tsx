@@ -227,6 +227,13 @@ export default function ConferenciaPage() {
                   return (
                     <div key={item.item_id} className="px-4 py-3">
                       <div className="flex items-start justify-between gap-3">
+                        {item.imagem && (
+                          <img
+                            src={item.imagem}
+                            alt={item.sku}
+                            className="h-10 w-10 shrink-0 rounded-md border border-line object-cover bg-surface"
+                          />
+                        )}
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-ink">
                             {item.sku}

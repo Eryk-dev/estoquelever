@@ -70,6 +70,7 @@ interface ItemDetail {
   quantidade: number;
   separacao_marcado: boolean;
   localizacao: string | null;
+  imagem_url: string | null;
 }
 
 export function SeparacaoCard({
@@ -423,6 +424,7 @@ export function SeparacaoCard({
                 <table className="w-full text-[11px]">
                   <thead>
                     <tr className="border-b border-line text-left text-ink-faint">
+                      <th className="w-8 px-2 py-1.5"></th>
                       <th className="px-2 py-1.5 font-medium">SKU</th>
                       <th className="px-2 py-1.5 font-medium">Descricao</th>
                       <th className="px-2 py-1.5 font-medium text-center">Qtd</th>
@@ -441,6 +443,17 @@ export function SeparacaoCard({
                           item.separacao_marcado && "bg-emerald-50/50 dark:bg-emerald-950/10",
                         )}
                       >
+                        <td className="px-2 py-1.5">
+                          {item.imagem_url ? (
+                            <img
+                              src={item.imagem_url}
+                              alt={item.sku}
+                              className="h-7 w-7 rounded border border-line object-cover bg-surface"
+                            />
+                          ) : (
+                            <div className="h-7 w-7 rounded border border-line bg-surface" />
+                          )}
+                        </td>
                         <td className="px-2 py-1.5 font-mono font-medium text-ink">
                           {item.sku}
                         </td>

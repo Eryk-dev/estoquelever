@@ -45,6 +45,7 @@ interface PedidoItem {
   quantidade_bipada: number;
   bipado_completo: boolean;
   localizacao: string | null;
+  imagem_url: string | null;
 }
 
 // --- Page ---
@@ -708,6 +709,15 @@ function EmbalagemItemRow({
       )}
       style={{ minHeight: "44px" }}
     >
+      {/* Item image */}
+      {item.imagem_url && (
+        <img
+          src={item.imagem_url}
+          alt={item.sku}
+          className="h-10 w-10 shrink-0 rounded-md border border-line object-cover bg-surface"
+        />
+      )}
+
       {/* Item info */}
       <div className="min-w-0 flex-1">
         <p

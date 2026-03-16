@@ -15,9 +15,9 @@ BEGIN
   UPDATE siso_pedidos
   SET agrupamento_expedicao_id = 'pending', updated_at = now()
   WHERE siso_pedidos.id = ANY(p_pedido_ids)
-    AND empresa_origem_id IS NOT NULL
-    AND nota_fiscal_id IS NOT NULL
-    AND agrupamento_expedicao_id IS NULL
+    AND siso_pedidos.empresa_origem_id IS NOT NULL
+    AND siso_pedidos.nota_fiscal_id IS NOT NULL
+    AND siso_pedidos.agrupamento_expedicao_id IS NULL
   RETURNING
     siso_pedidos.id,
     siso_pedidos.numero,

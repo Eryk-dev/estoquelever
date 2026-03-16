@@ -88,18 +88,20 @@ export async function POST(request: NextRequest) {
       titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId} (reimpressão)`,
     });
 
-    await supabase
-      .from("siso_pedidos")
-      .update({ etiqueta_status: "impresso" })
-      .eq("id", pedidoId);
+    // Use RPC to bypass PostgREST schema cache issue with etiqueta_status
+    await supabase.rpc("siso_set_etiqueta_status", {
+      p_pedido_id: pedidoId,
+      p_status: "impresso",
+    });
 
     logger.info(LOG_SOURCE, "Reimpressão via cache", { pedidoId, jobId: String(jobId) });
     return NextResponse.json({ status: "impresso", jobId });
   } catch (err) {
-    await supabase
-      .from("siso_pedidos")
-      .update({ etiqueta_status: "falhou" })
-      .eq("id", pedidoId);
+    // Use RPC to bypass PostgREST schema cache issue with etiqueta_status
+    await supabase.rpc("siso_set_etiqueta_status", {
+      p_pedido_id: pedidoId,
+      p_status: "falhou",
+    });
 
     logger.error(LOG_SOURCE, "Erro ao reimprimir", {
       pedidoId,

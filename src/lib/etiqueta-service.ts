@@ -32,17 +32,11 @@ const LOG_SOURCE = "etiqueta-service";
 export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
   const supabase = createServiceClient();
 
-  // Atomic claim: only one caller can transition to "imprimindo".
-  // This prevents duplicate prints from concurrent calls (e.g. rapid scans).
-  const { data: claimed, error: claimErr } = await supabase
-    .from("siso_pedidos")
-    .update({ etiqueta_status: "imprimindo" })
-    .eq("id", pedidoId)
-    .or("etiqueta_status.is.null,etiqueta_status.eq.pendente,etiqueta_status.eq.falhou")
-    .select(
-      "id, numero, empresa_origem_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_zpl, separacao_galpao_id, separacao_operador_id"
-    )
-    .maybeSingle();
+  // Atomic claim via RPC (bypasses PostgREST schema cache issue with etiqueta_status).
+  // Only one concurrent caller can succeed — others get null back.
+  const { data: claimed, error: claimErr } = await supabase.rpc("siso_claim_etiqueta", {
+    p_pedido_id: pedidoId,
+  });
 
   if (claimErr) {
     logger.error(LOG_SOURCE, "Falha ao reivindicar impressão", { pedidoId, error: claimErr.message });
@@ -54,7 +48,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
     return;
   }
 
-  const pedido = claimed;
+  const pedido = claimed as PedidoRow;
 
   if (!pedido.empresa_origem_id) {
     await setStatus(supabase, pedidoId, "falhou");
@@ -147,10 +141,11 @@ async function setStatus(
   pedidoId: string,
   status: "pendente" | "imprimindo" | "impresso" | "falhou",
 ): Promise<void> {
-  await supabase
-    .from("siso_pedidos")
-    .update({ etiqueta_status: status })
-    .eq("id", pedidoId);
+  // Use RPC to bypass PostgREST schema cache issue with etiqueta_status
+  await supabase.rpc("siso_set_etiqueta_status", {
+    p_pedido_id: pedidoId,
+    p_status: status,
+  });
 }
 
 /**

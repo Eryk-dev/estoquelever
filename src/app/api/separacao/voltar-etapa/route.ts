@@ -91,8 +91,7 @@ export async function POST(request: NextRequest) {
       pedidoUpdate.separacao_concluida_em = null;
     }
 
-    // Clear etiqueta data when reverting from embalado
-    pedidoUpdate.etiqueta_status = null;
+    // Clear etiqueta data when reverting (etiqueta_url/zpl are fine via PostgREST)
     pedidoUpdate.etiqueta_url = null;
     pedidoUpdate.etiqueta_zpl = null;
 
@@ -106,6 +105,13 @@ export async function POST(request: NextRequest) {
       logger.error("voltar-etapa", "Failed to update pedidos", { error: updateErr.message });
       return NextResponse.json({ error: updateErr.message }, { status: 500 });
     }
+
+    // Clear etiqueta_status via RPC for each pedido (PostgREST schema cache workaround)
+    await Promise.all(
+      validIds.map((pid) =>
+        supabase.rpc("siso_set_etiqueta_status", { p_pedido_id: pid, p_status: null })
+      )
+    );
 
     // Clean up item-level data
     if (targetIdx <= STATUS_ORDER.indexOf("aguardando_separacao")) {

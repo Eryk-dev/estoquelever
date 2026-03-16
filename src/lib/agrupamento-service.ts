@@ -39,14 +39,22 @@ export async function preCriarAgrupamentosEmLote(
 
   const { data: pedidos, error: fetchErr } = await supabase
     .from("siso_pedidos")
-    .select("id, numero, empresa_origem_id")
+    .select("id, numero, empresa_origem_id, agrupamento_expedicao_id")
     .in("id", pedidoIds)
-    .not("empresa_origem_id", "is", null);
+    .not("empresa_origem_id", "is", null)
+    .is("agrupamento_expedicao_id", null);
 
-  if (fetchErr || !pedidos || pedidos.length === 0) {
+  if (fetchErr) {
     logger.error(LOG_SOURCE, "Falha ao buscar pedidos para agrupamento", {
       pedidoIds,
-      error: fetchErr?.message,
+      error: fetchErr.message,
+    });
+    return;
+  }
+
+  if (!pedidos || pedidos.length === 0) {
+    logger.info(LOG_SOURCE, "Nenhum pedido precisa de agrupamento (já criados ou sem empresa)", {
+      pedidoIds,
     });
     return;
   }

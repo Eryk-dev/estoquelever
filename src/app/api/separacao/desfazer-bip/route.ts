@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
       newStatusSeparacao = "em_separacao";
       pedidoUpdates.status_separacao = "em_separacao";
       pedidoUpdates.embalagem_concluida_em = null;
-      pedidoUpdates.etiqueta_status = null;
+      // etiqueta_status cleared via RPC below (PostgREST cache workaround)
     } else if (pedido.status_separacao === "em_separacao") {
       // Check if all bips are now zero across all items
       const { data: allItems } = await supabase
@@ -161,6 +161,14 @@ export async function POST(request: NextRequest) {
           { error: updatePedidoError.message },
           { status: 500 },
         );
+      }
+
+      // Clear etiqueta_status via RPC (PostgREST schema cache workaround)
+      if (pedido.status_separacao === "embalado") {
+        await supabase.rpc("siso_set_etiqueta_status", {
+          p_pedido_id: pedido_id,
+          p_status: null,
+        });
       }
     }
 

@@ -99,5 +99,8 @@ async function extrairZplDoZip(
 }
 
 function validarZpl(text: string): boolean {
-  return !!text && text.trimStart().startsWith("^");
+  if (!text) return false;
+  const trimmed = text.trimStart();
+  // ZPL commands start with ^ or ~ (e.g. ^XA, ~DG for graphic labels like Shopee)
+  return trimmed.startsWith("^") || trimmed.startsWith("~");
 }

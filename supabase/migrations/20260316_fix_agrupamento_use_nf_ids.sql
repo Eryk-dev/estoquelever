@@ -6,7 +6,7 @@
 DROP FUNCTION IF EXISTS siso_claim_pedidos_para_agrupamento(text[]);
 
 CREATE OR REPLACE FUNCTION siso_claim_pedidos_para_agrupamento(p_pedido_ids text[])
-RETURNS TABLE(id text, numero text, empresa_origem_id text, nota_fiscal_id bigint, forma_envio_id text, forma_frete_id text, transportador_id text)
+RETURNS TABLE(id text, numero text, empresa_origem_id uuid, nota_fiscal_id bigint, forma_envio_id text, forma_frete_id text, transportador_id text)
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$

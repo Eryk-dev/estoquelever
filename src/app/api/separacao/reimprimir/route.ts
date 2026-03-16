@@ -63,7 +63,15 @@ export async function POST(request: NextRequest) {
   if (!pedido.etiqueta_zpl) {
     logger.info(LOG_SOURCE, "ZPL não cacheado, usando fluxo completo", { pedidoId });
     await buscarEImprimirEtiqueta(pedidoId);
-    return NextResponse.json({ status: "imprimindo" });
+
+    // Check if print succeeded (etiqueta_zpl gets cached on success)
+    const { data: check } = await supabase
+      .from("siso_pedidos")
+      .select("etiqueta_zpl")
+      .eq("id", pedidoId)
+      .single();
+
+    return NextResponse.json({ status: check?.etiqueta_zpl ? "impresso" : "falhou" });
   }
 
   const printNodeApiKey = await getConfig("PRINTNODE_API_KEY");

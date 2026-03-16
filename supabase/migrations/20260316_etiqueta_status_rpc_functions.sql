@@ -21,6 +21,7 @@ BEGIN
     'id', id,
     'numero', numero,
     'empresa_origem_id', empresa_origem_id,
+    'nota_fiscal_id', nota_fiscal_id,
     'agrupamento_expedicao_id', agrupamento_expedicao_id,
     'etiqueta_url', etiqueta_url,
     'etiqueta_zpl', etiqueta_zpl,

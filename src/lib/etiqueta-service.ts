@@ -127,6 +127,7 @@ interface PedidoRow {
   id: string;
   numero: string;
   empresa_origem_id: string;
+  nota_fiscal_id: number | null;
   agrupamento_expedicao_id: string | null;
   etiqueta_url: string | null;
   etiqueta_zpl: string | null;
@@ -168,31 +169,54 @@ async function resolverZplFallback(
     : null;
 
   if (!agrupamentoId) {
-    const pedidoTinyId = parseInt(pedido.id, 10);
-    if (isNaN(pedidoTinyId)) {
-      logger.error(LOG_SOURCE, "Pedido com id não numérico", { pedidoId: pedido.id });
+    if (!pedido.nota_fiscal_id) {
+      logger.error(LOG_SOURCE, "Pedido sem nota_fiscal_id, não pode criar agrupamento", { pedidoId: pedido.id });
       return null;
     }
-    const res = await criarAgrupamento(token, [pedidoTinyId]);
+    const res = await criarAgrupamento(token, [pedido.nota_fiscal_id]);
     agrupamentoId = res.id;
 
     await supabase
       .from("siso_pedidos")
       .update({ agrupamento_expedicao_id: String(agrupamentoId) })
       .eq("id", pedido.id);
-
-    await concluirAgrupamento(token, agrupamentoId);
-  } else {
-    // Agrupamento exists but may not be concluded yet — ensure it is
-    await concluirAgrupamento(token, agrupamentoId).catch(() => {});
   }
 
-  // Fetch URL
+  // Conclude agrupamento (non-fatal: Mercado Envios may auto-request pickup)
+  try {
+    await concluirAgrupamento(token, agrupamentoId);
+  } catch {
+    logger.warn(LOG_SOURCE, "Não foi possível concluir agrupamento (tentando etiquetas mesmo assim)", {
+      pedidoId: pedido.id,
+      agrupamentoId: String(agrupamentoId),
+    });
+  }
+
+  // Fetch URL — retry with delay because Tiny may take a moment to process conclusion
   let url = pedido.etiqueta_url;
   if (!url) {
-    const etiquetas = await obterEtiquetasAgrupamento(token, agrupamentoId);
-    if (!etiquetas.urls || etiquetas.urls.length === 0) return null;
-    url = etiquetas.urls[0];
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const etiquetas = await obterEtiquetasAgrupamento(token, agrupamentoId);
+        if (etiquetas.urls && etiquetas.urls.length > 0) {
+          url = etiquetas.urls[0];
+          break;
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt < maxRetries && msg.includes("não foi concluído")) {
+          logger.info(LOG_SOURCE, `Etiqueta não pronta, aguardando tentativa ${attempt + 1}/${maxRetries}`, {
+            pedidoId: pedido.id,
+            agrupamentoId: String(agrupamentoId),
+          });
+          await new Promise((r) => setTimeout(r, 2000 * attempt));
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (!url) return null;
   }
 
   // Download and extract ZPL from ZIP

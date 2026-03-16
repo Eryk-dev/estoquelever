@@ -25,6 +25,7 @@ interface PedidoClaimed {
   id: string;
   numero: string;
   empresa_origem_id: string;
+  nota_fiscal_id: number | null;
   forma_envio_id: string | null;
   forma_frete_id: string | null;
   transportador_id: string | null;
@@ -110,35 +111,34 @@ async function processarGrupo(
   try {
     const { token } = await getValidTokenByEmpresa(empresaId);
 
-    // Build Tiny numeric IDs
-    const idsTiny: number[] = [];
-    const pedidoPorTinyId = new Map<number, string>();
+    // Build NF IDs (Tiny requires idsNotasFiscais, not idsPedidos)
+    const nfIds: number[] = [];
+    const pedidoIdsPorNfId = new Map<number, string>();
 
     for (const p of pedidos) {
-      const tinyId = parseInt(p.id, 10);
-      if (isNaN(tinyId)) {
-        logger.warn(LOG_SOURCE, "Pedido com id não numérico, skip", { pedidoId: p.id });
+      if (!p.nota_fiscal_id) {
+        logger.warn(LOG_SOURCE, "Pedido sem nota_fiscal_id, skip", { pedidoId: p.id });
         continue;
       }
-      idsTiny.push(tinyId);
-      pedidoPorTinyId.set(tinyId, p.id);
+      nfIds.push(p.nota_fiscal_id);
+      pedidoIdsPorNfId.set(p.nota_fiscal_id, p.id);
     }
 
-    if (idsTiny.length === 0) return;
+    if (nfIds.length === 0) return;
 
-    // 1. Create single agrupamento for all pedidos in this shipping group
-    const agrupamento = await criarAgrupamento(token, idsTiny);
+    // 1. Create single agrupamento using NF IDs
+    const agrupamento = await criarAgrupamento(token, nfIds);
     const agrupamentoId = agrupamento.id;
 
     logger.info(LOG_SOURCE, "Agrupamento criado em lote", {
       empresaId,
       agrupamentoId: String(agrupamentoId),
-      qtdPedidos: String(idsTiny.length),
+      qtdNFs: String(nfIds.length),
       groupKey,
     });
 
     // Save real agrupamento_expedicao_id (replacing 'pending')
-    const allPedidoIds = Array.from(pedidoPorTinyId.values());
+    const allPedidoIds = Array.from(pedidoIdsPorNfId.values());
     await supabase
       .from("siso_pedidos")
       .update({ agrupamento_expedicao_id: String(agrupamentoId) })

@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
   }
 
   const galpao = empresa.siso_galpoes as unknown as { nome: string } | null;
-  const filial = galpao?.nome === "SP" ? "SP" : "CWB";
+  const filial = galpao?.nome ?? "CWB";
 
   // Check if connection already exists
   const { data: existing } = await supabase

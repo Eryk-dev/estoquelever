@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import type { GalpaoEstoque } from "@/types";
 
 /**
  * GET /api/pedidos
  *
- * Returns all orders from siso_pedidos + siso_pedido_itens,
+ * Returns all orders from siso_pedidos + siso_pedido_item_estoques (normalized),
  * mapped to the frontend Pedido interface (camelCase).
+ *
+ * Stock is returned as a dynamic map keyed by galpão name, supporting any
+ * number of galpões without hardcoded CWB/SP references.
  *
  * Query params:
  *   ?status=pendente,executando  (comma-separated filter)
@@ -37,19 +41,78 @@ export async function GET(request: Request) {
     return NextResponse.json([]);
   }
 
-  // Fetch items for all pedidos in one query
   const pedidoIds = pedidos.map((p) => p.id);
-  const { data: itens } = await supabase
-    .from("siso_pedido_itens")
-    .select("*")
-    .in("pedido_id", pedidoIds);
+
+  // Fetch items + normalized stock in parallel
+  const [itensResult, estoquesResult] = await Promise.all([
+    supabase
+      .from("siso_pedido_itens")
+      .select("pedido_id, produto_id, sku, descricao, quantidade_pedida, fornecedor_oc, imagem_url")
+      .in("pedido_id", pedidoIds),
+    supabase
+      .from("siso_pedido_item_estoques")
+      .select("pedido_id, produto_id, empresa_id, deposito_id, deposito_nome, saldo, reservado, disponivel, localizacao, siso_empresas!inner(galpao_id, siso_galpoes!inner(nome))")
+      .in("pedido_id", pedidoIds),
+  ]);
+
+  const itens = itensResult.data ?? [];
+  const estoques = estoquesResult.data ?? [];
 
   // Group items by pedido_id
   const itensByPedido = new Map<string, typeof itens>();
-  for (const item of itens ?? []) {
+  for (const item of itens) {
     const list = itensByPedido.get(item.pedido_id) ?? [];
     list.push(item);
     itensByPedido.set(item.pedido_id, list);
+  }
+
+  // Build stock map: pedido_id → produto_id → galpão_name → aggregated stock
+  type StockEntry = {
+    depositoId: number | null;
+    depositoNome: string | null;
+    saldo: number;
+    reservado: number;
+    disponivel: number;
+    localizacao: string | null;
+  };
+
+  const stockMap = new Map<string, Map<number, Map<string, StockEntry>>>();
+
+  for (const est of estoques) {
+    const empresa = est.siso_empresas as unknown as {
+      galpao_id: string;
+      siso_galpoes: { nome: string };
+    } | null;
+    if (!empresa) continue;
+
+    const galpaoNome = empresa.siso_galpoes.nome;
+    const pedidoKey = est.pedido_id as string;
+    const produtoKey = est.produto_id as number;
+
+    if (!stockMap.has(pedidoKey)) stockMap.set(pedidoKey, new Map());
+    const produtoMap = stockMap.get(pedidoKey)!;
+    if (!produtoMap.has(produtoKey)) produtoMap.set(produtoKey, new Map());
+    const galpaoMap = produtoMap.get(produtoKey)!;
+
+    const existing = galpaoMap.get(galpaoNome);
+    if (existing) {
+      // Aggregate across empresas in the same galpão
+      existing.saldo += (est.saldo as number) ?? 0;
+      existing.reservado += (est.reservado as number) ?? 0;
+      existing.disponivel += (est.disponivel as number) ?? 0;
+      if (!existing.localizacao && est.localizacao) {
+        existing.localizacao = est.localizacao as string;
+      }
+    } else {
+      galpaoMap.set(galpaoNome, {
+        depositoId: est.deposito_id as number | null,
+        depositoNome: est.deposito_nome as string | null,
+        saldo: (est.saldo as number) ?? 0,
+        reservado: (est.reservado as number) ?? 0,
+        disponivel: (est.disponivel as number) ?? 0,
+        localizacao: (est.localizacao as string) ?? null,
+      });
+    }
   }
 
   // Map to frontend shape
@@ -73,36 +136,36 @@ export async function GET(request: Request) {
         id: p.forma_envio_id ?? "",
         descricao: p.forma_envio_descricao ?? "",
       },
-      itens: dbItens.map((item) => ({
-        produtoId: item.produto_id,
-        sku: item.sku ?? "",
-        descricao: item.descricao ?? "",
-        quantidadePedida: item.quantidade_pedida ?? 0,
-        estoqueCWB: item.estoque_cwb_deposito_id != null
-          ? {
-              id: item.estoque_cwb_deposito_id,
-              nome: item.estoque_cwb_deposito_nome ?? "",
-              saldo: item.estoque_cwb_saldo ?? 0,
-              reservado: item.estoque_cwb_reservado ?? 0,
-              disponivel: item.estoque_cwb_disponivel ?? 0,
-            }
-          : null,
-        estoqueSP: item.estoque_sp_deposito_id != null
-          ? {
-              id: item.estoque_sp_deposito_id,
-              nome: item.estoque_sp_deposito_nome ?? "",
-              saldo: item.estoque_sp_saldo ?? 0,
-              reservado: item.estoque_sp_reservado ?? 0,
-              disponivel: item.estoque_sp_disponivel ?? 0,
-            }
-          : null,
-        cwbAtende: item.cwb_atende ?? false,
-        spAtende: item.sp_atende ?? false,
-        fornecedorOC: item.fornecedor_oc ?? null,
-        localizacaoCWB: item.localizacao_cwb ?? undefined,
-        localizacaoSP: item.localizacao_sp ?? undefined,
-        imagemUrl: item.imagem_url ?? undefined,
-      })),
+      itens: dbItens.map((item) => {
+        const galpaoStock = stockMap.get(p.id)?.get(item.produto_id);
+        const estoques: Record<string, GalpaoEstoque> = {};
+
+        if (galpaoStock) {
+          for (const [galpaoNome, stock] of galpaoStock) {
+            estoques[galpaoNome] = {
+              deposito: {
+                id: stock.depositoId ?? 0,
+                nome: stock.depositoNome ?? "",
+                saldo: stock.saldo,
+                reservado: stock.reservado,
+                disponivel: stock.disponivel,
+              },
+              atende: stock.disponivel >= (item.quantidade_pedida ?? 0),
+              localizacao: stock.localizacao ?? undefined,
+            };
+          }
+        }
+
+        return {
+          produtoId: item.produto_id,
+          sku: item.sku ?? "",
+          descricao: item.descricao ?? "",
+          quantidadePedida: item.quantidade_pedida ?? 0,
+          estoques,
+          fornecedorOC: item.fornecedor_oc ?? null,
+          imagemUrl: item.imagem_url ?? undefined,
+        };
+      }),
       sugestao: p.sugestao ?? "propria",
       sugestaoMotivo: p.sugestao_motivo ?? "",
       status: p.status ?? "pendente",

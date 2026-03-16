@@ -21,7 +21,7 @@ import {
   getFilialColors,
 } from "@/lib/domain-helpers";
 import { ObservacoesTimeline } from "./observacoes-timeline";
-import type { Decisao, DepositoEstoque, EstoqueItem, Filial, Pedido } from "@/types";
+import type { Decisao, DepositoEstoque, EstoqueItem, Pedido } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -34,23 +34,81 @@ interface PedidoCardProps {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Decision options (card-specific: label function + icon)
+// Domain helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** All galpão names present in the items' stock data */
+function getAllGalpoes(pedido: Pedido): string[] {
+  const set = new Set<string>();
+  for (const item of pedido.itens) {
+    for (const g of Object.keys(item.estoques)) set.add(g);
+  }
+  return [...set].sort();
+}
+
+function galpaoAtendeTudo(itens: EstoqueItem[], galpao: string): boolean {
+  return itens.every((item) => item.estoques[galpao]?.atende ?? false);
+}
+
+function decisaoIsAvailable(decisao: Decisao, pedido: Pedido): boolean {
+  if (decisao === "oc") return true;
+  if (decisao === "propria") {
+    return galpaoAtendeTudo(pedido.itens, pedido.filialOrigem);
+  }
+  // transferencia: any OTHER galpão covers all items
+  for (const g of getAllGalpoes(pedido)) {
+    if (g !== pedido.filialOrigem && galpaoAtendeTudo(pedido.itens, g)) return true;
+  }
+  return false;
+}
+
+/** Find the best transfer target galpão */
+function getTransferTarget(pedido: Pedido): string {
+  const galpoes = getAllGalpoes(pedido);
+  // First try: a galpão that covers everything
+  for (const g of galpoes) {
+    if (g !== pedido.filialOrigem && galpaoAtendeTudo(pedido.itens, g)) return g;
+  }
+  // Fallback: the one with most coverage
+  let best = "";
+  let bestCount = 0;
+  for (const g of galpoes) {
+    if (g === pedido.filialOrigem) continue;
+    const count = pedido.itens.filter((i) => i.estoques[g]?.atende).length;
+    if (count > bestCount) { best = g; bestCount = count; }
+  }
+  return best || galpoes.find((g) => g !== pedido.filialOrigem) || "?";
+}
+
+/** Returns the relevant physical location for an item given the chosen decision */
+function getRelevantLocation(item: EstoqueItem, decisao: Decisao, filialOrigem: string, pedido: Pedido): string | undefined {
+  if (decisao === "propria") {
+    return item.estoques[filialOrigem]?.localizacao;
+  }
+  if (decisao === "transferencia") {
+    const target = getTransferTarget(pedido);
+    return item.estoques[target]?.localizacao;
+  }
+  return undefined;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Decision options
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface DecisaoOption {
   value: Decisao;
-  /** Short label shown in the action row */
-  label: (filialOrigem: Filial) => string;
+  label: (pedido: Pedido) => string;
 }
 
 const DECISAO_OPTIONS: DecisaoOption[] = [
   {
     value: "propria",
-    label: (f) => `Própria ${f}`,
+    label: (p) => `Própria ${p.filialOrigem}`,
   },
   {
     value: "transferencia",
-    label: (f) => `Transferência ${f === "CWB" ? "SP" : "CWB"}`,
+    label: (p) => `Transferência ${getTransferTarget(p)}`,
   },
   {
     value: "oc",
@@ -60,44 +118,6 @@ const DECISAO_OPTIONS: DecisaoOption[] = [
 
 function getDecisaoOption(decisao: Decisao): DecisaoOption {
   return DECISAO_OPTIONS.find((c) => c.value === decisao) ?? DECISAO_OPTIONS[0]!;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Domain helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-function cwbAtendeTudo(itens: EstoqueItem[]): boolean {
-  return itens.every((item) => item.cwbAtende);
-}
-
-function spAtendeTudo(itens: EstoqueItem[]): boolean {
-  return itens.every((item) => item.spAtende);
-}
-
-function decisaoIsAvailable(decisao: Decisao, pedido: Pedido): boolean {
-  if (decisao === "oc") return true;
-  if (decisao === "propria") {
-    return pedido.filialOrigem === "CWB"
-      ? cwbAtendeTudo(pedido.itens)
-      : spAtendeTudo(pedido.itens);
-  }
-  // transferencia
-  return pedido.filialOrigem === "CWB"
-    ? spAtendeTudo(pedido.itens)
-    : cwbAtendeTudo(pedido.itens);
-}
-
-/** Returns the relevant physical location for an item given the chosen decision */
-function getRelevantLocation(item: EstoqueItem, decisao: Decisao, filialOrigem: Filial): string | undefined {
-  if (decisao === "propria") {
-    return filialOrigem === "CWB" ? item.localizacaoCWB : item.localizacaoSP;
-  }
-  if (decisao === "transferencia") {
-    // Picking from the OTHER filial
-    return filialOrigem === "CWB" ? item.localizacaoSP : item.localizacaoCWB;
-  }
-  // OC — handled separately in ProductRow (shows all galpoes)
-  return undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,7 +131,7 @@ interface EditableStockPillProps {
   isRelevant?: boolean;
   pedidoId: string;
   produtoId: number;
-  galpao: "CWB" | "SP";
+  galpao: string;
   onUpdated?: () => void;
 }
 
@@ -180,7 +200,6 @@ function EditableStockPill({
     }
   }
 
-  // Editing: replace the number with an input
   if (editing) {
     return (
       <span className="inline-flex items-center gap-1 font-mono text-xs">
@@ -203,7 +222,6 @@ function EditableStockPill({
     );
   }
 
-  // Saving: spinner
   if (saving) {
     return (
       <span className="inline-flex items-center gap-1 font-mono text-xs text-zinc-400">
@@ -213,7 +231,6 @@ function EditableStockPill({
     );
   }
 
-  // Default: the number looks like an editable field
   return (
     <span className="inline-flex items-center gap-1 font-mono text-xs tabular-nums">
       <span
@@ -267,17 +284,21 @@ function LocationTag({ location }: { location: string }) {
 interface ProductRowProps {
   item: EstoqueItem;
   decisao: Decisao;
-  filialOrigem: Filial;
-  pedidoId: string;
+  pedido: Pedido;
   onStockUpdated?: () => void;
 }
 
-function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: ProductRowProps) {
-  const location = getRelevantLocation(item, decisao, filialOrigem);
-  const cwbIsRelevant =
-    decisao === "propria" ? filialOrigem === "CWB" : filialOrigem !== "CWB";
-  const spIsRelevant =
-    decisao === "propria" ? filialOrigem === "SP" : filialOrigem !== "SP";
+function ProductRow({ item, decisao, pedido, onStockUpdated }: ProductRowProps) {
+  const filialOrigem = pedido.filialOrigem;
+  const location = getRelevantLocation(item, decisao, filialOrigem, pedido);
+  const galpoes = Object.keys(item.estoques).sort();
+
+  /** Determine which galpão is "relevant" (will be used for this decision) */
+  function isGalpaoRelevant(g: string): boolean {
+    if (decisao === "propria") return g === filialOrigem;
+    if (decisao === "transferencia") return g !== filialOrigem;
+    return false; // OC — all shown equally
+  }
 
   return (
     <div className="flex items-start gap-3 py-2.5">
@@ -298,7 +319,6 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
             </div>
           )}
         </div>
-        {/* Quantity badge — outside overflow-hidden container */}
         <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-900 px-1 font-mono text-[10px] font-bold text-white ring-2 ring-paper dark:bg-zinc-100 dark:text-zinc-900">
           {item.quantidadePedida}
         </span>
@@ -306,7 +326,6 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
 
       {/* SKU + description + metadata */}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        {/* SKU tag */}
         <div className="flex items-baseline gap-2">
           <span
             className={cn(
@@ -319,7 +338,6 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
             {item.sku}
           </span>
         </div>
-        {/* Product name */}
         <span
           className="min-w-0 truncate text-sm font-medium text-ink"
           title={item.descricao}
@@ -335,8 +353,10 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
                 <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
                 OC
               </span>
-              {item.localizacaoCWB && <LocationTag location={`CWB: ${item.localizacaoCWB}`} />}
-              {item.localizacaoSP && <LocationTag location={`SP: ${item.localizacaoSP}`} />}
+              {galpoes.map((g) => {
+                const loc = item.estoques[g]?.localizacao;
+                return loc ? <LocationTag key={g} location={`${g}: ${loc}`} /> : null;
+              })}
             </>
           ) : location ? (
             <LocationTag location={location} />
@@ -346,26 +366,19 @@ function ProductRow({ item, decisao, filialOrigem, pedidoId, onStockUpdated }: P
 
           <span className="h-3 w-px bg-line" aria-hidden="true" />
 
-          <EditableStockPill
-            label="CWB"
-            estoque={item.estoqueCWB}
-            quantidadePedida={item.quantidadePedida}
-            isRelevant={cwbIsRelevant}
-            pedidoId={pedidoId}
-            produtoId={item.produtoId}
-            galpao="CWB"
-            onUpdated={onStockUpdated}
-          />
-          <EditableStockPill
-            label="SP"
-            estoque={item.estoqueSP}
-            quantidadePedida={item.quantidadePedida}
-            isRelevant={spIsRelevant}
-            pedidoId={pedidoId}
-            produtoId={item.produtoId}
-            galpao="SP"
-            onUpdated={onStockUpdated}
-          />
+          {galpoes.map((g) => (
+            <EditableStockPill
+              key={g}
+              label={g}
+              estoque={item.estoques[g]?.deposito ?? null}
+              quantidadePedida={item.quantidadePedida}
+              isRelevant={isGalpaoRelevant(g)}
+              pedidoId={pedido.id}
+              produtoId={item.produtoId}
+              galpao={g}
+              onUpdated={onStockUpdated}
+            />
+          ))}
         </div>
       </div>
     </div>
@@ -440,7 +453,7 @@ function DecisaoDropdown({ pedido, current, onSelect, onClose }: DecisaoDropdown
               aria-hidden="true"
             />
             <span className="font-medium text-ink">
-              {option.label(pedido.filialOrigem)}
+              {option.label(pedido)}
             </span>
             {!available && (
               <span className="ml-auto text-[10px] text-ink-faint">sem estoque</span>
@@ -483,7 +496,7 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
           aria-hidden="true"
         />
         <span className={cn("text-sm font-semibold truncate", textColor)}>
-          {option.label(pedido.filialOrigem)}
+          {option.label(pedido)}
         </span>
 
         {/* Chevron — opens dropdown to switch decision */}
@@ -588,9 +601,7 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
       {/* ── CARD BODY ────────────────────────────────────────────────────── */}
       <div className="flex min-w-0 flex-1 flex-col">
 
-        {/* ── HEADER ROW ───────────────────────────────────────────────────
-            #ORDER  CLIENT NAME (truncated)      ML   CWB
-        ──────────────────────────────────────────────────────────────────── */}
+        {/* ── HEADER ROW ─────────────────────────────────────────────────── */}
         <header className="flex items-center gap-2 px-4 py-3">
           {/* Order number */}
           <span className="shrink-0 font-mono text-sm font-bold text-ink">
@@ -623,8 +634,8 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
             {ecommerceAbbr}
           </span>
 
-          {/* Arrow + Filial origin */}
-          <span className="shrink-0 flex items-center gap-1 text-ink-faint" aria-label={`Filial de origem: ${pedido.filialOrigem}`}>
+          {/* Arrow + Galpao origin */}
+          <span className="shrink-0 flex items-center gap-1 text-ink-faint" aria-label={`Galpão de origem: ${pedido.filialOrigem}`}>
             <ArrowRight className="h-3 w-3" aria-hidden="true" />
             <span
               className={cn(
@@ -647,8 +658,7 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
               key={item.produtoId}
               item={item}
               decisao={decisao}
-              filialOrigem={pedido.filialOrigem}
-              pedidoId={pedido.id}
+              pedido={pedido}
               onStockUpdated={onStockUpdated}
             />
           ))}

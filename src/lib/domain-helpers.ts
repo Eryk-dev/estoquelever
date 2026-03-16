@@ -1,4 +1,4 @@
-import type { Decisao, Filial } from "@/types";
+import type { Decisao } from "@/types";
 
 // ─── E-commerce ─────────────────────────────────────────────────────────────
 
@@ -40,12 +40,16 @@ export function getDecisaoStripColor(decisao: Decisao): string {
   return "bg-amber-500";
 }
 
-// ─── Filial ─────────────────────────────────────────────────────────────────
+// ─── Galpão ────────────────────────────────────────────────────────────────
 
-export function getFilialColors(filial: Filial): string {
-  return filial === "CWB"
-    ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
-    : "bg-orange-50 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300";
+const GALPAO_COLORS: Record<string, string> = {
+  CWB: "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300",
+  SP: "bg-orange-50 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300",
+};
+const DEFAULT_GALPAO_COLOR = "bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300";
+
+export function getFilialColors(galpao: string): string {
+  return GALPAO_COLORS[galpao] ?? DEFAULT_GALPAO_COLOR;
 }
 
 // ─── Formatting ─────────────────────────────────────────────────────────────

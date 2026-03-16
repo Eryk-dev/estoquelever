@@ -3,9 +3,6 @@
 // Types
 // ============================================================
 
-/** @deprecated Use galpaoId instead. Kept for backwards compatibility. */
-export type Filial = "CWB" | "SP";
-
 /** Possible decision for an order */
 export type Decisao = "propria" | "transferencia" | "oc";
 
@@ -29,26 +26,23 @@ export interface DepositoEstoque {
   disponivel: number;
 }
 
-/** Stock info for one product across galpoes */
+/** Stock info for one galpão (aggregated across empresas in that galpão) */
+export interface GalpaoEstoque {
+  deposito: DepositoEstoque;
+  atende: boolean;
+  localizacao?: string;
+}
+
+/** Stock info for one product across galpões */
 export interface EstoqueItem {
   produtoId: number;
   sku: string;
   descricao: string;
   quantidadePedida: number;
-  /** Stock in CWB (aggregated across empresas in that galpao) */
-  estoqueCWB: DepositoEstoque | null;
-  /** Stock in SP (aggregated across empresas in that galpao) */
-  estoqueSP: DepositoEstoque | null;
-  /** Whether this item can be fulfilled by CWB galpao */
-  cwbAtende: boolean;
-  /** Whether this item can be fulfilled by SP galpao */
-  spAtende: boolean;
+  /** Stock per galpão — key is galpão name (e.g. "CWB", "SP") */
+  estoques: Record<string, GalpaoEstoque>;
   /** Supplier for OC based on SKU prefix */
   fornecedorOC: string | null;
-  /** Physical location in CWB warehouse */
-  localizacaoCWB?: string;
-  /** Physical location in SP warehouse */
-  localizacaoSP?: string;
   /** Product image URL (from Tiny anexos) */
   imagemUrl?: string;
 }
@@ -58,8 +52,8 @@ export interface Pedido {
   id: string;
   numero: string;
   data: string;
-  /** Which galpao received the order (galpao name: "CWB", "SP", etc.) */
-  filialOrigem: Filial;
+  /** Which galpao received the order (galpao name, e.g. "CWB", "SP") */
+  filialOrigem: string;
   /** Empresa that received the order (UUID) */
   empresaOrigemId?: string;
   /** Empresa name (e.g. "NetAir") */

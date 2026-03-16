@@ -5,7 +5,8 @@
 
 interface FornecedorInfo {
   fornecedor: string;
-  filialOC: "CWB" | "SP";
+  /** Galpão name where this supplier's OC should be placed */
+  filialOC: string;
 }
 
 const SKU_RULES: { test: (sku: string) => boolean; info: FornecedorInfo }[] = [

@@ -83,8 +83,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing dados.id" }, { status: 400 });
   }
 
-  // Legacy filial name for backwards compat
-  const filial = empresa.galpaoNome as "CWB" | "SP";
+  const filial = empresa.galpaoNome;
 
   logger.info("webhook", "Webhook received", {
     pedidoId,

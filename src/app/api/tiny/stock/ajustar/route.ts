@@ -13,7 +13,7 @@ import { logger } from "@/lib/logger";
  * Body: {
  *   pedidoId: string,           // siso_pedidos.id
  *   produtoId: number,           // produto_id from siso_pedido_itens
- *   galpao: "CWB" | "SP",       // which galpão's stock to set
+ *   galpao: string,              // galpão name (e.g. "CWB", "SP")
  *   quantidade: number,          // new saldo (exact value)
  * }
  */
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     const { pedidoId, produtoId, galpao } = body as {
       pedidoId: string;
       produtoId: number;
-      galpao: "CWB" | "SP";
+      galpao: string;
     };
     const quantidade = body.quantidade ?? body.novaQuantidade;
 
@@ -42,22 +42,7 @@ export async function POST(request: Request) {
 
     const supabase = createServiceClient();
 
-    // 1. Get the pedido item to find deposit IDs and produto_id_suporte
-    const { data: item } = await supabase
-      .from("siso_pedido_itens")
-      .select("produto_id, produto_id_suporte, estoque_cwb_deposito_id, estoque_sp_deposito_id")
-      .eq("pedido_id", pedidoId)
-      .eq("produto_id", produtoId)
-      .single();
-
-    if (!item) {
-      return NextResponse.json(
-        { error: "Item não encontrado no pedido" },
-        { status: 404 },
-      );
-    }
-
-    // 2. Get the pedido to find filial_origem
+    // 1. Get the pedido to find filial_origem and empresa
     const { data: pedido } = await supabase
       .from("siso_pedidos")
       .select("filial_origem, empresa_origem_id")
@@ -71,7 +56,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Find the empresa in the target galpão
+    // 2. Find the empresa in the target galpão
     const { data: empresa } = await supabase
       .from("siso_empresas")
       .select("id, nome, galpao_id, siso_galpoes!inner(nome)")
@@ -87,11 +72,23 @@ export async function POST(request: Request) {
       );
     }
 
-    // 4. Determine which product ID to use in Tiny
+    // 3. Determine which product ID to use in Tiny
     const isOrigemGalpao = pedido.filial_origem === galpao;
-    const tinyProdutoId = isOrigemGalpao
-      ? item.produto_id
-      : item.produto_id_suporte;
+
+    let tinyProdutoId: number | null = null;
+
+    if (isOrigemGalpao) {
+      tinyProdutoId = produtoId;
+    } else {
+      // Look up produto_id_suporte from siso_pedido_itens
+      const { data: item } = await supabase
+        .from("siso_pedido_itens")
+        .select("produto_id_suporte")
+        .eq("pedido_id", pedidoId)
+        .eq("produto_id", produtoId)
+        .single();
+      tinyProdutoId = item?.produto_id_suporte ?? null;
+    }
 
     if (!tinyProdutoId) {
       return NextResponse.json(
@@ -100,15 +97,21 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5. Get deposit ID for this galpão
-    const depositoId = galpao === "CWB"
-      ? item.estoque_cwb_deposito_id
-      : item.estoque_sp_deposito_id;
+    // 4. Get deposit ID from normalized stock table
+    const { data: estoqueRow } = await supabase
+      .from("siso_pedido_item_estoques")
+      .select("deposito_id")
+      .eq("pedido_id", pedidoId)
+      .eq("produto_id", produtoId)
+      .eq("empresa_id", empresa.id)
+      .maybeSingle();
 
-    // 6. Get token for the empresa
+    const depositoId = estoqueRow?.deposito_id ?? null;
+
+    // 5. Get token for the empresa
     const { token } = await getValidTokenByEmpresa(empresa.id);
 
-    // 7. Call Tiny — balanço (set exact saldo)
+    // 6. Call Tiny — balanço (set exact saldo)
     await waitForRateLimit(empresa.id);
     await registerApiCall(empresa.id, "POST /estoque/{id} (balanço)");
     await movimentarEstoque(token, tinyProdutoId, {
@@ -124,7 +127,7 @@ export async function POST(request: Request) {
       novoSaldo: quantidade,
     });
 
-    // 8. Re-fetch stock from Tiny to get actual values
+    // 7. Re-fetch stock from Tiny to get actual values
     await waitForRateLimit(empresa.id);
     await registerApiCall(empresa.id, "GET /estoque/{id}");
     const estoqueAtualizado = await getEstoque(token, tinyProdutoId);
@@ -144,29 +147,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // 9. Update DB
-    const qtdPedida = await getQuantidadePedida(supabase, pedidoId, produtoId);
-    const updateFields =
-      galpao === "CWB"
-        ? {
-            estoque_cwb_saldo: novoSaldo,
-            estoque_cwb_reservado: novoReservado,
-            estoque_cwb_disponivel: novoDisponivel,
-            cwb_atende: novoDisponivel >= qtdPedida,
-          }
-        : {
-            estoque_sp_saldo: novoSaldo,
-            estoque_sp_reservado: novoReservado,
-            estoque_sp_disponivel: novoDisponivel,
-            sp_atende: novoDisponivel >= qtdPedida,
-          };
-
-    await supabase
-      .from("siso_pedido_itens")
-      .update(updateFields)
-      .eq("pedido_id", pedidoId)
-      .eq("produto_id", produtoId);
-
+    // 8. Update normalized stock table
     await supabase
       .from("siso_pedido_item_estoques")
       .update({
@@ -177,6 +158,31 @@ export async function POST(request: Request) {
       .eq("pedido_id", pedidoId)
       .eq("produto_id", produtoId)
       .eq("empresa_id", empresa.id);
+
+    // 9. Also update legacy columns (backwards compat — will be removed)
+    const qtdPedida = await getQuantidadePedida(supabase, pedidoId, produtoId);
+    if (galpao === "CWB" || galpao === "SP") {
+      const legacyFields =
+        galpao === "CWB"
+          ? {
+              estoque_cwb_saldo: novoSaldo,
+              estoque_cwb_reservado: novoReservado,
+              estoque_cwb_disponivel: novoDisponivel,
+              cwb_atende: novoDisponivel >= qtdPedida,
+            }
+          : {
+              estoque_sp_saldo: novoSaldo,
+              estoque_sp_reservado: novoReservado,
+              estoque_sp_disponivel: novoDisponivel,
+              sp_atende: novoDisponivel >= qtdPedida,
+            };
+
+      await supabase
+        .from("siso_pedido_itens")
+        .update(legacyFields)
+        .eq("pedido_id", pedidoId)
+        .eq("produto_id", produtoId);
+    }
 
     return NextResponse.json({
       ok: true,

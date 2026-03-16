@@ -572,7 +572,7 @@ async function enrichItemMultiEmpresa(
 
       const saldo = dep?.saldo ?? 0;
       const reservado = dep?.reservado ?? 0;
-      const disponivel = Math.max(0, saldo - reservado);
+      const disponivel = saldo - reservado;
 
       estoquesPorEmpresa.push({
         empresaId: emp.empresaId,

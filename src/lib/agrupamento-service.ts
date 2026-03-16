@@ -111,34 +111,35 @@ async function processarGrupo(
   try {
     const { token } = await getValidTokenByEmpresa(empresaId);
 
-    // Build NF IDs (Tiny requires idsNotasFiscais, not idsPedidos)
-    const nfIds: number[] = [];
-    const pedidoIdsPorNfId = new Map<number, string>();
+    // Build Tiny pedido IDs (Tiny auto-includes the pedido's NF in the expedition)
+    const idsTiny: number[] = [];
+    const pedidoPorTinyId = new Map<number, string>();
 
     for (const p of pedidos) {
-      if (!p.nota_fiscal_id) {
-        logger.warn(LOG_SOURCE, "Pedido sem nota_fiscal_id, skip", { pedidoId: p.id });
+      const tinyId = parseInt(p.id, 10);
+      if (isNaN(tinyId)) {
+        logger.warn(LOG_SOURCE, "Pedido com id não numérico, skip", { pedidoId: p.id });
         continue;
       }
-      nfIds.push(p.nota_fiscal_id);
-      pedidoIdsPorNfId.set(p.nota_fiscal_id, p.id);
+      idsTiny.push(tinyId);
+      pedidoPorTinyId.set(tinyId, p.id);
     }
 
-    if (nfIds.length === 0) return;
+    if (idsTiny.length === 0) return;
 
-    // 1. Create single agrupamento using NF IDs
-    const agrupamento = await criarAgrupamento(token, nfIds);
+    // 1. Create single agrupamento for all pedidos in this shipping group
+    const agrupamento = await criarAgrupamento(token, idsTiny);
     const agrupamentoId = agrupamento.id;
 
     logger.info(LOG_SOURCE, "Agrupamento criado em lote", {
       empresaId,
       agrupamentoId: String(agrupamentoId),
-      qtdNFs: String(nfIds.length),
+      qtdPedidos: String(idsTiny.length),
       groupKey,
     });
 
     // Save real agrupamento_expedicao_id (replacing 'pending')
-    const allPedidoIds = Array.from(pedidoIdsPorNfId.values());
+    const allPedidoIds = Array.from(pedidoPorTinyId.values());
     await supabase
       .from("siso_pedidos")
       .update({ agrupamento_expedicao_id: String(agrupamentoId) })

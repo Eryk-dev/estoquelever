@@ -404,16 +404,16 @@ export interface TinyEtiquetasAgrupamentoResponse {
   urls: string[];
 }
 
-/** Create a shipment group (agrupamento de expedição) from NF IDs.
- *  Note: idsPedidos creates empty agrupamentos — Tiny requires idsNotasFiscais. */
+/** Create a shipment group (agrupamento de expedição) from order IDs.
+ *  Tiny automatically includes the pedido's NF in the expedition. */
 export async function criarAgrupamento(
   token: string,
-  idsNotasFiscais: number[],
+  idsPedidos: number[],
 ): Promise<TinyCriarAgrupamentoResponse> {
   return tinyFetch<TinyCriarAgrupamentoResponse>("/expedicao", {
     token,
     method: "POST",
-    body: { idsNotasFiscais },
+    body: { idsPedidos },
   });
 }
 

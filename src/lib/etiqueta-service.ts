@@ -169,11 +169,12 @@ async function resolverZplFallback(
     : null;
 
   if (!agrupamentoId) {
-    if (!pedido.nota_fiscal_id) {
-      logger.error(LOG_SOURCE, "Pedido sem nota_fiscal_id, não pode criar agrupamento", { pedidoId: pedido.id });
+    const pedidoTinyId = parseInt(pedido.id, 10);
+    if (isNaN(pedidoTinyId)) {
+      logger.error(LOG_SOURCE, "Pedido com id não numérico", { pedidoId: pedido.id });
       return null;
     }
-    const res = await criarAgrupamento(token, [pedido.nota_fiscal_id]);
+    const res = await criarAgrupamento(token, [pedidoTinyId]);
     agrupamentoId = res.id;
 
     await supabase

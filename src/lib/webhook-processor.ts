@@ -307,6 +307,8 @@ export async function processWebhook(
           cliente_cpf_cnpj: pedido.cliente.cpfCnpj ?? null,
           forma_envio_id: pedido.formaEnvio?.id ?? null,
           forma_envio_descricao: pedido.formaEnvio?.descricao ?? null,
+          forma_frete_id: pedido.formaFrete?.id ?? null,
+          transportador_id: pedido.transportadorId ?? null,
           sugestao,
           sugestao_motivo: motivoFinal,
           status,

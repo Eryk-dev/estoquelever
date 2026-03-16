@@ -91,7 +91,12 @@ interface TinyPedidoRaw {
     numeroPedidoEcommerce: string;
   };
   transportador?: {
+    id?: number;
     formaEnvio?: {
+      id: number;
+      nome: string;
+    };
+    formaFrete?: {
       id: number;
       nome: string;
     };
@@ -114,6 +119,11 @@ export interface TinyPedidoDetalhe {
     id: string;
     descricao: string;
   };
+  formaFrete?: {
+    id: string;
+    descricao: string;
+  };
+  transportadorId?: string;
   itens: TinyPedidoItem[];
 }
 
@@ -159,6 +169,13 @@ export async function getPedido(
           descricao: raw.transportador.formaEnvio.nome,
         }
       : undefined,
+    formaFrete: raw.transportador?.formaFrete
+      ? {
+          id: String(raw.transportador.formaFrete.id),
+          descricao: raw.transportador.formaFrete.nome,
+        }
+      : undefined,
+    transportadorId: raw.transportador?.id ? String(raw.transportador.id) : undefined,
     itens: raw.itens ?? [],
   };
 }

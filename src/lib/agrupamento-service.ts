@@ -2,8 +2,9 @@
  * Agrupamento (expedition grouping) pre-creation service.
  *
  * Called fire-and-forget when separation concludes (pedidos → "separado").
- * Groups pedidos by empresa_origem_id, creates a single Tiny agrupamento
- * per empresa (batch), downloads ZPL labels, and caches everything in DB.
+ * Groups pedidos by empresa_origem_id + shipping method (forma_envio_id,
+ * forma_frete_id, transportador_id), creates one Tiny agrupamento per group,
+ * downloads ZPL labels, and caches everything in DB.
  *
  * At packing time, the ZPL is already cached — we just send it to PrintNode
  * without any Tiny API calls, cutting the bip-to-print delay to ~1s.
@@ -21,12 +22,23 @@ interface PedidoParaAgrupamento {
   id: string;
   numero: string;
   empresa_origem_id: string;
+  forma_envio_id: string | null;
+  forma_frete_id: string | null;
+  transportador_id: string | null;
+}
+
+/**
+ * Build a grouping key from empresa + shipping fields.
+ * Pedidos with the same key can be in the same Tiny agrupamento.
+ */
+function buildGroupKey(p: PedidoParaAgrupamento): string {
+  return `${p.empresa_origem_id}|${p.forma_envio_id ?? ""}|${p.forma_frete_id ?? ""}|${p.transportador_id ?? ""}`;
 }
 
 /**
  * Pre-create Tiny agrupamentos in batch for pedidos that just became "separado".
- * Groups by empresa, creates one agrupamento per empresa, downloads ZPL labels,
- * and caches them in etiqueta_zpl column.
+ * Groups by empresa + shipping method, creates one agrupamento per group,
+ * downloads ZPL labels, and caches them in etiqueta_zpl column.
  *
  * Errors are logged but never thrown — this is fire-and-forget.
  */
@@ -39,7 +51,7 @@ export async function preCriarAgrupamentosEmLote(
 
   const { data: pedidos, error: fetchErr } = await supabase
     .from("siso_pedidos")
-    .select("id, numero, empresa_origem_id, agrupamento_expedicao_id")
+    .select("id, numero, empresa_origem_id, agrupamento_expedicao_id, forma_envio_id, forma_frete_id, transportador_id")
     .in("id", pedidoIds)
     .not("empresa_origem_id", "is", null)
     .is("agrupamento_expedicao_id", null);
@@ -59,19 +71,29 @@ export async function preCriarAgrupamentosEmLote(
     return;
   }
 
-  // Group by empresa_origem_id
-  const porEmpresa = new Map<string, PedidoParaAgrupamento[]>();
+  // Group by empresa + shipping method (forma_envio, forma_frete, transportador)
+  const groups = new Map<string, PedidoParaAgrupamento[]>();
   for (const p of pedidos) {
-    const empresaId = p.empresa_origem_id!;
-    const lista = porEmpresa.get(empresaId) ?? [];
-    lista.push({ id: p.id, numero: p.numero, empresa_origem_id: empresaId });
-    porEmpresa.set(empresaId, lista);
+    const pedido: PedidoParaAgrupamento = {
+      id: p.id,
+      numero: p.numero,
+      empresa_origem_id: p.empresa_origem_id!,
+      forma_envio_id: p.forma_envio_id ?? null,
+      forma_frete_id: p.forma_frete_id ?? null,
+      transportador_id: p.transportador_id ?? null,
+    };
+    const key = buildGroupKey(pedido);
+    const lista = groups.get(key) ?? [];
+    lista.push(pedido);
+    groups.set(key, lista);
   }
 
-  // Process each empresa in parallel
-  const promises = Array.from(porEmpresa.entries()).map(
-    ([empresaId, pedidosEmpresa]) =>
-      processarEmpresa(supabase, empresaId, pedidosEmpresa),
+  // Process each group in parallel
+  const promises = Array.from(groups.entries()).map(
+    ([key, pedidosGrupo]) => {
+      const empresaId = pedidosGrupo[0].empresa_origem_id;
+      return processarGrupo(supabase, empresaId, key, pedidosGrupo);
+    },
   );
 
   await Promise.allSettled(promises);
@@ -81,9 +103,10 @@ export async function preCriarAgrupamentosEmLote(
 
 type SupabaseClient = ReturnType<typeof createServiceClient>;
 
-async function processarEmpresa(
+async function processarGrupo(
   supabase: SupabaseClient,
   empresaId: string,
+  groupKey: string,
   pedidos: PedidoParaAgrupamento[],
 ): Promise<void> {
   try {
@@ -107,7 +130,7 @@ async function processarEmpresa(
 
     if (idsTiny.length === 0) return;
 
-    // 1. Create single agrupamento for all pedidos of this empresa
+    // 1. Create single agrupamento for all pedidos in this shipping group
     const agrupamento = await criarAgrupamento(token, idsTiny);
     const agrupamentoId = agrupamento.id;
 
@@ -115,6 +138,7 @@ async function processarEmpresa(
       empresaId,
       agrupamentoId: String(agrupamentoId),
       qtdPedidos: String(idsTiny.length),
+      groupKey,
     });
 
     // Save agrupamento_expedicao_id on all pedidos
@@ -151,7 +175,7 @@ async function processarEmpresa(
       return;
     }
 
-    // 3. Download ZPL content from each URL in parallel
+    // 4. Download ZPL content from each URL in parallel
     const downloads = await Promise.allSettled(
       etiquetas.urls.map((url) => baixarZpl(url)),
     );
@@ -160,7 +184,7 @@ async function processarEmpresa(
       r.status === "fulfilled" ? r.value : null,
     );
 
-    // 4. Map URLs/ZPL to pedidos and save
+    // 5. Map URLs/ZPL to pedidos and save
     if (allPedidoIds.length === 1) {
       // Single pedido
       await salvarEtiqueta(supabase, allPedidoIds[0], etiquetas.urls[0], zplContents[0]);
@@ -191,6 +215,7 @@ async function processarEmpresa(
   } catch (err) {
     logger.error(LOG_SOURCE, "Falha ao pré-criar agrupamento", {
       empresaId,
+      groupKey,
       pedidoIds: pedidos.map((p) => p.id),
       error: err instanceof Error ? err.message : String(err),
     });

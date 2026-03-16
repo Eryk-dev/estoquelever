@@ -428,13 +428,54 @@ export async function concluirAgrupamento(
   });
 }
 
-/** Fetch label URLs for a shipment group */
+/** Fetch label URLs for a shipment group (all expeditions) */
 export async function obterEtiquetasAgrupamento(
   token: string,
   idAgrupamento: number,
 ): Promise<TinyEtiquetasAgrupamentoResponse> {
   return tinyFetch<TinyEtiquetasAgrupamentoResponse>(
     `/expedicao/${idAgrupamento}/etiquetas`,
+    { token },
+  );
+}
+
+/** Response from GET /expedicao/{idAgrupamento} */
+export interface TinyExpedicaoResponse {
+  id: number;
+  tipoObjeto: string;
+  idObjeto: number;
+  situacao: string;
+  venda?: {
+    id: number;
+    numero?: number;
+  };
+}
+
+export interface TinyAgrupamentoResponse {
+  id: number;
+  identificacao: string;
+  expedicoes: TinyExpedicaoResponse[];
+}
+
+/** Get agrupamento details including expeditions list */
+export async function obterAgrupamento(
+  token: string,
+  idAgrupamento: number,
+): Promise<TinyAgrupamentoResponse> {
+  return tinyFetch<TinyAgrupamentoResponse>(
+    `/expedicao/${idAgrupamento}`,
+    { token },
+  );
+}
+
+/** Fetch label URLs for a specific expedition within an agrupamento */
+export async function obterEtiquetasExpedicao(
+  token: string,
+  idAgrupamento: number,
+  idExpedicao: number,
+): Promise<TinyEtiquetasAgrupamentoResponse> {
+  return tinyFetch<TinyEtiquetasAgrupamentoResponse>(
+    `/expedicao/${idAgrupamento}/expedicao/${idExpedicao}/etiquetas`,
     { token },
   );
 }

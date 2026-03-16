@@ -148,8 +148,14 @@ export async function getValidToken(connectionId: string): Promise<string> {
       clientSecret: conn.client_secret,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error("oauth", "Token refresh failed", { connectionId, error: msg });
+    logger.logError({
+      error: err,
+      source: "oauth",
+      message: "Token refresh failed",
+      category: "auth",
+      severity: "critical",
+      metadata: { connectionId },
+    });
     throw err;
   }
 

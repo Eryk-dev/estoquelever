@@ -6,7 +6,7 @@ import { registerApiCall, waitForRateLimit } from "./rate-limiter";
 import { processQueue } from "./execution-worker";
 import { getEmpresasDoGrupo, agregarEstoquePorGalpao } from "./grupo-resolver";
 import type { EmpresaGrupo } from "./grupo-resolver";
-import { logger } from "./logger";
+import { logger, getCorrelationId } from "./logger";
 import { registrarEvento } from "./historico-service";
 import type { NfWebhookPayload } from "./nf-webhook-handler";
 import type { TinyPedidoItem } from "./tiny-api";
@@ -385,10 +385,16 @@ export async function processWebhook(
           { onConflict: "pedido_id,produto_id" },
         );
       if (itemError && itemError.code !== "23505") {
-        logger.error("processor", "Failed to insert order item", {
+        logger.logError({
+          error: itemError,
+          source: "processor",
+          message: "Failed to insert order item",
+          category: "database",
           pedidoId: pedidoTinyId,
-          produtoId: item.produto_id,
-          supabaseError: itemError.message,
+          empresaId: empresaOrigemId,
+          correlationId: getCorrelationId(),
+          errorCode: itemError.code,
+          metadata: { produtoId: item.produto_id, table: "siso_pedido_itens" },
         });
       }
     }
@@ -401,9 +407,16 @@ export async function processWebhook(
           onConflict: "pedido_id,produto_id,empresa_id",
         });
       if (estError) {
-        logger.error("processor", "Failed to insert item estoques", {
+        logger.logError({
+          error: estError,
+          source: "processor",
+          message: "Failed to insert item estoques",
+          category: "database",
           pedidoId: pedidoTinyId,
-          supabaseError: estError.message,
+          empresaId: empresaOrigemId,
+          correlationId: getCorrelationId(),
+          errorCode: estError.code,
+          metadata: { table: "siso_pedido_item_estoques", count: itensEstoques.length },
         });
       }
     }
@@ -495,11 +508,20 @@ export async function processWebhook(
       .from("siso_webhook_logs")
       .update({ status: "erro", erro: msg, processado_em: new Date().toISOString() })
       .eq("id", webhookLogId);
-    logger.error("processor", "Webhook processing failed", {
+    logger.logError({
+      error: err,
+      source: "processor",
+      message: "Webhook processing failed",
+      category: msg.includes("token") || msg.includes("Token")
+        ? "auth"
+        : msg.includes("rate") || msg.includes("429")
+          ? "infrastructure"
+          : "external_api",
+      severity: "critical",
       pedidoId: pedidoTinyId,
       empresaId: empresaOrigemId,
-      error: msg,
-      webhookLogId,
+      correlationId: getCorrelationId(),
+      metadata: { webhookLogId },
     });
     throw err;
   }

@@ -195,13 +195,25 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
         erro: errorMsg,
       });
 
-      logger.error("worker", "Job failed", {
-        jobId: job.id,
+      logger.logError({
+        error: err,
+        source: "worker",
+        message: `Job failed (tentativa ${tentativas}/${job.max_tentativas})`,
+        category: errorMsg.includes("token") || errorMsg.includes("Token")
+          ? "auth"
+          : errorMsg.includes("rate") || errorMsg.includes("429")
+            ? "infrastructure"
+            : "external_api",
+        severity: maxed ? "critical" : "error",
         pedidoId: job.pedido_id,
         empresaId: job.empresa_id,
-        tentativas,
-        maxed,
-        error: errorMsg,
+        metadata: {
+          jobId: job.id,
+          decisao: job.decisao,
+          tentativas,
+          maxed,
+          retryDelay: maxed ? null : retryDelay,
+        },
       });
     }
   }
@@ -546,9 +558,15 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
       if (!produto) {
         errors++;
         failedSkus.push(item.sku);
-        logger.error("worker", `Produto não encontrado na empresa suporte: ${item.sku}`, {
+        logger.logError({
+          error: new Error(`Produto não encontrado na empresa suporte: ${item.sku}`),
+          source: "worker",
+          message: `Produto não encontrado na empresa suporte: ${item.sku}`,
+          category: "business_logic",
           pedidoId: job.pedido_id,
           empresaId: empresaEscolhida.empresaId,
+          empresaNome: empresaEscolhida.empresaNome,
+          metadata: { sku: item.sku, operation: "transferencia" },
         });
         continue;
       }
@@ -589,11 +607,15 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err);
       errors++;
       failedSkus.push(item.sku);
-      logger.error("worker", `Falha ao lançar saída: ${item.sku}`, {
+      logger.logError({
+        error: err,
+        source: "worker",
+        message: `Falha ao lançar saída: ${item.sku}`,
+        category: "external_api",
         pedidoId: job.pedido_id,
-        sku: item.sku,
         empresaId: empresaEscolhida.empresaId,
-        error: msg,
+        empresaNome: empresaEscolhida.empresaNome,
+        metadata: { sku: item.sku, operation: "movimentarEstoque", depositoId },
       });
     }
   }

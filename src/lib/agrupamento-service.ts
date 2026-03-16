@@ -4,7 +4,7 @@
  * Called fire-and-forget when separation concludes (pedidos → "separado").
  * Groups pedidos by empresa_origem_id + shipping method (forma_envio_id,
  * forma_frete_id, transportador_id), creates one Tiny agrupamento per group,
- * downloads ZPL labels, and caches everything in DB.
+ * downloads ZPL labels per expedition, and caches everything in DB.
  *
  * Uses atomic claim (siso_claim_pedidos_para_agrupamento) to prevent duplicate
  * agrupamentos when called concurrently (e.g. double-click on "iniciar").
@@ -15,7 +15,12 @@
 
 import { createServiceClient } from "@/lib/supabase-server";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
-import { criarAgrupamento, concluirAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
+import {
+  criarAgrupamento,
+  concluirAgrupamento,
+  obterAgrupamento,
+  obterEtiquetasExpedicao,
+} from "@/lib/tiny-api";
 import { baixarZpl } from "@/lib/etiqueta-download";
 import { logger } from "@/lib/logger";
 
@@ -162,49 +167,71 @@ async function processarGrupo(
       });
     }
 
-    // 3. Fetch etiqueta URLs
-    const etiquetas = await obterEtiquetasAgrupamento(token, agrupamentoId);
+    // 3. Get agrupamento details to discover expedition IDs per pedido
+    const agrupamentoDetails = await obterAgrupamento(token, agrupamentoId);
 
-    if (!etiquetas.urls || etiquetas.urls.length === 0) {
-      logger.warn(LOG_SOURCE, "Nenhuma URL de etiqueta retornada", {
+    if (!agrupamentoDetails.expedicoes || agrupamentoDetails.expedicoes.length === 0) {
+      logger.warn(LOG_SOURCE, "Agrupamento sem expedições", {
         agrupamentoId: String(agrupamentoId),
       });
       return;
     }
 
-    // 4. Download ZPL content from each URL in parallel
-    const downloads = await Promise.allSettled(
-      etiquetas.urls.map((url) => baixarZpl(url)),
-    );
+    // 4. Fetch labels per expedition (one per pedido) in parallel
+    //    idObjeto is the pedido ID when tipoObjeto=pedido, or the NF ID when
+    //    tipoObjeto=nota_fiscal. Use venda.id as fallback to always find the pedido.
+    const labelPromises = agrupamentoDetails.expedicoes.map(async (exp) => {
+      const pedidoId = pedidoPorTinyId.get(exp.idObjeto)
+        ?? (exp.venda?.id ? pedidoPorTinyId.get(exp.venda.id) : undefined);
+      if (!pedidoId) {
+        logger.warn(LOG_SOURCE, "Expedição sem pedido correspondente", {
+          agrupamentoId: String(agrupamentoId),
+          expedicaoId: String(exp.id),
+          idObjeto: String(exp.idObjeto),
+          tipoObjeto: exp.tipoObjeto,
+          vendaId: String(exp.venda?.id ?? ""),
+        });
+        return;
+      }
 
-    const zplContents = downloads.map((r) =>
-      r.status === "fulfilled" ? r.value : null,
-    );
+      try {
+        const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, exp.id);
 
-    // 5. Map URLs/ZPL to pedidos and save
-    if (allPedidoIds.length === 1) {
-      await salvarEtiqueta(supabase, allPedidoIds[0], etiquetas.urls[0], zplContents[0]);
-    } else if (etiquetas.urls.length === allPedidoIds.length) {
-      const updates = allPedidoIds.map((pedidoId, i) =>
-        salvarEtiqueta(supabase, pedidoId, etiquetas.urls[i], zplContents[i]),
-      );
-      await Promise.all(updates);
-    } else {
-      logger.warn(LOG_SOURCE, "URL count != pedido count, storing first for all", {
-        urlCount: String(etiquetas.urls.length),
-        pedidoCount: String(allPedidoIds.length),
-      });
-      const updates = allPedidoIds.map((pedidoId) =>
-        salvarEtiqueta(supabase, pedidoId, etiquetas.urls[0], zplContents[0]),
-      );
-      await Promise.all(updates);
-    }
+        if (!etiquetas.urls || etiquetas.urls.length === 0) {
+          logger.warn(LOG_SOURCE, "Sem URL de etiqueta para expedição", {
+            agrupamentoId: String(agrupamentoId),
+            expedicaoId: String(exp.id),
+            pedidoId,
+          });
+          return;
+        }
 
-    logger.info(LOG_SOURCE, "Etiquetas ZPL pré-cacheadas", {
+        const url = etiquetas.urls[0];
+        const zpl = await baixarZpl(url);
+
+        await salvarEtiqueta(supabase, pedidoId, url, zpl);
+
+        logger.info(LOG_SOURCE, "Etiqueta ZPL pré-cacheada", {
+          pedidoId,
+          expedicaoId: String(exp.id),
+          cached: String(!!zpl),
+        });
+      } catch (err) {
+        logger.warn(LOG_SOURCE, "Falha ao buscar etiqueta da expedição", {
+          agrupamentoId: String(agrupamentoId),
+          expedicaoId: String(exp.id),
+          pedidoId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+
+    await Promise.allSettled(labelPromises);
+
+    logger.info(LOG_SOURCE, "Etiquetas processadas", {
       empresaId,
       agrupamentoId: String(agrupamentoId),
-      total: String(etiquetas.urls.length),
-      cached: String(zplContents.filter(Boolean).length),
+      totalExpedicoes: String(agrupamentoDetails.expedicoes.length),
     });
   } catch (err) {
     // On failure, clear 'pending' so it can be retried

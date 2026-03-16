@@ -1,0 +1,71 @@
+# ============================================================
+# SISO — Erros Conhecidos e Corrigidos
+#
+# Este arquivo serve como base de conhecimento para diagnostico
+# rapido de erros recorrentes. Sempre que um erro for corrigido,
+# adicione uma entrada aqui seguindo o formato abaixo.
+#
+# Para consultar: grep por message, source, category ou tags.
+# ============================================================
+
+# Formato de cada entrada:
+# - id: identificador curto e unico (kebab-case)
+#   date: YYYY-MM-DD da correcao
+#   source: modulo que gerou o erro (webhook, processor, worker, etiqueta-service, oauth, etc)
+#   category: validation | database | external_api | auth | config | business_logic | infrastructure
+#   message: mensagem do erro (como aparece nos logs)
+#   cause: causa raiz identificada
+#   fix: o que foi feito para corrigir
+#   files: lista de arquivos alterados
+#   commit: hash do commit (opcional)
+#   tags: palavras-chave para busca rapida
+#   notes: observacoes adicionais (opcional)
+
+erros:
+  - id: zpl-dg-graphic-label
+    date: "2026-03-16"
+    source: etiqueta-service
+    category: external_api
+    message: "ZPL label not recognized / empty after download"
+    cause: "Shopee Envios gera etiquetas com comando ~DG (graphic) em vez de ^XA/^XZ puro. O splitZplLabels nao reconhecia esse formato."
+    fix: "Atualizado splitZplLabels em etiqueta-download.ts para aceitar labels que comecam com ~DG alem de ^XA."
+    files:
+      - src/lib/etiqueta-download.ts
+    commit: 5909e41
+    tags: [zpl, shopee, etiqueta, dg-graphic, label]
+
+  - id: agrupamento-ids-pedidos-vs-nf
+    date: "2026-03-16"
+    source: agrupamento-service
+    category: external_api
+    message: "Agrupamento creation failed / wrong IDs sent to Tiny"
+    cause: "Tiny API espera idsPedidos (nao idsNotasFiscais) para criar agrupamentos. Mudanca anterior tentou usar NF IDs mas a API rejeita."
+    fix: "Revertido para usar idsPedidos na criacao de agrupamentos."
+    files:
+      - src/lib/agrupamento-service.ts
+    commit: 773b5c9
+    tags: [agrupamento, tiny-api, ids, nota-fiscal]
+
+  - id: reimprimir-status-wrong
+    date: "2026-03-16"
+    source: etiqueta-service
+    category: business_logic
+    message: "Reimprimir returns wrong etiqueta_status after full print flow"
+    cause: "Apos reimprimir, o status da etiqueta ficava como 'imprimindo' em vez de voltar para 'impresso' porque o fluxo completo nao era executado."
+    fix: "Corrigido reimprimir para executar o fluxo completo e retornar status correto."
+    files:
+      - src/app/api/separacao/reimprimir/route.ts
+    commit: daeab36
+    tags: [reimprimir, etiqueta, status]
+
+  - id: rpc-column-reference-ambiguous
+    date: "2026-03-16"
+    source: separacao
+    category: database
+    message: "column reference 'pedido_id' is ambiguous"
+    cause: "RPC siso_claim_pedidos_para_agrupamento referenciava pedido_id sem qualificar a tabela, causando ambiguidade no JOIN."
+    fix: "Qualificado todas as referencias de coluna no RPC com alias de tabela."
+    files:
+      - supabase/migrations/20260316_fix_rpc_param_types_and_atomic_agrupamento.sql
+    commit: 9e18c10
+    tags: [rpc, supabase, ambiguous, column, sql]

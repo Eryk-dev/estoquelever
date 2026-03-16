@@ -12,8 +12,8 @@
 
 import { createServiceClient } from "@/lib/supabase-server";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
-import { criarAgrupamento, concluirAgrupamento, obterEtiquetasAgrupamento } from "@/lib/tiny-api";
-import { baixarZpl } from "@/lib/etiqueta-download";
+import { criarAgrupamento, concluirAgrupamento, obterAgrupamento, obterEtiquetasExpedicao } from "@/lib/tiny-api";
+import { baixarZpl, splitZplLabels } from "@/lib/etiqueta-download";
 import { enviarImpressaoZpl } from "@/lib/printnode";
 import { resolverImpressora } from "@/lib/printnode";
 import { getConfig } from "@/lib/config";
@@ -39,7 +39,14 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
   });
 
   if (claimErr) {
-    logger.error(LOG_SOURCE, "Falha ao reivindicar impressão", { pedidoId, error: claimErr.message });
+    logger.logError({
+      error: claimErr,
+      source: LOG_SOURCE,
+      message: "Falha ao reivindicar impressão (RPC siso_claim_etiqueta)",
+      category: "database",
+      pedidoId,
+      metadata: { rpc: "siso_claim_etiqueta" },
+    });
     return;
   }
 
@@ -52,7 +59,13 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
 
   if (!pedido.empresa_origem_id) {
     await setStatus(supabase, pedidoId, "falhou");
-    logger.error(LOG_SOURCE, "Pedido sem empresa_origem_id", { pedidoId });
+    logger.logError({
+      error: new Error("Pedido sem empresa_origem_id"),
+      source: LOG_SOURCE,
+      message: "Pedido sem empresa_origem_id",
+      category: "validation",
+      pedidoId,
+    });
     return;
   }
 
@@ -62,7 +75,15 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
 
     if (!zpl) {
       await setStatus(supabase, pedidoId, "falhou");
-      logger.error(LOG_SOURCE, "Não foi possível obter ZPL", { pedidoId });
+      logger.logError({
+        error: new Error("Não foi possível obter ZPL"),
+        source: LOG_SOURCE,
+        message: "Não foi possível obter ZPL (fast path e fallback falharam)",
+        category: "external_api",
+        pedidoId,
+        empresaId: pedido.empresa_origem_id,
+        metadata: { agrupamentoId: pedido.agrupamento_expedicao_id, etiquetaUrl: pedido.etiqueta_url },
+      });
       return;
     }
 
@@ -70,14 +91,28 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
     const printNodeApiKey = await getConfig("PRINTNODE_API_KEY");
     if (!printNodeApiKey) {
       await setStatus(supabase, pedidoId, "falhou");
-      logger.error(LOG_SOURCE, "PRINTNODE_API_KEY não configurada", { pedidoId });
+      logger.logError({
+        error: new Error("PRINTNODE_API_KEY não configurada"),
+        source: LOG_SOURCE,
+        message: "PRINTNODE_API_KEY não configurada em siso_configuracoes",
+        category: "config",
+        severity: "critical",
+        pedidoId,
+      });
       return;
     }
 
     const galpaoId = pedido.separacao_galpao_id;
     if (!galpaoId) {
       await setStatus(supabase, pedidoId, "falhou");
-      logger.error(LOG_SOURCE, "Pedido sem separacao_galpao_id", { pedidoId });
+      logger.logError({
+        error: new Error("Pedido sem separacao_galpao_id"),
+        source: LOG_SOURCE,
+        message: "Pedido sem separacao_galpao_id",
+        category: "validation",
+        pedidoId,
+        empresaId: pedido.empresa_origem_id,
+      });
       return;
     }
 
@@ -88,11 +123,14 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
       return;
     }
 
+    // Safety: ensure we only print one label even if multiple were cached
+    const singleLabel = splitZplLabels(zpl)[0] ?? zpl;
+
     // Send ZPL directly to PrintNode
     await enviarImpressaoZpl({
       apiKey: printNodeApiKey,
       printerId: printer.printerId,
-      zpl,
+      zpl: singleLabel,
       titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId}`,
     });
 
@@ -114,9 +152,18 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
       evento: "etiqueta_falhou",
       detalhes: { error: err instanceof Error ? err.message : String(err) },
     }).catch(() => {});
-    logger.error(LOG_SOURCE, "Falha ao imprimir etiqueta", {
+    logger.logError({
+      error: err,
+      source: LOG_SOURCE,
+      message: "Falha ao imprimir etiqueta",
+      category: "external_api",
       pedidoId,
-      error: err instanceof Error ? err.message : String(err),
+      empresaId: pedido.empresa_origem_id,
+      metadata: {
+        cached: !!pedido.etiqueta_zpl,
+        agrupamentoId: pedido.agrupamento_expedicao_id,
+        galpaoId: pedido.separacao_galpao_id,
+      },
     });
   }
 }
@@ -193,16 +240,25 @@ async function resolverZplFallback(
     });
   }
 
-  // Fetch URL — retry with delay because Tiny may take a moment to process conclusion
+  // Find this pedido's expedition within the agrupamento, then fetch its label
   let url = pedido.etiqueta_url;
   if (!url) {
+    const pedidoTinyIdNum = parseInt(pedido.id, 10);
     const maxRetries = 3;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const etiquetas = await obterEtiquetasAgrupamento(token, agrupamentoId);
-        if (etiquetas.urls && etiquetas.urls.length > 0) {
-          url = etiquetas.urls[0];
-          break;
+        // Get agrupamento to find the expedition ID for this specific pedido
+        const agrupamentoDetails = await obterAgrupamento(token, agrupamentoId);
+        const exp = agrupamentoDetails.expedicoes?.find(
+          (e) => e.idObjeto === pedidoTinyIdNum || e.venda?.id === pedidoTinyIdNum,
+        );
+
+        if (exp) {
+          const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, exp.id);
+          if (etiquetas.urls && etiquetas.urls.length > 0) {
+            url = etiquetas.urls[0];
+            break;
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

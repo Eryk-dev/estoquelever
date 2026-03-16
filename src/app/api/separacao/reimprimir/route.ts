@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/session";
 import { enviarImpressaoZpl, resolverImpressora } from "@/lib/printnode";
 import { getConfig } from "@/lib/config";
 import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
+import { splitZplLabels } from "@/lib/etiqueta-download";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "separacao-reimprimir";
@@ -92,10 +93,13 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Safety: ensure we only print one label even if multiple were cached
+    const singleLabel = splitZplLabels(pedido.etiqueta_zpl)[0] ?? pedido.etiqueta_zpl;
+
     const { jobId } = await enviarImpressaoZpl({
       apiKey: printNodeApiKey,
       printerId: printer.printerId,
-      zpl: pedido.etiqueta_zpl,
+      zpl: singleLabel,
       titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId} (reimpressão)`,
     });
 

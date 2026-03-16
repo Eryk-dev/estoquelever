@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getEmpresaByCnpj } from "@/lib/empresa-lookup";
 import { processWebhook } from "@/lib/webhook-processor";
 import { handleNfWebhook, type NfWebhookPayload } from "@/lib/nf-webhook-handler";
-import { logger } from "@/lib/logger";
+import { logger, generateCorrelationId } from "@/lib/logger";
 
 /**
  * POST /api/webhook/tiny
@@ -18,6 +18,7 @@ import { logger } from "@/lib/logger";
  * 5. Process asynchronously (fetch order, enrich stock, save)
  */
 export async function POST(request: NextRequest) {
+  const correlationId = generateCorrelationId();
   let payload: Record<string, unknown>;
 
   try {
@@ -27,6 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   logger.info("webhook", "Raw payload received", {
+    correlationId,
     keys: Object.keys(payload),
     payload: JSON.stringify(payload).slice(0, 500),
   });
@@ -59,10 +61,17 @@ export async function POST(request: NextRequest) {
     }
 
     handleNfWebhook(nfPayload, empresa.empresaId).catch((err) => {
-      logger.error("webhook", "NF webhook processing failed", {
-        idNotaFiscalTiny: String(nfPayload.dados.idNotaFiscalTiny),
+      logger.logError({
+        error: err,
+        source: "webhook",
+        message: "NF webhook processing failed",
+        category: "external_api",
+        pedidoId: String(nfPayload.dados.idNotaFiscalTiny),
         empresaId: empresa.empresaId,
-        error: err instanceof Error ? err.message : String(err),
+        correlationId,
+        requestPath: "/api/webhook/tiny",
+        requestMethod: "POST",
+        metadata: { tipo: "nota_fiscal" },
       });
     });
 
@@ -114,10 +123,18 @@ export async function POST(request: NextRequest) {
       logger.info("webhook", "Duplicate webhook ignored", { pedidoId, empresaId: empresa.empresaId, codigoSituacao });
       return NextResponse.json({ status: "duplicate", pedidoId });
     }
-    logger.error("webhook", "Failed to insert webhook log", {
+    logger.logError({
+      error: insertError,
+      source: "webhook",
+      message: "Failed to insert webhook log",
+      category: "database",
       pedidoId,
       empresaId: empresa.empresaId,
-      supabaseError: insertError.message,
+      correlationId,
+      requestPath: "/api/webhook/tiny",
+      requestMethod: "POST",
+      errorCode: insertError.code,
+      metadata: { table: "siso_webhook_logs" },
     });
     return NextResponse.json(
       { error: "Failed to log webhook" },
@@ -271,14 +288,19 @@ export async function POST(request: NextRequest) {
     empresa.galpaoId,
     empresa.grupoId,
   ).catch((err) => {
-    const msg = err instanceof Error ? err.message
-      : (typeof err === "object" && err !== null && "message" in err)
-        ? String((err as { message: unknown }).message)
-        : JSON.stringify(err);
-    logger.error("webhook", `Processing task failed for pedido ${pedidoId}`, {
+    logger.logError({
+      error: err,
+      source: "webhook",
+      message: `Processing task failed for pedido ${pedidoId}`,
+      category: "business_logic",
       pedidoId,
       empresaId: empresa.empresaId,
-      error: msg,
+      empresaNome: empresa.empresaNome,
+      galpaoNome: empresa.galpaoNome,
+      correlationId,
+      requestPath: "/api/webhook/tiny",
+      requestMethod: "POST",
+      metadata: { webhookLogId },
     });
   });
 

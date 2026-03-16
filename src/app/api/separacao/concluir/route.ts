@@ -37,8 +37,15 @@ export async function POST(request: NextRequest) {
       .in("pedido_id", pedido_ids);
 
     if (fetchError) {
-      logger.error("separacao-concluir", "Failed to fetch items", {
-        error: fetchError.message,
+      logger.logError({
+        error: fetchError,
+        source: "separacao-concluir",
+        message: "Failed to fetch items",
+        category: "database",
+        errorCode: fetchError.code,
+        requestPath: "/api/separacao/concluir",
+        requestMethod: "POST",
+        metadata: { pedido_ids, table: "siso_pedido_itens" },
       });
       return NextResponse.json(
         { error: fetchError.message },
@@ -78,8 +85,15 @@ export async function POST(request: NextRequest) {
         .eq("status_separacao", "em_separacao");
 
       if (updateError) {
-        logger.error("separacao-concluir", "Failed to update pedidos", {
-          error: updateError.message,
+        logger.logError({
+          error: updateError,
+          source: "separacao-concluir",
+          message: "Failed to update pedidos to separado",
+          category: "database",
+          errorCode: updateError.code,
+          requestPath: "/api/separacao/concluir",
+          requestMethod: "POST",
+          metadata: { separados, table: "siso_pedidos" },
         });
         return NextResponse.json(
           { error: updateError.message },
@@ -105,8 +119,14 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ separados, pendentes });
   } catch (err) {
-    logger.error("separacao-concluir", "Unexpected error", {
-      error: err instanceof Error ? err.message : String(err),
+    logger.logError({
+      error: err,
+      source: "separacao-concluir",
+      message: "Unexpected error in concluir",
+      category: "unknown",
+      requestPath: "/api/separacao/concluir",
+      requestMethod: "POST",
+      metadata: { pedido_ids },
     });
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });
   }

@@ -236,7 +236,7 @@ src/
     domain-helpers.ts              # UI helpers: e-commerce abbreviations, decisão colors
     supabase.ts                    # Supabase browser client
     supabase-server.ts             # Supabase service-role client
-    logger.ts                      # Structured logger (stdout JSON + Supabase siso_logs)
+    logger.ts                      # Structured logger (stdout JSON + Supabase siso_logs + siso_erros)
     utils.ts                       # cn() helper (clsx + tailwind-merge)
     # ── Deprecated ──
     cnpj-filial.ts                 # DEPRECATED — thin wrapper, use empresa-lookup.ts
@@ -283,7 +283,8 @@ All tables are prefixed with `siso_`:
 | `siso_tiny_connections` | Tiny API connections per empresa. Has `empresa_id` FK. |
 | `siso_webhook_logs` | Webhook dedup + processing status (unique: `dedup_key`). Has `empresa_id` FK. |
 | `siso_api_calls` | API call tracking. Has `empresa_id` FK. |
-| `siso_logs` | Structured application logs |
+| `siso_logs` | Structured application logs (info/warn/error) |
+| `siso_erros` | **Dedicated error tracking** with stack traces, categories, correlation IDs, resolution tracking. Queryable for diagnostics. |
 | `siso_configuracoes` | Key-value config store |
 
 > **Note:** `siso_pedido_itens` still has deprecated `estoque_cwb_*` / `estoque_sp_*` columns. The API reads from `siso_pedido_item_estoques` (normalized). The webhook processor writes to both for backwards compat. Legacy columns will be removed in a future migration.
@@ -384,8 +385,17 @@ npm run lint      # ESLint
 - All DB access via `createServiceClient()` from `supabase-server.ts` (service role).
 - Error responses: `NextResponse.json({ error: "..." }, { status: N })`.
 - Logging via `logger.info/warn/error(source, message, meta?)` — never `console.log` directly.
+- **Error logging:** Use `logger.logError(opts)` for actual errors — writes to both `siso_logs` and `siso_erros` with stack traces, categories, correlation IDs. See `ErrorLogOptions` in `logger.ts`.
+- **Error categories:** `validation`, `database`, `external_api`, `auth`, `config`, `business_logic`, `infrastructure`, `unknown`.
+- **Correlation IDs:** Generated at webhook entry via `generateCorrelationId()`, auto-attached to all `logError` calls in the same request.
 - Webhook processor is fire-and-forget (returns 200 immediately, processes async).
 - History events recorded via `registrarEvento()` — fire-and-forget safe.
+
+### Error Knowledge Base
+- **`erros-conhecidos.yaml`** at project root tracks every error that was diagnosed and fixed.
+- **MANDATORY:** When you fix any error or bug, add an entry to `erros-conhecidos.yaml` following the format in the file (id, date, source, category, message, cause, fix, files, tags).
+- **Before debugging:** Always check `erros-conhecidos.yaml` first — the error may have been fixed before.
+- Tags are searchable keywords for fast lookup.
 
 ### Database
 - All tables prefixed with `siso_`.

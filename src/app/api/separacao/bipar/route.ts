@@ -55,9 +55,15 @@ export async function POST(request: NextRequest) {
     });
 
     if (error) {
-      logger.error("separacao-bipar", "RPC siso_processar_bip failed", {
-        error: error.message,
-        codigo: body.codigo,
+      logger.logError({
+        error,
+        source: "separacao-bipar",
+        message: "RPC siso_processar_bip failed",
+        category: "database",
+        errorCode: error.code,
+        requestPath: "/api/separacao/bipar",
+        requestMethod: "POST",
+        metadata: { codigo: body.codigo, rpc: "siso_processar_bip" },
       });
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
@@ -102,9 +108,14 @@ export async function POST(request: NextRequest) {
         // Fire-and-forget: trigger label printing without blocking the response
         if (result.pedido_id) {
           buscarEImprimirEtiqueta(result.pedido_id).catch((err) => {
-            logger.error("separacao-bipar", "Falha ao disparar impressão de etiqueta", {
+            logger.logError({
+              error: err,
+              source: "separacao-bipar",
+              message: "Falha ao disparar impressão de etiqueta",
+              category: "external_api",
               pedidoId: result.pedido_id!,
-              error: err instanceof Error ? err.message : String(err),
+              requestPath: "/api/separacao/bipar",
+              requestMethod: "POST",
             });
           });
         }
@@ -140,8 +151,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Erro interno" }, { status: 500 });
     }
   } catch (err) {
-    logger.error("separacao-bipar", "Unexpected error", {
-      error: err instanceof Error ? err.message : String(err),
+    logger.logError({
+      error: err,
+      source: "separacao-bipar",
+      message: "Unexpected error in bipar",
+      category: "unknown",
+      requestPath: "/api/separacao/bipar",
+      requestMethod: "POST",
+      metadata: { codigo: body?.codigo },
     });
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });
   }

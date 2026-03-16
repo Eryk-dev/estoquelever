@@ -49,8 +49,15 @@ export async function POST(request: NextRequest) {
       .in("id", pedido_ids);
 
     if (fetchError) {
-      logger.error("separacao-expedir", "Failed to fetch pedidos", {
-        error: fetchError.message,
+      logger.logError({
+        error: fetchError,
+        source: "separacao-expedir",
+        message: "Failed to fetch pedidos",
+        category: "database",
+        errorCode: fetchError.code,
+        requestPath: "/api/separacao/expedir",
+        requestMethod: "POST",
+        metadata: { pedido_ids, table: "siso_pedidos" },
       });
       return NextResponse.json(
         { error: fetchError.message },
@@ -104,8 +111,15 @@ export async function POST(request: NextRequest) {
       .eq("status_separacao", "embalado");
 
     if (updateError) {
-      logger.error("separacao-expedir", "Failed to update pedidos", {
-        error: updateError.message,
+      logger.logError({
+        error: updateError,
+        source: "separacao-expedir",
+        message: "Failed to update pedidos to expedido",
+        category: "database",
+        errorCode: updateError.code,
+        requestPath: "/api/separacao/expedir",
+        requestMethod: "POST",
+        metadata: { pedido_ids, table: "siso_pedidos" },
       });
       return NextResponse.json(
         { error: updateError.message },
@@ -121,8 +135,14 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ updated: count ?? pedido_ids.length });
   } catch (err) {
-    logger.error("separacao-expedir", "Unexpected error", {
-      error: err instanceof Error ? err.message : String(err),
+    logger.logError({
+      error: err,
+      source: "separacao-expedir",
+      message: "Unexpected error in expedir",
+      category: "unknown",
+      requestPath: "/api/separacao/expedir",
+      requestMethod: "POST",
+      metadata: { pedido_ids },
     });
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });
   }

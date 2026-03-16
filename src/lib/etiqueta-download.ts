@@ -104,3 +104,31 @@ function validarZpl(text: string): boolean {
   // ZPL commands start with ^ or ~ (e.g. ^XA, ~DG for graphic labels like Shopee)
   return trimmed.startsWith("^") || trimmed.startsWith("~");
 }
+
+/**
+ * Split a ZPL string containing multiple concatenated labels into individual labels.
+ * Each label is delimited by ^XA ... ^XZ. Any preceding content (e.g. ~DG graphic
+ * definitions for Shopee labels) is included with the following ^XA block.
+ *
+ * Returns at least one element (the original string if no split boundaries found).
+ */
+export function splitZplLabels(zpl: string): string[] {
+  if (!zpl) return [];
+
+  const labels: string[] = [];
+  let remaining = zpl;
+
+  while (remaining.length > 0) {
+    const xzIdx = remaining.indexOf("^XZ");
+    if (xzIdx === -1) break;
+
+    const label = remaining.substring(0, xzIdx + 3).trim();
+    remaining = remaining.substring(xzIdx + 3);
+
+    if (label.includes("^XA")) {
+      labels.push(label);
+    }
+  }
+
+  return labels.length > 0 ? labels : [zpl];
+}

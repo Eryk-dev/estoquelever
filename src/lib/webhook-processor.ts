@@ -802,21 +802,15 @@ function calcularSugestaoMultiGalpao(
     coverageByGalpao.set(galpaoId, covers);
   }
 
-  // Find best galpao
-  let bestGalpaoId = galpaoOrigemId;
-  let bestCovers = coverageByGalpao.get(galpaoOrigemId) ?? 0;
-  for (const [galpaoId, covers] of coverageByGalpao) {
-    if (covers > bestCovers) {
-      bestCovers = covers;
-      bestGalpaoId = galpaoId;
-    }
-  }
+  const origemCovers = coverageByGalpao.get(galpaoOrigemId) ?? 0;
 
   const coverageDesc = [...coverageByGalpao.entries()]
     .map(([gId, c]) => `${galpaoMap.get(gId)} cobre ${c}/${itens.length}`)
     .join(", ");
 
-  if (bestGalpaoId === galpaoOrigemId) {
+  // Transferencia ONLY when a galpão covers 100% (handled above).
+  // Partial case: propria if origin has some coverage, otherwise oc.
+  if (origemCovers > 0) {
     return {
       sugestao: "propria",
       motivo: `Estoque parcial. ${coverageDesc}`,
@@ -825,11 +819,14 @@ function calcularSugestaoMultiGalpao(
     };
   }
 
+  const fornecedores = [
+    ...new Set(itens.map((i) => i.fornecedor_oc).filter(Boolean)),
+  ];
   return {
-    sugestao: "transferencia",
-    motivo: `Estoque parcial. ${coverageDesc}`,
+    sugestao: "oc",
+    motivo: `Estoque parcial — origem sem cobertura. ${coverageDesc}${fornecedores.length > 0 ? ` (Fornecedor: ${fornecedores.join(", ")})` : ""}`,
     parcial: true,
-    separacaoGalpaoId: bestGalpaoId,
+    separacaoGalpaoId: galpaoOrigemId,
   };
 }
 

@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ClipboardList, PackageSearch, ShoppingCart, Settings, LogOut } from "lucide-react";
 import Link from "next/link";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { CARGO_LABELS } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -52,15 +52,43 @@ const MODULES: Module[] = [
   },
 ];
 
+interface DashboardCounts {
+  siso: number;
+  separacao: number;
+  compras: number;
+}
+
 export default function HomePage() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
+  const [counts, setCounts] = useState<DashboardCounts | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
       router.replace("/login");
     }
   }, [user, loading, router]);
+
+  // Fetch module counts
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    async function fetchCounts() {
+      try {
+        const res = await sisoFetch("/api/dashboard/counts");
+        if (res.ok && !cancelled) {
+          setCounts(await res.json());
+        }
+      } catch {
+        // silent — badge is optional
+      }
+    }
+
+    fetchCounts();
+    const interval = setInterval(fetchCounts, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [user]);
 
   if (loading) {
     return (
@@ -123,6 +151,7 @@ export default function HomePage() {
         <div className="grid gap-4 sm:grid-cols-2">
           {MODULES.map((mod) => {
             const Icon = mod.icon;
+            const count = counts?.[mod.id as keyof DashboardCounts] ?? 0;
             return (
               <Link
                 key={mod.id}
@@ -138,6 +167,11 @@ export default function HomePage() {
                 {mod.soon && (
                   <span className="absolute right-3 top-3 rounded-full border border-line bg-surface px-2 py-0.5 text-[10px] font-semibold text-ink-faint">
                     Em breve
+                  </span>
+                )}
+                {count > 0 && (
+                  <span className="absolute right-3 top-3 flex h-6 min-w-6 items-center justify-center rounded-full bg-red-500 px-1.5 font-mono text-[11px] font-bold text-white shadow-sm">
+                    {count > 99 ? "99+" : count}
                   </span>
                 )}
                 <div

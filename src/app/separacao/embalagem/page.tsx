@@ -714,7 +714,7 @@ function EmbalagemItemRow({
         <img
           src={item.imagem_url}
           alt={item.sku}
-          className="h-10 w-10 shrink-0 rounded-md border border-line object-cover bg-surface"
+          className="h-12 w-12 shrink-0 rounded-md border border-line object-cover bg-surface"
         />
       )}
 

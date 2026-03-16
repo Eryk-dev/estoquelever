@@ -448,10 +448,10 @@ export function SeparacaoCard({
                             <img
                               src={item.imagem_url}
                               alt={item.sku}
-                              className="h-7 w-7 rounded border border-line object-cover bg-surface"
+                              className="h-12 w-12 rounded border border-line object-cover bg-surface"
                             />
                           ) : (
-                            <div className="h-7 w-7 rounded border border-line bg-surface" />
+                            <div className="h-12 w-12 rounded border border-line bg-surface" />
                           )}
                         </td>
                         <td className="px-2 py-1.5 font-mono font-medium text-ink">

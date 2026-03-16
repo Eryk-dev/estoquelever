@@ -34,7 +34,7 @@ function EtiquetaBadge({ status }: { status: string | null | undefined }) {
 
 export function TabEmbalados({ pedidos, onUpdated }: TabEmbaladosProps) {
   const { user } = useAuth();
-  const isAdmin = user?.cargo === "admin";
+  const isAdmin = user?.cargos?.includes("admin") ?? user?.cargo === "admin";
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());

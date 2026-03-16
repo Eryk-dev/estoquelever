@@ -335,7 +335,7 @@ export default function SeparacaoPage() {
 
   if (!user) return null;
 
-  const isAdmin = user.cargo === "admin";
+  const isAdmin = user.cargos?.includes("admin") ?? user.cargo === "admin";
   const showCheckbox =
     activeTab === "aguardando_compra" ||
     activeTab === "aguardando_separacao" ||
@@ -382,7 +382,7 @@ export default function SeparacaoPage() {
                 {user.nome}
               </span>
               <span className="text-[10px] text-ink-faint">
-                {CARGO_LABELS[user.cargo]}
+                {(user.cargos ?? [user.cargo]).map((c) => CARGO_LABELS[c]).join(", ")}
               </span>
             </div>
             <button

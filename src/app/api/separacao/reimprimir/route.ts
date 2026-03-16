@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "pedido_nao_encontrado" }, { status: 404 });
   }
 
-  if (session.cargo !== "admin" && pedido.separacao_galpao_id !== session.galpaoId) {
+  if (!session.cargos.includes("admin") && pedido.separacao_galpao_id !== session.galpaoId) {
     return NextResponse.json({ error: "acesso_negado" }, { status: 403 });
   }
 

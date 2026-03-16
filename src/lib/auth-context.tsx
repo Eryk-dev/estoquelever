@@ -14,6 +14,7 @@ interface AuthUser {
   id: string;
   nome: string;
   cargo: Cargo;
+  cargos: Cargo[];
   sessionId?: string;
 }
 
@@ -60,10 +61,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!res.ok || !data.ok) {
       return { ok: false, erro: data.erro ?? "Erro ao fazer login" };
     }
+    const cargos: Cargo[] = data.usuario.cargos ?? [data.usuario.cargo];
     const authUser: AuthUser = {
       id: data.usuario.id,
       nome: data.usuario.nome,
-      cargo: data.usuario.cargo,
+      cargo: cargos[0],
+      cargos,
       ...(data.sessionId && { sessionId: data.sessionId }),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(authUser));

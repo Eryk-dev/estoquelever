@@ -287,11 +287,22 @@ export interface Usuario {
   nome: string;
   pin: string;
   cargo: Cargo;
+  cargos: Cargo[];
   ativo: boolean;
   criado_em: string;
   atualizado_em: string;
   printnode_printer_id: number | null;
   printnode_printer_nome: string | null;
+}
+
+/** Check if a user has a specific cargo */
+export function userHasCargo(cargos: Cargo[], check: Cargo): boolean {
+  return cargos.includes(check);
+}
+
+/** Check if any of the user's cargos is in a list */
+export function userHasAnyCargo(cargos: Cargo[], allowed: string[]): boolean {
+  return cargos.some((c) => allowed.includes(c));
 }
 
 // ─── Galpao / Empresa / Grupo ───────────────────────────────────────────────

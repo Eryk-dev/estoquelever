@@ -521,7 +521,7 @@ function ChecklistPage() {
               {user.nome}
             </span>
             <span className="text-[10px] text-ink-faint">
-              {CARGO_LABELS[user.cargo]}
+              {(user.cargos ?? [user.cargo]).map((c) => CARGO_LABELS[c]).join(", ")}
             </span>
           </div>
         </div>

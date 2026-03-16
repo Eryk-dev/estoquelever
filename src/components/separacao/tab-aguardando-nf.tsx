@@ -32,7 +32,7 @@ function isOverTwoHours(dataIso: string): boolean {
 
 export function TabAguardandoNf({ pedidos, onUpdated }: TabAguardandoNfProps) {
   const { user } = useAuth();
-  const isAdmin = user?.cargo === "admin";
+  const isAdmin = user?.cargos?.includes("admin") ?? user?.cargo === "admin";
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
   async function handleForcarPendente(pedidoId: string) {

@@ -114,7 +114,7 @@ export default function HomePage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {user.cargo === "admin" && (
+            {(user.cargos ?? [user.cargo]).includes("admin") && (
               <Link
                 href="/configuracoes"
                 className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
@@ -128,7 +128,7 @@ export default function HomePage() {
                 {user.nome}
               </span>
               <span className="text-[10px] text-ink-faint">
-                {CARGO_LABELS[user.cargo]}
+                {(user.cargos ?? [user.cargo]).map((c) => CARGO_LABELS[c]).join(", ")}
               </span>
             </div>
             <button

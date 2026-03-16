@@ -21,6 +21,7 @@ interface UsuarioListItem {
   id: string;
   nome: string;
   cargo: Cargo;
+  cargos: Cargo[];
   ativo: boolean;
   criado_em: string;
   atualizado_em: string;
@@ -121,6 +122,50 @@ export default function AdminUsuariosPage() {
   );
 }
 
+// ─── Cargo Multi-Select ─────────────────────────────────────────────────────
+
+function CargoMultiSelect({
+  selected,
+  onChange,
+  disabled,
+}: {
+  selected: Cargo[];
+  onChange: (cargos: Cargo[]) => void;
+  disabled?: boolean;
+}) {
+  function toggle(cargo: Cargo) {
+    if (disabled) return;
+    if (selected.includes(cargo)) {
+      // Don't allow removing the last cargo
+      if (selected.length <= 1) return;
+      onChange(selected.filter((c) => c !== cargo));
+    } else {
+      onChange([...selected, cargo]);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {CARGOS.map((c) => (
+        <button
+          key={c}
+          type="button"
+          disabled={disabled}
+          onClick={() => toggle(c)}
+          className={cn(
+            "rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
+            selected.includes(c)
+              ? cn(CARGO_COLORS[c], "ring-2 ring-zinc-300 dark:ring-zinc-600")
+              : "bg-zinc-100 text-zinc-400 hover:text-zinc-600 dark:bg-zinc-800 dark:hover:text-zinc-300",
+          )}
+        >
+          {CARGO_LABELS[c]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ─── New User Form ──────────────────────────────────────────────────────────
 
 function NovoUsuarioForm({
@@ -132,19 +177,19 @@ function NovoUsuarioForm({
 }) {
   const [nome, setNome] = useState("");
   const [pin, setPin] = useState("");
-  const [cargo, setCargo] = useState<Cargo>("operador_cwb");
+  const [cargos, setCargos] = useState<Cargo[]>(["operador_cwb"]);
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!nome.trim() || pin.length !== 4) return;
+    if (!nome.trim() || pin.length !== 4 || cargos.length === 0) return;
 
     setSaving(true);
     try {
       const res = await fetch("/api/admin/usuarios", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nome: nome.trim(), pin, cargo }),
+        body: JSON.stringify({ nome: nome.trim(), pin, cargos }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -209,28 +254,15 @@ function NovoUsuarioForm({
           />
         </div>
 
-        {/* Cargo */}
+        {/* Cargos */}
         <div>
           <label className="mb-1 block text-xs font-medium text-ink-muted">
-            Cargo
+            Cargos
           </label>
-          <div className="flex flex-wrap gap-2">
-            {CARGOS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => setCargo(c)}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
-                  cargo === c
-                    ? cn(CARGO_COLORS[c], "ring-2 ring-zinc-300 dark:ring-zinc-600")
-                    : "bg-zinc-100 text-zinc-400 hover:text-zinc-600 dark:bg-zinc-800 dark:hover:text-zinc-300",
-                )}
-              >
-                {CARGO_LABELS[c]}
-              </button>
-            ))}
-          </div>
+          <CargoMultiSelect selected={cargos} onChange={setCargos} />
+          <p className="mt-1 text-[10px] text-ink-faint">
+            Selecione um ou mais cargos
+          </p>
         </div>
 
         {/* Actions */}
@@ -244,7 +276,7 @@ function NovoUsuarioForm({
           </button>
           <button
             type="submit"
-            disabled={saving || !nome.trim() || pin.length !== 4}
+            disabled={saving || !nome.trim() || pin.length !== 4 || cargos.length === 0}
             className="btn-primary inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-30"
           >
             {saving ? (
@@ -275,6 +307,8 @@ function UsuarioRow({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  const cargos: Cargo[] = usuario.cargos?.length ? usuario.cargos : [usuario.cargo];
+
   async function handleToggleAtivo() {
     setSaving(true);
     try {
@@ -295,20 +329,21 @@ function UsuarioRow({
     }
   }
 
-  async function handleChangeCargo(novoCargo: Cargo) {
+  async function handleChangeCargos(novosCargos: Cargo[]) {
+    if (novosCargos.length === 0) return;
     setSaving(true);
     try {
       const res = await fetch("/api/admin/usuarios", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: usuario.id, cargo: novoCargo }),
+        body: JSON.stringify({ id: usuario.id, cargos: novosCargos }),
       });
       if (!res.ok) throw new Error();
-      toast.success(`Cargo de ${usuario.nome} alterado`);
+      toast.success(`Cargos de ${usuario.nome} atualizados`);
       setEditingCargo(false);
       onUpdated();
     } catch {
-      toast.error("Erro ao alterar cargo");
+      toast.error("Erro ao alterar cargos");
     } finally {
       setSaving(false);
     }
@@ -355,45 +390,31 @@ function UsuarioRow({
             )}
           </div>
 
-          {/* Cargo badge or editor */}
+          {/* Cargo badges or editor */}
           {editingCargo ? (
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {CARGOS.map((c) => (
+            <EditCargosInline
+              current={cargos}
+              saving={saving}
+              onSave={handleChangeCargos}
+              onCancel={() => setEditingCargo(false)}
+            />
+          ) : (
+            <div className="mt-0.5 flex flex-wrap gap-1">
+              {cargos.map((c) => (
                 <button
                   key={c}
                   type="button"
-                  disabled={saving}
-                  onClick={() => handleChangeCargo(c)}
+                  onClick={() => setEditingCargo(true)}
                   className={cn(
-                    "rounded-md px-2 py-1 text-[11px] font-semibold transition-all",
-                    c === usuario.cargo
-                      ? cn(CARGO_COLORS[c], "ring-1 ring-zinc-300 dark:ring-zinc-600")
-                      : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700",
+                    "rounded px-1.5 py-0.5 text-[11px] font-semibold transition-colors hover:ring-1 hover:ring-zinc-300 dark:hover:ring-zinc-600",
+                    CARGO_COLORS[c],
                   )}
+                  title="Clique para alterar cargos"
                 >
                   {CARGO_LABELS[c]}
                 </button>
               ))}
-              <button
-                type="button"
-                onClick={() => setEditingCargo(false)}
-                className="ml-1 text-[11px] text-ink-faint hover:text-ink"
-              >
-                cancelar
-              </button>
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setEditingCargo(true)}
-              className={cn(
-                "mt-0.5 rounded px-1.5 py-0.5 text-[11px] font-semibold transition-colors hover:ring-1 hover:ring-zinc-300 dark:hover:ring-zinc-600",
-                CARGO_COLORS[usuario.cargo],
-              )}
-              title="Clique para alterar cargo"
-            >
-              {CARGO_LABELS[usuario.cargo]}
-            </button>
           )}
         </div>
 
@@ -434,6 +455,73 @@ function UsuarioRow({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Inline Cargo Editor ────────────────────────────────────────────────────
+
+function EditCargosInline({
+  current,
+  saving,
+  onSave,
+  onCancel,
+}: {
+  current: Cargo[];
+  saving: boolean;
+  onSave: (cargos: Cargo[]) => void;
+  onCancel: () => void;
+}) {
+  const [selected, setSelected] = useState<Cargo[]>(current);
+
+  function toggle(cargo: Cargo) {
+    if (saving) return;
+    setSelected((prev) => {
+      if (prev.includes(cargo)) {
+        if (prev.length <= 1) return prev;
+        return prev.filter((c) => c !== cargo);
+      }
+      return [...prev, cargo];
+    });
+  }
+
+  const changed = JSON.stringify(selected.sort()) !== JSON.stringify([...current].sort());
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {CARGOS.map((c) => (
+        <button
+          key={c}
+          type="button"
+          disabled={saving}
+          onClick={() => toggle(c)}
+          className={cn(
+            "rounded-md px-2 py-1 text-[11px] font-semibold transition-all",
+            selected.includes(c)
+              ? cn(CARGO_COLORS[c], "ring-1 ring-zinc-300 dark:ring-zinc-600")
+              : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700",
+          )}
+        >
+          {CARGO_LABELS[c]}
+        </button>
+      ))}
+      {changed && (
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => onSave(selected)}
+          className="ml-1 rounded-md bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300"
+        >
+          {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : "Salvar"}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onCancel}
+        className="ml-1 text-[11px] text-ink-faint hover:text-ink"
+      >
+        cancelar
+      </button>
     </div>
   );
 }

@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
   const { data: usuario, error } = await supabase
     .from("siso_usuarios")
-    .select("id, nome, pin, cargo, ativo")
+    .select("id, nome, pin, cargo, cargos, ativo")
     .eq("nome", nome)
     .single();
 
@@ -75,6 +75,7 @@ export async function POST(request: NextRequest) {
       id: usuario.id,
       nome: usuario.nome,
       cargo: usuario.cargo,
+      cargos: usuario.cargos?.length ? usuario.cargos : [usuario.cargo],
     },
     ...(sessionId && { sessionId }),
   });

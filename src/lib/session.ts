@@ -5,6 +5,7 @@ export interface SessionUser {
   id: string;
   nome: string;
   cargo: string;
+  cargos: string[];
   galpaoId: string | null;
 }
 
@@ -25,7 +26,7 @@ export async function getSessionUser(
   // Join sessoes → usuarios, filtering by valid (non-expired) session
   const { data, error } = await supabase
     .from("siso_sessoes")
-    .select("usuario_id, siso_usuarios(id, nome, cargo)")
+    .select("usuario_id, siso_usuarios(id, nome, cargo, cargos)")
     .eq("id", sessionId)
     .gt("expira_em", new Date().toISOString())
     .single();
@@ -40,15 +41,19 @@ export async function getSessionUser(
     id: string;
     nome: string;
     cargo: string;
+    cargos: string[];
   } | null;
 
   if (!usuario) return null;
 
-  // Resolve galpaoId from cargo
+  const cargos = usuario.cargos?.length ? usuario.cargos : [usuario.cargo];
+
+  // Resolve galpaoId from cargos (first operador cargo wins)
   let galpaoId: string | null = null;
 
-  if (usuario.cargo === "operador_cwb" || usuario.cargo === "operador_sp") {
-    const galpaoNome = usuario.cargo === "operador_cwb" ? "CWB" : "SP";
+  const operadorCargo = cargos.find((c) => c === "operador_cwb" || c === "operador_sp");
+  if (operadorCargo) {
+    const galpaoNome = operadorCargo === "operador_cwb" ? "CWB" : "SP";
     const { data: galpao } = await supabase
       .from("siso_galpoes")
       .select("id")
@@ -61,7 +66,8 @@ export async function getSessionUser(
   return {
     id: usuario.id,
     nome: usuario.nome,
-    cargo: usuario.cargo,
+    cargo: cargos[0],
+    cargos,
     galpaoId,
   };
 }

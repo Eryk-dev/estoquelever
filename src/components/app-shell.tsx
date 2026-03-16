@@ -33,7 +33,7 @@ export function AppShell({
     if (!loading && !user) {
       router.replace("/login");
     }
-    if (!loading && requireAdmin && user && user.cargo !== "admin") {
+    if (!loading && requireAdmin && user && !(user.cargos ?? [user.cargo]).includes("admin")) {
       router.replace("/");
     }
   }, [user, loading, requireAdmin, router]);
@@ -47,7 +47,7 @@ export function AppShell({
   }
 
   if (!user) return null;
-  if (requireAdmin && user.cargo !== "admin") return null;
+  if (requireAdmin && !(user.cargos ?? [user.cargo]).includes("admin")) return null;
 
   return (
     <div className="min-h-screen bg-surface">

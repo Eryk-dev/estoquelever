@@ -54,19 +54,19 @@ export default function DashboardPage() {
   );
 
   // Filter by role
-  const cargo = user?.cargo ?? "admin";
+  const cargos = user?.cargos ?? [user?.cargo ?? "admin"];
 
   const pendentesFiltrados = useMemo(
-    () => filtrarPendentes(pendentes, cargo),
-    [pendentes, cargo],
+    () => filtrarPendentes(pendentes, cargos),
+    [pendentes, cargos],
   );
   const concluidosFiltrados = useMemo(
-    () => filtrarConcluidos(concluidos, cargo),
-    [concluidos, cargo],
+    () => filtrarConcluidos(concluidos, cargos),
+    [concluidos, cargos],
   );
   const autoFiltrados = useMemo(
-    () => filtrarAuto(auto, cargo),
-    [auto, cargo],
+    () => filtrarAuto(auto, cargos),
+    [auto, cargos],
   );
 
   const tabs: Tab[] = [
@@ -75,7 +75,9 @@ export default function DashboardPage() {
     { id: "auto", label: "Auto", count: autoFiltrados.length },
   ];
 
-  const visibleTabs = cargo === "comprador" ? tabs.filter((t) => t.id !== "auto") : tabs;
+  // Hide auto tab only if user ONLY has comprador (no other roles)
+  const onlyComprador = cargos.length === 1 && cargos[0] === "comprador";
+  const visibleTabs = onlyComprador ? tabs.filter((t) => t.id !== "auto") : tabs;
 
   async function handleAprovar(id: string, decisao: Decisao) {
     const pedido = pendentes.find((p) => p.id === id);
@@ -110,7 +112,7 @@ export default function DashboardPage() {
 
   const headerRight = (
     <>
-      {user?.cargo === "admin" && (
+      {(user?.cargos ?? [user?.cargo]).includes("admin") && (
         <Link
           href="/configuracoes"
           className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
@@ -132,7 +134,7 @@ export default function DashboardPage() {
           {user?.nome}
         </span>
         <span className="text-[10px] text-ink-faint">
-          {user ? CARGO_LABELS[user.cargo] : ""}
+          {user ? (user.cargos ?? [user.cargo]).map((c) => CARGO_LABELS[c]).join(", ") : ""}
         </span>
       </div>
       <button

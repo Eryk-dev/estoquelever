@@ -51,7 +51,7 @@ export function PrintNodeSection({
   const [savingKey, setSavingKey] = useState(false);
   const [loadingKey, setLoadingKey] = useState(true);
 
-  if (!user || user.cargo !== "admin") return null;
+  if (!user || !(user.cargos ?? [user.cargo]).includes("admin")) return null;
 
   // Fetch API key status on mount
   // eslint-disable-next-line react-hooks/rules-of-hooks

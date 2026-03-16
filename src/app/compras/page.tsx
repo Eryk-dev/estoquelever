@@ -71,8 +71,9 @@ export default function ComprasPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<CompraTab>("aguardando_compra");
 
-  const cargo = user?.cargo ?? "";
-  const allowed = ALLOWED_CARGOS.includes(cargo);
+  const cargos = user?.cargos ?? (user?.cargo ? [user.cargo] : []);
+  const cargo = cargos.find((c) => ALLOWED_CARGOS.includes(c)) ?? "";
+  const allowed = cargo !== "";
 
   const { data, isLoading, isRefetching } = useQuery({
     queryKey: ["compras", activeTab, cargo],

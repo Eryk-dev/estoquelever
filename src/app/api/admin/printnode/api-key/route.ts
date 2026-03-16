@@ -17,11 +17,11 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
   const { data: user } = await supabase
     .from("siso_usuarios")
-    .select("cargo")
+    .select("cargo, cargos")
     .eq("id", userId)
     .single();
 
-  if (!user || user.cargo !== "admin") {
+  if (!user || !(user.cargos ?? [user.cargo]).includes("admin")) {
     return NextResponse.json({ error: "Acesso restrito" }, { status: 403 });
   }
 
@@ -52,11 +52,11 @@ export async function PUT(request: NextRequest) {
   const supabase = createServiceClient();
   const { data: user } = await supabase
     .from("siso_usuarios")
-    .select("cargo")
+    .select("cargo, cargos")
     .eq("id", userId)
     .single();
 
-  if (!user || user.cargo !== "admin") {
+  if (!user || !(user.cargos ?? [user.cargo]).includes("admin")) {
     return NextResponse.json({ error: "Acesso restrito" }, { status: 403 });
   }
 
@@ -83,11 +83,11 @@ export async function DELETE(request: NextRequest) {
   const supabase = createServiceClient();
   const { data: user } = await supabase
     .from("siso_usuarios")
-    .select("cargo")
+    .select("cargo, cargos")
     .eq("id", userId)
     .single();
 
-  if (!user || user.cargo !== "admin") {
+  if (!user || !(user.cargos ?? [user.cargo]).includes("admin")) {
     return NextResponse.json({ error: "Acesso restrito" }, { status: 403 });
   }
 

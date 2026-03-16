@@ -58,11 +58,14 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
 
   // Role-based filtering: resolve allowed empresa IDs from cargo
-  const cargo = request.headers.get("X-User-Cargo") ?? "admin";
+  const cargoHeader = request.headers.get("X-User-Cargo") ?? "admin";
+  const cargos = cargoHeader.split(",").map((c) => c.trim());
   let allowedEmpresaIds: string[] | null = null; // null = no restriction
 
-  if (cargo === "operador_cwb" || cargo === "operador_sp") {
-    const galpaoNome = cargo === "operador_cwb" ? "CWB" : "SP";
+  // Admin sees all; otherwise find operador cargo to filter by galpao
+  const operadorCargo = cargos.includes("admin") ? null : cargos.find((c) => c === "operador_cwb" || c === "operador_sp");
+  if (operadorCargo) {
+    const galpaoNome = operadorCargo === "operador_cwb" ? "CWB" : "SP";
     const { data: galpao } = await supabase
       .from("siso_galpoes")
       .select("id")

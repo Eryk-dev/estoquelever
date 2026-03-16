@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
 
-  if (session.cargo !== "admin") {
+  if (!session.cargos.includes("admin")) {
     return NextResponse.json(
       { error: "apenas admin pode forçar pendente" },
       { status: 403 },

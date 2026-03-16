@@ -68,8 +68,9 @@ export default function ConferenciaPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
 
-  const cargo = user?.cargo ?? "";
-  const allowed = ALLOWED_CARGOS.includes(cargo);
+  const cargos = user?.cargos ?? (user?.cargo ? [user.cargo] : []);
+  const cargo = cargos.find((c) => ALLOWED_CARGOS.includes(c)) ?? "";
+  const allowed = cargo !== "";
 
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);

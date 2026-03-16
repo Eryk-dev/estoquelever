@@ -139,6 +139,7 @@ export async function POST(request: NextRequest) {
       tipo_resolucao: "manual",
       marcadores,
       separacao_galpao_id: separacaoGalpaoId,
+      status_separacao: decisao === "oc" ? null : "aguardando_nf",
     })
     .eq("id", pedidoId);
 

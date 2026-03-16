@@ -313,7 +313,7 @@ export async function processWebhook(
           tipo_resolucao: tipoResolucao,
           decisao_final: isAuto ? "propria" : null,
           separacao_galpao_id: separacaoGalpaoId,
-          status_separacao: "aguardando_nf",
+          status_separacao: isAuto ? "aguardando_nf" : null,
           processado_em: null,
           marcadores: isAuto ? [galpaoOrigemNome] : [],
           payload_original: pedido,

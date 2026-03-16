@@ -8,14 +8,16 @@ import { getFornecedorBySku } from "@/lib/sku-fornecedor";
  *
  * Marks a SKU as out of stock. Finds ALL pedidos in active separation
  * (aguardando_nf, aguardando_separacao, em_separacao) that contain this SKU,
- * moves the item to compra flow, and moves the pedido to aguardando_compra.
+ * moves the item to compra flow, moves the pedido to aguardando_compra,
+ * and auto-creates an OC (ordem de compra) for the affected items.
  *
- * Body: { sku: string }
- * Returns: { pedidos_afetados: number, itens_afetados: number }
+ * Body: { sku: string, usuario_id?: string }
+ * Returns: { pedidos_afetados: number, itens_afetados: number, ordem_compra_id?: string }
  */
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const sku = body?.sku;
+  const usuarioId: string | undefined = body?.usuario_id;
 
   if (!sku || typeof sku !== "string") {
     return NextResponse.json(
@@ -139,16 +141,95 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 6. Auto-create OC for the affected items
+    let ordemCompraId: string | null = null;
+    const fornecedor = fornecedorInfo.fornecedor;
+
+    try {
+      // Get empresa_id from the first affected pedido
+      const { data: pedidoData } = await supabase
+        .from("siso_pedidos")
+        .select("empresa_origem_id")
+        .in("id", affectedPedidoIds)
+        .not("empresa_origem_id", "is", null)
+        .limit(1)
+        .single();
+
+      const empresaId = pedidoData?.empresa_origem_id;
+
+      if (empresaId) {
+        // Check if there's already an open OC for this fornecedor
+        const { data: existingOC } = await supabase
+          .from("siso_ordens_compra")
+          .select("id")
+          .eq("fornecedor", fornecedor)
+          .eq("empresa_id", empresaId)
+          .eq("status", "aguardando_compra")
+          .limit(1)
+          .maybeSingle();
+
+        if (existingOC) {
+          ordemCompraId = existingOC.id;
+        } else {
+          // Create new OC
+          const { data: newOC, error: ocError } = await supabase
+            .from("siso_ordens_compra")
+            .insert({
+              fornecedor,
+              empresa_id: empresaId,
+              status: "aguardando_compra",
+              observacao: `Criada automaticamente — SKU ${sku} esgotado`,
+              ...(usuarioId && { comprado_por: usuarioId }),
+            })
+            .select("id")
+            .single();
+
+          if (ocError) {
+            logger.warn("produto-esgotado", "Erro ao criar OC automatica", {
+              error: ocError.message,
+              fornecedor,
+              empresaId,
+            });
+          } else {
+            ordemCompraId = newOC.id;
+          }
+        }
+
+        // Link items to the OC
+        if (ordemCompraId) {
+          const { error: linkError } = await supabase
+            .from("siso_pedido_itens")
+            .update({ ordem_compra_id: ordemCompraId })
+            .in("id", itemIds);
+
+          if (linkError) {
+            logger.warn("produto-esgotado", "Erro ao vincular itens a OC", {
+              error: linkError.message,
+              ordemCompraId,
+            });
+          }
+        }
+      }
+    } catch (ocErr) {
+      // OC creation is best-effort — don't fail the whole esgotado flow
+      logger.warn("produto-esgotado", "Erro ao criar OC automatica (nao-critico)", {
+        error: ocErr instanceof Error ? ocErr.message : String(ocErr),
+        sku,
+      });
+    }
+
     logger.info("produto-esgotado", "SKU marcado como esgotado", {
       sku,
-      fornecedor: fornecedorInfo?.fornecedor ?? "Desconhecido",
+      fornecedor,
       pedidos_afetados: affectedPedidoIds.length,
       itens_afetados: itemIds.length,
+      ordem_compra_id: ordemCompraId,
     });
 
     return NextResponse.json({
       pedidos_afetados: affectedPedidoIds.length,
       itens_afetados: itemIds.length,
+      ordem_compra_id: ordemCompraId,
     });
   } catch (err) {
     logger.error("produto-esgotado", "Erro inesperado", {

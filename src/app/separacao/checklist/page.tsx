@@ -449,12 +449,13 @@ function ChecklistPage() {
       const res = await sisoFetch("/api/separacao/produto-esgotado", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sku }),
+        body: JSON.stringify({ sku, usuario_id: user?.id }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        const ocMsg = data.ordem_compra_id ? " — OC criada" : "";
         toast.success(
-          `SKU ${sku} esgotado — ${data.pedidos_afetados} pedido(s) movido(s) para Aguardando OC`,
+          `SKU ${sku} esgotado — ${data.pedidos_afetados} pedido(s) movido(s) para Aguardando OC${ocMsg}`,
         );
         queryClient.invalidateQueries({ queryKey });
         queryClient.invalidateQueries({ queryKey: ["separacao"] });

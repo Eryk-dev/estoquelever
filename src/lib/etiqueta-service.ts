@@ -197,6 +197,23 @@ async function setStatus(
 }
 
 /**
+ * Create a new agrupamento in Tiny and save its ID to the pedido.
+ */
+async function criarNovoAgrupamento(
+  supabase: SupabaseClient,
+  token: string,
+  pedidoId: string,
+  pedidoTinyId: number,
+): Promise<number> {
+  const res = await criarAgrupamento(token, [pedidoTinyId]);
+  await supabase
+    .from("siso_pedidos")
+    .update({ agrupamento_expedicao_id: String(res.id) })
+    .eq("id", pedidoId);
+  return res.id;
+}
+
+/**
  * Slow fallback: ZPL not pre-cached. Create agrupamento if needed,
  * fetch etiqueta URL, download ZPL, and cache for future use.
  */
@@ -227,7 +244,7 @@ async function resolverZplFallback(
 
   // Conclude agrupamento (non-fatal: Mercado Envios may auto-request pickup)
   try {
-    await concluirAgrupamento(token, agrupamentoId);
+    await concluirAgrupamento(token, agrupamentoId!);
   } catch {
     logger.warn(LOG_SOURCE, "Não foi possível concluir agrupamento (tentando etiquetas mesmo assim)", {
       pedidoId: pedido.id,
@@ -242,13 +259,13 @@ async function resolverZplFallback(
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         // Get agrupamento to find the expedition ID for this specific pedido
-        const agrupamentoDetails = await obterAgrupamento(token, agrupamentoId);
+        const agrupamentoDetails = await obterAgrupamento(token, agrupamentoId!);
         const exp = agrupamentoDetails.expedicoes?.find(
           (e) => e.idObjeto === pedidoTinyId || e.venda?.id === pedidoTinyId,
         );
 
         if (exp) {
-          const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, exp.id);
+          const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId!, exp.id);
           if (etiquetas.urls && etiquetas.urls.length > 0) {
             url = etiquetas.urls[0];
             break;

@@ -210,24 +210,19 @@ async function resolverZplFallback(
 
   const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
 
+  const pedidoTinyId = parseInt(pedido.id, 10);
+  if (isNaN(pedidoTinyId)) {
+    logger.error(LOG_SOURCE, "Pedido com id não numérico", { pedidoId: pedido.id });
+    return null;
+  }
+
   // Resolve or create agrupamento
   let agrupamentoId = pedido.agrupamento_expedicao_id
     ? parseInt(pedido.agrupamento_expedicao_id, 10)
     : null;
 
   if (!agrupamentoId) {
-    const pedidoTinyId = parseInt(pedido.id, 10);
-    if (isNaN(pedidoTinyId)) {
-      logger.error(LOG_SOURCE, "Pedido com id não numérico", { pedidoId: pedido.id });
-      return null;
-    }
-    const res = await criarAgrupamento(token, [pedidoTinyId]);
-    agrupamentoId = res.id;
-
-    await supabase
-      .from("siso_pedidos")
-      .update({ agrupamento_expedicao_id: String(agrupamentoId) })
-      .eq("id", pedido.id);
+    agrupamentoId = await criarNovoAgrupamento(supabase, token, pedido.id, pedidoTinyId);
   }
 
   // Conclude agrupamento (non-fatal: Mercado Envios may auto-request pickup)
@@ -243,14 +238,13 @@ async function resolverZplFallback(
   // Find this pedido's expedition within the agrupamento, then fetch its label
   let url = pedido.etiqueta_url;
   if (!url) {
-    const pedidoTinyIdNum = parseInt(pedido.id, 10);
     const maxRetries = 3;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         // Get agrupamento to find the expedition ID for this specific pedido
         const agrupamentoDetails = await obterAgrupamento(token, agrupamentoId);
         const exp = agrupamentoDetails.expedicoes?.find(
-          (e) => e.idObjeto === pedidoTinyIdNum || e.venda?.id === pedidoTinyIdNum,
+          (e) => e.idObjeto === pedidoTinyId || e.venda?.id === pedidoTinyId,
         );
 
         if (exp) {
@@ -262,6 +256,16 @@ async function resolverZplFallback(
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        // Agrupamento gone from Tiny (404) — create a fresh one and retry
+        if (msg.includes("404") || msg.includes("não encontrado")) {
+          logger.warn(LOG_SOURCE, "Agrupamento não encontrado no Tiny, criando novo", {
+            pedidoId: pedido.id,
+            oldAgrupamentoId: String(agrupamentoId),
+          });
+          agrupamentoId = await criarNovoAgrupamento(supabase, token, pedido.id, pedidoTinyId);
+          try { await concluirAgrupamento(token, agrupamentoId); } catch { /* non-fatal */ }
+          continue;
+        }
         if (attempt < maxRetries && msg.includes("não foi concluído")) {
           logger.info(LOG_SOURCE, `Etiqueta não pronta, aguardando tentativa ${attempt + 1}/${maxRetries}`, {
             pedidoId: pedido.id,

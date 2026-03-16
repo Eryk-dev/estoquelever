@@ -25,29 +25,36 @@ const LOG_SOURCE = "etiqueta-service";
 /**
  * Print the shipping label for a packed order.
  *
- * Idempotent: returns early if etiqueta_status is already 'impresso'.
+ * Idempotent: uses atomic UPDATE+WHERE to claim the print job.
+ * Only one concurrent caller can succeed — others skip silently.
  * On any error, sets etiqueta_status = 'falhou' (never throws to caller).
  */
 export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
   const supabase = createServiceClient();
 
-  const { data: pedido, error: fetchErr } = await supabase
+  // Atomic claim: only one caller can transition to "imprimindo".
+  // This prevents duplicate prints from concurrent calls (e.g. rapid scans).
+  const { data: claimed, error: claimErr } = await supabase
     .from("siso_pedidos")
-    .select(
-      "id, numero, empresa_origem_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_zpl, etiqueta_status, separacao_galpao_id, separacao_operador_id"
-    )
+    .update({ etiqueta_status: "imprimindo" })
     .eq("id", pedidoId)
-    .single();
+    .or("etiqueta_status.is.null,etiqueta_status.eq.pendente,etiqueta_status.eq.falhou")
+    .select(
+      "id, numero, empresa_origem_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_zpl, separacao_galpao_id, separacao_operador_id"
+    )
+    .maybeSingle();
 
-  if (fetchErr || !pedido) {
-    logger.error(LOG_SOURCE, "Pedido não encontrado", { pedidoId, error: fetchErr?.message });
+  if (claimErr) {
+    logger.error(LOG_SOURCE, "Falha ao reivindicar impressão", { pedidoId, error: claimErr.message });
     return;
   }
 
-  if (pedido.etiqueta_status === "impresso") {
-    logger.info(LOG_SOURCE, "Etiqueta já impressa, skip", { pedidoId });
+  if (!claimed) {
+    logger.info(LOG_SOURCE, "Etiqueta já em andamento ou impressa, skip", { pedidoId });
     return;
   }
+
+  const pedido = claimed;
 
   if (!pedido.empresa_origem_id) {
     await setStatus(supabase, pedidoId, "falhou");
@@ -64,8 +71,6 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
       logger.error(LOG_SOURCE, "Não foi possível obter ZPL", { pedidoId });
       return;
     }
-
-    await setStatus(supabase, pedidoId, "imprimindo");
 
     // Resolve printer
     const printNodeApiKey = await getConfig("PRINTNODE_API_KEY");

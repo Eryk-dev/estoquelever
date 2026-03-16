@@ -296,7 +296,7 @@ async function gerarNotaFiscalPedido(
     return nota.id;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("400") && msg.includes("nota fiscal")) {
+    if ((msg.includes("400") || msg.includes("409")) && (msg.includes("nota fiscal") || msg.includes("Já existe"))) {
       logger.warn("worker", "NF já existente externamente", { pedidoId, error: msg });
       return null;
     }

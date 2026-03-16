@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2 } from "lucide-react";
+import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -71,19 +71,55 @@ const SORT_OPTIONS = [
   { value: "sku", label: "SKU" },
 ] as const;
 
-// Revert target options per current tab
-const REVERT_TARGETS: Partial<Record<StatusSeparacao, { value: StatusSeparacao; label: string }[]>> = {
-  embalado: [
-    { value: "separado", label: "Separado" },
-    { value: "aguardando_separacao", label: "Aguardando Separacao" },
-  ],
-  separado: [
-    { value: "em_separacao", label: "Em Separacao" },
-    { value: "aguardando_separacao", label: "Aguardando Separacao" },
-  ],
-  em_separacao: [
-    { value: "aguardando_separacao", label: "Aguardando Separacao" },
-  ],
+// Move target options per current tab (backward + forward)
+const MOVE_TARGETS: Partial<Record<StatusSeparacao, {
+  back: { value: StatusSeparacao; label: string }[];
+  forward: { value: StatusSeparacao; label: string }[];
+}>> = {
+  aguardando_nf: {
+    back: [],
+    forward: [
+      { value: "aguardando_separacao", label: "Aguardando Separacao" },
+      { value: "em_separacao", label: "Em Separacao" },
+      { value: "separado", label: "Separado" },
+      { value: "embalado", label: "Embalado" },
+    ],
+  },
+  aguardando_separacao: {
+    back: [
+      { value: "aguardando_nf", label: "Aguardando NF" },
+    ],
+    forward: [
+      { value: "em_separacao", label: "Em Separacao" },
+      { value: "separado", label: "Separado" },
+      { value: "embalado", label: "Embalado" },
+    ],
+  },
+  em_separacao: {
+    back: [
+      { value: "aguardando_separacao", label: "Aguardando Separacao" },
+    ],
+    forward: [
+      { value: "separado", label: "Separado" },
+      { value: "embalado", label: "Embalado" },
+    ],
+  },
+  separado: {
+    back: [
+      { value: "em_separacao", label: "Em Separacao" },
+      { value: "aguardando_separacao", label: "Aguardando Separacao" },
+    ],
+    forward: [
+      { value: "embalado", label: "Embalado" },
+    ],
+  },
+  embalado: {
+    back: [
+      { value: "separado", label: "Separado" },
+      { value: "aguardando_separacao", label: "Aguardando Separacao" },
+    ],
+    forward: [],
+  },
 };
 
 interface SeparacaoResponse {
@@ -260,7 +296,7 @@ export default function SeparacaoPage() {
     setActionLoading(false);
   }
 
-  async function handleVoltarEtapa(novoStatus: StatusSeparacao) {
+  async function handleMoverEtapa(novoStatus: StatusSeparacao) {
     if (selectedIds.size === 0) return;
     setActionLoading(true);
     setRevertMenuOpen(false);
@@ -275,12 +311,12 @@ export default function SeparacaoPage() {
       });
       if (res.ok) {
         const body = await res.json();
-        toast.success(`${body.total} pedido(s) revertido(s)`);
+        toast.success(`${body.total} pedido(s) movido(s)`);
         setSelectedIds(new Set());
         refetch();
       } else {
         const body = await res.json().catch(() => ({}));
-        toast.error(body.error ?? "Erro ao voltar etapa");
+        toast.error(body.error ?? "Erro ao mover pedido(s)");
       }
     } catch {
       toast.error("Erro de conexao");
@@ -318,7 +354,7 @@ export default function SeparacaoPage() {
     }
   }
 
-  const revertTargets = REVERT_TARGETS[activeTab];
+  const moveTargets = MOVE_TARGETS[activeTab];
 
   return (
     <div className="min-h-screen bg-surface">
@@ -448,17 +484,29 @@ export default function SeparacaoPage() {
                 ? `${selectedIds.size} selecionado(s)`
                 : `${pedidos.length} pedido(s)`}
             </span>
-            <button
-              type="button"
-              onClick={handleSepararSelecionados}
-              disabled={actionLoading}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-            >
-              <Play className="h-3.5 w-3.5" />
-              {actionLoading
-                ? "Iniciando..."
-                : `Separar ${selectedIds.size > 0 ? selectedIds.size : pedidos.length} pedido(s)`}
-            </button>
+            <div className="flex items-center gap-2">
+              {isAdmin && moveTargets && selectedIds.size > 0 && (
+                <MoveButton
+                  targets={moveTargets}
+                  open={revertMenuOpen}
+                  onToggle={() => setRevertMenuOpen((v) => !v)}
+                  onSelect={handleMoverEtapa}
+                  disabled={actionLoading}
+                  count={selectedIds.size}
+                />
+              )}
+              <button
+                type="button"
+                onClick={handleSepararSelecionados}
+                disabled={actionLoading}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              >
+                <Play className="h-3.5 w-3.5" />
+                {actionLoading
+                  ? "Iniciando..."
+                  : `Separar ${selectedIds.size > 0 ? selectedIds.size : pedidos.length} pedido(s)`}
+              </button>
+            </div>
           </div>
         )}
 
@@ -470,12 +518,12 @@ export default function SeparacaoPage() {
                 : `${pedidos.length} pedido(s)`}
             </span>
             <div className="flex items-center gap-2">
-              {isAdmin && revertTargets && selectedIds.size > 0 && (
-                <RevertButton
-                  targets={revertTargets}
+              {isAdmin && moveTargets && selectedIds.size > 0 && (
+                <MoveButton
+                  targets={moveTargets}
                   open={revertMenuOpen}
                   onToggle={() => setRevertMenuOpen((v) => !v)}
-                  onSelect={handleVoltarEtapa}
+                  onSelect={handleMoverEtapa}
                   disabled={actionLoading}
                   count={selectedIds.size}
                 />
@@ -502,12 +550,12 @@ export default function SeparacaoPage() {
                 : `${pedidos.length} pedido(s)`}
             </span>
             <div className="flex items-center gap-2">
-              {isAdmin && revertTargets && selectedIds.size > 0 && (
-                <RevertButton
-                  targets={revertTargets}
+              {isAdmin && moveTargets && selectedIds.size > 0 && (
+                <MoveButton
+                  targets={moveTargets}
                   open={revertMenuOpen}
                   onToggle={() => setRevertMenuOpen((v) => !v)}
-                  onSelect={handleVoltarEtapa}
+                  onSelect={handleMoverEtapa}
                   disabled={actionLoading}
                   count={selectedIds.size}
                 />
@@ -535,12 +583,12 @@ export default function SeparacaoPage() {
                 : `${pedidos.length} pedido(s)`}
             </span>
             <div className="flex items-center gap-2">
-              {isAdmin && revertTargets && selectedIds.size > 0 && (
-                <RevertButton
-                  targets={revertTargets}
+              {isAdmin && moveTargets && selectedIds.size > 0 && (
+                <MoveButton
+                  targets={moveTargets}
                   open={revertMenuOpen}
                   onToggle={() => setRevertMenuOpen((v) => !v)}
-                  onSelect={handleVoltarEtapa}
+                  onSelect={handleMoverEtapa}
                   disabled={actionLoading}
                   count={selectedIds.size}
                 />
@@ -567,17 +615,29 @@ export default function SeparacaoPage() {
                 ? `${selectedIds.size} selecionado(s)`
                 : `${pedidos.length} pedido(s)`}
             </span>
-            <button
-              type="button"
-              onClick={handleForcarPendente}
-              disabled={selectedIds.size === 0 || actionLoading}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
-            >
-              <ShieldAlert className="h-3.5 w-3.5" />
-              {actionLoading
-                ? "Movendo..."
-                : `Forcar pendente (${selectedIds.size})`}
-            </button>
+            <div className="flex items-center gap-2">
+              {moveTargets && selectedIds.size > 0 && (
+                <MoveButton
+                  targets={moveTargets}
+                  open={revertMenuOpen}
+                  onToggle={() => setRevertMenuOpen((v) => !v)}
+                  onSelect={handleMoverEtapa}
+                  disabled={actionLoading}
+                  count={selectedIds.size}
+                />
+              )}
+              <button
+                type="button"
+                onClick={handleForcarPendente}
+                disabled={selectedIds.size === 0 || actionLoading}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
+              >
+                <ShieldAlert className="h-3.5 w-3.5" />
+                {actionLoading
+                  ? "Movendo..."
+                  : `Forcar pendente (${selectedIds.size})`}
+              </button>
+            </div>
           </div>
         )}
 
@@ -605,9 +665,9 @@ export default function SeparacaoPage() {
   );
 }
 
-// ─── Revert dropdown button (page-level, no overflow issues) ─────────────────
+// ─── Move dropdown button (backward + forward) ──────────────────────────────
 
-function RevertButton({
+function MoveButton({
   targets,
   open,
   onToggle,
@@ -615,13 +675,16 @@ function RevertButton({
   disabled,
   count,
 }: {
-  targets: { value: StatusSeparacao; label: string }[];
+  targets: { back: { value: StatusSeparacao; label: string }[]; forward: { value: StatusSeparacao; label: string }[] };
   open: boolean;
   onToggle: () => void;
   onSelect: (status: StatusSeparacao) => void;
   disabled: boolean;
   count: number;
 }) {
+  const hasBack = targets.back.length > 0;
+  const hasForward = targets.forward.length > 0;
+
   return (
     <div className="relative">
       <button
@@ -631,23 +694,49 @@ function RevertButton({
         className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
       >
         <Undo2 className="h-3.5 w-3.5" />
-        Voltar {count} pedido(s)
+        Mover {count} pedido(s)
       </button>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 min-w-[200px] rounded-lg border border-line bg-paper py-1 shadow-lg">
-          <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
-            Voltar para
-          </p>
-          {targets.map((t) => (
-            <button
-              key={t.value}
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink transition-colors hover:bg-surface"
-              onClick={() => onSelect(t.value)}
-            >
-              {t.label}
-            </button>
-          ))}
+          {hasBack && (
+            <>
+              <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                <Undo2 className="mr-1 inline h-3 w-3" />
+                Voltar para
+              </p>
+              {targets.back.map((t) => (
+                <button
+                  key={t.value}
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink transition-colors hover:bg-surface"
+                  onClick={() => onSelect(t.value)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </>
+          )}
+          {hasBack && hasForward && (
+            <div className="my-1 border-t border-line" />
+          )}
+          {hasForward && (
+            <>
+              <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                <ArrowRight className="mr-1 inline h-3 w-3" />
+                Avancar para
+              </p>
+              {targets.forward.map((t) => (
+                <button
+                  key={t.value}
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-emerald-700 transition-colors hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                  onClick={() => onSelect(t.value)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>

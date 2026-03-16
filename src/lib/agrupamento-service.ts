@@ -6,6 +6,9 @@
  * forma_frete_id, transportador_id), creates one Tiny agrupamento per group,
  * downloads ZPL labels, and caches everything in DB.
  *
+ * Uses atomic claim (siso_claim_pedidos_para_agrupamento) to prevent duplicate
+ * agrupamentos when called concurrently (e.g. double-click on "iniciar").
+ *
  * At packing time, the ZPL is already cached — we just send it to PrintNode
  * without any Tiny API calls, cutting the bip-to-print delay to ~1s.
  */
@@ -18,7 +21,7 @@ import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "agrupamento-service";
 
-interface PedidoParaAgrupamento {
+interface PedidoClaimed {
   id: string;
   numero: string;
   empresa_origem_id: string;
@@ -31,12 +34,13 @@ interface PedidoParaAgrupamento {
  * Build a grouping key from empresa + shipping fields.
  * Pedidos with the same key can be in the same Tiny agrupamento.
  */
-function buildGroupKey(p: PedidoParaAgrupamento): string {
+function buildGroupKey(p: PedidoClaimed): string {
   return `${p.empresa_origem_id}|${p.forma_envio_id ?? ""}|${p.forma_frete_id ?? ""}|${p.transportador_id ?? ""}`;
 }
 
 /**
  * Pre-create Tiny agrupamentos in batch for pedidos that just became "separado".
+ * Uses atomic claim to prevent duplicate agrupamentos on concurrent calls.
  * Groups by empresa + shipping method, creates one agrupamento per group,
  * downloads ZPL labels, and caches them in etiqueta_zpl column.
  *
@@ -49,42 +53,34 @@ export async function preCriarAgrupamentosEmLote(
 
   const supabase = createServiceClient();
 
-  const { data: pedidos, error: fetchErr } = await supabase
-    .from("siso_pedidos")
-    .select("id, numero, empresa_origem_id, agrupamento_expedicao_id, forma_envio_id, forma_frete_id, transportador_id")
-    .in("id", pedidoIds)
-    .not("empresa_origem_id", "is", null)
-    .is("agrupamento_expedicao_id", null);
+  // Atomic claim: sets agrupamento_expedicao_id = 'pending' and returns claimed rows.
+  // Concurrent callers will get an empty result for already-claimed pedidos.
+  const { data: pedidos, error: claimErr } = await supabase.rpc(
+    "siso_claim_pedidos_para_agrupamento",
+    { p_pedido_ids: pedidoIds },
+  );
 
-  if (fetchErr) {
-    logger.error(LOG_SOURCE, "Falha ao buscar pedidos para agrupamento", {
+  if (claimErr) {
+    logger.error(LOG_SOURCE, "Falha ao reivindicar pedidos para agrupamento", {
       pedidoIds,
-      error: fetchErr.message,
+      error: claimErr.message,
     });
     return;
   }
 
   if (!pedidos || pedidos.length === 0) {
-    logger.info(LOG_SOURCE, "Nenhum pedido precisa de agrupamento (já criados ou sem empresa)", {
+    logger.info(LOG_SOURCE, "Nenhum pedido precisa de agrupamento (já reivindicados ou sem empresa)", {
       pedidoIds,
     });
     return;
   }
 
-  // Group by empresa + shipping method (forma_envio, forma_frete, transportador)
-  const groups = new Map<string, PedidoParaAgrupamento[]>();
-  for (const p of pedidos) {
-    const pedido: PedidoParaAgrupamento = {
-      id: p.id,
-      numero: p.numero,
-      empresa_origem_id: p.empresa_origem_id!,
-      forma_envio_id: p.forma_envio_id ?? null,
-      forma_frete_id: p.forma_frete_id ?? null,
-      transportador_id: p.transportador_id ?? null,
-    };
-    const key = buildGroupKey(pedido);
+  // Group by empresa + shipping method
+  const groups = new Map<string, PedidoClaimed[]>();
+  for (const p of pedidos as PedidoClaimed[]) {
+    const key = buildGroupKey(p);
     const lista = groups.get(key) ?? [];
-    lista.push(pedido);
+    lista.push(p);
     groups.set(key, lista);
   }
 
@@ -107,21 +103,21 @@ async function processarGrupo(
   supabase: SupabaseClient,
   empresaId: string,
   groupKey: string,
-  pedidos: PedidoParaAgrupamento[],
+  pedidos: PedidoClaimed[],
 ): Promise<void> {
+  const pedidoIds = pedidos.map((p) => p.id);
+
   try {
     const { token } = await getValidTokenByEmpresa(empresaId);
 
     // Build Tiny numeric IDs
     const idsTiny: number[] = [];
-    const pedidoPorTinyId = new Map<number, string>(); // tinyId → pedido UUID
+    const pedidoPorTinyId = new Map<number, string>();
 
     for (const p of pedidos) {
       const tinyId = parseInt(p.id, 10);
       if (isNaN(tinyId)) {
-        logger.warn(LOG_SOURCE, "Pedido com id não numérico, skip", {
-          pedidoId: p.id,
-        });
+        logger.warn(LOG_SOURCE, "Pedido com id não numérico, skip", { pedidoId: p.id });
         continue;
       }
       idsTiny.push(tinyId);
@@ -141,7 +137,7 @@ async function processarGrupo(
       groupKey,
     });
 
-    // Save agrupamento_expedicao_id on all pedidos
+    // Save real agrupamento_expedicao_id (replacing 'pending')
     const allPedidoIds = Array.from(pedidoPorTinyId.values());
     await supabase
       .from("siso_pedidos")
@@ -186,16 +182,13 @@ async function processarGrupo(
 
     // 5. Map URLs/ZPL to pedidos and save
     if (allPedidoIds.length === 1) {
-      // Single pedido
       await salvarEtiqueta(supabase, allPedidoIds[0], etiquetas.urls[0], zplContents[0]);
     } else if (etiquetas.urls.length === allPedidoIds.length) {
-      // 1:1 mapping — urls in same order as idsPedidos
       const updates = allPedidoIds.map((pedidoId, i) =>
         salvarEtiqueta(supabase, pedidoId, etiquetas.urls[i], zplContents[i]),
       );
       await Promise.all(updates);
     } else {
-      // Mismatch — store first URL/ZPL for all
       logger.warn(LOG_SOURCE, "URL count != pedido count, storing first for all", {
         urlCount: String(etiquetas.urls.length),
         pedidoCount: String(allPedidoIds.length),
@@ -213,10 +206,17 @@ async function processarGrupo(
       cached: String(zplContents.filter(Boolean).length),
     });
   } catch (err) {
+    // On failure, clear 'pending' so it can be retried
+    await supabase
+      .from("siso_pedidos")
+      .update({ agrupamento_expedicao_id: null })
+      .in("id", pedidoIds)
+      .eq("agrupamento_expedicao_id", "pending");
+
     logger.error(LOG_SOURCE, "Falha ao pré-criar agrupamento", {
       empresaId,
       groupKey,
-      pedidoIds: pedidos.map((p) => p.id),
+      pedidoIds,
       error: err instanceof Error ? err.message : String(err),
     });
   }

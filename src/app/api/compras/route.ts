@@ -74,8 +74,7 @@ async function fetchCounts(supabase: ReturnType<typeof createServiceClient>) {
     supabase
       .from("siso_pedido_itens")
       .select("id", { count: "exact", head: true })
-      .eq("compra_status", "aguardando_compra")
-      .is("ordem_compra_id", null),
+      .eq("compra_status", "aguardando_compra"),
     supabase
       .from("siso_ordens_compra")
       .select("id", { count: "exact", head: true })
@@ -102,6 +101,7 @@ interface RawAguardandoItem {
   quantidade_pedida: number;
   fornecedor_oc: string | null;
   pedido_id: string;
+  ordem_compra_id: string | null;
   siso_pedidos: {
     numero: string;
     empresa_origem_id: string | null;
@@ -114,10 +114,9 @@ async function fetchAguardandoCompra(
   const { data: items, error } = await supabase
     .from("siso_pedido_itens")
     .select(
-      "id, sku, descricao, quantidade_pedida, fornecedor_oc, pedido_id, siso_pedidos(numero, empresa_origem_id)",
+      "id, sku, descricao, quantidade_pedida, fornecedor_oc, pedido_id, ordem_compra_id, siso_pedidos(numero, empresa_origem_id)",
     )
     .eq("compra_status", "aguardando_compra")
-    .is("ordem_compra_id", null)
     .order("fornecedor_oc");
 
   if (error) throw new Error(`Erro ao buscar itens aguardando: ${error.message}`);

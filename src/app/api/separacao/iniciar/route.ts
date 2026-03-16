@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
+import { preCriarAgrupamentosEmLote } from "@/lib/agrupamento-service";
 import type { ProdutoConsolidado } from "@/types";
 
 /**
@@ -69,14 +70,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate all have status_separacao = 'aguardando_separacao'
+    // Validate all have status_separacao = 'aguardando_separacao' or 'em_separacao' (resume)
+    const ALLOWED_STATUSES = ["aguardando_separacao", "em_separacao"];
     const invalidPedidos = (pedidos ?? []).filter(
-      (p) => p.status_separacao !== "aguardando_separacao",
+      (p) => !ALLOWED_STATUSES.includes(p.status_separacao),
     );
     if (invalidPedidos.length > 0) {
       return NextResponse.json(
         {
-          error: "todos os pedidos devem estar com status 'aguardando_separacao'",
+          error: "todos os pedidos devem estar com status 'aguardando_separacao' ou 'em_separacao'",
           pedido_ids: invalidPedidos.map((p) => p.id),
           statuses: invalidPedidos.map((p) => p.status_separacao),
         },
@@ -84,25 +86,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Update all pedidos to em_separacao
-    const { error: updateError } = await supabase
-      .from("siso_pedidos")
-      .update({
-        status_separacao: "em_separacao",
-        separacao_operador_id: operador_id,
-        separacao_iniciada_em: new Date().toISOString(),
-      })
-      .in("id", pedido_ids)
-      .eq("status_separacao", "aguardando_separacao");
+    // 2. Update pedidos that are aguardando_separacao to em_separacao (skip already em_separacao)
+    const toStart = (pedidos ?? [])
+      .filter((p) => p.status_separacao === "aguardando_separacao")
+      .map((p) => p.id);
 
-    if (updateError) {
-      logger.error("separacao-iniciar", "Failed to update pedidos", {
-        error: updateError.message,
-      });
-      return NextResponse.json(
-        { error: updateError.message },
-        { status: 500 },
-      );
+    if (toStart.length > 0) {
+      const { error: updateError } = await supabase
+        .from("siso_pedidos")
+        .update({
+          status_separacao: "em_separacao",
+          separacao_operador_id: operador_id,
+          separacao_iniciada_em: new Date().toISOString(),
+        })
+        .in("id", toStart)
+        .eq("status_separacao", "aguardando_separacao");
+
+      if (updateError) {
+        logger.error("separacao-iniciar", "Failed to update pedidos", {
+          error: updateError.message,
+        });
+        return NextResponse.json(
+          { error: updateError.message },
+          { status: 500 },
+        );
+      }
     }
 
     // 3. Call RPC to get consolidated product list for wave picking
@@ -148,6 +156,14 @@ export async function POST(request: NextRequest) {
       pedido_ids,
       operador_id,
       produtos_count: consolidados.length,
+    });
+
+    // Fire-and-forget: pre-create Tiny agrupamentos + download ZPL labels
+    // early so they're cached before packing even starts
+    preCriarAgrupamentosEmLote(pedido_ids).catch((err) => {
+      logger.error("separacao-iniciar", "Falha ao pré-criar agrupamentos", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
 
     return NextResponse.json({ pedido_ids, produtos: consolidados });

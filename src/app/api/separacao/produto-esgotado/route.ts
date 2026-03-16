@@ -8,16 +8,16 @@ import { getFornecedorBySku } from "@/lib/sku-fornecedor";
  *
  * Marks a SKU as out of stock. Finds ALL pedidos in active separation
  * (aguardando_nf, aguardando_separacao, em_separacao) that contain this SKU,
- * moves the item to compra flow, moves the pedido to aguardando_compra,
- * and auto-creates an OC (ordem de compra) for the affected items.
+ * moves the item to compra flow (compra_status + fornecedor_oc), and moves
+ * the pedido to aguardando_compra. Items appear in the compras module's
+ * "Aguardando Compra" tab for the operator to create an OC.
  *
- * Body: { sku: string, usuario_id?: string }
- * Returns: { pedidos_afetados: number, itens_afetados: number, ordem_compra_id?: string }
+ * Body: { sku: string }
+ * Returns: { pedidos_afetados: number, itens_afetados: number }
  */
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const sku = body?.sku;
-  const usuarioId: string | undefined = body?.usuario_id;
 
   if (!sku || typeof sku !== "string") {
     return NextResponse.json(
@@ -141,12 +141,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 6. Auto-create OC for the affected items
+    // 6. Auto-create OC and link items to it
     let ordemCompraId: string | null = null;
     const fornecedor = fornecedorInfo.fornecedor;
 
     try {
-      // Get empresa_id from the first affected pedido
       const { data: pedidoData } = await supabase
         .from("siso_pedidos")
         .select("empresa_origem_id")
@@ -171,7 +170,6 @@ export async function POST(request: NextRequest) {
         if (existingOC) {
           ordemCompraId = existingOC.id;
         } else {
-          // Create new OC
           const { data: newOC, error: ocError } = await supabase
             .from("siso_ordens_compra")
             .insert({
@@ -179,7 +177,6 @@ export async function POST(request: NextRequest) {
               empresa_id: empresaId,
               status: "aguardando_compra",
               observacao: `Criada automaticamente — SKU ${sku} esgotado`,
-              ...(usuarioId && { comprado_por: usuarioId }),
             })
             .select("id")
             .single();
@@ -211,7 +208,6 @@ export async function POST(request: NextRequest) {
         }
       }
     } catch (ocErr) {
-      // OC creation is best-effort — don't fail the whole esgotado flow
       logger.warn("produto-esgotado", "Erro ao criar OC automatica (nao-critico)", {
         error: ocErr instanceof Error ? ocErr.message : String(ocErr),
         sku,

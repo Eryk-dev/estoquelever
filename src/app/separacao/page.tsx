@@ -553,8 +553,8 @@ export default function SeparacaoPage() {
               >
                 <Play className="h-3.5 w-3.5" />
                 {actionLoading
-                  ? "Iniciando..."
-                  : `Separar ${selectedIds.size > 0 ? selectedIds.size : pedidos.length} pedido(s)`}
+                  ? "Retomando..."
+                  : `Retomar ${selectedIds.size > 0 ? selectedIds.size : pedidos.length} pedido(s)`}
               </button>
             </div>
           </div>

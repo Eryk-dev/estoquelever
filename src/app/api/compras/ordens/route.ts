@@ -43,53 +43,76 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // Check if there are items to link
-    const { count, error: countError } = await supabase
+    // Find all aguardando items for this fornecedor
+    const { data: aguardandoItems, error: fetchError } = await supabase
       .from("siso_pedido_itens")
-      .select("id", { count: "exact", head: true })
+      .select("id, ordem_compra_id")
       .eq("fornecedor_oc", fornecedor)
-      .eq("compra_status", "aguardando_compra")
-      .is("ordem_compra_id", null);
+      .eq("compra_status", "aguardando_compra");
 
-    if (countError) throw new Error(`Erro ao contar itens: ${countError.message}`);
+    if (fetchError) throw new Error(`Erro ao buscar itens: ${fetchError.message}`);
 
-    if (!count || count === 0) {
+    if (!aguardandoItems || aguardandoItems.length === 0) {
       return NextResponse.json(
         { error: `Nenhum item aguardando compra para fornecedor '${fornecedor}'` },
         { status: 400 },
       );
     }
 
-    // Create the ordem de compra
-    const { data: oc, error: insertError } = await supabase
-      .from("siso_ordens_compra")
-      .insert({
-        fornecedor,
-        empresa_id,
-        status: "comprado",
-        observacao: observacao ?? null,
-        comprado_por: usuario_id,
-        comprado_em: new Date().toISOString(),
-      })
-      .select("id, fornecedor, empresa_id, status, observacao, comprado_por, comprado_em, created_at")
-      .single();
+    const allItemIds = aguardandoItems.map((i) => i.id);
+    const now = new Date().toISOString();
 
-    if (insertError || !oc) {
-      throw new Error(`Erro ao criar OC: ${insertError?.message ?? "no data"}`);
+    // Check if items already have an auto-created OC
+    const existingOcId = aguardandoItems.find((i) => i.ordem_compra_id)?.ordem_compra_id;
+    let ocId: string;
+
+    if (existingOcId) {
+      // Update existing auto-created OC to 'comprado'
+      const { error: updateOcError } = await supabase
+        .from("siso_ordens_compra")
+        .update({
+          status: "comprado",
+          observacao: observacao ?? undefined,
+          comprado_por: usuario_id,
+          comprado_em: now,
+        })
+        .eq("id", existingOcId);
+
+      if (updateOcError) {
+        throw new Error(`Erro ao atualizar OC: ${updateOcError.message}`);
+      }
+      ocId = existingOcId;
+    } else {
+      // Create new OC
+      const { data: oc, error: insertError } = await supabase
+        .from("siso_ordens_compra")
+        .insert({
+          fornecedor,
+          empresa_id,
+          status: "comprado",
+          observacao: observacao ?? null,
+          comprado_por: usuario_id,
+          comprado_em: now,
+        })
+        .select("id")
+        .single();
+
+      if (insertError || !oc) {
+        throw new Error(`Erro ao criar OC: ${insertError?.message ?? "no data"}`);
+      }
+      ocId = oc.id;
     }
 
-    // Link all aguardando items for this fornecedor to the new OC
+    // Link all items to the OC and mark as comprado
     const { data: updatedItems, error: updateError } = await supabase
       .from("siso_pedido_itens")
       .update({
-        ordem_compra_id: oc.id,
+        ordem_compra_id: ocId,
         compra_status: "comprado",
-        comprado_em: new Date().toISOString(),
+        comprado_em: now,
         comprado_por: usuario_id,
       })
-      .eq("fornecedor_oc", fornecedor)
-      .eq("compra_status", "aguardando_compra")
-      .is("ordem_compra_id", null)
+      .in("id", allItemIds)
       .select("id");
 
     if (updateError) {
@@ -98,17 +121,25 @@ export async function POST(request: NextRequest) {
 
     const linkedCount = updatedItems?.length ?? 0;
 
-    logger.info("compras-ordens", "OC criada", {
-      ocId: oc.id,
+    // Fetch the full OC for response
+    const { data: fullOc } = await supabase
+      .from("siso_ordens_compra")
+      .select("id, fornecedor, empresa_id, status, observacao, comprado_por, comprado_em, created_at")
+      .eq("id", ocId)
+      .single();
+
+    logger.info("compras-ordens", "OC criada/atualizada", {
+      ocId,
       fornecedor,
       empresaId: empresa_id,
       itensVinculados: linkedCount,
       usuarioId: usuario_id,
+      reuseExisting: !!existingOcId,
     });
 
     return NextResponse.json({
       ok: true,
-      ordem_compra: oc,
+      ordem_compra: fullOc,
       itens_vinculados: linkedCount,
     });
   } catch (err) {

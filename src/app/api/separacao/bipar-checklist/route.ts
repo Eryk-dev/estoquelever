@@ -33,13 +33,25 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // Find matching items by SKU or GTIN within the given pedidos, not yet marked
-    const { data: items, error: fetchError } = await supabase
+    // Find matching items by SKU within the given pedidos, not yet marked
+    let { data: items, error: fetchError } = await supabase
       .from("siso_pedido_itens")
       .select("id, pedido_id, sku, gtin")
       .in("pedido_id", pedido_ids)
       .eq("separacao_marcado", false)
-      .or(`sku.eq.${sku},gtin.eq.${sku}`);
+      .eq("sku", sku);
+
+    // If no SKU match, try GTIN match
+    if (!fetchError && (!items || items.length === 0)) {
+      const gtinResult = await supabase
+        .from("siso_pedido_itens")
+        .select("id, pedido_id, sku, gtin")
+        .in("pedido_id", pedido_ids)
+        .eq("separacao_marcado", false)
+        .eq("gtin", sku);
+      items = gtinResult.data;
+      fetchError = gtinResult.error;
+    }
 
     if (fetchError) {
       logger.error("separacao-bipar-checklist", "Failed to fetch items", {

@@ -146,18 +146,24 @@ function EmbalagemPage() {
   }, [pedidos]);
 
   // Track completed pedidos (transitioned to embalado during this session)
+  // Store full pedido data so it persists after API stops returning them
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
+  const completedPedidoData = useRef<Map<string, SeparacaoPedido>>(new Map());
 
   // Handle pedido completion (shared between scan and manual)
   const handlePedidoComplete = useCallback(
     (pedidoId: string) => {
+      // Save pedido data before it disappears from the API response
+      const pedidoData = allPedidos.find((p) => p.id === pedidoId);
+      if (pedidoData) {
+        completedPedidoData.current.set(pedidoId, pedidoData);
+      }
       setCompletedIds((prev) => new Set(prev).add(pedidoId));
       toast.success("Pedido embalado — etiqueta enviada");
-      setExpandedPedidoId(null);
       queryClient.invalidateQueries({ queryKey: pedidosQueryKey });
       queryClient.invalidateQueries({ queryKey: itemsQueryKey });
     },
-    [queryClient, pedidosQueryKey, itemsQueryKey],
+    [allPedidos, queryClient, pedidosQueryKey, itemsQueryKey],
   );
 
   // Scan handler
@@ -375,7 +381,10 @@ function EmbalagemPage() {
 
   // Separate active (separado) and completed (embalado during session)
   const activePedidos = pedidos.filter((p) => !completedIds.has(p.id));
-  const completedPedidos = pedidos.filter((p) => completedIds.has(p.id));
+  // Use stored data for completed pedidos (persists even after API stops returning them)
+  const completedPedidos = Array.from(completedIds)
+    .map((id) => completedPedidoData.current.get(id) ?? pedidos.find((p) => p.id === id))
+    .filter((p): p is SeparacaoPedido => p !== undefined);
 
   return (
     <div className="min-h-screen bg-surface">
@@ -521,9 +530,13 @@ function EmbalagemPage() {
                     pedido={pedido}
                     highlighted={false}
                     completed
-                    expanded={false}
-                    onToggleExpand={() => {}}
-                    items={[]}
+                    expanded={expandedPedidoId === pedido.id}
+                    onToggleExpand={() =>
+                      setExpandedPedidoId(
+                        expandedPedidoId === pedido.id ? null : pedido.id,
+                      )
+                    }
+                    items={itemsByPedido.get(pedido.id) ?? []}
                     onConfirmItem={handleConfirmItem}
                   />
                 ))}
@@ -593,10 +606,9 @@ function EmbalagemOrderRow({
       {/* Clickable header */}
       <button
         type="button"
-        onClick={!isComplete ? onToggleExpand : undefined}
+        onClick={onToggleExpand}
         className={cn(
-          "flex w-full items-center gap-3 px-4 py-3 text-left",
-          !isComplete && "cursor-pointer hover:bg-zinc-50/50 dark:hover:bg-zinc-800/20",
+          "flex w-full items-center gap-3 px-4 py-3 text-left cursor-pointer hover:bg-zinc-50/50 dark:hover:bg-zinc-800/20",
         )}
       >
         {/* Status dot */}
@@ -649,25 +661,24 @@ function EmbalagemOrderRow({
         </div>
 
         {/* Expand icon */}
-        {!isComplete && (
-          <div className="shrink-0 text-ink-faint">
-            {expanded ? (
-              <ChevronUp className="h-4 w-4" />
-            ) : (
-              <ChevronDown className="h-4 w-4" />
-            )}
-          </div>
-        )}
+        <div className="shrink-0 text-ink-faint">
+          {expanded ? (
+            <ChevronUp className="h-4 w-4" />
+          ) : (
+            <ChevronDown className="h-4 w-4" />
+          )}
+        </div>
       </button>
 
       {/* Expanded items */}
-      {expanded && !isComplete && items.length > 0 && (
+      {expanded && items.length > 0 && (
         <div className="border-t border-line">
           {items.map((item) => (
             <EmbalagemItemRow
               key={item.id}
               item={item}
               onConfirm={onConfirmItem}
+              readOnly={isComplete}
             />
           ))}
         </div>
@@ -681,9 +692,11 @@ function EmbalagemOrderRow({
 function EmbalagemItemRow({
   item,
   onConfirm,
+  readOnly,
 }: {
   item: PedidoItem;
   onConfirm: (item: PedidoItem, delta: number) => void;
+  readOnly?: boolean;
 }) {
   const isDone = item.bipado_completo;
 
@@ -731,25 +744,29 @@ function EmbalagemItemRow({
           {item.quantidade_bipada}/{item.quantidade}
         </span>
 
-        <button
-          type="button"
-          onClick={() => onConfirm(item, -1)}
-          disabled={item.quantidade_bipada <= 0}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-ink-faint transition-colors hover:bg-zinc-100 hover:text-ink disabled:opacity-30 dark:hover:bg-zinc-800"
-          aria-label="Diminuir quantidade"
-        >
-          <Minus className="h-4 w-4" />
-        </button>
+        {!readOnly && (
+          <>
+            <button
+              type="button"
+              onClick={() => onConfirm(item, -1)}
+              disabled={item.quantidade_bipada <= 0}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-ink-faint transition-colors hover:bg-zinc-100 hover:text-ink disabled:opacity-30 dark:hover:bg-zinc-800"
+              aria-label="Diminuir quantidade"
+            >
+              <Minus className="h-4 w-4" />
+            </button>
 
-        <button
-          type="button"
-          onClick={() => onConfirm(item, 1)}
-          disabled={isDone}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-ink-faint transition-colors hover:bg-zinc-100 hover:text-ink disabled:opacity-30 dark:hover:bg-zinc-800"
-          aria-label="Aumentar quantidade"
-        >
-          <Plus className="h-4 w-4" />
-        </button>
+            <button
+              type="button"
+              onClick={() => onConfirm(item, 1)}
+              disabled={isDone}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-ink-faint transition-colors hover:bg-zinc-100 hover:text-ink disabled:opacity-30 dark:hover:bg-zinc-800"
+              aria-label="Aumentar quantidade"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

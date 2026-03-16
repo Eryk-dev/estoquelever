@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { preCriarAgrupamentosEmLote } from "@/lib/agrupamento-service";
 import { registrarEventos } from "@/lib/historico-service";
 
 /**
@@ -102,16 +101,6 @@ export async function POST(request: NextRequest) {
           evento: "separacao_concluida" as const,
         })),
       ).catch(() => {});
-    }
-
-    // Fire-and-forget: pre-create Tiny agrupamentos + download ZPL labels
-    // so they're cached when packing completes (cuts print delay to ~200ms)
-    if (separados.length > 0) {
-      preCriarAgrupamentosEmLote(separados).catch((err) => {
-        logger.error("separacao-concluir", "Falha ao pré-criar agrupamentos", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
     }
 
     return NextResponse.json({ separados, pendentes });

@@ -31,13 +31,14 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // 1. Fetch items for the given pedidos
+    // 1. Fetch items for the given pedidos (exclude items moved to compra flow)
     const { data: items, error: itemsError } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em, quantidade_bipada, bipado_completo, imagem_url",
+        "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em, quantidade_bipada, bipado_completo, imagem_url, compra_status",
       )
-      .in("pedido_id", pedido_ids);
+      .in("pedido_id", pedido_ids)
+      .is("compra_status", null);
 
     if (itemsError) {
       logger.error("checklist-items", "Failed to fetch items", {

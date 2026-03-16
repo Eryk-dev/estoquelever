@@ -424,7 +424,7 @@ export function SeparacaoCard({
                 <table className="w-full text-[11px]">
                   <thead>
                     <tr className="border-b border-line text-left text-ink-faint">
-                      <th className="w-8 px-2 py-1.5"></th>
+                      <th className="w-14 px-2 py-1.5"></th>
                       <th className="px-2 py-1.5 font-medium">SKU</th>
                       <th className="px-2 py-1.5 font-medium">Descricao</th>
                       <th className="px-2 py-1.5 font-medium text-center">Qtd</th>

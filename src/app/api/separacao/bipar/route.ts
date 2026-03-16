@@ -105,26 +105,21 @@ export async function POST(request: NextRequest) {
         });
 
       case "pedido_completo": {
-        // Fire-and-forget: trigger label printing without blocking the response
+        let etiqueta_status = "pendente";
+        let etiqueta_erro: string | null = null;
+
         if (result.pedido_id) {
-          buscarEImprimirEtiqueta(result.pedido_id).catch((err) => {
-            logger.logError({
-              error: err,
-              source: "separacao-bipar",
-              message: "Falha ao disparar impressão de etiqueta",
-              category: "external_api",
-              pedidoId: result.pedido_id!,
-              requestPath: "/api/separacao/bipar",
-              requestMethod: "POST",
-            });
-          });
+          const etiqueta = await buscarEImprimirEtiqueta(result.pedido_id);
+          etiqueta_status = etiqueta.success ? "impresso" : "falhou";
+          etiqueta_erro = etiqueta.error ?? null;
         }
 
         return NextResponse.json({
           status: "pedido_completo",
           pedido_id: result.pedido_id,
           pedido_numero: result.pedido_numero,
-          etiqueta_status: "pendente",
+          etiqueta_status,
+          etiqueta_erro,
         });
       }
 

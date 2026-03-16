@@ -69,3 +69,32 @@ erros:
       - supabase/migrations/20260316_fix_rpc_param_types_and_atomic_agrupamento.sql
     commit: 9e18c10
     tags: [rpc, supabase, ambiguous, column, sql]
+
+  - id: etiqueta-fire-and-forget-silent-failure
+    date: "2026-03-16"
+    source: etiqueta-service
+    category: business_logic
+    message: "Etiqueta nao imprime mas pedido some da aba de embalagem"
+    cause: "buscarEImprimirEtiqueta era chamado fire-and-forget (.catch) nos 3 endpoints (bipar, bipar-embalagem, confirmar-item-embalagem). O status_separacao era atualizado para 'embalado' ANTES da impressao (dentro do RPC), e a resposta da API era enviada ao frontend sem aguardar o resultado da impressao. Se a impressao falhava, o pedido ja tinha sumido da UI com toast 'etiqueta enviada'."
+    fix: "1) buscarEImprimirEtiqueta agora retorna { success, error? } em vez de void. 2) Todos os 3 endpoints agora fazem await da impressao e incluem etiqueta_status + etiqueta_erro na resposta. 3) Frontend mostra toast correto baseado no resultado real (sucesso vs falha com mensagem de erro)."
+    files:
+      - src/lib/etiqueta-service.ts
+      - src/app/api/separacao/bipar/route.ts
+      - src/app/api/separacao/bipar-embalagem/route.ts
+      - src/app/api/separacao/confirmar-item-embalagem/route.ts
+      - src/app/separacao/embalagem/page.tsx
+      - src/components/separacao/scan-input.tsx
+    tags: [etiqueta, impressao, fire-and-forget, embalagem, silent-failure, printnode, label]
+    notes: "A impressao no slow path pode levar 3-5s (criar agrupamento + baixar ZPL). Isso agora bloqueia a resposta do endpoint, mas o operador precisa saber se a etiqueta saiu ou nao."
+
+  - id: agrupamento-sem-retry-no-concluir
+    date: "2026-03-16"
+    source: agrupamento-service
+    category: business_logic
+    message: "Etiqueta nao disponivel na hora de imprimir — agrupamento nao criado ou ZPL nao cacheado"
+    cause: "preCriarAgrupamentosEmLote era chamado somente no iniciar (fire-and-forget). Se falhasse, nao havia segunda tentativa antes da impressao. Problemas adicionais: 1) agrupamento_expedicao_id ficava travado em 'pending' apos crash; 2) salvarEtiqueta salvava etiqueta_url com etiqueta_zpl = null quando download falhava, fazendo fast path sempre falhar."
+    fix: "1) Adicionado recarregarEtiquetasFaltantes() chamado no concluir para re-baixar ZPL de pedidos com agrupamento mas sem ZPL cacheado. 2) Adicionado recuperarPendingTravados() para limpar agrupamento_expedicao_id = 'pending' travados >5min. 3) salvarEtiqueta agora so salva etiqueta_zpl se download realmente sucedeu. 4) concluir agora tambem chama preCriarAgrupamentosEmLote como segunda tentativa."
+    files:
+      - src/lib/agrupamento-service.ts
+      - src/app/api/separacao/concluir/route.ts
+    tags: [agrupamento, etiqueta, pre-criacao, retry, concluir, pending, zpl, cache, download]

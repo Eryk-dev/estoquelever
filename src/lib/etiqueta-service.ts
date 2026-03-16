@@ -22,14 +22,23 @@ import { registrarEvento } from "@/lib/historico-service";
 
 const LOG_SOURCE = "etiqueta-service";
 
+export interface EtiquetaResult {
+  success: boolean;
+  error?: string;
+  /** true when another concurrent call already claimed the print job */
+  skipped?: boolean;
+}
+
 /**
  * Print the shipping label for a packed order.
  *
  * Idempotent: uses atomic UPDATE+WHERE to claim the print job.
  * Only one concurrent caller can succeed — others skip silently.
- * On any error, sets etiqueta_status = 'falhou' (never throws to caller).
+ * On any error, sets etiqueta_status = 'falhou'.
+ *
+ * Returns a result so callers can report success/failure to the frontend.
  */
-export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
+export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<EtiquetaResult> {
   const supabase = createServiceClient();
 
   // Atomic claim via RPC (bypasses PostgREST schema cache issue with etiqueta_status).
@@ -47,12 +56,12 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
       pedidoId,
       metadata: { rpc: "siso_claim_etiqueta" },
     });
-    return;
+    return { success: false, error: "Falha ao reivindicar impressão" };
   }
 
   if (!claimed) {
     logger.info(LOG_SOURCE, "Etiqueta já em andamento ou impressa, skip", { pedidoId });
-    return;
+    return { success: true, skipped: true };
   }
 
   const pedido = claimed as PedidoRow;
@@ -66,7 +75,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
       category: "validation",
       pedidoId,
     });
-    return;
+    return { success: false, error: "Pedido sem empresa_origem_id" };
   }
 
   try {
@@ -75,31 +84,33 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
 
     if (!zpl) {
       await setStatus(supabase, pedidoId, "falhou");
+      const msg = "Não foi possível obter ZPL (fast path e fallback falharam)";
       logger.logError({
         error: new Error("Não foi possível obter ZPL"),
         source: LOG_SOURCE,
-        message: "Não foi possível obter ZPL (fast path e fallback falharam)",
+        message: msg,
         category: "external_api",
         pedidoId,
         empresaId: pedido.empresa_origem_id,
         metadata: { agrupamentoId: pedido.agrupamento_expedicao_id, etiquetaUrl: pedido.etiqueta_url },
       });
-      return;
+      return { success: false, error: msg };
     }
 
     // Resolve printer
     const printNodeApiKey = await getConfig("PRINTNODE_API_KEY");
     if (!printNodeApiKey) {
       await setStatus(supabase, pedidoId, "falhou");
+      const msg = "PRINTNODE_API_KEY não configurada";
       logger.logError({
-        error: new Error("PRINTNODE_API_KEY não configurada"),
+        error: new Error(msg),
         source: LOG_SOURCE,
         message: "PRINTNODE_API_KEY não configurada em siso_configuracoes",
         category: "config",
         severity: "critical",
         pedidoId,
       });
-      return;
+      return { success: false, error: msg };
     }
 
     const galpaoId = pedido.separacao_galpao_id;
@@ -113,14 +124,14 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
         pedidoId,
         empresaId: pedido.empresa_origem_id,
       });
-      return;
+      return { success: false, error: "Pedido sem separacao_galpao_id" };
     }
 
     const printer = await resolverImpressora(pedido.separacao_operador_id ?? galpaoId, galpaoId);
     if (!printer) {
       await setStatus(supabase, pedidoId, "falhou");
       logger.warn(LOG_SOURCE, "Nenhuma impressora configurada", { pedidoId, galpaoId });
-      return;
+      return { success: false, error: "Nenhuma impressora configurada" };
     }
 
     // Safety: ensure we only print one label even if multiple were cached
@@ -145,12 +156,14 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
       printerId: String(printer.printerId),
       cached: String(!!pedido.etiqueta_zpl),
     });
+    return { success: true };
   } catch (err) {
     await setStatus(supabase, pedidoId, "falhou");
+    const errorMsg = err instanceof Error ? err.message : String(err);
     registrarEvento({
       pedidoId,
       evento: "etiqueta_falhou",
-      detalhes: { error: err instanceof Error ? err.message : String(err) },
+      detalhes: { error: errorMsg },
     }).catch(() => {});
     logger.logError({
       error: err,
@@ -165,6 +178,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<void> {
         galpaoId: pedido.separacao_galpao_id,
       },
     });
+    return { success: false, error: errorMsg };
   }
 }
 

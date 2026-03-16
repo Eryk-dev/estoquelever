@@ -20,6 +20,8 @@ interface BipResponse {
   bipados?: number;
   total?: number;
   itens_faltam?: number;
+  etiqueta_status?: "impresso" | "falhou" | "pendente";
+  etiqueta_erro?: string | null;
 }
 
 interface ScanInputProps {
@@ -94,11 +96,19 @@ export function ScanInput({ onBipProcessed }: ScanInputProps) {
           break;
         }
         case "pedido_completo": {
-          playComplete();
-          toast.success(
-            `Pedido #${data.pedido_numero} completo!`,
-            { duration: 5000 },
-          );
+          if (data.etiqueta_status === "falhou") {
+            playError();
+            toast.error(
+              `Pedido #${data.pedido_numero} completo — FALHA na etiqueta${data.etiqueta_erro ? `: ${data.etiqueta_erro}` : ""}`,
+              { duration: 8000 },
+            );
+          } else {
+            playComplete();
+            toast.success(
+              `Pedido #${data.pedido_numero} completo — etiqueta impressa!`,
+              { duration: 5000 },
+            );
+          }
           break;
         }
       }

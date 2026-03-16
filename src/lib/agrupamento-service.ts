@@ -59,6 +59,9 @@ export async function preCriarAgrupamentosEmLote(
 
   const supabase = createServiceClient();
 
+  // Recover any pedidos stuck with 'pending' for >5 minutes (crash recovery)
+  await recuperarPendingTravados(supabase, pedidoIds);
+
   // Atomic claim: sets agrupamento_expedicao_id = 'pending' and returns claimed rows.
   // Concurrent callers will get an empty result for already-claimed pedidos.
   const { data: pedidos, error: claimErr } = await supabase.rpc(
@@ -95,6 +98,71 @@ export async function preCriarAgrupamentosEmLote(
     ([key, pedidosGrupo]) => {
       const empresaId = pedidosGrupo[0].empresa_origem_id;
       return processarGrupo(supabase, empresaId, key, pedidosGrupo);
+    },
+  );
+
+  await Promise.allSettled(promises);
+}
+
+/**
+ * Retry ZPL download for pedidos that have an agrupamento but no cached ZPL.
+ * Called at separation conclusion (concluir) to fill any gaps left by the
+ * initial pre-creation at iniciar time.
+ *
+ * Errors are logged but never thrown — fire-and-forget.
+ */
+export async function recarregarEtiquetasFaltantes(
+  pedidoIds: string[],
+): Promise<void> {
+  if (pedidoIds.length === 0) return;
+
+  const supabase = createServiceClient();
+
+  // Find pedidos that have agrupamento but no ZPL cached
+  const { data: pedidos, error } = await supabase
+    .from("siso_pedidos")
+    .select("id, empresa_origem_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_zpl")
+    .in("id", pedidoIds)
+    .not("agrupamento_expedicao_id", "is", null)
+    .neq("agrupamento_expedicao_id", "pending")
+    .is("etiqueta_zpl", null);
+
+  if (error || !pedidos || pedidos.length === 0) return;
+
+  logger.info(LOG_SOURCE, "Recarregando etiquetas faltantes", {
+    count: String(pedidos.length),
+    pedidoIds: pedidos.map((p) => p.id),
+  });
+
+  // Group by empresa + agrupamento to minimize API calls
+  const byEmpresa = new Map<string, typeof pedidos>();
+  for (const p of pedidos) {
+    const list = byEmpresa.get(p.empresa_origem_id) ?? [];
+    list.push(p);
+    byEmpresa.set(p.empresa_origem_id, list);
+  }
+
+  const promises = Array.from(byEmpresa.entries()).map(
+    async ([empresaId, pedidosEmpresa]) => {
+      try {
+        const { token } = await getValidTokenByEmpresa(empresaId);
+
+        for (const pedido of pedidosEmpresa) {
+          try {
+            await recarregarZplPedido(supabase, token, pedido);
+          } catch (err) {
+            logger.warn(LOG_SOURCE, "Falha ao recarregar ZPL para pedido", {
+              pedidoId: pedido.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      } catch (err) {
+        logger.warn(LOG_SOURCE, "Falha ao obter token para recarregar etiquetas", {
+          empresaId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     },
   );
 
@@ -256,11 +324,87 @@ async function salvarEtiqueta(
   url: string,
   zpl: string | null,
 ): Promise<void> {
+  // Only cache ZPL if download was successful. Saving null ZPL with a URL
+  // leaves the pedido in a state where fast path always fails and the URL
+  // may be stale. Better to leave both null so fallback creates fresh.
+  const updateData: Record<string, string | null> = { etiqueta_url: url };
+  if (zpl) {
+    updateData.etiqueta_zpl = zpl;
+  }
   await supabase
     .from("siso_pedidos")
-    .update({
-      etiqueta_url: url,
-      etiqueta_zpl: zpl,
-    })
+    .update(updateData)
     .eq("id", pedidoId);
+}
+
+/**
+ * Recover pedidos stuck with agrupamento_expedicao_id = 'pending' for >5 minutes.
+ * This can happen if the process crashes after the atomic claim but before
+ * saving the real Tiny agrupamento ID.
+ */
+async function recuperarPendingTravados(
+  supabase: SupabaseClient,
+  pedidoIds: string[],
+): Promise<void> {
+  const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from("siso_pedidos")
+    .update({ agrupamento_expedicao_id: null })
+    .in("id", pedidoIds)
+    .eq("agrupamento_expedicao_id", "pending")
+    .lt("updated_at", fiveMinAgo)
+    .select("id");
+
+  if (!error && data && data.length > 0) {
+    logger.warn(LOG_SOURCE, "Recuperados pedidos com agrupamento travado em 'pending'", {
+      pedidoIds: data.map((p) => p.id),
+    });
+  }
+}
+
+/**
+ * Re-download ZPL for a single pedido that has an agrupamento but no cached ZPL.
+ */
+async function recarregarZplPedido(
+  supabase: SupabaseClient,
+  token: string,
+  pedido: { id: string; agrupamento_expedicao_id: string | null; etiqueta_url: string | null },
+): Promise<void> {
+  const agrupamentoId = pedido.agrupamento_expedicao_id
+    ? parseInt(pedido.agrupamento_expedicao_id, 10)
+    : null;
+  if (!agrupamentoId) return;
+
+  const pedidoTinyId = parseInt(pedido.id, 10);
+  if (isNaN(pedidoTinyId)) return;
+
+  // If we already have a URL, just re-download the ZPL
+  if (pedido.etiqueta_url) {
+    const zpl = await baixarZpl(pedido.etiqueta_url);
+    if (zpl) {
+      await supabase
+        .from("siso_pedidos")
+        .update({ etiqueta_zpl: zpl })
+        .eq("id", pedido.id);
+      logger.info(LOG_SOURCE, "ZPL recarregado de URL existente", { pedidoId: pedido.id });
+      return;
+    }
+  }
+
+  // No URL or download failed — fetch fresh from Tiny
+  const details = await obterAgrupamento(token, agrupamentoId);
+  const exp = details.expedicoes?.find(
+    (e) => e.idObjeto === pedidoTinyId || e.venda?.id === pedidoTinyId,
+  );
+  if (!exp) return;
+
+  const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, exp.id);
+  if (!etiquetas.urls || etiquetas.urls.length === 0) return;
+
+  const url = etiquetas.urls[0];
+  const zpl = await baixarZpl(url);
+  if (zpl) {
+    await salvarEtiqueta(supabase, pedido.id, url, zpl);
+    logger.info(LOG_SOURCE, "ZPL recarregado via Tiny API", { pedidoId: pedido.id });
+  }
 }

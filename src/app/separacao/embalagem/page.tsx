@@ -153,14 +153,25 @@ function EmbalagemPage() {
 
   // Handle pedido completion (shared between scan and manual)
   const handlePedidoComplete = useCallback(
-    (pedidoId: string) => {
+    (pedidoId: string, etiquetaStatus?: string, etiquetaErro?: string | null) => {
       // Save pedido data before it disappears from the API response
       const pedidoData = allPedidos.find((p) => p.id === pedidoId);
       if (pedidoData) {
         completedPedidoData.current.set(pedidoId, pedidoData);
       }
       setCompletedIds((prev) => new Set(prev).add(pedidoId));
-      toast.success("Pedido embalado — etiqueta enviada");
+
+      if (etiquetaStatus === "falhou") {
+        toast.error(
+          `Pedido embalado — FALHA na etiqueta${etiquetaErro ? `: ${etiquetaErro}` : ""}. Use reimprimir.`,
+          { duration: 8000 },
+        );
+      } else if (etiquetaStatus === "impresso") {
+        toast.success("Pedido embalado — etiqueta impressa");
+      } else {
+        toast.success("Pedido embalado");
+      }
+
       queryClient.invalidateQueries({ queryKey: pedidosQueryKey });
       queryClient.invalidateQueries({ queryKey: itemsQueryKey });
     },
@@ -214,7 +225,7 @@ function EmbalagemPage() {
       setTimeout(() => setHighlightedPedidoId(null), 2000);
 
       if (result.pedido_completo) {
-        handlePedidoComplete(result.pedido_id);
+        handlePedidoComplete(result.pedido_id, result.etiqueta_status, result.etiqueta_erro);
       } else {
         queryClient.invalidateQueries({ queryKey: pedidosQueryKey });
         queryClient.invalidateQueries({ queryKey: itemsQueryKey });
@@ -283,7 +294,7 @@ function EmbalagemPage() {
         const result = await res.json();
 
         if (result.pedido_completo) {
-          handlePedidoComplete(item.pedido_id);
+          handlePedidoComplete(item.pedido_id, result.etiqueta_status, result.etiqueta_erro);
         } else {
           // Sync with server response
           queryClient.setQueryData<{ items: PedidoItem[] }>(

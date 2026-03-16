@@ -116,7 +116,8 @@ export async function GET(request: NextRequest) {
       .select(
         `id, numero, data, id_pedido_ecommerce, cliente_nome,
          forma_envio_descricao, status_separacao, marcadores,
-         empresa_origem_id, siso_empresas(nome, galpao_id)`,
+         empresa_origem_id, etiqueta_status, etiqueta_zpl,
+         siso_empresas(nome, galpao_id)`,
       )
       .not("status_separacao", "is", null);
 
@@ -253,6 +254,8 @@ export async function GET(request: NextRequest) {
         itens_marcados: stats.marcados,
         itens_bipados: stats.bipados,
         compra_stats: cs,
+        etiqueta_status: p.etiqueta_status ?? null,
+        etiqueta_pronta: !!p.etiqueta_zpl,
       };
     });
 

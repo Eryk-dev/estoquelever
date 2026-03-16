@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight } from "lucide-react";
+import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -510,7 +510,18 @@ export default function SeparacaoPage() {
           </div>
         )}
 
-        {activeTab === "separado" && pedidos.length > 0 && (
+        {activeTab === "separado" && pedidos.length > 0 && (() => {
+          const semEtiqueta = pedidos.filter((p) => !p.etiqueta_pronta).length;
+          return (
+          <>
+          {semEtiqueta > 0 && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-950/20 dark:text-amber-400">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                <strong>{semEtiqueta}</strong> pedido(s) sem etiqueta pronta — impressao sera mais lenta
+              </span>
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <span className="text-xs text-ink-faint">
               {selectedIds.size > 0
@@ -540,7 +551,9 @@ export default function SeparacaoPage() {
               </button>
             </div>
           </div>
-        )}
+          </>
+          );
+        })()}
 
         {activeTab === "embalado" && pedidos.length > 0 && (
           <div className="flex items-center justify-between">

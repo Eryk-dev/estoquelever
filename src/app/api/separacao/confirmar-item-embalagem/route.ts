@@ -137,18 +137,21 @@ export async function POST(request: NextRequest) {
       pedido_completo,
     });
 
-    // Fire-and-forget: record event and trigger label print when packing is complete
+    // Record event and await label print when packing is complete
     if (pedido_completo) {
       registrarEvento({
         pedidoId: item.pedido_id,
         evento: "embalagem_concluida",
       }).catch(() => {});
 
-      buscarEImprimirEtiqueta(item.pedido_id).catch((err) => {
-        logger.error("confirmar-item-embalagem", "Label print trigger failed", {
-          pedido_id: item.pedido_id,
-          error: err instanceof Error ? err.message : String(err),
-        });
+      const etiqueta = await buscarEImprimirEtiqueta(item.pedido_id);
+      return NextResponse.json({
+        pedido_item_id,
+        quantidade_bipada: newBipada,
+        bipado_completo,
+        pedido_completo,
+        etiqueta_status: etiqueta.success ? "impresso" : "falhou",
+        etiqueta_erro: etiqueta.error ?? null,
       });
     }
 

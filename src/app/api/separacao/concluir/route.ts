@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
+import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/agrupamento-service";
 
 /**
  * POST /api/separacao/concluir
@@ -115,6 +116,21 @@ export async function POST(request: NextRequest) {
           evento: "separacao_concluida" as const,
         })),
       ).catch(() => {});
+
+      // Fire-and-forget: ensure agrupamentos exist and ZPL labels are cached.
+      // This is a second chance — the first attempt was at iniciar time.
+      // 1. Create agrupamentos for any pedidos that don't have one yet
+      preCriarAgrupamentosEmLote(separados).catch((err) => {
+        logger.error("separacao-concluir", "Falha ao pré-criar agrupamentos no concluir", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      // 2. Re-download ZPL for pedidos that have agrupamento but missing ZPL
+      recarregarEtiquetasFaltantes(separados).catch((err) => {
+        logger.error("separacao-concluir", "Falha ao recarregar etiquetas faltantes", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     }
 
     return NextResponse.json({ separados, pendentes });

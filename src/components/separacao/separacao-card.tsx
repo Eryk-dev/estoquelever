@@ -41,6 +41,8 @@ export interface SeparacaoPedido {
   itens_bipados: number;
   galpao_id: string | null;
   compra_stats: CompraStatsData | null;
+  etiqueta_status: string | null;
+  etiqueta_pronta: boolean;
 }
 
 interface SeparacaoCardProps {
@@ -86,6 +88,7 @@ export function SeparacaoCard({
   const [itemsLoading, setItemsLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
   const isEmbalado = pedido.status_separacao === "embalado";
+  const isSeparado = pedido.status_separacao === "separado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
   const isAguardandoOC = pedido.status_separacao === "aguardando_compra";
   const cs = pedido.compra_stats;
@@ -264,6 +267,27 @@ export function SeparacaoCard({
               <Calendar className="h-3 w-3" aria-hidden="true" />
               {formatDate(pedido.data_pedido)}
             </span>
+
+            {/* Label readiness indicator (separado + embalado) */}
+            {isSeparado && (
+              pedido.etiqueta_pronta ? (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
+                  <Printer className="h-2.5 w-2.5" />
+                  Etiqueta pronta
+                </span>
+              ) : (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:bg-amber-950/30 dark:text-amber-400">
+                  <AlertTriangle className="h-2.5 w-2.5" />
+                  Sem etiqueta
+                </span>
+              )
+            )}
+            {isEmbalado && pedido.etiqueta_status === "falhou" && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 dark:bg-red-950/30 dark:text-red-400">
+                <AlertTriangle className="h-2.5 w-2.5" />
+                Etiqueta falhou
+              </span>
+            )}
           </div>
 
           {/* Em Separacao: progress bar */}

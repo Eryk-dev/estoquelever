@@ -75,18 +75,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: check?.etiqueta_zpl ? "impresso" : "falhou" });
   }
 
-  const printNodeApiKey = await getConfig("PRINTNODE_API_KEY");
-  if (!printNodeApiKey) {
-    logger.error(LOG_SOURCE, "PRINTNODE_API_KEY não configurada");
-    return NextResponse.json({ status: "falhou", error: "impressora_nao_configurada" }, { status: 500 });
-  }
-
   const galpaoId = pedido.separacao_galpao_id;
   if (!galpaoId) {
     return NextResponse.json({ status: "falhou", error: "galpao_nao_definido" }, { status: 400 });
   }
 
-  const printer = await resolverImpressora(pedido.separacao_operador_id ?? session.id, galpaoId);
+  // Resolve API key + printer in parallel
+  const [printNodeApiKey, printer] = await Promise.all([
+    getConfig("PRINTNODE_API_KEY"),
+    resolverImpressora(pedido.separacao_operador_id ?? session.id, galpaoId),
+  ]);
+
+  if (!printNodeApiKey) {
+    logger.error(LOG_SOURCE, "PRINTNODE_API_KEY não configurada");
+    return NextResponse.json({ status: "falhou", error: "impressora_nao_configurada" }, { status: 500 });
+  }
+
   if (!printer) {
     logger.warn(LOG_SOURCE, "Nenhuma impressora configurada", { pedidoId, galpaoId });
     return NextResponse.json({ status: "falhou", error: "impressora_nao_encontrada" }, { status: 400 });
@@ -103,20 +107,20 @@ export async function POST(request: NextRequest) {
       titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId} (reimpressão)`,
     });
 
-    // Use RPC to bypass PostgREST schema cache issue with etiqueta_status
-    await supabase.rpc("siso_set_etiqueta_status", {
+    // Fire-and-forget status update — operator already got the print
+    supabase.rpc("siso_set_etiqueta_status", {
       p_pedido_id: pedidoId,
       p_status: "impresso",
-    });
+    }).then(() => {}, () => {});
 
     logger.info(LOG_SOURCE, "Reimpressão via cache", { pedidoId, jobId: String(jobId) });
     return NextResponse.json({ status: "impresso", jobId });
   } catch (err) {
-    // Use RPC to bypass PostgREST schema cache issue with etiqueta_status
-    await supabase.rpc("siso_set_etiqueta_status", {
+    // Fire-and-forget status update on error
+    supabase.rpc("siso_set_etiqueta_status", {
       p_pedido_id: pedidoId,
       p_status: "falhou",
-    });
+    }).then(() => {}, () => {});
 
     logger.error(LOG_SOURCE, "Erro ao reimprimir", {
       pedidoId,

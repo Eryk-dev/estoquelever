@@ -79,8 +79,30 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
   }
 
   try {
-    // Resolve ZPL content (fast path: cached, slow path: fetch from Tiny)
-    const zpl = pedido.etiqueta_zpl ?? (await resolverZplFallback(supabase, pedido));
+    const galpaoId = pedido.separacao_galpao_id;
+    if (!galpaoId) {
+      await setStatus(supabase, pedidoId, "falhou");
+      logger.logError({
+        error: new Error("Pedido sem separacao_galpao_id"),
+        source: LOG_SOURCE,
+        message: "Pedido sem separacao_galpao_id",
+        category: "validation",
+        pedidoId,
+        empresaId: pedido.empresa_origem_id,
+      });
+      return { success: false, error: "Pedido sem separacao_galpao_id" };
+    }
+
+    // Resolve ZPL + printer config + API key in parallel
+    // Fast path: ZPL already cached → all 3 resolve concurrently (~100ms total)
+    // Slow path: ZPL fetched from Tiny → printer/key still resolve during that wait
+    const [zpl, printNodeApiKey, printer] = await Promise.all([
+      pedido.etiqueta_zpl
+        ? Promise.resolve(pedido.etiqueta_zpl)
+        : resolverZplFallback(supabase, pedido),
+      getConfig("PRINTNODE_API_KEY"),
+      resolverImpressora(pedido.separacao_operador_id ?? galpaoId, galpaoId),
+    ]);
 
     if (!zpl) {
       await setStatus(supabase, pedidoId, "falhou");
@@ -97,8 +119,6 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
       return { success: false, error: msg };
     }
 
-    // Resolve printer
-    const printNodeApiKey = await getConfig("PRINTNODE_API_KEY");
     if (!printNodeApiKey) {
       await setStatus(supabase, pedidoId, "falhou");
       const msg = "PRINTNODE_API_KEY não configurada";
@@ -113,21 +133,6 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
       return { success: false, error: msg };
     }
 
-    const galpaoId = pedido.separacao_galpao_id;
-    if (!galpaoId) {
-      await setStatus(supabase, pedidoId, "falhou");
-      logger.logError({
-        error: new Error("Pedido sem separacao_galpao_id"),
-        source: LOG_SOURCE,
-        message: "Pedido sem separacao_galpao_id",
-        category: "validation",
-        pedidoId,
-        empresaId: pedido.empresa_origem_id,
-      });
-      return { success: false, error: "Pedido sem separacao_galpao_id" };
-    }
-
-    const printer = await resolverImpressora(pedido.separacao_operador_id ?? galpaoId, galpaoId);
     if (!printer) {
       await setStatus(supabase, pedidoId, "falhou");
       logger.warn(LOG_SOURCE, "Nenhuma impressora configurada", { pedidoId, galpaoId });
@@ -145,7 +150,9 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
       titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId}`,
     });
 
-    await setStatus(supabase, pedidoId, "impresso");
+    // Fire-and-forget: status update + event logging after successful print
+    // Operator doesn't need to wait for these DB writes
+    setStatus(supabase, pedidoId, "impresso").catch(() => {});
     registrarEvento({
       pedidoId,
       evento: "etiqueta_impressa",
@@ -158,7 +165,8 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
     });
     return { success: true };
   } catch (err) {
-    await setStatus(supabase, pedidoId, "falhou");
+    // Fire-and-forget: status + event on error path too
+    setStatus(supabase, pedidoId, "falhou").catch(() => {});
     const errorMsg = err instanceof Error ? err.message : String(err);
     registrarEvento({
       pedidoId,

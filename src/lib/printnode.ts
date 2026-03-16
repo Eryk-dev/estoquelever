@@ -235,43 +235,63 @@ export async function enviarImpressaoZpl(params: {
   return { jobId };
 }
 
+// ─── Printer resolution cache ─────────────────────────────────────────────
+
+const printerCache = new Map<string, { value: { printerId: number; printerNome: string } | null; expiresAt: number }>();
+const PRINTER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
  * Resolve which printer to use for a given user + galpao.
  * Priority: usuario.printnode_printer_id > galpao.printnode_printer_id > null
+ *
+ * Results are cached in-memory for 5 minutes to avoid repeated DB lookups
+ * during high-throughput packing sessions.
  */
 export async function resolverImpressora(
   usuarioId: string,
   galpaoId: string,
 ): Promise<{ printerId: number; printerNome: string } | null> {
+  const cacheKey = `${usuarioId}|${galpaoId}`;
+  const cached = printerCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.value;
+  }
+
   const supabase = createServiceClient();
 
-  // Check user override first
-  const { data: usuario } = await supabase
-    .from("siso_usuarios")
-    .select("printnode_printer_id, printnode_printer_nome")
-    .eq("id", usuarioId)
-    .single();
+  // Fetch user + galpao in parallel (single round-trip)
+  const [userResult, galpaoResult] = await Promise.all([
+    supabase
+      .from("siso_usuarios")
+      .select("printnode_printer_id, printnode_printer_nome")
+      .eq("id", usuarioId)
+      .single(),
+    supabase
+      .from("siso_galpoes")
+      .select("printnode_printer_id, printnode_printer_nome")
+      .eq("id", galpaoId)
+      .single(),
+  ]);
 
-  if (usuario?.printnode_printer_id) {
-    return {
-      printerId: usuario.printnode_printer_id,
-      printerNome: usuario.printnode_printer_nome ?? "",
+  let result: { printerId: number; printerNome: string } | null = null;
+
+  if (userResult.data?.printnode_printer_id) {
+    result = {
+      printerId: userResult.data.printnode_printer_id,
+      printerNome: userResult.data.printnode_printer_nome ?? "",
+    };
+  } else if (galpaoResult.data?.printnode_printer_id) {
+    result = {
+      printerId: galpaoResult.data.printnode_printer_id,
+      printerNome: galpaoResult.data.printnode_printer_nome ?? "",
     };
   }
 
-  // Fallback to galpao default
-  const { data: galpao } = await supabase
-    .from("siso_galpoes")
-    .select("printnode_printer_id, printnode_printer_nome")
-    .eq("id", galpaoId)
-    .single();
+  printerCache.set(cacheKey, { value: result, expiresAt: Date.now() + PRINTER_CACHE_TTL_MS });
+  return result;
+}
 
-  if (galpao?.printnode_printer_id) {
-    return {
-      printerId: galpao.printnode_printer_id,
-      printerNome: galpao.printnode_printer_nome ?? "",
-    };
-  }
-
-  return null;
+/** Clear the printer cache (e.g. after config changes). */
+export function invalidarCacheImpressora(): void {
+  printerCache.clear();
 }

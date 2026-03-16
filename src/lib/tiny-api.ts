@@ -421,6 +421,28 @@ export async function obterEtiquetasAgrupamento(
   );
 }
 
+/** Update product location in Tiny */
+export async function atualizarLocalizacaoProduto(
+  token: string,
+  produtoId: number,
+  localizacao: string,
+): Promise<void> {
+  // PUT /produtos/{id} requires descricao — fetch it first
+  const produto = await tinyFetch<{ descricao: string }>(
+    `/produtos/${produtoId}`,
+    { token },
+  );
+
+  await tinyFetch<void>(`/produtos/${produtoId}`, {
+    token,
+    method: "PUT",
+    body: {
+      descricao: produto.descricao,
+      estoque: { localizacao },
+    },
+  });
+}
+
 /** Test connection by fetching company info */
 export async function testarConexao(
   token: string,

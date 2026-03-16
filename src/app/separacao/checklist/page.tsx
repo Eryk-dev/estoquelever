@@ -16,6 +16,8 @@ import {
   X,
   XCircle,
   Loader2,
+  Pencil,
+  Save,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -38,6 +40,7 @@ interface ChecklistItem {
   separacao_marcado_em: string | null;
   localizacao: string | null;
   imagem_url: string | null;
+  empresa_origem_id: string | null;
 }
 
 interface ConsolidatedProduct {
@@ -50,6 +53,7 @@ interface ConsolidatedProduct {
   imagem_url: string | null;
   item_ids: string[];
   all_marcado: boolean;
+  empresa_origem_id: string | null;
 }
 
 const SORT_OPTIONS = [
@@ -85,6 +89,10 @@ function ChecklistPage() {
   const [highlightedSku, setHighlightedSku] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [esgotadoLoading, setEsgotadoLoading] = useState<string | null>(null);
+  const [editingLoc, setEditingLoc] = useState<string | null>(null); // produto_id being edited
+  const [editLocValue, setEditLocValue] = useState("");
+  const [savingLoc, setSavingLoc] = useState(false);
+  const locInputRef = useRef<HTMLInputElement>(null);
   const scanRef = useRef<HTMLInputElement>(null);
 
   // Auth redirect
@@ -151,6 +159,7 @@ function ChecklistPage() {
           imagem_url: item.imagem_url,
           item_ids: [item.id],
           all_marcado: item.separacao_marcado,
+          empresa_origem_id: item.empresa_origem_id,
         });
       }
     }
@@ -362,6 +371,66 @@ function ChecklistPage() {
       toast.error("Erro de conexao");
     } finally {
       setActionLoading(false);
+    }
+  }
+
+  // Handle location edit
+  function startEditLocation(product: ConsolidatedProduct, e: React.MouseEvent) {
+    e.stopPropagation();
+    setEditingLoc(product.produto_id);
+    setEditLocValue(product.localizacao ?? "");
+    setTimeout(() => locInputRef.current?.focus(), 50);
+  }
+
+  async function saveLocation(product: ConsolidatedProduct) {
+    const trimmed = editLocValue.trim();
+    if (trimmed === (product.localizacao ?? "")) {
+      setEditingLoc(null);
+      return;
+    }
+
+    if (!product.empresa_origem_id) {
+      toast.error("Empresa de origem nao encontrada");
+      setEditingLoc(null);
+      return;
+    }
+
+    setSavingLoc(true);
+    try {
+      const res = await sisoFetch("/api/separacao/localizacao", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          produto_id: Number(product.produto_id),
+          localizacao: trimmed,
+          empresa_id: product.empresa_origem_id,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Erro ao salvar localizacao");
+        return;
+      }
+
+      // Optimistic update in cache
+      queryClient.setQueryData<{ items: ChecklistItem[] }>(queryKey, (old) => {
+        if (!old) return old;
+        return {
+          items: old.items.map((item) =>
+            item.produto_id === product.produto_id
+              ? { ...item, localizacao: trimmed || null }
+              : item,
+          ),
+        };
+      });
+
+      toast.success(`Localizacao atualizada: ${trimmed || "(vazio)"}`);
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setSavingLoc(false);
+      setEditingLoc(null);
     }
   }
 
@@ -609,13 +678,59 @@ function ChecklistPage() {
                 </span>
 
                 {/* Location */}
-                {product.localizacao ? (
-                  <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-blue-50 px-2 py-1 font-mono text-xs font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-                    <MapPin className="h-3 w-3" />
-                    {product.localizacao}
-                  </span>
+                {editingLoc === product.produto_id ? (
+                  <div
+                    className="inline-flex shrink-0 items-center gap-1"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      ref={locInputRef}
+                      type="text"
+                      value={editLocValue}
+                      onChange={(e) => setEditLocValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); saveLocation(product); }
+                        if (e.key === "Escape") { e.preventDefault(); setEditingLoc(null); }
+                      }}
+                      disabled={savingLoc}
+                      placeholder="Ex: A1-02"
+                      className="h-7 w-24 rounded-md border border-blue-300 bg-white px-2 font-mono text-xs text-ink focus:border-blue-500 focus:outline-none dark:border-blue-700 dark:bg-zinc-900"
+                    />
+                    <button
+                      type="button"
+                      disabled={savingLoc}
+                      onClick={() => saveLocation(product)}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-500 text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
+                      title="Salvar"
+                    >
+                      {savingLoc ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                    </button>
+                  </div>
                 ) : (
-                  <MapPinOff className="h-3.5 w-3.5 shrink-0 text-zinc-300 dark:text-zinc-600" />
+                  <button
+                    type="button"
+                    onClick={(e) => startEditLocation(product, e)}
+                    className={cn(
+                      "inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 font-mono text-xs font-semibold transition-colors",
+                      product.localizacao
+                        ? "bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+                        : "bg-zinc-100 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700",
+                    )}
+                    title="Editar localizacao"
+                  >
+                    {product.localizacao ? (
+                      <>
+                        <MapPin className="h-3 w-3" />
+                        {product.localizacao}
+                      </>
+                    ) : (
+                      <>
+                        <MapPinOff className="h-3 w-3" />
+                        Sem loc.
+                      </>
+                    )}
+                    <Pencil className="h-2.5 w-2.5 opacity-50" />
+                  </button>
                 )}
 
                 {/* Esgotado button */}

@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 2. Fetch origin empresa_id per pedido (for localizacao join)
+    // 2. Fetch origin empresa_id per pedido (for localizacao join + location updates)
     const { data: pedidos } = await supabase
       .from("siso_pedidos")
       .select("id, empresa_origem_id")
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 4. Shape response
+    // 4. Shape response (include empresa_origem_id for location updates)
     const result = (items ?? []).map((item) => ({
       id: item.id,
       pedido_id: item.pedido_id,
@@ -93,6 +93,7 @@ export async function GET(request: NextRequest) {
       imagem_url: item.imagem_url ?? null,
       localizacao:
         locMap.get(`${item.pedido_id}:${item.produto_id}`) ?? null,
+      empresa_origem_id: pedidoEmpresaMap.get(item.pedido_id) ?? null,
     }));
 
     return NextResponse.json({ items: result });

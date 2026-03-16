@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { enviarImpressaoZpl, resolverImpressora } from "@/lib/printnode";
 import { getConfig } from "@/lib/config";
+import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "separacao-reimprimir";
@@ -10,8 +11,10 @@ const LOG_SOURCE = "separacao-reimprimir";
 /**
  * POST /api/separacao/reimprimir
  *
- * Reprint a shipping label using cached ZPL from the database.
- * No Tiny API calls — instant print from cache.
+ * Print/reprint a shipping label.
+ * Fast path: uses cached ZPL (instant).
+ * Fallback: if no cache, delegates to buscarEImprimirEtiqueta which
+ * creates agrupamento in Tiny, fetches ZPL, and prints.
  *
  * Headers: X-Session-Id
  * Body: { pedido_id: string }
@@ -56,11 +59,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // No cached ZPL — use full flow (create agrupamento + fetch from Tiny)
   if (!pedido.etiqueta_zpl) {
-    return NextResponse.json(
-      { error: "etiqueta_nao_cacheada", message: "ZPL não disponível no cache. A etiqueta pode ter expirado." },
-      { status: 404 },
-    );
+    logger.info(LOG_SOURCE, "ZPL não cacheado, usando fluxo completo", { pedidoId });
+    await buscarEImprimirEtiqueta(pedidoId);
+    return NextResponse.json({ status: "imprimindo" });
   }
 
   const printNodeApiKey = await getConfig("PRINTNODE_API_KEY");

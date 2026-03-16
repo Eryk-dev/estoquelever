@@ -728,7 +728,7 @@ function calcularSugestaoMultiGalpao(
         const emp = empresasDoGrupo.find((eg) => eg.empresaId === e.empresa_id);
         return emp?.galpaoId === galpaoOrigemId;
       })
-      .reduce((sum, e) => sum + e.disponivel, 0);
+      .reduce((sum, e) => sum + e.saldo, 0);
     return estoqueOrigemGalpao >= item.quantidade_pedida;
   });
 
@@ -751,7 +751,7 @@ function calcularSugestaoMultiGalpao(
           const emp = empresasDoGrupo.find((eg) => eg.empresaId === e.empresa_id);
           return emp?.galpaoId === outroGalpaoId;
         })
-        .reduce((sum, e) => sum + e.disponivel, 0);
+        .reduce((sum, e) => sum + e.saldo, 0);
       return estoqueOutro >= item.quantidade_pedida;
     });
 
@@ -769,7 +769,7 @@ function calcularSugestaoMultiGalpao(
   const nenhumaTemQualquer = itens.every((item) => {
     const totalDisponivel = itensEstoques
       .filter((e) => e.produto_id === item.produto_id)
-      .reduce((sum, e) => sum + e.disponivel, 0);
+      .reduce((sum, e) => sum + e.saldo, 0);
     return totalDisponivel <= 0;
   });
 
@@ -796,7 +796,7 @@ function calcularSugestaoMultiGalpao(
           const emp = empresasDoGrupo.find((eg) => eg.empresaId === e.empresa_id);
           return emp?.galpaoId === galpaoId;
         })
-        .reduce((sum, e) => sum + e.disponivel, 0);
+        .reduce((sum, e) => sum + e.saldo, 0);
       if (estoqueGalpao >= item.quantidade_pedida) covers++;
     }
     coverageByGalpao.set(galpaoId, covers);

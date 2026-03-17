@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ClipboardList, PackageSearch, ShoppingCart, Settings, LogOut } from "lucide-react";
+import { ClipboardList, PackageSearch, ShoppingCart, Settings, LogOut, Monitor } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { CARGO_LABELS } from "@/types";
@@ -49,6 +49,16 @@ const MODULES: Module[] = [
       "Pedidos sem estoque agrupados por fornecedor para formular ordens de compra rapidamente.",
     icon: ShoppingCart,
     color: "var(--color-caution)",
+  },
+  {
+    id: "painel",
+    href: "/painel",
+    title: "Painel",
+    subtitle: "Painel Operacional",
+    description:
+      "Visao consolidada por urgencia de envio. Pedidos agrupados por deadline com atualizacao em tempo real.",
+    icon: Monitor,
+    color: "var(--color-danger)",
   },
 ];
 

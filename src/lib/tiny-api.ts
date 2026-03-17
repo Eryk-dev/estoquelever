@@ -80,6 +80,8 @@ interface TinyPedidoRaw {
   id: number;
   numeroPedido: number;
   data: string; // "2024-01-01"
+  dataEnvio?: string | null;
+  dataPrevista?: string | null;
   cliente: {
     id: number;
     nome: string;
@@ -109,6 +111,7 @@ export interface TinyPedidoDetalhe {
   id: string;
   numero: string;
   data: string;
+  dataEnvio?: string | null;
   idPedidoEcommerce?: string;
   nomeEcommerce?: string;
   cliente: {
@@ -157,6 +160,7 @@ export async function getPedido(
     id: String(raw.id),
     numero: String(raw.numeroPedido),
     data: raw.data,
+    dataEnvio: raw.dataEnvio ?? raw.dataPrevista ?? null,
     idPedidoEcommerce: raw.ecommerce?.numeroPedidoEcommerce ?? undefined,
     nomeEcommerce: raw.ecommerce?.nome ?? undefined,
     cliente: {

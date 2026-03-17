@@ -23,6 +23,18 @@ function serializeError(err: unknown): string {
 
 type Decisao = "propria" | "transferencia" | "oc";
 
+/** Convert Tiny datetime "YYYY-MM-DD HH:MM:SS" (BRT, UTC-3) to ISO timestamptz */
+function parseTinyDateTime(dateStr: string): string {
+  // Tiny sends dates in BRT (UTC-3) without timezone info
+  const cleaned = dateStr.trim();
+  // Handle "YYYY-MM-DD" (date only) — assume end of day
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
+    return `${cleaned}T23:59:59-03:00`;
+  }
+  // Handle "YYYY-MM-DD HH:MM:SS"
+  return `${cleaned.replace(" ", "T")}-03:00`;
+}
+
 interface ProcessedItem {
   produto_id: number;
   produto_id_suporte: number | null;
@@ -316,6 +328,7 @@ export async function processWebhook(
           decisao_final: isAuto ? "propria" : null,
           separacao_galpao_id: separacaoGalpaoId,
           status_separacao: isAuto ? "aguardando_nf" : null,
+          prazo_envio: pedido.dataEnvio ? parseTinyDateTime(pedido.dataEnvio) : null,
           processado_em: null,
           marcadores: isAuto ? [galpaoOrigemNome] : [],
           payload_original: pedido,

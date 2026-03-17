@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { Suspense, useState, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle } from "lucide-react";
@@ -18,9 +18,11 @@ import {
 import { GalpaoSelector } from "@/components/galpao-selector";
 import type { Tab, StatusSeparacao, SeparacaoCounts } from "@/types";
 
+type VisibleSeparacaoTab = Exclude<StatusSeparacao, "cancelado">;
+
 // 6 tabs mapping 1:1 to StatusSeparacao values
 const TAB_CONFIG: {
-  id: StatusSeparacao;
+  id: VisibleSeparacaoTab;
   label: string;
   emptyMessage: string;
   description: string;
@@ -78,9 +80,9 @@ const SORT_OPTIONS = [
   { value: "sku", label: "SKU" },
 ] as const;
 
-function parseTabParam(value: string | null): StatusSeparacao | null {
+function parseTabParam(value: string | null): VisibleSeparacaoTab | null {
   if (!value) return null;
-  return TAB_CONFIG.some((tab) => tab.id === value) ? (value as StatusSeparacao) : null;
+  return TAB_CONFIG.some((tab) => tab.id === value) ? (value as VisibleSeparacaoTab) : null;
 }
 
 // Move target options per current tab (backward + forward)
@@ -140,7 +142,15 @@ interface SeparacaoResponse {
   empresas: { id: string; nome: string }[];
 }
 
-export default function SeparacaoPage() {
+function SeparacaoPageFallback() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-surface">
+      <LoadingSpinner />
+    </div>
+  );
+}
+
+function SeparacaoPageContent() {
   const { user, loading, logout, activeGalpaoId, activeGalpaoNome } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -922,6 +932,14 @@ export default function SeparacaoPage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function SeparacaoPage() {
+  return (
+    <Suspense fallback={<SeparacaoPageFallback />}>
+      <SeparacaoPageContent />
+    </Suspense>
   );
 }
 

@@ -63,8 +63,8 @@ export async function POST(request: NextRequest) {
       const g = ug.siso_galpoes as unknown as { id: string; nome: string } | null;
       return g ? { id: g.id, nome: g.nome } : null;
     })
-    .filter(Boolean)
-    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")) as { id: string; nome: string }[];
+    .filter((galpao): galpao is { id: string; nome: string } => galpao !== null)
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
   // Create server-side session
   let sessionId: string | undefined;

@@ -235,6 +235,7 @@ export async function imprimirEtiquetaDireta(data: EtiquetaPreClaimed): Promise<
       numero: data.numero,
       empresa_origem_id: data.empresaOrigemId,
       nota_fiscal_id: null,
+      forma_frete_id: null,
       agrupamento_expedicao_id: data.agrupamentoExpedicaoId,
       etiqueta_url: data.etiquetaUrl,
       etiqueta_zpl: data.etiquetaZpl,
@@ -319,6 +320,7 @@ interface PedidoRow {
   numero: string;
   empresa_origem_id: string;
   nota_fiscal_id: number | null;
+  forma_frete_id: string | null;
   agrupamento_expedicao_id: string | null;
   etiqueta_url: string | null;
   etiqueta_zpl: string | null;
@@ -341,19 +343,28 @@ async function setStatus(
 }
 
 /**
- * Create a new agrupamento in Tiny and save its ID to the pedido.
+ * Create a new agrupamento in Tiny using NF ID and save its ID to the pedido.
  */
 async function criarNovoAgrupamento(
   supabase: SupabaseClient,
   token: string,
-  pedidoId: string,
-  pedidoTinyId: number,
+  pedido: PedidoRow,
 ): Promise<number> {
-  const res = await criarAgrupamento(token, [pedidoTinyId]);
+  if (!pedido.nota_fiscal_id) {
+    throw new Error(`Pedido ${pedido.id} sem nota_fiscal_id — não pode criar agrupamento`);
+  }
+  const formaFreteId = pedido.forma_frete_id
+    ? parseInt(pedido.forma_frete_id, 10)
+    : undefined;
+  const res = await criarAgrupamento(
+    token,
+    [pedido.nota_fiscal_id],
+    isNaN(formaFreteId as number) ? undefined : formaFreteId,
+  );
   await supabase
     .from("siso_pedidos")
     .update({ agrupamento_expedicao_id: String(res.id) })
-    .eq("id", pedidoId);
+    .eq("id", pedido.id);
   return res.id;
 }
 
@@ -371,12 +382,6 @@ async function resolverZplFallback(
 
   const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
 
-  const pedidoTinyId = parseInt(pedido.id, 10);
-  if (isNaN(pedidoTinyId)) {
-    logger.error(LOG_SOURCE, "Pedido com id não numérico", { pedidoId: pedido.id });
-    return null;
-  }
-
   return runWithEmpresa(pedido.empresa_origem_id, async () => {
     // Resolve or create agrupamento
     let agrupamentoId = pedido.agrupamento_expedicao_id
@@ -384,7 +389,7 @@ async function resolverZplFallback(
       : null;
 
     if (!agrupamentoId) {
-      agrupamentoId = await criarNovoAgrupamento(supabase, token, pedido.id, pedidoTinyId);
+      agrupamentoId = await criarNovoAgrupamento(supabase, token, pedido);
     }
 
     // Conclude agrupamento (non-fatal: Mercado Envios may auto-request pickup)
@@ -404,9 +409,13 @@ async function resolverZplFallback(
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           // Get agrupamento to find the expedition ID for this specific pedido
+          const pedidoTinyId = parseInt(pedido.id, 10);
           const agrupamentoDetails = await obterAgrupamento(token, agrupamentoId!);
           const exp = agrupamentoDetails.expedicoes?.find(
-            (e) => e.idObjeto === pedidoTinyId || e.venda?.id === pedidoTinyId,
+            (e) =>
+              e.idObjeto === pedido.nota_fiscal_id ||
+              e.idObjeto === pedidoTinyId ||
+              e.venda?.id === pedidoTinyId,
           );
 
           if (exp) {
@@ -424,7 +433,7 @@ async function resolverZplFallback(
               pedidoId: pedido.id,
               oldAgrupamentoId: String(agrupamentoId),
             });
-            agrupamentoId = await criarNovoAgrupamento(supabase, token, pedido.id, pedidoTinyId);
+            agrupamentoId = await criarNovoAgrupamento(supabase, token, pedido);
             try { await concluirAgrupamento(token, agrupamentoId); } catch { /* non-fatal */ }
             continue;
           }

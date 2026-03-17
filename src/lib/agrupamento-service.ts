@@ -347,30 +347,39 @@ async function processarGrupo(
     // All Tiny API calls within this scope are rate-limited for this empresa
     return await runWithEmpresa(empresaId, async () => {
 
-    // Build Tiny pedido IDs (Tiny auto-includes the pedido's NF in the expedition)
-    const idsTiny: number[] = [];
+    // Build NF IDs + pedido mapping for expedition matching
+    const idsNotasFiscais: number[] = [];
     const pedidoPorTinyId = new Map<number, string>();
 
     for (const p of pedidos) {
-      const tinyId = parseInt(p.id, 10);
-      if (isNaN(tinyId)) {
-        logger.warn(LOG_SOURCE, "Pedido com id não numérico, skip", { pedidoId: p.id });
+      if (!p.nota_fiscal_id) {
+        logger.warn(LOG_SOURCE, "Pedido sem nota fiscal, skip", { pedidoId: p.id });
         continue;
       }
-      idsTiny.push(tinyId);
-      pedidoPorTinyId.set(tinyId, p.id);
+      idsNotasFiscais.push(p.nota_fiscal_id);
+      // Map both pedido ID and NF ID for expedition matching
+      const tinyId = parseInt(p.id, 10);
+      if (!isNaN(tinyId)) pedidoPorTinyId.set(tinyId, p.id);
+      pedidoPorTinyId.set(p.nota_fiscal_id, p.id);
     }
 
-    if (idsTiny.length === 0) return;
+    if (idsNotasFiscais.length === 0) return;
 
-    // 1. Create single agrupamento for all pedidos in this shipping group
-    const agrupamento = await criarAgrupamento(token, idsTiny);
+    // 1. Create agrupamento with NF IDs + forma de frete
+    const formaFreteId = pedidos[0].forma_frete_id
+      ? parseInt(pedidos[0].forma_frete_id, 10)
+      : undefined;
+    const agrupamento = await criarAgrupamento(
+      token,
+      idsNotasFiscais,
+      isNaN(formaFreteId as number) ? undefined : formaFreteId,
+    );
     const agrupamentoId = agrupamento.id;
 
     logger.info(LOG_SOURCE, "Agrupamento criado em lote", {
       empresaId,
       agrupamentoId: String(agrupamentoId),
-      qtdPedidos: String(idsTiny.length),
+      qtdNFs: String(idsNotasFiscais.length),
       groupKey,
     });
 

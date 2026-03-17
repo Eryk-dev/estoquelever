@@ -434,16 +434,20 @@ export interface TinyEtiquetasAgrupamentoResponse {
   urls: string[];
 }
 
-/** Create a shipment group (agrupamento de expedição) from order IDs.
- *  Tiny automatically includes the pedido's NF in the expedition. */
+/** Create a shipment group (agrupamento de expedição) from NF IDs + forma de frete. */
 export async function criarAgrupamento(
   token: string,
-  idsPedidos: number[],
+  idsNotasFiscais: number[],
+  formaFreteId?: number,
 ): Promise<TinyCriarAgrupamentoResponse> {
+  const body: Record<string, unknown> = { idsNotasFiscais };
+  if (formaFreteId) {
+    body.logistica = { formaFrete: { id: formaFreteId } };
+  }
   return tinyFetch<TinyCriarAgrupamentoResponse>("/expedicao", {
     token,
     method: "POST",
-    body: { idsPedidos },
+    body,
   });
 }
 

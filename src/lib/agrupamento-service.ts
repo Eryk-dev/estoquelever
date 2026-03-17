@@ -106,9 +106,16 @@ export async function preCriarAgrupamentosEmLote(
 }
 
 /**
- * Retry ZPL download for pedidos that have an agrupamento but no cached ZPL.
- * Called at separation conclusion (concluir) to fill any gaps left by the
- * initial pre-creation at iniciar time.
+ * Smart retry for agrupamentos that exist but have missing ZPL labels.
+ * Called at separation conclusion (concluir) and handles each state:
+ *
+ * 1. Agrupamento not found in Tiny (404) → clears agrupamento_id so it
+ *    gets re-created on next iniciar/concluir via preCriarAgrupamentosEmLote.
+ * 2. Agrupamento exists but not concluded → concludes it, then fetches labels.
+ * 3. Agrupamento exists and concluded → fetches labels per expedition.
+ *
+ * Groups by agrupamento to minimize API calls (1 obterAgrupamento per group
+ * instead of 1 per pedido).
  *
  * Errors are logged but never thrown — fire-and-forget.
  */
@@ -135,7 +142,7 @@ export async function recarregarEtiquetasFaltantes(
     pedidoIds: pedidos.map((p) => p.id),
   });
 
-  // Group by empresa + agrupamento to minimize API calls
+  // Group by empresa first (for token resolution)
   const byEmpresa = new Map<string, typeof pedidos>();
   for (const p of pedidos) {
     const list = byEmpresa.get(p.empresa_origem_id) ?? [];
@@ -148,13 +155,30 @@ export async function recarregarEtiquetasFaltantes(
       try {
         const { token } = await getValidTokenByEmpresa(empresaId);
 
+        // Group by agrupamento within this empresa
+        const byAgrupamento = new Map<string, typeof pedidosEmpresa>();
+        for (const p of pedidosEmpresa) {
+          const agId = p.agrupamento_expedicao_id!;
+          const list = byAgrupamento.get(agId) ?? [];
+          list.push(p);
+          byAgrupamento.set(agId, list);
+        }
+
         await runWithEmpresa(empresaId, async () => {
-          for (const pedido of pedidosEmpresa) {
+          for (const [agrupamentoIdStr, pedidosAgrup] of byAgrupamento) {
             try {
-              await recarregarZplPedido(supabase, token, pedido);
+              await retryAgrupamento(
+                supabase,
+                token,
+                empresaId,
+                parseInt(agrupamentoIdStr, 10),
+                pedidosAgrup,
+              );
             } catch (err) {
-              logger.warn(LOG_SOURCE, "Falha ao recarregar ZPL para pedido", {
-                pedidoId: pedido.id,
+              logger.warn(LOG_SOURCE, "Falha ao processar agrupamento no retry", {
+                agrupamentoId: agrupamentoIdStr,
+                empresaId,
+                pedidoIds: pedidosAgrup.map((p) => p.id),
                 error: err instanceof Error ? err.message : String(err),
               });
             }
@@ -175,6 +199,116 @@ export async function recarregarEtiquetasFaltantes(
 // ─── Internal ────────────────────────────────────────────────────────────────
 
 type SupabaseClient = ReturnType<typeof createServiceClient>;
+
+/**
+ * Smart retry for a single agrupamento — handles each state:
+ *
+ * 1. Agrupamento not found (404) → clear agrupamento_expedicao_id
+ * 2. Exists but not concluded → conclude, then fetch labels
+ * 3. Concluded → fetch labels per expedition
+ */
+async function retryAgrupamento(
+  supabase: SupabaseClient,
+  token: string,
+  empresaId: string,
+  agrupamentoId: number,
+  pedidos: Array<{
+    id: string;
+    empresa_origem_id: string;
+    agrupamento_expedicao_id: string | null;
+    etiqueta_url: string | null;
+    etiqueta_zpl: string | null;
+  }>,
+): Promise<void> {
+  const pedidoIds = pedidos.map((p) => p.id);
+
+  // 1. Fetch agrupamento from Tiny — if 404, clear IDs so they get re-created
+  let details;
+  try {
+    details = await obterAgrupamento(token, agrupamentoId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("404")) {
+      logger.warn(LOG_SOURCE, "Agrupamento não encontrado no Tiny (404) — limpando para re-criação", {
+        agrupamentoId: String(agrupamentoId),
+        pedidoIds,
+      });
+      await supabase
+        .from("siso_pedidos")
+        .update({ agrupamento_expedicao_id: null, etiqueta_url: null })
+        .in("id", pedidoIds);
+      return;
+    }
+    throw err;
+  }
+
+  // 2. Try to conclude (idempotent — if already concluded, Tiny returns 400 which is fine)
+  try {
+    await concluirAgrupamento(token, agrupamentoId);
+    logger.info(LOG_SOURCE, "Agrupamento concluído no retry", {
+      agrupamentoId: String(agrupamentoId),
+    });
+  } catch (err) {
+    logger.warn(LOG_SOURCE, "Concluir agrupamento no retry (não-fatal)", {
+      agrupamentoId: String(agrupamentoId),
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // 3. Map pedido Tiny IDs for matching expeditions
+  const pedidoPorTinyId = new Map<number, string>();
+  for (const p of pedidos) {
+    const tinyId = parseInt(p.id, 10);
+    if (!isNaN(tinyId)) pedidoPorTinyId.set(tinyId, p.id);
+  }
+
+  if (!details.expedicoes || details.expedicoes.length === 0) {
+    logger.warn(LOG_SOURCE, "Agrupamento sem expedições no retry", {
+      agrupamentoId: String(agrupamentoId),
+    });
+    return;
+  }
+
+  // 4. Fetch labels per expedition
+  for (const exp of details.expedicoes) {
+    const pedidoId =
+      pedidoPorTinyId.get(exp.idObjeto) ??
+      (exp.venda?.id ? pedidoPorTinyId.get(exp.venda.id) : undefined);
+
+    if (!pedidoId) continue;
+
+    try {
+      const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, exp.id);
+
+      if (!etiquetas.urls || etiquetas.urls.length === 0) {
+        logger.warn(LOG_SOURCE, "Sem URL de etiqueta no retry", {
+          agrupamentoId: String(agrupamentoId),
+          expedicaoId: String(exp.id),
+          pedidoId,
+        });
+        continue;
+      }
+
+      const url = etiquetas.urls[0];
+      const zpl = await baixarZpl(url);
+      await salvarEtiqueta(supabase, pedidoId, url, zpl);
+
+      logger.info(LOG_SOURCE, "Etiqueta recuperada no retry", {
+        pedidoId,
+        agrupamentoId: String(agrupamentoId),
+        expedicaoId: String(exp.id),
+        cached: String(!!zpl),
+      });
+    } catch (err) {
+      logger.warn(LOG_SOURCE, "Falha ao buscar etiqueta no retry", {
+        agrupamentoId: String(agrupamentoId),
+        expedicaoId: String(exp.id),
+        pedidoId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
 
 async function processarGrupo(
   supabase: SupabaseClient,
@@ -369,49 +503,3 @@ async function recuperarPendingTravados(
   }
 }
 
-/**
- * Re-download ZPL for a single pedido that has an agrupamento but no cached ZPL.
- */
-async function recarregarZplPedido(
-  supabase: SupabaseClient,
-  token: string,
-  pedido: { id: string; agrupamento_expedicao_id: string | null; etiqueta_url: string | null },
-): Promise<void> {
-  const agrupamentoId = pedido.agrupamento_expedicao_id
-    ? parseInt(pedido.agrupamento_expedicao_id, 10)
-    : null;
-  if (!agrupamentoId) return;
-
-  const pedidoTinyId = parseInt(pedido.id, 10);
-  if (isNaN(pedidoTinyId)) return;
-
-  // If we already have a URL, just re-download the ZPL
-  if (pedido.etiqueta_url) {
-    const zpl = await baixarZpl(pedido.etiqueta_url);
-    if (zpl) {
-      await supabase
-        .from("siso_pedidos")
-        .update({ etiqueta_zpl: zpl })
-        .eq("id", pedido.id);
-      logger.info(LOG_SOURCE, "ZPL recarregado de URL existente", { pedidoId: pedido.id });
-      return;
-    }
-  }
-
-  // No URL or download failed — fetch fresh from Tiny
-  const details = await obterAgrupamento(token, agrupamentoId);
-  const exp = details.expedicoes?.find(
-    (e) => e.idObjeto === pedidoTinyId || e.venda?.id === pedidoTinyId,
-  );
-  if (!exp) return;
-
-  const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, exp.id);
-  if (!etiquetas.urls || etiquetas.urls.length === 0) return;
-
-  const url = etiquetas.urls[0];
-  const zpl = await baixarZpl(url);
-  if (zpl) {
-    await salvarEtiqueta(supabase, pedido.id, url, zpl);
-    logger.info(LOG_SOURCE, "ZPL recarregado via Tiny API", { pedidoId: pedido.id });
-  }
-}

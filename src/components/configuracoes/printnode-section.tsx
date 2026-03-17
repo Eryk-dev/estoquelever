@@ -303,7 +303,7 @@ export function PrintNodeSection({
         </div>
 
         {/* Connection test */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={handleTestConnection}
             disabled={testing || (!apiKeyConfigured && !apiKeyInput.trim())}
@@ -318,7 +318,7 @@ export function PrintNodeSection({
           </button>
 
           {connectionStatus && (
-            <span className="flex items-center gap-1.5 text-xs">
+            <span className="flex items-center gap-1.5 text-xs min-w-0">
               {connectionStatus.ok ? (
                 <>
                   <Check className="h-3.5 w-3.5 text-emerald-500" />
@@ -358,9 +358,9 @@ export function PrintNodeSection({
                 .map((galpao) => (
                   <div
                     key={galpao.id}
-                    className="flex items-center gap-3"
+                    className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3"
                   >
-                    <span className="w-16 text-xs font-semibold text-ink">
+                    <span className="w-16 shrink-0 text-xs font-semibold text-ink">
                       {galpao.nome}
                     </span>
                     <select
@@ -411,8 +411,8 @@ export function PrintNodeSection({
             </p>
             <div className="space-y-2">
               {usuarios.map((u) => (
-                <div key={u.id} className="flex items-center gap-3">
-                  <span className="w-24 truncate text-xs text-ink">
+                <div key={u.id} className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
+                  <span className="w-24 shrink-0 truncate text-xs text-ink">
                     {u.nome}
                   </span>
                   <select

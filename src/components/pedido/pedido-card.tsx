@@ -346,7 +346,7 @@ function ProductRow({ item, decisao, pedido, onStockUpdated }: ProductRowProps) 
         </span>
 
         {/* Location + stock numbers */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {decisao === "oc" ? (
             <>
               <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[11px] text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
@@ -488,7 +488,7 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
     ShoppingCart;
 
   return (
-    <div className="flex items-center gap-2 px-4 py-3">
+    <div className="flex items-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3">
       {/* Decision label + chevron toggle */}
       <div className="relative flex min-w-0 flex-1 items-center gap-1.5">
         <DecisaoIcon
@@ -602,7 +602,7 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
       <div className="flex min-w-0 flex-1 flex-col">
 
         {/* ── HEADER ROW ─────────────────────────────────────────────────── */}
-        <header className="flex items-center gap-2 px-4 py-3">
+        <header className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 sm:px-4 py-2.5 sm:py-3">
           {/* Order number */}
           <span className="shrink-0 font-mono text-sm font-bold text-ink">
             #{pedido.numero}
@@ -652,7 +652,7 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
         <div className="mx-4 h-px bg-line" />
 
         {/* ── PRODUCT ROWS ─────────────────────────────────────────────────── */}
-        <div className="divide-y divide-line px-4">
+        <div className="divide-y divide-line px-3 sm:px-4">
           {pedido.itens.map((item) => (
             <ProductRow
               key={item.produtoId}

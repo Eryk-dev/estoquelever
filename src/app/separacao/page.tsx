@@ -372,25 +372,25 @@ export default function SeparacaoPage() {
   return (
     <div className="min-h-screen bg-surface">
       {/* Header */}
-      <header className="border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
+      <header className="sticky top-0 z-10 border-b border-line bg-paper">
+        <div className="mx-auto flex max-w-5xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
           <Link
             href="/"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink shrink-0"
             title="Inicio"
           >
             <Home className="h-4 w-4" />
           </Link>
-          <div className="flex-1">
-            <h1 className="text-base font-bold tracking-tight text-ink">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-sm sm:text-base font-bold tracking-tight text-ink">
               Separacao
             </h1>
-            <p className="text-[11px] text-ink-faint">
+            <p className="text-[11px] text-ink-faint hidden sm:block">
               Separacao fisica por galpao
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
               <span className="font-mono text-xs font-semibold text-ink">
                 {user.nome}
               </span>
@@ -410,7 +410,7 @@ export default function SeparacaoPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl space-y-4 px-4 py-4">
+      <main className="mx-auto max-w-5xl space-y-4 px-3 sm:px-4 py-3 sm:py-4">
         {/* Tabs */}
         <div className="overflow-x-auto">
           <Tabs
@@ -427,7 +427,7 @@ export default function SeparacaoPage() {
         {/* Filter bar — all tabs */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Search */}
-          <div className="relative flex-1 min-w-[180px]">
+          <div className="relative flex-1 min-w-[140px] sm:min-w-[180px]">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint" />
             <input
               type="text"
@@ -491,13 +491,13 @@ export default function SeparacaoPage() {
 
         {/* Action buttons per tab */}
         {activeTab === "aguardando_separacao" && pedidos.length > 0 && (
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-ink-faint">
               {selectedIds.size > 0
                 ? `${selectedIds.size} selecionado(s)`
                 : `${pedidos.length} pedido(s)`}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {isAdmin && moveTargets && selectedIds.size > 0 && (
                 <MoveButton
                   targets={moveTargets}
@@ -539,13 +539,13 @@ export default function SeparacaoPage() {
               </span>
             </div>
           )}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-ink-faint">
               {selectedIds.size > 0
                 ? `${selectedIds.size} selecionado(s)`
                 : `${pedidos.length} pedido(s)`}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {isAdmin && moveTargets && selectedIds.size > 0 && (
                 <MoveButton
                   targets={moveTargets}
@@ -560,20 +560,20 @@ export default function SeparacaoPage() {
                 <button
                   type="button"
                   onClick={handleEmbalarComEtiqueta}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 sm:px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700"
                 >
                   <PackageCheck className="h-3.5 w-3.5" />
-                  Embalar {comEtiqueta} com etiqueta
+                  <span className="hidden sm:inline">Embalar</span> {comEtiqueta} <span className="hidden sm:inline">com etiqueta</span>
                 </button>
               )}
               <button
                 type="button"
                 onClick={handleEmbalarSelecionados}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-3 sm:px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
               >
                 <PackageCheck className="h-3.5 w-3.5" />
                 {selectedIds.size > 0
-                  ? `Embalar ${selectedIds.size} pedido(s)`
+                  ? `Embalar ${selectedIds.size}`
                   : `Embalar todos (${pedidos.length})`}
               </button>
             </div>
@@ -583,13 +583,13 @@ export default function SeparacaoPage() {
         })()}
 
         {activeTab === "embalado" && pedidos.length > 0 && (
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-ink-faint">
               {selectedIds.size > 0
                 ? `${selectedIds.size} selecionado(s)`
                 : `${pedidos.length} pedido(s)`}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {isAdmin && moveTargets && selectedIds.size > 0 && (
                 <MoveButton
                   targets={moveTargets}
@@ -616,13 +616,13 @@ export default function SeparacaoPage() {
         )}
 
         {activeTab === "em_separacao" && pedidos.length > 0 && (
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-ink-faint">
               {selectedIds.size > 0
                 ? `${selectedIds.size} selecionado(s)`
                 : `${pedidos.length} pedido(s)`}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {isAdmin && moveTargets && selectedIds.size > 0 && (
                 <MoveButton
                   targets={moveTargets}
@@ -649,13 +649,13 @@ export default function SeparacaoPage() {
         )}
 
         {activeTab === "aguardando_nf" && isAdmin && pedidos.length > 0 && (
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-ink-faint">
               {selectedIds.size > 0
                 ? `${selectedIds.size} selecionado(s)`
                 : `${pedidos.length} pedido(s)`}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {moveTargets && selectedIds.size > 0 && (
                 <MoveButton
                   targets={moveTargets}

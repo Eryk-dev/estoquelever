@@ -89,7 +89,7 @@ function ConfiguracoesContent() {
       mainClassName="space-y-6"
     >
       {/* ── Links rápidos ───────────────────────────────────────── */}
-      <div className="flex gap-3">
+      <div className="flex flex-col sm:flex-row gap-3">
         <Link
           href="/admin/usuarios"
           className="flex flex-1 items-center gap-3 rounded-xl border border-line bg-paper px-4 py-4 transition-colors hover:bg-surface"

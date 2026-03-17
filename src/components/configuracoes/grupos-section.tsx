@@ -206,13 +206,13 @@ function GrupoCard({
           .map((ge) => (
             <div
               key={ge.id}
-              className="flex items-center gap-2 px-4 py-2 text-sm"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 text-sm"
             >
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-zinc-100 font-mono text-[10px] font-bold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-zinc-100 font-mono text-[10px] font-bold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 shrink-0">
                 {ge.tier}
               </span>
-              <span className="text-ink">{ge.siso_empresas.nome}</span>
-              <span className="font-mono text-[10px] text-ink-faint">
+              <span className="text-ink truncate">{ge.siso_empresas.nome}</span>
+              <span className="font-mono text-[10px] text-ink-faint hidden sm:inline shrink-0">
                 {ge.siso_empresas.cnpj}
               </span>
               <button
@@ -233,7 +233,7 @@ function GrupoCard({
 
         {/* Add empresa row */}
         {adding ? (
-          <div className="flex items-center gap-2 border-t border-line px-4 py-2.5">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 border-t border-line px-4 py-2.5">
             <select
               value={selectedEmpresaId}
               onChange={(e) => setSelectedEmpresaId(e.target.value)}
@@ -247,29 +247,31 @@ function GrupoCard({
                 </option>
               ))}
             </select>
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-ink-faint">Tier</span>
-              <input
-                type="number"
-                min="1"
-                value={selectedTier}
-                onChange={(e) => setSelectedTier(Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-10 rounded-lg border border-line bg-surface px-1.5 py-1.5 text-center font-mono text-xs text-ink outline-none"
-              />
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-ink-faint">Tier</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={selectedTier}
+                  onChange={(e) => setSelectedTier(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-12 rounded-lg border border-line bg-surface px-1.5 py-1.5 text-center font-mono text-xs text-ink outline-none"
+                />
+              </div>
+              <button
+                onClick={handleAddEmpresa}
+                disabled={!selectedEmpresaId || saving}
+                className="btn-primary px-2.5 py-1.5 text-xs disabled:opacity-40"
+              >
+                {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+              </button>
+              <button
+                onClick={() => { setAdding(false); setSelectedEmpresaId(""); }}
+                className="inline-flex h-6 w-6 items-center justify-center rounded text-ink-faint hover:text-ink"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             </div>
-            <button
-              onClick={handleAddEmpresa}
-              disabled={!selectedEmpresaId || saving}
-              className="btn-primary px-2.5 py-1.5 text-xs disabled:opacity-40"
-            >
-              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-            </button>
-            <button
-              onClick={() => { setAdding(false); setSelectedEmpresaId(""); }}
-              className="inline-flex h-6 w-6 items-center justify-center rounded text-ink-faint hover:text-ink"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
           </div>
         ) : (
           <button

@@ -401,24 +401,24 @@ function EmbalagemPage() {
   return (
     <div className="min-h-screen bg-surface">
       {/* Header */}
-      <header className="border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
+      <header className="sticky top-0 z-10 border-b border-line bg-paper">
+        <div className="mx-auto flex max-w-5xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
           <Link
             href="/separacao"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink shrink-0"
             title="Voltar"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
-          <div className="flex-1">
-            <h1 className="text-base font-bold tracking-tight text-ink">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-sm sm:text-base font-bold tracking-tight text-ink">
               Embalagem
             </h1>
             <p className="text-[11px] text-ink-faint">
               {pedidoIds.length} pedido(s) — Bipagem e conferencia
             </p>
           </div>
-          <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
+          <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
             <span className="font-mono text-xs font-semibold text-ink">
               {user.nome}
             </span>
@@ -429,7 +429,7 @@ function EmbalagemPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl space-y-4 px-4 py-4">
+      <main className="mx-auto max-w-5xl space-y-4 px-3 sm:px-4 py-3 sm:py-4">
         {/* Scan input */}
         <div className="rounded-xl border border-line bg-paper px-4 py-3">
           <div className="flex items-center gap-2">

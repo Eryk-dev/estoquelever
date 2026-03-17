@@ -103,17 +103,17 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-surface">
       {/* Header */}
-      <header className="border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
-          <div className="flex-1">
-            <h1 className="text-base font-bold tracking-tight text-ink">
+      <header className="sticky top-0 z-10 border-b border-line bg-paper">
+        <div className="mx-auto flex max-w-3xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-sm sm:text-base font-bold tracking-tight text-ink">
               SISO Platform
             </h1>
             <p className="text-[11px] text-ink-faint">
-              Gestão de Pedidos & Separação
+              Gestao de Pedidos & Separacao
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {(user.cargos ?? [user.cargo]).includes("admin") && (
               <Link
                 href="/configuracoes"
@@ -123,7 +123,7 @@ export default function HomePage() {
                 <Settings className="h-4 w-4" />
               </Link>
             )}
-            <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
+            <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
               <span className="font-mono text-xs font-semibold text-ink">
                 {user.nome}
               </span>
@@ -144,7 +144,7 @@ export default function HomePage() {
       </header>
 
       {/* Module cards */}
-      <main className="mx-auto max-w-3xl px-4 py-8">
+      <main className="mx-auto max-w-3xl px-3 sm:px-4 py-6 sm:py-8">
         <p className="mb-5 text-sm text-ink-muted">
           Selecione um módulo para começar:
         </p>

@@ -129,7 +129,7 @@ export default function DashboardPage() {
       >
         <RefreshCw className={`h-4 w-4 ${isRefetching ? "animate-spin" : ""}`} />
       </button>
-      <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
+      <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
         <span className="font-mono text-xs font-semibold text-ink">
           {user?.nome}
         </span>

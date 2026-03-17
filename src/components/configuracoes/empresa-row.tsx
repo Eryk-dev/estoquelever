@@ -70,11 +70,11 @@ export function EmpresaRow({
     <div className={cn("border-b border-line/50 last:border-b-0", isInactive && "opacity-50")}>
       <button
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-surface/50"
+        className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 px-3 sm:px-4 py-2.5 text-left transition-colors hover:bg-surface/50"
       >
-        <Building2 className="h-3.5 w-3.5 text-ink-faint" />
+        <Building2 className="h-3.5 w-3.5 text-ink-faint shrink-0" />
         <span className="text-sm font-medium text-ink">{empresa.nome}</span>
-        <span className="font-mono text-[10px] text-ink-faint">{empresa.cnpj}</span>
+        <span className="font-mono text-[10px] text-ink-faint hidden sm:inline">{empresa.cnpj}</span>
 
         {/* Inactive badge */}
         {isInactive && (

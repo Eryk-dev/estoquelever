@@ -136,7 +136,7 @@ function ProductRowReadonly({
           {item.descricao}
         </span>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {decisao === "oc" ? (
             <>
               <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[11px] text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
@@ -224,7 +224,7 @@ export function PedidoCardConcluido({ pedido }: PedidoCardConcluidoProps) {
 
           {/* Client name */}
           <span
-            className="min-w-0 max-w-[180px] truncate text-sm text-ink-muted"
+            className="min-w-0 max-w-[120px] sm:max-w-[180px] truncate text-sm text-ink-muted"
             title={pedido.cliente.nome}
           >
             {pedido.cliente.nome}

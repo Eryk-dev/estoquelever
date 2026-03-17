@@ -200,7 +200,7 @@ export default function ComprasPage() {
                 ).map((item) => (
                   <div
                     key={item.id}
-                    className="flex items-center justify-between gap-3 rounded-xl border border-line bg-paper px-4 py-3"
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 rounded-xl border border-line bg-paper px-3 sm:px-4 py-3"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-ink truncate">
@@ -224,7 +224,8 @@ export default function ComprasPage() {
                       </span>
                       <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">
                         <XCircle className="h-3 w-3" />
-                        Indisponível
+                        <span className="hidden sm:inline">Indisponível</span>
+                        <span className="sm:hidden">Indisp.</span>
                       </span>
                     </div>
                   </div>

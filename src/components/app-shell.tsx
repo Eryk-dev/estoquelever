@@ -52,30 +52,30 @@ export function AppShell({
   return (
     <div className="min-h-screen bg-surface">
       <header className="sticky top-0 z-10 border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-3xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
           {backHref && (
             <Link
               href={backHref}
-              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-ink-muted transition-colors hover:bg-surface hover:text-ink"
+              className="inline-flex items-center justify-center rounded-lg p-1.5 sm:px-2 sm:py-1.5 text-sm text-ink-muted transition-colors hover:bg-surface hover:text-ink"
             >
               <ArrowLeft className="h-4 w-4" />
-              Voltar
+              <span className="hidden sm:inline ml-1.5">Voltar</span>
             </Link>
           )}
-          <div className="flex-1">
-            <h1 className="text-base font-bold tracking-tight text-ink">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-sm sm:text-base font-bold tracking-tight text-ink truncate">
               {title}
             </h1>
             {subtitle && (
-              <p className="text-[11px] text-ink-faint">{subtitle}</p>
+              <p className="text-[11px] text-ink-faint truncate">{subtitle}</p>
             )}
           </div>
           {headerRight && (
-            <div className="flex items-center gap-2">{headerRight}</div>
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">{headerRight}</div>
           )}
         </div>
       </header>
-      <main className={cn("mx-auto max-w-3xl px-4 py-6", mainClassName)}>
+      <main className={cn("mx-auto max-w-3xl px-3 sm:px-4 py-4 sm:py-6", mainClassName)}>
         {children}
       </main>
     </div>

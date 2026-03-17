@@ -97,7 +97,7 @@ export function GalpaoCard({
           {addingEmpresa ? (
             <div className="border-t border-line px-4 py-3">
               <div className="flex flex-col gap-2">
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     type="text"
                     value={newEmpresaNome}
@@ -111,7 +111,7 @@ export function GalpaoCard({
                     value={newEmpresaCnpj}
                     onChange={(e) => setNewEmpresaCnpj(e.target.value)}
                     placeholder="CNPJ"
-                    className="w-40 rounded-lg border border-line bg-surface px-3 py-1.5 font-mono text-sm text-ink outline-none"
+                    className="w-full sm:w-40 rounded-lg border border-line bg-surface px-3 py-1.5 font-mono text-sm text-ink outline-none"
                     onKeyDown={(e) => e.key === "Enter" && handleAddEmpresa()}
                   />
                 </div>

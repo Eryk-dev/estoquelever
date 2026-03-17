@@ -391,42 +391,44 @@ export function SeparacaoCard({
               )}
 
               {/* Item list */}
-              <div className="rounded-lg border border-line bg-surface">
-                <table className="w-full text-[11px]">
-                  <thead>
-                    <tr className="border-b border-line text-left text-ink-faint">
-                      <th className="px-2 py-1 font-medium">SKU</th>
-                      <th className="px-2 py-1 font-medium">Descricao</th>
-                      <th className="px-2 py-1 font-medium text-center">Qtd</th>
-                      <th className="px-2 py-1 font-medium">Fornecedor</th>
-                      <th className="px-2 py-1 font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cs.itens.map((item, idx) => (
-                      <tr
-                        key={`${item.sku}-${idx}`}
-                        className="border-b border-line/50 last:border-0"
-                      >
-                        <td className="px-2 py-1 font-mono font-medium text-ink">
-                          {item.sku}
-                        </td>
-                        <td className="max-w-[200px] truncate px-2 py-1 text-ink-faint" title={item.descricao}>
-                          {item.descricao}
-                        </td>
-                        <td className="px-2 py-1 text-center font-mono text-ink">
-                          {item.quantidade}
-                        </td>
-                        <td className="px-2 py-1 text-ink-faint">
-                          {item.fornecedor_oc ?? "—"}
-                        </td>
-                        <td className="px-2 py-1">
-                          <CompraStatusBadge status={item.compra_status} />
-                        </td>
+              <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+                <div className="rounded-lg border border-line bg-surface min-w-[400px]">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="border-b border-line text-left text-ink-faint">
+                        <th className="px-2 py-1 font-medium">SKU</th>
+                        <th className="px-2 py-1 font-medium">Descricao</th>
+                        <th className="px-2 py-1 font-medium text-center">Qtd</th>
+                        <th className="px-2 py-1 font-medium">Fornecedor</th>
+                        <th className="px-2 py-1 font-medium">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {cs.itens.map((item, idx) => (
+                        <tr
+                          key={`${item.sku}-${idx}`}
+                          className="border-b border-line/50 last:border-0"
+                        >
+                          <td className="px-2 py-1 font-mono font-medium text-ink whitespace-nowrap">
+                            {item.sku}
+                          </td>
+                          <td className="max-w-[120px] sm:max-w-[200px] truncate px-2 py-1 text-ink-faint" title={item.descricao}>
+                            {item.descricao}
+                          </td>
+                          <td className="px-2 py-1 text-center font-mono text-ink">
+                            {item.quantidade}
+                          </td>
+                          <td className="px-2 py-1 text-ink-faint whitespace-nowrap">
+                            {item.fornecedor_oc ?? "—"}
+                          </td>
+                          <td className="px-2 py-1">
+                            <CompraStatusBadge status={item.compra_status} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -444,72 +446,74 @@ export function SeparacaoCard({
                 <span className="ml-2 text-xs text-ink-faint">Carregando itens...</span>
               </div>
             ) : items && items.length > 0 ? (
-              <div className="rounded-lg border border-line bg-surface">
-                <table className="w-full text-[11px]">
-                  <thead>
-                    <tr className="border-b border-line text-left text-ink-faint">
-                      <th className="w-14 px-2 py-1.5"></th>
-                      <th className="px-2 py-1.5 font-medium">SKU</th>
-                      <th className="px-2 py-1.5 font-medium">Descricao</th>
-                      <th className="px-2 py-1.5 font-medium text-center">Qtd</th>
-                      <th className="px-2 py-1.5 font-medium">Localizacao</th>
-                      {isEmSeparacao && (
-                        <th className="px-2 py-1.5 font-medium text-center">Separado</th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item) => (
-                      <tr
-                        key={item.id}
-                        className={cn(
-                          "border-b border-line/50 last:border-0",
-                          item.separacao_marcado && "bg-emerald-50/50 dark:bg-emerald-950/10",
-                        )}
-                      >
-                        <td className="px-2 py-1.5">
-                          {item.imagem_url ? (
-                            <img
-                              src={item.imagem_url}
-                              alt={item.sku}
-                              className="h-12 w-12 rounded border border-line object-cover bg-surface"
-                            />
-                          ) : (
-                            <div className="h-12 w-12 rounded border border-line bg-surface" />
-                          )}
-                        </td>
-                        <td className="px-2 py-1.5 font-mono font-medium text-ink">
-                          {item.sku}
-                        </td>
-                        <td className="max-w-[200px] truncate px-2 py-1.5 text-ink-faint" title={item.descricao}>
-                          {item.descricao}
-                        </td>
-                        <td className="px-2 py-1.5 text-center font-mono text-ink">
-                          {item.quantidade}
-                        </td>
-                        <td className="px-2 py-1.5">
-                          {item.localizacao ? (
-                            <span className="inline-flex items-center gap-1 text-ink-faint">
-                              <MapPin className="h-3 w-3" />
-                              {item.localizacao}
-                            </span>
-                          ) : (
-                            <span className="text-ink-faint">—</span>
-                          )}
-                        </td>
+              <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+                <div className="rounded-lg border border-line bg-surface min-w-[480px]">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="border-b border-line text-left text-ink-faint">
+                        <th className="w-14 px-2 py-1.5"></th>
+                        <th className="px-2 py-1.5 font-medium">SKU</th>
+                        <th className="px-2 py-1.5 font-medium">Descricao</th>
+                        <th className="px-2 py-1.5 font-medium text-center">Qtd</th>
+                        <th className="px-2 py-1.5 font-medium">Localizacao</th>
                         {isEmSeparacao && (
-                          <td className="px-2 py-1.5 text-center">
-                            {item.separacao_marcado ? (
-                              <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-emerald-500" />
+                          <th className="px-2 py-1.5 font-medium text-center">Separado</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((item) => (
+                        <tr
+                          key={item.id}
+                          className={cn(
+                            "border-b border-line/50 last:border-0",
+                            item.separacao_marcado && "bg-emerald-50/50 dark:bg-emerald-950/10",
+                          )}
+                        >
+                          <td className="px-2 py-1.5">
+                            {item.imagem_url ? (
+                              <img
+                                src={item.imagem_url}
+                                alt={item.sku}
+                                className="h-10 w-10 sm:h-12 sm:w-12 rounded border border-line object-cover bg-surface"
+                              />
+                            ) : (
+                              <div className="h-10 w-10 sm:h-12 sm:w-12 rounded border border-line bg-surface" />
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 font-mono font-medium text-ink whitespace-nowrap">
+                            {item.sku}
+                          </td>
+                          <td className="max-w-[120px] sm:max-w-[200px] truncate px-2 py-1.5 text-ink-faint" title={item.descricao}>
+                            {item.descricao}
+                          </td>
+                          <td className="px-2 py-1.5 text-center font-mono text-ink">
+                            {item.quantidade}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap">
+                            {item.localizacao ? (
+                              <span className="inline-flex items-center gap-1 text-ink-faint">
+                                <MapPin className="h-3 w-3" />
+                                {item.localizacao}
+                              </span>
                             ) : (
                               <span className="text-ink-faint">—</span>
                             )}
                           </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                          {isEmSeparacao && (
+                            <td className="px-2 py-1.5 text-center">
+                              {item.separacao_marcado ? (
+                                <CheckCircle2 className="mx-auto h-3.5 w-3.5 text-emerald-500" />
+                              ) : (
+                                <span className="text-ink-faint">—</span>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             ) : (
               <p className="py-2 text-center text-xs text-ink-faint">

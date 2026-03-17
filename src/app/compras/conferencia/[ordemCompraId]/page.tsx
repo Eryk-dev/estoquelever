@@ -255,7 +255,7 @@ export default function ConferenciaPage() {
                         </div>
                       </div>
 
-                      <div className="mt-3 flex items-center gap-4">
+                      <div className="mt-3 flex flex-wrap items-center gap-3 sm:gap-4">
                         <div className="text-xs text-ink-muted">
                           <span className="text-ink-faint">Esperado:</span>{" "}
                           <span className="font-semibold text-ink tabular-nums">

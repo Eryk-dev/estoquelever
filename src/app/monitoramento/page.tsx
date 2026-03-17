@@ -328,7 +328,7 @@ export default function MonitoramentoPage() {
                 Pedidos Hoje
               </h2>
             </div>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {(
                 [
                   { key: "pendente", label: "Pendente", color: "text-amber-600 dark:text-amber-400" },

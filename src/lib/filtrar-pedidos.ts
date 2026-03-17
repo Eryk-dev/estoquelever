@@ -29,7 +29,17 @@ export function filtrarPendentes(pedidos: Pedido[], cargos: Cargo | Cargo[]): Pe
       filtered = pedidos.filter((p) => p.sugestao === "oc");
     } else {
       const galpao = cargoToGalpao(cargo);
-      filtered = galpao ? pedidos.filter((p) => p.filialOrigem === galpao) : pedidos;
+      if (!galpao) {
+        filtered = pedidos;
+      } else {
+        filtered = pedidos.filter((p) => {
+          const sugestao = p.sugestao;
+          // Transferencia: quem aprova é o galpão que vai ENVIAR (o outro)
+          if (sugestao === "transferencia") return p.filialOrigem !== galpao;
+          // Propria / OC / outros: quem aprova é o galpão de origem
+          return p.filialOrigem === galpao;
+        });
+      }
     }
     for (const p of filtered) {
       if (!ids.has(p.id)) {

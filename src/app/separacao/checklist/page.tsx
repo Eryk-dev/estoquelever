@@ -1009,6 +1009,65 @@ function ChecklistPage() {
           </div>
         )}
       </main>
+
+      {/* Esgotado modal — choose between encaminhar or OC */}
+      {esgotadoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-line bg-paper p-5 shadow-xl">
+            <h3 className="text-sm font-bold text-ink">
+              SKU {esgotadoModal.sku} — Esgotado
+            </h3>
+            <p className="mt-1 text-xs text-ink/60">
+              {esgotadoModal.pedidos_afetados} pedido(s) afetado(s). O que
+              deseja fazer?
+            </p>
+
+            <div className="mt-4 flex flex-col gap-2">
+              {esgotadoModal.galpoes.map((g) => (
+                <button
+                  key={g.galpao_id}
+                  type="button"
+                  disabled={esgotadoModal.loading}
+                  onClick={() =>
+                    handleEsgotadoAction("encaminhar", g.galpao_id)
+                  }
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-40 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/50"
+                >
+                  {esgotadoModal.loading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )}
+                  Encaminhar para {g.galpao_nome}
+                </button>
+              ))}
+
+              <button
+                type="button"
+                disabled={esgotadoModal.loading}
+                onClick={() => handleEsgotadoAction("oc")}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:opacity-40 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
+              >
+                {esgotadoModal.loading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ShoppingCart className="h-3.5 w-3.5" />
+                )}
+                Criar Ordem de Compra
+              </button>
+            </div>
+
+            <button
+              type="button"
+              disabled={esgotadoModal.loading}
+              onClick={() => setEsgotadoModal(null)}
+              className="mt-3 w-full rounded-lg border border-line px-4 py-2 text-xs font-medium text-ink/60 transition-colors hover:bg-surface disabled:opacity-40"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

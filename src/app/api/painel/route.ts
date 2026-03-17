@@ -11,20 +11,11 @@ const PIPELINE_STATUSES = [
   "embalado",
 ] as const;
 
-// Active statuses for SLA calculation (not yet embalado)
-const SLA_STATUSES = [
-  "aguardando_compra",
-  "aguardando_nf",
-  "aguardando_separacao",
-  "em_separacao",
-  "separado",
-] as const;
-
 /**
  * GET /api/painel
  *
  * Returns aggregated data for the Torre de Controle (control tower) view:
- * pipeline counts, SLA breakdown, throughput, alerts, KPIs.
+ * pipeline counts, throughput, alerts, KPIs.
  *
  * Query params:
  *   galpao_id — filter by galpão (optional)
@@ -78,14 +69,7 @@ export async function GET(request: NextRequest) {
       return applyFilter(q);
     });
 
-    // 2. SLA — fetch prazo_envio for active (non-embalado) orders
-    let slaQuery = supabase
-      .from("siso_pedidos")
-      .select("prazo_envio")
-      .in("status_separacao", SLA_STATUSES as unknown as string[]);
-    slaQuery = applyFilter(slaQuery);
-
-    // 3. Throughput — orders packed today (embalagem_concluida_em >= today BRT)
+    // 2. Throughput — orders packed today (embalagem_concluida_em >= today BRT)
     let throughputQuery = supabase
       .from("siso_pedidos")
       .select("embalagem_concluida_em")
@@ -93,7 +77,7 @@ export async function GET(request: NextRequest) {
       .gte("embalagem_concluida_em", todayStartBrt);
     throughputQuery = applyFilter(throughputQuery);
 
-    // 4. Stuck NF — aguardando_nf with criado_em > 4h ago
+    // 3. Stuck NF — aguardando_nf with criado_em > 4h ago
     let stuckNfQuery = supabase
       .from("siso_pedidos")
       .select("*", { count: "exact", head: true })
@@ -101,7 +85,7 @@ export async function GET(request: NextRequest) {
       .lt("criado_em", fourHoursAgo);
     stuckNfQuery = applyFilter(stuckNfQuery);
 
-    // 5. Stuck separacao — em_separacao with separacao_iniciada_em > 2h ago
+    // 4. Stuck separacao — em_separacao with separacao_iniciada_em > 2h ago
     let stuckSepQuery = supabase
       .from("siso_pedidos")
       .select("*", { count: "exact", head: true })
@@ -109,7 +93,7 @@ export async function GET(request: NextRequest) {
       .lt("separacao_iniciada_em", twoHoursAgo);
     stuckSepQuery = applyFilter(stuckSepQuery);
 
-    // 6. Recent errors — last 1h (no empresa filter on erros table)
+    // 5. Recent errors — last 1h (no empresa filter on erros table)
     const errorsCountQuery = supabase
       .from("siso_erros")
       .select("*", { count: "exact", head: true })
@@ -122,7 +106,7 @@ export async function GET(request: NextRequest) {
       .order("timestamp", { ascending: false })
       .limit(3);
 
-    // 7. Avg cycle time — embalados in last 24h, fetch both timestamps
+    // 6. Avg cycle time — embalados in last 24h, fetch both timestamps
     let cycleQuery = supabase
       .from("siso_pedidos")
       .select("criado_em, embalagem_concluida_em")
@@ -131,7 +115,7 @@ export async function GET(request: NextRequest) {
       .not("embalagem_concluida_em", "is", null);
     cycleQuery = applyFilter(cycleQuery);
 
-    // 8. Galpoes list
+    // 7. Galpoes list
     const galpoesQuery = supabase
       .from("siso_galpoes")
       .select("id, nome")
@@ -141,7 +125,6 @@ export async function GET(request: NextRequest) {
     // ── Execute all in parallel ───────────────────────────────────────────
     const [
       pipelineResults,
-      { data: slaData },
       { data: throughputData },
       stuckNfResult,
       stuckSepResult,
@@ -151,7 +134,6 @@ export async function GET(request: NextRequest) {
       { data: galpoes },
     ] = await Promise.all([
       Promise.all(pipelinePromises),
-      slaQuery,
       throughputQuery,
       stuckNfQuery,
       stuckSepQuery,
@@ -166,21 +148,6 @@ export async function GET(request: NextRequest) {
     PIPELINE_STATUSES.forEach((status, i) => {
       pipeline[status] = pipelineResults[i].count ?? 0;
     });
-
-    // ── Build SLA ─────────────────────────────────────────────────────────
-    const sla = { overdue: 0, urgent: 0, attention: 0, on_time: 0, no_deadline: 0 };
-    const nowMs = now.getTime();
-    for (const row of slaData ?? []) {
-      if (!row.prazo_envio) {
-        sla.no_deadline++;
-        continue;
-      }
-      const diffH = (new Date(row.prazo_envio).getTime() - nowMs) / (1000 * 60 * 60);
-      if (diffH < 0) sla.overdue++;
-      else if (diffH < 2) sla.urgent++;
-      else if (diffH < 4) sla.attention++;
-      else sla.on_time++;
-    }
 
     // ── Build throughput buckets ──────────────────────────────────────────
     const hourBuckets = new Map<number, number>();
@@ -222,15 +189,12 @@ export async function GET(request: NextRequest) {
 
       pipeline,
 
-      sla,
-
       throughput: {
         buckets,
         total_today: totalToday,
       },
 
       alerts: {
-        overdue_count: sla.overdue,
         stuck_nf: stuckNfResult.count ?? 0,
         stuck_separacao: stuckSepResult.count ?? 0,
         recent_errors: errorsCountResult.count ?? 0,
@@ -244,7 +208,6 @@ export async function GET(request: NextRequest) {
       kpis: {
         processed_today: totalToday,
         pipeline_total: pipelineTotal,
-        overdue_count: sla.overdue,
         avg_cycle_time_min: avgCycleTimeMin,
       },
     });
@@ -261,9 +224,8 @@ function emptyResponse() {
     server_time: new Date().toISOString(),
     galpoes: [],
     pipeline: Object.fromEntries(PIPELINE_STATUSES.map((s) => [s, 0])),
-    sla: { overdue: 0, urgent: 0, attention: 0, on_time: 0, no_deadline: 0 },
     throughput: { buckets: [], total_today: 0 },
-    alerts: { overdue_count: 0, stuck_nf: 0, stuck_separacao: 0, recent_errors: 0, error_samples: [] },
-    kpis: { processed_today: 0, pipeline_total: 0, overdue_count: 0, avg_cycle_time_min: null },
+    alerts: { stuck_nf: 0, stuck_separacao: 0, recent_errors: 0, error_samples: [] },
+    kpis: { processed_today: 0, pipeline_total: 0, avg_cycle_time_min: null },
   };
 }

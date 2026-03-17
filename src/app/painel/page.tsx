@@ -6,11 +6,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Home,
   Clock,
-  AlertTriangle,
   PackageCheck,
   Layers,
   ChevronRight,
-  AlertCircle,
   FileWarning,
   Timer,
   XCircle,
@@ -27,19 +25,11 @@ interface PainelResponse {
   server_time: string;
   galpoes: { id: string; nome: string }[];
   pipeline: Record<string, number>;
-  sla: {
-    overdue: number;
-    urgent: number;
-    attention: number;
-    on_time: number;
-    no_deadline: number;
-  };
   throughput: {
     buckets: { hour: number; count: number }[];
     total_today: number;
   };
   alerts: {
-    overdue_count: number;
     stuck_nf: number;
     stuck_separacao: number;
     recent_errors: number;
@@ -48,7 +38,6 @@ interface PainelResponse {
   kpis: {
     processed_today: number;
     pipeline_total: number;
-    overdue_count: number;
     avg_cycle_time_min: number | null;
   };
 }
@@ -161,10 +150,9 @@ export default function PainelPage() {
 
   const galpoes = data?.galpoes ?? [];
   const pipeline = data?.pipeline ?? {};
-  const sla = data?.sla ?? { overdue: 0, urgent: 0, attention: 0, on_time: 0, no_deadline: 0 };
   const throughput = data?.throughput ?? { buckets: [], total_today: 0 };
-  const alerts = data?.alerts ?? { overdue_count: 0, stuck_nf: 0, stuck_separacao: 0, recent_errors: 0, error_samples: [] };
-  const kpis = data?.kpis ?? { processed_today: 0, pipeline_total: 0, overdue_count: 0, avg_cycle_time_min: null };
+  const alerts = data?.alerts ?? { stuck_nf: 0, stuck_separacao: 0, recent_errors: 0, error_samples: [] };
+  const kpis = data?.kpis ?? { processed_today: 0, pipeline_total: 0, avg_cycle_time_min: null };
 
   // Find pipeline bottleneck (stage with most items, excluding embalado)
   const bottleneckKey = useMemo(() => {
@@ -178,23 +166,9 @@ export default function PainelPage() {
     return max > 0 ? key : null;
   }, [pipeline]);
 
-  // SLA bars
-  const slaGroups = useMemo(() => {
-    const total = sla.overdue + sla.urgent + sla.attention + sla.on_time + sla.no_deadline;
-    return [
-      { key: "overdue", label: "Atrasados", count: sla.overdue, color: "bg-red-500", icon: "🔴" },
-      { key: "urgent", label: "Urgentes <2h", count: sla.urgent, color: "bg-orange-500", icon: "🟠" },
-      { key: "attention", label: "Atenção <4h", count: sla.attention, color: "bg-amber-500", icon: "🟡" },
-      { key: "on_time", label: "No prazo", count: sla.on_time, color: "bg-emerald-500", icon: "🟢" },
-      { key: "no_deadline", label: "Sem prazo", count: sla.no_deadline, color: "bg-zinc-400", icon: "⚪" },
-    ].map((g) => ({ ...g, pct: total > 0 ? (g.count / total) * 100 : 0 }));
-  }, [sla]);
-
   // Alert items
   const alertItems = useMemo(() => {
-    const items: { icon: typeof AlertTriangle; color: string; bgColor: string; label: string; count: number; href: string }[] = [];
-    if (alerts.overdue_count > 0)
-      items.push({ icon: AlertTriangle, color: "text-red-500", bgColor: "bg-red-50 dark:bg-red-950/30", label: "pedidos atrasados", count: alerts.overdue_count, href: "/separacao" });
+    const items: { icon: typeof Clock; color: string; bgColor: string; label: string; count: number; href: string }[] = [];
     if (alerts.stuck_nf > 0)
       items.push({ icon: FileWarning, color: "text-amber-500", bgColor: "bg-amber-50 dark:bg-amber-950/30", label: "aguardando NF há >4h", count: alerts.stuck_nf, href: "/separacao?tab=aguardando_nf" });
     if (alerts.stuck_separacao > 0)
@@ -262,7 +236,7 @@ export default function PainelPage() {
 
       <main className="mx-auto max-w-5xl space-y-4 px-4 py-4">
         {/* ── KPI Cards ──────────────────────────────────────────────────── */}
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <section className="grid grid-cols-3 gap-3">
           <KpiCard
             label="Processados hoje"
             value={kpis.processed_today}
@@ -274,13 +248,6 @@ export default function PainelPage() {
             value={kpis.pipeline_total}
             icon={Layers}
             color="text-blue-500"
-          />
-          <KpiCard
-            label="Atrasados"
-            value={kpis.overdue_count}
-            icon={AlertTriangle}
-            color="text-red-500"
-            pulse={kpis.overdue_count > 0}
           />
           <KpiCard
             label="Tempo médio"
@@ -327,53 +294,22 @@ export default function PainelPage() {
           )}
         </section>
 
-        {/* ── SLA + Throughput + Alerts ───────────────────────────────────── */}
+        {/* ── Throughput + Alerts ─────────────────────────────────────────── */}
         <div className="grid gap-4 lg:grid-cols-2">
-          {/* Left column: SLA + Throughput */}
-          <div className="space-y-4">
-            {/* SLA Bars */}
-            <section className="rounded-xl border border-line bg-paper p-4">
-              <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-ink-faint">
-                Prazos de Envio
+          {/* Throughput Chart */}
+          <section className="rounded-xl border border-line bg-paper p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-ink-faint">
+                Throughput Hoje
               </h2>
-              <div className="space-y-2">
-                {slaGroups.map((g) => (
-                  <div key={g.key} className="flex items-center gap-2">
-                    <span className="w-4 text-center text-xs">{g.icon}</span>
-                    <span className="w-16 font-mono text-xs font-bold tabular-nums text-ink">
-                      {g.count}
-                    </span>
-                    <span className="w-24 truncate text-xs text-ink-muted">
-                      {g.label}
-                    </span>
-                    <div className="flex-1">
-                      <div className="h-3 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                        <div
-                          className={cn("h-full rounded-full transition-all", g.color)}
-                          style={{ width: `${Math.max(g.pct, g.count > 0 ? 2 : 0)}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+              <span className="font-mono text-xs font-bold tabular-nums text-ink">
+                {throughput.total_today} total
+              </span>
+            </div>
+            <ThroughputChart buckets={throughput.buckets} />
+          </section>
 
-            {/* Throughput Chart */}
-            <section className="rounded-xl border border-line bg-paper p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-ink-faint">
-                  Throughput Hoje
-                </h2>
-                <span className="font-mono text-xs font-bold tabular-nums text-ink">
-                  {throughput.total_today} total
-                </span>
-              </div>
-              <ThroughputChart buckets={throughput.buckets} />
-            </section>
-          </div>
-
-          {/* Right column: Alerts */}
+          {/* Alerts */}
           <section className="rounded-xl border border-line bg-paper p-4">
             <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-ink-faint">
               Alertas
@@ -447,21 +383,14 @@ function KpiCard({
   value,
   icon: Icon,
   color,
-  pulse,
 }: {
   label: string;
   value: string | number;
   icon: React.ElementType;
   color: string;
-  pulse?: boolean;
 }) {
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-2 rounded-xl border border-line bg-paper p-4",
-        pulse && "animate-pulse-urgent border-red-300 dark:border-red-800",
-      )}
-    >
+    <div className="flex flex-col gap-2 rounded-xl border border-line bg-paper p-4">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-ink-muted">{label}</span>
         <Icon className={cn("h-4 w-4", color)} />
@@ -483,9 +412,8 @@ function ThroughputChart({ buckets }: { buckets: { hour: number; count: number }
   const currentHour = nowBrt.getUTCHours();
 
   // Show 6h..current+1 range for relevance
-  const startHour = Math.max(0, 6);
   const endHour = Math.min(23, Math.max(currentHour + 1, 18));
-  const visible = buckets.filter((b) => b.hour >= startHour && b.hour <= endHour);
+  const visible = buckets.filter((b) => b.hour >= 6 && b.hour <= endHour);
 
   if (visible.length === 0) {
     return <p className="text-xs text-ink-faint">Nenhum dado disponível.</p>;

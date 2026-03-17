@@ -23,6 +23,7 @@ import {
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
+import { naturalLocCompare } from "@/lib/domain-helpers";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CARGO_LABELS } from "@/types";
@@ -185,10 +186,8 @@ function ChecklistPage() {
     result.sort((a, b) => {
       if (sort === "sku") return a.sku.localeCompare(b.sku);
       if (sort === "descricao") return a.descricao.localeCompare(b.descricao);
-      // Default: localizacao
-      const aLoc = a.localizacao ?? "\uffff";
-      const bLoc = b.localizacao ?? "\uffff";
-      return aLoc.localeCompare(bLoc);
+      // Default: localizacao (natural sort — B-2 before B-10)
+      return naturalLocCompare(a.localizacao, b.localizacao);
     });
 
     return result;

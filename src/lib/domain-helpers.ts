@@ -52,6 +52,48 @@ export function getFilialColors(galpao: string): string {
   return GALPAO_COLORS[galpao] ?? DEFAULT_GALPAO_COLOR;
 }
 
+// ─── Localizacao (natural sort) ─────────────────────────────────────────────
+
+/**
+ * Compare two localizacao strings with natural ordering.
+ * Pattern: LETTERS-NUMBER-NUMBER (e.g., "B-10-1", "AB-2-3").
+ * Numeric segments are compared as numbers, not strings.
+ * Nulls and non-standard formats sort to the end.
+ */
+export function naturalLocCompare(a: string | null, b: string | null): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+
+  const partsA = a.split("-");
+  const partsB = b.split("-");
+  const len = Math.max(partsA.length, partsB.length);
+
+  for (let i = 0; i < len; i++) {
+    const pa = partsA[i];
+    const pb = partsB[i];
+    if (pa === undefined && pb === undefined) return 0;
+    if (pa === undefined) return -1;
+    if (pb === undefined) return 1;
+
+    const numA = parseInt(pa, 10);
+    const numB = parseInt(pb, 10);
+    const aIsNum = !isNaN(numA) && String(numA) === pa;
+    const bIsNum = !isNaN(numB) && String(numB) === pb;
+
+    if (aIsNum && bIsNum) {
+      if (numA !== numB) return numA - numB;
+    } else if (aIsNum !== bIsNum) {
+      // letters before numbers
+      return aIsNum ? 1 : -1;
+    } else {
+      const cmp = pa.localeCompare(pb);
+      if (cmp !== 0) return cmp;
+    }
+  }
+  return 0;
+}
+
 // ─── Formatting ─────────────────────────────────────────────────────────────
 
 export function formatTime(iso: string | undefined): string {

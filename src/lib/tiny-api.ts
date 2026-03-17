@@ -1,7 +1,14 @@
 /**
  * Tiny ERP API v3 client.
  * Wraps common operations used by the SISO webhook processor.
+ *
+ * Rate limiting: When called within a runWithEmpresa() scope (from tiny-queue.ts),
+ * all requests are automatically queued and rate-limited per empresa
+ * (55 req/min, max 5 concurrent). The 429 retry loop below acts as
+ * a defense-in-depth fallback.
  */
+
+import { getContextEmpresaId, tinyQueue } from "./tiny-queue";
 
 const TINY_BASE = "https://api.tiny.com.br/public-api/v3";
 
@@ -13,7 +20,26 @@ interface TinyRequestOptions {
 
 const MAX_RETRIES = 3;
 
+/**
+ * Main entry point for Tiny API calls.
+ * Routes through the in-memory queue when an empresa context is set
+ * (via runWithEmpresa), otherwise calls directly.
+ */
 async function tinyFetch<T>(
+  path: string,
+  opts: TinyRequestOptions,
+): Promise<T> {
+  const empresaId = getContextEmpresaId();
+
+  if (empresaId) {
+    return tinyQueue.execute(empresaId, () => doTinyFetch<T>(path, opts));
+  }
+
+  return doTinyFetch<T>(path, opts);
+}
+
+/** Raw HTTP fetch with 429 retry (defense-in-depth). */
+async function doTinyFetch<T>(
   path: string,
   { token, method = "GET", body }: TinyRequestOptions,
 ): Promise<T> {
@@ -160,7 +186,7 @@ export async function getPedido(
     id: String(raw.id),
     numero: String(raw.numeroPedido),
     data: raw.data,
-    dataEnvio: raw.dataEnvio ?? raw.dataPrevista ?? null,
+    dataEnvio: raw.dataEnvio || raw.dataPrevista || null,
     idPedidoEcommerce: raw.ecommerce?.numeroPedidoEcommerce ?? undefined,
     nomeEcommerce: raw.ecommerce?.nome ?? undefined,
     cliente: {

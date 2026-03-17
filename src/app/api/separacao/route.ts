@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getSessionUser } from "@/lib/session";
 import type { SeparacaoCounts, StatusSeparacao } from "@/types";
 
 const VALID_STATUSES: StatusSeparacao[] = [
@@ -25,7 +26,7 @@ const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
 /**
  * GET /api/separacao
  *
- * List orders filtered by separation status with search, sorting, and role-based filtering.
+ * List orders filtered by separation status with search and sorting.
  * Returns { counts: SeparacaoCounts, pedidos: array }
  *
  * Query params:
@@ -34,19 +35,21 @@ const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
  *   sort — data_pedido (default) | localizacao | sku
  *   busca — search string (matches numero, id_pedido_ecommerce, cliente_nome)
  *
- * Galpão filtering (priority order):
- *   X-Galpao-Id header — filter by specific galpão (new)
- *   X-User-Cargo header — legacy cargo-based filtering (fallback)
- *   No header — sees all (admin default)
+ * Galpão filtering:
+ *   uses the authenticated session and filters by siso_pedidos.separacao_galpao_id.
  */
 export async function GET(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const statusFilter = searchParams.get(
     "status_separacao",
   ) as StatusSeparacao | null;
   const empresaFilter = searchParams.get("empresa_origem_id");
   const marketplaceFilter = searchParams.get("marketplace");
-  const sortParam = searchParams.get("sort") ?? "data_pedido";
   const busca = searchParams.get("busca");
 
   if (statusFilter && !VALID_STATUSES.includes(statusFilter)) {
@@ -57,46 +60,10 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
+  const isAdmin = session.cargos.includes("admin");
+  const activeGalpaoId = session.galpaoId;
 
-  // Role-based filtering: resolve allowed empresa IDs
-  // Priority: X-Galpao-Id header (new) → X-User-Cargo header (legacy) → admin (all)
-  let allowedEmpresaIds: string[] | null = null; // null = no restriction
-
-  const galpaoIdHeader = request.headers.get("X-Galpao-Id");
-  if (galpaoIdHeader) {
-    // New approach: filter by the selected galpão
-    const { data: empresas } = await supabase
-      .from("siso_empresas")
-      .select("id")
-      .eq("galpao_id", galpaoIdHeader);
-    allowedEmpresaIds = empresas?.map((e) => e.id) ?? [];
-  } else {
-    // Legacy fallback: X-User-Cargo header
-    const cargoHeader = request.headers.get("X-User-Cargo") ?? "admin";
-    const cargos = cargoHeader.split(",").map((c) => c.trim());
-    const operadorCargo = cargos.includes("admin") ? null : cargos.find((c) => c === "operador_cwb" || c === "operador_sp");
-    if (operadorCargo) {
-      const galpaoNome = operadorCargo === "operador_cwb" ? "CWB" : "SP";
-      const { data: galpao } = await supabase
-        .from("siso_galpoes")
-        .select("id")
-        .eq("nome", galpaoNome)
-        .single();
-
-      if (galpao) {
-        const { data: empresas } = await supabase
-          .from("siso_empresas")
-          .select("id")
-          .eq("galpao_id", galpao.id);
-        allowedEmpresaIds = empresas?.map((e) => e.id) ?? [];
-      } else {
-        allowedEmpresaIds = [];
-      }
-    }
-  }
-
-  // No empresas for this role — return empty
-  if (allowedEmpresaIds !== null && allowedEmpresaIds.length === 0) {
+  if (!isAdmin && !activeGalpaoId) {
     const emptyCounts: SeparacaoCounts = {
       aguardando_compra: 0,
       aguardando_nf: 0,
@@ -105,7 +72,12 @@ export async function GET(request: NextRequest) {
       separado: 0,
       embalado: 0,
     };
-    return NextResponse.json({ counts: emptyCounts, pedidos: [] });
+    return NextResponse.json({
+      counts: emptyCounts,
+      pedidos: [],
+      empresas: [],
+      error: "galpao_nao_selecionado",
+    });
   }
 
   try {
@@ -115,15 +87,19 @@ export async function GET(request: NextRequest) {
         .from("siso_pedidos")
         .select("*", { count: "exact", head: true })
         .eq("status_separacao", status);
-      if (allowedEmpresaIds) q = q.in("empresa_origem_id", allowedEmpresaIds);
+      if (activeGalpaoId) q = q.eq("separacao_galpao_id", activeGalpaoId);
       return q;
     });
 
-    // 1b. Fetch distinct empresas that have pedidos (for dropdown)
-    const empresasPromise = supabase
-      .from("siso_empresas")
-      .select("id, nome")
-      .order("nome");
+    // 1b. Fetch distinct origin empresas inside the current separation context
+    let empresasPromise = supabase
+      .from("siso_pedidos")
+      .select("empresa_origem_id, siso_empresas(id, nome)")
+      .not("status_separacao", "is", null);
+
+    if (activeGalpaoId) {
+      empresasPromise = empresasPromise.eq("separacao_galpao_id", activeGalpaoId);
+    }
 
     // 2. Pedidos query
     let pedidosQuery = supabase
@@ -131,13 +107,13 @@ export async function GET(request: NextRequest) {
       .select(
         `id, numero, data, id_pedido_ecommerce, cliente_nome,
          nome_ecommerce, forma_envio_descricao, status_separacao, marcadores,
-         empresa_origem_id, etiqueta_status, etiqueta_zpl,
-         siso_empresas(nome, galpao_id)`,
+         empresa_origem_id, separacao_galpao_id, etiqueta_status, etiqueta_zpl,
+         siso_empresas(nome)`,
       )
       .not("status_separacao", "is", null);
 
-    if (allowedEmpresaIds) {
-      pedidosQuery = pedidosQuery.in("empresa_origem_id", allowedEmpresaIds);
+    if (activeGalpaoId) {
+      pedidosQuery = pedidosQuery.eq("separacao_galpao_id", activeGalpaoId);
     }
     if (empresaFilter) {
       pedidosQuery = pedidosQuery.eq("empresa_origem_id", empresaFilter);
@@ -250,7 +226,7 @@ export async function GET(request: NextRequest) {
 
     // Shape response
     const result = (pedidos ?? []).map((p) => {
-      const empresa = p.siso_empresas as unknown as { nome: string; galpao_id: string } | null;
+      const empresa = p.siso_empresas as unknown as { nome: string } | null;
       const stats = itemStats[p.id] ?? { total: 0, marcados: 0, bipados: 0 };
       const cs = compraStats[p.id] ?? null;
       return {
@@ -265,7 +241,7 @@ export async function GET(request: NextRequest) {
         forma_envio: p.forma_envio_descricao,
         data_pedido: p.data,
         empresa_origem_nome: empresa?.nome ?? null,
-        galpao_id: empresa?.galpao_id ?? null,
+        galpao_id: p.separacao_galpao_id ?? null,
         status_separacao: p.status_separacao,
         marcadores: p.marcadores ?? [],
         total_itens: stats.total,
@@ -277,11 +253,23 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // Build empresas list (filtered by role if applicable)
-    let empresas = (empresasList ?? []).map((e) => ({ id: e.id, nome: e.nome }));
-    if (allowedEmpresaIds) {
-      empresas = empresas.filter((e) => allowedEmpresaIds!.includes(e.id));
+    // Build empresas dropdown from pedidos visible to the active separation galpão
+    const empresasMap = new Map<string, string>();
+    for (const row of empresasList ?? []) {
+      const empresaId = row.empresa_origem_id;
+      const empresa = row.siso_empresas as unknown as
+        | { id: string; nome: string }
+        | { id: string; nome: string }[]
+        | null;
+      const resolvedEmpresa = Array.isArray(empresa) ? (empresa[0] ?? null) : empresa;
+
+      if (empresaId && resolvedEmpresa?.nome) {
+        empresasMap.set(empresaId, resolvedEmpresa.nome);
+      }
     }
+    const empresas = Array.from(empresasMap.entries())
+      .map(([id, nome]) => ({ id, nome }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
     return NextResponse.json({ counts, pedidos: result, empresas });
   } catch (err) {

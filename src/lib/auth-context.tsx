@@ -8,6 +8,7 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Cargo, UserGalpao } from "@/types";
 
 interface AuthUser {
@@ -61,8 +62,26 @@ function getStoredGalpaoId(): string | null {
 function validateGalpaoId(galpaoId: string | null, galpoes: UserGalpao[]): string | null {
   if (!galpaoId) return null;
   if (galpoes.some((g) => g.id === galpaoId)) return galpaoId;
-  // Stored galpão no longer valid — reset to first or null
-  return galpoes.length === 1 ? galpoes[0].id : null;
+  return null;
+}
+
+function isAdmin(cargos: Cargo[]): boolean {
+  return cargos.includes("admin");
+}
+
+function resolveInitialGalpaoId(
+  galpoes: UserGalpao[],
+  cargos: Cargo[],
+  storedGalpaoId: string | null,
+): string | null {
+  if (galpoes.length === 0) return null;
+
+  const validStoredGalpaoId = validateGalpaoId(storedGalpaoId, galpoes);
+  if (validStoredGalpaoId) return validStoredGalpaoId;
+
+  if (galpoes.length === 1) return galpoes[0].id;
+
+  return isAdmin(cargos) ? null : galpoes[0].id;
 }
 
 // Hydration gate: server=false, client=true (no mismatch via useSyncExternalStore)
@@ -72,23 +91,36 @@ function useHydrated(): boolean {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(getStoredUser);
   const [activeGalpaoId, setActiveGalpaoIdState] = useState<string | null>(() => {
     const stored = getStoredUser();
     const storedGalpao = getStoredGalpaoId();
-    return stored ? validateGalpaoId(storedGalpao, stored.galpoes ?? []) : null;
+    const cargos = stored?.cargos?.length ? stored.cargos : stored?.cargo ? [stored.cargo] : [];
+    return stored
+      ? resolveInitialGalpaoId(stored.galpoes ?? [], cargos, storedGalpao)
+      : null;
   });
   const hydrated = useHydrated();
   const loading = !hydrated;
 
   const setActiveGalpao = useCallback((galpaoId: string | null) => {
-    setActiveGalpaoIdState(galpaoId);
-    if (galpaoId) {
-      localStorage.setItem(GALPAO_KEY, galpaoId);
+    const cargos = user?.cargos?.length ? user.cargos : user?.cargo ? [user.cargo] : [];
+    const nextGalpaoId = resolveInitialGalpaoId(
+      user?.galpoes ?? [],
+      cargos,
+      galpaoId,
+    );
+
+    setActiveGalpaoIdState(nextGalpaoId);
+    if (nextGalpaoId) {
+      localStorage.setItem(GALPAO_KEY, nextGalpaoId);
     } else {
       localStorage.removeItem(GALPAO_KEY);
     }
-  }, []);
+
+    queryClient.invalidateQueries();
+  }, [queryClient, user]);
 
   const activeGalpaoNome = user?.galpoes?.find((g) => g.id === activeGalpaoId)?.nome ?? null;
 
@@ -115,10 +147,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(authUser));
     setUser(authUser);
 
-    // Auto-select galpão: if user has exactly 1, select it; otherwise restore stored or null
     const storedGalpao = getStoredGalpaoId();
-    const validGalpao = validateGalpaoId(storedGalpao, galpoes);
-    const initialGalpao = galpoes.length === 1 ? galpoes[0].id : validGalpao;
+    const initialGalpao = resolveInitialGalpaoId(galpoes, cargos, storedGalpao);
     setActiveGalpaoIdState(initialGalpao);
     if (initialGalpao) {
       localStorage.setItem(GALPAO_KEY, initialGalpao);
@@ -126,15 +156,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem(GALPAO_KEY);
     }
 
+    queryClient.invalidateQueries();
+
     return { ok: true };
-  }, []);
+  }, [queryClient]);
 
   const logout = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(GALPAO_KEY);
     setUser(null);
     setActiveGalpaoIdState(null);
-  }, []);
+    queryClient.clear();
+  }, [queryClient]);
 
   return (
     <AuthContext.Provider

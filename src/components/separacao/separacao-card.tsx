@@ -52,7 +52,6 @@ interface SeparacaoCardProps {
   checkbox?: boolean;
   checked?: boolean;
   onToggle?: (id: string) => void;
-  onRefetch?: () => void;
 }
 
 function formatDate(iso: string): string {
@@ -82,7 +81,6 @@ export function SeparacaoCard({
   checkbox,
   checked,
   onToggle,
-  onRefetch,
 }: SeparacaoCardProps) {
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -119,6 +117,63 @@ export function SeparacaoCard({
     isEmSeparacao && pedido.total_itens > 0
       ? (pedido.itens_marcados / pedido.total_itens) * 100
       : 0;
+  const statusBadge = (() => {
+    if (isAguardandoOC) {
+      return {
+        label: "Compra pendente",
+        className: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300",
+      };
+    }
+
+    if (pedido.status_separacao === "aguardando_nf") {
+      return {
+        label: "Aguardando NF",
+        className: "bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300",
+      };
+    }
+
+    if (pedido.status_separacao === "aguardando_separacao") {
+      return {
+        label: "Pronto para separar",
+        className: "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300",
+      };
+    }
+
+    if (isEmSeparacao) {
+      return {
+        label: pedido.total_itens > 0
+          ? `${pedido.itens_marcados}/${pedido.total_itens} itens`
+          : "Em separação",
+        className: "bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300",
+      };
+    }
+
+    if (isSeparado) {
+      return pedido.etiqueta_pronta
+        ? {
+            label: "Pronto para embalar",
+            className: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
+          }
+        : {
+            label: "Separado sem etiqueta",
+            className: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300",
+          };
+    }
+
+    if (isEmbalado) {
+      return pedido.etiqueta_status === "falhou"
+        ? {
+            label: "Etiqueta falhou",
+            className: "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300",
+          }
+        : {
+            label: "Embalado",
+            className: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
+          };
+    }
+
+    return null;
+  })();
 
   return (
     <article
@@ -172,6 +227,12 @@ export function SeparacaoCard({
             >
               {pedido.cliente ?? "—"}
             </span>
+
+            {statusBadge && (
+              <span className={cn("hidden rounded-full px-2 py-1 text-[10px] font-semibold sm:inline-flex", statusBadge.className)}>
+                {statusBadge.label}
+              </span>
+            )}
 
             {/* Print label (embalado only) */}
             {isEmbalado && (
@@ -264,6 +325,12 @@ export function SeparacaoCard({
               </span>
             )}
 
+            {pedido.total_itens > 0 && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                {pedido.total_itens} {pedido.total_itens === 1 ? "item" : "itens"}
+              </span>
+            )}
+
             {pedido.forma_envio && (
               <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-ink-faint">
                 <Truck className="h-3 w-3" aria-hidden="true" />
@@ -300,6 +367,12 @@ export function SeparacaoCard({
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 dark:bg-red-950/30 dark:text-red-400">
                 <AlertTriangle className="h-2.5 w-2.5" />
                 Etiqueta falhou
+              </span>
+            )}
+
+            {statusBadge && (
+              <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold sm:hidden", statusBadge.className)}>
+                {statusBadge.label}
               </span>
             )}
           </div>

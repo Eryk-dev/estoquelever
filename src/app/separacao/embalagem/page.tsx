@@ -59,7 +59,7 @@ export default function EmbalagemPageWrapper() {
 }
 
 function EmbalagemPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, activeGalpaoId } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
@@ -86,8 +86,8 @@ function EmbalagemPage() {
 
   // Fetch pedidos from API
   const pedidosQueryKey = useMemo(
-    () => ["embalagem-pedidos", pedidoIds.join(",")],
-    [pedidoIds],
+    () => ["embalagem-pedidos", activeGalpaoId ?? "all", pedidoIds.join(",")],
+    [activeGalpaoId, pedidoIds],
   );
 
   const { data, isLoading } = useQuery<{ pedidos: SeparacaoPedido[] }>({
@@ -104,8 +104,8 @@ function EmbalagemPage() {
 
   // Fetch items for expanded pedido
   const itemsQueryKey = useMemo(
-    () => ["embalagem-items", pedidoIds.join(",")],
-    [pedidoIds],
+    () => ["embalagem-items", activeGalpaoId ?? "all", pedidoIds.join(",")],
+    [activeGalpaoId, pedidoIds],
   );
 
   const { data: itemsData } = useQuery<{ items: PedidoItem[] }>({

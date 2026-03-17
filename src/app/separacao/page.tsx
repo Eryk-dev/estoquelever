@@ -1,13 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
-import { cn } from "@/lib/utils";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import { Tabs } from "@/components/ui/tabs";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -24,36 +23,43 @@ const TAB_CONFIG: {
   id: StatusSeparacao;
   label: string;
   emptyMessage: string;
+  description: string;
 }[] = [
   {
     id: "aguardando_compra",
     label: "Aguardando OC",
     emptyMessage: "Nenhum pedido aguardando ordem de compra",
+    description: "Pedidos sem estoque aguardando ação do time de compras antes de entrar na separação.",
   },
   {
     id: "aguardando_nf",
     label: "Aguardando NF",
     emptyMessage: "Nenhum pedido aguardando nota fiscal",
+    description: "Pedidos que já podem avançar, mas dependem de NF ou liberação manual para seguir o fluxo.",
   },
   {
     id: "aguardando_separacao",
     label: "Aguardando Separacao",
     emptyMessage: "Nenhum pedido aguardando separacao",
+    description: "Fila pronta para iniciar checklist e começar a execução física no galpão.",
   },
   {
     id: "em_separacao",
     label: "Em Separacao",
     emptyMessage: "Nenhum pedido em separacao",
+    description: "Pedidos já em andamento. O objetivo aqui é retomar rapidamente o que ficou aberto.",
   },
   {
     id: "separado",
     label: "Separados",
     emptyMessage: "Nenhum pedido separado",
+    description: "Pedidos concluídos na separação e aguardando embalagem, idealmente já com etiqueta pronta.",
   },
   {
     id: "embalado",
     label: "Embalados",
     emptyMessage: "Nenhum pedido embalado",
+    description: "Fila final do fluxo. Use para reimpressão, conferência final e eventuais retornos de etapa.",
   },
 ];
 
@@ -71,6 +77,11 @@ const SORT_OPTIONS = [
   { value: "localizacao", label: "Localizacao" },
   { value: "sku", label: "SKU" },
 ] as const;
+
+function parseTabParam(value: string | null): StatusSeparacao | null {
+  if (!value) return null;
+  return TAB_CONFIG.some((tab) => tab.id === value) ? (value as StatusSeparacao) : null;
+}
 
 // Move target options per current tab (backward + forward)
 const MOVE_TARGETS: Partial<Record<StatusSeparacao, {
@@ -130,10 +141,23 @@ interface SeparacaoResponse {
 }
 
 export default function SeparacaoPage() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, activeGalpaoId, activeGalpaoNome } = useAuth();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<StatusSeparacao>("aguardando_separacao");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const searchParams = useSearchParams();
+  const requestedTab = useMemo(
+    () => parseTabParam(searchParams.get("tab")),
+    [searchParams],
+  );
+
+  const activeTab = requestedTab ?? "aguardando_separacao";
+  const contextKey = `${activeGalpaoId ?? "all"}:${activeTab}`;
+  const [selectionState, setSelectionState] = useState<{
+    key: string;
+    ids: Set<string>;
+  }>({
+    key: "",
+    ids: new Set(),
+  });
 
   // Filter state
   const [empresaFilter, setEmpresaFilter] = useState("");
@@ -142,18 +166,49 @@ export default function SeparacaoPage() {
   const [busca, setBusca] = useState("");
   // Action loading states
   const [actionLoading, setActionLoading] = useState(false);
-  const [revertMenuOpen, setRevertMenuOpen] = useState(false);
+  const [revertMenuState, setRevertMenuState] = useState<{
+    key: string;
+    open: boolean;
+  }>({
+    key: "",
+    open: false,
+  });
+
+  const selectedIds =
+    selectionState.key === contextKey ? selectionState.ids : new Set<string>();
+  const revertMenuOpen =
+    revertMenuState.key === contextKey ? revertMenuState.open : false;
 
   // Realtime: auto-refresh when other operators change order statuses
   useRealtimeSeparacao();
 
   function toggleSelected(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
+    setSelectionState((prev) => {
+      const baseIds = prev.key === contextKey ? prev.ids : new Set<string>();
+      const next = new Set(baseIds);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
+      return { key: contextKey, ids: next };
     });
+  }
+
+  function clearSelection() {
+    setSelectionState({ key: contextKey, ids: new Set() });
+  }
+
+  function setSelection(ids: Set<string>) {
+    setSelectionState({ key: contextKey, ids });
+  }
+
+  function toggleRevertMenu() {
+    setRevertMenuState((prev) => ({
+      key: contextKey,
+      open: prev.key === contextKey ? !prev.open : true,
+    }));
+  }
+
+  function closeRevertMenu() {
+    setRevertMenuState({ key: contextKey, open: false });
   }
 
   useEffect(() => {
@@ -180,10 +235,10 @@ export default function SeparacaoPage() {
     isLoading: isFetching,
     refetch,
   } = useQuery<SeparacaoResponse>({
-    queryKey: ["separacao", queryParams],
+    queryKey: ["separacao", activeGalpaoId ?? "all", queryParams],
     queryFn: async () => {
       const res = await sisoFetch(`/api/separacao?${queryParams}`);
-      if (!res.ok) return { counts: EMPTY_COUNTS, pedidos: [] };
+      if (!res.ok) return { counts: EMPTY_COUNTS, pedidos: [], empresas: [] };
       return res.json();
     },
     enabled: canFetch,
@@ -271,7 +326,7 @@ export default function SeparacaoPage() {
       if (res.ok) {
         const body = await res.json();
         toast.success(`${body.total ?? selectedIds.size} pedido(s) movido(s) para Aguardando Separacao`);
-        setSelectedIds(new Set());
+        clearSelection();
         refetch();
       } else {
         const body = await res.json().catch(() => ({}));
@@ -314,7 +369,7 @@ export default function SeparacaoPage() {
   async function handleMoverEtapa(novoStatus: StatusSeparacao) {
     if (selectedIds.size === 0) return;
     setActionLoading(true);
-    setRevertMenuOpen(false);
+    closeRevertMenu();
     try {
       const res = await sisoFetch("/api/separacao/voltar-etapa", {
         method: "POST",
@@ -327,7 +382,7 @@ export default function SeparacaoPage() {
       if (res.ok) {
         const body = await res.json();
         toast.success(`${body.total} pedido(s) movido(s)`);
-        setSelectedIds(new Set());
+        clearSelection();
         refetch();
       } else {
         const body = await res.json().catch(() => ({}));
@@ -363,13 +418,88 @@ export default function SeparacaoPage() {
 
   function toggleSelectAll() {
     if (allSelected) {
-      setSelectedIds(new Set());
+      clearSelection();
     } else {
-      setSelectedIds(new Set(pedidos.map((p) => p.id)));
+      setSelection(new Set(pedidos.map((p) => p.id)));
     }
   }
 
   const moveTargets = MOVE_TARGETS[activeTab];
+  const hasFilters =
+    busca.trim().length > 0 ||
+    empresaFilter.length > 0 ||
+    marketplaceFilter.length > 0 ||
+    sortFilter !== "data_pedido";
+  const activeFilterCount = [
+    busca.trim().length > 0,
+    empresaFilter.length > 0,
+    marketplaceFilter.length > 0,
+    sortFilter !== "data_pedido",
+  ].filter(Boolean).length;
+  const markedItemsTotal = pedidos.reduce((sum, pedido) => sum + pedido.itens_marcados, 0);
+  const itemsTotal = pedidos.reduce((sum, pedido) => sum + pedido.total_itens, 0);
+  const queueInsight = (() => {
+    if (activeTab === "aguardando_compra") {
+      const waitingItems = pedidos.reduce(
+        (sum, pedido) => sum + (pedido.compra_stats?.aguardando ?? 0),
+        0,
+      );
+      return {
+        label: "Itens aguardando compra",
+        value: waitingItems,
+        helper: "Volume de itens ainda sem pedido de compra iniciado.",
+      };
+    }
+
+    if (activeTab === "em_separacao") {
+      return {
+        label: "Itens marcados",
+        value: itemsTotal > 0 ? `${markedItemsTotal}/${itemsTotal}` : "0/0",
+        helper: "Avanço consolidado dos pedidos já em execução.",
+      };
+    }
+
+    if (activeTab === "separado") {
+      const readyLabels = pedidos.filter((pedido) => pedido.etiqueta_pronta).length;
+      return {
+        label: "Com etiqueta pronta",
+        value: readyLabels,
+        helper: "Pedidos que entram na embalagem sem perda de ritmo.",
+      };
+    }
+
+    if (activeTab === "embalado") {
+      const failedLabels = pedidos.filter((pedido) => pedido.etiqueta_status === "falhou").length;
+      return {
+        label: "Etiqueta com falha",
+        value: failedLabels,
+        helper: "Pedidos embalados que ainda pedem reimpressão.",
+      };
+    }
+
+    return {
+      label: "Prontos para agir",
+      value: pedidos.length,
+      helper: "Pedidos visíveis na etapa atual para execução imediata.",
+    };
+  })();
+
+  function handleTabChange(nextTab: StatusSeparacao) {
+    clearSelection();
+    closeRevertMenu();
+
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", nextTab);
+    const query = params.toString();
+    router.replace(query ? `/separacao?${query}` : "/separacao", { scroll: false });
+  }
+
+  function clearFilters() {
+    setBusca("");
+    setEmpresaFilter("");
+    setMarketplaceFilter("");
+    setSortFilter("data_pedido");
+  }
 
   return (
     <div className="min-h-screen bg-surface">
@@ -416,69 +546,148 @@ export default function SeparacaoPage() {
           <Tabs
             tabs={tabs}
             activeTab={activeTab}
-            onChange={(id) => {
-              setActiveTab(id as StatusSeparacao);
-              setSelectedIds(new Set());
-              setRevertMenuOpen(false);
-            }}
+            onChange={(id) => handleTabChange(id as StatusSeparacao)}
           />
         </div>
 
-        {/* Filter bar — all tabs */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Search */}
-          <div className="relative flex-1 min-w-[140px] sm:min-w-[180px]">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint" />
-            <input
-              type="text"
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar pedido, cliente..."
-              className="h-8 w-full rounded-lg border border-line bg-paper pl-8 pr-3 text-xs text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
-            />
+        <section className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(180px,1fr)_minmax(180px,1fr)]">
+          <div className="rounded-2xl border border-line bg-paper p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-ink-faint">
+              Etapa atual
+            </p>
+            <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-lg font-semibold tracking-tight text-ink">
+                  {activeConfig.label}
+                </h2>
+                <p className="mt-1 text-sm text-ink-muted">
+                  {activeConfig.description}
+                </p>
+              </div>
+              <div className="inline-flex w-fit flex-col rounded-2xl border border-line bg-surface px-4 py-3 text-left">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-faint">
+                  Na fila
+                </span>
+                <span className="font-mono text-2xl font-bold tracking-tight text-ink">
+                  {counts[activeTab]}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <ContextChip
+                label="Galpão"
+                value={activeGalpaoNome ?? "Todos"}
+              />
+              <ContextChip
+                label="Selecionados"
+                value={selectedIds.size}
+              />
+              {hasFilters && (
+                <ContextChip
+                  label="Filtros"
+                  value={`${activeFilterCount} ativo(s)`}
+                />
+              )}
+            </div>
           </div>
 
-          {/* Empresa dropdown */}
-          {empresaOptions.length > 0 && (
+          <QueueInsightCard
+            label="Selecionados"
+            value={selectedIds.size}
+            helper="Pedidos marcados para ação em lote nesta etapa."
+          />
+          <QueueInsightCard
+            label={queueInsight.label}
+            value={queueInsight.value}
+            helper={queueInsight.helper}
+          />
+        </section>
+
+        {/* Filter bar — all tabs */}
+        <section className="rounded-2xl border border-line bg-paper p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[140px] sm:min-w-[200px]">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint" />
+              <input
+                type="text"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                placeholder="Buscar pedido, cliente..."
+                className="h-9 w-full rounded-xl border border-line bg-surface pl-8 pr-3 text-xs text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+              />
+            </div>
+
+            {empresaOptions.length > 0 && (
+              <select
+                value={empresaFilter}
+                onChange={(e) => setEmpresaFilter(e.target.value)}
+                className="h-9 rounded-xl border border-line bg-surface px-3 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+              >
+                <option value="">Todas empresas</option>
+                {empresaOptions.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.nome}
+                  </option>
+                ))}
+              </select>
+            )}
+
             <select
-              value={empresaFilter}
-              onChange={(e) => setEmpresaFilter(e.target.value)}
-              className="h-8 rounded-lg border border-line bg-paper px-2 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+              value={marketplaceFilter}
+              onChange={(e) => setMarketplaceFilter(e.target.value)}
+              className="h-9 rounded-xl border border-line bg-surface px-3 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
             >
-              <option value="">Todas empresas</option>
-              {empresaOptions.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {emp.nome}
+              <option value="">Todos marketplaces</option>
+              <option value="Mercado Livre">Mercado Livre</option>
+              <option value="Shopee">Shopee</option>
+            </select>
+
+            <select
+              value={sortFilter}
+              onChange={(e) => setSortFilter(e.target.value)}
+              className="h-9 rounded-xl border border-line bg-surface px-3 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+            >
+              {SORT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
                 </option>
               ))}
             </select>
+
+            {hasFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="inline-flex h-9 items-center justify-center rounded-xl border border-line px-3 text-xs font-semibold text-ink transition-colors hover:bg-surface"
+              >
+                Limpar filtros
+              </button>
+            )}
+          </div>
+
+          {hasFilters && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-ink-faint">
+                {activeFilterCount} filtro(s) ativo(s)
+              </span>
+              {busca.trim() && <ContextChip label="Busca" value={busca.trim()} />}
+              {empresaFilter && (
+                <ContextChip
+                  label="Empresa"
+                  value={empresaOptions.find((emp) => emp.id === empresaFilter)?.nome ?? empresaFilter}
+                />
+              )}
+              {marketplaceFilter && <ContextChip label="Marketplace" value={marketplaceFilter} />}
+              {sortFilter !== "data_pedido" && (
+                <ContextChip
+                  label="Ordenação"
+                  value={SORT_OPTIONS.find((option) => option.value === sortFilter)?.label ?? sortFilter}
+                />
+              )}
+            </div>
           )}
-
-          {/* Marketplace dropdown */}
-          <select
-            value={marketplaceFilter}
-            onChange={(e) => setMarketplaceFilter(e.target.value)}
-            className="h-8 rounded-lg border border-line bg-paper px-2 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
-          >
-            <option value="">Todos marketplaces</option>
-            <option value="Mercado Livre">Mercado Livre</option>
-            <option value="Shopee">Shopee</option>
-          </select>
-
-          {/* Sort dropdown */}
-          <select
-            value={sortFilter}
-            onChange={(e) => setSortFilter(e.target.value)}
-            className="h-8 rounded-lg border border-line bg-paper px-2 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
-          >
-            {SORT_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-
-        </div>
+        </section>
 
         {/* Select all + count */}
         {showCheckbox && pedidos.length > 0 && (
@@ -514,7 +723,7 @@ export default function SeparacaoPage() {
                 <MoveButton
                   targets={moveTargets}
                   open={revertMenuOpen}
-                  onToggle={() => setRevertMenuOpen((v) => !v)}
+                  onToggle={toggleRevertMenu}
                   onSelect={handleMoverEtapa}
                   disabled={actionLoading}
                   count={selectedIds.size}
@@ -562,7 +771,7 @@ export default function SeparacaoPage() {
                 <MoveButton
                   targets={moveTargets}
                   open={revertMenuOpen}
-                  onToggle={() => setRevertMenuOpen((v) => !v)}
+                  onToggle={toggleRevertMenu}
                   onSelect={handleMoverEtapa}
                   disabled={actionLoading}
                   count={selectedIds.size}
@@ -606,7 +815,7 @@ export default function SeparacaoPage() {
                 <MoveButton
                   targets={moveTargets}
                   open={revertMenuOpen}
-                  onToggle={() => setRevertMenuOpen((v) => !v)}
+                  onToggle={toggleRevertMenu}
                   onSelect={handleMoverEtapa}
                   disabled={actionLoading}
                   count={selectedIds.size}
@@ -639,7 +848,7 @@ export default function SeparacaoPage() {
                 <MoveButton
                   targets={moveTargets}
                   open={revertMenuOpen}
-                  onToggle={() => setRevertMenuOpen((v) => !v)}
+                  onToggle={toggleRevertMenu}
                   onSelect={handleMoverEtapa}
                   disabled={actionLoading}
                   count={selectedIds.size}
@@ -672,7 +881,7 @@ export default function SeparacaoPage() {
                 <MoveButton
                   targets={moveTargets}
                   open={revertMenuOpen}
-                  onToggle={() => setRevertMenuOpen((v) => !v)}
+                  onToggle={toggleRevertMenu}
                   onSelect={handleMoverEtapa}
                   disabled={actionLoading}
                   count={selectedIds.size}
@@ -707,13 +916,49 @@ export default function SeparacaoPage() {
                 checkbox={showCheckbox}
                 checked={selectedIds.has(pedido.id)}
                 onToggle={toggleSelected}
-                onRefetch={refetch}
               />
             ))}
           </div>
         )}
       </main>
     </div>
+  );
+}
+
+function QueueInsightCard({
+  label,
+  value,
+  helper,
+}: {
+  label: string;
+  value: string | number;
+  helper: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-line bg-paper p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
+        {label}
+      </p>
+      <p className="mt-3 font-mono text-3xl font-bold tracking-tight text-ink">
+        {value}
+      </p>
+      <p className="mt-2 text-xs text-ink-faint">{helper}</p>
+    </div>
+  );
+}
+
+function ContextChip({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number;
+}) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-ink">
+      <span className="font-semibold text-ink-faint">{label}</span>
+      <span className="font-medium text-ink">{value}</span>
+    </span>
   );
 }
 

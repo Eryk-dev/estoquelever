@@ -23,6 +23,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 
 interface PainelResponse {
   server_time: string;
+  client_received_at?: number;
   galpoes: { id: string; nome: string }[];
   pipeline: Record<string, number>;
   throughput: {
@@ -53,6 +54,28 @@ const PIPELINE_STAGES = [
   { key: "embalado", label: "Embalado", tab: "embalado" },
 ] as const;
 
+const EMPTY_PIPELINE: Record<string, number> = {
+  aguardando_compra: 0,
+  aguardando_nf: 0,
+  aguardando_separacao: 0,
+  em_separacao: 0,
+  separado: 0,
+  embalado: 0,
+};
+
+const EMPTY_THROUGHPUT = { buckets: [], total_today: 0 } satisfies PainelResponse["throughput"];
+const EMPTY_ALERTS = {
+  stuck_nf: 0,
+  stuck_separacao: 0,
+  recent_errors: 0,
+  error_samples: [],
+} satisfies PainelResponse["alerts"];
+const EMPTY_KPIS = {
+  processed_today: 0,
+  pipeline_total: 0,
+  avg_cycle_time_min: null,
+} satisfies PainelResponse["kpis"];
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function formatCycleTime(minutes: number | null): string {
@@ -63,8 +86,8 @@ function formatCycleTime(minutes: number | null): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-function formatRelative(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+function formatRelative(nowMs: number, iso: string): string {
+  const diff = nowMs - new Date(iso).getTime();
   const s = Math.floor(diff / 1000);
   if (s < 60) return `${s}s atrás`;
   const m = Math.floor(s / 60);
@@ -76,14 +99,12 @@ function formatRelative(iso: string): string {
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export default function PainelPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, activeGalpaoId, setActiveGalpao } = useAuth();
   const router = useRouter();
   const queryClient = useQueryClient();
   const channelRef = useRef<RealtimeChannel | null>(null);
 
-  const [galpaoFilter, setGalpaoFilter] = useState("");
   const [clockTime, setClockTime] = useState(new Date());
-  const [serverOffset, setServerOffset] = useState(0);
 
   // Redirect if not logged in
   useEffect(() => {
@@ -118,41 +139,44 @@ export default function PainelPage() {
   // Query params
   const queryParams = useMemo(() => {
     const params = new URLSearchParams();
-    if (galpaoFilter) params.set("galpao_id", galpaoFilter);
+    if (activeGalpaoId) params.set("galpao_id", activeGalpaoId);
     return params.toString();
-  }, [galpaoFilter]);
+  }, [activeGalpaoId]);
 
   // Fetch
   const { data } = useQuery<PainelResponse>({
     queryKey: ["painel", queryParams],
     queryFn: async () => {
       const url = queryParams ? `/api/painel?${queryParams}` : "/api/painel";
+      const clientReceivedAt = Date.now();
       const res = await sisoFetch(url);
       if (!res.ok) throw new Error("Failed to fetch");
-      return res.json();
+      const json = await res.json();
+      return {
+        ...json,
+        client_received_at: clientReceivedAt,
+      };
     },
     enabled: !loading && !!user,
     refetchInterval: 30_000,
   });
 
-  // Server time sync
-  useEffect(() => {
-    if (data?.server_time) {
-      setServerOffset(new Date(data.server_time).getTime() - Date.now());
-    }
-  }, [data?.server_time]);
-
-  // Clock display
-  const clockDisplay = useMemo(() => {
-    const synced = new Date(clockTime.getTime() + serverOffset);
-    return synced.toLocaleTimeString("pt-BR", { hour12: false });
-  }, [clockTime, serverOffset]);
+  const clockDisplay = !data?.server_time || !data.client_received_at
+    ? clockTime.toLocaleTimeString("pt-BR", { hour12: false })
+    : new Date(
+        clockTime.getTime() +
+          (new Date(data.server_time).getTime() - data.client_received_at),
+      ).toLocaleTimeString("pt-BR", { hour12: false });
 
   const galpoes = data?.galpoes ?? [];
-  const pipeline = data?.pipeline ?? {};
-  const throughput = data?.throughput ?? { buckets: [], total_today: 0 };
-  const alerts = data?.alerts ?? { stuck_nf: 0, stuck_separacao: 0, recent_errors: 0, error_samples: [] };
-  const kpis = data?.kpis ?? { processed_today: 0, pipeline_total: 0, avg_cycle_time_min: null };
+  const pipeline = data?.pipeline ?? EMPTY_PIPELINE;
+  const throughput = data?.throughput ?? EMPTY_THROUGHPUT;
+  const alerts = data?.alerts ?? EMPTY_ALERTS;
+  const kpis = data?.kpis ?? EMPTY_KPIS;
+  const currentBrtHour = useMemo(
+    () => new Date(clockTime.getTime() - 3 * 60 * 60 * 1000).getUTCHours(),
+    [clockTime],
+  );
 
   // Find pipeline bottleneck (stage with most items, excluding embalado)
   const bottleneckKey = useMemo(() => {
@@ -177,6 +201,60 @@ export default function PainelPage() {
       items.push({ icon: XCircle, color: "text-red-500", bgColor: "bg-red-50 dark:bg-red-950/30", label: "erros na última hora", count: alerts.recent_errors, href: "/monitoramento" });
     return items;
   }, [alerts]);
+
+  const recommendedAction = useMemo(() => {
+    if (alerts.stuck_nf > 0) {
+      return {
+        icon: FileWarning,
+        href: "/separacao?tab=aguardando_nf",
+        title: `${alerts.stuck_nf} pedido(s) travados em NF`,
+        description: "Há pedidos aguardando nota fiscal acima do SLA. Essa é a primeira fila a destravar.",
+        cta: "Abrir aguardando NF",
+        panelClassName: "border-amber-200 bg-amber-50/80 dark:border-amber-800 dark:bg-amber-950/20",
+        iconClassName: "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+      };
+    }
+
+    if (alerts.stuck_separacao > 0) {
+      return {
+        icon: Timer,
+        href: "/separacao?tab=em_separacao",
+        title: `${alerts.stuck_separacao} pedido(s) parados em separação`,
+        description: "Existem separações abertas há mais de 2 horas. Vale retomar essa execução antes de puxar novas ondas.",
+        cta: "Retomar separação",
+        panelClassName: "border-violet-200 bg-violet-50/80 dark:border-violet-800 dark:bg-violet-950/20",
+        iconClassName: "bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300",
+      };
+    }
+
+    if (alerts.recent_errors > 0) {
+      return {
+        icon: XCircle,
+        href: "/monitoramento",
+        title: `${alerts.recent_errors} erro(s) recente(s) no fluxo`,
+        description: "Os erros da última hora merecem revisão para evitar que o gargalo aumente por falha silenciosa.",
+        cta: "Abrir monitoramento",
+        panelClassName: "border-red-200 bg-red-50/80 dark:border-red-800 dark:bg-red-950/20",
+        iconClassName: "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300",
+      };
+    }
+
+    if (bottleneckKey) {
+      const stage = PIPELINE_STAGES.find((item) => item.key === bottleneckKey);
+      const count = stage ? pipeline[stage.key] ?? 0 : 0;
+      return {
+        icon: Layers,
+        href: stage ? `/separacao?tab=${stage.tab}` : "/separacao",
+        title: `${count} pedido(s) concentrados em ${stage?.label ?? "Separação"}`,
+        description: "A etapa com maior acúmulo vira o próximo foco natural da operação.",
+        cta: stage ? `Abrir ${stage.label}` : "Abrir separação",
+        panelClassName: "border-blue-200 bg-blue-50/80 dark:border-blue-800 dark:bg-blue-950/20",
+        iconClassName: "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300",
+      };
+    }
+
+    return null;
+  }, [alerts, bottleneckKey, pipeline]);
 
   if (loading) {
     return (
@@ -213,10 +291,12 @@ export default function PainelPage() {
                 <button
                   key={g.id}
                   type="button"
-                  onClick={() => setGalpaoFilter(g.id)}
+                  onClick={() => {
+                    setActiveGalpao(g.id || null);
+                  }}
                   className={cn(
                     "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
-                    galpaoFilter === g.id
+                    (activeGalpaoId ?? "") === g.id
                       ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
                       : "text-ink-faint hover:bg-surface hover:text-ink",
                   )}
@@ -235,6 +315,37 @@ export default function PainelPage() {
       </header>
 
       <main className="mx-auto max-w-5xl space-y-4 px-4 py-4">
+        {recommendedAction && (
+          <section className={cn("rounded-xl border p-4", recommendedAction.panelClassName)}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className={cn("inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl", recommendedAction.iconClassName)}>
+                  <recommendedAction.icon className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-ink-faint">
+                    Ação recomendada
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold tracking-tight text-ink">
+                    {recommendedAction.title}
+                  </h2>
+                  <p className="mt-1 text-sm text-ink-muted">
+                    {recommendedAction.description}
+                  </p>
+                </div>
+              </div>
+
+              <Link
+                href={recommendedAction.href}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink px-4 py-2 text-xs font-semibold text-paper transition-colors hover:opacity-90"
+              >
+                {recommendedAction.cta}
+                <ChevronRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </section>
+        )}
+
         {/* ── KPI Cards ──────────────────────────────────────────────────── */}
         <section className="grid grid-cols-3 gap-3">
           <KpiCard
@@ -306,7 +417,7 @@ export default function PainelPage() {
                 {throughput.total_today} total
               </span>
             </div>
-            <ThroughputChart buckets={throughput.buckets} />
+            <ThroughputChart buckets={throughput.buckets} currentHour={currentBrtHour} />
           </section>
 
           {/* Alerts */}
@@ -360,7 +471,7 @@ export default function PainelPage() {
                           {err.source}
                         </span>
                         <span className="text-[10px] text-ink-faint">
-                          {formatRelative(err.timestamp)}
+                          {formatRelative(clockTime.getTime(), err.timestamp)}
                         </span>
                       </div>
                       <p className="mt-0.5 truncate text-ink-muted">{err.message}</p>
@@ -404,12 +515,14 @@ function KpiCard({
 
 // ─── Throughput Chart ────────────────────────────────────────────────────────
 
-function ThroughputChart({ buckets }: { buckets: { hour: number; count: number }[] }) {
+function ThroughputChart({
+  buckets,
+  currentHour,
+}: {
+  buckets: { hour: number; count: number }[];
+  currentHour: number;
+}) {
   const max = Math.max(...buckets.map((b) => b.count), 1);
-
-  // Current BRT hour for highlight
-  const nowBrt = new Date(Date.now() - 3 * 60 * 60 * 1000);
-  const currentHour = nowBrt.getUTCHours();
 
   // Show 6h..current+1 range for relevance
   const endHour = Math.min(23, Math.max(currentHour + 1, 18));

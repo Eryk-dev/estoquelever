@@ -84,7 +84,7 @@ export default function ChecklistPageWrapper() {
 }
 
 function ChecklistPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, activeGalpaoId } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
@@ -140,8 +140,8 @@ function ChecklistPage() {
 
   // Fetch individual items
   const queryKey = useMemo(
-    () => ["checklist-items", pedidoIds.join(",")],
-    [pedidoIds],
+    () => ["checklist-items", activeGalpaoId ?? "all", pedidoIds.join(",")],
+    [activeGalpaoId, pedidoIds],
   );
 
   const { data, isLoading } = useQuery<{ items: ChecklistItem[] }>({

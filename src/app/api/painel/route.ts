@@ -27,19 +27,6 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // ── Resolve empresa IDs for galpao filter ─────────────────────────────
-    let allowedEmpresaIds: string[] | null = null;
-    if (galpaoFilter) {
-      const { data: empresas } = await supabase
-        .from("siso_empresas")
-        .select("id")
-        .eq("galpao_id", galpaoFilter);
-      allowedEmpresaIds = empresas?.map((e) => e.id) ?? [];
-      if (allowedEmpresaIds.length === 0) {
-        return NextResponse.json(emptyResponse());
-      }
-    }
-
     // ── Build all queries in parallel ─────────────────────────────────────
     const now = new Date();
     const nowIso = now.toISOString();
@@ -54,9 +41,9 @@ export async function GET(request: NextRequest) {
     const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
     const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 
-    // Helper to apply empresa filter to a query builder
-    function applyFilter<T extends { in: (col: string, vals: string[]) => T }>(q: T): T {
-      if (allowedEmpresaIds) return q.in("empresa_origem_id", allowedEmpresaIds);
+    // Filter the operational pipeline by the destination separation galpão.
+    function applyFilter<T extends { eq: (col: string, val: string) => T }>(q: T): T {
+      if (galpaoFilter) return q.eq("separacao_galpao_id", galpaoFilter);
       return q;
     }
 
@@ -217,15 +204,4 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });
   }
-}
-
-function emptyResponse() {
-  return {
-    server_time: new Date().toISOString(),
-    galpoes: [],
-    pipeline: Object.fromEntries(PIPELINE_STATUSES.map((s) => [s, 0])),
-    throughput: { buckets: [], total_today: 0 },
-    alerts: { stuck_nf: 0, stuck_separacao: 0, recent_errors: 0, error_samples: [] },
-    kpis: { processed_today: 0, pipeline_total: 0, avg_cycle_time_min: null },
-  };
 }

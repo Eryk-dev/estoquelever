@@ -671,7 +671,19 @@ function ChecklistPage() {
                     </span>
                   </div>
 
-                  {/* Row 2: Location + Esgotado */}
+                  {/* Row 2: Description */}
+                  <p
+                    className={cn(
+                      "truncate text-xs mt-0.5",
+                      product.all_marcado
+                        ? "text-emerald-600/60 line-through dark:text-emerald-400/60"
+                        : "text-ink-faint",
+                    )}
+                  >
+                    {product.descricao}
+                  </p>
+
+                  {/* Row 3: Location + Esgotado */}
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     {/* Location */}
                     {editingLoc === product.produto_id ? (

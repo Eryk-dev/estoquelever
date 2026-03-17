@@ -87,6 +87,8 @@ export function naturalLocCompare(a: string | null, b: string | null): number {
       // letters before numbers
       return aIsNum ? 1 : -1;
     } else {
+      // Text segments: shorter first (C before CP), then alphabetic
+      if (pa.length !== pb.length) return pa.length - pb.length;
       const cmp = pa.localeCompare(pb);
       if (cmp !== 0) return cmp;
     }

@@ -19,6 +19,8 @@ import {
   Loader2,
   Pencil,
   Save,
+  Send,
+  ShoppingCart,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -98,6 +100,12 @@ function ChecklistPage() {
   const [highlightedSku, setHighlightedSku] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [esgotadoLoading, setEsgotadoLoading] = useState<string | null>(null);
+  const [esgotadoModal, setEsgotadoModal] = useState<{
+    sku: string;
+    loading: boolean;
+    galpoes: Array<{ galpao_id: string; galpao_nome: string }>;
+    pedidos_afetados: number;
+  } | null>(null);
   const [editingLoc, setEditingLoc] = useState<string | null>(null); // produto_id being edited
   const [editLocValue, setEditLocValue] = useState("");
   const [savingLoc, setSavingLoc] = useState(false);
@@ -535,16 +543,9 @@ function ChecklistPage() {
     }
   }
 
-  // Handle esgotado (product out of stock)
+  // Handle esgotado — step 1: preview (check alternatives)
   async function handleEsgotado(sku: string, e: React.MouseEvent) {
     e.stopPropagation();
-    if (
-      !window.confirm(
-        `Marcar SKU ${sku} como esgotado?\n\nTODOS os pedidos em separacao com este produto serao movidos para Aguardando OC.`,
-      )
-    )
-      return;
-
     setEsgotadoLoading(sku);
     try {
       const res = await sisoFetch("/api/separacao/produto-esgotado", {
@@ -553,10 +554,53 @@ function ChecklistPage() {
         body: JSON.stringify({ sku }),
       });
       const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Erro ao verificar estoque");
+        return;
+      }
+      // Open modal with alternatives
+      setEsgotadoModal({
+        sku,
+        loading: false,
+        galpoes: data.galpoes_alternativos ?? [],
+        pedidos_afetados: data.pedidos_afetados ?? 0,
+      });
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setEsgotadoLoading(null);
+    }
+  }
+
+  // Handle esgotado — step 2: execute chosen action
+  async function handleEsgotadoAction(
+    acao: "oc" | "encaminhar",
+    galpaoDestinoId?: string,
+  ) {
+    if (!esgotadoModal) return;
+    const { sku } = esgotadoModal;
+    setEsgotadoModal((prev) => (prev ? { ...prev, loading: true } : null));
+    try {
+      const payload: Record<string, string> = { sku, acao };
+      if (galpaoDestinoId) payload.galpao_destino_id = galpaoDestinoId;
+
+      const res = await sisoFetch("/api/separacao/produto-esgotado", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success(
-          `SKU ${sku} esgotado — ${data.pedidos_afetados} pedido(s) movido(s) para Aguardando OC`,
-        );
+        if (acao === "encaminhar") {
+          toast.success(
+            `SKU ${sku} — ${data.pedidos_afetados} pedido(s) encaminhado(s) para ${data.galpao_destino_nome}`,
+          );
+        } else {
+          toast.success(
+            `SKU ${sku} esgotado — ${data.pedidos_afetados} pedido(s) movido(s) para OC`,
+          );
+        }
+        setEsgotadoModal(null);
         // If all pedidos were affected, go back to separation list
         if (data.pedidos_afetados >= pedidoIds.length) {
           queryClient.invalidateQueries({ queryKey: ["separacao"] });
@@ -566,12 +610,14 @@ function ChecklistPage() {
         queryClient.invalidateQueries({ queryKey });
         queryClient.invalidateQueries({ queryKey: ["separacao"] });
       } else {
-        toast.error(data.error ?? "Erro ao marcar como esgotado");
+        toast.error(data.error ?? "Erro ao processar");
+        setEsgotadoModal((prev) =>
+          prev ? { ...prev, loading: false } : null,
+        );
       }
     } catch {
       toast.error("Erro de conexao");
-    } finally {
-      setEsgotadoLoading(null);
+      setEsgotadoModal((prev) => (prev ? { ...prev, loading: false } : null));
     }
   }
 

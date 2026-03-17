@@ -3,10 +3,11 @@
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle } from "lucide-react";
+import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle, CalendarClock } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
+import { cn } from "@/lib/utils";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import { Tabs } from "@/components/ui/tabs";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -134,10 +135,11 @@ export default function SeparacaoPage() {
   const [activeTab, setActiveTab] = useState<StatusSeparacao>("aguardando_separacao");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Filter state (only applies to aguardando_separacao tab)
+  // Filter state
   const [empresaFilter, setEmpresaFilter] = useState("");
   const [sortFilter, setSortFilter] = useState("data_pedido");
   const [busca, setBusca] = useState("");
+  const [envioHoje, setEnvioHoje] = useState(false);
 
   // Action loading states
   const [actionLoading, setActionLoading] = useState(false);
@@ -169,8 +171,9 @@ export default function SeparacaoPage() {
     if (empresaFilter) params.set("empresa_origem_id", empresaFilter);
     if (sortFilter !== "data_pedido") params.set("sort", sortFilter);
     if (busca.trim()) params.set("busca", busca.trim());
+    if (envioHoje) params.set("envio_hoje", "true");
     return params.toString();
-  }, [activeTab, empresaFilter, sortFilter, busca]);
+  }, [activeTab, empresaFilter, sortFilter, busca, envioHoje]);
 
   // Fetch pedidos for active tab + counts for all tabs
   const {
@@ -466,6 +469,21 @@ export default function SeparacaoPage() {
               </option>
             ))}
           </select>
+
+          {/* Envio Hoje toggle */}
+          <button
+            type="button"
+            onClick={() => setEnvioHoje((v) => !v)}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors",
+              envioHoje
+                ? "border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/30 dark:text-amber-300"
+                : "border-line bg-paper text-ink-faint hover:text-ink",
+            )}
+          >
+            <CalendarClock className="h-3.5 w-3.5" />
+            Envio Hoje
+          </button>
         </div>
 
         {/* Select all + count */}

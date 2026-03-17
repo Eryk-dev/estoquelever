@@ -7,7 +7,9 @@
 -- function to use it.
 -- ============================================================
 
--- 1. Helper: convert "B-10-1" → "B-0000000010-0000000001" for sorting
+-- 1. Helper: convert "B-10-1" → "01:B-0000000010-0000000001" for sorting
+--    Text segments are prefixed with their length so shorter comes first
+--    (C before CP before CPA), numeric segments are zero-padded.
 CREATE OR REPLACE FUNCTION siso_loc_sort_key(loc text)
 RETURNS text AS $$
 DECLARE
@@ -24,7 +26,8 @@ BEGIN
     IF part ~ '^\d+$' THEN
       result := result || lpad(part, 10, '0');
     ELSE
-      result := result || part;
+      -- Prefix with zero-padded length so shorter text sorts first
+      result := result || lpad(length(part)::text, 2, '0') || ':' || part;
     END IF;
   END LOOP;
   RETURN result;

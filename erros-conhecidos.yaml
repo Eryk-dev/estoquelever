@@ -35,16 +35,20 @@ erros:
     tags: [zpl, shopee, etiqueta, dg-graphic, label]
 
   - id: agrupamento-ids-pedidos-vs-nf
-    date: "2026-03-16"
+    date: "2026-03-17"
     source: agrupamento-service
     category: external_api
-    message: "Agrupamento creation failed / wrong IDs sent to Tiny"
-    cause: "Tiny API espera idsPedidos (nao idsNotasFiscais) para criar agrupamentos. Mudanca anterior tentou usar NF IDs mas a API rejeita."
-    fix: "Revertido para usar idsPedidos na criacao de agrupamentos."
+    message: "Agrupamento criado com 0 expedicoes — etiquetas nunca disponíveis"
+    cause: "POST /expedicao era chamado com { idsPedidos } mas Tiny espera { idsNotasFiscais } + { logistica: { formaFrete: { id } } } para gerar expedicoes. Agrupamento era criado mas sem nenhuma expedicao, impossibilitando download de etiquetas."
+    fix: "Alterado criarAgrupamento em tiny-api.ts para enviar idsNotasFiscais + logistica.formaFrete. agrupamento-service.ts e etiqueta-service.ts atualizados para passar nota_fiscal_id em vez de pedido ID. Adicionado coluna expedicao_id em siso_pedidos para cachear ID da expedicao e evitar chamada extra de obterAgrupamento no retry. siso_claim_etiqueta RPC atualizado para retornar forma_frete_id."
     files:
+      - src/lib/tiny-api.ts
       - src/lib/agrupamento-service.ts
-    commit: 773b5c9
-    tags: [agrupamento, tiny-api, ids, nota-fiscal]
+      - src/lib/etiqueta-service.ts
+      - supabase/migrations/20260317_add_expedicao_id_to_pedidos.sql
+      - supabase/migrations/20260317_claim_etiqueta_add_forma_frete.sql
+    commit: 6128e4b
+    tags: [agrupamento, tiny-api, ids, nota-fiscal, expedicao, idsNotasFiscais, formaFrete, etiqueta, 0-expedicoes]
 
   - id: reimprimir-status-wrong
     date: "2026-03-16"

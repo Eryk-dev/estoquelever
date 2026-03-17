@@ -141,7 +141,9 @@ src/
         voltar-etapa/route.ts      # Go back one step (POST)
         produto-esgotado/route.ts  # Mark product out of stock (POST)
         reimprimir/route.ts        # Reprint label (POST)
-        forcar-pendente/route.ts   # Force order back to pending (POST)
+        forcar-pendente/route.ts   # Force orders back to pending — batch (POST)
+        [pedidoId]/forcar-pendente/route.ts  # Force single order back to pending (PATCH)
+        localizacao/route.ts       # Update product location in Tiny + DB (POST)
       compras/
         route.ts                   # List purchase items grouped by supplier (GET)
         ordens/route.ts            # List purchase orders (GET)
@@ -150,7 +152,9 @@ src/
         itens/[itemId]/indisponivel/route.ts  # Mark item unavailable (POST)
         itens/[itemId]/devolver/route.ts      # Return received item (POST)
         itens/[itemId]/trocar-fornecedor/route.ts  # Change supplier (POST)
-      worker/processar/route.ts    # Execution worker trigger (POST)
+      worker/processar/route.ts    # Execution worker trigger (POST/GET)
+      dashboard/counts/route.ts    # Module card counts (GET)
+      painel/route.ts              # Control tower / Torre de Controle (GET)
       admin/
         usuarios/route.ts          # User CRUD (GET/POST/PUT/DELETE)
         galpoes/route.ts           # Galpao CRUD (GET/POST) — GET returns full hierarchy
@@ -162,7 +166,7 @@ src/
         grupos/[id]/empresas/route.ts           # Add empresa to grupo (POST)
         grupos/[id]/empresas/[empresaId]/route.ts  # Update tier / remove
         printnode/
-          api-key/route.ts         # Manage PrintNode API key (GET/PUT)
+          api-key/route.ts         # Manage PrintNode API key (GET/PUT/DELETE)
           printers/route.ts        # List printers (GET)
           test/route.ts            # Test PrintNode connection (POST)
       tiny/
@@ -361,6 +365,36 @@ npm run lint      # ESLint
 - `sisoFetch` wrapper in `auth-context.tsx` auto-sends session header
 - Server validates via `getSessionUser()` in `session.ts`
 - Seed user: `Eryk / 1234 / admin`
+
+## Documentation
+
+### API Reference (`docs/api-reference.md`)
+
+**`docs/api-reference.md`** is the **complete, authoritative reference** for every API route in the system. It documents:
+- HTTP method + path + file location
+- Auth requirements (headers, session, role)
+- Request body/query params with exact JSON shapes
+- Response body with exact JSON shapes for every status code
+- Business logic summary and side effects
+- Error codes and causes
+
+**This file exists so that any LLM or developer can understand the full API contract without reading the route source code.** Always consult it before making API changes.
+
+### MANDATORY: Keeping Documentation Updated
+
+**When you modify any API route, you MUST update `docs/api-reference.md` in the same commit.** This includes:
+- Adding a new route -> add full documentation entry
+- Changing request/response shape -> update the documented shapes
+- Adding/removing query params or body fields -> update the docs
+- Changing auth requirements -> update the docs
+- Changing business logic or side effects -> update the docs
+- Removing a route -> remove from docs
+
+**When you modify `CLAUDE.md` itself** (project structure, conventions, architecture), ensure it stays consistent with `docs/api-reference.md`.
+
+**When you add new lib services**, update the Project Structure section in this file.
+
+Failure to update documentation means the next developer or LLM will work with stale information and introduce bugs.
 
 ## Coding Conventions
 

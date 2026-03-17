@@ -144,3 +144,15 @@ erros:
       - src/app/api/tiny/stock/ajustar/route.ts
       - src/app/api/separacao/localizacao/route.ts
     tags: [429, rate-limit, tiny-api, queue, concurrency, agrupamento, etiqueta, burst]
+
+  - id: 10
+    date: "2026-03-17"
+    source: siso_loc_sort_key (PostgreSQL RPC)
+    category: database
+    message: "upper bound of FOR loop cannot be null"
+    cause: "siso_loc_sort_key('') — string_to_array('', '-') retorna array vazio, array_length retorna NULL, FOR i IN 1..NULL crashava. 26 rows em siso_pedido_item_estoques tinham localizacao = '' (vazio, nao NULL)."
+    fix: "Adicionado check para string vazia (loc = '') no inicio da funcao, e guard contra array_length NULL antes do FOR loop. Ambos retornam NULL cedo."
+    files:
+      - supabase/migrations/20260317_fix_loc_sort_key_empty_string.sql
+      - supabase/migrations/20260317_natural_loc_sort.sql
+    tags: [postgres, rpc, for-loop, null, localizacao, separacao, sort]

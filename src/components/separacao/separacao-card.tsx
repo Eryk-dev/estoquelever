@@ -41,7 +41,6 @@ export interface SeparacaoPedido {
   itens_bipados: number;
   galpao_id: string | null;
   compra_stats: CompraStatsData | null;
-  prazo_envio: string | null;
   etiqueta_status: string | null;
   etiqueta_pronta: boolean;
 }
@@ -268,36 +267,6 @@ export function SeparacaoCard({
               <Calendar className="h-3 w-3" aria-hidden="true" />
               {formatDate(pedido.data_pedido)}
             </span>
-
-            {pedido.prazo_envio && (() => {
-              const deadline = new Date(pedido.prazo_envio);
-              const now = new Date();
-              const diffMs = deadline.getTime() - now.getTime();
-              const diffH = diffMs / (1000 * 60 * 60);
-              const isOverdue = diffH < 0;
-              const isUrgent = diffH >= 0 && diffH < 2;
-              const isAttention = diffH >= 2 && diffH < 4;
-              return (
-                <span
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
-                    isOverdue
-                      ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400"
-                      : isUrgent
-                        ? "bg-orange-50 text-orange-600 dark:bg-orange-950/30 dark:text-orange-400"
-                        : isAttention
-                          ? "bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400"
-                          : "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400",
-                  )}
-                  title={`Prazo: ${deadline.toLocaleString("pt-BR")}`}
-                >
-                  <Clock className="h-2.5 w-2.5" />
-                  {isOverdue
-                    ? "Atrasado"
-                    : `${String(deadline.getDate()).padStart(2, "0")}/${String(deadline.getMonth() + 1).padStart(2, "0")} ${String(deadline.getHours()).padStart(2, "0")}:${String(deadline.getMinutes()).padStart(2, "0")}`}
-                </span>
-              );
-            })()}
 
             {/* Label readiness indicator (separado + embalado) */}
             {isSeparado && (

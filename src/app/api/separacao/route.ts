@@ -47,7 +47,6 @@ export async function GET(request: NextRequest) {
   const empresaFilter = searchParams.get("empresa_origem_id");
   const sortParam = searchParams.get("sort") ?? "data_pedido";
   const busca = searchParams.get("busca");
-  const envioHoje = searchParams.get("envio_hoje") === "true";
 
   if (statusFilter && !VALID_STATUSES.includes(statusFilter)) {
     return NextResponse.json(
@@ -121,7 +120,6 @@ export async function GET(request: NextRequest) {
         `id, numero, data, id_pedido_ecommerce, cliente_nome,
          forma_envio_descricao, status_separacao, marcadores,
          empresa_origem_id, etiqueta_status, etiqueta_zpl,
-         prazo_envio,
          siso_empresas(nome, galpao_id)`,
       )
       .not("status_separacao", "is", null);
@@ -141,16 +139,6 @@ export async function GET(request: NextRequest) {
         `numero.ilike.%${busca}%,id_pedido_ecommerce.ilike.%${busca}%,cliente_nome.ilike.%${busca}%`,
       );
     }
-    if (envioHoje) {
-      // Filter orders with prazo_envio today (BRT = UTC-3)
-      const now = new Date();
-      const brt = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-      const todayStr = brt.toISOString().slice(0, 10);
-      pedidosQuery = pedidosQuery
-        .gte("prazo_envio", `${todayStr}T00:00:00-03:00`)
-        .lt("prazo_envio", `${todayStr}T23:59:59.999-03:00`);
-    }
-
     pedidosQuery = pedidosQuery.order("data", { ascending: true });
 
     // Execute counts + pedidos + empresas in parallel
@@ -268,7 +256,6 @@ export async function GET(request: NextRequest) {
         itens_marcados: stats.marcados,
         itens_bipados: stats.bipados,
         compra_stats: cs,
-        prazo_envio: p.prazo_envio ?? null,
         etiqueta_status: p.etiqueta_status ?? null,
         etiqueta_pronta: !!p.etiqueta_zpl,
       };

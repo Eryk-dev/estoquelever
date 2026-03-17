@@ -603,7 +603,7 @@ function ChecklistPage() {
                 type="button"
                 onClick={() => handleToggle(product)}
                 className={cn(
-                  "flex w-full min-h-[44px] items-start gap-2.5 sm:gap-3 rounded-xl border px-3 sm:px-4 py-3 text-left transition-all duration-300",
+                  "flex w-full min-h-[44px] items-start sm:items-center gap-2.5 sm:gap-3 rounded-xl border px-3 sm:px-4 py-3 text-left transition-all duration-300",
                   product.all_marcado
                     ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
                     : "border-line bg-paper hover:bg-surface",
@@ -614,7 +614,7 @@ function ChecklistPage() {
                 {/* Checkbox visual */}
                 <div
                   className={cn(
-                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition-colors mt-0.5",
+                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition-colors mt-0.5 sm:mt-0",
                     product.all_marcado
                       ? "border-emerald-500 bg-emerald-500 text-white"
                       : "border-zinc-300 dark:border-zinc-600",
@@ -640,51 +640,64 @@ function ChecklistPage() {
                   )}
                 </div>
 
-                {/* Content — stacks vertically */}
-                <div className="min-w-0 flex-1">
-                  {/* Row 1: SKU + GTIN + Qty badge */}
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "font-mono text-xs font-semibold",
-                        product.all_marcado
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-ink",
-                      )}
-                    >
-                      {product.sku}
-                    </span>
-                    {product.gtin && (
-                      <span className="hidden sm:inline text-[10px] text-ink-faint">
-                        GTIN
+                {/* Content — stacks on mobile, single row on sm+ */}
+                <div className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
+                  {/* SKU / Description block */}
+                  <div className="min-w-0 sm:flex-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          "font-mono text-xs font-semibold",
+                          product.all_marcado
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-ink",
+                        )}
+                      >
+                        {product.sku}
                       </span>
-                    )}
-                    <span
+                      {product.gtin && (
+                        <span className="text-[10px] text-ink-faint">
+                          <span className="hidden sm:inline">GTIN </span>{product.gtin}
+                        </span>
+                      )}
+                      {/* Qty badge — mobile only */}
+                      <span
+                        className={cn(
+                          "sm:hidden ml-auto shrink-0 rounded-md px-2 py-0.5 font-mono text-sm font-semibold",
+                          product.all_marcado
+                            ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+                            : "bg-zinc-100 text-ink dark:bg-zinc-800",
+                        )}
+                      >
+                        {product.quantidade_total}
+                      </span>
+                    </div>
+                    <p
                       className={cn(
-                        "ml-auto shrink-0 rounded-md px-2 py-0.5 font-mono text-sm font-semibold",
+                        "truncate text-xs sm:text-sm mt-0.5",
                         product.all_marcado
-                          ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
-                          : "bg-zinc-100 text-ink dark:bg-zinc-800",
+                          ? "text-emerald-600/60 line-through dark:text-emerald-400/60"
+                          : "text-ink-faint sm:text-ink",
                       )}
                     >
-                      {product.quantidade_total}
-                    </span>
+                      {product.descricao}
+                    </p>
                   </div>
 
-                  {/* Row 2: Description */}
-                  <p
+                  {/* Qty badge — desktop only */}
+                  <span
                     className={cn(
-                      "truncate text-xs mt-0.5",
+                      "hidden sm:inline-flex shrink-0 rounded-md px-2 py-0.5 font-mono text-sm font-semibold",
                       product.all_marcado
-                        ? "text-emerald-600/60 line-through dark:text-emerald-400/60"
-                        : "text-ink-faint",
+                        ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+                        : "bg-zinc-100 text-ink dark:bg-zinc-800",
                     )}
                   >
-                    {product.descricao}
-                  </p>
+                    {product.quantidade_total}
+                  </span>
 
-                  {/* Row 3: Location + Esgotado */}
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {/* Location + Esgotado — wraps on mobile, inline on sm+ */}
+                  <div className="mt-1.5 sm:mt-0 flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0">
                     {/* Location */}
                     {editingLoc === product.produto_id ? (
                       <div

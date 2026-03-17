@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   Check,
   Loader2,
+  Pencil,
   Plus,
   Trash2,
   Users,
@@ -399,21 +400,29 @@ function UsuarioRow({
               onCancel={() => setEditingCargo(false)}
             />
           ) : (
-            <div className="mt-0.5 flex flex-wrap gap-1">
+            <div className="mt-0.5 flex flex-wrap items-center gap-1">
               {cargos.map((c) => (
-                <button
+                <span
                   key={c}
-                  type="button"
-                  onClick={() => setEditingCargo(true)}
                   className={cn(
-                    "rounded px-1.5 py-0.5 text-[11px] font-semibold transition-colors hover:ring-1 hover:ring-zinc-300 dark:hover:ring-zinc-600",
+                    "rounded px-1.5 py-0.5 text-[11px] font-semibold",
                     CARGO_COLORS[c],
                   )}
-                  title="Clique para alterar cargos"
                 >
                   {CARGO_LABELS[c]}
-                </button>
+                </span>
               ))}
+              {!isSelf && (
+                <button
+                  type="button"
+                  onClick={() => setEditingCargo(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-dashed border-zinc-300 px-1.5 py-0.5 text-[11px] text-ink-faint transition-colors hover:border-zinc-400 hover:text-ink dark:border-zinc-600 dark:hover:border-zinc-500"
+                  title="Alterar cargos"
+                >
+                  <Pencil className="h-2.5 w-2.5" />
+                  Editar
+                </button>
+              )}
             </div>
           )}
         </div>

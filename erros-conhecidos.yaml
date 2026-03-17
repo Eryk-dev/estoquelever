@@ -120,3 +120,23 @@ erros:
     files:
       - src/app/separacao/embalagem/page.tsx
     tags: [embalagem, pedido, concluir, empty-state, conferencia, react-query]
+
+  - id: tiny-429-agrupamento-etiquetas
+    date: "2026-03-17"
+    source: agrupamento-service
+    category: infrastructure
+    message: "Tiny API GET /expedicao/{id}/expedicao/{id}/etiquetas → 429 after 3 retries"
+    cause: "agrupamento-service disparava N requisicoes de etiqueta em paralelo (Promise.allSettled) sem nenhum rate limiting. Com 11+ expedicoes no mesmo agrupamento, estourava o limite de 60 req/min do Tiny. O rate-limiter.ts (Supabase-based) nao era usado por agrupamento-service nem etiqueta-service. Outros modulos (webhook-processor, execution-worker) usavam waitForRateLimit mas isso era lento (2+ DB queries por API call) e nao prevenia bursts concorrentes."
+    fix: "Criado tiny-queue.ts — fila in-memory com sliding window (55 req/60s) + controle de concorrencia (max 5 por empresa) usando AsyncLocalStorage. Integrado ao tinyFetch: quando chamado dentro de runWithEmpresa(), cada request passa pela fila automaticamente. Todos os callers migrados de waitForRateLimit/registerApiCall para runWithEmpresa(). O 429 retry em tinyFetch permanece como defense-in-depth."
+    files:
+      - src/lib/tiny-queue.ts
+      - src/lib/tiny-api.ts
+      - src/lib/agrupamento-service.ts
+      - src/lib/etiqueta-service.ts
+      - src/lib/webhook-processor.ts
+      - src/lib/execution-worker.ts
+      - src/lib/nf-webhook-handler.ts
+      - src/app/api/compras/conferir/route.ts
+      - src/app/api/tiny/stock/ajustar/route.ts
+      - src/app/api/separacao/localizacao/route.ts
+    tags: [429, rate-limit, tiny-api, queue, concurrency, agrupamento, etiqueta, burst]

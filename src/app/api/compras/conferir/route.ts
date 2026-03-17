@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { movimentarEstoque } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
-import { waitForRateLimit, registerApiCall } from "@/lib/rate-limiter";
+import { runWithEmpresa } from "@/lib/tiny-queue";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
 
 const ALLOWED_CARGOS = ["admin", "comprador"];
@@ -125,14 +125,12 @@ export async function POST(request: NextRequest) {
       // Call Tiny movimentarEstoque if produto_id_tiny exists
       if (item.produto_id_tiny) {
         try {
-          await waitForRateLimit(oc.empresa_id);
-          await registerApiCall(oc.empresa_id, "POST /estoque/{id} (entrada OC)");
-          await movimentarEstoque(token, item.produto_id_tiny, {
+          await runWithEmpresa(oc.empresa_id, () => movimentarEstoque(token, item.produto_id_tiny!, {
             tipo: "E",
             quantidade: input.quantidade_recebida,
             deposito: depositoId ? { id: depositoId } : undefined,
             observacoes: `Entrada OC via SISO — ${item.sku}`,
-          });
+          }));
 
           logger.info("compras-conferir", `Entrada estoque Tiny: ${item.sku} x${input.quantidade_recebida}`, {
             ordemCompraId: ordem_compra_id,

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { movimentarEstoque, getEstoque } from "@/lib/tiny-api";
-import { waitForRateLimit, registerApiCall } from "@/lib/rate-limiter";
+import { runWithEmpresa } from "@/lib/tiny-queue";
 import { logger } from "@/lib/logger";
 
 /**
@@ -111,26 +111,24 @@ export async function POST(request: Request) {
     // 5. Get token for the empresa
     const { token } = await getValidTokenByEmpresa(empresa.id);
 
-    // 6. Call Tiny — balanço (set exact saldo)
-    await waitForRateLimit(empresa.id);
-    await registerApiCall(empresa.id, "POST /estoque/{id} (balanço)");
-    await movimentarEstoque(token, tinyProdutoId, {
-      tipo: "B",
-      quantidade,
-      ...(depositoId != null && { deposito: { id: depositoId } }),
-      observacoes: `Balanço via SISO — pedido ${pedidoId}`,
-    });
+    // 6. Call Tiny — balanço (set exact saldo) + re-fetch actual values
+    const estoqueAtualizado = await runWithEmpresa(empresa.id, async () => {
+      await movimentarEstoque(token, tinyProdutoId!, {
+        tipo: "B",
+        quantidade,
+        ...(depositoId != null && { deposito: { id: depositoId } }),
+        observacoes: `Balanço via SISO — pedido ${pedidoId}`,
+      });
 
-    logger.info("stock-adjust", "Stock balance set in Tiny", {
-      pedidoId, produtoId, galpao,
-      empresaId: empresa.id, tinyProdutoId, depositoId,
-      novoSaldo: quantidade,
-    });
+      logger.info("stock-adjust", "Stock balance set in Tiny", {
+        pedidoId, produtoId, galpao,
+        empresaId: empresa.id, tinyProdutoId, depositoId,
+        novoSaldo: quantidade,
+      });
 
-    // 7. Re-fetch stock from Tiny to get actual values
-    await waitForRateLimit(empresa.id);
-    await registerApiCall(empresa.id, "GET /estoque/{id}");
-    const estoqueAtualizado = await getEstoque(token, tinyProdutoId);
+      // 7. Re-fetch stock from Tiny to get actual values
+      return getEstoque(token, tinyProdutoId!);
+    });
 
     let novoSaldo = quantidade;
     let novoReservado = 0;

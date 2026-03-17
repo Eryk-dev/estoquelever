@@ -2,7 +2,7 @@ import { createServiceClient } from "./supabase-server";
 import { getPedido, getEstoque, buscarProdutoPorSku, getProdutoDetalhe, getProdutoKit, obterNotaFiscal } from "./tiny-api";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
-import { registerApiCall, waitForRateLimit } from "./rate-limiter";
+import { runWithEmpresa } from "./tiny-queue";
 import { processQueue } from "./execution-worker";
 import { getEmpresasDoGrupo, agregarEstoquePorGalpao } from "./grupo-resolver";
 import type { EmpresaGrupo } from "./grupo-resolver";
@@ -173,9 +173,9 @@ export async function processWebhook(
     }
 
     // 4. Fetch order details from Tiny (origin empresa)
-    await waitForRateLimit(empresaOrigemId);
-    await registerApiCall(empresaOrigemId, "GET /pedidos/{id}");
-    const pedido = await getPedido(origemToken, pedidoTinyId);
+    const pedido = await runWithEmpresa(empresaOrigemId, () =>
+      getPedido(origemToken, pedidoTinyId),
+    );
 
     // 5. Enrich each item with stock from all empresas in the grupo
     const itensProcessados: ProcessedItem[] = [];
@@ -198,17 +198,17 @@ export async function processWebhook(
       let itemGtin: string | null = null;
 
       try {
-        await waitForRateLimit(empresaOrigemId);
-        await registerApiCall(empresaOrigemId, "GET /produtos/{id}");
-        const detalhe = await getProdutoDetalhe(origemToken, item.produto.id);
+        const detalhe = await runWithEmpresa(empresaOrigemId, () =>
+          getProdutoDetalhe(origemToken, item.produto.id),
+        );
         kitImagemUrl = detalhe.imagemUrl;
         itemGtin = detalhe.gtin;
 
         if (detalhe.tipo === "K") {
           await sleep(500);
-          await waitForRateLimit(empresaOrigemId);
-          await registerApiCall(empresaOrigemId, "GET /produtos/{id}/kit");
-          const componentes = await getProdutoKit(origemToken, item.produto.id);
+          const componentes = await runWithEmpresa(empresaOrigemId, () =>
+            getProdutoKit(origemToken, item.produto.id),
+          );
 
           if (componentes.length > 0) {
             logger.info("processor", `Kit detected — expanding ${componentes.length} components`, {
@@ -462,9 +462,9 @@ export async function processWebhook(
           // Match this NF to the just-saved pedido via Tiny API
           let isMatch = false;
           try {
-            await waitForRateLimit(empresaOrigemId);
-            await registerApiCall(empresaOrigemId, "GET /notas/{id}");
-            const nf = await obterNotaFiscal(origemToken, idNotaFiscalTiny);
+            const nf = await runWithEmpresa(empresaOrigemId, () =>
+              obterNotaFiscal(origemToken, idNotaFiscalTiny),
+            );
             if (nf.origem?.tipo === "venda" && nf.origem?.id === pedidoTinyId) {
               isMatch = true;
             }
@@ -594,17 +594,17 @@ async function enrichItemMultiEmpresa(
       } else {
         // Search for product by SKU in this empresa's Tiny account
         await sleep(500);
-        await waitForRateLimit(emp.empresaId);
-        await registerApiCall(emp.empresaId, "GET /produtos?codigo=");
-        const produtoBusca = await buscarProdutoPorSku(token, sku);
+        const produtoBusca = await runWithEmpresa(emp.empresaId, () =>
+          buscarProdutoPorSku(token, sku),
+        );
         if (!produtoBusca) continue;
         produtoId = produtoBusca.id;
         if (!produtoIdSuporte) produtoIdSuporte = produtoId;
       }
 
-      await waitForRateLimit(emp.empresaId);
-      await registerApiCall(emp.empresaId, "GET /estoque/{id}");
-      const estoque = await getEstoque(token, produtoId);
+      const estoque = await runWithEmpresa(emp.empresaId, () =>
+        getEstoque(token, produtoId),
+      );
       const dep = pickDeposito(estoque.depositos, depositoId);
 
       const saldo = dep?.saldo ?? 0;
@@ -638,9 +638,9 @@ async function enrichItemMultiEmpresa(
     const origemToken = empresaTokens.get(empresaOrigemId);
     if (origemToken) {
       try {
-        await waitForRateLimit(empresaOrigemId);
-        await registerApiCall(empresaOrigemId, "GET /produtos/{id}");
-        const detalhe = await getProdutoDetalhe(origemToken, item.produto.id);
+        const detalhe = await runWithEmpresa(empresaOrigemId, () =>
+          getProdutoDetalhe(origemToken, item.produto.id),
+        );
         imagemUrl = detalhe.imagemUrl;
         if (!gtin) gtin = detalhe.gtin;
       } catch {

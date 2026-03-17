@@ -21,6 +21,7 @@ import {
   obterAgrupamento,
   obterEtiquetasExpedicao,
 } from "@/lib/tiny-api";
+import { runWithEmpresa } from "@/lib/tiny-queue";
 import { baixarZpl } from "@/lib/etiqueta-download";
 import { logger } from "@/lib/logger";
 
@@ -147,16 +148,18 @@ export async function recarregarEtiquetasFaltantes(
       try {
         const { token } = await getValidTokenByEmpresa(empresaId);
 
-        for (const pedido of pedidosEmpresa) {
-          try {
-            await recarregarZplPedido(supabase, token, pedido);
-          } catch (err) {
-            logger.warn(LOG_SOURCE, "Falha ao recarregar ZPL para pedido", {
-              pedidoId: pedido.id,
-              error: err instanceof Error ? err.message : String(err),
-            });
+        await runWithEmpresa(empresaId, async () => {
+          for (const pedido of pedidosEmpresa) {
+            try {
+              await recarregarZplPedido(supabase, token, pedido);
+            } catch (err) {
+              logger.warn(LOG_SOURCE, "Falha ao recarregar ZPL para pedido", {
+                pedidoId: pedido.id,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
           }
-        }
+        });
       } catch (err) {
         logger.warn(LOG_SOURCE, "Falha ao obter token para recarregar etiquetas", {
           empresaId,
@@ -183,6 +186,9 @@ async function processarGrupo(
 
   try {
     const { token } = await getValidTokenByEmpresa(empresaId);
+
+    // All Tiny API calls within this scope are rate-limited for this empresa
+    return await runWithEmpresa(empresaId, async () => {
 
     // Build Tiny pedido IDs (Tiny auto-includes the pedido's NF in the expedition)
     const idsTiny: number[] = [];
@@ -301,6 +307,7 @@ async function processarGrupo(
       agrupamentoId: String(agrupamentoId),
       totalExpedicoes: String(agrupamentoDetails.expedicoes.length),
     });
+    }); // end runWithEmpresa
   } catch (err) {
     // On failure, clear 'pending' so it can be retried
     await supabase

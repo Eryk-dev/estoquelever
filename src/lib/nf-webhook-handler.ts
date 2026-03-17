@@ -9,7 +9,7 @@
 import { createServiceClient } from "./supabase-server";
 import { obterNotaFiscal } from "./tiny-api";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
-import { waitForRateLimit, registerApiCall } from "./rate-limiter";
+import { runWithEmpresa } from "./tiny-queue";
 import { logger } from "./logger";
 import { registrarEvento } from "./historico-service";
 
@@ -81,9 +81,9 @@ export async function handleNfWebhook(
   if (!pedidoId) {
     try {
       const { token } = await getValidTokenByEmpresa(empresaId);
-      await waitForRateLimit(empresaId);
-      await registerApiCall(empresaId, "GET /notas/{id}");
-      const nf = await obterNotaFiscal(token, idNotaFiscalTiny);
+      const nf = await runWithEmpresa(empresaId, () =>
+        obterNotaFiscal(token, idNotaFiscalTiny),
+      );
 
       // Only process sale invoices
       if (nf.origem?.tipo !== "venda") {

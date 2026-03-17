@@ -20,7 +20,7 @@ import {
   buscarProdutoPorSku,
 } from "./tiny-api";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
-import { checkRateLimit, registerApiCall, waitForRateLimit } from "./rate-limiter";
+import { runWithEmpresa } from "./tiny-queue";
 import { getOrdemDeducao } from "./grupo-resolver";
 import { getEmpresaById } from "./empresa-lookup";
 import { logger } from "./logger";
@@ -72,18 +72,6 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
   }
 
   for (const job of jobs as FilaJob[]) {
-    // Check rate limit before each job
-    const rateStatus = await checkRateLimit(job.empresa_id);
-    if (!rateStatus.allowed) {
-      logger.info("worker", "Rate limited, pausing queue", {
-        empresaId: job.empresa_id,
-        remaining: rateStatus.remaining,
-        waitMs: rateStatus.waitMs,
-      });
-      result.rateLimited = true;
-      break;
-    }
-
     // Mark as executing (atomic claim)
     const { data: claimed } = await supabase
       .from("siso_fila_execucao")
@@ -260,9 +248,9 @@ async function inserirMarcadoresTiny(
   if (marcadores.length === 0) return;
 
   try {
-    await waitForRateLimit(empresaId);
-    await registerApiCall(empresaId, "POST /pedidos/{id}/marcadores");
-    await criarMarcadoresPedido(token, pedidoId, marcadores);
+    await runWithEmpresa(empresaId, () =>
+      criarMarcadoresPedido(token, pedidoId, marcadores),
+    );
     logger.info("worker", "Marcadores inseridos no pedido Tiny", {
       pedidoId,
       marcadores,
@@ -290,9 +278,9 @@ async function gerarNotaFiscalPedido(
   const supabase = createServiceClient();
 
   try {
-    await waitForRateLimit(empresaId);
-    await registerApiCall(empresaId, "POST /pedidos/{id}/gerar-nota-fiscal");
-    const nota = await gerarNotaFiscal(token, pedidoId);
+    const nota = await runWithEmpresa(empresaId, () =>
+      gerarNotaFiscal(token, pedidoId),
+    );
 
     await supabase
       .from("siso_pedidos")
@@ -364,9 +352,9 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
   await sleep(500);
 
   // 3. Post stock from NF
-  await waitForRateLimit(job.empresa_id);
-  await registerApiCall(job.empresa_id, "POST /notas/{id}/lancar-estoque");
-  await lancarEstoqueNota(token, notaId);
+  await runWithEmpresa(job.empresa_id, () =>
+    lancarEstoqueNota(token, notaId),
+  );
 
   await supabase
     .from("siso_pedidos")
@@ -551,9 +539,9 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
   for (const item of itens) {
     try {
       // Find product in this empresa by SKU
-      await waitForRateLimit(empresaEscolhida.empresaId);
-      await registerApiCall(empresaEscolhida.empresaId, "GET /produtos?codigo=");
-      const produto = await buscarProdutoPorSku(suporteToken, item.sku);
+      const produto = await runWithEmpresa(empresaEscolhida.empresaId, () =>
+        buscarProdutoPorSku(suporteToken, item.sku),
+      );
 
       if (!produto) {
         errors++;
@@ -574,14 +562,12 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
       await sleep(500);
 
       // Deduct stock
-      await waitForRateLimit(empresaEscolhida.empresaId);
-      await registerApiCall(empresaEscolhida.empresaId, "POST /estoque/{id}");
-      await movimentarEstoque(suporteToken, produto.id, {
+      await runWithEmpresa(empresaEscolhida.empresaId, () => movimentarEstoque(suporteToken, produto.id, {
         tipo: "S",
         quantidade: item.quantidade_pedida as number,
         deposito: depositoId ? { id: depositoId } : undefined,
         observacoes,
-      });
+      }));
 
       // Mark item as deducted
       await supabase

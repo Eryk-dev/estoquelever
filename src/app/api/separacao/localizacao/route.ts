@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { atualizarLocalizacaoProduto } from "@/lib/tiny-api";
+import { runWithEmpresa } from "@/lib/tiny-queue";
 
 /**
  * POST /api/separacao/localizacao
@@ -45,7 +46,9 @@ export async function POST(request: NextRequest) {
   try {
     // 1. Update in Tiny ERP
     const { token } = await getValidTokenByEmpresa(empresaId);
-    await atualizarLocalizacaoProduto(token, produtoId, trimmed);
+    await runWithEmpresa(empresaId, () =>
+      atualizarLocalizacaoProduto(token, produtoId, trimmed),
+    );
 
     // 2. Update all rows in siso_pedido_item_estoques for this product+empresa
     const { error: dbError } = await supabase

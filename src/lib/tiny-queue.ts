@@ -1,8 +1,9 @@
 /**
  * In-memory request queue for Tiny API calls.
  *
- * Enforces per-empresa rate limiting (55 req/60s sliding window)
- * and concurrency control (max 5 concurrent requests per empresa).
+ * Enforces per-empresa rate limiting by spacing requests evenly across
+ * a 60s window. With a budget of 55 req/min (Tiny limit is 60, 5 buffer),
+ * each request is spaced ~1.1s apart to avoid bursts that trigger 429s.
  *
  * Uses AsyncLocalStorage to automatically detect which empresa
  * a tinyFetch call belongs to — callers just wrap their code in
@@ -25,7 +26,10 @@ const LOG_SOURCE = "tiny-queue";
 const MAX_PER_MINUTE = 55;
 const WINDOW_MS = 60_000;
 
-/** Max concurrent in-flight requests per empresa */
+/** Minimum interval between dispatches: spreads requests evenly across the window */
+const MIN_INTERVAL_MS = Math.ceil(WINDOW_MS / MAX_PER_MINUTE); // ~1091ms
+
+/** Max concurrent in-flight requests per empresa (safety net for slow responses) */
 const MAX_CONCURRENT = 5;
 
 /** Max time a request can wait in queue before being rejected */
@@ -78,6 +82,7 @@ class EmpresaRequestQueue {
   private active = 0;
   private timestamps: number[] = [];
   private scheduledDrain: ReturnType<typeof setTimeout> | null = null;
+  private lastDispatchTime = 0;
 
   enqueue<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
@@ -106,37 +111,49 @@ class EmpresaRequestQueue {
       );
     }
 
+    if (this.queue.length === 0) return;
+
     // Clean old timestamps from sliding window
     const windowStart = Date.now() - WINDOW_MS;
     this.timestamps = this.timestamps.filter((t) => t > windowStart);
 
-    // Process items from queue
-    while (this.queue.length > 0 && this.active < MAX_CONCURRENT) {
-      // Check rate limit
-      if (this.timestamps.length >= MAX_PER_MINUTE) {
-        const oldestTs = this.timestamps[0];
-        const waitMs = Math.max(100, oldestTs + WINDOW_MS - Date.now() + 100);
-        this.scheduleDrain(Math.min(waitMs, 5000));
-        return;
-      }
-
-      const item = this.queue.shift()!;
-      this.active++;
-      this.timestamps.push(Date.now());
-
-      // Fire and forget — completion triggers re-drain
-      item
-        .fn()
-        .then(item.resolve)
-        .catch(item.reject)
-        .finally(() => {
-          this.active--;
-          this.drain();
-        });
+    // Check sliding window budget
+    if (this.timestamps.length >= MAX_PER_MINUTE) {
+      const oldestTs = this.timestamps[0];
+      const waitMs = Math.max(100, oldestTs + WINDOW_MS - Date.now() + 100);
+      this.scheduleDrain(Math.min(waitMs, 5000));
+      return;
     }
 
-    // If queue still has items but we're at max concurrency,
-    // they'll be picked up when an active request completes (via finally→drain)
+    // Check concurrency limit (safety net for slow responses)
+    if (this.active >= MAX_CONCURRENT) return;
+
+    // Enforce minimum interval between dispatches — spread evenly across the minute
+    const elapsed = Date.now() - this.lastDispatchTime;
+    if (elapsed < MIN_INTERVAL_MS) {
+      this.scheduleDrain(MIN_INTERVAL_MS - elapsed + 5);
+      return;
+    }
+
+    // Dispatch one item
+    const item = this.queue.shift()!;
+    this.active++;
+    this.timestamps.push(Date.now());
+    this.lastDispatchTime = Date.now();
+
+    item
+      .fn()
+      .then(item.resolve)
+      .catch(item.reject)
+      .finally(() => {
+        this.active--;
+        this.drain();
+      });
+
+    // Schedule next drain for the next interval slot (don't loop — one at a time)
+    if (this.queue.length > 0) {
+      this.scheduleDrain(MIN_INTERVAL_MS);
+    }
   }
 
   private scheduleDrain(ms: number): void {

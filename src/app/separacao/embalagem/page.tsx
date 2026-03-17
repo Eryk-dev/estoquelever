@@ -502,7 +502,7 @@ function EmbalagemPage() {
         {/* Order list */}
         {isLoading ? (
           <LoadingSpinner message="Carregando pedidos..." />
-        ) : pedidos.length === 0 ? (
+        ) : pedidos.length === 0 && completedPedidos.length === 0 ? (
           <EmptyState message="Nenhum pedido encontrado" />
         ) : (
           <div className="space-y-3">
@@ -564,8 +564,17 @@ function EmbalagemPage() {
             disabled={actionLoading}
             className="inline-flex items-center gap-2 rounded-xl border border-line bg-paper px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-surface disabled:opacity-50"
           >
-            <Save className="h-4 w-4" />
-            Salvar para depois
+            {activePedidos.length === 0 ? (
+              <>
+                <ArrowLeft className="h-4 w-4" />
+                Voltar
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4" />
+                Salvar para depois
+              </>
+            )}
           </button>
           <button
             onClick={handleReiniciar}

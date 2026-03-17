@@ -10,6 +10,7 @@ import {
   MapPinOff,
   Check,
   Package,
+  Boxes,
   ScanBarcode,
   CheckCircle2,
   RotateCcw,
@@ -41,6 +42,9 @@ interface ChecklistItem {
   localizacao: string | null;
   imagem_url: string | null;
   empresa_origem_id: string | null;
+  saldo: number;
+  disponivel: number;
+  galpao_nome: string | null;
 }
 
 interface ConsolidatedProduct {
@@ -54,6 +58,10 @@ interface ConsolidatedProduct {
   item_ids: string[];
   all_marcado: boolean;
   empresa_origem_id: string | null;
+  saldo: number;
+  disponivel: number;
+  galpao_nome: string | null;
+  first_pedido_id: string;
 }
 
 const SORT_OPTIONS = [
@@ -92,7 +100,11 @@ function ChecklistPage() {
   const [editingLoc, setEditingLoc] = useState<string | null>(null); // produto_id being edited
   const [editLocValue, setEditLocValue] = useState("");
   const [savingLoc, setSavingLoc] = useState(false);
+  const [editingStock, setEditingStock] = useState<string | null>(null); // produto_id being edited
+  const [editStockValue, setEditStockValue] = useState("");
+  const [savingStock, setSavingStock] = useState(false);
   const locInputRef = useRef<HTMLInputElement>(null);
+  const stockInputRef = useRef<HTMLInputElement>(null);
   const scanRef = useRef<HTMLInputElement>(null);
 
   // Auth redirect
@@ -160,6 +172,10 @@ function ChecklistPage() {
           item_ids: [item.id],
           all_marcado: item.separacao_marcado,
           empresa_origem_id: item.empresa_origem_id,
+          saldo: item.saldo,
+          disponivel: item.disponivel,
+          galpao_nome: item.galpao_nome,
+          first_pedido_id: item.pedido_id,
         });
       }
     }
@@ -338,6 +354,17 @@ function ChecklistPage() {
       }
 
       toast.success("Progresso reiniciado");
+      // Optimistic: immediately clear all marcado flags in cache
+      queryClient.setQueryData<{ items: ChecklistItem[] }>(queryKey, (old) => {
+        if (!old) return old;
+        return {
+          items: old.items.map((item) => ({
+            ...item,
+            separacao_marcado: false,
+            separacao_marcado_em: null,
+          })),
+        };
+      });
       queryClient.invalidateQueries({ queryKey });
     } catch {
       toast.error("Erro de conexao");
@@ -395,6 +422,10 @@ function ChecklistPage() {
       return;
     }
 
+    if (!window.confirm(
+      `Alterar localizacao de ${product.sku}?\n\nDe: ${product.localizacao || "(vazio)"}\nPara: ${trimmed || "(vazio)"}`,
+    )) return;
+
     setSavingLoc(true);
     try {
       const res = await sisoFetch("/api/separacao/localizacao", {
@@ -431,6 +462,77 @@ function ChecklistPage() {
     } finally {
       setSavingLoc(false);
       setEditingLoc(null);
+    }
+  }
+
+  // Handle stock edit
+  function startEditStock(product: ConsolidatedProduct, e: React.MouseEvent) {
+    e.stopPropagation();
+    setEditingStock(product.produto_id);
+    setEditStockValue(String(product.saldo));
+    setTimeout(() => stockInputRef.current?.focus(), 50);
+  }
+
+  async function saveStock(product: ConsolidatedProduct) {
+    const newSaldo = parseInt(editStockValue, 10);
+    if (isNaN(newSaldo) || newSaldo < 0) {
+      toast.error("Quantidade invalida");
+      return;
+    }
+    if (newSaldo === product.saldo) {
+      setEditingStock(null);
+      return;
+    }
+
+    if (!product.galpao_nome) {
+      toast.error("Galpao nao identificado");
+      setEditingStock(null);
+      return;
+    }
+
+    if (!window.confirm(
+      `Ajustar estoque de ${product.sku}?\n\nSaldo atual: ${product.saldo}\nNovo saldo: ${newSaldo}\n\nEsta acao altera o estoque no Tiny ERP.`,
+    )) return;
+
+    setSavingStock(true);
+    try {
+      const res = await sisoFetch("/api/tiny/stock/ajustar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedidoId: product.first_pedido_id,
+          produtoId: Number(product.produto_id),
+          galpao: product.galpao_nome,
+          quantidade: newSaldo,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Erro ao ajustar estoque");
+        return;
+      }
+
+      const result = await res.json();
+
+      // Optimistic update in cache
+      queryClient.setQueryData<{ items: ChecklistItem[] }>(queryKey, (old) => {
+        if (!old) return old;
+        return {
+          items: old.items.map((item) =>
+            item.produto_id === product.produto_id
+              ? { ...item, saldo: result.saldo, disponivel: result.disponivel }
+              : item,
+          ),
+        };
+      });
+
+      toast.success(`Estoque ajustado: ${product.sku} → saldo ${result.saldo}`);
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setSavingStock(false);
+      setEditingStock(null);
     }
   }
 
@@ -696,8 +798,57 @@ function ChecklistPage() {
                     {product.quantidade_total}
                   </span>
 
-                  {/* Location + Esgotado — wraps on mobile, inline on sm+ */}
+                  {/* Stock + Location + Esgotado — wraps on mobile, inline on sm+ */}
                   <div className="mt-1.5 sm:mt-0 flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0">
+                    {/* Stock badge */}
+                    {editingStock === product.produto_id ? (
+                      <div
+                        className="inline-flex items-center gap-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          ref={stockInputRef}
+                          type="number"
+                          min={0}
+                          value={editStockValue}
+                          onChange={(e) => setEditStockValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); saveStock(product); }
+                            if (e.key === "Escape") { e.preventDefault(); setEditingStock(null); }
+                          }}
+                          disabled={savingStock}
+                          className="h-7 w-20 rounded-md border border-amber-300 bg-white px-2 font-mono text-xs text-ink text-center focus:border-amber-500 focus:outline-none dark:border-amber-700 dark:bg-zinc-900"
+                        />
+                        <button
+                          type="button"
+                          disabled={savingStock}
+                          onClick={() => saveStock(product)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-amber-500 text-white transition-colors hover:bg-amber-600 disabled:opacity-40"
+                          title="Salvar estoque"
+                        >
+                          {savingStock ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => startEditStock(product, e)}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-xs font-semibold transition-colors",
+                          product.disponivel >= product.quantidade_total
+                            ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/60"
+                            : product.disponivel > 0
+                              ? "bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/60"
+                              : "bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60",
+                        )}
+                        title={`Estoque: saldo ${product.saldo}, disponivel ${product.disponivel} — clique para ajustar`}
+                      >
+                        <Boxes className="h-3 w-3" />
+                        {product.disponivel}
+                        <Pencil className="h-2.5 w-2.5 opacity-50" />
+                      </button>
+                    )}
+
                     {/* Location */}
                     {editingLoc === product.produto_id ? (
                       <div

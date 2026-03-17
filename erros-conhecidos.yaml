@@ -98,3 +98,25 @@ erros:
       - src/lib/agrupamento-service.ts
       - src/app/api/separacao/concluir/route.ts
     tags: [agrupamento, etiqueta, pre-criacao, retry, concluir, pending, zpl, cache, download]
+
+  - id: checklist-reiniciar-nao-reseta-visual
+    date: "2026-03-17"
+    source: separacao
+    category: business_logic
+    message: "Reiniciar progresso no checklist nao reseta visualmente os itens marcados"
+    cause: "handleReiniciar usava apenas invalidateQueries que agenda refetch em background mas mantem dados stale visiveis ate o refetch completar. Em condicoes de rede lentas ou timing infeliz, os itens permaneciam visualmente marcados."
+    fix: "Adicionado update otimista no cache (setQueryData) para zerar separacao_marcado em todos os itens imediatamente antes do invalidateQueries."
+    files:
+      - src/app/separacao/checklist/page.tsx
+    tags: [checklist, reiniciar, separacao, react-query, cache, otimista]
+
+  - id: embalagem-pedido-some-ao-concluir
+    date: "2026-03-17"
+    source: separacao
+    category: business_logic
+    message: "Pedido concluido some da tela de embalagem impossibilitando conferencia"
+    cause: "A query da embalagem busca status_separacao=separado. Quando pedido transiciona para embalado, sai da resposta da API no proximo refetch (5s). O check de empty state usava pedidos.length === 0, que ficava true quando todos pedidos eram concluidos, escondendo a secao Embalados com os pedidos ja completados."
+    fix: "Mudado check de empty state para pedidos.length === 0 && completedPedidos.length === 0. Botao 'Salvar para depois' muda para 'Voltar' quando nao ha pedidos ativos."
+    files:
+      - src/app/separacao/embalagem/page.tsx
+    tags: [embalagem, pedido, concluir, empty-state, conferencia, react-query]

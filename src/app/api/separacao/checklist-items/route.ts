@@ -63,18 +63,38 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 3. Fetch localizacao from siso_pedido_item_estoques
+    // 3. Fetch localizacao + stock from siso_pedido_item_estoques
     const { data: estoques } = await supabase
       .from("siso_pedido_item_estoques")
-      .select("pedido_id, produto_id, empresa_id, localizacao")
+      .select("pedido_id, produto_id, empresa_id, localizacao, saldo, disponivel")
       .in("pedido_id", pedido_ids);
 
-    // Build localizacao map: pedido_id:produto_id -> localizacao (origin empresa only)
+    // Build localizacao + stock maps (origin empresa only)
     const locMap = new Map<string, string>();
+    const stockMap = new Map<string, { saldo: number; disponivel: number }>();
     for (const e of estoques ?? []) {
       const originEmpresa = pedidoEmpresaMap.get(e.pedido_id);
-      if (e.empresa_id === originEmpresa && e.localizacao) {
-        locMap.set(`${e.pedido_id}:${e.produto_id}`, e.localizacao);
+      if (e.empresa_id === originEmpresa) {
+        const key = `${e.pedido_id}:${e.produto_id}`;
+        if (e.localizacao) locMap.set(key, e.localizacao);
+        stockMap.set(key, {
+          saldo: e.saldo ?? 0,
+          disponivel: e.disponivel ?? 0,
+        });
+      }
+    }
+
+    // 3b. Fetch galpao name for origin empresas (needed for stock adjustment calls)
+    const uniqueEmpresaIds = Array.from(new Set(pedidoEmpresaMap.values()));
+    const galpaoMap = new Map<string, string>();
+    if (uniqueEmpresaIds.length > 0) {
+      const { data: empresas } = await supabase
+        .from("siso_empresas")
+        .select("id, siso_galpoes(nome)")
+        .in("id", uniqueEmpresaIds);
+      for (const emp of empresas ?? []) {
+        const g = emp.siso_galpoes as unknown as { nome: string } | null;
+        if (g?.nome) galpaoMap.set(emp.id, g.nome);
       }
     }
 
@@ -94,7 +114,10 @@ export async function GET(request: NextRequest) {
       imagem_url: item.imagem_url ?? null,
       localizacao:
         locMap.get(`${item.pedido_id}:${item.produto_id}`) ?? null,
+      saldo: stockMap.get(`${item.pedido_id}:${item.produto_id}`)?.saldo ?? 0,
+      disponivel: stockMap.get(`${item.pedido_id}:${item.produto_id}`)?.disponivel ?? 0,
       empresa_origem_id: pedidoEmpresaMap.get(item.pedido_id) ?? null,
+      galpao_nome: galpaoMap.get(pedidoEmpresaMap.get(item.pedido_id) ?? "") ?? null,
     }));
 
     return NextResponse.json({ items: result });

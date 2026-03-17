@@ -222,10 +222,9 @@ async function retryAgrupamento(
 ): Promise<void> {
   const pedidoIds = pedidos.map((p) => p.id);
 
-  // 1. Fetch agrupamento from Tiny — if 404, clear IDs so they get re-created
-  let details;
+  // 1. Check if agrupamento exists — if 404, clear IDs so they get re-created
   try {
-    details = await obterAgrupamento(token, agrupamentoId);
+    await obterAgrupamento(token, agrupamentoId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("404")) {
@@ -255,7 +254,10 @@ async function retryAgrupamento(
     });
   }
 
-  // 3. Map pedido Tiny IDs for matching expeditions
+  // 3. Re-fetch details AFTER concluding — expeditions are only populated post-conclusion
+  const details = await obterAgrupamento(token, agrupamentoId);
+
+  // 4. Map pedido Tiny IDs for matching expeditions
   const pedidoPorTinyId = new Map<number, string>();
   for (const p of pedidos) {
     const tinyId = parseInt(p.id, 10);
@@ -269,7 +271,7 @@ async function retryAgrupamento(
     return;
   }
 
-  // 4. Fetch labels per expedition
+  // 5. Fetch labels per expedition
   for (const exp of details.expedicoes) {
     const pedidoId =
       pedidoPorTinyId.get(exp.idObjeto) ??

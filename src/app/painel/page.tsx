@@ -1,17 +1,19 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Home,
   Clock,
   AlertTriangle,
-  Package,
-  FileText,
-  PackageSearch,
   PackageCheck,
-  Truck,
+  Layers,
+  ChevronRight,
+  AlertCircle,
+  FileWarning,
+  Timer,
+  XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -21,113 +23,65 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface PainelPedido {
-  id: string;
-  numero: string;
-  numero_ec: string | null;
-  cliente: string | null;
-  forma_envio: string | null;
-  status_separacao: string;
-  marcadores: string[];
-  empresa_nome: string | null;
-  galpao_id: string | null;
-  prazo_envio: string | null;
-  total_itens: number;
-}
-
 interface PainelResponse {
-  counts: Record<string, number>;
-  pedidos: PainelPedido[];
-  galpoes: { id: string; nome: string }[];
   server_time: string;
+  galpoes: { id: string; nome: string }[];
+  pipeline: Record<string, number>;
+  sla: {
+    overdue: number;
+    urgent: number;
+    attention: number;
+    on_time: number;
+    no_deadline: number;
+  };
+  throughput: {
+    buckets: { hour: number; count: number }[];
+    total_today: number;
+  };
+  alerts: {
+    overdue_count: number;
+    stuck_nf: number;
+    stuck_separacao: number;
+    recent_errors: number;
+    error_samples: { source: string; message: string; timestamp: string }[];
+  };
+  kpis: {
+    processed_today: number;
+    pipeline_total: number;
+    overdue_count: number;
+    avg_cycle_time_min: number | null;
+  };
 }
 
-type UrgencyLevel = "overdue" | "urgent" | "attention" | "on_time" | "no_deadline";
+// ─── Pipeline config ────────────────────────────────────────────────────────
 
-interface UrgencyGroup {
-  level: UrgencyLevel;
-  label: string;
-  color: string;
-  bgClass: string;
-  dotClass: string;
-  pedidos: PainelPedido[];
-}
-
-// ─── Status config ──────────────────────────────────────────────────────────
-
-const STATUS_CONFIG: Record<
-  string,
-  { label: string; icon: typeof Clock; colorClass: string }
-> = {
-  aguardando_nf: {
-    label: "Ag.NF",
-    icon: FileText,
-    colorClass: "text-amber-500",
-  },
-  aguardando_separacao: {
-    label: "Ag.Sep",
-    icon: PackageSearch,
-    colorClass: "text-blue-500",
-  },
-  em_separacao: {
-    label: "Em Sep",
-    icon: Package,
-    colorClass: "text-violet-500",
-  },
-  separado: {
-    label: "Separado",
-    icon: PackageCheck,
-    colorClass: "text-emerald-500",
-  },
-  embalado: {
-    label: "Embalado",
-    icon: Truck,
-    colorClass: "text-teal-500",
-  },
-};
+const PIPELINE_STAGES = [
+  { key: "aguardando_compra", label: "Ag.OC", tab: "aguardando_compra" },
+  { key: "aguardando_nf", label: "Ag.NF", tab: "aguardando_nf" },
+  { key: "aguardando_separacao", label: "Ag.Sep", tab: "aguardando_separacao" },
+  { key: "em_separacao", label: "Em Sep", tab: "em_separacao" },
+  { key: "separado", label: "Separado", tab: "separado" },
+  { key: "embalado", label: "Embalado", tab: "embalado" },
+] as const;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function classifyUrgency(
-  prazoEnvio: string | null,
-  serverTime: string,
-): UrgencyLevel {
-  if (!prazoEnvio) return "no_deadline";
-  const deadline = new Date(prazoEnvio).getTime();
-  const now = new Date(serverTime).getTime();
-  const diffH = (deadline - now) / (1000 * 60 * 60);
-  if (diffH < 0) return "overdue";
-  if (diffH < 2) return "urgent";
-  if (diffH < 4) return "attention";
-  return "on_time";
+function formatCycleTime(minutes: number | null): string {
+  if (minutes === null) return "--";
+  if (minutes < 60) return `${minutes}min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-function formatCountdown(prazoEnvio: string, serverTime: string): string {
-  const deadline = new Date(prazoEnvio).getTime();
-  const now = new Date(serverTime).getTime();
-  const diffMs = deadline - now;
-
-  if (diffMs < 0) {
-    const absMs = Math.abs(diffMs);
-    const h = Math.floor(absMs / (1000 * 60 * 60));
-    const m = Math.floor((absMs % (1000 * 60 * 60)) / (1000 * 60));
-    return h > 0 ? `-${h}h ${m}min` : `-${m}min`;
-  }
-
-  const h = Math.floor(diffMs / (1000 * 60 * 60));
-  const m = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-  return h > 0 ? `${h}h ${m}min` : `${m}min`;
-}
-
-function abbreviateEcommerce(name: string | null): string {
-  if (!name) return "";
-  const lower = name.toLowerCase();
-  if (lower.includes("mercado")) return "ML";
-  if (lower.includes("shopee")) return "SH";
-  if (lower.includes("magalu") || lower.includes("magazine")) return "MG";
-  if (lower.includes("amazon")) return "AZ";
-  if (lower.includes("shopify")) return "SF";
-  return name.slice(0, 3).toUpperCase();
+function formatRelative(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s atrás`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}min atrás`;
+  const h = Math.floor(m / 60);
+  return `${h}h atrás`;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -140,36 +94,29 @@ export default function PainelPage() {
 
   const [galpaoFilter, setGalpaoFilter] = useState("");
   const [clockTime, setClockTime] = useState(new Date());
-  const [serverOffset, setServerOffset] = useState(0); // ms diff: server - client
+  const [serverOffset, setServerOffset] = useState(0);
 
   // Redirect if not logged in
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
 
-  // Live clock (1s interval)
+  // Live clock (1s)
   useEffect(() => {
     const interval = setInterval(() => setClockTime(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
 
-  // Supabase Realtime — invalidate on pedido changes
+  // Supabase Realtime
   useEffect(() => {
     const channel = supabase
       .channel("painel_changes")
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "siso_pedidos",
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["painel"] });
-        },
+        { event: "*", schema: "public", table: "siso_pedidos" },
+        () => queryClient.invalidateQueries({ queryKey: ["painel"] }),
       )
       .subscribe();
-
     channelRef.current = channel;
     return () => {
       if (channelRef.current) {
@@ -179,131 +126,83 @@ export default function PainelPage() {
     };
   }, [queryClient]);
 
-  // Build query params
+  // Query params
   const queryParams = useMemo(() => {
     const params = new URLSearchParams();
     if (galpaoFilter) params.set("galpao_id", galpaoFilter);
     return params.toString();
   }, [galpaoFilter]);
 
-  // Fetch data
+  // Fetch
   const { data } = useQuery<PainelResponse>({
     queryKey: ["painel", queryParams],
     queryFn: async () => {
-      const url = queryParams
-        ? `/api/painel?${queryParams}`
-        : "/api/painel";
+      const url = queryParams ? `/api/painel?${queryParams}` : "/api/painel";
       const res = await sisoFetch(url);
       if (!res.ok) throw new Error("Failed to fetch");
       return res.json();
     },
     enabled: !loading && !!user,
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
   });
 
-  // Sync server time offset when data arrives
+  // Server time sync
   useEffect(() => {
     if (data?.server_time) {
-      const serverNow = new Date(data.server_time).getTime();
-      const clientNow = Date.now();
-      setServerOffset(serverNow - clientNow);
+      setServerOffset(new Date(data.server_time).getTime() - Date.now());
     }
   }, [data?.server_time]);
 
-  // Current "server time" — client clock + offset
-  const currentServerTime = useMemo(
-    () => new Date(clockTime.getTime() + serverOffset).toISOString(),
-    [clockTime, serverOffset],
-  );
-
-  const counts = data?.counts ?? {};
-  const pedidos = data?.pedidos ?? [];
-  const galpoes = data?.galpoes ?? [];
-
-  // Group pedidos by urgency
-  const urgencyGroups = useMemo((): UrgencyGroup[] => {
-    const groups: Record<UrgencyLevel, PainelPedido[]> = {
-      overdue: [],
-      urgent: [],
-      attention: [],
-      on_time: [],
-      no_deadline: [],
-    };
-
-    for (const p of pedidos) {
-      const level = classifyUrgency(p.prazo_envio, currentServerTime);
-      groups[level].push(p);
-    }
-
-    const config: Omit<UrgencyGroup, "pedidos">[] = [
-      {
-        level: "overdue",
-        label: "Atrasados",
-        color: "text-red-500",
-        bgClass: "bg-red-500",
-        dotClass: "bg-red-500 animate-pulse-urgent",
-      },
-      {
-        level: "urgent",
-        label: "Urgentes (< 2h)",
-        color: "text-orange-500",
-        bgClass: "bg-orange-500",
-        dotClass: "bg-orange-500",
-      },
-      {
-        level: "attention",
-        label: "Atencao (< 4h)",
-        color: "text-amber-500",
-        bgClass: "bg-amber-500",
-        dotClass: "bg-amber-500",
-      },
-      {
-        level: "on_time",
-        label: "No Prazo (> 4h)",
-        color: "text-emerald-500",
-        bgClass: "bg-emerald-500",
-        dotClass: "bg-emerald-500",
-      },
-      {
-        level: "no_deadline",
-        label: "Sem Prazo",
-        color: "text-zinc-400",
-        bgClass: "bg-zinc-400",
-        dotClass: "bg-zinc-400",
-      },
-    ];
-
-    return config
-      .map((c) => ({ ...c, pedidos: groups[c.level] }))
-      .filter((g) => g.pedidos.length > 0);
-  }, [pedidos, currentServerTime]);
-
-  // Format clock display
+  // Clock display
   const clockDisplay = useMemo(() => {
-    const brt = new Date(clockTime.getTime() + serverOffset);
-    return brt.toLocaleTimeString("pt-BR", { hour12: false });
+    const synced = new Date(clockTime.getTime() + serverOffset);
+    return synced.toLocaleTimeString("pt-BR", { hour12: false });
   }, [clockTime, serverOffset]);
 
-  const getStatusBadge = useCallback(
-    (status: string) => {
-      const cfg = STATUS_CONFIG[status];
-      if (!cfg) return null;
-      const Icon = cfg.icon;
-      return (
-        <span
-          className={cn(
-            "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
-            "bg-zinc-100 dark:bg-zinc-800",
-            cfg.colorClass,
-          )}
-        >
-          <Icon className="h-2.5 w-2.5" />
-          {cfg.label}
-        </span>
-      );
-    },
-    [],
-  );
+  const galpoes = data?.galpoes ?? [];
+  const pipeline = data?.pipeline ?? {};
+  const sla = data?.sla ?? { overdue: 0, urgent: 0, attention: 0, on_time: 0, no_deadline: 0 };
+  const throughput = data?.throughput ?? { buckets: [], total_today: 0 };
+  const alerts = data?.alerts ?? { overdue_count: 0, stuck_nf: 0, stuck_separacao: 0, recent_errors: 0, error_samples: [] };
+  const kpis = data?.kpis ?? { processed_today: 0, pipeline_total: 0, overdue_count: 0, avg_cycle_time_min: null };
+
+  // Find pipeline bottleneck (stage with most items, excluding embalado)
+  const bottleneckKey = useMemo(() => {
+    let max = 0;
+    let key = "";
+    for (const stage of PIPELINE_STAGES) {
+      if (stage.key === "embalado") continue;
+      const count = pipeline[stage.key] ?? 0;
+      if (count > max) { max = count; key = stage.key; }
+    }
+    return max > 0 ? key : null;
+  }, [pipeline]);
+
+  // SLA bars
+  const slaGroups = useMemo(() => {
+    const total = sla.overdue + sla.urgent + sla.attention + sla.on_time + sla.no_deadline;
+    return [
+      { key: "overdue", label: "Atrasados", count: sla.overdue, color: "bg-red-500", icon: "🔴" },
+      { key: "urgent", label: "Urgentes <2h", count: sla.urgent, color: "bg-orange-500", icon: "🟠" },
+      { key: "attention", label: "Atenção <4h", count: sla.attention, color: "bg-amber-500", icon: "🟡" },
+      { key: "on_time", label: "No prazo", count: sla.on_time, color: "bg-emerald-500", icon: "🟢" },
+      { key: "no_deadline", label: "Sem prazo", count: sla.no_deadline, color: "bg-zinc-400", icon: "⚪" },
+    ].map((g) => ({ ...g, pct: total > 0 ? (g.count / total) * 100 : 0 }));
+  }, [sla]);
+
+  // Alert items
+  const alertItems = useMemo(() => {
+    const items: { icon: typeof AlertTriangle; color: string; bgColor: string; label: string; count: number; href: string }[] = [];
+    if (alerts.overdue_count > 0)
+      items.push({ icon: AlertTriangle, color: "text-red-500", bgColor: "bg-red-50 dark:bg-red-950/30", label: "pedidos atrasados", count: alerts.overdue_count, href: "/separacao" });
+    if (alerts.stuck_nf > 0)
+      items.push({ icon: FileWarning, color: "text-amber-500", bgColor: "bg-amber-50 dark:bg-amber-950/30", label: "aguardando NF há >4h", count: alerts.stuck_nf, href: "/separacao?tab=aguardando_nf" });
+    if (alerts.stuck_separacao > 0)
+      items.push({ icon: Timer, color: "text-violet-500", bgColor: "bg-violet-50 dark:bg-violet-950/30", label: "em separação há >2h", count: alerts.stuck_separacao, href: "/separacao?tab=em_separacao" });
+    if (alerts.recent_errors > 0)
+      items.push({ icon: XCircle, color: "text-red-500", bgColor: "bg-red-50 dark:bg-red-950/30", label: "erros na última hora", count: alerts.recent_errors, href: "/monitoramento" });
+    return items;
+  }, [alerts]);
 
   if (loading) {
     return (
@@ -317,23 +216,23 @@ export default function PainelPage() {
 
   return (
     <div className="min-h-screen bg-surface">
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-10 border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-2.5">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-2.5">
           <Link
             href="/"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink shrink-0"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
             title="Inicio"
           >
             <Home className="h-4 w-4" />
           </Link>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-sm sm:text-base font-bold tracking-tight text-ink">
-              Painel Operacional
-            </h1>
-          </div>
+          <h1 className="text-sm font-bold tracking-tight text-ink sm:text-base">
+            Torre de Controle
+          </h1>
 
-          {/* Galpao filter */}
+          <div className="flex-1" />
+
+          {/* Galpao filter pills */}
           {galpoes.length > 1 && (
             <div className="flex items-center gap-1">
               {[{ id: "", nome: "Todos" }, ...galpoes].map((g) => (
@@ -361,163 +260,273 @@ export default function PainelPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-4 space-y-4">
-        {/* Status counters bar */}
-        <div className="flex flex-wrap items-center gap-2">
-          {Object.entries(STATUS_CONFIG).map(([status, cfg]) => {
-            const Icon = cfg.icon;
-            const count = counts[status] ?? 0;
-            return (
-              <div
-                key={status}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-lg border border-line bg-paper px-3 py-2",
-                  count > 0 ? "opacity-100" : "opacity-50",
-                )}
-              >
-                <Icon className={cn("h-4 w-4", cfg.colorClass)} />
-                <span className="font-mono text-sm font-bold tabular-nums text-ink">
-                  {count}
-                </span>
-                <span className="text-xs text-ink-faint">{cfg.label}</span>
-              </div>
-            );
-          })}
-        </div>
+      <main className="mx-auto max-w-5xl space-y-4 px-4 py-4">
+        {/* ── KPI Cards ──────────────────────────────────────────────────── */}
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiCard
+            label="Processados hoje"
+            value={kpis.processed_today}
+            icon={PackageCheck}
+            color="text-emerald-500"
+          />
+          <KpiCard
+            label="Pipeline ativo"
+            value={kpis.pipeline_total}
+            icon={Layers}
+            color="text-blue-500"
+          />
+          <KpiCard
+            label="Atrasados"
+            value={kpis.overdue_count}
+            icon={AlertTriangle}
+            color="text-red-500"
+            pulse={kpis.overdue_count > 0}
+          />
+          <KpiCard
+            label="Tempo médio"
+            value={formatCycleTime(kpis.avg_cycle_time_min)}
+            icon={Clock}
+            color="text-amber-500"
+          />
+        </section>
 
-        {/* Urgency groups */}
-        {urgencyGroups.length === 0 && pedidos.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <PackageCheck className="h-12 w-12 text-ink-faint" />
-            <p className="mt-3 text-sm text-ink-faint">
-              Nenhum pedido ativo no momento
-            </p>
+        {/* ── Pipeline Funnel ────────────────────────────────────────────── */}
+        <section className="rounded-xl border border-line bg-paper p-4">
+          <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-ink-faint">
+            Pipeline
+          </h2>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {PIPELINE_STAGES.map((stage, i) => {
+              const count = pipeline[stage.key] ?? 0;
+              const isBottleneck = stage.key === bottleneckKey;
+              return (
+                <div key={stage.key} className="flex items-center gap-1.5">
+                  {i > 0 && (
+                    <ChevronRight className="h-3 w-3 shrink-0 text-ink-faint/50" />
+                  )}
+                  <Link
+                    href={`/separacao?tab=${stage.tab}`}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800",
+                      isBottleneck
+                        ? "ring-2 ring-amber-400 bg-amber-50 text-amber-800 dark:ring-amber-500 dark:bg-amber-950/40 dark:text-amber-300"
+                        : "bg-zinc-50 text-ink-muted dark:bg-zinc-800/60",
+                    )}
+                  >
+                    <span className="font-mono tabular-nums">{count}</span>
+                    <span>{stage.label}</span>
+                  </Link>
+                </div>
+              );
+            })}
           </div>
-        )}
+          {bottleneckKey && (
+            <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
+              Gargalo: {PIPELINE_STAGES.find((s) => s.key === bottleneckKey)?.label}
+            </p>
+          )}
+        </section>
 
-        {urgencyGroups.map((group) => (
-          <section key={group.level}>
-            {/* Group header */}
-            <div className="mb-2 flex items-center gap-2">
-              <span
-                className={cn(
-                  "h-2.5 w-2.5 rounded-full",
-                  group.dotClass,
-                )}
-              />
-              <h2 className={cn("text-xs font-bold uppercase tracking-wider", group.color)}>
-                {group.label}
+        {/* ── SLA + Throughput + Alerts ───────────────────────────────────── */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Left column: SLA + Throughput */}
+          <div className="space-y-4">
+            {/* SLA Bars */}
+            <section className="rounded-xl border border-line bg-paper p-4">
+              <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-ink-faint">
+                Prazos de Envio
               </h2>
-              <span className="font-mono text-xs text-ink-faint">
-                ({group.pedidos.length})
-              </span>
-              <div className="flex-1 border-t border-line" />
-            </div>
+              <div className="space-y-2">
+                {slaGroups.map((g) => (
+                  <div key={g.key} className="flex items-center gap-2">
+                    <span className="w-4 text-center text-xs">{g.icon}</span>
+                    <span className="w-16 font-mono text-xs font-bold tabular-nums text-ink">
+                      {g.count}
+                    </span>
+                    <span className="w-24 truncate text-xs text-ink-muted">
+                      {g.label}
+                    </span>
+                    <div className="flex-1">
+                      <div className="h-3 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                        <div
+                          className={cn("h-full rounded-full transition-all", g.color)}
+                          style={{ width: `${Math.max(g.pct, g.count > 0 ? 2 : 0)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
 
-            {/* Cards grid */}
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {group.pedidos.map((p) => (
-                <PedidoCard
-                  key={p.id}
-                  pedido={p}
-                  urgency={group.level}
-                  serverTime={currentServerTime}
-                  statusBadge={getStatusBadge(p.status_separacao)}
-                />
-              ))}
-            </div>
+            {/* Throughput Chart */}
+            <section className="rounded-xl border border-line bg-paper p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-ink-faint">
+                  Throughput Hoje
+                </h2>
+                <span className="font-mono text-xs font-bold tabular-nums text-ink">
+                  {throughput.total_today} total
+                </span>
+              </div>
+              <ThroughputChart buckets={throughput.buckets} />
+            </section>
+          </div>
+
+          {/* Right column: Alerts */}
+          <section className="rounded-xl border border-line bg-paper p-4">
+            <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-ink-faint">
+              Alertas
+            </h2>
+            {alertItems.length === 0 ? (
+              <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-4 dark:bg-emerald-950/30">
+                <PackageCheck className="h-4 w-4 text-emerald-500" />
+                <p className="text-sm text-emerald-700 dark:text-emerald-400">
+                  Nenhum alerta no momento
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {alertItems.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.label}
+                      href={item.href}
+                      className={cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:brightness-95",
+                        item.bgColor,
+                      )}
+                    >
+                      <Icon className={cn("h-4 w-4 shrink-0", item.color)} />
+                      <span className={cn("font-mono text-lg font-bold tabular-nums", item.color)}>
+                        {item.count}
+                      </span>
+                      <span className="flex-1 text-sm text-ink">{item.label}</span>
+                      <ChevronRight className="h-4 w-4 text-ink-faint" />
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Error samples */}
+            {alerts.error_samples.length > 0 && (
+              <div className="mt-4 border-t border-line pt-3">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+                  Erros recentes
+                </p>
+                <div className="space-y-2">
+                  {alerts.error_samples.map((err, i) => (
+                    <div key={i} className="text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded bg-red-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-red-600 dark:bg-red-950/40 dark:text-red-400">
+                          {err.source}
+                        </span>
+                        <span className="text-[10px] text-ink-faint">
+                          {formatRelative(err.timestamp)}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 truncate text-ink-muted">{err.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
-        ))}
+        </div>
       </main>
     </div>
   );
 }
 
-// ─── Pedido Card ────────────────────────────────────────────────────────────
+// ─── KPI Card ────────────────────────────────────────────────────────────────
 
-function PedidoCard({
-  pedido,
-  urgency,
-  serverTime,
-  statusBadge,
+function KpiCard({
+  label,
+  value,
+  icon: Icon,
+  color,
+  pulse,
 }: {
-  pedido: PainelPedido;
-  urgency: UrgencyLevel;
-  serverTime: string;
-  statusBadge: React.ReactNode;
+  label: string;
+  value: string | number;
+  icon: React.ElementType;
+  color: string;
+  pulse?: boolean;
 }) {
-  const ecAbbrv = abbreviateEcommerce(pedido.marcadores?.[0] ?? null);
-
   return (
     <div
       className={cn(
-        "rounded-xl border bg-paper p-3 transition-colors",
-        urgency === "overdue"
-          ? "animate-pulse-urgent border-red-300 dark:border-red-800"
-          : urgency === "urgent"
-            ? "border-orange-200 dark:border-orange-800"
-            : urgency === "attention"
-              ? "border-amber-200 dark:border-amber-800"
-              : "border-line",
+        "flex flex-col gap-2 rounded-xl border border-line bg-paper p-4",
+        pulse && "animate-pulse-urgent border-red-300 dark:border-red-800",
       )}
     >
-      {/* Row 1: Order number + ecommerce badge + status */}
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-sm font-bold text-ink">
-          #{pedido.numero}
-        </span>
-        {ecAbbrv && (
-          <span className="rounded bg-zinc-100 px-1 py-0.5 text-[10px] font-bold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-            {ecAbbrv}
-          </span>
-        )}
-        <div className="flex-1" />
-        {statusBadge}
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-ink-muted">{label}</span>
+        <Icon className={cn("h-4 w-4", color)} />
       </div>
-
-      {/* Row 2: Client name */}
-      <p className="mt-1 truncate text-xs text-ink-muted" title={pedido.cliente ?? ""}>
-        {pedido.cliente ?? "—"}
+      <p className="font-mono text-2xl font-bold tracking-tight tabular-nums text-ink">
+        {value}
       </p>
+    </div>
+  );
+}
 
-      {/* Row 3: Countdown + item count */}
-      <div className="mt-2 flex items-center justify-between">
-        {pedido.prazo_envio ? (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 text-xs font-semibold",
-              urgency === "overdue"
-                ? "text-red-600 dark:text-red-400"
-                : urgency === "urgent"
-                  ? "text-orange-600 dark:text-orange-400"
-                  : urgency === "attention"
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-emerald-600 dark:text-emerald-400",
-            )}
-          >
-            <Clock className="h-3 w-3" />
-            {formatCountdown(pedido.prazo_envio, serverTime)}
-          </span>
-        ) : (
-          <span className="text-xs text-ink-faint">Sem prazo</span>
-        )}
+// ─── Throughput Chart ────────────────────────────────────────────────────────
 
-        <span className="text-xs text-ink-faint">
-          {pedido.total_itens} {pedido.total_itens === 1 ? "item" : "itens"}
-        </span>
+function ThroughputChart({ buckets }: { buckets: { hour: number; count: number }[] }) {
+  const max = Math.max(...buckets.map((b) => b.count), 1);
+
+  // Current BRT hour for highlight
+  const nowBrt = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  const currentHour = nowBrt.getUTCHours();
+
+  // Show 6h..current+1 range for relevance
+  const startHour = Math.max(0, 6);
+  const endHour = Math.min(23, Math.max(currentHour + 1, 18));
+  const visible = buckets.filter((b) => b.hour >= startHour && b.hour <= endHour);
+
+  if (visible.length === 0) {
+    return <p className="text-xs text-ink-faint">Nenhum dado disponível.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex h-20 items-end gap-0.5">
+        {visible.map((bucket) => {
+          const pct = (bucket.count / max) * 100;
+          const isCurrent = bucket.hour === currentHour;
+          return (
+            <div
+              key={bucket.hour}
+              className="group relative flex flex-1 flex-col items-center justify-end"
+            >
+              <div
+                className={cn(
+                  "w-full rounded-t transition-all",
+                  isCurrent
+                    ? "bg-blue-500 dark:bg-blue-400"
+                    : "bg-blue-400/60 dark:bg-blue-500/40",
+                )}
+                style={{ height: `${Math.max(pct, bucket.count > 0 ? 4 : 0)}%` }}
+              />
+              {bucket.count > 0 && (
+                <div className="pointer-events-none absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-zinc-700">
+                  {bucket.count}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
-
-      {/* Row 4: Empresa + forma envio */}
-      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-ink-faint">
-        {pedido.empresa_nome && (
-          <span className="truncate font-medium">{pedido.empresa_nome}</span>
-        )}
-        {pedido.forma_envio && (
-          <>
-            <span className="text-line">•</span>
-            <span className="truncate">{pedido.forma_envio}</span>
-          </>
-        )}
+      <div className="flex justify-between">
+        <span className="text-[10px] text-ink-faint">
+          {visible[0]?.hour ?? 0}h
+        </span>
+        <span className="text-[10px] text-ink-faint">
+          {visible[visible.length - 1]?.hour ?? 23}h
+        </span>
       </div>
     </div>
   );

@@ -112,6 +112,7 @@ export async function POST(request: NextRequest) {
       pedidoUpdate.etiqueta_url = null;
       pedidoUpdate.etiqueta_zpl = null;
       pedidoUpdate.agrupamento_expedicao_id = null;
+      pedidoUpdate.expedicao_id = null;
     }
 
     // ── Going forward: set timestamps ───────────────────────────────────

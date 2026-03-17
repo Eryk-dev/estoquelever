@@ -129,7 +129,7 @@ export async function recarregarEtiquetasFaltantes(
   // Find pedidos that have agrupamento but no ZPL cached
   const { data: pedidos, error } = await supabase
     .from("siso_pedidos")
-    .select("id, empresa_origem_id, agrupamento_expedicao_id, etiqueta_url, etiqueta_zpl")
+    .select("id, empresa_origem_id, agrupamento_expedicao_id, expedicao_id, etiqueta_url, etiqueta_zpl")
     .in("id", pedidoIds)
     .not("agrupamento_expedicao_id", "is", null)
     .neq("agrupamento_expedicao_id", "pending")
@@ -206,6 +206,9 @@ type SupabaseClient = ReturnType<typeof createServiceClient>;
  * 1. Agrupamento not found (404) → clear agrupamento_expedicao_id
  * 2. Exists but not concluded → conclude, then fetch labels
  * 3. Concluded → fetch labels per expedition
+ *
+ * If pedidos already have `expedicao_id` saved from creation, skips the
+ * obterAgrupamento call entirely (saves 1-2 API calls per agrupamento).
  */
 async function retryAgrupamento(
   supabase: SupabaseClient,
@@ -216,17 +219,22 @@ async function retryAgrupamento(
     id: string;
     empresa_origem_id: string;
     agrupamento_expedicao_id: string | null;
+    expedicao_id: string | null;
     etiqueta_url: string | null;
     etiqueta_zpl: string | null;
   }>,
 ): Promise<void> {
   const pedidoIds = pedidos.map((p) => p.id);
 
-  // 1. Check if agrupamento exists — if 404, clear IDs so they get re-created
+  // 1. Try to conclude (idempotent — if already concluded, Tiny returns 400)
   try {
-    await obterAgrupamento(token, agrupamentoId);
+    await concluirAgrupamento(token, agrupamentoId);
+    logger.info(LOG_SOURCE, "Agrupamento concluído no retry", {
+      agrupamentoId: String(agrupamentoId),
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // 404 = agrupamento doesn't exist → clear IDs for re-creation
     if (msg.includes("404")) {
       logger.warn(LOG_SOURCE, "Agrupamento não encontrado no Tiny (404) — limpando para re-criação", {
         agrupamentoId: String(agrupamentoId),
@@ -234,81 +242,94 @@ async function retryAgrupamento(
       });
       await supabase
         .from("siso_pedidos")
-        .update({ agrupamento_expedicao_id: null, etiqueta_url: null })
+        .update({ agrupamento_expedicao_id: null, expedicao_id: null, etiqueta_url: null })
         .in("id", pedidoIds);
       return;
     }
-    throw err;
-  }
-
-  // 2. Try to conclude (idempotent — if already concluded, Tiny returns 400 which is fine)
-  try {
-    await concluirAgrupamento(token, agrupamentoId);
-    logger.info(LOG_SOURCE, "Agrupamento concluído no retry", {
-      agrupamentoId: String(agrupamentoId),
-    });
-  } catch (err) {
+    // 400 = already concluded (Mercado Envios etc) — continue to fetch labels
+    if (!msg.includes("400")) {
+      throw err;
+    }
     logger.warn(LOG_SOURCE, "Concluir agrupamento no retry (não-fatal)", {
       agrupamentoId: String(agrupamentoId),
+      error: msg,
+    });
+  }
+
+  // 2. Fast path: if all pedidos already have expedicao_id saved, skip obterAgrupamento
+  const pedidosComExpedicao = pedidos.filter((p) => p.expedicao_id);
+  const pedidosSemExpedicao = pedidos.filter((p) => !p.expedicao_id);
+
+  // Fetch labels for pedidos with saved expedicao_id (no extra API call needed)
+  for (const p of pedidosComExpedicao) {
+    await fetchAndSaveLabel(supabase, token, agrupamentoId, parseInt(p.expedicao_id!, 10), p.id);
+  }
+
+  // 3. Slow path: pedidos without expedicao_id — need to discover via obterAgrupamento
+  if (pedidosSemExpedicao.length > 0) {
+    const details = await obterAgrupamento(token, agrupamentoId);
+
+    if (!details.expedicoes || details.expedicoes.length === 0) {
+      logger.warn(LOG_SOURCE, "Agrupamento sem expedições no retry", {
+        agrupamentoId: String(agrupamentoId),
+      });
+      return;
+    }
+
+    // Map pedido Tiny IDs for matching expeditions
+    const pedidoPorTinyId = new Map<number, string>();
+    for (const p of pedidosSemExpedicao) {
+      const tinyId = parseInt(p.id, 10);
+      if (!isNaN(tinyId)) pedidoPorTinyId.set(tinyId, p.id);
+    }
+
+    for (const exp of details.expedicoes) {
+      const pedidoId =
+        pedidoPorTinyId.get(exp.idObjeto) ??
+        (exp.venda?.id ? pedidoPorTinyId.get(exp.venda.id) : undefined);
+      if (!pedidoId) continue;
+      await fetchAndSaveLabel(supabase, token, agrupamentoId, exp.id, pedidoId);
+    }
+  }
+}
+
+/** Fetch label for a single expedition and save to DB */
+async function fetchAndSaveLabel(
+  supabase: SupabaseClient,
+  token: string,
+  agrupamentoId: number,
+  expedicaoId: number,
+  pedidoId: string,
+): Promise<void> {
+  try {
+    const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, expedicaoId);
+
+    if (!etiquetas.urls || etiquetas.urls.length === 0) {
+      logger.warn(LOG_SOURCE, "Sem URL de etiqueta no retry", {
+        agrupamentoId: String(agrupamentoId),
+        expedicaoId: String(expedicaoId),
+        pedidoId,
+      });
+      return;
+    }
+
+    const url = etiquetas.urls[0];
+    const zpl = await baixarZpl(url);
+    await salvarEtiqueta(supabase, pedidoId, url, zpl, expedicaoId);
+
+    logger.info(LOG_SOURCE, "Etiqueta recuperada no retry", {
+      pedidoId,
+      agrupamentoId: String(agrupamentoId),
+      expedicaoId: String(expedicaoId),
+      cached: String(!!zpl),
+    });
+  } catch (err) {
+    logger.warn(LOG_SOURCE, "Falha ao buscar etiqueta no retry", {
+      agrupamentoId: String(agrupamentoId),
+      expedicaoId: String(expedicaoId),
+      pedidoId,
       error: err instanceof Error ? err.message : String(err),
     });
-  }
-
-  // 3. Re-fetch details AFTER concluding — expeditions are only populated post-conclusion
-  const details = await obterAgrupamento(token, agrupamentoId);
-
-  // 4. Map pedido Tiny IDs for matching expeditions
-  const pedidoPorTinyId = new Map<number, string>();
-  for (const p of pedidos) {
-    const tinyId = parseInt(p.id, 10);
-    if (!isNaN(tinyId)) pedidoPorTinyId.set(tinyId, p.id);
-  }
-
-  if (!details.expedicoes || details.expedicoes.length === 0) {
-    logger.warn(LOG_SOURCE, "Agrupamento sem expedições no retry", {
-      agrupamentoId: String(agrupamentoId),
-    });
-    return;
-  }
-
-  // 5. Fetch labels per expedition
-  for (const exp of details.expedicoes) {
-    const pedidoId =
-      pedidoPorTinyId.get(exp.idObjeto) ??
-      (exp.venda?.id ? pedidoPorTinyId.get(exp.venda.id) : undefined);
-
-    if (!pedidoId) continue;
-
-    try {
-      const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, exp.id);
-
-      if (!etiquetas.urls || etiquetas.urls.length === 0) {
-        logger.warn(LOG_SOURCE, "Sem URL de etiqueta no retry", {
-          agrupamentoId: String(agrupamentoId),
-          expedicaoId: String(exp.id),
-          pedidoId,
-        });
-        continue;
-      }
-
-      const url = etiquetas.urls[0];
-      const zpl = await baixarZpl(url);
-      await salvarEtiqueta(supabase, pedidoId, url, zpl);
-
-      logger.info(LOG_SOURCE, "Etiqueta recuperada no retry", {
-        pedidoId,
-        agrupamentoId: String(agrupamentoId),
-        expedicaoId: String(exp.id),
-        cached: String(!!zpl),
-      });
-    } catch (err) {
-      logger.warn(LOG_SOURCE, "Falha ao buscar etiqueta no retry", {
-        agrupamentoId: String(agrupamentoId),
-        expedicaoId: String(exp.id),
-        pedidoId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
   }
 }
 
@@ -419,7 +440,7 @@ async function processarGrupo(
         const url = etiquetas.urls[0];
         const zpl = await baixarZpl(url);
 
-        await salvarEtiqueta(supabase, pedidoId, url, zpl);
+        await salvarEtiqueta(supabase, pedidoId, url, zpl, exp.id);
 
         logger.info(LOG_SOURCE, "Etiqueta ZPL pré-cacheada", {
           pedidoId,
@@ -427,6 +448,12 @@ async function processarGrupo(
           cached: String(!!zpl),
         });
       } catch (err) {
+        // Save expedicao_id even if label download failed — retry can use it
+        await supabase
+          .from("siso_pedidos")
+          .update({ expedicao_id: String(exp.id) })
+          .eq("id", pedidoId);
+
         logger.warn(LOG_SOURCE, "Falha ao buscar etiqueta da expedição", {
           agrupamentoId: String(agrupamentoId),
           expedicaoId: String(exp.id),
@@ -448,7 +475,7 @@ async function processarGrupo(
     // On failure, clear 'pending' so it can be retried
     await supabase
       .from("siso_pedidos")
-      .update({ agrupamento_expedicao_id: null })
+      .update({ agrupamento_expedicao_id: null, expedicao_id: null })
       .in("id", pedidoIds)
       .eq("agrupamento_expedicao_id", "pending");
 
@@ -466,11 +493,15 @@ async function salvarEtiqueta(
   pedidoId: string,
   url: string,
   zpl: string | null,
+  expedicaoId?: number,
 ): Promise<void> {
   // Only cache ZPL if download was successful. Saving null ZPL with a URL
   // leaves the pedido in a state where fast path always fails and the URL
   // may be stale. Better to leave both null so fallback creates fresh.
   const updateData: Record<string, string | null> = { etiqueta_url: url };
+  if (expedicaoId != null) {
+    updateData.expedicao_id = String(expedicaoId);
+  }
   if (zpl) {
     updateData.etiqueta_zpl = zpl;
   }
@@ -492,7 +523,7 @@ async function recuperarPendingTravados(
   const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from("siso_pedidos")
-    .update({ agrupamento_expedicao_id: null })
+    .update({ agrupamento_expedicao_id: null, expedicao_id: null })
     .in("id", pedidoIds)
     .eq("agrupamento_expedicao_id", "pending")
     .lt("updated_at", fiveMinAgo)

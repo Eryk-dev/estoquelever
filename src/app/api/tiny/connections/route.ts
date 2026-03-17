@@ -103,6 +103,46 @@ export async function POST(request: NextRequest) {
 }
 
 /**
+ * DELETE /api/tiny/connections
+ * Remove a Tiny connection and deactivate the empresa.
+ */
+export async function DELETE(request: NextRequest) {
+  const body = (await request.json()) as { empresa_id?: string };
+
+  if (!body.empresa_id) {
+    return NextResponse.json({ error: "Missing empresa_id" }, { status: 400 });
+  }
+
+  const supabase = createServiceClient();
+
+  // Delete the connection
+  const { error: connErr } = await supabase
+    .from("siso_tiny_connections")
+    .delete()
+    .eq("empresa_id", body.empresa_id);
+
+  if (connErr) {
+    return NextResponse.json({ error: connErr.message }, { status: 500 });
+  }
+
+  // Deactivate the empresa
+  const { error: empErr } = await supabase
+    .from("siso_empresas")
+    .update({ ativo: false, atualizado_em: new Date().toISOString() })
+    .eq("id", body.empresa_id);
+
+  if (empErr) {
+    return NextResponse.json({ error: empErr.message }, { status: 500 });
+  }
+
+  // Clear empresa cache
+  const { clearEmpresaCache } = await import("@/lib/empresa-lookup");
+  clearEmpresaCache();
+
+  return NextResponse.json({ ok: true });
+}
+
+/**
  * PUT /api/tiny/connections
  * Update OAuth2 client credentials (client_id + client_secret).
  */

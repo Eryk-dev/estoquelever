@@ -191,6 +191,7 @@ export async function enviarImpressaoZpl(params: {
     content: zplBase64,
     title: titulo,
     source: "SISO Separacao",
+    expireAfter: 300,
   });
 
   const doRequest = async (): Promise<number> => {

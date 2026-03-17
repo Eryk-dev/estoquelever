@@ -30,6 +30,22 @@ export interface EtiquetaResult {
 }
 
 /**
+ * Pre-claimed pedido data from siso_processar_bip_embalagem.
+ * When the bip RPC claims the etiqueta atomically, we can skip the
+ * separate claim RPC and go straight to printing (~30-50ms savings).
+ */
+export interface EtiquetaPreClaimed {
+  pedidoId: string;
+  numero: string;
+  empresaOrigemId: string;
+  agrupamentoExpedicaoId: string | null;
+  etiquetaZpl: string | null;
+  etiquetaUrl: string | null;
+  separacaoGalpaoId: string;
+  separacaoOperadorId: string | null;
+}
+
+/**
  * Print the shipping label for a packed order.
  *
  * Idempotent: uses atomic UPDATE+WHERE to claim the print job.
@@ -39,6 +55,7 @@ export interface EtiquetaResult {
  * Returns a result so callers can report success/failure to the frontend.
  */
 export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<EtiquetaResult> {
+  const t0 = performance.now();
   const supabase = createServiceClient();
 
   // Atomic claim via RPC (bypasses PostgREST schema cache issue with etiqueta_status).
@@ -46,6 +63,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
   const { data: claimed, error: claimErr } = await supabase.rpc("siso_claim_etiqueta", {
     p_pedido_id: pedidoId,
   });
+  const claimMs = Math.round(performance.now() - t0);
 
   if (claimErr) {
     logger.logError({
@@ -96,6 +114,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
     // Resolve ZPL + printer config + API key in parallel
     // Fast path: ZPL already cached → all 3 resolve concurrently (~100ms total)
     // Slow path: ZPL fetched from Tiny → printer/key still resolve during that wait
+    const tResolve = performance.now();
     const [zpl, printNodeApiKey, printer] = await Promise.all([
       pedido.etiqueta_zpl
         ? Promise.resolve(pedido.etiqueta_zpl)
@@ -103,6 +122,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
       getConfig("PRINTNODE_API_KEY"),
       resolverImpressora(pedido.separacao_operador_id ?? galpaoId, galpaoId),
     ]);
+    const resolveMs = Math.round(performance.now() - tResolve);
 
     if (!zpl) {
       await setStatus(supabase, pedidoId, "falhou");
@@ -143,12 +163,15 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
     const singleLabel = splitZplLabels(zpl)[0] ?? zpl;
 
     // Send ZPL directly to PrintNode
+    const tPrint = performance.now();
     await enviarImpressaoZpl({
       apiKey: printNodeApiKey,
       printerId: printer.printerId,
       zpl: singleLabel,
       titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId}`,
     });
+    const printMs = Math.round(performance.now() - tPrint);
+    const totalMs = Math.round(performance.now() - t0);
 
     // Fire-and-forget: status update + event logging after successful print
     // Operator doesn't need to wait for these DB writes
@@ -162,6 +185,10 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
       pedidoId,
       printerId: String(printer.printerId),
       cached: String(!!pedido.etiqueta_zpl),
+      claimMs: String(claimMs),
+      resolveMs: String(resolveMs),
+      printNodeMs: String(printMs),
+      totalMs: String(totalMs),
     });
     return { success: true };
   } catch (err) {
@@ -185,6 +212,100 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
         agrupamentoId: pedido.agrupamento_expedicao_id,
         galpaoId: pedido.separacao_galpao_id,
       },
+    });
+    return { success: false, error: errorMsg };
+  }
+}
+
+/**
+ * Print a label for a pedido that was already claimed by the bip RPC.
+ * Skips the claim RPC roundtrip — the bip function already set
+ * etiqueta_status = 'imprimindo' atomically.
+ *
+ * Used by bipar-embalagem when the RPC returns print fields.
+ */
+export async function imprimirEtiquetaDireta(data: EtiquetaPreClaimed): Promise<EtiquetaResult> {
+  const t0 = performance.now();
+  const supabase = createServiceClient();
+
+  try {
+    const pedido: PedidoRow = {
+      id: data.pedidoId,
+      numero: data.numero,
+      empresa_origem_id: data.empresaOrigemId,
+      nota_fiscal_id: null,
+      agrupamento_expedicao_id: data.agrupamentoExpedicaoId,
+      etiqueta_url: data.etiquetaUrl,
+      etiqueta_zpl: data.etiquetaZpl,
+      separacao_galpao_id: data.separacaoGalpaoId,
+      separacao_operador_id: data.separacaoOperadorId,
+    };
+
+    // Resolve ZPL + printer config + API key in parallel
+    const tResolve = performance.now();
+    const [zpl, printNodeApiKey, printer] = await Promise.all([
+      pedido.etiqueta_zpl
+        ? Promise.resolve(pedido.etiqueta_zpl)
+        : resolverZplFallback(supabase, pedido),
+      getConfig("PRINTNODE_API_KEY"),
+      resolverImpressora(pedido.separacao_operador_id ?? data.separacaoGalpaoId, data.separacaoGalpaoId),
+    ]);
+    const resolveMs = Math.round(performance.now() - tResolve);
+
+    if (!zpl) {
+      await setStatus(supabase, data.pedidoId, "falhou");
+      return { success: false, error: "Não foi possível obter ZPL" };
+    }
+    if (!printNodeApiKey) {
+      await setStatus(supabase, data.pedidoId, "falhou");
+      return { success: false, error: "PRINTNODE_API_KEY não configurada" };
+    }
+    if (!printer) {
+      await setStatus(supabase, data.pedidoId, "falhou");
+      return { success: false, error: "Nenhuma impressora configurada" };
+    }
+
+    const singleLabel = splitZplLabels(zpl)[0] ?? zpl;
+
+    const tPrint = performance.now();
+    await enviarImpressaoZpl({
+      apiKey: printNodeApiKey,
+      printerId: printer.printerId,
+      zpl: singleLabel,
+      titulo: `Etiqueta Pedido #${pedido.numero ?? data.pedidoId}`,
+    });
+    const printMs = Math.round(performance.now() - tPrint);
+    const totalMs = Math.round(performance.now() - t0);
+
+    setStatus(supabase, data.pedidoId, "impresso").catch(() => {});
+    registrarEvento({
+      pedidoId: data.pedidoId,
+      evento: "etiqueta_impressa",
+      detalhes: { printerId: printer.printerId, cached: !!pedido.etiqueta_zpl, directPath: true },
+    }).catch(() => {});
+    logger.info(LOG_SOURCE, "Etiqueta impressa (direta)", {
+      pedidoId: data.pedidoId,
+      resolveMs: String(resolveMs),
+      printNodeMs: String(printMs),
+      totalMs: String(totalMs),
+      cached: String(!!pedido.etiqueta_zpl),
+    });
+    return { success: true };
+  } catch (err) {
+    setStatus(supabase, data.pedidoId, "falhou").catch(() => {});
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    registrarEvento({
+      pedidoId: data.pedidoId,
+      evento: "etiqueta_falhou",
+      detalhes: { error: errorMsg },
+    }).catch(() => {});
+    logger.logError({
+      error: err,
+      source: LOG_SOURCE,
+      message: "Falha ao imprimir etiqueta (direta)",
+      category: "external_api",
+      pedidoId: data.pedidoId,
+      empresaId: data.empresaOrigemId,
     });
     return { success: false, error: errorMsg };
   }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
+import { buscarEImprimirEtiqueta, imprimirEtiquetaDireta } from "@/lib/etiqueta-service";
 import { registrarEvento } from "@/lib/historico-service";
 import type { BipEmbalagemResult } from "@/types";
 
@@ -89,7 +89,21 @@ export async function POST(request: NextRequest) {
         detalhes: { sku, galpao_id },
       }).catch(() => {});
 
-      const etiqueta = await buscarEImprimirEtiqueta(result.pedido_id);
+      // Fast path: bip RPC already claimed the etiqueta and returned print fields
+      // Slow path: claim wasn't included (already claimed elsewhere) → fall back to full flow
+      const etiqueta = row.etiqueta_empresa_origem_id && row.etiqueta_galpao_id
+        ? await imprimirEtiquetaDireta({
+            pedidoId: result.pedido_id,
+            numero: row.etiqueta_numero ?? result.pedido_id,
+            empresaOrigemId: row.etiqueta_empresa_origem_id,
+            agrupamentoExpedicaoId: row.etiqueta_agrupamento_id ?? null,
+            etiquetaZpl: row.etiqueta_zpl ?? null,
+            etiquetaUrl: row.etiqueta_url ?? null,
+            separacaoGalpaoId: row.etiqueta_galpao_id,
+            separacaoOperadorId: row.etiqueta_operador_id ?? null,
+          })
+        : await buscarEImprimirEtiqueta(result.pedido_id);
+
       return NextResponse.json({
         ...result,
         etiqueta_status: etiqueta.success ? "impresso" : "falhou",

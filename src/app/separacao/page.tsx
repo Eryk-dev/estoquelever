@@ -244,6 +244,19 @@ export default function SeparacaoPage() {
     router.push(`/separacao/embalagem?pedidos=${ids.join(",")}`);
   }
 
+  function handleEmbalarComEtiqueta() {
+    const source =
+      selectedIds.size > 0
+        ? pedidos.filter((p) => selectedIds.has(p.id))
+        : pedidos;
+    const ids = source.filter((p) => p.etiqueta_pronta).map((p) => p.id);
+    if (ids.length === 0) {
+      toast.error("Nenhum pedido com etiqueta pronta");
+      return;
+    }
+    router.push(`/separacao/embalagem?pedidos=${ids.join(",")}`);
+  }
+
   async function handleForcarPendente() {
     if (selectedIds.size === 0) return;
     setActionLoading(true);
@@ -511,7 +524,11 @@ export default function SeparacaoPage() {
         )}
 
         {activeTab === "separado" && pedidos.length > 0 && (() => {
-          const semEtiqueta = pedidos.filter((p) => !p.etiqueta_pronta).length;
+          const comEtiquetaSource = selectedIds.size > 0
+            ? pedidos.filter((p) => selectedIds.has(p.id))
+            : pedidos;
+          const comEtiqueta = comEtiquetaSource.filter((p) => p.etiqueta_pronta).length;
+          const semEtiqueta = comEtiquetaSource.length - comEtiqueta;
           return (
           <>
           {semEtiqueta > 0 && (
@@ -539,6 +556,16 @@ export default function SeparacaoPage() {
                   count={selectedIds.size}
                 />
               )}
+              {semEtiqueta > 0 && comEtiqueta > 0 && (
+                <button
+                  type="button"
+                  onClick={handleEmbalarComEtiqueta}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700"
+                >
+                  <PackageCheck className="h-3.5 w-3.5" />
+                  Embalar {comEtiqueta} com etiqueta
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleEmbalarSelecionados}
@@ -547,7 +574,7 @@ export default function SeparacaoPage() {
                 <PackageCheck className="h-3.5 w-3.5" />
                 {selectedIds.size > 0
                   ? `Embalar ${selectedIds.size} pedido(s)`
-                  : `Embalar ${pedidos.length} pedido(s)`}
+                  : `Embalar todos (${pedidos.length})`}
               </button>
             </div>
           </div>

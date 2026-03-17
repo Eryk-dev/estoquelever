@@ -8,7 +8,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 
 const cache = new Map<string, { value: string; expiresAt: number }>();
-const CACHE_TTL_MS = 60_000; // 1 minute
+const CACHE_TTL_MS = 10 * 60_000; // 10 minutes
 
 /**
  * Get a config value by key.

@@ -5,7 +5,7 @@ import { logger } from "@/lib/logger";
 /**
  * POST /api/auth/login
  * Body: { nome: string, pin: string }
- * Returns: { ok: true, usuario: { id, nome, cargo } }
+ * Returns: { ok: true, usuario: { id, nome, cargo, cargos, galpoes }, sessionId? }
  */
 export async function POST(request: NextRequest) {
   let body: { nome?: string; pin?: string };
@@ -52,6 +52,19 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Fetch user's allowed galpões from siso_usuario_galpoes
+  const { data: userGalpoes } = await supabase
+    .from("siso_usuario_galpoes")
+    .select("galpao_id, siso_galpoes(id, nome)")
+    .eq("usuario_id", usuario.id);
+
+  const galpoes = (userGalpoes ?? [])
+    .map((ug) => {
+      const g = ug.siso_galpoes as unknown as { id: string; nome: string } | null;
+      return g ? { id: g.id, nome: g.nome } : null;
+    })
+    .filter(Boolean) as { id: string; nome: string }[];
+
   // Create server-side session
   let sessionId: string | undefined;
   const { data: sessao, error: sessaoError } = await supabase
@@ -76,6 +89,7 @@ export async function POST(request: NextRequest) {
       nome: usuario.nome,
       cargo: usuario.cargo,
       cargos: usuario.cargos?.length ? usuario.cargos : [usuario.cargo],
+      galpoes,
     },
     ...(sessionId && { sessionId }),
   });

@@ -21,7 +21,7 @@ import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
-import { CARGO_LABELS } from "@/types";
+import { GalpaoSelector } from "@/components/galpao-selector";
 import type { SeparacaoPedido } from "@/components/separacao/separacao-card";
 
 // --- Types ---
@@ -418,12 +418,10 @@ function EmbalagemPage() {
               {pedidoIds.length} pedido(s) — Bipagem e conferencia
             </p>
           </div>
+          <GalpaoSelector />
           <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
             <span className="font-mono text-xs font-semibold text-ink">
               {user.nome}
-            </span>
-            <span className="text-[10px] text-ink-faint">
-              {(user.cargos ?? [user.cargo]).map((c) => CARGO_LABELS[c]).join(", ")}
             </span>
           </div>
         </div>

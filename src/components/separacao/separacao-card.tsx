@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { sisoFetch } from "@/lib/auth-context";
 import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin } from "lucide-react";
+import { getEcommerceAbbr, getEcommerceColors } from "@/lib/domain-helpers";
 import { PedidoTimeline } from "./pedido-timeline";
 import type { StatusSeparacao } from "@/types";
 
@@ -29,6 +30,7 @@ export interface SeparacaoPedido {
   numero_ec: string | null;
   numero_pedido: string;
   cliente: string | null;
+  nome_ecommerce: string | null;
   uf: string | null;
   cidade: string | null;
   forma_envio: string | null;
@@ -238,6 +240,18 @@ export function SeparacaoCard({
 
           {/* Row 2: Metadata badges */}
           <div className="flex flex-wrap items-center gap-2">
+            {pedido.nome_ecommerce && (
+              <span
+                className={cn(
+                  "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold tracking-wide",
+                  getEcommerceColors(pedido.nome_ecommerce),
+                )}
+                title={pedido.nome_ecommerce}
+              >
+                {getEcommerceAbbr(pedido.nome_ecommerce)}
+              </span>
+            )}
+
             {pedido.empresa_origem_nome && (
               <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
                 {pedido.empresa_origem_nome}

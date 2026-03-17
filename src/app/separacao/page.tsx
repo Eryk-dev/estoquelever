@@ -16,7 +16,7 @@ import {
   SeparacaoCard,
   type SeparacaoPedido,
 } from "@/components/separacao/separacao-card";
-import { CARGO_LABELS } from "@/types";
+import { GalpaoSelector } from "@/components/galpao-selector";
 import type { Tab, StatusSeparacao, SeparacaoCounts } from "@/types";
 
 // 6 tabs mapping 1:1 to StatusSeparacao values
@@ -137,6 +137,7 @@ export default function SeparacaoPage() {
 
   // Filter state
   const [empresaFilter, setEmpresaFilter] = useState("");
+  const [marketplaceFilter, setMarketplaceFilter] = useState("");
   const [sortFilter, setSortFilter] = useState("data_pedido");
   const [busca, setBusca] = useState("");
   // Action loading states
@@ -167,10 +168,11 @@ export default function SeparacaoPage() {
   const queryParams = useMemo(() => {
     const params = new URLSearchParams({ status_separacao: activeTab });
     if (empresaFilter) params.set("empresa_origem_id", empresaFilter);
+    if (marketplaceFilter) params.set("marketplace", marketplaceFilter);
     if (sortFilter !== "data_pedido") params.set("sort", sortFilter);
     if (busca.trim()) params.set("busca", busca.trim());
     return params.toString();
-  }, [activeTab, empresaFilter, sortFilter, busca]);
+  }, [activeTab, empresaFilter, marketplaceFilter, sortFilter, busca]);
 
   // Fetch pedidos for active tab + counts for all tabs
   const {
@@ -390,12 +392,10 @@ export default function SeparacaoPage() {
             </p>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <GalpaoSelector />
             <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
               <span className="font-mono text-xs font-semibold text-ink">
                 {user.nome}
-              </span>
-              <span className="text-[10px] text-ink-faint">
-                {(user.cargos ?? [user.cargo]).map((c) => CARGO_LABELS[c]).join(", ")}
               </span>
             </div>
             <button
@@ -453,6 +453,17 @@ export default function SeparacaoPage() {
               ))}
             </select>
           )}
+
+          {/* Marketplace dropdown */}
+          <select
+            value={marketplaceFilter}
+            onChange={(e) => setMarketplaceFilter(e.target.value)}
+            className="h-8 rounded-lg border border-line bg-paper px-2 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+          >
+            <option value="">Todos marketplaces</option>
+            <option value="Mercado Livre">Mercado Livre</option>
+            <option value="Shopee">Shopee</option>
+          </select>
 
           {/* Sort dropdown */}
           <select

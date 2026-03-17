@@ -20,6 +20,19 @@ export function getEcommerceColors(nome: string): string {
   return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
 }
 
+/**
+ * Normalize nome_ecommerce to a canonical marketplace name.
+ * E.g. "Mercado Livre - Classic" → "Mercado Livre", "Shopee - Express" → "Shopee"
+ */
+export function getMarketplaceName(nome: string): string {
+  const lower = nome.toLowerCase();
+  if (lower.includes("mercado livre")) return "Mercado Livre";
+  if (lower.includes("shopee")) return "Shopee";
+  if (lower.includes("amazon")) return "Amazon";
+  if (lower.includes("magalu")) return "Magalu";
+  return nome;
+}
+
 // ─── Decisão ────────────────────────────────────────────────────────────────
 
 export const DECISAO_LABELS: Record<Decisao, string> = {

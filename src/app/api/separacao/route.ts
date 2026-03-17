@@ -34,10 +34,10 @@ const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
  *   sort — data_pedido (default) | localizacao | sku
  *   busca — search string (matches numero, id_pedido_ecommerce, cliente_nome)
  *
- * Role-based filtering via X-User-Cargo header:
- *   operador_cwb — sees only pedidos where empresa galpao = CWB
- *   operador_sp — sees only pedidos where empresa galpao = SP
- *   admin (default) — sees all
+ * Galpão filtering (priority order):
+ *   X-Galpao-Id header — filter by specific galpão (new)
+ *   X-User-Cargo header — legacy cargo-based filtering (fallback)
+ *   No header — sees all (admin default)
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -45,6 +45,7 @@ export async function GET(request: NextRequest) {
     "status_separacao",
   ) as StatusSeparacao | null;
   const empresaFilter = searchParams.get("empresa_origem_id");
+  const marketplaceFilter = searchParams.get("marketplace");
   const sortParam = searchParams.get("sort") ?? "data_pedido";
   const busca = searchParams.get("busca");
 
@@ -57,29 +58,40 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Role-based filtering: resolve allowed empresa IDs from cargo
-  const cargoHeader = request.headers.get("X-User-Cargo") ?? "admin";
-  const cargos = cargoHeader.split(",").map((c) => c.trim());
+  // Role-based filtering: resolve allowed empresa IDs
+  // Priority: X-Galpao-Id header (new) → X-User-Cargo header (legacy) → admin (all)
   let allowedEmpresaIds: string[] | null = null; // null = no restriction
 
-  // Admin sees all; otherwise find operador cargo to filter by galpao
-  const operadorCargo = cargos.includes("admin") ? null : cargos.find((c) => c === "operador_cwb" || c === "operador_sp");
-  if (operadorCargo) {
-    const galpaoNome = operadorCargo === "operador_cwb" ? "CWB" : "SP";
-    const { data: galpao } = await supabase
-      .from("siso_galpoes")
+  const galpaoIdHeader = request.headers.get("X-Galpao-Id");
+  if (galpaoIdHeader) {
+    // New approach: filter by the selected galpão
+    const { data: empresas } = await supabase
+      .from("siso_empresas")
       .select("id")
-      .eq("nome", galpaoNome)
-      .single();
-
-    if (galpao) {
-      const { data: empresas } = await supabase
-        .from("siso_empresas")
+      .eq("galpao_id", galpaoIdHeader);
+    allowedEmpresaIds = empresas?.map((e) => e.id) ?? [];
+  } else {
+    // Legacy fallback: X-User-Cargo header
+    const cargoHeader = request.headers.get("X-User-Cargo") ?? "admin";
+    const cargos = cargoHeader.split(",").map((c) => c.trim());
+    const operadorCargo = cargos.includes("admin") ? null : cargos.find((c) => c === "operador_cwb" || c === "operador_sp");
+    if (operadorCargo) {
+      const galpaoNome = operadorCargo === "operador_cwb" ? "CWB" : "SP";
+      const { data: galpao } = await supabase
+        .from("siso_galpoes")
         .select("id")
-        .eq("galpao_id", galpao.id);
-      allowedEmpresaIds = empresas?.map((e) => e.id) ?? [];
-    } else {
-      allowedEmpresaIds = [];
+        .eq("nome", galpaoNome)
+        .single();
+
+      if (galpao) {
+        const { data: empresas } = await supabase
+          .from("siso_empresas")
+          .select("id")
+          .eq("galpao_id", galpao.id);
+        allowedEmpresaIds = empresas?.map((e) => e.id) ?? [];
+      } else {
+        allowedEmpresaIds = [];
+      }
     }
   }
 
@@ -118,7 +130,7 @@ export async function GET(request: NextRequest) {
       .from("siso_pedidos")
       .select(
         `id, numero, data, id_pedido_ecommerce, cliente_nome,
-         forma_envio_descricao, status_separacao, marcadores,
+         nome_ecommerce, forma_envio_descricao, status_separacao, marcadores,
          empresa_origem_id, etiqueta_status, etiqueta_zpl,
          siso_empresas(nome, galpao_id)`,
       )
@@ -129,6 +141,9 @@ export async function GET(request: NextRequest) {
     }
     if (empresaFilter) {
       pedidosQuery = pedidosQuery.eq("empresa_origem_id", empresaFilter);
+    }
+    if (marketplaceFilter) {
+      pedidosQuery = pedidosQuery.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
     }
 
     if (statusFilter) {
@@ -244,6 +259,7 @@ export async function GET(request: NextRequest) {
         numero_ec: p.id_pedido_ecommerce,
         numero_pedido: p.numero,
         cliente: p.cliente_nome,
+        nome_ecommerce: p.nome_ecommerce ?? null,
         uf: null,
         cidade: null,
         forma_envio: p.forma_envio_descricao,

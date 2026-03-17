@@ -273,14 +273,21 @@ export interface ConferenciaItem {
 // ─── Auth / Usuarios ────────────────────────────────────────────────────────
 
 /** User role — determines what they see */
-export type Cargo = "admin" | "operador_cwb" | "operador_sp" | "comprador";
+export type Cargo = "admin" | "operador" | "operador_cwb" | "operador_sp" | "comprador";
 
 export const CARGO_LABELS: Record<Cargo, string> = {
   admin: "Administrador",
+  operador: "Operador",
   operador_cwb: "Operador CWB",
   operador_sp: "Operador SP",
   comprador: "Comprador",
 };
+
+/** Lightweight galpão reference for user context */
+export interface UserGalpao {
+  id: string;
+  nome: string;
+}
 
 export interface Usuario {
   id: string;

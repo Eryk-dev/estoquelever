@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
 import { naturalLocCompare } from "@/lib/domain-helpers";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
-import { CARGO_LABELS } from "@/types";
+import { GalpaoSelector } from "@/components/galpao-selector";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -663,12 +663,10 @@ function ChecklistPage() {
               {pedidoIds.length} pedido(s) — Wave picking
             </p>
           </div>
+          <GalpaoSelector />
           <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
             <span className="font-mono text-xs font-semibold text-ink">
               {user.nome}
-            </span>
-            <span className="text-[10px] text-ink-faint">
-              {(user.cargos ?? [user.cargo]).map((c) => CARGO_LABELS[c]).join(", ")}
             </span>
           </div>
         </div>

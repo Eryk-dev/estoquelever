@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ClipboardList, PackageSearch, ShoppingCart, Settings, LogOut, Monitor } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
-import { CARGO_LABELS } from "@/types";
+import { GalpaoSelector } from "@/components/galpao-selector";
 import { cn } from "@/lib/utils";
 
 interface Module {
@@ -133,12 +133,10 @@ export default function HomePage() {
                 <Settings className="h-4 w-4" />
               </Link>
             )}
+            <GalpaoSelector />
             <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
               <span className="font-mono text-xs font-semibold text-ink">
                 {user.nome}
-              </span>
-              <span className="text-[10px] text-ink-faint">
-                {(user.cargos ?? [user.cargo]).map((c) => CARGO_LABELS[c]).join(", ")}
               </span>
             </div>
             <button

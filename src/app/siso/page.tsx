@@ -13,11 +13,11 @@ import { PedidoCardConcluido } from "@/components/pedido/pedido-card-concluido";
 import { PedidoCard } from "@/components/pedido/pedido-card";
 import { useAuth } from "@/lib/auth-context";
 import {
-  filtrarPendentes,
-  filtrarConcluidos,
-  filtrarAuto,
+  filtrarPendentesGalpao,
+  filtrarConcluidosGalpao,
+  filtrarAutoGalpao,
 } from "@/lib/filtrar-pedidos";
-import { CARGO_LABELS } from "@/types";
+import { GalpaoSelector } from "@/components/galpao-selector";
 
 import type { Tab, Pedido, Decisao } from "@/types";
 
@@ -28,7 +28,7 @@ async function fetchPedidos(): Promise<Pedido[]> {
 }
 
 export default function DashboardPage() {
-  const { user, logout } = useAuth();
+  const { user, logout, activeGalpaoNome } = useAuth();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab["id"]>("pendente");
 
@@ -53,20 +53,18 @@ export default function DashboardPage() {
     [allPedidos],
   );
 
-  // Filter by role
-  const cargos = user?.cargos ?? [user?.cargo ?? "admin"];
-
+  // Filter by active galpão
   const pendentesFiltrados = useMemo(
-    () => filtrarPendentes(pendentes, cargos),
-    [pendentes, cargos],
+    () => filtrarPendentesGalpao(pendentes, activeGalpaoNome),
+    [pendentes, activeGalpaoNome],
   );
   const concluidosFiltrados = useMemo(
-    () => filtrarConcluidos(concluidos, cargos),
-    [concluidos, cargos],
+    () => filtrarConcluidosGalpao(concluidos, activeGalpaoNome),
+    [concluidos, activeGalpaoNome],
   );
   const autoFiltrados = useMemo(
-    () => filtrarAuto(auto, cargos),
-    [auto, cargos],
+    () => filtrarAutoGalpao(auto, activeGalpaoNome),
+    [auto, activeGalpaoNome],
   );
 
   const tabs: Tab[] = [
@@ -76,7 +74,8 @@ export default function DashboardPage() {
   ];
 
   // Hide auto tab only if user ONLY has comprador (no other roles)
-  const onlyComprador = cargos.length === 1 && cargos[0] === "comprador";
+  const userCargos = user?.cargos ?? [user?.cargo ?? "admin"];
+  const onlyComprador = userCargos.length === 1 && userCargos[0] === "comprador";
   const visibleTabs = onlyComprador ? tabs.filter((t) => t.id !== "auto") : tabs;
 
   async function handleAprovar(id: string, decisao: Decisao) {
@@ -129,12 +128,10 @@ export default function DashboardPage() {
       >
         <RefreshCw className={`h-4 w-4 ${isRefetching ? "animate-spin" : ""}`} />
       </button>
+      <GalpaoSelector />
       <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
         <span className="font-mono text-xs font-semibold text-ink">
           {user?.nome}
-        </span>
-        <span className="text-[10px] text-ink-faint">
-          {user ? (user.cargos ?? [user.cargo]).map((c) => CARGO_LABELS[c]).join(", ") : ""}
         </span>
       </div>
       <button

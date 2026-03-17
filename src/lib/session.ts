@@ -13,6 +13,10 @@ export interface SessionUser {
  * Validates a session ID from the X-Session-Id header and returns the
  * authenticated user with their resolved galpão.
  *
+ * Galpão resolution priority:
+ *   1. X-Galpao-Id header (new dynamic approach)
+ *   2. Legacy cargo-based resolution (operador_cwb → CWB, operador_sp → SP)
+ *
  * Returns null if session not found, expired, or user not found.
  */
 export async function getSessionUser(
@@ -48,9 +52,31 @@ export async function getSessionUser(
 
   const cargos = usuario.cargos?.length ? usuario.cargos : [usuario.cargo];
 
-  // Resolve galpaoId from cargos (first operador cargo wins)
-  let galpaoId: string | null = null;
+  // 1. Try X-Galpao-Id header (new dynamic approach)
+  const galpaoIdHeader = request.headers.get("X-Galpao-Id");
+  if (galpaoIdHeader) {
+    // Validate that this galpão belongs to the user
+    const { data: valid } = await supabase
+      .from("siso_usuario_galpoes")
+      .select("galpao_id")
+      .eq("usuario_id", usuario.id)
+      .eq("galpao_id", galpaoIdHeader)
+      .maybeSingle();
 
+    if (valid) {
+      return {
+        id: usuario.id,
+        nome: usuario.nome,
+        cargo: cargos[0],
+        cargos,
+        galpaoId: galpaoIdHeader,
+      };
+    }
+    // Header galpão not in user's list — fall through to legacy
+  }
+
+  // 2. Legacy fallback: resolve from cargo name
+  let galpaoId: string | null = null;
   const operadorCargo = cargos.find((c) => c === "operador_cwb" || c === "operador_sp");
   if (operadorCargo) {
     const galpaoNome = operadorCargo === "operador_cwb" ? "CWB" : "SP";

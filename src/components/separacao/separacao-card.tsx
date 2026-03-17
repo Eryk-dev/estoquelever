@@ -7,7 +7,7 @@ import { sisoFetch } from "@/lib/auth-context";
 import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin } from "lucide-react";
 import { getEcommerceAbbr, getEcommerceColors } from "@/lib/domain-helpers";
 import { PedidoTimeline } from "./pedido-timeline";
-import type { StatusSeparacao } from "@/types";
+import type { Decisao, StatusSeparacao } from "@/types";
 
 export interface CompraStatsData {
   total: number;
@@ -36,6 +36,8 @@ export interface SeparacaoPedido {
   forma_envio: string | null;
   data_pedido: string;
   empresa_origem_nome: string | null;
+  filial_origem: string | null;
+  decisao_final: Decisao | null;
   status_separacao: StatusSeparacao;
   marcadores: string[];
   total_itens: number;
@@ -49,6 +51,7 @@ export interface SeparacaoPedido {
 
 interface SeparacaoCardProps {
   pedido: SeparacaoPedido;
+  activeGalpaoNome?: string | null;
   checkbox?: boolean;
   checked?: boolean;
   onToggle?: (id: string) => void;
@@ -78,6 +81,7 @@ interface ItemDetail {
 
 export function SeparacaoCard({
   pedido,
+  activeGalpaoNome,
   checkbox,
   checked,
   onToggle,
@@ -92,6 +96,12 @@ export function SeparacaoCard({
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
   const isAguardandoOC = pedido.status_separacao === "aguardando_compra";
   const cs = pedido.compra_stats;
+  const transferLabel =
+    pedido.decisao_final === "transferencia" && pedido.filial_origem
+      ? activeGalpaoNome && activeGalpaoNome !== pedido.filial_origem
+        ? `Transferência ${pedido.filial_origem} -> ${activeGalpaoNome}`
+        : `Transferência de ${pedido.filial_origem}`
+      : null;
 
   // Fetch items when expanded
   useEffect(() => {
@@ -316,6 +326,13 @@ export function SeparacaoCard({
             {pedido.empresa_origem_nome && (
               <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
                 {pedido.empresa_origem_nome}
+              </span>
+            )}
+
+            {transferLabel && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                <Truck className="h-2.5 w-2.5" />
+                {transferLabel}
               </span>
             )}
 

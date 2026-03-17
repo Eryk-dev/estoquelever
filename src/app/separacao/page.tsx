@@ -923,6 +923,7 @@ function SeparacaoPageContent() {
               <SeparacaoCard
                 key={pedido.id}
                 pedido={pedido}
+                activeGalpaoNome={activeGalpaoNome}
                 checkbox={showCheckbox}
                 checked={selectedIds.has(pedido.id)}
                 onToggle={toggleSelected}

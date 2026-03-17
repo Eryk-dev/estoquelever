@@ -603,7 +603,7 @@ function ChecklistPage() {
                 type="button"
                 onClick={() => handleToggle(product)}
                 className={cn(
-                  "flex w-full min-h-[44px] items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all duration-300",
+                  "flex w-full min-h-[44px] items-start gap-2.5 sm:gap-3 rounded-xl border px-3 sm:px-4 py-3 text-left transition-all duration-300",
                   product.all_marcado
                     ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
                     : "border-line bg-paper hover:bg-surface",
@@ -614,7 +614,7 @@ function ChecklistPage() {
                 {/* Checkbox visual */}
                 <div
                   className={cn(
-                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition-colors",
+                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition-colors mt-0.5",
                     product.all_marcado
                       ? "border-emerald-500 bg-emerald-500 text-white"
                       : "border-zinc-300 dark:border-zinc-600",
@@ -640,8 +640,9 @@ function ChecklistPage() {
                   )}
                 </div>
 
-                {/* Content */}
+                {/* Content — stacks vertically */}
                 <div className="min-w-0 flex-1">
+                  {/* Row 1: SKU + GTIN + Qty badge */}
                   <div className="flex items-center gap-2">
                     <span
                       className={cn(
@@ -654,108 +655,99 @@ function ChecklistPage() {
                       {product.sku}
                     </span>
                     {product.gtin && (
-                      <span className="text-[10px] text-ink-faint">
-                        GTIN {product.gtin}
+                      <span className="hidden sm:inline text-[10px] text-ink-faint">
+                        GTIN
                       </span>
                     )}
-                  </div>
-                  <p
-                    className={cn(
-                      "truncate text-sm",
-                      product.all_marcado
-                        ? "text-emerald-600/60 line-through dark:text-emerald-400/60"
-                        : "text-ink",
-                    )}
-                  >
-                    {product.descricao}
-                  </p>
-                </div>
-
-                {/* Quantity badge */}
-                <span
-                  className={cn(
-                    "shrink-0 rounded-md px-2 py-0.5 font-mono text-sm font-semibold",
-                    product.all_marcado
-                      ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
-                      : "bg-zinc-100 text-ink dark:bg-zinc-800",
-                  )}
-                >
-                  {product.quantidade_total}
-                </span>
-
-                {/* Location */}
-                {editingLoc === product.produto_id ? (
-                  <div
-                    className="inline-flex shrink-0 items-center gap-1"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      ref={locInputRef}
-                      type="text"
-                      value={editLocValue}
-                      onChange={(e) => setEditLocValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") { e.preventDefault(); saveLocation(product); }
-                        if (e.key === "Escape") { e.preventDefault(); setEditingLoc(null); }
-                      }}
-                      disabled={savingLoc}
-                      placeholder="Ex: A1-02"
-                      className="h-7 w-24 rounded-md border border-blue-300 bg-white px-2 font-mono text-xs text-ink focus:border-blue-500 focus:outline-none dark:border-blue-700 dark:bg-zinc-900"
-                    />
-                    <button
-                      type="button"
-                      disabled={savingLoc}
-                      onClick={() => saveLocation(product)}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-500 text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
-                      title="Salvar"
+                    <span
+                      className={cn(
+                        "ml-auto shrink-0 rounded-md px-2 py-0.5 font-mono text-sm font-semibold",
+                        product.all_marcado
+                          ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+                          : "bg-zinc-100 text-ink dark:bg-zinc-800",
+                      )}
                     >
-                      {savingLoc ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                    </button>
+                      {product.quantidade_total}
+                    </span>
                   </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={(e) => startEditLocation(product, e)}
-                    className={cn(
-                      "inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 font-mono text-xs font-semibold transition-colors",
-                      product.localizacao
-                        ? "bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
-                        : "bg-zinc-100 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700",
-                    )}
-                    title="Editar localizacao"
-                  >
-                    {product.localizacao ? (
-                      <>
-                        <MapPin className="h-3 w-3" />
-                        {product.localizacao}
-                      </>
-                    ) : (
-                      <>
-                        <MapPinOff className="h-3 w-3" />
-                        Sem loc.
-                      </>
-                    )}
-                    <Pencil className="h-2.5 w-2.5 opacity-50" />
-                  </button>
-                )}
 
-                {/* Esgotado button */}
-                {!product.all_marcado && (
-                  <button
-                    type="button"
-                    disabled={esgotadoLoading !== null}
-                    onClick={(e) => handleEsgotado(product.sku, e)}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-40 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
-                    title={`Marcar ${product.sku} como esgotado`}
-                  >
-                    {esgotadoLoading === product.sku ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
+                  {/* Row 2: Location + Esgotado */}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    {/* Location */}
+                    {editingLoc === product.produto_id ? (
+                      <div
+                        className="inline-flex items-center gap-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          ref={locInputRef}
+                          type="text"
+                          value={editLocValue}
+                          onChange={(e) => setEditLocValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); saveLocation(product); }
+                            if (e.key === "Escape") { e.preventDefault(); setEditingLoc(null); }
+                          }}
+                          disabled={savingLoc}
+                          placeholder="Ex: A1-02"
+                          className="h-7 w-24 rounded-md border border-blue-300 bg-white px-2 font-mono text-xs text-ink focus:border-blue-500 focus:outline-none dark:border-blue-700 dark:bg-zinc-900"
+                        />
+                        <button
+                          type="button"
+                          disabled={savingLoc}
+                          onClick={() => saveLocation(product)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-500 text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
+                          title="Salvar"
+                        >
+                          {savingLoc ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                        </button>
+                      </div>
                     ) : (
-                      <XCircle className="h-3 w-3" />
+                      <button
+                        type="button"
+                        onClick={(e) => startEditLocation(product, e)}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-xs font-semibold transition-colors",
+                          product.localizacao
+                            ? "bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+                            : "bg-zinc-100 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700",
+                        )}
+                        title="Editar localizacao"
+                      >
+                        {product.localizacao ? (
+                          <>
+                            <MapPin className="h-3 w-3" />
+                            {product.localizacao}
+                          </>
+                        ) : (
+                          <>
+                            <MapPinOff className="h-3 w-3" />
+                            Sem loc.
+                          </>
+                        )}
+                        <Pencil className="h-2.5 w-2.5 opacity-50" />
+                      </button>
                     )}
-                    Esgotado
-                  </button>
-                )}
+
+                    {/* Esgotado button */}
+                    {!product.all_marcado && (
+                      <button
+                        type="button"
+                        disabled={esgotadoLoading !== null}
+                        onClick={(e) => handleEsgotado(product.sku, e)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-40 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
+                        title={`Marcar ${product.sku} como esgotado`}
+                      >
+                        {esgotadoLoading === product.sku ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <XCircle className="h-3 w-3" />
+                        )}
+                        Esgotado
+                      </button>
+                    )}
+                  </div>
+                </div>
               </button>
             ))}
           </div>

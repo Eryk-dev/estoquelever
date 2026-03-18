@@ -808,13 +808,15 @@ function ChecklistPage() {
                       {/* Qty badge — mobile only */}
                       <span
                         className={cn(
-                          "sm:hidden ml-auto shrink-0 rounded-md px-2 py-0.5 font-mono text-sm font-semibold",
+                          "sm:hidden ml-auto shrink-0 rounded-md px-2 py-0.5 font-mono font-semibold",
                           product.all_marcado
-                            ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
-                            : "bg-zinc-100 text-ink dark:bg-zinc-800",
+                            ? "text-sm bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+                            : product.quantidade_total > 1
+                              ? "text-base bg-amber-100 text-amber-700 ring-2 ring-amber-300 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-600"
+                              : "text-sm bg-zinc-100 text-ink dark:bg-zinc-800",
                         )}
                       >
-                        {product.quantidade_total}
+                        {product.quantidade_total > 1 && !product.all_marcado ? `${product.quantidade_total}x` : product.quantidade_total}
                       </span>
                     </div>
                     <p
@@ -832,13 +834,15 @@ function ChecklistPage() {
                   {/* Qty badge — desktop only */}
                   <span
                     className={cn(
-                      "hidden sm:inline-flex shrink-0 rounded-md px-2 py-0.5 font-mono text-sm font-semibold",
+                      "hidden sm:inline-flex shrink-0 rounded-md px-2 py-0.5 font-mono font-semibold",
                       product.all_marcado
-                        ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
-                        : "bg-zinc-100 text-ink dark:bg-zinc-800",
+                        ? "text-sm bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+                        : product.quantidade_total > 1
+                          ? "text-base bg-amber-100 text-amber-700 ring-2 ring-amber-300 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-600"
+                          : "text-sm bg-zinc-100 text-ink dark:bg-zinc-800",
                     )}
                   >
-                    {product.quantidade_total}
+                    {product.quantidade_total > 1 && !product.all_marcado ? `${product.quantidade_total}x` : product.quantidade_total}
                   </span>
 
                   {/* Stock + Location + Esgotado — wraps on mobile, inline on sm+ */}

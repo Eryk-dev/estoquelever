@@ -180,3 +180,14 @@ erros:
       - supabase/migrations/20260317_fix_loc_sort_key_empty_string.sql
       - supabase/migrations/20260317_natural_loc_sort.sql
     tags: [postgres, rpc, for-loop, null, localizacao, separacao, sort]
+
+  - id: agrupamento-nf-ja-expedida-bloqueia-lote
+    date: "2026-03-18"
+    source: agrupamento-service
+    category: external_api
+    message: "Nota fiscal com id 'X' já foi expedida"
+    cause: "Ao criar agrupamento via POST /expedicao, se qualquer NF do lote já foi expedida no Tiny (manualmente ou por fluxo antigo), o Tiny rejeita o lote INTEIRO com 400. Uma única NF problemática bloqueava dezenas de pedidos válidos. Erro repetia em loop a cada tentativa pois a NF nunca era removida do lote."
+    fix: "Adicionado retry loop em processarGrupo: quando Tiny retorna erro 'já foi expedida', extrai o NF ID via regex, remove do lote, marca o pedido como 'expedido_externo', e retenta com os NFs restantes. Máximo 5 retries por grupo."
+    files:
+      - src/lib/agrupamento-service.ts
+    tags: [agrupamento, expedicao, tiny-api, nf-expedida, retry, lote, bloqueio]

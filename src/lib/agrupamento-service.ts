@@ -350,6 +350,7 @@ async function processarGrupo(
     // Build NF IDs + pedido mapping for expedition matching
     const idsNotasFiscais: number[] = [];
     const pedidoPorTinyId = new Map<number, string>();
+    const nfToPedidoId = new Map<number, string>();
 
     for (const p of pedidos) {
       if (!p.nota_fiscal_id) {
@@ -357,6 +358,7 @@ async function processarGrupo(
         continue;
       }
       idsNotasFiscais.push(p.nota_fiscal_id);
+      nfToPedidoId.set(p.nota_fiscal_id, p.id);
       // Map both pedido ID and NF ID for expedition matching
       const tinyId = parseInt(p.id, 10);
       if (!isNaN(tinyId)) pedidoPorTinyId.set(tinyId, p.id);
@@ -365,26 +367,77 @@ async function processarGrupo(
 
     if (idsNotasFiscais.length === 0) return;
 
-    // 1. Create agrupamento with NF IDs + forma de frete
+    // 1. Create agrupamento with NF IDs + forma de frete.
+    //    Retry loop: if Tiny reports a NF as "já foi expedida", remove it
+    //    from the batch and retry with the remaining NFs.
     const formaFreteId = pedidos[0].forma_frete_id
       ? parseInt(pedidos[0].forma_frete_id, 10)
       : undefined;
-    const agrupamento = await criarAgrupamento(
-      token,
-      idsNotasFiscais,
-      isNaN(formaFreteId as number) ? undefined : formaFreteId,
-    );
-    const agrupamentoId = agrupamento.id;
+    const safeFormaFrete = isNaN(formaFreteId as number) ? undefined : formaFreteId;
+
+    let remainingNFs = [...idsNotasFiscais];
+    const MAX_RETRY_EXPEDIDA = 5;
+    let agrupamentoId: number | undefined;
+
+    for (let attempt = 0; attempt <= MAX_RETRY_EXPEDIDA; attempt++) {
+      try {
+        const agrupamento = await criarAgrupamento(token, remainingNFs, safeFormaFrete);
+        agrupamentoId = agrupamento.id;
+        break;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const nfMatch = msg.match(/Nota fiscal com id '(\d+)' já foi expedida/);
+
+        if (!nfMatch || attempt === MAX_RETRY_EXPEDIDA) {
+          throw err; // Not a "já expedida" error or max retries reached
+        }
+
+        const nfExpedida = parseInt(nfMatch[1], 10);
+        const pedidoAfetado = nfToPedidoId.get(nfExpedida);
+
+        logger.warn(LOG_SOURCE, "NF já expedida no Tiny — removendo do lote e retentando", {
+          nfId: String(nfExpedida),
+          pedidoId: pedidoAfetado ?? "desconhecido",
+          attempt: String(attempt + 1),
+          remainingBefore: String(remainingNFs.length),
+        });
+
+        // Remove the offending NF from the batch
+        remainingNFs = remainingNFs.filter((nf) => nf !== nfExpedida);
+
+        // Mark the pedido as already expedited (embalado) since Tiny says it was
+        if (pedidoAfetado) {
+          await supabase
+            .from("siso_pedidos")
+            .update({
+              agrupamento_expedicao_id: "expedido_externo",
+              status_separacao: "embalado",
+            })
+            .eq("id", pedidoAfetado);
+        }
+
+        if (remainingNFs.length === 0) {
+          logger.info(LOG_SOURCE, "Todas as NFs do grupo já foram expedidas", { groupKey });
+          return;
+        }
+      }
+    }
+
+    if (!agrupamentoId) return;
 
     logger.info(LOG_SOURCE, "Agrupamento criado em lote", {
       empresaId,
       agrupamentoId: String(agrupamentoId),
-      qtdNFs: String(idsNotasFiscais.length),
+      qtdNFs: String(remainingNFs.length),
+      nfsRemovidas: String(idsNotasFiscais.length - remainingNFs.length),
       groupKey,
     });
 
-    // Save real agrupamento_expedicao_id (replacing 'pending')
-    const allPedidoIds = Array.from(pedidoPorTinyId.values());
+    // Save real agrupamento_expedicao_id (replacing 'pending') — only for NFs that were included
+    const remainingPedidoIds = remainingNFs
+      .map((nf) => nfToPedidoId.get(nf))
+      .filter((id): id is string => !!id);
+    const allPedidoIds = remainingPedidoIds;
     await supabase
       .from("siso_pedidos")
       .update({ agrupamento_expedicao_id: String(agrupamentoId) })

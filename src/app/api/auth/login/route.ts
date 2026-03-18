@@ -75,13 +75,16 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (sessaoError || !sessao) {
-    logger.warn("auth/login", "Failed to create session, continuing without", {
+    logger.error("auth/login", "Failed to create session", {
       usuarioId: usuario.id,
       error: sessaoError?.message,
     });
-  } else {
-    sessionId = sessao.id;
+    return NextResponse.json(
+      { ok: false, erro: "Nao foi possivel iniciar a sessao. Tente novamente." },
+      { status: 500 },
+    );
   }
+  sessionId = sessao.id;
 
   return NextResponse.json({
     ok: true,

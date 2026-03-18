@@ -22,6 +22,30 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: embalagem-hidden-items-block-completion
+    date: "2026-03-18"
+    source: confirmar-item-embalagem
+    category: business_logic
+    message: "Pedido never reaches pedido_completo=true despite all visible items completed"
+    cause: >
+      The pending items count in confirmar-item-embalagem counted ALL items
+      (including indisponivel/cancelado), but checklist-items hides those from
+      the UI. User completes all visible items but backend still sees pending
+      items, so pedido_completo stays false, no label prints, no toast shown.
+      Same issue in siso_processar_bip_embalagem RPC (excluded cancelado but
+      not indisponivel). Also separacao route total_itens included indisponivel
+      items, showing wrong progress (e.g. 3/4 when only 3 items visible).
+    fix: >
+      Added NOT IN ('indisponivel','cancelado') filter to pending count in
+      confirmar-item-embalagem. Updated siso_processar_bip_embalagem RPC to
+      exclude indisponivel in both item search and pending count. Fixed
+      separacao route to skip indisponivel items in item stats.
+    files:
+      - src/app/api/separacao/confirmar-item-embalagem/route.ts
+      - src/app/api/separacao/route.ts
+      - supabase/migrations/20260318_fix_embalagem_hidden_items_count.sql
+    tags: [embalagem, etiqueta, indisponivel, cancelado, pedido_completo, hidden-items, compra_status]
+
   - id: zpl-dg-graphic-label
     date: "2026-03-16"
     source: etiqueta-service

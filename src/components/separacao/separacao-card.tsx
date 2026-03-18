@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { sisoFetch } from "@/lib/auth-context";
-import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin } from "lucide-react";
+import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin, RotateCcw } from "lucide-react";
 import { getEcommerceAbbr, getEcommerceColors } from "@/lib/domain-helpers";
 import { PedidoTimeline } from "./pedido-timeline";
 import type { Decisao, StatusSeparacao } from "@/types";
@@ -93,10 +93,12 @@ export function SeparacaoCard({
   const [items, setItems] = useState<ItemDetail[] | null>(null);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [retryingLabel, setRetryingLabel] = useState(false);
   const isEmbalado = pedido.status_separacao === "embalado";
   const isSeparado = pedido.status_separacao === "separado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
   const isAguardandoOC = pedido.status_separacao === "aguardando_compra";
+  const canRetryEtiqueta = isEmbalado && !pedido.etiqueta_pronta;
   const cs = pedido.compra_stats;
   const transferLabel =
     pedido.decisao_final === "transferencia" && pedido.filial_origem
@@ -178,6 +180,11 @@ export function SeparacaoCard({
             label: "Etiqueta falhou",
             className: "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300",
           }
+        : !pedido.etiqueta_pronta
+          ? {
+              label: "Sem etiqueta",
+              className: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300",
+            }
         : {
             label: "Embalado",
             className: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
@@ -246,8 +253,54 @@ export function SeparacaoCard({
               </span>
             )}
 
-            {/* Print label (embalado only) */}
-            {isEmbalado && (
+            {/* Retry label fetch when embalado without cached ZPL */}
+            {canRetryEtiqueta && (
+              <button
+                type="button"
+                disabled={retryingLabel}
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  setRetryingLabel(true);
+                  try {
+                    const res = await sisoFetch("/api/separacao/retry-etiqueta", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ pedido_id: pedido.id }),
+                    });
+                    const body = await res.json().catch(() => ({}));
+                    const result = Array.isArray(body.pedidos) ? body.pedidos[0] : null;
+
+                    if (!res.ok) {
+                      toast.error(body.error ?? "Falha ao tentar obter etiqueta");
+                    } else if (result?.status === "recuperada" || body.recuperadas > 0) {
+                      toast.success(`Etiqueta #${pedido.numero_pedido} recuperada`);
+                    } else if (result?.status === "em_andamento" || body.em_andamento > 0) {
+                      toast.message("Retry em andamento. Aguarde alguns segundos.");
+                    } else if (result?.status === "ja_disponivel" || body.ja_disponiveis > 0) {
+                      toast.success("Etiqueta já estava disponível");
+                    } else {
+                      toast.error("Ainda não foi possível obter a etiqueta");
+                    }
+                  } catch {
+                    toast.error("Erro de conexao");
+                  } finally {
+                    setRetryingLabel(false);
+                  }
+                }}
+                className="shrink-0 rounded p-1 text-amber-500 transition-colors hover:bg-amber-50 hover:text-amber-700 disabled:opacity-50 dark:hover:bg-amber-950/30"
+                title="Obter etiqueta novamente"
+                aria-label="Obter etiqueta novamente"
+              >
+                {retryingLabel ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+              </button>
+            )}
+
+            {/* Print label (embalado only when ZPL is available) */}
+            {isEmbalado && pedido.etiqueta_pronta && (
               <button
                 type="button"
                 disabled={printing}
@@ -386,6 +439,12 @@ export function SeparacaoCard({
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 dark:bg-red-950/30 dark:text-red-400">
                 <AlertTriangle className="h-2.5 w-2.5" />
                 Etiqueta falhou
+              </span>
+            )}
+            {isEmbalado && !pedido.etiqueta_pronta && pedido.etiqueta_status !== "falhou" && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:bg-amber-950/30 dark:text-amber-400">
+                <AlertTriangle className="h-2.5 w-2.5" />
+                Sem etiqueta
               </span>
             )}
 

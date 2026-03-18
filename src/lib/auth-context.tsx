@@ -43,7 +43,16 @@ function getStoredUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
+    if (!stored) return null;
+
+    const parsed = JSON.parse(stored) as AuthUser | null;
+    if (!parsed?.sessionId) {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(GALPAO_KEY);
+      return null;
+    }
+
+    return parsed;
   } catch {
     return null;
   }

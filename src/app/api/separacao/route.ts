@@ -190,7 +190,7 @@ export async function GET(request: NextRequest) {
         .in("pedido_id", pedidoIds);
 
       for (const item of items ?? []) {
-        if (item.compra_status === "cancelado") continue;
+        if (item.compra_status === "cancelado" || item.compra_status === "indisponivel") continue;
 
         if (!itemStats[item.pedido_id]) {
           itemStats[item.pedido_id] = { total: 0, marcados: 0, bipados: 0 };

@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle } from "lucide-react";
+import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -242,18 +242,36 @@ function SeparacaoPageContent() {
   // Fetch pedidos for active tab + counts for all tabs
   const {
     data,
+    error,
+    isError,
     isLoading: isFetching,
     refetch,
   } = useQuery<SeparacaoResponse>({
     queryKey: ["separacao", activeGalpaoId ?? "all", queryParams],
     queryFn: async () => {
       const res = await sisoFetch(`/api/separacao?${queryParams}`);
-      if (!res.ok) return { counts: EMPTY_COUNTS, pedidos: [], empresas: [] };
-      return res.json();
+      const body = await res.json().catch(() => ({}));
+
+      if (res.status === 401) {
+        logout();
+        router.replace("/login");
+        throw new Error("Sua sessão expirou. Faça login novamente.");
+      }
+
+      if (!res.ok) {
+        throw new Error(body.error ?? "Erro ao carregar separação");
+      }
+
+      if (body?.error === "galpao_nao_selecionado") {
+        throw new Error("Selecione um galpão para visualizar a fila de separação.");
+      }
+
+      return body;
     },
     enabled: canFetch,
     refetchInterval: 10000,
   });
+  const queryError = error instanceof Error ? error.message : "Erro ao carregar separação";
 
   const counts = data?.counts ?? EMPTY_COUNTS;
   const pedidos = useMemo(() => data?.pedidos ?? [], [data?.pedidos]);
@@ -376,6 +394,41 @@ function SeparacaoPageContent() {
     setActionLoading(false);
   }
 
+  async function handleRetryEtiquetasSelecionadas() {
+    if (selectedIds.size === 0) return;
+    setActionLoading(true);
+    try {
+      const res = await sisoFetch("/api/separacao/retry-etiqueta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_ids: Array.from(selectedIds) }),
+      });
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        toast.error(body.error ?? "Erro ao tentar obter etiquetas");
+        return;
+      }
+
+      if (body.recuperadas > 0) {
+        toast.success(`${body.recuperadas} etiqueta(s) recuperada(s)`);
+      }
+      if (body.em_andamento > 0) {
+        toast.message(`${body.em_andamento} etiqueta(s) ainda em processamento`);
+      }
+      if (body.falhas > 0) {
+        toast.error(`${body.falhas} etiqueta(s) ainda sem retorno`);
+      }
+      if (body.recuperadas === 0 && body.em_andamento === 0 && body.falhas === 0) {
+        toast.success("As etiquetas selecionadas já estavam disponíveis");
+      }
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   async function handleMoverEtapa(novoStatus: StatusSeparacao) {
     if (selectedIds.size === 0) return;
     setActionLoading(true);
@@ -414,6 +467,57 @@ function SeparacaoPageContent() {
   }
 
   if (!user) return null;
+
+  if (isError) {
+    return (
+      <div className="min-h-screen bg-surface">
+        <header className="sticky top-0 z-10 border-b border-line bg-paper">
+          <div className="mx-auto flex max-w-5xl items-center gap-2 px-3 py-3 sm:px-4">
+            <Link
+              href="/"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink shrink-0"
+              title="Inicio"
+            >
+              <Home className="h-4 w-4" />
+            </Link>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-sm font-bold tracking-tight text-ink sm:text-base">
+                Separacao
+              </h1>
+            </div>
+          </div>
+        </header>
+
+        <main className="mx-auto max-w-5xl px-3 py-4 sm:px-4">
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-5">
+            <div className="flex items-center gap-2 text-red-700">
+              <AlertTriangle className="h-5 w-5" />
+              <p className="text-sm font-semibold">Falha ao carregar separação</p>
+            </div>
+            <p className="mt-2 text-sm text-red-700/90">{queryError}</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => refetch()}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-paper px-4 py-2 text-sm font-medium text-red-700 hover:bg-white"
+              >
+                <ArrowRight className="h-4 w-4" />
+                Tentar novamente
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="inline-flex items-center gap-2 rounded-lg border border-line bg-paper px-4 py-2 text-sm font-medium text-ink hover:bg-surface"
+              >
+                <LogOut className="h-4 w-4" />
+                Entrar de novo
+              </button>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   const isAdmin = user.cargos?.includes("admin") ?? user.cargo === "admin";
   const showCheckbox =
@@ -479,11 +583,11 @@ function SeparacaoPageContent() {
     }
 
     if (activeTab === "embalado") {
-      const failedLabels = pedidos.filter((pedido) => pedido.etiqueta_status === "falhou").length;
+      const missingLabels = pedidos.filter((pedido) => !pedido.etiqueta_pronta).length;
       return {
-        label: "Etiqueta com falha",
-        value: failedLabels,
-        helper: "Pedidos embalados que ainda pedem reimpressão.",
+        label: "Sem etiqueta",
+        value: missingLabels,
+        helper: "Pedidos embalados que ainda precisam recuperar a etiqueta no Tiny.",
       };
     }
 
@@ -831,6 +935,17 @@ function SeparacaoPageContent() {
                   count={selectedIds.size}
                 />
               )}
+              <button
+                type="button"
+                onClick={handleRetryEtiquetasSelecionadas}
+                disabled={selectedIds.size === 0 || actionLoading}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {actionLoading
+                  ? "Tentando..."
+                  : `Retry etiqueta (${selectedIds.size})`}
+              </button>
               <button
                 type="button"
                 onClick={handleImprimirSelecionados}

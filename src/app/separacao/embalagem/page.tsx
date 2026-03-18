@@ -149,13 +149,9 @@ function EmbalagemPage() {
     return allPedidos.filter((p) => pedidoIds.includes(p.id));
   }, [allPedidos, pedidoIds]);
 
-  // Derive galpao_id from first pedido
-  const galpaoId = useMemo(() => {
-    for (const p of pedidos) {
-      if (p.galpao_id) return p.galpao_id;
-    }
-    return null;
-  }, [pedidos]);
+  // Use activeGalpaoId from auth (null when "Todos" selected)
+  // Fallback to first pedido's galpao if a specific galpao is selected
+  const galpaoId = activeGalpaoId ?? null;
 
   // Track completed pedidos (transitioned to embalado during this session)
   // Store full pedido data so it persists after API stops returning them
@@ -195,10 +191,7 @@ function EmbalagemPage() {
     if (scanRef.current) {
       scanRef.current.value = "";
     }
-    if (!sku || !galpaoId) {
-      if (!galpaoId) toast.error("Galpao nao identificado");
-      return;
-    }
+    if (!sku) return;
 
     const qty = scanQty;
     setScanQty(1);
@@ -209,7 +202,7 @@ function EmbalagemPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sku,
-          galpao_id: galpaoId,
+          ...(galpaoId && { galpao_id: galpaoId }),
           quantidade: qty,
         }),
       });

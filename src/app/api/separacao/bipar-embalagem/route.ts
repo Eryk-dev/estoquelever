@@ -23,15 +23,11 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
-  if (!body?.galpao_id || typeof body.galpao_id !== "string") {
-    return NextResponse.json(
-      { error: "'galpao_id' (string) é obrigatório" },
-      { status: 400 },
-    );
-  }
-
   const sku: string = body.sku.trim();
-  const galpao_id: string = body.galpao_id;
+  const galpao_id: string | null =
+    body.galpao_id && typeof body.galpao_id === "string"
+      ? body.galpao_id
+      : null;
   const quantidade: number =
     typeof body.quantidade === "number" && body.quantidade > 0
       ? body.quantidade

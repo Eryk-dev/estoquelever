@@ -179,8 +179,12 @@ export interface PedidoItem {
   ordem_compra_id: string | null;
   /** Purchase status of this item */
   compra_status: CompraStatus;
+  /** Quantity effectively requested for purchase */
+  compra_quantidade_solicitada: number;
   /** Quantity already received */
   compra_quantidade_recebida: number;
+  /** When the item entered the purchase flow */
+  compra_solicitada_em: string | null;
   /** When the item was purchased */
   comprado_em: string | null;
   /** Who purchased it */
@@ -247,6 +251,9 @@ export interface CompraItemAgrupado {
   descricao: string;
   imagem: string | null;
   quantidade_total: number;
+  pedidos_bloqueados: number;
+  aging_dias: number;
+  primeira_solicitacao_em: string | null;
   fornecedor_oc: string;
   pedidos: Array<{
     pedido_id: string;

@@ -373,64 +373,93 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
 async function resolveCompraItemIds(
   pedidoId: string,
   empresaOrigemId: string | null | undefined,
-): Promise<string[]> {
-  if (!empresaOrigemId) return [];
-
+): Promise<Array<{ id: string; quantidadeSolicitada: number }>> {
   const supabase = createServiceClient();
-  const [itemsResult, estoqueResult] = await Promise.all([
-    supabase
-      .from("siso_pedido_itens")
-      .select("id, produto_id, quantidade_pedida")
-      .eq("pedido_id", pedidoId),
-    supabase
-      .from("siso_pedido_item_estoques")
-      .select("produto_id, disponivel")
-      .eq("pedido_id", pedidoId)
-      .eq("empresa_id", empresaOrigemId),
-  ]);
 
-  if (itemsResult.error || !itemsResult.data) {
-    logger.warn(
-      "execution-worker",
-      "Nao foi possivel resolver itens faltantes para compra",
-      {
-        pedidoId,
-        empresaOrigemId,
-        error: itemsResult.error?.message ?? "items not found",
-      },
+  const { data: items, error: itemsError } = await supabase
+    .from("siso_pedido_itens")
+    .select("id, produto_id, quantidade_pedida")
+    .eq("pedido_id", pedidoId);
+
+  if (itemsError || !items) {
+    throw new Error(
+      `Nao foi possivel resolver itens do pedido para compra: ${itemsError?.message ?? "not found"}`,
     );
-    return [];
   }
 
-  if (estoqueResult.error) {
+  if (items.length === 0) return [];
+
+  if (!empresaOrigemId) {
+    logger.warn(
+      "execution-worker",
+      "Pedido OC sem empresa de origem para calcular faltas; usando quantidade integral",
+      {
+        pedidoId,
+      },
+    );
+    return items.map((item) => ({
+      id: String(item.id),
+      quantidadeSolicitada: Number(item.quantidade_pedida ?? 0),
+    }));
+  }
+
+  const { data: estoques, error: estoqueError } = await supabase
+    .from("siso_pedido_item_estoques")
+    .select("produto_id, disponivel")
+    .eq("pedido_id", pedidoId)
+    .eq("empresa_id", empresaOrigemId);
+
+  if (estoqueError) {
     logger.warn(
       "execution-worker",
       "Nao foi possivel consultar estoque da empresa de origem para compra",
       {
         pedidoId,
         empresaOrigemId,
-        error: estoqueResult.error.message,
+        error: estoqueError.message,
       },
     );
-    return [];
+    return items.map((item) => ({
+      id: String(item.id),
+      quantidadeSolicitada: Number(item.quantidade_pedida ?? 0),
+    }));
   }
 
   const disponivelPorProduto = new Map<string, number>();
-  for (const estoque of estoqueResult.data ?? []) {
+  for (const estoque of estoques ?? []) {
     disponivelPorProduto.set(
       String(estoque.produto_id),
       Number(estoque.disponivel ?? 0),
     );
   }
 
-  // For now the compra flow is SKU-based, not quantity-based.
-  // If the origin empresa does not fully cover the SKU, the whole item enters compra.
-  return itemsResult.data
-    .filter((item) => {
-      const disponivel = disponivelPorProduto.get(String(item.produto_id)) ?? 0;
-      return disponivel < Number(item.quantidade_pedida ?? 0);
-    })
-    .map((item) => item.id as string);
+  // Allocate the available stock across repeated products before deciding the
+  // missing quantity to buy for each order line.
+  const demandas: Array<{ id: string; quantidadeSolicitada: number }> = [];
+
+  for (const item of [...items].sort((a, b) =>
+    String(a.id).localeCompare(String(b.id)),
+  )) {
+    const quantidadePedida = Number(item.quantidade_pedida ?? 0);
+    const produtoId = String(item.produto_id);
+    const disponivelAtual = Math.max(disponivelPorProduto.get(produtoId) ?? 0, 0);
+    const quantidadeCoberta = Math.min(disponivelAtual, quantidadePedida);
+    const quantidadeFaltante = Math.max(quantidadePedida - quantidadeCoberta, 0);
+
+    disponivelPorProduto.set(
+      produtoId,
+      Math.max(disponivelAtual - quantidadePedida, 0),
+    );
+
+    if (quantidadeFaltante > 0) {
+      demandas.push({
+        id: String(item.id),
+        quantidadeSolicitada: quantidadeFaltante,
+      });
+    }
+  }
+
+  return demandas;
 }
 
 async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
@@ -447,34 +476,89 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
 
   await inserirMarcadoresTiny(job.empresa_id, token, job.pedido_id, marcadores);
 
-  // Set compra fields so items appear in the compras module
+  const compraDemandas = await resolveCompraItemIds(
+    job.pedido_id,
+    pedido?.empresa_origem_id ?? job.empresa_id,
+  );
+
+  if (compraDemandas.length === 0) {
+    const now = new Date().toISOString();
+
+    await supabase
+      .from("siso_pedido_itens")
+      .update({
+        compra_status: null,
+        ordem_compra_id: null,
+        compra_quantidade_solicitada: 0,
+        compra_solicitada_em: null,
+      })
+      .eq("pedido_id", job.pedido_id);
+
+    await supabase
+      .from("siso_pedidos")
+      .update({
+        decisao_final: "propria",
+        status: "executando",
+        status_separacao: "aguardando_nf",
+      })
+      .eq("id", job.pedido_id);
+
+    const { data: existingReleaseJob } = await supabase
+      .from("siso_fila_execucao")
+      .select("id")
+      .eq("pedido_id", job.pedido_id)
+      .eq("tipo", "lancar_estoque")
+      .in("status", ["pendente", "executando"])
+      .maybeSingle();
+
+    if (!existingReleaseJob) {
+      await supabase
+        .from("siso_fila_execucao")
+        .insert({
+          pedido_id: job.pedido_id,
+          tipo: "lancar_estoque",
+          empresa_id: pedido?.empresa_origem_id ?? job.empresa_id,
+          decisao: "propria",
+          atualizado_em: now,
+        });
+    }
+
+    logger.info(
+      "execution-worker",
+      "Pedido OC sem faltas reais; liberado direto para fluxo proprio",
+      {
+        pedidoId: job.pedido_id,
+        empresaOrigemId: pedido?.empresa_origem_id ?? job.empresa_id,
+      },
+    );
+    return;
+  }
+
+  const now = new Date().toISOString();
+
   await supabase
     .from("siso_pedidos")
     .update({ status_separacao: "aguardando_compra" })
     .eq("id", job.pedido_id);
 
-  const compraItemIds = await resolveCompraItemIds(
-    job.pedido_id,
-    pedido?.empresa_origem_id ?? job.empresa_id,
-  );
-  const fallbackTodosItens = compraItemIds.length === 0;
-
-  if (fallbackTodosItens) {
+  for (const demanda of compraDemandas) {
     await supabase
       .from("siso_pedido_itens")
-      .update({ compra_status: "aguardando_compra" })
-      .eq("pedido_id", job.pedido_id);
-  } else {
-    await supabase
-      .from("siso_pedido_itens")
-      .update({ compra_status: "aguardando_compra" })
-      .in("id", compraItemIds);
+      .update({
+        compra_status: "aguardando_compra",
+        compra_quantidade_solicitada: demanda.quantidadeSolicitada,
+        compra_solicitada_em: now,
+      })
+      .eq("id", demanda.id);
   }
 
   logger.info("execution-worker", "Pedido OC enviado para modulo de compras", {
     pedidoId: job.pedido_id,
-    itensCompra: compraItemIds.length,
-    fallbackTodosItens,
+    itensCompra: compraDemandas.length,
+    quantidadeSolicitadaTotal: compraDemandas.reduce(
+      (sum, demanda) => sum + demanda.quantidadeSolicitada,
+      0,
+    ),
   });
 }
 

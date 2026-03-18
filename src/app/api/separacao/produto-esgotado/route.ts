@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
     // 2. Find items with this SKU in those pedidos
     const { data: matchingItems, error: itemsErr } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, produto_id")
+      .select("id, pedido_id, produto_id, quantidade_pedida")
       .eq("sku", sku)
       .in("pedido_id", activePedidoIds)
       .is("compra_status", null);
@@ -245,24 +245,30 @@ export async function POST(request: NextRequest) {
 
     // ─── OC mode (acao: "oc") ───────────────────────────────────
     const fornecedorInfo = getFornecedorBySku(sku);
+    const now = new Date().toISOString();
 
-    // Update matching items: mark for purchase
-    const { error: updateItemsErr } = await supabase
-      .from("siso_pedido_itens")
-      .update({
-        compra_status: "aguardando_compra",
-        fornecedor_oc: fornecedorInfo.fornecedor,
-      })
-      .in("id", itemIds);
+    // Update matching items: mark for purchase with the real missing quantity.
+    for (const item of matchingItems) {
+      const { error: updateItemsErr } = await supabase
+        .from("siso_pedido_itens")
+        .update({
+          compra_status: "aguardando_compra",
+          fornecedor_oc: fornecedorInfo.fornecedor,
+          compra_quantidade_solicitada: Number(item.quantidade_pedida ?? 0),
+          compra_solicitada_em: now,
+        })
+        .eq("id", item.id);
 
-    if (updateItemsErr) {
-      logger.error("produto-esgotado", "Erro ao atualizar itens", {
-        error: updateItemsErr.message,
-      });
-      return NextResponse.json(
-        { error: "Erro ao atualizar itens" },
-        { status: 500 },
-      );
+      if (updateItemsErr) {
+        logger.error("produto-esgotado", "Erro ao atualizar itens", {
+          error: updateItemsErr.message,
+          itemId: item.id,
+        });
+        return NextResponse.json(
+          { error: "Erro ao atualizar itens" },
+          { status: 500 },
+        );
+      }
     }
 
     // Reset separation state on ALL items of affected pedidos

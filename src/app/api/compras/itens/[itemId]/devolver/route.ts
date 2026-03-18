@@ -35,7 +35,7 @@ export async function POST(
     // Fetch item
     const { data: item, error: itemError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, ordem_compra_id, compra_status, fornecedor_oc")
+      .select("id, ordem_compra_id, compra_status, fornecedor_oc, compra_solicitada_em")
       .eq("id", itemId)
       .single();
 
@@ -70,6 +70,7 @@ export async function POST(
         compra_cancelamento_solicitado_por: null,
         compra_cancelado_em: null,
         compra_cancelado_por: null,
+        compra_solicitada_em: item.compra_solicitada_em ?? new Date().toISOString(),
       })
       .eq("id", itemId)
       .select("id, sku, descricao, fornecedor_oc, compra_status")

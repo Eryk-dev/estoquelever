@@ -186,7 +186,7 @@ export async function GET(request: NextRequest) {
     if (pedidoIds.length > 0) {
       const { data: items } = await supabase
         .from("siso_pedido_itens")
-        .select("pedido_id, separacao_marcado, bipado_completo, compra_status, fornecedor_oc, sku, descricao, quantidade_pedida")
+        .select("pedido_id, separacao_marcado, bipado_completo, compra_status, fornecedor_oc, sku, descricao, quantidade_pedida, compra_quantidade_solicitada")
         .in("pedido_id", pedidoIds);
 
       for (const item of items ?? []) {
@@ -224,7 +224,10 @@ export async function GET(request: NextRequest) {
           cs.itens.push({
             sku: item.sku,
             descricao: item.descricao,
-            quantidade: item.quantidade_pedida,
+            quantidade:
+              Number(item.compra_quantidade_solicitada ?? 0) > 0
+                ? item.compra_quantidade_solicitada
+                : item.quantidade_pedida,
             compra_status: item.compra_status,
             fornecedor_oc: item.fornecedor_oc,
           });

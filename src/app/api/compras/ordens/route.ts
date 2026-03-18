@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getCompraQuantidadeSolicitada } from "@/lib/compras-utils";
 
 const ALLOWED_CARGOS = ["admin", "comprador"];
 
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
     // This prevents one OC from mixing demands from different empresas.
     const { data: aguardandoItems, error: fetchError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, ordem_compra_id, siso_pedidos!inner(empresa_origem_id)")
+      .select("id, ordem_compra_id, quantidade_pedida, compra_quantidade_solicitada, siso_pedidos!inner(empresa_origem_id)")
       .eq("fornecedor_oc", fornecedor)
       .eq("compra_status", "aguardando_compra")
       .eq("siso_pedidos.empresa_origem_id", empresa_id);
@@ -62,6 +63,10 @@ export async function POST(request: NextRequest) {
     }
 
     const allItemIds = aguardandoItems.map((i) => i.id);
+    const quantidadeTotal = aguardandoItems.reduce(
+      (sum, item) => sum + getCompraQuantidadeSolicitada(item),
+      0,
+    );
     const now = new Date().toISOString();
 
     // Check if items already have an auto-created OC
@@ -143,6 +148,7 @@ export async function POST(request: NextRequest) {
       ok: true,
       ordem_compra: fullOc,
       itens_vinculados: linkedCount,
+      quantidade_total: quantidadeTotal,
     });
   } catch (err) {
     logger.error("compras-ordens", "Erro ao criar OC", {

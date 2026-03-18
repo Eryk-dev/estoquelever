@@ -33,7 +33,7 @@ export async function POST(
     const { data: item, error: itemError } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, descricao, quantidade_pedida, compra_status, compra_equivalente_sku, compra_equivalente_fornecedor",
+        "id, pedido_id, produto_id, sku, descricao, quantidade_pedida, compra_quantidade_solicitada, compra_solicitada_em, compra_status, compra_equivalente_sku, compra_equivalente_fornecedor",
       )
       .eq("id", itemId)
       .single();
@@ -58,6 +58,11 @@ export async function POST(
         { status: 400 },
       );
     }
+
+    const quantidadeNecessariaCompra =
+      Number(item.compra_quantidade_solicitada ?? 0) > 0
+        ? Number(item.compra_quantidade_solicitada)
+        : Number(item.quantidade_pedida ?? 0);
 
     const { data: pedido, error: pedidoError } = await supabase
       .from("siso_pedidos")
@@ -171,12 +176,14 @@ export async function POST(
         estoque_sp_saldo: equivalente.estoqueSpSaldo,
         estoque_sp_reservado: equivalente.estoqueSpReservado,
         estoque_sp_disponivel: equivalente.estoqueSpDisponivel,
-        cwb_atende: equivalente.estoqueCwbDisponivel >= item.quantidade_pedida,
-        sp_atende: equivalente.estoqueSpDisponivel >= item.quantidade_pedida,
+        cwb_atende: equivalente.estoqueCwbDisponivel >= quantidadeNecessariaCompra,
+        sp_atende: equivalente.estoqueSpDisponivel >= quantidadeNecessariaCompra,
         localizacao_cwb: equivalente.localizacaoCwb,
         localizacao_sp: equivalente.localizacaoSp,
         compra_status: "aguardando_compra",
         ordem_compra_id: null,
+        compra_quantidade_solicitada: quantidadeNecessariaCompra,
+        compra_solicitada_em: item.compra_solicitada_em ?? new Date().toISOString(),
         comprado_em: null,
         comprado_por: null,
         recebido_em: null,

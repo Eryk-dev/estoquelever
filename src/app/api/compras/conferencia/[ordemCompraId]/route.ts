@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getCompraQuantidadeSolicitada } from "@/lib/compras-utils";
 import type { ConferenciaItem } from "@/types";
 
 const ALLOWED_CARGOS = ["admin", "comprador"];
@@ -10,6 +11,7 @@ interface RawConferenciaItem {
   sku: string;
   descricao: string;
   quantidade_pedida: number;
+  compra_quantidade_solicitada: number;
   compra_status: string | null;
   compra_quantidade_recebida: number;
   imagem_url: string | null;
@@ -63,7 +65,7 @@ export async function GET(
     const { data: items, error: itemsError } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, sku, descricao, quantidade_pedida, compra_status, compra_quantidade_recebida, imagem_url, produto_id_tiny, pedido_id, siso_pedidos(numero)",
+        "id, sku, descricao, quantidade_pedida, compra_quantidade_solicitada, compra_status, compra_quantidade_recebida, imagem_url, produto_id_tiny, pedido_id, siso_pedidos(numero)",
       )
       .eq("ordem_compra_id", ordemCompraId)
       .eq("compra_status", "comprado");
@@ -74,23 +76,29 @@ export async function GET(
 
     const rawItems = (items ?? []) as unknown as RawConferenciaItem[];
 
-    const conferenciaItens: ConferenciaItem[] = rawItems.map((item) => ({
-      item_id: String(item.id),
-      sku: item.sku,
-      descricao: item.descricao,
-      imagem: item.imagem_url ?? null,
-      quantidade_esperada: item.quantidade_pedida,
-      quantidade_ja_recebida: item.compra_quantidade_recebida,
-      quantidade_restante: item.quantidade_pedida - item.compra_quantidade_recebida,
-      produto_id_tiny: item.produto_id_tiny,
-      pedidos: [
-        {
-          pedido_id: item.pedido_id,
-          numero_pedido: item.siso_pedidos?.numero ?? "?",
-          quantidade: item.quantidade_pedida,
-        },
-      ],
-    }));
+    const conferenciaItens: ConferenciaItem[] = rawItems.map((item) => {
+      const quantidadeEsperada = getCompraQuantidadeSolicitada(item);
+      return {
+        item_id: String(item.id),
+        sku: item.sku,
+        descricao: item.descricao,
+        imagem: item.imagem_url ?? null,
+        quantidade_esperada: quantidadeEsperada,
+        quantidade_ja_recebida: item.compra_quantidade_recebida,
+        quantidade_restante: Math.max(
+          quantidadeEsperada - item.compra_quantidade_recebida,
+          0,
+        ),
+        produto_id_tiny: item.produto_id_tiny,
+        pedidos: [
+          {
+            pedido_id: item.pedido_id,
+            numero_pedido: item.siso_pedidos?.numero ?? "?",
+            quantidade: quantidadeEsperada,
+          },
+        ],
+      };
+    });
 
     const ocTyped = oc as unknown as {
       id: string;

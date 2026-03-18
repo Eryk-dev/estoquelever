@@ -51,7 +51,7 @@ export async function POST(
     // Fetch item
     const { data: item, error: itemError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, sku, fornecedor_oc, ordem_compra_id, compra_status")
+      .select("id, sku, fornecedor_oc, ordem_compra_id, compra_status, compra_solicitada_em")
       .eq("id", itemId)
       .single();
 
@@ -87,12 +87,15 @@ export async function POST(
       // Move to a specific existing OC
       updateFields.ordem_compra_id = nova_ordem_compra_id;
       updateFields.compra_status = "comprado";
+      updateFields.comprado_em = new Date().toISOString();
     } else {
       // No target OC — back to aguardando_compra queue
       updateFields.ordem_compra_id = null;
       updateFields.compra_status = "aguardando_compra";
       updateFields.comprado_em = null;
       updateFields.comprado_por = null;
+      updateFields.compra_solicitada_em =
+        item.compra_solicitada_em ?? new Date().toISOString();
     }
 
     const { data: updated, error: updateError } = await supabase

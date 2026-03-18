@@ -5,6 +5,7 @@ import { movimentarEstoque } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
+import { getCompraQuantidadeRestante, getCompraQuantidadeSolicitada } from "@/lib/compras-utils";
 
 const ALLOWED_CARGOS = ["admin", "comprador"];
 
@@ -25,6 +26,7 @@ interface RawItem {
   sku: string;
   descricao: string;
   quantidade_pedida: number;
+  compra_quantidade_solicitada: number;
   compra_quantidade_recebida: number;
   produto_id_tiny: number | null;
   compra_status: string | null;
@@ -109,7 +111,7 @@ export async function POST(request: NextRequest) {
       // Fetch the item from DB
       const { data: dbItem, error: itemError } = await supabase
         .from("siso_pedido_itens")
-        .select("id, sku, descricao, quantidade_pedida, compra_quantidade_recebida, produto_id_tiny, compra_status, pedido_id")
+        .select("id, sku, descricao, quantidade_pedida, compra_quantidade_solicitada, compra_quantidade_recebida, produto_id_tiny, compra_status, pedido_id")
         .eq("id", input.item_id)
         .eq("ordem_compra_id", ordem_compra_id)
         .single();
@@ -121,6 +123,22 @@ export async function POST(request: NextRequest) {
       }
 
       const item = dbItem as unknown as RawItem;
+      const quantidadeEsperada = getCompraQuantidadeSolicitada(item);
+      const quantidadeRestante = getCompraQuantidadeRestante(item);
+
+      if (quantidadeRestante <= 0) {
+        erros++;
+        errosDetalhe.push(`${item.sku}: item já está totalmente recebido`);
+        continue;
+      }
+
+      if (input.quantidade_recebida > quantidadeRestante) {
+        erros++;
+        errosDetalhe.push(
+          `${item.sku}: recebido ${input.quantidade_recebida} acima do restante ${quantidadeRestante}`,
+        );
+        continue;
+      }
 
       // Call Tiny movimentarEstoque if produto_id_tiny exists
       if (item.produto_id_tiny) {
@@ -161,7 +179,7 @@ export async function POST(request: NextRequest) {
 
       // Update quantity in DB (even if Tiny call was skipped)
       const novaQuantidadeRecebida = item.compra_quantidade_recebida + input.quantidade_recebida;
-      const totalmenteRecebido = novaQuantidadeRecebida >= item.quantidade_pedida;
+      const totalmenteRecebido = novaQuantidadeRecebida >= quantidadeEsperada;
 
       const updateFields: Record<string, unknown> = {
         compra_quantidade_recebida: novaQuantidadeRecebida,
@@ -190,12 +208,16 @@ export async function POST(request: NextRequest) {
     // Update OC status based on items
     const { data: allOcItems } = await supabase
       .from("siso_pedido_itens")
-      .select("compra_status")
+      .select("compra_status, quantidade_pedida, compra_quantidade_solicitada, compra_quantidade_recebida")
       .eq("ordem_compra_id", ordem_compra_id);
 
     if (allOcItems && allOcItems.length > 0) {
-      const todosRecebidos = allOcItems.every((i) => i.compra_status === "recebido");
-      const algumRecebido = allOcItems.some((i) => i.compra_status === "recebido");
+      const todosRecebidos = allOcItems.every((item) =>
+        getCompraQuantidadeRestante(item) === 0,
+      );
+      const algumRecebido = allOcItems.some((item) =>
+        Number(item.compra_quantidade_recebida ?? 0) > 0,
+      );
 
       let novoStatus: string;
       if (todosRecebidos) {

@@ -34,7 +34,7 @@ export async function POST(
     // Fetch item to validate and get pedido info
     const { data: item, error: itemError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, sku, descricao, pedido_id, fornecedor_oc, ordem_compra_id")
+      .select("id, sku, descricao, pedido_id, fornecedor_oc, ordem_compra_id, compra_solicitada_em")
       .eq("id", itemId)
       .single();
 
@@ -67,6 +67,7 @@ export async function POST(
         compra_cancelamento_solicitado_por: null,
         compra_cancelado_em: null,
         compra_cancelado_por: null,
+        compra_solicitada_em: item.compra_solicitada_em ?? new Date().toISOString(),
       })
       .eq("id", itemId)
       .select("id, sku, descricao, fornecedor_oc, compra_status, pedido_id")

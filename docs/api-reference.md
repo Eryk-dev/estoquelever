@@ -869,7 +869,7 @@ Updates product warehouse location in Tiny ERP and local DB.
 **File:** `src/app/api/compras/route.ts`
 **Auth:** `cargo` query param (admin or comprador)
 
-Returns purchase items grouped by supplier and status.
+Returns the buyer operational view for purchase flow, with counts, summary metrics, bottlenecks and the requested tab data.
 
 **Query Params:**
 | Param | Type | Default | Description |
@@ -881,6 +881,17 @@ Returns purchase items grouped by supplier and status.
 ```json
 {
   "counts": { "aguardando_compra": 5, "comprado": 2, "indisponivel": 1 },
+  "summary": {
+    "itens_pendentes": 12,
+    "quantidade_pendente": 34,
+    "pedidos_bloqueados": 7,
+    "empresas_em_compra": 3,
+    "ocs_abertas": 2,
+    "excecoes": 1,
+    "mais_antigo_dias": 4,
+    "gargalos_fornecedor": [{ "nome": "ACA", "quantidade": 10, "pedidos": 4 }],
+    "gargalos_empresa": [{ "nome": "NetAir", "quantidade": 12, "pedidos": 3 }]
+  },
   "data": [...]
 }
 ```
@@ -893,11 +904,20 @@ Returns purchase items grouped by supplier and status.
   "fornecedor": "ACA",
   "empresa_id": "uuid",
   "empresa_nome": "NetAir",
+  "prioridade": "critica",
+  "aging_dias": 4,
+  "pedidos_bloqueados": 3,
+  "quantidade_total": 9,
+  "total_skus": 2,
+  "proxima_acao": "Criar OC e destravar pedidos desta empresa",
   "itens": [{
     "sku": "19ABC",
     "descricao": "Filtro",
     "imagem": "https://...",
     "quantidade_total": 5,
+    "pedidos_bloqueados": 2,
+    "aging_dias": 4,
+    "primeira_solicitacao_em": "2026-03-18T12:00:00Z",
     "fornecedor_oc": "ACA",
     "pedidos": [{ "pedido_id": "123", "numero_pedido": "12345", "quantidade": 2 }],
     "itens_ids": ["uuid1", "uuid2"]
@@ -905,7 +925,7 @@ Returns purchase items grouped by supplier and status.
 }]
 ```
 
-Groups are split by `fornecedor + empresa_origem_id` so the buyer can see which empresa needs each purchase.
+Groups are split by `fornecedor + empresa_origem_id`, use `compra_quantidade_solicitada` as the real quantity to buy, and are sorted by priority/aging.
 
 **`comprado`:** Array of OCs with items:
 ```json
@@ -913,12 +933,26 @@ Groups are split by `fornecedor + empresa_origem_id` so the buyer can see which 
   "id": "uuid",
   "fornecedor": "ACA",
   "empresa_id": "uuid",
+  "empresa_nome": "NetAir",
   "status": "comprado",
   "comprado_por_nome": "Eryk",
   "comprado_em": "2026-03-17T...",
+  "aging_dias": 2,
+  "prioridade": "alta",
+  "pedidos_bloqueados": 3,
+  "quantidade_total": 12,
+  "quantidade_recebida": 5,
   "total_itens": 3,
   "itens_recebidos": 1,
-  "itens": [{ "id": "uuid", "sku": "19ABC", "quantidade": 2, "compra_status": "comprado", "compra_quantidade_recebida": 0 }]
+  "proxima_acao": "Conferir recebimento da OC",
+  "itens": [{
+    "id": "uuid",
+    "sku": "19ABC",
+    "quantidade": 2,
+    "compra_status": "comprado",
+    "compra_quantidade_recebida": 0,
+    "aging_dias": 2
+  }]
 }]
 ```
 
@@ -927,6 +961,9 @@ Groups are split by `fornecedor + empresa_origem_id` so the buyer can see which 
 Cada item de exceção inclui, além dos dados básicos, campos como:
 - `compra_status`
 - `empresa_nome`
+- `aging_dias`
+- `prioridade`
+- `proxima_acao`
 - `compra_equivalente_sku`
 - `compra_equivalente_descricao`
 - `compra_equivalente_fornecedor`
@@ -958,11 +995,12 @@ Creates an OC and links all aguardando items for that supplier within one compan
 {
   "ok": true,
   "ordem_compra": { "id": "uuid", "fornecedor": "ACA", ... },
-  "itens_vinculados": 5
+  "itens_vinculados": 5,
+  "quantidade_total": 9
 }
 ```
 
-**Business Logic:** If items already have an auto-created OC, updates it to `comprado` instead of creating new one. Links only items for the requested `fornecedor` inside the requested `empresa_id`.
+**Business Logic:** If items already have an auto-created OC, updates it to `comprado` instead of creating new one. Links only items for the requested `fornecedor` inside the requested `empresa_id`. `quantidade_total` is based on `compra_quantidade_solicitada`, not `quantidade_pedida`.
 
 ---
 
@@ -998,6 +1036,8 @@ Process receiving confirmation. Updates quantities and enters stock in Tiny.
 
 **Business Logic:**
 - Calls `movimentarEstoque(tipo: "E")` in Tiny for each item with `produto_id_tiny`
+- Uses `compra_quantidade_solicitada` as the expected quantity
+- Rejects conference lines that exceed the pending remaining quantity
 - Updates `compra_quantidade_recebida`, marks `recebido` when fully received
 - Updates OC status: `parcialmente_recebido` or `recebido`
 - Checks if pedidos can be released via `checkAndReleasePedidos` (itens `cancelado` contam como resolvidos; pedidos com todos os itens cancelados não são liberados)
@@ -1011,6 +1051,8 @@ Process receiving confirmation. Updates quantities and enters stock in Tiny.
 **Auth:** `cargo` query param (admin or comprador)
 
 Returns OC info + pending items for receiving screen.
+
+`quantidade_esperada` and `quantidade_restante` are calculated from `compra_quantidade_solicitada`.
 
 **Response 200:**
 ```json

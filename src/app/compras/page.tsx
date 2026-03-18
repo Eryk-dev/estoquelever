@@ -170,12 +170,13 @@ export default function ComprasPage() {
   const cargo = cargos.find((c) => ALLOWED_CARGOS.includes(c)) ?? "";
   const allowed = cargo !== "";
 
-  const { data, isLoading, isRefetching } = useQuery({
+  const { data, error, isError, isLoading, isRefetching } = useQuery({
     queryKey: ["compras", activeTab, cargo],
     queryFn: () => fetchCompras(activeTab, cargo),
     enabled: !!user && allowed,
     refetchInterval: 30_000,
   });
+  const queryError = error instanceof Error ? error.message : "Erro ao carregar compras";
 
   const counts = data?.counts ?? {
     aguardando_compra: 0,
@@ -329,6 +330,22 @@ export default function ComprasPage() {
             Acesso negado. Apenas administradores e compradores podem acessar
             esta página.
           </p>
+        </div>
+      ) : isError ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-6 py-10">
+          <div className="flex items-center gap-2 text-red-700">
+            <AlertTriangle className="h-5 w-5" />
+            <p className="text-sm font-semibold">Falha ao carregar compras</p>
+          </div>
+          <p className="mt-2 text-sm text-red-700/90">{queryError}</p>
+          <button
+            type="button"
+            onClick={() => queryClient.invalidateQueries({ queryKey: ["compras"] })}
+            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-red-200 bg-paper px-4 py-2 text-sm font-medium text-red-700 hover:bg-white"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Tentar novamente
+          </button>
         </div>
       ) : isLoading ? (
         <LoadingSpinner message="Carregando compras..." />

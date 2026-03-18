@@ -130,7 +130,13 @@ export async function GET(request: NextRequest) {
         `numero.ilike.%${busca}%,id_pedido_ecommerce.ilike.%${busca}%,cliente_nome.ilike.%${busca}%`,
       );
     }
-    pedidosQuery = pedidosQuery.order("data", { ascending: true });
+    if (statusFilter === "embalado") {
+      pedidosQuery = pedidosQuery
+        .order("embalagem_concluida_em", { ascending: false, nullsFirst: false })
+        .order("data", { ascending: true });
+    } else {
+      pedidosQuery = pedidosQuery.order("data", { ascending: true });
+    }
 
     // Execute counts + pedidos + empresas in parallel
     const [countResults, { data: pedidos, error: pedidosError }, { data: empresasList }] =

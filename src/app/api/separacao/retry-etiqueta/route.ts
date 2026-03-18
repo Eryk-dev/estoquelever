@@ -157,6 +157,11 @@ export async function POST(request: NextRequest) {
     const targetIds = rows
       .filter((row) => !row.etiqueta_zpl)
       .map((row) => row.id);
+    const originallySeparadoIds = new Set(
+      rows
+        .filter((row) => row.status_separacao === "separado")
+        .map((row) => row.id),
+    );
 
     if (targetIds.length > 0) {
       await preCriarAgrupamentosEmLote(targetIds);
@@ -217,7 +222,45 @@ export async function POST(request: NextRequest) {
     }
 
     const targetedIds = new Set(targetIds);
-    const finalRows = (finalRowsData ?? []) as PedidoRetryRow[];
+    let finalRows = (finalRowsData ?? []) as PedidoRetryRow[];
+    const changedToEmbaladoIds = finalRows
+      .filter(
+        (row) =>
+          originallySeparadoIds.has(row.id) &&
+          row.status_separacao === "embalado",
+      )
+      .map((row) => row.id);
+
+    if (changedToEmbaladoIds.length > 0) {
+      const { error: restoreError } = await supabase
+        .from("siso_pedidos")
+        .update({
+          status_separacao: "separado",
+          embalagem_concluida_em: null,
+        })
+        .in("id", changedToEmbaladoIds)
+        .eq("status_separacao", "embalado");
+
+      if (restoreError) {
+        logger.logError({
+          error: restoreError,
+          source: LOG_SOURCE,
+          message: "Falha ao restaurar pedidos para separado após retry de etiqueta",
+          category: "database",
+          errorCode: restoreError.code,
+          requestPath: "/api/separacao/retry-etiqueta",
+          requestMethod: "POST",
+          metadata: { pedidoIds: changedToEmbaladoIds },
+        });
+      } else {
+        finalRows = finalRows.map((row) =>
+          changedToEmbaladoIds.includes(row.id)
+            ? { ...row, status_separacao: "separado" }
+            : row,
+        );
+      }
+    }
+
     const recoverIds = finalRows
       .filter(
         (row) =>

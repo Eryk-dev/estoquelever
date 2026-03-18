@@ -137,14 +137,30 @@ export async function recarregarEtiquetasFaltantes(
 
   if (error || !pedidos || pedidos.length === 0) return;
 
+  const pedidosValidos = pedidos.filter((p) =>
+    /^\d+$/.test(p.agrupamento_expedicao_id ?? ""),
+  );
+  const skippedPedidos = pedidos.filter(
+    (p) => !/^\d+$/.test(p.agrupamento_expedicao_id ?? ""),
+  );
+
+  if (skippedPedidos.length > 0) {
+    logger.warn(LOG_SOURCE, "Ignorando pedidos com agrupamento não numérico no retry de etiqueta", {
+      pedidoIds: skippedPedidos.map((p) => p.id),
+      agrupamentos: skippedPedidos.map((p) => p.agrupamento_expedicao_id ?? "null"),
+    });
+  }
+
+  if (pedidosValidos.length === 0) return;
+
   logger.info(LOG_SOURCE, "Recarregando etiquetas faltantes", {
-    count: String(pedidos.length),
-    pedidoIds: pedidos.map((p) => p.id),
+    count: String(pedidosValidos.length),
+    pedidoIds: pedidosValidos.map((p) => p.id),
   });
 
   // Group by empresa first (for token resolution)
-  const byEmpresa = new Map<string, typeof pedidos>();
-  for (const p of pedidos) {
+  const byEmpresa = new Map<string, typeof pedidosValidos>();
+  for (const p of pedidosValidos) {
     const list = byEmpresa.get(p.empresa_origem_id) ?? [];
     list.push(p);
     byEmpresa.set(p.empresa_origem_id, list);
@@ -405,13 +421,14 @@ async function processarGrupo(
         // Remove the offending NF from the batch
         remainingNFs = remainingNFs.filter((nf) => nf !== nfExpedida);
 
-        // Mark the pedido as already expedited (embalado) since Tiny says it was
+        // Persist the external-expedition marker, but do not advance the local
+        // packing workflow here. Retrying labels must never move a pedido from
+        // separado -> embalado on its own.
         if (pedidoAfetado) {
           await supabase
             .from("siso_pedidos")
             .update({
               agrupamento_expedicao_id: "expedido_externo",
-              status_separacao: "embalado",
             })
             .eq("id", pedidoAfetado);
         }
@@ -597,4 +614,3 @@ async function recuperarPendingTravados(
     });
   }
 }
-

@@ -20,7 +20,7 @@ const VALID_STATUSES: CompraStatusFilter[] = [
 ];
 
 const ALLOWED_CARGOS = ["admin", "comprador"];
-const OPEN_OC_STATUSES = ["aguardando_compra", "comprado", "parcialmente_recebido"] as const;
+const OPEN_OC_LIST_STATUSES = ["comprado", "parcialmente_recebido"] as const;
 const UNRESOLVED_COMPRA_STATUSES = [
   "aguardando_compra",
   "comprado",
@@ -176,7 +176,7 @@ async function fetchCounts(supabase: ReturnType<typeof createServiceClient>) {
     supabase
       .from("siso_ordens_compra")
       .select("id", { count: "exact", head: true })
-      .in("status", [...OPEN_OC_STATUSES]),
+      .in("status", [...OPEN_OC_LIST_STATUSES]),
     supabase
       .from("siso_pedido_itens")
       .select("id", { count: "exact", head: true })
@@ -263,7 +263,7 @@ async function fetchSummary(supabase: ReturnType<typeof createServiceClient>) {
   const { count: ocsAbertas } = await supabase
     .from("siso_ordens_compra")
     .select("id", { count: "exact", head: true })
-    .in("status", [...OPEN_OC_STATUSES]);
+    .in("status", [...OPEN_OC_LIST_STATUSES]);
 
   return {
     itens_pendentes: rawItems.length,
@@ -440,7 +440,7 @@ async function fetchComprado(
   const { data: ordens, error: ordensError } = await supabase
     .from("siso_ordens_compra")
     .select("id, fornecedor, empresa_id, status, observacao, comprado_por, comprado_em, created_at, siso_usuarios:comprado_por(nome)")
-    .in("status", ["comprado", "parcialmente_recebido"])
+    .in("status", [...OPEN_OC_LIST_STATUSES])
     .order("created_at", { ascending: false });
 
   if (ordensError) throw new Error(`Erro ao buscar OCs: ${ordensError.message}`);

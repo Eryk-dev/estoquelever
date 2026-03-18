@@ -48,10 +48,6 @@ interface PedidoItem {
   imagem_url: string | null;
 }
 
-function isItemDone(item: Pick<PedidoItem, "quantidade_bipada" | "quantidade">) {
-  return Number(item.quantidade_bipada ?? 0) >= Number(item.quantidade ?? 0);
-}
-
 // --- Page ---
 
 export default function EmbalagemPageWrapper() {
@@ -205,13 +201,12 @@ function EmbalagemPage() {
     }
 
     try {
-      const res = await sisoFetch("/api/separacao/confirmar-item-embalagem", {
+      const res = await sisoFetch("/api/separacao/bipar-embalagem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sku,
           galpao_id: galpaoId,
-          pedido_ids: pedidoIds,
           quantidade: scanQty,
         }),
       });
@@ -256,7 +251,6 @@ function EmbalagemPage() {
   }, [
     scanQty,
     galpaoId,
-    pedidoIds,
     queryClient,
     pedidosQueryKey,
     itemsQueryKey,
@@ -267,15 +261,6 @@ function EmbalagemPage() {
     e.preventDefault();
     void handleScan(scanRef.current?.value);
   }, [handleScan]);
-
-  const handleScanInputKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key !== "Enter" && e.key !== "NumpadEnter") return;
-      e.preventDefault();
-      void handleScan(e.currentTarget.value);
-    },
-    [handleScan],
-  );
 
   // Manual +/- handler with optimistic UI
   const handleConfirmItem = useCallback(
@@ -474,7 +459,6 @@ function EmbalagemPage() {
                 autoCorrect="off"
                 autoComplete="off"
                 spellCheck={false}
-                onKeyDown={handleScanInputKeyDown}
                 className="h-10 w-full rounded-xl border border-line bg-surface pl-10 pr-3 text-sm text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
               />
             </div>
@@ -493,7 +477,6 @@ function EmbalagemPage() {
                 className="h-10 w-16 rounded-xl border border-line bg-surface px-2 text-center font-mono text-sm text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
               />
             </div>
-            <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
           </form>
         </div>
 
@@ -629,10 +612,8 @@ function EmbalagemOrderRow({
   items: PedidoItem[];
   onConfirmItem: (item: PedidoItem, delta: number) => void;
 }) {
-  const totalItens = items.length > 0 ? items.length : pedido.total_itens || 0;
-  const itensBipados = items.length > 0
-    ? items.filter((item) => isItemDone(item)).length
-    : pedido.itens_bipados || 0;
+  const totalItens = pedido.total_itens || 0;
+  const itensBipados = pedido.itens_bipados || 0;
   const isComplete = completed || itensBipados >= totalItens;
 
   return (
@@ -741,7 +722,7 @@ function EmbalagemItemRow({
   onConfirm: (item: PedidoItem, delta: number) => void;
   readOnly?: boolean;
 }) {
-  const isDone = isItemDone(item);
+  const isDone = item.bipado_completo;
 
   return (
     <div

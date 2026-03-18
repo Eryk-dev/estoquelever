@@ -2,11 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 
-function toNumber(value: unknown): number {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 /**
  * GET /api/separacao/checklist-items?pedidos=id1,id2,id3
  *
@@ -154,8 +149,6 @@ export async function GET(request: NextRequest) {
 
     const result = visibleItems.map((item) => {
       const sepEmpresaId = pedidoSepEmpresaMap.get(item.pedido_id) ?? null;
-      const quantidadePedida = toNumber(item.quantidade_pedida);
-      const quantidadeBipada = toNumber(item.quantidade_bipada);
       return {
         id: item.id,
         pedido_id: item.pedido_id,
@@ -163,11 +156,11 @@ export async function GET(request: NextRequest) {
         sku: item.sku,
         gtin: item.gtin,
         descricao: item.descricao,
-        quantidade: quantidadePedida,
+        quantidade: item.quantidade_pedida,
         separacao_marcado: item.separacao_marcado ?? false,
         separacao_marcado_em: item.separacao_marcado_em,
-        quantidade_bipada: quantidadeBipada,
-        bipado_completo: quantidadeBipada >= quantidadePedida,
+        quantidade_bipada: item.quantidade_bipada ?? 0,
+        bipado_completo: item.bipado_completo ?? false,
         imagem_url: item.imagem_url ?? null,
         localizacao:
           locMap.get(`${item.pedido_id}:${item.produto_id}`) ?? null,

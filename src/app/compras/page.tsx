@@ -4,13 +4,11 @@ import { useDeferredValue, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  Building2,
   Clock3,
   Filter,
   RefreshCw,
   Search,
   ShoppingCart,
-  Truck,
 } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
@@ -173,10 +171,6 @@ const EXCEPTION_META = {
   },
 } as const;
 
-function isCriticalPendingItem(item: CompraItemAgrupado) {
-  return item.aging_dias >= 3 || item.pedidos_bloqueados >= 2 || item.quantidade_total >= 5;
-}
-
 export default function ComprasPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -324,20 +318,6 @@ export default function ComprasPage() {
     });
   }, [activeTab, agingFilter, deferredSearch, empresaFilter, items, prioridadeFilter]);
 
-  const planningInsights = useMemo(() => {
-    if (activeTab !== "aguardando_compra") return null;
-    const groups = filteredItems as FornecedorGroup[];
-
-    return {
-      fornecedores: groups.length,
-      comRascunho: groups.filter((group) => group.rascunho_ocs > 0).length,
-      linhasCriticas: groups.reduce(
-        (sum, group) => sum + group.itens.filter((item) => isCriticalPendingItem(item)).length,
-        0,
-      ),
-    };
-  }, [activeTab, filteredItems]);
-
   const exceptionSections = useMemo(() => {
     if (activeTab !== "excecoes") return [];
 
@@ -408,26 +388,26 @@ export default function ComprasPage() {
       ) : (
         <>
           <section className="mb-5 overflow-hidden rounded-2xl border border-line bg-[linear-gradient(135deg,rgba(244,244,245,0.95),rgba(255,255,255,1)_60%)] p-4">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
               <div className="rounded-xl border border-line bg-paper px-3 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-ink-faint">Itens pendentes</p>
                 <p className="mt-1 text-2xl font-semibold text-ink">{summary.itens_pendentes}</p>
-              </div>
-              <div className="rounded-xl border border-line bg-paper px-3 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-ink-faint">Quantidade</p>
-                <p className="mt-1 text-2xl font-semibold text-ink">{summary.quantidade_pendente} un</p>
               </div>
               <div className="rounded-xl border border-line bg-paper px-3 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-ink-faint">Pedidos travados</p>
                 <p className="mt-1 text-2xl font-semibold text-ink">{summary.pedidos_bloqueados}</p>
               </div>
               <div className="rounded-xl border border-line bg-paper px-3 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-ink-faint">Empresas</p>
-                <p className="mt-1 text-2xl font-semibold text-ink">{summary.empresas_em_compra}</p>
+                <p className="text-[11px] uppercase tracking-wide text-ink-faint">Quantidade</p>
+                <p className="mt-1 text-2xl font-semibold text-ink">{summary.quantidade_pendente} un</p>
               </div>
               <div className="rounded-xl border border-line bg-paper px-3 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-ink-faint">OCs abertas</p>
                 <p className="mt-1 text-2xl font-semibold text-ink">{summary.ocs_abertas}</p>
+              </div>
+              <div className="rounded-xl border border-line bg-paper px-3 py-3">
+                <p className="text-[11px] uppercase tracking-wide text-ink-faint">Empresas</p>
+                <p className="mt-1 text-2xl font-semibold text-ink">{summary.empresas_em_compra}</p>
               </div>
               <div className="rounded-xl border border-line bg-paper px-3 py-3">
                 <p className="text-[11px] uppercase tracking-wide text-ink-faint">Mais antigo</p>
@@ -435,56 +415,6 @@ export default function ComprasPage() {
                   <Clock3 className="h-5 w-5 text-ink-faint" />
                   {formatDays(summary.mais_antigo_dias)}
                 </p>
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-3 lg:grid-cols-2">
-              <div className="rounded-xl border border-line bg-paper px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <Truck className="h-4 w-4 text-ink-faint" />
-                  <h3 className="text-sm font-semibold text-ink">Fornecedores com mais pressão</h3>
-                </div>
-                <div className="mt-3 space-y-2">
-                  {summary.gargalos_fornecedor.length === 0 ? (
-                    <p className="text-xs text-ink-faint">Sem gargalos mapeados.</p>
-                  ) : (
-                    summary.gargalos_fornecedor.map((item) => (
-                      <div
-                        key={item.nome ?? "sem-nome"}
-                        className="flex items-center justify-between text-sm"
-                      >
-                        <span className="text-ink">{item.nome ?? "Sem fornecedor"}</span>
-                        <span className="text-ink-muted">
-                          {item.quantidade} un · {item.pedidos} pedido{item.pedidos !== 1 ? "s" : ""}
-                        </span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-line bg-paper px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <Building2 className="h-4 w-4 text-ink-faint" />
-                  <h3 className="text-sm font-semibold text-ink">Empresas com maior fila</h3>
-                </div>
-                <div className="mt-3 space-y-2">
-                  {summary.gargalos_empresa.length === 0 ? (
-                    <p className="text-xs text-ink-faint">Sem gargalos mapeados.</p>
-                  ) : (
-                    summary.gargalos_empresa.map((item) => (
-                      <div
-                        key={item.empresa_id ?? item.nome ?? "sem-empresa"}
-                        className="flex items-center justify-between text-sm"
-                      >
-                        <span className="text-ink">{item.nome ?? "Sem empresa"}</span>
-                        <span className="text-ink-muted">
-                          {item.quantidade} un · {item.pedidos} pedido{item.pedidos !== 1 ? "s" : ""}
-                        </span>
-                      </div>
-                    ))
-                  )}
-                </div>
               </div>
             </div>
           </section>
@@ -563,33 +493,16 @@ export default function ComprasPage() {
             <div className="flex flex-col gap-3">
               <p className="text-xs text-ink-faint">
                 {filteredItems.length} resultado{filteredItems.length !== 1 ? "s" : ""} exibido{filteredItems.length !== 1 ? "s" : ""} ·{" "}
-                {summary.excecoes} exceção{summary.excecoes !== 1 ? "ões" : ""} no fluxo ·{" "}
+                {summary.excecoes} {summary.excecoes === 1 ? "exceção" : "exceções"} no fluxo ·{" "}
                 {formatDays(summary.mais_antigo_dias)} no item mais antigo
               </p>
 
-              {activeTab === "aguardando_compra" && planningInsights && (
+              {activeTab === "aguardando_compra" && (
                 <section className="rounded-2xl border border-line bg-surface/40 px-4 py-4">
-                  <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                    <div>
-                      <h3 className="text-sm font-semibold text-ink">
-                        Planejamento por rodada de compra
-                      </h3>
-                      <p className="mt-1 text-sm text-ink-muted">
-                        Selecione dentro de cada fornecedor apenas as linhas que entram nesta rodada. Isso permite dividir urgência, prazo e intercambiáveis sem arrastar toda a fila.
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2 text-xs text-ink-muted">
-                      <span className="rounded-full bg-paper px-3 py-1">
-                        {planningInsights.fornecedores} fornecedor{planningInsights.fornecedores !== 1 ? "es" : ""}
-                      </span>
-                      <span className="rounded-full bg-paper px-3 py-1">
-                        {planningInsights.comRascunho} com rascunho automático
-                      </span>
-                      <span className="rounded-full bg-paper px-3 py-1">
-                        {planningInsights.linhasCriticas} linha{planningInsights.linhasCriticas !== 1 ? "s" : ""} crítica{planningInsights.linhasCriticas !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                  </div>
+                  <h3 className="text-sm font-semibold text-ink">Planejamento por fornecedor</h3>
+                  <p className="mt-1 text-sm text-ink-muted">
+                    Abra só o fornecedor que vai trabalhar agora. Dentro dele, selecione a rodada e confirme a OC.
+                  </p>
                 </section>
               )}
 

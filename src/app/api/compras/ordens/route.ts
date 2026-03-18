@@ -18,6 +18,7 @@ export async function POST(request: NextRequest) {
     observacao?: string;
     usuario_id?: string;
     cargo?: string;
+    item_ids?: string[];
   };
 
   try {
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { fornecedor, empresa_id, observacao, usuario_id, cargo } = body;
+  const { fornecedor, empresa_id, observacao, usuario_id, cargo, item_ids } = body;
 
   // Auth check
   if (cargo && !ALLOWED_CARGOS.includes(cargo)) {
@@ -44,14 +45,25 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // Find all aguardando items for this fornecedor in the selected empresa.
-    // This prevents one OC from mixing demands from different empresas.
-    const { data: aguardandoItems, error: fetchError } = await supabase
+    let query = supabase
       .from("siso_pedido_itens")
-      .select("id, ordem_compra_id, quantidade_pedida, compra_quantidade_solicitada, siso_pedidos!inner(empresa_origem_id)")
+      .select(
+        "id, ordem_compra_id, fornecedor_oc, quantidade_pedida, compra_quantidade_solicitada, siso_pedidos!inner(empresa_origem_id)",
+      )
       .eq("fornecedor_oc", fornecedor)
       .eq("compra_status", "aguardando_compra")
       .eq("siso_pedidos.empresa_origem_id", empresa_id);
+
+    const selectedItemIds = Array.isArray(item_ids)
+      ? [...new Set(item_ids.map((value) => value.trim()).filter(Boolean))]
+      : [];
+    if (selectedItemIds.length > 0) {
+      query = query.in("id", selectedItemIds);
+    }
+
+    // Find only the items that belong to this purchase round.
+    // This allows the buyer to split one supplier queue into multiple OCs.
+    const { data: aguardandoItems, error: fetchError } = await query;
 
     if (fetchError) throw new Error(`Erro ao buscar itens: ${fetchError.message}`);
 
@@ -62,6 +74,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (selectedItemIds.length > 0 && aguardandoItems.length !== selectedItemIds.length) {
+      return NextResponse.json(
+        {
+          error:
+            "Alguns itens selecionados nao estao mais aguardando compra para este fornecedor/empresa",
+        },
+        { status: 409 },
+      );
+    }
+
     const allItemIds = aguardandoItems.map((i) => i.id);
     const quantidadeTotal = aguardandoItems.reduce(
       (sum, item) => sum + getCompraQuantidadeSolicitada(item),
@@ -69,8 +91,21 @@ export async function POST(request: NextRequest) {
     );
     const now = new Date().toISOString();
 
-    // Check if items already have an auto-created OC
-    const existingOcId = aguardandoItems.find((i) => i.ordem_compra_id)?.ordem_compra_id;
+    // If this round already belongs to one auto-created draft OC, reuse it.
+    const existingDraftOcIds = [
+      ...new Set(aguardandoItems.map((item) => item.ordem_compra_id).filter(Boolean)),
+    ];
+    if (existingDraftOcIds.length > 1) {
+      return NextResponse.json(
+        {
+          error:
+            "Os itens selecionados pertencem a mais de um rascunho de OC. Separe a compra por rascunho antes de confirmar.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const existingOcId = existingDraftOcIds[0] ?? null;
     let ocId: string;
 
     if (existingOcId) {
@@ -140,6 +175,7 @@ export async function POST(request: NextRequest) {
       fornecedor,
       empresaId: empresa_id,
       itensVinculados: linkedCount,
+      selecionados: selectedItemIds.length > 0,
       usuarioId: usuario_id,
       reuseExisting: !!existingOcId,
     });

@@ -323,6 +323,8 @@ async function fetchAguardandoCompra(
       primeira_solicitacao_em: string | null;
       pedidos: Set<string>;
       quantidade_total: number;
+      ordens_rascunho: Set<string>;
+      itens_em_rascunho: number;
       itens: Map<string, CompraItemAgrupado>;
     }
   >();
@@ -342,6 +344,8 @@ async function fetchAguardandoCompra(
         primeira_solicitacao_em: primeiraSolicitacao,
         pedidos: new Set<string>(),
         quantidade_total: 0,
+        ordens_rascunho: new Set(),
+        itens_em_rascunho: 0,
         itens: new Map(),
       });
     }
@@ -355,6 +359,10 @@ async function fetchAguardandoCompra(
     ) {
       grupo.primeira_solicitacao_em = primeiraSolicitacao;
     }
+    if (item.ordem_compra_id) {
+      grupo.ordens_rascunho.add(item.ordem_compra_id);
+      grupo.itens_em_rascunho += 1;
+    }
 
     if (!grupo.itens.has(item.sku)) {
       grupo.itens.set(item.sku, {
@@ -366,6 +374,7 @@ async function fetchAguardandoCompra(
         aging_dias: 0,
         primeira_solicitacao_em: primeiraSolicitacao,
         fornecedor_oc: fornecedor,
+        em_rascunho: false,
         pedidos: [],
         itens_ids: [],
       });
@@ -379,6 +388,7 @@ async function fetchAguardandoCompra(
       quantidade: quantidadeSolicitada,
     });
     agrupado.itens_ids.push(String(item.id));
+    agrupado.em_rascunho = agrupado.em_rascunho || Boolean(item.ordem_compra_id);
     agrupado.pedidos_bloqueados = new Set(agrupado.pedidos.map((pedido) => pedido.pedido_id)).size;
 
     if (
@@ -410,10 +420,14 @@ async function fetchAguardandoCompra(
         pedidos_bloqueados: pedidosBloqueados,
         quantidade_total: grupo.quantidade_total,
         total_skus: grupo.itens.size,
+        rascunho_ocs: grupo.ordens_rascunho.size,
+        itens_em_rascunho: grupo.itens_em_rascunho,
         proxima_acao:
-          prioridade === "critica"
-            ? "Criar OC e destravar pedidos desta empresa"
-            : "Confirmar compra com o fornecedor",
+          grupo.ordens_rascunho.size > 0
+            ? "Revisar o rascunho e confirmar a rodada de compra"
+            : prioridade === "critica"
+              ? "Montar OC parcial para destravar os pedidos mais antigos"
+              : "Selecionar a rodada ideal e confirmar com o fornecedor",
         itens: [...grupo.itens.values()].sort((a, b) =>
           b.quantidade_total - a.quantidade_total || a.sku.localeCompare(b.sku, "pt-BR"),
         ),

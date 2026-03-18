@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
@@ -53,6 +54,16 @@ export function AppShell({
     <div className="min-h-screen bg-surface">
       <header className="sticky top-0 z-10 border-b border-line bg-paper">
         <div className="mx-auto flex max-w-3xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
+          <Link href="/" className="shrink-0">
+            <Image
+              src="/logo.svg"
+              alt="Estoque Lever"
+              width={28}
+              height={28}
+              className="h-7 w-7"
+              priority
+            />
+          </Link>
           {backHref && (
             <Link
               href={backHref}

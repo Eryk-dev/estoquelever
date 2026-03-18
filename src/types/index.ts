@@ -255,6 +255,7 @@ export interface CompraItemAgrupado {
   aging_dias: number;
   primeira_solicitacao_em: string | null;
   fornecedor_oc: string;
+  em_rascunho?: boolean;
   pedidos: Array<{
     pedido_id: string;
     numero_pedido: string;

@@ -63,6 +63,8 @@ interface FornecedorGroup {
   pedidos_bloqueados: number;
   quantidade_total: number;
   total_skus: number;
+  rascunho_ocs: number;
+  itens_em_rascunho: number;
   proxima_acao: string;
   itens: CompraItemAgrupado[];
 }
@@ -156,6 +158,25 @@ function formatDays(days: number) {
   return `${days} dias`;
 }
 
+const EXCEPTION_META = {
+  equivalente_pendente: {
+    title: "Intercambiáveis aguardando confirmação",
+    description: "Itens com SKU alternativo já definido, mas ainda dependentes de ajuste externo.",
+  },
+  cancelamento_pendente: {
+    title: "Cancelamentos pendentes",
+    description: "Itens que precisam ser removidos ou cancelados fora do SISO antes de liberar o pedido.",
+  },
+  indisponivel: {
+    title: "Indisponíveis sem saída",
+    description: "Itens travados que ainda exigem decisão do comprador.",
+  },
+} as const;
+
+function isCriticalPendingItem(item: CompraItemAgrupado) {
+  return item.aging_dias >= 3 || item.pedidos_bloqueados >= 2 || item.quantidade_total >= 5;
+}
+
 export default function ComprasPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -194,22 +215,22 @@ export default function ComprasPage() {
     gargalos_fornecedor: [],
     gargalos_empresa: [],
   };
-  const items = (data?.data ?? []) as unknown[];
+  const items = useMemo(() => (data?.data ?? []) as unknown[], [data?.data]);
 
   const tabs: Tab[] = [
     {
       id: "aguardando_compra",
-      label: "Aguardando Compra",
+      label: "Planejamento",
       count: counts.aguardando_compra,
     },
-    { id: "comprado", label: "OCs Abertas", count: counts.comprado },
-    { id: "excecoes", label: "Exceções", count: counts.indisponivel },
+    { id: "comprado", label: "OCs Em Aberto", count: counts.comprado },
+    { id: "excecoes", label: "Intercambiáveis / Exceções", count: counts.indisponivel },
   ];
 
   const emptyMessages: Record<CompraTab, string> = {
-    aguardando_compra: "Nenhum item aguardando compra.",
+    aguardando_compra: "Nenhuma demanda aguardando decisão de compra.",
     comprado: "Nenhuma ordem de compra aberta.",
-    excecoes: "Nenhuma exceção de compra.",
+    excecoes: "Nenhum item bloqueado por intercambiável ou exceção.",
   };
 
   const empresaOptions = useMemo(() => {
@@ -302,6 +323,41 @@ export default function ComprasPage() {
       return haystack.includes(searchTerm);
     });
   }, [activeTab, agingFilter, deferredSearch, empresaFilter, items, prioridadeFilter]);
+
+  const planningInsights = useMemo(() => {
+    if (activeTab !== "aguardando_compra") return null;
+    const groups = filteredItems as FornecedorGroup[];
+
+    return {
+      fornecedores: groups.length,
+      comRascunho: groups.filter((group) => group.rascunho_ocs > 0).length,
+      linhasCriticas: groups.reduce(
+        (sum, group) => sum + group.itens.filter((item) => isCriticalPendingItem(item)).length,
+        0,
+      ),
+    };
+  }, [activeTab, filteredItems]);
+
+  const exceptionSections = useMemo(() => {
+    if (activeTab !== "excecoes") return [];
+
+    const grouped = new Map<string, ExceptionData[]>();
+    for (const item of filteredItems as ExceptionData[]) {
+      const key = item.compra_status ?? "indisponivel";
+      const current = grouped.get(key) ?? [];
+      current.push(item);
+      grouped.set(key, current);
+    }
+
+    return ["equivalente_pendente", "cancelamento_pendente", "indisponivel"]
+      .map((status) => ({
+        status,
+        title: EXCEPTION_META[status as keyof typeof EXCEPTION_META].title,
+        description: EXCEPTION_META[status as keyof typeof EXCEPTION_META].description,
+        items: grouped.get(status) ?? [],
+      }))
+      .filter((section) => section.items.length > 0);
+  }, [activeTab, filteredItems]);
 
   const headerRight = (
     <button
@@ -511,6 +567,32 @@ export default function ComprasPage() {
                 {formatDays(summary.mais_antigo_dias)} no item mais antigo
               </p>
 
+              {activeTab === "aguardando_compra" && planningInsights && (
+                <section className="rounded-2xl border border-line bg-surface/40 px-4 py-4">
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-ink">
+                        Planejamento por rodada de compra
+                      </h3>
+                      <p className="mt-1 text-sm text-ink-muted">
+                        Selecione dentro de cada fornecedor apenas as linhas que entram nesta rodada. Isso permite dividir urgência, prazo e intercambiáveis sem arrastar toda a fila.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs text-ink-muted">
+                      <span className="rounded-full bg-paper px-3 py-1">
+                        {planningInsights.fornecedores} fornecedor{planningInsights.fornecedores !== 1 ? "es" : ""}
+                      </span>
+                      <span className="rounded-full bg-paper px-3 py-1">
+                        {planningInsights.comRascunho} com rascunho automático
+                      </span>
+                      <span className="rounded-full bg-paper px-3 py-1">
+                        {planningInsights.linhasCriticas} linha{planningInsights.linhasCriticas !== 1 ? "s" : ""} crítica{planningInsights.linhasCriticas !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                  </div>
+                </section>
+              )}
+
               {activeTab === "aguardando_compra" &&
                 (filteredItems as FornecedorGroup[]).map((group) => (
                   <FornecedorCard
@@ -523,6 +605,8 @@ export default function ComprasPage() {
                     pedidos_bloqueados={group.pedidos_bloqueados}
                     quantidade_total={group.quantidade_total}
                     total_skus={group.total_skus}
+                    rascunho_ocs={group.rascunho_ocs}
+                    itens_em_rascunho={group.itens_em_rascunho}
                     proxima_acao={group.proxima_acao}
                     itens={group.itens}
                     usuario_id={user!.id}
@@ -556,13 +640,26 @@ export default function ComprasPage() {
                 ))}
 
               {activeTab === "excecoes" &&
-                (filteredItems as ExceptionData[]).map((item) => (
-                  <ExceptionItemCard
-                    key={item.id}
-                    item={item}
-                    cargo={cargo}
-                    usuario_id={user!.id}
-                  />
+                exceptionSections.map((section) => (
+                  <section
+                    key={section.status}
+                    className="rounded-2xl border border-line bg-paper p-4"
+                  >
+                    <div className="flex flex-col gap-1 border-b border-line pb-3">
+                      <h3 className="text-sm font-semibold text-ink">{section.title}</h3>
+                      <p className="text-xs text-ink-muted">{section.description}</p>
+                    </div>
+                    <div className="mt-4 flex flex-col gap-3">
+                      {section.items.map((item) => (
+                        <ExceptionItemCard
+                          key={item.id}
+                          item={item}
+                          cargo={cargo}
+                          usuario_id={user!.id}
+                        />
+                      ))}
+                    </div>
+                  </section>
                 ))}
             </div>
           )}

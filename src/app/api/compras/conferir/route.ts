@@ -132,14 +132,6 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      if (input.quantidade_recebida > quantidadeRestante) {
-        erros++;
-        errosDetalhe.push(
-          `${item.sku}: recebido ${input.quantidade_recebida} acima do restante ${quantidadeRestante}`,
-        );
-        continue;
-      }
-
       // Call Tiny movimentarEstoque if produto_id_tiny exists
       if (item.produto_id_tiny) {
         try {

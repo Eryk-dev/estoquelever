@@ -206,6 +206,9 @@ export default function ConferenciaPage() {
                 <span className="italic">{oc.observacao}</span>
               )}
             </div>
+            <p className="mt-3 text-xs text-ink-muted">
+              Informe o que realmente chegou. Se o fornecedor mandou a mais, o SISO agora aceita quantidades acima do restante esperado.
+            </p>
           </div>
 
           {/* Items */}
@@ -225,6 +228,7 @@ export default function ConferenciaPage() {
               <div className="rounded-xl border border-line bg-paper divide-y divide-line/50 overflow-hidden">
                 {itens.map((item) => {
                   const qty = getQuantity(item);
+                  const excedente = Math.max(qty - item.quantidade_restante, 0);
                   return (
                     <div key={item.item_id} className="px-4 py-3">
                       <div className="flex items-start justify-between gap-3">
@@ -257,7 +261,7 @@ export default function ConferenciaPage() {
 
                       <div className="mt-3 flex flex-wrap items-center gap-3 sm:gap-4">
                         <div className="text-xs text-ink-muted">
-                          <span className="text-ink-faint">Esperado:</span>{" "}
+                          <span className="text-ink-faint">Restante esperado:</span>{" "}
                           <span className="font-semibold text-ink tabular-nums">
                             {item.quantidade_restante}
                           </span>
@@ -288,6 +292,11 @@ export default function ConferenciaPage() {
                         {item.quantidade_ja_recebida > 0 && (
                           <span className="text-[10px] text-blue-600">
                             Já recebido: {item.quantidade_ja_recebida}
+                          </span>
+                        )}
+                        {excedente > 0 && (
+                          <span className="text-[10px] text-amber-700">
+                            Excedente desta conferência: +{excedente}
                           </span>
                         )}
                       </div>

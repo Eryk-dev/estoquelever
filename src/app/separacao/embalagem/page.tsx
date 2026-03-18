@@ -231,6 +231,7 @@ function EmbalagemPage() {
       });
 
       setHighlightedPedidoId(result.pedido_id);
+      setExpandedPedidoIds((prev) => new Set(prev).add(result.pedido_id));
       setTimeout(() => setHighlightedPedidoId(null), 2000);
 
       if (result.pedido_completo) {
@@ -477,35 +478,28 @@ function EmbalagemPage() {
           </form>
         </div>
 
-        {/* Ultimo item lido */}
-        {lastScanned && (
-          <div
-            className={cn(
-              "rounded-xl border px-4 py-3 transition-colors",
-              lastScanned.pedido_completo
-                ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
-                : "border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20",
-            )}
-          >
-            <p className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
-              Ultimo item lido
-            </p>
-            <div className="mt-1 flex items-center gap-3">
-              <span className="font-mono text-sm font-bold text-ink">
-                {lastScanned.sku}
-              </span>
-              <span className="text-xs text-ink-faint">
-                Bipado: {lastScanned.quantidade_bipada}
-              </span>
-              {lastScanned.pedido_completo && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
-                  <CheckCircle2 className="h-3 w-3" />
-                  Pedido completo
-                </span>
-              )}
+        {/* Pedido do ultimo bip — aparece no topo expandido */}
+        {lastScanned && (() => {
+          const focusedPedido = activePedidos.find((p) => p.id === lastScanned.pedido_id)
+            ?? completedPedidos.find((p) => p.id === lastScanned.pedido_id);
+          if (!focusedPedido) return null;
+          return (
+            <div>
+              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                Ultimo bip: <span className="font-mono normal-case">{lastScanned.sku}</span>
+              </p>
+              <EmbalagemOrderRow
+                pedido={focusedPedido}
+                highlighted={highlightedPedidoId === focusedPedido.id}
+                completed={completedIds.has(focusedPedido.id)}
+                expanded
+                onToggleExpand={() => toggleExpandedPedido(focusedPedido.id)}
+                items={itemsByPedido.get(focusedPedido.id) ?? []}
+                onConfirmItem={handleConfirmItem}
+              />
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Order list */}
         {isLoading ? (
@@ -514,13 +508,15 @@ function EmbalagemPage() {
           <EmptyState message="Nenhum pedido encontrado" />
         ) : (
           <div className="space-y-3">
-            {/* Active orders */}
-            {activePedidos.length > 0 && (
+            {/* Active orders (excluding focused pedido) */}
+            {activePedidos.filter((p) => p.id !== lastScanned?.pedido_id).length > 0 && (
               <div className="space-y-1">
                 <p className="text-xs font-medium text-ink-faint">
-                  Pendentes ({activePedidos.length})
+                  Pendentes ({activePedidos.filter((p) => p.id !== lastScanned?.pedido_id).length})
                 </p>
-                {activePedidos.map((pedido) => (
+                {activePedidos
+                  .filter((p) => p.id !== lastScanned?.pedido_id)
+                  .map((pedido) => (
                   <EmbalagemOrderRow
                     key={pedido.id}
                     pedido={pedido}
@@ -534,13 +530,13 @@ function EmbalagemPage() {
               </div>
             )}
 
-            {/* Completed orders */}
-            {completedPedidos.length > 0 && (
+            {/* Completed orders (excluding focused pedido) */}
+            {completedPedidos.filter((p) => p.id !== lastScanned?.pedido_id).length > 0 && (
               <div className="space-y-1">
                 <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                  Embalados ({completedPedidos.length})
+                  Embalados ({completedPedidos.filter((p) => p.id !== lastScanned?.pedido_id).length})
                 </p>
-                {completedPedidos.map((pedido) => (
+                {completedPedidos.filter((p) => p.id !== lastScanned?.pedido_id).map((pedido) => (
                   <EmbalagemOrderRow
                     key={pedido.id}
                     pedido={pedido}
@@ -615,6 +611,7 @@ function EmbalagemOrderRow({
 
   return (
     <article
+      id={`pedido-${pedido.id}`}
       className={cn(
         "overflow-hidden rounded-xl border transition-all duration-300",
         isComplete

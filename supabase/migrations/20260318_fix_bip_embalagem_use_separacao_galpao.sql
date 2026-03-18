@@ -48,7 +48,13 @@ BEGIN
     AND (i.sku = p_sku OR i.gtin = p_sku)
     AND i.bipado_completo = false
     AND COALESCE(i.compra_status, '') NOT IN ('cancelado', 'indisponivel')
-  ORDER BY p.data ASC
+  ORDER BY
+    -- Prioritize orders that already have items scanned (in-progress packing)
+    CASE WHEN EXISTS (
+      SELECT 1 FROM siso_pedido_itens x
+      WHERE x.pedido_id = p.id AND x.quantidade_bipada > 0
+    ) THEN 0 ELSE 1 END,
+    p.data ASC
   LIMIT 1
   FOR UPDATE OF i;
 

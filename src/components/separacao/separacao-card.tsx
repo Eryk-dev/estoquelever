@@ -98,7 +98,7 @@ export function SeparacaoCard({
   const isSeparado = pedido.status_separacao === "separado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
   const isAguardandoOC = pedido.status_separacao === "aguardando_compra";
-  const canRetryEtiqueta = isEmbalado && !pedido.etiqueta_pronta;
+  const canRetryEtiqueta = (isSeparado || isEmbalado) && !pedido.etiqueta_pronta;
   const cs = pedido.compra_stats;
   const transferLabel =
     pedido.decisao_final === "transferencia" && pedido.filial_origem
@@ -288,8 +288,8 @@ export function SeparacaoCard({
                   }
                 }}
                 className="shrink-0 rounded p-1 text-amber-500 transition-colors hover:bg-amber-50 hover:text-amber-700 disabled:opacity-50 dark:hover:bg-amber-950/30"
-                title="Obter etiqueta novamente"
-                aria-label="Obter etiqueta novamente"
+                title={isSeparado ? "Obter etiqueta" : "Obter etiqueta novamente"}
+                aria-label={isSeparado ? "Obter etiqueta" : "Obter etiqueta novamente"}
               >
                 {retryingLabel ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />

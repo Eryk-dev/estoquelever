@@ -394,14 +394,14 @@ function SeparacaoPageContent() {
     setActionLoading(false);
   }
 
-  async function handleRetryEtiquetasSelecionadas() {
-    if (selectedIds.size === 0) return;
+  async function handleRetryEtiquetas(pedidoIds: string[]) {
+    if (pedidoIds.length === 0) return;
     setActionLoading(true);
     try {
       const res = await sisoFetch("/api/separacao/retry-etiqueta", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pedido_ids: Array.from(selectedIds) }),
+        body: JSON.stringify({ pedido_ids: pedidoIds }),
       });
       const body = await res.json().catch(() => ({}));
 
@@ -901,6 +901,19 @@ function SeparacaoPageContent() {
                   <span className="hidden sm:inline">Embalar</span> {comEtiqueta} <span className="hidden sm:inline">com etiqueta</span>
                 </button>
               )}
+              {semEtiqueta > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleRetryEtiquetas(comEtiquetaSource.filter((p) => !p.etiqueta_pronta).map((p) => p.id))}
+                  disabled={actionLoading}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 sm:px-4 py-2 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  {actionLoading
+                    ? "Tentando..."
+                    : `Gerar ${semEtiqueta} etiqueta(s)`}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleEmbalarSelecionados}
@@ -937,7 +950,7 @@ function SeparacaoPageContent() {
               )}
               <button
                 type="button"
-                onClick={handleRetryEtiquetasSelecionadas}
+                onClick={() => handleRetryEtiquetas(Array.from(selectedIds))}
                 disabled={selectedIds.size === 0 || actionLoading}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
               >

@@ -4,6 +4,11 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import type { SeparacaoCounts, StatusSeparacao } from "@/types";
 
+function toNumber(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 const VALID_STATUSES: StatusSeparacao[] = [
   "aguardando_compra",
   "aguardando_nf",
@@ -192,7 +197,7 @@ export async function GET(request: NextRequest) {
     if (pedidoIds.length > 0) {
       const { data: items } = await supabase
         .from("siso_pedido_itens")
-        .select("pedido_id, separacao_marcado, bipado_completo, compra_status, fornecedor_oc, sku, descricao, quantidade_pedida, compra_quantidade_solicitada")
+        .select("pedido_id, separacao_marcado, bipado_completo, compra_status, fornecedor_oc, sku, descricao, quantidade_pedida, quantidade_bipada, compra_quantidade_solicitada")
         .in("pedido_id", pedidoIds);
 
       for (const item of items ?? []) {
@@ -203,7 +208,9 @@ export async function GET(request: NextRequest) {
         }
         itemStats[item.pedido_id].total++;
         if (item.separacao_marcado) itemStats[item.pedido_id].marcados++;
-        if (item.bipado_completo) itemStats[item.pedido_id].bipados++;
+        if (toNumber(item.quantidade_bipada) >= toNumber(item.quantidade_pedida)) {
+          itemStats[item.pedido_id].bipados++;
+        }
 
         // Build compra stats for OC orders
         if (item.compra_status) {

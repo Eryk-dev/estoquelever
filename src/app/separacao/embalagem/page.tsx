@@ -200,6 +200,9 @@ function EmbalagemPage() {
       return;
     }
 
+    const qty = scanQty;
+    setScanQty(1);
+
     try {
       const res = await sisoFetch("/api/separacao/bipar-embalagem", {
         method: "POST",
@@ -207,7 +210,7 @@ function EmbalagemPage() {
         body: JSON.stringify({
           sku,
           galpao_id: galpaoId,
-          quantidade: scanQty,
+          quantidade: qty,
         }),
       });
 
@@ -477,6 +480,7 @@ function EmbalagemPage() {
                 className="h-10 w-16 rounded-xl border border-line bg-surface px-2 text-center font-mono text-sm text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
               />
             </div>
+            <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
           </form>
         </div>
 

@@ -66,10 +66,10 @@ BEGIN
 
   SELECT COUNT(*)
   INTO v_itens_pendentes
-  FROM siso_pedido_itens
-  WHERE siso_pedido_itens.pedido_id = v_pedido_id
-    AND bipado_completo = false
-    AND COALESCE(siso_pedido_itens.compra_status, '') NOT IN ('cancelado', 'indisponivel');
+  FROM siso_pedido_itens pit
+  WHERE pit.pedido_id = v_pedido_id
+    AND pit.bipado_completo = false
+    AND COALESCE(pit.compra_status, '') NOT IN ('cancelado', 'indisponivel');
 
   v_pedido_completo := (v_itens_pendentes = 0);
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, ShoppingCart, XCircle } from "lucide-react";
+import { RefreshCw, ShoppingCart } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { Tabs } from "@/components/ui/tabs";
@@ -10,11 +10,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { FornecedorCard } from "@/components/compras/fornecedor-card";
 import { OrdemCompraCard } from "@/components/compras/ordem-compra-card";
+import { ExceptionItemCard } from "@/components/compras/exception-item-card";
 import { useAuth } from "@/lib/auth-context";
 
 import type { Tab, CompraItemAgrupado } from "@/types";
 
-type CompraTab = "aguardando_compra" | "comprado" | "indisponivel";
+type CompraTab = "aguardando_compra" | "comprado" | "excecoes";
 
 interface ComprasCounts {
   aguardando_compra: number;
@@ -25,6 +26,7 @@ interface ComprasCounts {
 interface FornecedorGroup {
   fornecedor: string;
   empresa_id: string | null;
+  empresa_nome: string | null;
   itens: CompraItemAgrupado[];
 }
 
@@ -96,13 +98,13 @@ export default function ComprasPage() {
       count: counts.aguardando_compra,
     },
     { id: "comprado", label: "Comprado", count: counts.comprado },
-    { id: "indisponivel", label: "Indisponíveis", count: counts.indisponivel },
+    { id: "excecoes", label: "Exceções", count: counts.indisponivel },
   ];
 
   const emptyMessages: Record<CompraTab, string> = {
     aguardando_compra: "Nenhum item aguardando compra.",
     comprado: "Nenhuma ordem de compra aguardando entrega.",
-    indisponivel: "Nenhum item indisponível.",
+    excecoes: "Nenhuma exceção de compra.",
   };
 
   const headerRight = (
@@ -156,15 +158,16 @@ export default function ComprasPage() {
                 {activeTab === "comprado"
                   ? `ordem${items.length !== 1 ? "s" : ""}`
                   : activeTab === "aguardando_compra"
-                    ? `fornecedor${items.length !== 1 ? "es" : ""}`
-                    : `item${items.length !== 1 ? "s" : ""}`}
+                    ? `grupo${items.length !== 1 ? "s" : ""}`
+                    : `exce${items.length !== 1 ? "ões" : "ção"}`}
               </p>
               {activeTab === "aguardando_compra" &&
                 (items as FornecedorGroup[]).map((group) => (
                   <FornecedorCard
-                    key={group.fornecedor}
+                    key={`${group.fornecedor}-${group.empresa_id ?? "sem-empresa"}`}
                     fornecedor={group.fornecedor}
                     empresa_id={group.empresa_id}
+                    empresa_nome={group.empresa_nome}
                     itens={group.itens}
                     usuario_id={user!.id}
                     cargo={cargo}
@@ -184,51 +187,35 @@ export default function ComprasPage() {
                     total_itens={oc.total_itens}
                     itens_recebidos={oc.itens_recebidos}
                     itens={oc.itens}
+                    cargo={cargo}
                   />
                 ))}
-              {activeTab === "indisponivel" &&
+              {activeTab === "excecoes" &&
                 (
                   items as Array<{
                     id: string;
                     sku: string;
                     descricao: string;
+                    imagem: string | null;
                     quantidade: number;
                     fornecedor_oc: string | null;
                     pedido_id: string;
                     numero_pedido: string;
+                    empresa_nome: string | null;
+                    compra_status: string | null;
+                    compra_equivalente_sku: string | null;
+                    compra_equivalente_descricao: string | null;
+                    compra_equivalente_fornecedor: string | null;
+                    compra_equivalente_observacao: string | null;
+                    compra_cancelamento_motivo: string | null;
                   }>
                 ).map((item) => (
-                  <div
+                  <ExceptionItemCard
                     key={item.id}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 rounded-xl border border-line bg-paper px-3 sm:px-4 py-3"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-ink truncate">
-                        {item.sku}
-                      </p>
-                      <p className="text-xs text-ink-muted truncate">
-                        {item.descricao}
-                      </p>
-                      {item.fornecedor_oc && (
-                        <p className="text-xs text-ink-faint mt-0.5">
-                          Fornecedor: {item.fornecedor_oc}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-sm font-semibold text-ink tabular-nums">
-                        {item.quantidade}un
-                      </span>
-                      <span className="inline-flex items-center rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
-                        #{item.numero_pedido}
-                      </span>
-                      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">
-                        <XCircle className="h-3 w-3" />
-                        <span className="hidden sm:inline">Indisponível</span>
-                        <span className="sm:hidden">Indisp.</span>
-                      </span>
-                    </div>
-                  </div>
+                    item={item}
+                    cargo={cargo}
+                    usuario_id={user!.id}
+                  />
                 ))}
             </div>
           )}

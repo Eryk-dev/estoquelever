@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import type { CompraItemAgrupado } from "@/types";
+import { COMPRA_EXCEPTION_STATUSES } from "@/lib/compras-utils";
 
-type CompraStatusFilter = "aguardando_compra" | "comprado" | "indisponivel";
+type CompraStatusFilter = "aguardando_compra" | "comprado" | "indisponivel" | "excecoes";
 
 const VALID_STATUSES: CompraStatusFilter[] = [
   "aguardando_compra",
   "comprado",
   "indisponivel",
+  "excecoes",
 ];
 
 const ALLOWED_CARGOS = ["admin", "comprador"];
@@ -18,7 +20,7 @@ const ALLOWED_CARGOS = ["admin", "comprador"];
  *
  * Returns compra items grouped by supplier and status.
  * Query params:
- *   - status: 'aguardando_compra' | 'comprado' | 'indisponivel' (default: 'aguardando_compra')
+ *   - status: 'aguardando_compra' | 'comprado' | 'excecoes' (legacy: 'indisponivel')
  *   - cargo: user cargo for auth check
  */
 export async function GET(request: NextRequest) {
@@ -52,7 +54,7 @@ export async function GET(request: NextRequest) {
     } else if (status === "comprado") {
       data = await fetchComprado(supabase);
     } else {
-      data = await fetchIndisponivel(supabase);
+      data = await fetchExcecoes(supabase);
     }
 
     return NextResponse.json({ counts, data });
@@ -82,7 +84,7 @@ async function fetchCounts(supabase: ReturnType<typeof createServiceClient>) {
     supabase
       .from("siso_pedido_itens")
       .select("id", { count: "exact", head: true })
-      .eq("compra_status", "indisponivel"),
+      .in("compra_status", [...COMPRA_EXCEPTION_STATUSES]),
   ]);
 
   return {
@@ -123,18 +125,59 @@ async function fetchAguardandoCompra(
   if (error) throw new Error(`Erro ao buscar itens aguardando: ${error.message}`);
   if (!items || items.length === 0) return [];
 
-  // Group by fornecedor_oc, then consolidate by SKU within each supplier
-  const byFornecedor = new Map<string, Map<string, CompraItemAgrupado>>();
+  const rawItems = items as unknown as RawAguardandoItem[];
+  const empresaIds = [
+    ...new Set(
+      rawItems
+        .map((item) => item.siso_pedidos?.empresa_origem_id)
+        .filter(Boolean),
+    ),
+  ] as string[];
 
-  for (const item of items as unknown as RawAguardandoItem[]) {
+  const empresaNameMap = new Map<string, string>();
+  if (empresaIds.length > 0) {
+    const { data: empresas, error: empresasError } = await supabase
+      .from("siso_empresas")
+      .select("id, nome")
+      .in("id", empresaIds);
+
+    if (empresasError) {
+      throw new Error(`Erro ao buscar empresas: ${empresasError.message}`);
+    }
+
+    for (const empresa of empresas ?? []) {
+      empresaNameMap.set(empresa.id, empresa.nome);
+    }
+  }
+
+  // Group by fornecedor + empresa_origem_id so the buyer can see clearly
+  // which empresa needs each purchase.
+  const byGrupo = new Map<
+    string,
+    {
+      fornecedor: string;
+      empresa_id: string | null;
+      empresa_nome: string | null;
+      itens: Map<string, CompraItemAgrupado>;
+    }
+  >();
+
+  for (const item of rawItems) {
     const fornecedor = item.fornecedor_oc ?? "Desconhecido";
     const pedido = item.siso_pedidos;
     const numeroPedido = pedido?.numero ?? "?";
+    const empresaId = pedido?.empresa_origem_id ?? null;
+    const groupKey = `${fornecedor}::${empresaId ?? "sem-empresa"}`;
 
-    if (!byFornecedor.has(fornecedor)) {
-      byFornecedor.set(fornecedor, new Map());
+    if (!byGrupo.has(groupKey)) {
+      byGrupo.set(groupKey, {
+        fornecedor,
+        empresa_id: empresaId,
+        empresa_nome: empresaId ? (empresaNameMap.get(empresaId) ?? null) : null,
+        itens: new Map(),
+      });
     }
-    const skuMap = byFornecedor.get(fornecedor)!;
+    const skuMap = byGrupo.get(groupKey)!.itens;
 
     if (!skuMap.has(item.sku)) {
       skuMap.set(item.sku, {
@@ -162,21 +205,29 @@ async function fetchAguardandoCompra(
   const result: Array<{
     fornecedor: string;
     empresa_id: string | null;
+    empresa_nome: string | null;
     itens: CompraItemAgrupado[];
   }> = [];
 
-  for (const [fornecedor, skuMap] of byFornecedor) {
-    const itens = Array.from(skuMap.values());
-    // Get empresa_id from first item's pedido
-    const firstRawItem = (items as unknown as RawAguardandoItem[]).find(
-      (i) => (i.fornecedor_oc ?? "Desconhecido") === fornecedor,
-    );
-    const empresaId = firstRawItem?.siso_pedidos?.empresa_origem_id ?? null;
-
-    result.push({ fornecedor, empresa_id: empresaId, itens });
+  for (const grupo of byGrupo.values()) {
+    result.push({
+      fornecedor: grupo.fornecedor,
+      empresa_id: grupo.empresa_id,
+      empresa_nome: grupo.empresa_nome,
+      itens: Array.from(grupo.itens.values()).sort((a, b) =>
+        a.sku.localeCompare(b.sku),
+      ),
+    });
   }
 
-  return result;
+  return result.sort((a, b) => {
+    const empresaA = a.empresa_nome ?? a.empresa_id ?? "";
+    const empresaB = b.empresa_nome ?? b.empresa_id ?? "";
+    return (
+      empresaA.localeCompare(empresaB, "pt-BR") ||
+      a.fornecedor.localeCompare(b.fornecedor, "pt-BR")
+    );
+  });
 }
 
 // ─── Comprado ────────────────────────────────────────────────────────────────
@@ -267,19 +318,66 @@ async function fetchComprado(
   });
 }
 
-// ─── Indisponivel ────────────────────────────────────────────────────────────
+// ─── Exceções ────────────────────────────────────────────────────────────────
 
-async function fetchIndisponivel(
+interface RawExceptionItem {
+  id: string;
+  sku: string;
+  descricao: string;
+  quantidade_pedida: number;
+  fornecedor_oc: string | null;
+  imagem_url: string | null;
+  pedido_id: string;
+  compra_status: string | null;
+  compra_equivalente_sku: string | null;
+  compra_equivalente_descricao: string | null;
+  compra_equivalente_fornecedor: string | null;
+  compra_equivalente_observacao: string | null;
+  compra_cancelamento_motivo: string | null;
+  siso_pedidos: {
+    numero: string;
+    empresa_origem_id: string | null;
+  } | null;
+}
+
+async function fetchExcecoes(
   supabase: ReturnType<typeof createServiceClient>,
 ) {
   const { data: items, error } = await supabase
     .from("siso_pedido_itens")
-    .select("id, sku, descricao, quantidade_pedida, fornecedor_oc, imagem_url, pedido_id, siso_pedidos(numero)")
-    .eq("compra_status", "indisponivel");
+    .select(
+      "id, sku, descricao, quantidade_pedida, fornecedor_oc, imagem_url, pedido_id, compra_status, compra_equivalente_sku, compra_equivalente_descricao, compra_equivalente_fornecedor, compra_equivalente_observacao, compra_cancelamento_motivo, siso_pedidos(numero, empresa_origem_id)",
+    )
+    .in("compra_status", [...COMPRA_EXCEPTION_STATUSES]);
 
-  if (error) throw new Error(`Erro ao buscar itens indisponiveis: ${error.message}`);
+  if (error) throw new Error(`Erro ao buscar exceções de compras: ${error.message}`);
 
-  return ((items ?? []) as unknown as RawAguardandoItem[]).map((item) => ({
+  const rawItems = (items ?? []) as unknown as RawExceptionItem[];
+  const empresaIds = [
+    ...new Set(
+      rawItems
+        .map((item) => item.siso_pedidos?.empresa_origem_id)
+        .filter(Boolean),
+    ),
+  ] as string[];
+
+  const empresaNameMap = new Map<string, string>();
+  if (empresaIds.length > 0) {
+    const { data: empresas, error: empresasError } = await supabase
+      .from("siso_empresas")
+      .select("id, nome")
+      .in("id", empresaIds);
+
+    if (empresasError) {
+      throw new Error(`Erro ao buscar empresas das exceções: ${empresasError.message}`);
+    }
+
+    for (const empresa of empresas ?? []) {
+      empresaNameMap.set(empresa.id, empresa.nome);
+    }
+  }
+
+  return rawItems.map((item) => ({
     id: String(item.id),
     sku: item.sku,
     descricao: item.descricao,
@@ -287,6 +385,16 @@ async function fetchIndisponivel(
     quantidade: item.quantidade_pedida,
     fornecedor_oc: item.fornecedor_oc,
     pedido_id: item.pedido_id,
+    compra_status: item.compra_status,
+    compra_equivalente_sku: item.compra_equivalente_sku,
+    compra_equivalente_descricao: item.compra_equivalente_descricao,
+    compra_equivalente_fornecedor: item.compra_equivalente_fornecedor,
+    compra_equivalente_observacao: item.compra_equivalente_observacao,
+    compra_cancelamento_motivo: item.compra_cancelamento_motivo,
     numero_pedido: item.siso_pedidos?.numero ?? "?",
+    empresa_id: item.siso_pedidos?.empresa_origem_id ?? null,
+    empresa_nome: item.siso_pedidos?.empresa_origem_id
+      ? (empresaNameMap.get(item.siso_pedidos.empresa_origem_id) ?? null)
+      : null,
   }));
 }

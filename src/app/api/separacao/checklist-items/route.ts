@@ -32,14 +32,14 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // 1. Fetch items for the given pedidos (exclude items moved to compra flow)
+    // 1. Fetch items for the given pedidos.
+    // Compra filtering is applied later based on the pedido status.
     const { data: items, error: itemsError } = await supabase
       .from("siso_pedido_itens")
       .select(
         "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em, quantidade_bipada, bipado_completo, imagem_url, compra_status",
       )
-      .in("pedido_id", pedido_ids)
-      .is("compra_status", null);
+      .in("pedido_id", pedido_ids);
 
     if (itemsError) {
       logger.error("checklist-items", "Failed to fetch items", {
@@ -54,8 +54,13 @@ export async function GET(request: NextRequest) {
     // 2. Fetch empresa_origem_id + separacao_galpao_id per pedido
     const { data: pedidos } = await supabase
       .from("siso_pedidos")
-      .select("id, empresa_origem_id, separacao_galpao_id")
+      .select("id, empresa_origem_id, separacao_galpao_id, status_separacao")
       .in("id", pedido_ids);
+
+    const pedidoStatusMap = new Map<string, string | null>();
+    for (const pedido of pedidos ?? []) {
+      pedidoStatusMap.set(pedido.id, pedido.status_separacao ?? null);
+    }
 
     // 2b. Resolve the "separating empresa" — the empresa in the galpão
     //     that will physically separate/ship the order.
@@ -133,7 +138,16 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Shape response (empresa_origem_id = separating empresa for location updates)
-    const result = (items ?? []).map((item) => {
+    const visibleItems = (items ?? []).filter((item) => {
+      const pedidoStatus = pedidoStatusMap.get(item.pedido_id);
+      if (pedidoStatus === "aguardando_compra") {
+        return item.compra_status == null;
+      }
+
+      return item.compra_status !== "indisponivel" && item.compra_status !== "cancelado";
+    });
+
+    const result = visibleItems.map((item) => {
       const sepEmpresaId = pedidoSepEmpresaMap.get(item.pedido_id) ?? null;
       return {
         id: item.id,

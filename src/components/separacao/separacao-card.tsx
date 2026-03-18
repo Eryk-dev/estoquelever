@@ -15,6 +15,8 @@ export interface CompraStatsData {
   comprado: number;
   recebido: number;
   indisponivel: number;
+  equivalente_pendente: number;
+  cancelamento_pendente: number;
   itens: Array<{
     sku: string;
     descricao: string;
@@ -464,6 +466,18 @@ export function SeparacaoCard({
                     {cs.indisponivel} indisponivel
                   </span>
                 )}
+                {cs.equivalente_pendente > 0 && (
+                  <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                    <Clock className="h-3 w-3" />
+                    {cs.equivalente_pendente} equivalente{cs.equivalente_pendente !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {cs.cancelamento_pendente > 0 && (
+                  <span className="inline-flex items-center gap-1 text-zinc-600 dark:text-zinc-300">
+                    <AlertTriangle className="h-3 w-3" />
+                    {cs.cancelamento_pendente} cancelamento{cs.cancelamento_pendente !== 1 ? "s" : ""}
+                  </span>
+                )}
               </div>
 
               {/* Progress bar */}
@@ -657,6 +671,18 @@ const COMPRA_STATUS_MAP: Record<string, { label: string; className: string }> = 
   indisponivel: {
     label: "Indisponivel",
     className: "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400",
+  },
+  equivalente_pendente: {
+    label: "Equivalente",
+    className: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400",
+  },
+  cancelamento_pendente: {
+    label: "Cancel. pend.",
+    className: "bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300",
+  },
+  cancelado: {
+    label: "Cancelado",
+    className: "bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-500",
   },
 };
 

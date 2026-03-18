@@ -678,7 +678,7 @@ Fetch items for wave-picking checklist with stock and location data.
 }
 ```
 
-**Notes:** Excludes items with `compra_status` (moved to purchase flow). Location comes from origin empresa's stock.
+**Notes:** While a pedido is still in `aguardando_compra`, excludes items currently in purchase flow. After release back to separacao, received purchase items are included again. Location comes from origin empresa's stock.
 
 ---
 
@@ -874,7 +874,7 @@ Returns purchase items grouped by supplier and status.
 **Query Params:**
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `status` | string | `aguardando_compra` | `aguardando_compra`, `comprado`, `indisponivel` |
+| `status` | string | `aguardando_compra` | `aguardando_compra`, `comprado`, `excecoes` (`indisponivel` ainda aceito por compatibilidade) |
 | `cargo` | string | - | User cargo for auth check |
 
 **Response 200:**
@@ -887,11 +887,12 @@ Returns purchase items grouped by supplier and status.
 
 **Data shapes by status:**
 
-**`aguardando_compra`:** Array grouped by supplier:
+**`aguardando_compra`:** Array grouped by supplier + company:
 ```json
 [{
   "fornecedor": "ACA",
   "empresa_id": "uuid",
+  "empresa_nome": "NetAir",
   "itens": [{
     "sku": "19ABC",
     "descricao": "Filtro",
@@ -903,6 +904,8 @@ Returns purchase items grouped by supplier and status.
   }]
 }]
 ```
+
+Groups are split by `fornecedor + empresa_origem_id` so the buyer can see which empresa needs each purchase.
 
 **`comprado`:** Array of OCs with items:
 ```json
@@ -919,7 +922,16 @@ Returns purchase items grouped by supplier and status.
 }]
 ```
 
-**`indisponivel`:** Flat array of items.
+**`excecoes`:** Flat array of itens com `compra_status` em `indisponivel`, `equivalente_pendente` ou `cancelamento_pendente`.
+
+Cada item de exceção inclui, além dos dados básicos, campos como:
+- `compra_status`
+- `empresa_nome`
+- `compra_equivalente_sku`
+- `compra_equivalente_descricao`
+- `compra_equivalente_fornecedor`
+- `compra_equivalente_observacao`
+- `compra_cancelamento_motivo`
 
 ---
 
@@ -928,7 +940,7 @@ Returns purchase items grouped by supplier and status.
 **File:** `src/app/api/compras/ordens/route.ts`
 **Auth:** `cargo` in body (admin or comprador)
 
-Creates an OC and links all aguardando items for that supplier.
+Creates an OC and links all aguardando items for that supplier within one company.
 
 **Request Body:**
 ```json
@@ -950,7 +962,7 @@ Creates an OC and links all aguardando items for that supplier.
 }
 ```
 
-**Business Logic:** If items already have an auto-created OC, updates it to `comprado` instead of creating new one.
+**Business Logic:** If items already have an auto-created OC, updates it to `comprado` instead of creating new one. Links only items for the requested `fornecedor` inside the requested `empresa_id`.
 
 ---
 
@@ -988,7 +1000,7 @@ Process receiving confirmation. Updates quantities and enters stock in Tiny.
 - Calls `movimentarEstoque(tipo: "E")` in Tiny for each item with `produto_id_tiny`
 - Updates `compra_quantidade_recebida`, marks `recebido` when fully received
 - Updates OC status: `parcialmente_recebido` or `recebido`
-- Checks if pedidos can be released via `checkAndReleasePedidos`
+- Checks if pedidos can be released via `checkAndReleasePedidos` (itens `cancelado` contam como resolvidos; pedidos com todos os itens cancelados não são liberados)
 - 500ms delay between Tiny API calls
 
 ---
@@ -1043,6 +1055,169 @@ Marks item as unavailable from supplier. Unlinks from OC.
 ```
 
 **Side effect:** If OC has no remaining items, cancels the OC.
+
+---
+
+### `POST /api/compras/itens/[itemId]/equivalente`
+
+**File:** `src/app/api/compras/itens/[itemId]/equivalente/route.ts`
+**Auth:** `cargo` in body (admin or comprador)
+
+Registra um SKU equivalente para o item e move o caso para exceção `equivalente_pendente`.
+
+**Request Body:**
+```json
+{
+  "sku_equivalente": "EW1234",
+  "fornecedor_equivalente": "Eletricway",
+  "observacao": "Troca aprovada comercialmente",
+  "usuario_id": "uuid",
+  "cargo": "comprador"
+}
+```
+
+**Response 200:**
+```json
+{
+  "ok": true,
+  "item": {
+    "id": "uuid",
+    "compra_status": "equivalente_pendente",
+    "compra_equivalente_sku": "EW1234"
+  }
+}
+```
+
+**Business Logic:**
+- Valida que o SKU equivalente existe na empresa de origem do pedido
+- Remove o item da OC atual, se houver
+- Zera o vínculo de compra anterior e guarda os dados do equivalente até a confirmação externa
+- Se a OC anterior ficar vazia, ela é cancelada
+
+---
+
+### `POST /api/compras/itens/[itemId]/equivalente/confirmar`
+
+**File:** `src/app/api/compras/itens/[itemId]/equivalente/confirmar/route.ts`
+**Auth:** `cargo` in body (admin or comprador)
+
+Confirma que a troca do item já foi aplicada externamente e sincroniza o item local com o SKU equivalente.
+
+**Request Body:**
+```json
+{ "cargo": "comprador" }
+```
+
+**Response 200:**
+```json
+{
+  "ok": true,
+  "item": {
+    "id": "uuid",
+    "sku": "EW1234",
+    "compra_status": "aguardando_compra"
+  }
+}
+```
+
+**Business Logic:**
+- Recarrega o produto equivalente e estoques por empresa
+- Atualiza `siso_pedido_itens` com SKU/produto/GTIN/imagem do equivalente
+- Regrava `siso_pedido_item_estoques` para o novo produto
+- Devolve o item para `aguardando_compra`
+- Não altera o pedido no Tiny automaticamente; presume que a troca já foi feita externamente
+
+---
+
+### `POST /api/compras/itens/[itemId]/cancelamento`
+
+**File:** `src/app/api/compras/itens/[itemId]/cancelamento/route.ts`
+**Auth:** `cargo` in body (admin or comprador)
+
+Marca um item como `cancelamento_pendente`, aguardando remoção/cancelamento externo.
+
+**Request Body:**
+```json
+{
+  "motivo": "Sem disponibilidade no fornecedor",
+  "usuario_id": "uuid",
+  "cargo": "comprador"
+}
+```
+
+**Response 200:**
+```json
+{
+  "ok": true,
+  "item": {
+    "id": "uuid",
+    "compra_status": "cancelamento_pendente"
+  }
+}
+```
+
+**Side effect:** If OC has no remaining items, cancels the OC.
+
+---
+
+### `POST /api/compras/itens/[itemId]/cancelamento/confirmar`
+
+**File:** `src/app/api/compras/itens/[itemId]/cancelamento/confirmar/route.ts`
+**Auth:** `cargo` in body (admin or comprador)
+
+Confirma que o item já foi removido/cancelado externamente e o exclui do fluxo local.
+
+**Request Body:**
+```json
+{
+  "usuario_id": "uuid",
+  "cargo": "comprador"
+}
+```
+
+**Response 200:**
+```json
+{
+  "ok": true,
+  "pedido_cancelado": null,
+  "pedidos_liberados": ["pedido_id_1"]
+}
+```
+
+**Business Logic:**
+- Marca o item como `cancelado`
+- Remove os estoques normalizados do item
+- Se todos os itens do pedido forem cancelados, cancela o pedido localmente
+- Caso contrário, reavalia a liberação via `checkAndReleasePedidos`
+
+---
+
+### `POST /api/compras/pedidos/[pedidoId]/cancelar`
+
+**File:** `src/app/api/compras/pedidos/[pedidoId]/cancelar/route.ts`
+**Auth:** `cargo` in body (admin or comprador)
+
+Cancela o pedido inteiro no Tiny e limpa o fluxo local de compras.
+
+**Request Body:**
+```json
+{ "cargo": "comprador" }
+```
+
+**Response 200:**
+```json
+{
+  "ok": true,
+  "pedido_id": "123456",
+  "estoque_lancado_alerta": false
+}
+```
+
+**Business Logic:**
+- Chama `atualizarStatusPedido(..., "cancelado")` no Tiny
+- Cancela a fila de execução pendente do pedido
+- Desvincula todos os itens de compra e cancela OCs que ficarem vazias
+- Sinaliza `compra_estoque_lancado_alerta` se já houve entrada de estoque pela conferência
 
 ---
 

@@ -224,6 +224,9 @@ export type CompraStatus =
   | "comprado"
   | "recebido"
   | "indisponivel"
+  | "equivalente_pendente"
+  | "cancelamento_pendente"
+  | "cancelado"
   | null;
 
 /** A purchase order (OC) for a specific supplier */

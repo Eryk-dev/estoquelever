@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     // Find matching items by SKU within the given pedidos, not yet marked
     let { data: items, error: fetchError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, sku, gtin")
+      .select("id, pedido_id, sku, gtin, compra_status")
       .in("pedido_id", pedido_ids)
       .eq("separacao_marcado", false)
       .eq("sku", sku);
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     if (!fetchError && (!items || items.length === 0)) {
       const gtinResult = await supabase
         .from("siso_pedido_itens")
-        .select("id, pedido_id, sku, gtin")
+        .select("id, pedido_id, sku, gtin, compra_status")
         .in("pedido_id", pedido_ids)
         .eq("separacao_marcado", false)
         .eq("gtin", sku);
@@ -62,6 +62,8 @@ export async function POST(request: NextRequest) {
         { status: 500 },
       );
     }
+
+    items = (items ?? []).filter((item) => item.compra_status !== "cancelado");
 
     if (!items || items.length === 0) {
       return NextResponse.json(

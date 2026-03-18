@@ -370,12 +370,75 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
 
 // ─── oc: only insert marcadores, no NF or stock ─────────────────────────────
 
+async function resolveCompraItemIds(
+  pedidoId: string,
+  empresaOrigemId: string | null | undefined,
+): Promise<string[]> {
+  if (!empresaOrigemId) return [];
+
+  const supabase = createServiceClient();
+  const [itemsResult, estoqueResult] = await Promise.all([
+    supabase
+      .from("siso_pedido_itens")
+      .select("id, produto_id, quantidade_pedida")
+      .eq("pedido_id", pedidoId),
+    supabase
+      .from("siso_pedido_item_estoques")
+      .select("produto_id, disponivel")
+      .eq("pedido_id", pedidoId)
+      .eq("empresa_id", empresaOrigemId),
+  ]);
+
+  if (itemsResult.error || !itemsResult.data) {
+    logger.warn(
+      "execution-worker",
+      "Nao foi possivel resolver itens faltantes para compra",
+      {
+        pedidoId,
+        empresaOrigemId,
+        error: itemsResult.error?.message ?? "items not found",
+      },
+    );
+    return [];
+  }
+
+  if (estoqueResult.error) {
+    logger.warn(
+      "execution-worker",
+      "Nao foi possivel consultar estoque da empresa de origem para compra",
+      {
+        pedidoId,
+        empresaOrigemId,
+        error: estoqueResult.error.message,
+      },
+    );
+    return [];
+  }
+
+  const disponivelPorProduto = new Map<string, number>();
+  for (const estoque of estoqueResult.data ?? []) {
+    disponivelPorProduto.set(
+      String(estoque.produto_id),
+      Number(estoque.disponivel ?? 0),
+    );
+  }
+
+  // For now the compra flow is SKU-based, not quantity-based.
+  // If the origin empresa does not fully cover the SKU, the whole item enters compra.
+  return itemsResult.data
+    .filter((item) => {
+      const disponivel = disponivelPorProduto.get(String(item.produto_id)) ?? 0;
+      return disponivel < Number(item.quantidade_pedida ?? 0);
+    })
+    .map((item) => item.id as string);
+}
+
 async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
   const supabase = createServiceClient();
 
   const { data: pedido } = await supabase
     .from("siso_pedidos")
-    .select("marcadores")
+    .select("marcadores, empresa_origem_id")
     .eq("id", job.pedido_id)
     .single();
 
@@ -390,13 +453,28 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
     .update({ status_separacao: "aguardando_compra" })
     .eq("id", job.pedido_id);
 
-  await supabase
-    .from("siso_pedido_itens")
-    .update({ compra_status: "aguardando_compra" })
-    .eq("pedido_id", job.pedido_id);
+  const compraItemIds = await resolveCompraItemIds(
+    job.pedido_id,
+    pedido?.empresa_origem_id ?? job.empresa_id,
+  );
+  const fallbackTodosItens = compraItemIds.length === 0;
+
+  if (fallbackTodosItens) {
+    await supabase
+      .from("siso_pedido_itens")
+      .update({ compra_status: "aguardando_compra" })
+      .eq("pedido_id", job.pedido_id);
+  } else {
+    await supabase
+      .from("siso_pedido_itens")
+      .update({ compra_status: "aguardando_compra" })
+      .in("id", compraItemIds);
+  }
 
   logger.info("execution-worker", "Pedido OC enviado para modulo de compras", {
     pedidoId: job.pedido_id,
+    itensCompra: compraItemIds.length,
+    fallbackTodosItens,
   });
 }
 

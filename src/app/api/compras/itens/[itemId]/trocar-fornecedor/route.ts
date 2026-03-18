@@ -67,6 +67,20 @@ export async function POST(
     // Build update fields
     const updateFields: Record<string, unknown> = {
       fornecedor_oc: novo_fornecedor,
+      compra_equivalente_sku: null,
+      compra_equivalente_descricao: null,
+      compra_equivalente_produto_id_tiny: null,
+      compra_equivalente_fornecedor: null,
+      compra_equivalente_imagem_url: null,
+      compra_equivalente_gtin: null,
+      compra_equivalente_observacao: null,
+      compra_equivalente_definido_em: null,
+      compra_equivalente_definido_por: null,
+      compra_cancelamento_motivo: null,
+      compra_cancelamento_solicitado_em: null,
+      compra_cancelamento_solicitado_por: null,
+      compra_cancelado_em: null,
+      compra_cancelado_por: null,
     };
 
     if (nova_ordem_compra_id) {

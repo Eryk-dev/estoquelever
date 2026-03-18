@@ -10,6 +10,7 @@ import type { CompraItemAgrupado } from "@/types";
 interface FornecedorCardProps {
   fornecedor: string;
   empresa_id: string | null;
+  empresa_nome: string | null;
   itens: CompraItemAgrupado[];
   usuario_id: string;
   cargo: string;
@@ -18,6 +19,7 @@ interface FornecedorCardProps {
 export function FornecedorCard({
   fornecedor,
   empresa_id,
+  empresa_nome,
   itens,
   usuario_id,
   cargo,
@@ -34,7 +36,8 @@ export function FornecedorCard({
     const lines = itens.map(
       (i) => `*${i.quantidade_total}x* ${i.sku}\n${i.descricao}`,
     );
-    const text = `*${fornecedor}* — ${itens.length} ite${itens.length !== 1 ? "ns" : "m"}\n\n${lines.join("\n\n")}`;
+    const empresaLabel = empresa_nome ?? "Empresa não identificada";
+    const text = `*${fornecedor}* — ${empresaLabel}\n${itens.length} ite${itens.length !== 1 ? "ns" : "m"}\n\n${lines.join("\n\n")}`;
     try {
       await navigator.clipboard.writeText(text);
       toast.success("Lista copiada para enviar no WhatsApp");
@@ -83,15 +86,20 @@ export function FornecedorCard({
     <div className="rounded-xl border border-line bg-paper overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-line bg-surface/50">
-        <div className="flex items-center gap-2 min-w-0">
-          <Package className="h-4 w-4 text-ink-faint shrink-0" />
-          <h3 className="text-sm font-semibold text-ink truncate">
-            {fornecedor}
-          </h3>
-          <span className="text-xs text-ink-faint">
-            {itens.length} SKU{itens.length !== 1 ? "s" : ""} &middot;{" "}
-            {totalItens} un
-          </span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <Package className="h-4 w-4 text-ink-faint shrink-0" />
+            <h3 className="text-sm font-semibold text-ink truncate">
+              {fornecedor}
+            </h3>
+            <span className="text-xs text-ink-faint">
+              {itens.length} SKU{itens.length !== 1 ? "s" : ""} &middot;{" "}
+              {totalItens} un
+            </span>
+          </div>
+          <p className="mt-0.5 text-xs text-ink-faint">
+            Empresa: {empresa_nome ?? "Não identificada"}
+          </p>
         </div>
         <button
           type="button"

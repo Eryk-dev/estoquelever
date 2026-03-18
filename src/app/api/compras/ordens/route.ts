@@ -43,12 +43,14 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // Find all aguardando items for this fornecedor
+    // Find all aguardando items for this fornecedor in the selected empresa.
+    // This prevents one OC from mixing demands from different empresas.
     const { data: aguardandoItems, error: fetchError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, ordem_compra_id")
+      .select("id, ordem_compra_id, siso_pedidos!inner(empresa_origem_id)")
       .eq("fornecedor_oc", fornecedor)
-      .eq("compra_status", "aguardando_compra");
+      .eq("compra_status", "aguardando_compra")
+      .eq("siso_pedidos.empresa_origem_id", empresa_id);
 
     if (fetchError) throw new Error(`Erro ao buscar itens: ${fetchError.message}`);
 

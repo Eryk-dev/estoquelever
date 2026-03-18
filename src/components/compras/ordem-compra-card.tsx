@@ -37,6 +37,7 @@ interface OrdemCompraCardProps {
   total_itens: number;
   itens_recebidos: number;
   itens: OcItem[];
+  cargo: string;
 }
 
 function formatDate(iso: string | null): string {
@@ -75,9 +76,11 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
 
 function ItemActions({
   item,
+  cargo,
   onActionComplete,
 }: {
   item: OcItem;
+  cargo: string;
   onActionComplete: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -91,7 +94,7 @@ function ItemActions({
       const res = await fetch(`/api/compras/itens/${item.id}/devolver`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cargo: "admin" }),
+        body: JSON.stringify({ cargo }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: "Erro" }));
@@ -114,7 +117,7 @@ function ItemActions({
       const res = await fetch(`/api/compras/itens/${item.id}/indisponivel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cargo: "admin" }),
+        body: JSON.stringify({ cargo }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: "Erro" }));
@@ -146,7 +149,7 @@ function ItemActions({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             novo_fornecedor: novoFornecedor.trim(),
-            cargo: "admin",
+            cargo,
           }),
         },
       );
@@ -283,6 +286,7 @@ export function OrdemCompraCard({
   total_itens,
   itens_recebidos,
   itens,
+  cargo,
 }: OrdemCompraCardProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -365,6 +369,7 @@ export function OrdemCompraCard({
                 )}
                 <ItemActions
                   item={item}
+                  cargo={cargo}
                   onActionComplete={handleActionComplete}
                 />
               </div>

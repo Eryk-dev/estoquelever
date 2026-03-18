@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { cancelOcIfEmpty } from "@/lib/compras-utils";
 
 const ALLOWED_CARGOS = ["admin", "comprador"];
 
@@ -52,6 +53,20 @@ export async function POST(
       .update({
         compra_status: "indisponivel",
         ordem_compra_id: null,
+        compra_equivalente_sku: null,
+        compra_equivalente_descricao: null,
+        compra_equivalente_produto_id_tiny: null,
+        compra_equivalente_fornecedor: null,
+        compra_equivalente_imagem_url: null,
+        compra_equivalente_gtin: null,
+        compra_equivalente_observacao: null,
+        compra_equivalente_definido_em: null,
+        compra_equivalente_definido_por: null,
+        compra_cancelamento_motivo: null,
+        compra_cancelamento_solicitado_em: null,
+        compra_cancelamento_solicitado_por: null,
+        compra_cancelado_em: null,
+        compra_cancelado_por: null,
       })
       .eq("id", itemId)
       .select("id, sku, descricao, fornecedor_oc, compra_status, pedido_id")
@@ -59,24 +74,7 @@ export async function POST(
 
     if (updateError) throw new Error(`Erro ao atualizar item: ${updateError.message}`);
 
-    // Check if OC still has items — if empty, cancel it
-    if (ordemCompraId) {
-      const { count } = await supabase
-        .from("siso_pedido_itens")
-        .select("id", { count: "exact", head: true })
-        .eq("ordem_compra_id", ordemCompraId);
-
-      if (count === 0) {
-        await supabase
-          .from("siso_ordens_compra")
-          .update({ status: "cancelado" })
-          .eq("id", ordemCompraId);
-
-        logger.info("compras-indisponivel", "OC cancelada (sem itens restantes)", {
-          ordemCompraId,
-        });
-      }
-    }
+    await cancelOcIfEmpty(supabase, ordemCompraId, "compras-indisponivel");
 
     logger.warn("compras-indisponivel", "Item marcado como indisponível", {
       itemId,

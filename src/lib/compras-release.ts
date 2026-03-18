@@ -8,11 +8,12 @@
 
 import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
+import { isCompraResolvedForRelease } from "./compras-utils";
 
 /**
  * Check if pedidos linked to the given item IDs can be released.
- * A pedido is released when ALL its items that have a compra_status
- * (non-null) have compra_status='recebido'.
+ * A pedido is released when all its compra items are resolved
+ * (`recebido` or `cancelado`) and at least one active item remains.
  *
  * Returns array of released pedido IDs.
  */
@@ -58,12 +59,25 @@ export async function checkAndReleasePedidos(
 
     if (allCompraItems.length === 0) continue;
 
-    // Check if ALL compra items are 'recebido'
-    const todosRecebidos = allCompraItems.every(
-      (item) => item.compra_status === "recebido",
+    const todosResolvidos = allCompraItems.every((item) =>
+      isCompraResolvedForRelease(item.compra_status),
     );
+    if (!todosResolvidos) continue;
 
-    if (!todosRecebidos) continue;
+    const { data: anyActiveItem } = await supabase
+      .from("siso_pedido_itens")
+      .select("id")
+      .eq("pedido_id", pedidoId)
+      .or("compra_status.is.null,compra_status.neq.cancelado")
+      .limit(1)
+      .maybeSingle();
+
+    if (!anyActiveItem) {
+      logger.info("compras-release", "Pedido não liberado porque todos os itens foram cancelados", {
+        pedidoId,
+      });
+      continue;
+    }
 
     // Get pedido info for the release
     const { data: pedido, error: pedidoError } = await supabase

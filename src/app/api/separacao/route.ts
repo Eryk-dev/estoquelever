@@ -171,6 +171,8 @@ export async function GET(request: NextRequest) {
         comprado: number;
         recebido: number;
         indisponivel: number;
+        equivalente_pendente: number;
+        cancelamento_pendente: number;
         itens: Array<{
           sku: string;
           descricao: string;
@@ -188,6 +190,8 @@ export async function GET(request: NextRequest) {
         .in("pedido_id", pedidoIds);
 
       for (const item of items ?? []) {
+        if (item.compra_status === "cancelado") continue;
+
         if (!itemStats[item.pedido_id]) {
           itemStats[item.pedido_id] = { total: 0, marcados: 0, bipados: 0 };
         }
@@ -204,6 +208,8 @@ export async function GET(request: NextRequest) {
               comprado: 0,
               recebido: 0,
               indisponivel: 0,
+              equivalente_pendente: 0,
+              cancelamento_pendente: 0,
               itens: [],
             };
           }
@@ -213,6 +219,8 @@ export async function GET(request: NextRequest) {
           else if (item.compra_status === "comprado") cs.comprado++;
           else if (item.compra_status === "recebido") cs.recebido++;
           else if (item.compra_status === "indisponivel") cs.indisponivel++;
+          else if (item.compra_status === "equivalente_pendente") cs.equivalente_pendente++;
+          else if (item.compra_status === "cancelamento_pendente") cs.cancelamento_pendente++;
           cs.itens.push({
             sku: item.sku,
             descricao: item.descricao,

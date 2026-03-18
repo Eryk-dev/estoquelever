@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, Suspense, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -69,15 +69,26 @@ function EmbalagemPage() {
     return param ? param.split(",").filter(Boolean) : [];
   }, [searchParams]);
 
-  const [scanValue, setScanValue] = useState("");
   const [scanQty, setScanQty] = useState(1);
   const [lastScanned, setLastScanned] = useState<LastScannedItem | null>(null);
   const [highlightedPedidoId, setHighlightedPedidoId] = useState<
     string | null
   >(null);
-  const [expandedPedidoId, setExpandedPedidoId] = useState<string | null>(null);
+  const [expandedPedidoIds, setExpandedPedidoIds] = useState<Set<string>>(new Set());
   const [actionLoading, setActionLoading] = useState(false);
   const scanRef = useRef<HTMLInputElement>(null);
+
+  const toggleExpandedPedido = useCallback((pedidoId: string) => {
+    setExpandedPedidoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(pedidoId)) {
+        next.delete(pedidoId);
+      } else {
+        next.add(pedidoId);
+      }
+      return next;
+    });
+  }, []);
 
   // Auth redirect
   useEffect(() => {
@@ -179,9 +190,11 @@ function EmbalagemPage() {
   );
 
   // Scan handler
-  const handleScan = useCallback(async () => {
-    const sku = scanValue.trim();
-    setScanValue("");
+  const handleScan = useCallback(async (rawCode?: string) => {
+    const sku = (rawCode ?? scanRef.current?.value ?? "").trim();
+    if (scanRef.current) {
+      scanRef.current.value = "";
+    }
     if (!sku || !galpaoId) {
       if (!galpaoId) toast.error("Galpao nao identificado");
       return;
@@ -236,7 +249,6 @@ function EmbalagemPage() {
       scanRef.current?.focus();
     }
   }, [
-    scanValue,
     scanQty,
     galpaoId,
     queryClient,
@@ -244,6 +256,11 @@ function EmbalagemPage() {
     itemsQueryKey,
     handlePedidoComplete,
   ]);
+
+  const handleScanSubmit = useCallback((e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    void handleScan(scanRef.current?.value);
+  }, [handleScan]);
 
   // Manual +/- handler with optimistic UI
   const handleConfirmItem = useCallback(
@@ -430,22 +447,18 @@ function EmbalagemPage() {
       <main className="mx-auto max-w-5xl space-y-4 px-3 sm:px-4 py-3 sm:py-4">
         {/* Scan input */}
         <div className="rounded-xl border border-line bg-paper px-4 py-3">
-          <div className="flex items-center gap-2">
+          <form onSubmit={handleScanSubmit} className="flex items-center gap-2">
             <div className="relative flex-1">
               <ScanBarcode className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
               <input
                 ref={scanRef}
                 type="text"
-                value={scanValue}
-                onChange={(e) => setScanValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleScan();
-                  }
-                }}
                 placeholder="Bipar SKU ou GTIN..."
                 autoFocus
+                autoCapitalize="off"
+                autoCorrect="off"
+                autoComplete="off"
+                spellCheck={false}
                 className="h-10 w-full rounded-xl border border-line bg-surface pl-10 pr-3 text-sm text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
               />
             </div>
@@ -464,7 +477,7 @@ function EmbalagemPage() {
                 className="h-10 w-16 rounded-xl border border-line bg-surface px-2 text-center font-mono text-sm text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
               />
             </div>
-          </div>
+          </form>
         </div>
 
         {/* Ultimo item lido */}
@@ -515,12 +528,8 @@ function EmbalagemPage() {
                     key={pedido.id}
                     pedido={pedido}
                     highlighted={highlightedPedidoId === pedido.id}
-                    expanded={expandedPedidoId === pedido.id}
-                    onToggleExpand={() =>
-                      setExpandedPedidoId(
-                        expandedPedidoId === pedido.id ? null : pedido.id,
-                      )
-                    }
+                    expanded={expandedPedidoIds.has(pedido.id)}
+                    onToggleExpand={() => toggleExpandedPedido(pedido.id)}
                     items={itemsByPedido.get(pedido.id) ?? []}
                     onConfirmItem={handleConfirmItem}
                   />
@@ -540,12 +549,8 @@ function EmbalagemPage() {
                     pedido={pedido}
                     highlighted={false}
                     completed
-                    expanded={expandedPedidoId === pedido.id}
-                    onToggleExpand={() =>
-                      setExpandedPedidoId(
-                        expandedPedidoId === pedido.id ? null : pedido.id,
-                      )
-                    }
+                    expanded={expandedPedidoIds.has(pedido.id)}
+                    onToggleExpand={() => toggleExpandedPedido(pedido.id)}
                     items={itemsByPedido.get(pedido.id) ?? []}
                     onConfirmItem={handleConfirmItem}
                   />

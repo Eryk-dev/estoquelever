@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
       .select(
         `id, numero, data, id_pedido_ecommerce, cliente_nome,
          nome_ecommerce, forma_envio_descricao, status_separacao, decisao_final, filial_origem, marcadores,
-         empresa_origem_id, separacao_galpao_id, etiqueta_status, etiqueta_zpl,
+         empresa_origem_id, separacao_galpao_id, etiqueta_status, etiqueta_zpl, embalagem_concluida_em,
          siso_empresas(nome)`,
       )
       .not("status_separacao", "is", null);
@@ -257,6 +257,7 @@ export async function GET(request: NextRequest) {
         cidade: null,
         forma_envio: p.forma_envio_descricao,
         data_pedido: p.data,
+        embalagem_concluida_em: p.embalagem_concluida_em ?? null,
         empresa_origem_nome: empresa?.nome ?? null,
         filial_origem: p.filial_origem ?? null,
         galpao_id: p.separacao_galpao_id ?? null,

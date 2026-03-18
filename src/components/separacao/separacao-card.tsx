@@ -37,6 +37,7 @@ export interface SeparacaoPedido {
   cidade: string | null;
   forma_envio: string | null;
   data_pedido: string;
+  embalagem_concluida_em?: string | null;
   empresa_origem_nome: string | null;
   filial_origem: string | null;
   decisao_final: Decisao | null;
@@ -420,6 +421,13 @@ export function SeparacaoCard({
               <Calendar className="h-3 w-3" aria-hidden="true" />
               {formatDate(pedido.data_pedido)}
             </span>
+
+            {isEmbalado && pedido.embalagem_concluida_em && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+                <Clock className="h-2.5 w-2.5" aria-hidden="true" />
+                Embalado em {formatDate(pedido.embalagem_concluida_em)}
+              </span>
+            )}
 
             {/* Label readiness indicator (separado + embalado) */}
             {isSeparado && (

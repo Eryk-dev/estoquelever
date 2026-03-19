@@ -15,6 +15,8 @@ import {
   Minus,
   Save,
   RotateCcw,
+  Printer,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -344,6 +346,30 @@ function EmbalagemPage() {
     ],
   );
 
+  // Reprint label handler
+  const handleReprint = useCallback(async (pedidoId: string) => {
+    try {
+      const res = await sisoFetch("/api/separacao/reimprimir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_id: pedidoId }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || data.status === "falhou") {
+        toast.error(
+          `Falha ao reimprimir${data.error ? `: ${data.error}` : ""}`,
+        );
+        return;
+      }
+
+      toast.success("Etiqueta reimpressa");
+    } catch {
+      toast.error("Erro de conexao");
+    }
+  }, []);
+
   // Reiniciar progresso handler
   const handleReiniciar = useCallback(async () => {
     const activePedidoIds = pedidoIds.filter((id) => !completedIds.has(id));
@@ -496,6 +522,7 @@ function EmbalagemPage() {
                 onToggleExpand={() => toggleExpandedPedido(focusedPedido.id)}
                 items={itemsByPedido.get(focusedPedido.id) ?? []}
                 onConfirmItem={handleConfirmItem}
+                onReprint={handleReprint}
               />
             </div>
           );
@@ -525,6 +552,7 @@ function EmbalagemPage() {
                     onToggleExpand={() => toggleExpandedPedido(pedido.id)}
                     items={itemsByPedido.get(pedido.id) ?? []}
                     onConfirmItem={handleConfirmItem}
+                    onReprint={handleReprint}
                   />
                 ))}
               </div>
@@ -546,6 +574,7 @@ function EmbalagemPage() {
                     onToggleExpand={() => toggleExpandedPedido(pedido.id)}
                     items={itemsByPedido.get(pedido.id) ?? []}
                     onConfirmItem={handleConfirmItem}
+                    onReprint={handleReprint}
                   />
                 ))}
               </div>
@@ -596,6 +625,7 @@ function EmbalagemOrderRow({
   onToggleExpand,
   items,
   onConfirmItem,
+  onReprint,
 }: {
   pedido: SeparacaoPedido;
   highlighted: boolean;
@@ -604,7 +634,9 @@ function EmbalagemOrderRow({
   onToggleExpand: () => void;
   items: PedidoItem[];
   onConfirmItem: (item: PedidoItem, delta: number) => void;
+  onReprint: (pedidoId: string) => Promise<void>;
 }) {
+  const [reprinting, setReprinting] = useState(false);
   const totalItens = pedido.total_itens || 0;
   const itensBipados = pedido.itens_bipados || 0;
   const isComplete = completed || itensBipados >= totalItens;
@@ -699,6 +731,33 @@ function EmbalagemOrderRow({
               readOnly={isComplete}
             />
           ))}
+        </div>
+      )}
+
+      {/* Reprint button for completed orders */}
+      {expanded && isComplete && (
+        <div className="border-t border-line px-4 py-2.5">
+          <button
+            type="button"
+            disabled={reprinting}
+            onClick={async (e) => {
+              e.stopPropagation();
+              setReprinting(true);
+              try {
+                await onReprint(pedido.id);
+              } finally {
+                setReprinting(false);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-50 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/50"
+          >
+            {reprinting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Printer className="h-3.5 w-3.5" />
+            )}
+            Reimprimir etiqueta
+          </button>
         </div>
       )}
     </article>

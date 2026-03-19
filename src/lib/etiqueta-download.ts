@@ -110,10 +110,21 @@ function validarZpl(text: string): boolean {
  * Each label is delimited by ^XA ... ^XZ. Any preceding content (e.g. ~DG graphic
  * definitions for Shopee labels) is included with the following ^XA block.
  *
+ * Shopee labels use ~DG to download a raster graphic to printer memory, then ^XG to
+ * print it, and finally ^ID to clean up the graphic. All blocks MUST be sent together
+ * — splitting them causes the cleanup to be lost, leaving stale graphics in printer
+ * memory that can prevent subsequent labels from printing.
+ *
  * Returns at least one element (the original string if no split boundaries found).
  */
 export function splitZplLabels(zpl: string): string[] {
   if (!zpl) return [];
+
+  // Shopee labels use ~DG graphic downloads and need ALL blocks sent together
+  // (graphic download + print + cleanup). Never split these.
+  if (zpl.includes("~DG")) {
+    return [zpl];
+  }
 
   const labels: string[] = [];
   let remaining = zpl;

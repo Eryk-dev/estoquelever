@@ -130,7 +130,7 @@ export async function checkAndReleasePedidos(
         .select("id")
         .eq("galpao_id", ocGalpaoId)
         .eq("ativo", true)
-        .order("created_at", { ascending: true })
+        .order("criado_em", { ascending: true })
         .limit(1)
         .single();
       if (empresaOcGalpao) {

@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
       .select("id")
       .eq("galpao_id", galpaoId)
       .eq("ativo", true)
-      .order("created_at", { ascending: true })
+      .order("criado_em", { ascending: true })
       .limit(1)
       .single();
 

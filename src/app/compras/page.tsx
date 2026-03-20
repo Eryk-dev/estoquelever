@@ -4,6 +4,7 @@ import { useDeferredValue, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowDownUp,
   Clock3,
   Filter,
   RefreshCw,
@@ -26,6 +27,7 @@ type CompraTab = "aguardando_compra" | "comprado" | "excecoes";
 type Prioridade = "critica" | "alta" | "normal";
 type PrioridadeFilter = "todas" | Prioridade;
 type AgingFilter = "todos" | "hoje" | "1-2" | "3+";
+type OcSortOption = "recente" | "prioridade" | "aging";
 
 interface ComprasCounts {
   aguardando_compra: number;
@@ -87,6 +89,7 @@ interface OcData {
   observacao: string | null;
   comprado_por_nome: string | null;
   comprado_em: string | null;
+  created_at: string;
   aging_dias: number;
   prioridade: Prioridade;
   pedidos_bloqueados: number;
@@ -204,6 +207,7 @@ export default function ComprasPage() {
   const [galpaoFilter, setGalpaoFilter] = useState("todos");
   const [prioridadeFilter, setPrioridadeFilter] = useState<PrioridadeFilter>("todas");
   const [agingFilter, setAgingFilter] = useState<AgingFilter>("todos");
+  const [ocSort, setOcSort] = useState<OcSortOption>("recente");
   const deferredSearch = useDeferredValue(search);
 
   const cargos = user?.cargos ?? (user?.cargo ? [user.cargo] : []);
@@ -307,7 +311,7 @@ export default function ComprasPage() {
     }
 
     if (activeTab === "comprado") {
-      return (items as OcData[]).filter((oc) => {
+      const filtered = (items as OcData[]).filter((oc) => {
         if (galpaoFilter !== "todos" && oc.galpao_id !== galpaoFilter) return false;
         if (prioridadeFilter !== "todas" && oc.prioridade !== prioridadeFilter) return false;
         if (!matchesAging(oc.aging_dias, agingFilter)) return false;
@@ -328,6 +332,20 @@ export default function ComprasPage() {
         );
         return haystack.includes(searchTerm);
       });
+
+      if (ocSort === "prioridade") {
+        const prioridadeOrder = { critica: 0, alta: 1, normal: 2 } as const;
+        filtered.sort((a, b) =>
+          prioridadeOrder[a.prioridade] - prioridadeOrder[b.prioridade] ||
+          b.aging_dias - a.aging_dias ||
+          b.pedidos_bloqueados - a.pedidos_bloqueados,
+        );
+      } else if (ocSort === "aging") {
+        filtered.sort((a, b) => b.aging_dias - a.aging_dias);
+      }
+      // "recente" keeps API default (comprado_em DESC)
+
+      return filtered;
     }
 
     return (items as ExceptionData[]).filter((item) => {
@@ -348,7 +366,7 @@ export default function ComprasPage() {
       );
       return haystack.includes(searchTerm);
     });
-  }, [activeTab, agingFilter, deferredSearch, galpaoFilter, items, prioridadeFilter]);
+  }, [activeTab, agingFilter, deferredSearch, galpaoFilter, items, ocSort, prioridadeFilter]);
 
   const exceptionSections = useMemo(() => {
     if (activeTab !== "excecoes") return [];
@@ -515,6 +533,22 @@ export default function ComprasPage() {
                 <option value="3+">3 dias ou mais</option>
               </select>
             </div>
+
+            {activeTab === "comprado" && (
+              <div className="mt-3 flex items-center gap-2">
+                <ArrowDownUp className="h-4 w-4 text-ink-faint" />
+                <span className="text-xs font-medium text-ink-muted">Ordenar:</span>
+                <select
+                  value={ocSort}
+                  onChange={(e) => setOcSort(e.target.value as OcSortOption)}
+                  className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
+                >
+                  <option value="recente">Mais recente</option>
+                  <option value="prioridade">Prioridade</option>
+                  <option value="aging">Aging</option>
+                </select>
+              </div>
+            )}
           </section>
 
           {items.length === 0 ? (

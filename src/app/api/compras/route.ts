@@ -555,13 +555,10 @@ async function fetchComprado(
       };
     })
     .sort((a, b) => {
-      const prioridadeOrder = { critica: 0, alta: 1, normal: 2 } as const;
-      return (
-        prioridadeOrder[a.prioridade] - prioridadeOrder[b.prioridade] ||
-        b.aging_dias - a.aging_dias ||
-        b.pedidos_bloqueados - a.pedidos_bloqueados ||
-        b.quantidade_total - a.quantidade_total
-      );
+      // Default: most recently purchased first
+      const aDate = a.comprado_em ?? a.created_at;
+      const bDate = b.comprado_em ?? b.created_at;
+      return bDate.localeCompare(aDate);
     });
 }
 

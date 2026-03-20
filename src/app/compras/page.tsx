@@ -154,7 +154,9 @@ async function fetchGalpoes(): Promise<GalpaoOption[]> {
   const res = await fetch("/api/admin/galpoes");
   if (!res.ok) return [];
   const data = await res.json();
-  return (data.galpoes ?? [])
+  // API returns array directly (not wrapped in { galpoes: [...] })
+  const galpoes = Array.isArray(data) ? data : (data.galpoes ?? []);
+  return galpoes
     .filter((g: { ativo: boolean }) => g.ativo)
     .map((g: { id: string; nome: string }) => ({ id: g.id, nome: g.nome }));
 }

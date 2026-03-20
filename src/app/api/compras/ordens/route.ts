@@ -131,17 +131,10 @@ export async function POST(request: NextRequest) {
       draftOcIds = (draftOcs ?? []).map((oc) => oc.id);
     }
 
-    if (draftOcIds.length > 1) {
-      return NextResponse.json(
-        {
-          error:
-            "Os itens selecionados pertencem a mais de um rascunho de OC. Separe a compra por rascunho antes de confirmar.",
-        },
-        { status: 409 },
-      );
-    }
-
-    const existingOcId = draftOcIds[0] ?? null;
+    // If exactly 1 draft → reuse it. If multiple drafts → create new OC
+    // (auto-created drafts from produto-esgotado can split items across OCs).
+    // Old empty drafts are cleaned up below.
+    const existingOcId = draftOcIds.length === 1 ? draftOcIds[0] : null;
     let ocId: string;
 
     if (existingOcId) {
@@ -201,6 +194,26 @@ export async function POST(request: NextRequest) {
     }
 
     const linkedCount = updatedItems?.length ?? 0;
+
+    // Clean up orphaned draft OCs (drafts that lost all their items to this new OC)
+    if (draftOcIds.length > 0) {
+      const orphanedDraftIds = draftOcIds.filter((id) => id !== ocId);
+      if (orphanedDraftIds.length > 0) {
+        for (const draftId of orphanedDraftIds) {
+          const { count } = await supabase
+            .from("siso_pedido_itens")
+            .select("id", { count: "exact", head: true })
+            .eq("ordem_compra_id", draftId);
+          if (count === 0) {
+            await supabase
+              .from("siso_ordens_compra")
+              .delete()
+              .eq("id", draftId)
+              .eq("status", "aguardando_compra");
+          }
+        }
+      }
+    }
 
     // Fetch the full OC for response
     const { data: fullOc } = await supabase

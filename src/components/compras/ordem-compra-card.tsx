@@ -3,6 +3,8 @@
 import { useState } from "react";
 import {
   ArrowRightLeft,
+  ChevronDown,
+  ChevronUp,
   ClipboardCheck,
   Clock3,
   Loader2,
@@ -319,6 +321,7 @@ export function OrdemCompraCard({
 }: OrdemCompraCardProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [expanded, setExpanded] = useState(false);
 
   const progresso = quantidade_total > 0
     ? Math.min((quantidade_recebida / quantidade_total) * 100, 100)
@@ -415,58 +418,72 @@ export function OrdemCompraCard({
         </div>
       )}
 
-      <div className="divide-y divide-line/60">
-        {itens.map((item) => {
-          const restante = Math.max(item.quantidade - item.compra_quantidade_recebida, 0);
-          return (
-            <div
-              key={item.id}
-              className="flex items-start justify-between gap-3 px-4 py-3"
-            >
-              <div className="flex min-w-0 gap-3">
-                {item.imagem ? (
-                  <img
-                    src={item.imagem}
-                    alt={item.sku}
-                    className="h-11 w-11 shrink-0 rounded-lg border border-line bg-surface object-cover"
-                  />
-                ) : (
-                  <div className="h-11 w-11 shrink-0 rounded-lg border border-dashed border-line bg-surface" />
-                )}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between border-b border-line/60 px-4 py-2.5 text-xs font-medium text-ink-muted hover:bg-surface/30 transition-colors"
+      >
+        <span>{total_itens} ite{total_itens !== 1 ? "ns" : "m"}</span>
+        <span className="inline-flex items-center gap-1">
+          {expanded ? "Ocultar" : "Ver itens"}
+          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </span>
+      </button>
 
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-semibold text-ink">{item.sku}</p>
-                    <span className="inline-flex items-center rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
-                      #{item.numero_pedido}
-                    </span>
+      {expanded && (
+        <div className="divide-y divide-line/60">
+          {itens.map((item) => {
+            const restante = Math.max(item.quantidade - item.compra_quantidade_recebida, 0);
+            return (
+              <div
+                key={item.id}
+                className="flex items-start justify-between gap-3 px-4 py-3"
+              >
+                <div className="flex min-w-0 gap-3">
+                  {item.imagem ? (
+                    <img
+                      src={item.imagem}
+                      alt={item.sku}
+                      className="h-11 w-11 shrink-0 rounded-lg border border-line bg-surface object-cover"
+                    />
+                  ) : (
+                    <div className="h-11 w-11 shrink-0 rounded-lg border border-dashed border-line bg-surface" />
+                  )}
+
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-ink">{item.sku}</p>
+                      <span className="inline-flex items-center rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
+                        #{item.numero_pedido}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-ink-muted">{item.descricao}</p>
+                    <p className="mt-1 text-[11px] text-ink-faint">
+                      Solicitado há {formatDaysLabel(item.aging_dias)}
+                    </p>
                   </div>
-                  <p className="mt-0.5 text-xs text-ink-muted">{item.descricao}</p>
-                  <p className="mt-1 text-[11px] text-ink-faint">
-                    Solicitado há {formatDaysLabel(item.aging_dias)}
-                  </p>
                 </div>
-              </div>
 
-              <div className="flex items-start gap-3">
-                <div className="text-right">
-                  <p className="text-sm font-semibold text-ink">
-                    {item.compra_quantidade_recebida}/{item.quantidade} un
-                  </p>
-                  <p className="text-[11px] text-ink-muted">
-                    {restante > 0 ? `${restante} un pendente` : "item fechado"}
-                  </p>
+                <div className="flex items-start gap-3">
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-ink">
+                      {item.compra_quantidade_recebida}/{item.quantidade} un
+                    </p>
+                    <p className="text-[11px] text-ink-muted">
+                      {restante > 0 ? `${restante} un pendente` : "item fechado"}
+                    </p>
+                  </div>
+                  <ItemActions
+                    item={item}
+                    cargo={cargo}
+                    onActionComplete={handleActionComplete}
+                  />
                 </div>
-                <ItemActions
-                  item={item}
-                  cargo={cargo}
-                  onActionComplete={handleActionComplete}
-                />
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="border-t border-line px-4 py-4">
         <button

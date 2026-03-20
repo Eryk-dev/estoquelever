@@ -133,33 +133,45 @@ export async function handleNfWebhook(
     return;
   }
 
-  // Step 5 — Transition aguardando_nf → aguardando_separacao (idempotent via WHERE clause)
-  const { data: updated } = await supabase
+  // Step 5a — ALWAYS save nota_fiscal_id + NF data regardless of current status
+  await supabase
     .from("siso_pedidos")
     .update({
-      status_separacao: "aguardando_separacao",
+      nota_fiscal_id: String(idNotaFiscalTiny),
       url_danfe: urlDanfe ?? null,
       chave_acesso_nf: chaveAcesso ?? null,
     })
+    .eq("id", pedidoId);
+
+  registrarEvento({
+    pedidoId,
+    evento: "nf_autorizada",
+    detalhes: { idNotaFiscalTiny, chaveAcesso },
+  }).catch(() => {});
+
+  logger.info("nf-webhook", "NF data saved on pedido", {
+    pedidoId,
+    idNotaFiscalTiny: String(idNotaFiscalTiny),
+    empresaId,
+  });
+
+  // Step 5b — Transition aguardando_nf → aguardando_separacao (only if in correct status)
+  const { data: transitioned } = await supabase
+    .from("siso_pedidos")
+    .update({ status_separacao: "aguardando_separacao" })
     .eq("id", pedidoId)
     .eq("status_separacao", "aguardando_nf")
     .select("id")
     .maybeSingle();
 
-  if (updated) {
-    registrarEvento({
-      pedidoId,
-      evento: "nf_autorizada",
-      detalhes: { idNotaFiscalTiny, chaveAcesso },
-    }).catch(() => {});
-
+  if (transitioned) {
     logger.info("nf-webhook", "Pedido transitioned aguardando_nf → aguardando_separacao", {
       pedidoId,
       idNotaFiscalTiny: String(idNotaFiscalTiny),
       empresaId,
     });
   } else {
-    logger.info("nf-webhook", "Pedido not in aguardando_nf — skipped transition", {
+    logger.info("nf-webhook", "Pedido not in aguardando_nf — NF saved, transition skipped", {
       pedidoId,
       idNotaFiscalTiny: String(idNotaFiscalTiny),
       empresaId,

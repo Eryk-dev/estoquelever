@@ -140,13 +140,30 @@ export async function checkAndReleasePedidos(
 
     const decisao = mesmoGalpao ? "propria" : "transferencia";
 
+    // Check if NF already arrived (webhook may have saved nota_fiscal_id before release)
+    const { data: pedidoNf } = await supabase
+      .from("siso_pedidos")
+      .select("nota_fiscal_id")
+      .eq("id", pedidoId)
+      .single();
+
+    const nfJaChegou = !!pedidoNf?.nota_fiscal_id;
+    const novoStatusSeparacao = nfJaChegou ? "aguardando_separacao" : "aguardando_nf";
+
+    if (nfJaChegou) {
+      logger.info("compras-release", "NF já registrada — pulando direto para aguardando_separacao", {
+        pedidoId,
+        notaFiscalId: pedidoNf.nota_fiscal_id,
+      });
+    }
+
     // Release: update pedido
     const { error: updateError } = await supabase
       .from("siso_pedidos")
       .update({
         decisao_final: decisao,
         status: "executando",
-        status_separacao: "aguardando_nf",
+        status_separacao: novoStatusSeparacao,
         // Route separation to the OC's galpão (so correct operator sees it)
         ...(ocGalpaoId ? { separacao_galpao_id: ocGalpaoId } : {}),
       })

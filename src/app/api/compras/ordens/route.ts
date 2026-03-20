@@ -9,12 +9,14 @@ const ALLOWED_CARGOS = ["admin", "comprador"];
  * POST /api/compras/ordens
  *
  * Creates an ordem de compra and links all aguardando items for that fornecedor.
- * Body: { fornecedor, empresa_id, observacao?, usuario_id, cargo }
+ * Items from ALL empresas are included (grouped by fornecedor only).
+ * Body: { fornecedor, galpao_id, observacao?, usuario_id, cargo, item_ids? }
  */
 export async function POST(request: NextRequest) {
   let body: {
     fornecedor?: string;
-    empresa_id?: string;
+    galpao_id?: string;
+    empresa_id?: string; // legacy — ignored if galpao_id is present
     observacao?: string;
     usuario_id?: string;
     cargo?: string;
@@ -27,7 +29,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { fornecedor, empresa_id, observacao, usuario_id, cargo, item_ids } = body;
+  const { fornecedor, observacao, usuario_id, cargo, item_ids } = body;
+  const galpaoId = body.galpao_id ?? null;
 
   // Auth check
   if (cargo && !ALLOWED_CARGOS.includes(cargo)) {
@@ -35,9 +38,9 @@ export async function POST(request: NextRequest) {
   }
 
   // Validate required fields
-  if (!fornecedor || !empresa_id || !usuario_id) {
+  if (!fornecedor || !galpaoId || !usuario_id) {
     return NextResponse.json(
-      { error: "fornecedor, empresa_id e usuario_id são obrigatórios" },
+      { error: "fornecedor, galpao_id e usuario_id são obrigatórios" },
       { status: 400 },
     );
   }
@@ -45,14 +48,34 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
+    // Resolve the first active empresa in the chosen galpão (for backwards compat empresa_id)
+    // Use deterministic ordering to always pick the same empresa
+    const { data: empresaGalpao, error: empresaError } = await supabase
+      .from("siso_empresas")
+      .select("id")
+      .eq("galpao_id", galpaoId)
+      .eq("ativo", true)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .single();
+
+    if (empresaError || !empresaGalpao) {
+      return NextResponse.json(
+        { error: "Nenhuma empresa ativa encontrada no galpão selecionado" },
+        { status: 400 },
+      );
+    }
+
+    const empresaId = empresaGalpao.id;
+
+    // Find items: all empresas for this fornecedor (no empresa_origem_id filter)
     let query = supabase
       .from("siso_pedido_itens")
       .select(
         "id, ordem_compra_id, fornecedor_oc, quantidade_pedida, compra_quantidade_solicitada, siso_pedidos!inner(empresa_origem_id)",
       )
       .eq("fornecedor_oc", fornecedor)
-      .eq("compra_status", "aguardando_compra")
-      .eq("siso_pedidos.empresa_origem_id", empresa_id);
+      .eq("compra_status", "aguardando_compra");
 
     const selectedItemIds = Array.isArray(item_ids)
       ? [...new Set(item_ids.map((value) => value.trim()).filter(Boolean))]
@@ -78,7 +101,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "Alguns itens selecionados nao estao mais aguardando compra para este fornecedor/empresa",
+            "Alguns itens selecionados nao estao mais aguardando compra para este fornecedor",
         },
         { status: 409 },
       );
@@ -109,11 +132,13 @@ export async function POST(request: NextRequest) {
     let ocId: string;
 
     if (existingOcId) {
-      // Update existing auto-created OC to 'comprado'
+      // Update existing auto-created OC to 'comprado' and set galpao
       const { error: updateOcError } = await supabase
         .from("siso_ordens_compra")
         .update({
           status: "comprado",
+          galpao_id: galpaoId,
+          empresa_id: empresaId,
           observacao: observacao ?? undefined,
           comprado_por: usuario_id,
           comprado_em: now,
@@ -125,12 +150,13 @@ export async function POST(request: NextRequest) {
       }
       ocId = existingOcId;
     } else {
-      // Create new OC
+      // Create new OC with galpao_id
       const { data: oc, error: insertError } = await supabase
         .from("siso_ordens_compra")
         .insert({
           fornecedor,
-          empresa_id,
+          galpao_id: galpaoId,
+          empresa_id: empresaId,
           status: "comprado",
           observacao: observacao ?? null,
           comprado_por: usuario_id,
@@ -166,14 +192,15 @@ export async function POST(request: NextRequest) {
     // Fetch the full OC for response
     const { data: fullOc } = await supabase
       .from("siso_ordens_compra")
-      .select("id, fornecedor, empresa_id, status, observacao, comprado_por, comprado_em, created_at")
+      .select("id, fornecedor, galpao_id, empresa_id, status, observacao, comprado_por, comprado_em, created_at")
       .eq("id", ocId)
       .single();
 
     logger.info("compras-ordens", "OC criada/atualizada", {
       ocId,
       fornecedor,
-      empresaId: empresa_id,
+      galpaoId,
+      empresaId,
       itensVinculados: linkedCount,
       selecionados: selectedItemIds.length > 0,
       usuarioId: usuario_id,
@@ -190,7 +217,7 @@ export async function POST(request: NextRequest) {
     logger.error("compras-ordens", "Erro ao criar OC", {
       error: err instanceof Error ? err.message : String(err),
       fornecedor,
-      empresaId: empresa_id,
+      galpaoId,
     });
     return NextResponse.json(
       { error: "Erro interno ao criar ordem de compra" },

@@ -8,6 +8,7 @@ import {
   getCompraQuantidadeRestante,
   getCompraQuantidadeSolicitada,
 } from "@/lib/compras-utils";
+import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import type { CompraItemAgrupado } from "@/types";
 
 type CompraStatusFilter = "aguardando_compra" | "comprado" | "indisponivel" | "excecoes";
@@ -53,13 +54,15 @@ interface RawCompraBaseItem {
 interface RawCompradoOc {
   id: string;
   fornecedor: string;
-  empresa_id: string;
+  empresa_id: string | null;
+  galpao_id: string | null;
   status: string;
   observacao: string | null;
   comprado_por: string | null;
   comprado_em: string | null;
   created_at: string;
   siso_usuarios: { nome: string } | null;
+  siso_galpoes: { nome: string } | null;
 }
 
 interface RawExceptionItem extends RawCompraBaseItem {
@@ -314,12 +317,19 @@ async function fetchAguardandoCompra(
     rawItems.map((item) => item.siso_pedidos?.empresa_origem_id),
   );
 
+  // Fetch galpão name map for default galpão suggestion
+  const { data: galpoes } = await supabase
+    .from("siso_galpoes")
+    .select("id, nome")
+    .eq("ativo", true);
+  const galpaoByNome = new Map<string, string>();
+  for (const g of galpoes ?? []) galpaoByNome.set(g.nome, g.id);
+
   const byGrupo = new Map<
     string,
     {
       fornecedor: string;
-      empresa_id: string | null;
-      empresa_nome: string | null;
+      empresas: Set<string>;
       primeira_solicitacao_em: string | null;
       pedidos: Set<string>;
       quantidade_total: number;
@@ -332,15 +342,15 @@ async function fetchAguardandoCompra(
   for (const item of rawItems) {
     const fornecedor = item.fornecedor_oc ?? "Sem fornecedor";
     const empresaId = item.siso_pedidos?.empresa_origem_id ?? null;
-    const groupKey = `${fornecedor}::${empresaId ?? "sem-empresa"}`;
+    // Group by fornecedor only (not by empresa)
+    const groupKey = fornecedor;
     const quantidadeSolicitada = getCompraQuantidadeSolicitada(item);
     const primeiraSolicitacao = item.compra_solicitada_em ?? null;
 
     if (!byGrupo.has(groupKey)) {
       byGrupo.set(groupKey, {
         fornecedor,
-        empresa_id: empresaId,
-        empresa_nome: empresaId ? (empresaNameMap.get(empresaId) ?? null) : null,
+        empresas: new Set<string>(),
         primeira_solicitacao_em: primeiraSolicitacao,
         pedidos: new Set<string>(),
         quantidade_total: 0,
@@ -351,6 +361,7 @@ async function fetchAguardandoCompra(
     }
 
     const grupo = byGrupo.get(groupKey)!;
+    if (empresaId) grupo.empresas.add(empresaId);
     grupo.quantidade_total += quantidadeSolicitada;
     grupo.pedidos.add(item.pedido_id);
     if (
@@ -410,10 +421,22 @@ async function fetchAguardandoCompra(
         quantidadeTotal: grupo.quantidade_total,
       });
 
+      // Derive default galpão from the first item's SKU → fornecedor mapping
+      const firstItem = [...grupo.itens.values()][0];
+      const skuInfo = firstItem ? getFornecedorBySku(firstItem.sku) : null;
+      const galpaoSugeridoNome = skuInfo?.filialOC ?? null;
+      const galpaoSugeridoId = galpaoSugeridoNome ? (galpaoByNome.get(galpaoSugeridoNome) ?? null) : null;
+
+      // Build empresa badges from the unique empresas in this group
+      const empresasBadges = [...grupo.empresas]
+        .map((id) => ({ id, nome: empresaNameMap.get(id) ?? id }))
+        .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+
       return {
         fornecedor: grupo.fornecedor,
-        empresa_id: grupo.empresa_id,
-        empresa_nome: grupo.empresa_nome,
+        galpao_sugerido_id: galpaoSugeridoId,
+        galpao_sugerido_nome: galpaoSugeridoNome,
+        empresas: empresasBadges,
         prioridade,
         aging_dias: agingDias,
         primeira_solicitacao_em: grupo.primeira_solicitacao_em,
@@ -439,10 +462,6 @@ async function fetchAguardandoCompra(
         prioridadeOrder[a.prioridade] - prioridadeOrder[b.prioridade] ||
         b.aging_dias - a.aging_dias ||
         b.quantidade_total - a.quantidade_total ||
-        (a.empresa_nome ?? a.empresa_id ?? "").localeCompare(
-          b.empresa_nome ?? b.empresa_id ?? "",
-          "pt-BR",
-        ) ||
         a.fornecedor.localeCompare(b.fornecedor, "pt-BR")
       );
     });
@@ -453,7 +472,7 @@ async function fetchComprado(
 ) {
   const { data: ordens, error: ordensError } = await supabase
     .from("siso_ordens_compra")
-    .select("id, fornecedor, empresa_id, status, observacao, comprado_por, comprado_em, created_at, siso_usuarios:comprado_por(nome)")
+    .select("id, fornecedor, empresa_id, galpao_id, status, observacao, comprado_por, comprado_em, created_at, siso_usuarios:comprado_por(nome), siso_galpoes:galpao_id(nome)")
     .in("status", [...OPEN_OC_LIST_STATUSES])
     .order("created_at", { ascending: false });
 
@@ -461,10 +480,6 @@ async function fetchComprado(
   if (!ordens || ordens.length === 0) return [];
 
   const ocs = ordens as unknown as RawCompradoOc[];
-  const empresaNameMap = await buildEmpresaNameMap(
-    supabase,
-    ocs.map((oc) => oc.empresa_id),
-  );
 
   const { data: items, error: itemsError } = await supabase
     .from("siso_pedido_itens")
@@ -507,8 +522,8 @@ async function fetchComprado(
       return {
         id: oc.id,
         fornecedor: oc.fornecedor,
-        empresa_id: oc.empresa_id,
-        empresa_nome: empresaNameMap.get(oc.empresa_id) ?? null,
+        galpao_id: oc.galpao_id,
+        galpao_nome: oc.siso_galpoes?.nome ?? null,
         status: oc.status,
         observacao: oc.observacao,
         comprado_por_nome: oc.siso_usuarios?.nome ?? null,
@@ -563,10 +578,26 @@ async function fetchExcecoes(
   if (error) throw new Error(`Erro ao buscar exceções de compras: ${error.message}`);
 
   const rawItems = (items ?? []) as unknown as RawExceptionItem[];
-  const empresaNameMap = await buildEmpresaNameMap(
-    supabase,
-    rawItems.map((item) => item.siso_pedidos?.empresa_origem_id),
-  );
+  const empresaIds = rawItems.map((item) => item.siso_pedidos?.empresa_origem_id).filter(Boolean) as string[];
+  const empresaNameMap = await buildEmpresaNameMap(supabase, empresaIds);
+
+  // Build empresa→galpão map for exception items
+  const uniqueEmpresaIds = [...new Set(empresaIds)];
+  const empresaGalpaoMap = new Map<string, { galpao_id: string; galpao_nome: string }>();
+  if (uniqueEmpresaIds.length > 0) {
+    const { data: empresasWithGalpao } = await supabase
+      .from("siso_empresas")
+      .select("id, galpao_id, siso_galpoes:galpao_id(nome)")
+      .in("id", uniqueEmpresaIds);
+    for (const emp of (empresasWithGalpao ?? []) as unknown as Array<{ id: string; galpao_id: string | null; siso_galpoes: { nome: string } | null }>) {
+      if (emp.galpao_id) {
+        empresaGalpaoMap.set(emp.id, {
+          galpao_id: emp.galpao_id,
+          galpao_nome: emp.siso_galpoes?.nome ?? emp.galpao_id,
+        });
+      }
+    }
+  }
 
   return rawItems
     .map((item) => {
@@ -576,6 +607,8 @@ async function fetchExcecoes(
         item.compra_solicitada_em;
       const quantidade = getCompraQuantidadeRestante(item);
       const agingDias = getAgingDays(agingBase);
+      const empresaId = item.siso_pedidos?.empresa_origem_id ?? null;
+      const galpaoInfo = empresaId ? empresaGalpaoMap.get(empresaId) : null;
 
       return {
         id: String(item.id),
@@ -605,10 +638,10 @@ async function fetchExcecoes(
         compra_equivalente_observacao: item.compra_equivalente_observacao,
         compra_cancelamento_motivo: item.compra_cancelamento_motivo,
         numero_pedido: item.siso_pedidos?.numero ?? "?",
-        empresa_id: item.siso_pedidos?.empresa_origem_id ?? null,
-        empresa_nome: item.siso_pedidos?.empresa_origem_id
-          ? (empresaNameMap.get(item.siso_pedidos.empresa_origem_id) ?? null)
-          : null,
+        empresa_id: empresaId,
+        empresa_nome: empresaId ? (empresaNameMap.get(empresaId) ?? null) : null,
+        galpao_id: galpaoInfo?.galpao_id ?? null,
+        galpao_nome: galpaoInfo?.galpao_nome ?? null,
       };
     })
     .sort((a, b) =>

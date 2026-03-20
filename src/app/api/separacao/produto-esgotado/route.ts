@@ -325,14 +325,29 @@ export async function POST(request: NextRequest) {
       const empresaId = pedidoData?.empresa_origem_id;
 
       if (empresaId) {
-        const { data: existingOC } = await supabase
+        // Resolve galpao_id from the empresa
+        const { data: empresaData } = await supabase
+          .from("siso_empresas")
+          .select("galpao_id")
+          .eq("id", empresaId)
+          .single();
+        const galpaoId = empresaData?.galpao_id ?? null;
+
+        // Look for existing draft OC by fornecedor + galpao (not empresa_id)
+        let existingOCQuery = supabase
           .from("siso_ordens_compra")
           .select("id")
           .eq("fornecedor", fornecedor)
-          .eq("empresa_id", empresaId)
           .eq("status", "aguardando_compra")
-          .limit(1)
-          .maybeSingle();
+          .limit(1);
+
+        if (galpaoId) {
+          existingOCQuery = existingOCQuery.eq("galpao_id", galpaoId);
+        } else {
+          existingOCQuery = existingOCQuery.eq("empresa_id", empresaId);
+        }
+
+        const { data: existingOC } = await existingOCQuery.maybeSingle();
 
         if (existingOC) {
           ordemCompraId = existingOC.id;
@@ -341,6 +356,7 @@ export async function POST(request: NextRequest) {
             .from("siso_ordens_compra")
             .insert({
               fornecedor,
+              galpao_id: galpaoId,
               empresa_id: empresaId,
               status: "aguardando_compra",
               observacao: `Criada automaticamente — SKU ${sku} esgotado`,

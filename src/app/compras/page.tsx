@@ -33,6 +33,16 @@ interface ComprasCounts {
   indisponivel: number;
 }
 
+interface GalpaoOption {
+  id: string;
+  nome: string;
+}
+
+interface EmpresaBadge {
+  id: string;
+  nome: string;
+}
+
 interface SummaryItem {
   nome: string | null;
   quantidade: number;
@@ -54,8 +64,9 @@ interface ComprasSummary {
 
 interface FornecedorGroup {
   fornecedor: string;
-  empresa_id: string | null;
-  empresa_nome: string | null;
+  galpao_sugerido_id: string | null;
+  galpao_sugerido_nome: string | null;
+  empresas: EmpresaBadge[];
   prioridade: Prioridade;
   aging_dias: number;
   pedidos_bloqueados: number;
@@ -70,7 +81,8 @@ interface FornecedorGroup {
 interface OcData {
   id: string;
   fornecedor: string;
-  empresa_nome: string | null;
+  galpao_id: string | null;
+  galpao_nome: string | null;
   status: string;
   observacao: string | null;
   comprado_por_nome: string | null;
@@ -110,6 +122,8 @@ interface ExceptionData {
   pedido_id: string;
   numero_pedido: string;
   empresa_nome: string | null;
+  galpao_id: string | null;
+  galpao_nome: string | null;
   compra_status: string | null;
   compra_equivalente_sku: string | null;
   compra_equivalente_descricao: string | null;
@@ -134,6 +148,15 @@ async function fetchCompras(
   if (res.status === 403) throw new Error("Acesso negado");
   if (!res.ok) throw new Error("Erro ao carregar compras");
   return res.json();
+}
+
+async function fetchGalpoes(): Promise<GalpaoOption[]> {
+  const res = await fetch("/api/admin/galpoes");
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.galpoes ?? [])
+    .filter((g: { ativo: boolean }) => g.ativo)
+    .map((g: { id: string; nome: string }) => ({ id: g.id, nome: g.nome }));
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -176,7 +199,7 @@ export default function ComprasPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<CompraTab>("aguardando_compra");
   const [search, setSearch] = useState("");
-  const [empresaFilter, setEmpresaFilter] = useState("todas");
+  const [galpaoFilter, setGalpaoFilter] = useState("todos");
   const [prioridadeFilter, setPrioridadeFilter] = useState<PrioridadeFilter>("todas");
   const [agingFilter, setAgingFilter] = useState<AgingFilter>("todos");
   const deferredSearch = useDeferredValue(search);
@@ -190,6 +213,13 @@ export default function ComprasPage() {
     queryFn: () => fetchCompras(activeTab, cargo),
     enabled: !!user && allowed,
     refetchInterval: 30_000,
+  });
+
+  const { data: galpoes = [] } = useQuery({
+    queryKey: ["galpoes-compras"],
+    queryFn: fetchGalpoes,
+    enabled: !!user && allowed,
+    staleTime: 5 * 60 * 1000,
   });
   const queryError = error instanceof Error ? error.message : "Erro ao carregar compras";
 
@@ -227,19 +257,19 @@ export default function ComprasPage() {
     excecoes: "Nenhum item bloqueado por intercambiável ou exceção.",
   };
 
-  const empresaOptions = useMemo(() => {
+  const galpaoOptions = useMemo(() => {
     const map = new Map<string, string>();
     if (activeTab === "aguardando_compra") {
       for (const group of items as FornecedorGroup[]) {
-        if (group.empresa_id) map.set(group.empresa_id, group.empresa_nome ?? group.empresa_id);
+        if (group.galpao_sugerido_id) map.set(group.galpao_sugerido_id, group.galpao_sugerido_nome ?? group.galpao_sugerido_id);
       }
     } else if (activeTab === "comprado") {
       for (const oc of items as OcData[]) {
-        if (oc.empresa_nome) map.set(oc.empresa_nome, oc.empresa_nome);
+        if (oc.galpao_id) map.set(oc.galpao_id, oc.galpao_nome ?? oc.galpao_id);
       }
     } else {
       for (const item of items as ExceptionData[]) {
-        if (item.empresa_nome) map.set(item.empresa_nome, item.empresa_nome);
+        if (item.galpao_id) map.set(item.galpao_id, item.galpao_nome ?? item.galpao_id);
       }
     }
     return [...map.entries()].map(([value, label]) => ({ value, label })).sort((a, b) =>
@@ -252,7 +282,7 @@ export default function ComprasPage() {
 
     if (activeTab === "aguardando_compra") {
       return (items as FornecedorGroup[]).filter((group) => {
-        if (empresaFilter !== "todas" && group.empresa_id !== empresaFilter) return false;
+        if (galpaoFilter !== "todos" && group.galpao_sugerido_id !== galpaoFilter) return false;
         if (prioridadeFilter !== "todas" && group.prioridade !== prioridadeFilter) return false;
         if (!matchesAging(group.aging_dias, agingFilter)) return false;
 
@@ -261,7 +291,7 @@ export default function ComprasPage() {
         const haystack = normalizeText(
           [
             group.fornecedor,
-            group.empresa_nome,
+            group.galpao_sugerido_nome,
             group.proxima_acao,
             ...group.itens.flatMap((item) => [
               item.sku,
@@ -276,7 +306,7 @@ export default function ComprasPage() {
 
     if (activeTab === "comprado") {
       return (items as OcData[]).filter((oc) => {
-        if (empresaFilter !== "todas" && oc.empresa_nome !== empresaFilter) return false;
+        if (galpaoFilter !== "todos" && oc.galpao_id !== galpaoFilter) return false;
         if (prioridadeFilter !== "todas" && oc.prioridade !== prioridadeFilter) return false;
         if (!matchesAging(oc.aging_dias, agingFilter)) return false;
 
@@ -285,7 +315,7 @@ export default function ComprasPage() {
         const haystack = normalizeText(
           [
             oc.fornecedor,
-            oc.empresa_nome,
+            oc.galpao_nome,
             oc.proxima_acao,
             ...oc.itens.flatMap((item) => [
               item.sku,
@@ -299,7 +329,7 @@ export default function ComprasPage() {
     }
 
     return (items as ExceptionData[]).filter((item) => {
-      if (empresaFilter !== "todas" && item.empresa_nome !== empresaFilter) return false;
+      if (galpaoFilter !== "todos" && item.galpao_id !== galpaoFilter) return false;
       if (prioridadeFilter !== "todas" && item.prioridade !== prioridadeFilter) return false;
       if (!matchesAging(item.aging_dias, agingFilter)) return false;
 
@@ -316,7 +346,7 @@ export default function ComprasPage() {
       );
       return haystack.includes(searchTerm);
     });
-  }, [activeTab, agingFilter, deferredSearch, empresaFilter, items, prioridadeFilter]);
+  }, [activeTab, agingFilter, deferredSearch, galpaoFilter, items, prioridadeFilter]);
 
   const exceptionSections = useMemo(() => {
     if (activeTab !== "excecoes") return [];
@@ -423,7 +453,12 @@ export default function ComprasPage() {
             <Tabs
               tabs={tabs}
               activeTab={activeTab}
-              onChange={(id) => setActiveTab(id as CompraTab)}
+              onChange={(id) => {
+                setActiveTab(id as CompraTab);
+                setGalpaoFilter("todos");
+                setPrioridadeFilter("todas");
+                setAgingFilter("todos");
+              }}
             />
           </div>
 
@@ -444,12 +479,12 @@ export default function ComprasPage() {
               </label>
 
               <select
-                value={empresaFilter}
-                onChange={(e) => setEmpresaFilter(e.target.value)}
+                value={galpaoFilter}
+                onChange={(e) => setGalpaoFilter(e.target.value)}
                 className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
               >
-                <option value="todas">Todas as empresas</option>
-                {empresaOptions.map((option) => (
+                <option value="todos">Todos os galpões</option>
+                {galpaoOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -509,10 +544,12 @@ export default function ComprasPage() {
               {activeTab === "aguardando_compra" &&
                 (filteredItems as FornecedorGroup[]).map((group) => (
                   <FornecedorCard
-                    key={`${group.fornecedor}-${group.empresa_id ?? "sem-empresa"}`}
+                    key={group.fornecedor}
                     fornecedor={group.fornecedor}
-                    empresa_id={group.empresa_id}
-                    empresa_nome={group.empresa_nome}
+                    galpao_sugerido_id={group.galpao_sugerido_id}
+                    galpao_sugerido_nome={group.galpao_sugerido_nome}
+                    empresas={group.empresas}
+                    galpoes={galpoes}
                     prioridade={group.prioridade}
                     aging_dias={group.aging_dias}
                     pedidos_bloqueados={group.pedidos_bloqueados}
@@ -534,7 +571,7 @@ export default function ComprasPage() {
                     id={oc.id}
                     index={idx + 1}
                     fornecedor={oc.fornecedor}
-                    empresa_nome={oc.empresa_nome}
+                    galpao_nome={oc.galpao_nome}
                     status={oc.status}
                     observacao={oc.observacao}
                     comprado_por_nome={oc.comprado_por_nome}

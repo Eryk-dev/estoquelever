@@ -3,13 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
-  Building2,
   Check,
   ChevronDown,
   ChevronUp,
   Clock3,
   Copy,
   Loader2,
+  MapPin,
   Package,
   ShoppingCart,
 } from "lucide-react";
@@ -19,10 +19,22 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import type { CompraItemAgrupado } from "@/types";
 
+interface EmpresaBadge {
+  id: string;
+  nome: string;
+}
+
+interface GalpaoOption {
+  id: string;
+  nome: string;
+}
+
 interface FornecedorCardProps {
   fornecedor: string;
-  empresa_id: string | null;
-  empresa_nome: string | null;
+  galpao_sugerido_id: string | null;
+  galpao_sugerido_nome: string | null;
+  empresas: EmpresaBadge[];
+  galpoes: GalpaoOption[];
   prioridade: "critica" | "alta" | "normal";
   aging_dias: number;
   pedidos_bloqueados: number;
@@ -77,8 +89,10 @@ function buildSelectionMap(
 
 export function FornecedorCard({
   fornecedor,
-  empresa_id,
-  empresa_nome,
+  galpao_sugerido_id,
+  galpao_sugerido_nome,
+  empresas,
+  galpoes,
   prioridade,
   aging_dias,
   pedidos_bloqueados,
@@ -96,9 +110,19 @@ export function FornecedorCard({
   const [submitting, setSubmitting] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
+  const [selectedGalpaoId, setSelectedGalpaoId] = useState<string>(
+    galpao_sugerido_id ?? galpoes[0]?.id ?? "",
+  );
   const [selectedSkus, setSelectedSkus] = useState<Record<string, boolean>>(() =>
     buildSelectionMap(itens, "all"),
   );
+
+  // Sync selectedGalpaoId when galpoes load async (initially empty)
+  useEffect(() => {
+    if (!selectedGalpaoId && galpoes.length > 0) {
+      setSelectedGalpaoId(galpao_sugerido_id ?? galpoes[0]?.id ?? "");
+    }
+  }, [galpoes, galpao_sugerido_id, selectedGalpaoId]);
 
   useEffect(() => {
     setSelectedSkus((current) => {
@@ -114,7 +138,7 @@ export function FornecedorCard({
   }, [itens]);
 
   const prioridadeMeta = PRIORIDADE_META[prioridade];
-  const empresaLabel = empresa_nome ?? "Empresa não identificada";
+  const selectedGalpaoNome = galpoes.find((g) => g.id === selectedGalpaoId)?.nome ?? galpao_sugerido_nome ?? "?";
 
   const selectedItems = useMemo(
     () => itens.filter((item) => selectedSkus[item.sku]),
@@ -146,7 +170,7 @@ export function FornecedorCard({
     });
     const text = [
       `Fornecedor\t${fornecedor}`,
-      `Empresa\t${empresaLabel}`,
+      `Galpão recebimento\t${selectedGalpaoNome}`,
       "SKU\tDescrição\tQtd\tPedidos",
       ...rows,
     ].join("\n");
@@ -160,8 +184,8 @@ export function FornecedorCard({
   }
 
   async function handleComprar() {
-    if (!empresa_id) {
-      toast.error("Empresa não identificada para este fornecedor");
+    if (!selectedGalpaoId) {
+      toast.error("Selecione o galpão de recebimento");
       return;
     }
 
@@ -177,7 +201,7 @@ export function FornecedorCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fornecedor,
-          empresa_id,
+          galpao_id: selectedGalpaoId,
           observacao: observacao.trim() || undefined,
           usuario_id,
           cargo,
@@ -192,7 +216,7 @@ export function FornecedorCard({
 
       const data = await res.json();
       toast.success(
-        `OC confirmada: ${selectedSkuCount} SKU(s), ${data.quantidade_total ?? selectedQuantity} un`,
+        `OC confirmada: ${selectedSkuCount} SKU(s), ${data.quantidade_total ?? selectedQuantity} un → ${selectedGalpaoNome}`,
       );
       setObservacao("");
       setExpanded(false);
@@ -222,10 +246,20 @@ export function FornecedorCard({
               >
                 {prioridadeMeta.label}
               </span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-surface px-2.5 py-1 text-[11px] font-medium text-ink-muted">
-                <Building2 className="h-3.5 w-3.5" />
-                {empresaLabel}
-              </span>
+              {galpao_sugerido_nome && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {galpao_sugerido_nome}
+                </span>
+              )}
+              {empresas.map((emp) => (
+                <span
+                  key={emp.id}
+                  className="inline-flex items-center rounded-full bg-surface px-2.5 py-1 text-[11px] font-medium text-ink-muted"
+                >
+                  {emp.nome}
+                </span>
+              ))}
               {rascunho_ocs > 0 && (
                 <span className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700">
                   {rascunho_ocs} rascunho{rascunho_ocs !== 1 ? "s" : ""}
@@ -419,6 +453,25 @@ export function FornecedorCard({
                 )}
               </div>
 
+              {/* Galpão picker */}
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 text-sm font-medium text-ink">
+                  <MapPin className="h-4 w-4 text-ink-faint" />
+                  Receber em:
+                </label>
+                <select
+                  value={selectedGalpaoId}
+                  onChange={(e) => setSelectedGalpaoId(e.target.value)}
+                  className="flex-1 rounded-xl border border-line bg-surface px-3 py-2 text-sm font-medium text-ink focus:border-ink focus:outline-none"
+                >
+                  {galpoes.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.nome}{g.id === galpao_sugerido_id ? " (sugerido)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <input
                 value={observacao}
                 onChange={(e) => setObservacao(e.target.value)}
@@ -433,7 +486,7 @@ export function FornecedorCard({
                 <button
                   type="button"
                   onClick={handleComprar}
-                  disabled={submitting || selectedSkuCount === 0}
+                  disabled={submitting || selectedSkuCount === 0 || !selectedGalpaoId}
                   className="inline-flex items-center justify-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-medium text-paper hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {submitting ? (
@@ -441,7 +494,7 @@ export function FornecedorCard({
                   ) : (
                     <ShoppingCart className="h-4 w-4" />
                   )}
-                  Confirmar OC
+                  Confirmar OC → {selectedGalpaoNome}
                 </button>
               </div>
             </div>

@@ -237,7 +237,8 @@ export type CompraStatus =
 export interface OrdemCompra {
   id: string;
   fornecedor: string;
-  empresa_id: string;
+  empresa_id: string | null;
+  galpao_id: string | null;
   status: OrdemCompraStatus;
   observacao: string | null;
   comprado_por: string | null;

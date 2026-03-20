@@ -898,18 +898,21 @@ Returns the buyer operational view for purchase flow, with counts, summary metri
 
 **Data shapes by status:**
 
-**`aguardando_compra`:** Array grouped by supplier + company:
+**`aguardando_compra`:** Array grouped by supplier (across all empresas):
 ```json
 [{
   "fornecedor": "ACA",
-  "empresa_id": "uuid",
-  "empresa_nome": "NetAir",
+  "galpao_sugerido_id": "uuid | null",
+  "galpao_sugerido_nome": "CWB | null",
+  "empresas": [{ "id": "uuid", "nome": "NetAir" }],
   "prioridade": "critica",
   "aging_dias": 4,
   "pedidos_bloqueados": 3,
   "quantidade_total": 9,
   "total_skus": 2,
-  "proxima_acao": "Criar OC e destravar pedidos desta empresa",
+  "rascunho_ocs": 0,
+  "itens_em_rascunho": 0,
+  "proxima_acao": "Selecionar a rodada ideal e confirmar com o fornecedor",
   "itens": [{
     "sku": "19ABC",
     "descricao": "Filtro",
@@ -925,15 +928,15 @@ Returns the buyer operational view for purchase flow, with counts, summary metri
 }]
 ```
 
-Groups are split by `fornecedor + empresa_origem_id`, use `compra_quantidade_solicitada` as the real quantity to buy, and are sorted by priority/aging.
+Groups are split by `fornecedor` only (items from all empresas for same supplier are grouped together). The `galpao_sugerido_id`/`galpao_sugerido_nome` default comes from `sku-fornecedor.ts` → `filialOC`. `empresas` is an informative array of unique empresas with items in the group. `compra_quantidade_solicitada` is the real quantity to buy. Sorted by priority/aging.
 
 **`comprado`:** Array of OCs with items:
 ```json
 [{
   "id": "uuid",
   "fornecedor": "ACA",
-  "empresa_id": "uuid",
-  "empresa_nome": "NetAir",
+  "galpao_id": "uuid | null",
+  "galpao_nome": "CWB | null",
   "status": "comprado",
   "comprado_por_nome": "Eryk",
   "comprado_em": "2026-03-17T...",
@@ -977,13 +980,13 @@ Cada item de exceção inclui, além dos dados básicos, campos como:
 **File:** `src/app/api/compras/ordens/route.ts`
 **Auth:** `cargo` in body (admin or comprador)
 
-Creates an OC and links all aguardando items for that supplier within one company.
+Creates an OC and links all aguardando items for that supplier across all empresas, with a specific receiving galpão.
 
 **Request Body:**
 ```json
 {
   "fornecedor": "ACA",
-  "empresa_id": "uuid",
+  "galpao_id": "uuid",
   "observacao": "Pedido urgente",
   "usuario_id": "uuid",
   "cargo": "comprador"
@@ -1000,7 +1003,7 @@ Creates an OC and links all aguardando items for that supplier within one compan
 }
 ```
 
-**Business Logic:** If items already have an auto-created OC, updates it to `comprado` instead of creating new one. Links only items for the requested `fornecedor` inside the requested `empresa_id`. `quantidade_total` is based on `compra_quantidade_solicitada`, not `quantidade_pedida`.
+**Business Logic:** If items already have an auto-created OC, updates it to `comprado` instead of creating new one. Links all items for the requested `fornecedor` regardless of empresa origin. The `galpao_id` determines where the purchase will be received; `empresa_id` is derived from the first active empresa in that galpão (backwards compat). `quantidade_total` is based on `compra_quantidade_solicitada`, not `quantidade_pedida`.
 
 ---
 
@@ -1035,12 +1038,17 @@ Process receiving confirmation. Updates quantities and enters stock in Tiny.
 ```
 
 **Business Logic:**
-- Calls `movimentarEstoque(tipo: "E")` in Tiny for each item with `produto_id_tiny`
+- Resolves the receiving empresa from the OC's `galpao_id` (first active empresa in that galpão, fallback to `oc.empresa_id`)
+- Calls `movimentarEstoque(tipo: "E")` in Tiny for each item with `produto_id_tiny`, using the receiving empresa's token and deposit
 - Uses `compra_quantidade_solicitada` as the expected quantity
 - Rejects conference lines that exceed the pending remaining quantity
 - Updates `compra_quantidade_recebida`, marks `recebido` when fully received
+- Upserts `siso_pedido_item_estoques` with received stock for each item (so the transferencia worker can find stock at the receiving empresa)
 - Updates OC status: `parcialmente_recebido` or `recebido`
-- Checks if pedidos can be released via `checkAndReleasePedidos` (itens `cancelado` contam como resolvidos; pedidos com todos os itens cancelados não são liberados)
+- Checks if pedidos can be released via `checkAndReleasePedidos`:
+  - Same galpão (OC galpão = pedido origin galpão) → `decisao_final='propria'`
+  - Cross-galpão → `decisao_final='transferencia'`, `separacao_galpao_id` set to OC galpão
+  - Itens `cancelado` count as resolved; pedidos with all items cancelled are not released
 - 500ms delay between Tiny API calls
 
 ---
@@ -1060,6 +1068,8 @@ Returns OC info + pending items for receiving screen.
   "ordem_compra": {
     "id": "uuid",
     "fornecedor": "ACA",
+    "galpao_id": "uuid | null",
+    "galpao_nome": "CWB | null",
     "status": "comprado",
     "comprado_por_nome": "Eryk",
     ...

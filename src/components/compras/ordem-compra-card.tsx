@@ -3,10 +3,10 @@
 import { useState } from "react";
 import {
   ArrowRightLeft,
-  Building2,
   ClipboardCheck,
   Clock3,
   Loader2,
+  MapPin,
   MoreVertical,
   RotateCcw,
   Truck,
@@ -34,7 +34,7 @@ interface OrdemCompraCardProps {
   id: string;
   index: number;
   fornecedor: string;
-  empresa_nome: string | null;
+  galpao_nome: string | null;
   status: string;
   observacao: string | null;
   comprado_por_nome: string | null;
@@ -301,7 +301,7 @@ export function OrdemCompraCard({
   id,
   index,
   fornecedor,
-  empresa_nome,
+  galpao_nome,
   status,
   observacao,
   comprado_por_nome,
@@ -353,8 +353,8 @@ export function OrdemCompraCard({
                 {prioridadeMeta.label}
               </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-paper/80 px-2.5 py-1 text-[11px] font-medium text-ink-muted">
-                <Building2 className="h-3.5 w-3.5" />
-                {empresa_nome ?? "Empresa não identificada"}
+                <MapPin className="h-3.5 w-3.5" />
+                {galpao_nome ?? "Galpão não definido"}
               </span>
             </div>
 

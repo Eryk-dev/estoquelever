@@ -42,11 +42,11 @@ export async function GET(
   const supabase = createServiceClient();
 
   try {
-    // Fetch the OC
+    // Fetch the OC (with galpão info)
     const { data: oc, error: ocError } = await supabase
       .from("siso_ordens_compra")
       .select(
-        "id, fornecedor, empresa_id, status, observacao, comprado_por, comprado_em, created_at, siso_usuarios:comprado_por(nome)",
+        "id, fornecedor, empresa_id, galpao_id, status, observacao, comprado_por, comprado_em, created_at, siso_usuarios:comprado_por(nome), siso_galpoes:galpao_id(nome)",
       )
       .eq("id", ordemCompraId)
       .single();
@@ -103,20 +103,23 @@ export async function GET(
     const ocTyped = oc as unknown as {
       id: string;
       fornecedor: string;
-      empresa_id: string;
+      empresa_id: string | null;
+      galpao_id: string | null;
       status: string;
       observacao: string | null;
       comprado_por: string | null;
       comprado_em: string | null;
       created_at: string;
       siso_usuarios: { nome: string } | null;
+      siso_galpoes: { nome: string } | null;
     };
 
     return NextResponse.json({
       ordem_compra: {
         id: ocTyped.id,
         fornecedor: ocTyped.fornecedor,
-        empresa_id: ocTyped.empresa_id,
+        galpao_id: ocTyped.galpao_id,
+        galpao_nome: ocTyped.siso_galpoes?.nome ?? null,
         status: ocTyped.status,
         observacao: ocTyped.observacao,
         comprado_por_nome: ocTyped.siso_usuarios?.nome ?? null,

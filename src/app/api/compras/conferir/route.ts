@@ -29,6 +29,7 @@ interface RawItem {
   compra_quantidade_solicitada: number;
   compra_quantidade_recebida: number;
   produto_id_tiny: number | null;
+  produto_id: number | null;
   compra_status: string | null;
   pedido_id: string;
 }
@@ -66,10 +67,10 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // Fetch the OC
+    // Fetch the OC (with galpao_id)
     const { data: oc, error: ocError } = await supabase
       .from("siso_ordens_compra")
-      .select("id, empresa_id, status, fornecedor")
+      .select("id, empresa_id, galpao_id, status, fornecedor")
       .eq("id", ordem_compra_id)
       .single();
 
@@ -83,18 +84,42 @@ export async function POST(request: NextRequest) {
       throw new Error(`Erro ao buscar OC: ${ocError?.message ?? "not found"}`);
     }
 
-    // Get deposito_id from siso_tiny_connections for this empresa
+    // Resolve the receiving empresa from the OC's galpão (or fallback to empresa_id)
+    // Use deterministic ordering to always pick the same empresa
+    let empresaRecebimentoId = oc.empresa_id;
+    if (oc.galpao_id) {
+      const { data: empresaGalpao } = await supabase
+        .from("siso_empresas")
+        .select("id")
+        .eq("galpao_id", oc.galpao_id)
+        .eq("ativo", true)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .single();
+      if (empresaGalpao) {
+        empresaRecebimentoId = empresaGalpao.id;
+      }
+    }
+
+    if (!empresaRecebimentoId) {
+      return NextResponse.json(
+        { error: "Nenhuma empresa ativa encontrada no galpão da OC" },
+        { status: 400 },
+      );
+    }
+
+    // Get deposito_id from siso_tiny_connections for the receiving empresa
     const { data: conn } = await supabase
       .from("siso_tiny_connections")
       .select("deposito_id")
-      .eq("empresa_id", oc.empresa_id)
+      .eq("empresa_id", empresaRecebimentoId)
       .eq("ativo", true)
       .single();
 
     const depositoId = conn?.deposito_id ?? null;
 
-    // Get valid token for this empresa
-    const { token } = await getValidTokenByEmpresa(oc.empresa_id);
+    // Get valid token for the receiving empresa
+    const { token } = await getValidTokenByEmpresa(empresaRecebimentoId);
 
     // Filter items with quantidade_recebida > 0
     const itensParaProcessar = itens.filter((i) => i.quantidade_recebida > 0);
@@ -108,10 +133,10 @@ export async function POST(request: NextRequest) {
     for (let idx = 0; idx < itensParaProcessar.length; idx++) {
       const input = itensParaProcessar[idx];
 
-      // Fetch the item from DB
+      // Fetch the item from DB (include produto_id for stock snapshot)
       const { data: dbItem, error: itemError } = await supabase
         .from("siso_pedido_itens")
-        .select("id, sku, descricao, quantidade_pedida, compra_quantidade_solicitada, compra_quantidade_recebida, produto_id_tiny, compra_status, pedido_id")
+        .select("id, sku, descricao, quantidade_pedida, compra_quantidade_solicitada, compra_quantidade_recebida, produto_id_tiny, produto_id, compra_status, pedido_id")
         .eq("id", input.item_id)
         .eq("ordem_compra_id", ordem_compra_id)
         .single();
@@ -135,7 +160,7 @@ export async function POST(request: NextRequest) {
       // Call Tiny movimentarEstoque if produto_id_tiny exists
       if (item.produto_id_tiny) {
         try {
-          await runWithEmpresa(oc.empresa_id, () => movimentarEstoque(token, item.produto_id_tiny!, {
+          await runWithEmpresa(empresaRecebimentoId, () => movimentarEstoque(token, item.produto_id_tiny!, {
             tipo: "E",
             quantidade: input.quantidade_recebida,
             deposito: depositoId ? { id: depositoId } : undefined,
@@ -183,10 +208,43 @@ export async function POST(request: NextRequest) {
         updateFields.recebido_por = usuario_id;
       }
 
-      await supabase
+      const { error: updateItemError } = await supabase
         .from("siso_pedido_itens")
         .update(updateFields)
         .eq("id", item.id);
+
+      if (updateItemError) {
+        logger.warn("compras-conferir", "Falha ao atualizar item no DB", {
+          ordemCompraId: ordem_compra_id,
+          itemId: item.id,
+          sku: item.sku,
+          error: updateItemError.message,
+        });
+      }
+
+      // Update stock snapshot so the transferencia worker finds stock at the receiving empresa
+      // Use cumulative novaQuantidadeRecebida (not just this batch) to handle partial receives
+      if (item.produto_id) {
+        const { error: estError } = await supabase.from("siso_pedido_item_estoques").upsert(
+          {
+            pedido_id: item.pedido_id,
+            produto_id: item.produto_id,
+            empresa_id: empresaRecebimentoId,
+            saldo: novaQuantidadeRecebida,
+            disponivel: novaQuantidadeRecebida,
+            reservado: 0,
+          },
+          { onConflict: "pedido_id,produto_id,empresa_id" },
+        );
+        if (estError) {
+          logger.warn("compras-conferir", "Falha ao atualizar snapshot de estoque", {
+            ordemCompraId: ordem_compra_id,
+            pedidoId: item.pedido_id,
+            produtoId: item.produto_id,
+            error: estError.message,
+          });
+        }
+      }
 
       processados++;
       processedItemIds.push(item.id);

@@ -58,10 +58,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (pedido.status_separacao !== "em_separacao") {
+    const ALLOWED_STATUSES = ["em_separacao", "aguardando_separacao"];
+    if (!ALLOWED_STATUSES.includes(pedido.status_separacao)) {
       return NextResponse.json(
         {
-          error: "Pedido deve estar com status 'em_separacao'",
+          error: "Pedido deve estar com status 'em_separacao' ou 'aguardando_separacao'",
           status_atual: pedido.status_separacao,
         },
         { status: 400 },

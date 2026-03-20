@@ -191,3 +191,15 @@ erros:
     files:
       - src/lib/agrupamento-service.ts
     tags: [agrupamento, expedicao, tiny-api, nf-expedida, retry, lote, bloqueio]
+
+  - id: marcar-item-race-condition-iniciar
+    date: "2026-03-20"
+    source: separacao-marcar-item
+    category: business_logic
+    message: "Erro ao salvar marcacao"
+    cause: "Race condition: checklist page calls /api/separacao/iniciar fire-and-forget on mount while loading items independently. If user clicks a checkbox before iniciar completes, orders are still in 'aguardando_separacao' and marcar-item rejects with 400 (only accepted 'em_separacao')."
+    fix: "Relaxed marcar-item validation to accept both 'em_separacao' and 'aguardando_separacao' statuses. Safe because the checklist is only accessible from the separation flow and iniciar will transition orders shortly."
+    files:
+      - src/app/api/separacao/marcar-item/route.ts
+      - docs/api-reference.md
+    tags: [separacao, checklist, marcar-item, race-condition, aguardando_separacao, em_separacao]

@@ -504,7 +504,7 @@ Toggle item checkbox during wave-picking.
 
 **Response 200:** Updated item row.
 
-**Validation:** Parent pedido must be `em_separacao`.
+**Validation:** Parent pedido must be `em_separacao` or `aguardando_separacao`.
 
 ---
 

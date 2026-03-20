@@ -115,10 +115,23 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString();
 
     // If this round already belongs to one auto-created draft OC, reuse it.
-    const existingDraftOcIds = [
+    // Only consider OCs that are still in 'aguardando_compra' status (actual drafts).
+    // Items linked to already-confirmed OCs (comprado, parcialmente_recebido) are ignored.
+    const allLinkedOcIds = [
       ...new Set(aguardandoItems.map((item) => item.ordem_compra_id).filter(Boolean)),
-    ];
-    if (existingDraftOcIds.length > 1) {
+    ] as string[];
+
+    let draftOcIds: string[] = [];
+    if (allLinkedOcIds.length > 0) {
+      const { data: draftOcs } = await supabase
+        .from("siso_ordens_compra")
+        .select("id")
+        .in("id", allLinkedOcIds)
+        .eq("status", "aguardando_compra");
+      draftOcIds = (draftOcs ?? []).map((oc) => oc.id);
+    }
+
+    if (draftOcIds.length > 1) {
       return NextResponse.json(
         {
           error:
@@ -128,7 +141,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const existingOcId = existingDraftOcIds[0] ?? null;
+    const existingOcId = draftOcIds[0] ?? null;
     let ocId: string;
 
     if (existingOcId) {

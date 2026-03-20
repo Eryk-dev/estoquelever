@@ -833,14 +833,14 @@ function SeparacaoPageContent() {
                 : `${pedidos.length} pedido(s)`}
             </span>
             <div className="flex flex-wrap items-center gap-2">
-              {isAdmin && moveTargets && selectedIds.size > 0 && (
+              {isAdmin && moveTargets && (
                 <MoveButton
                   targets={moveTargets}
                   open={revertMenuOpen}
                   onToggle={toggleRevertMenu}
                   onSelect={handleMoverEtapa}
-                  disabled={actionLoading}
-                  count={selectedIds.size}
+                  disabled={actionLoading || selectedIds.size === 0}
+                  count={selectedIds.size || pedidos.length}
                 />
               )}
               <button
@@ -881,14 +881,14 @@ function SeparacaoPageContent() {
                 : `${pedidos.length} pedido(s)`}
             </span>
             <div className="flex flex-wrap items-center gap-2">
-              {isAdmin && moveTargets && selectedIds.size > 0 && (
+              {isAdmin && moveTargets && (
                 <MoveButton
                   targets={moveTargets}
                   open={revertMenuOpen}
                   onToggle={toggleRevertMenu}
                   onSelect={handleMoverEtapa}
-                  disabled={actionLoading}
-                  count={selectedIds.size}
+                  disabled={actionLoading || selectedIds.size === 0}
+                  count={selectedIds.size || pedidos.length}
                 />
               )}
               {semEtiqueta > 0 && comEtiqueta > 0 && (
@@ -938,14 +938,14 @@ function SeparacaoPageContent() {
                 : `${pedidos.length} pedido(s)`}
             </span>
             <div className="flex flex-wrap items-center gap-2">
-              {isAdmin && moveTargets && selectedIds.size > 0 && (
+              {isAdmin && moveTargets && (
                 <MoveButton
                   targets={moveTargets}
                   open={revertMenuOpen}
                   onToggle={toggleRevertMenu}
                   onSelect={handleMoverEtapa}
-                  disabled={actionLoading}
-                  count={selectedIds.size}
+                  disabled={actionLoading || selectedIds.size === 0}
+                  count={selectedIds.size || pedidos.length}
                 />
               )}
               <button
@@ -982,14 +982,14 @@ function SeparacaoPageContent() {
                 : `${pedidos.length} pedido(s)`}
             </span>
             <div className="flex flex-wrap items-center gap-2">
-              {isAdmin && moveTargets && selectedIds.size > 0 && (
+              {isAdmin && moveTargets && (
                 <MoveButton
                   targets={moveTargets}
                   open={revertMenuOpen}
                   onToggle={toggleRevertMenu}
                   onSelect={handleMoverEtapa}
-                  disabled={actionLoading}
-                  count={selectedIds.size}
+                  disabled={actionLoading || selectedIds.size === 0}
+                  count={selectedIds.size || pedidos.length}
                 />
               )}
               <button
@@ -1015,14 +1015,14 @@ function SeparacaoPageContent() {
                 : `${pedidos.length} pedido(s)`}
             </span>
             <div className="flex flex-wrap items-center gap-2">
-              {moveTargets && selectedIds.size > 0 && (
+              {moveTargets && (
                 <MoveButton
                   targets={moveTargets}
                   open={revertMenuOpen}
                   onToggle={toggleRevertMenu}
                   onSelect={handleMoverEtapa}
-                  disabled={actionLoading}
-                  count={selectedIds.size}
+                  disabled={actionLoading || selectedIds.size === 0}
+                  count={selectedIds.size || pedidos.length}
                 />
               )}
               <button

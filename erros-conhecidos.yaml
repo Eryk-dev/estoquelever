@@ -203,3 +203,25 @@ erros:
       - src/app/api/separacao/marcar-item/route.ts
       - docs/api-reference.md
     tags: [separacao, checklist, marcar-item, race-condition, aguardando_separacao, em_separacao]
+
+  - id: nf-antes-aprovacao-race-condition
+    date: "2026-03-23"
+    source: aprovar, execution-worker
+    category: business_logic
+    message: "Pedido fica preso em aguardando_nf apesar da NF já estar autorizada"
+    cause: >
+      Race condition: webhook NF chega e é processado ANTES da aprovação do pedido.
+      nf-webhook-handler salva os dados (nota_fiscal_id, chave_acesso_nf, url_danfe)
+      mas não consegue transicionar aguardando_nf → aguardando_separacao porque o pedido
+      ainda não está nesse status. Quando o operador aprova, a rota seta aguardando_nf
+      sem verificar se a NF já existe. O worker (executarSaidaPropria) também não
+      transiciona status_separacao após lançar estoque.
+    fix: >
+      1) Rota de aprovação agora verifica se nota_fiscal_id + chave_acesso_nf já existem
+      antes de setar status_separacao — se sim, vai direto para aguardando_separacao.
+      2) executarSaidaPropria agora transiciona aguardando_nf → aguardando_separacao
+      após lançar estoque com sucesso (defense-in-depth).
+    files:
+      - src/app/api/pedidos/aprovar/route.ts
+      - src/lib/execution-worker.ts
+    tags: [nf, aprovacao, race-condition, aguardando_nf, aguardando_separacao, worker, webhook]

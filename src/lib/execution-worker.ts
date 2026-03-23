@@ -417,6 +417,24 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
     .update({ estoque_lancado: true })
     .eq("id", job.pedido_id);
 
+  // Transition aguardando_nf → aguardando_separacao (handles race condition
+  // where NF webhook arrived before approval set status_separacao)
+  await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, notaId);
+
+  const { data: transitioned } = await supabase
+    .from("siso_pedidos")
+    .update({ status_separacao: "aguardando_separacao" })
+    .eq("id", job.pedido_id)
+    .eq("status_separacao", "aguardando_nf")
+    .select("id")
+    .maybeSingle();
+
+  if (transitioned) {
+    logger.info("worker", "Transição aguardando_nf → aguardando_separacao (worker)", {
+      pedidoId: job.pedido_id,
+    });
+  }
+
   logger.info("worker", "Estoque lançado via NF (própria)", {
     pedidoId: job.pedido_id,
     notaId,

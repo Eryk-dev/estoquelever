@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
   // Fetch the order (include empresa_origem_id for queue job)
   const { data: pedido, error: fetchError } = await supabase
     .from("siso_pedidos")
-    .select("id, filial_origem, empresa_origem_id, status")
+    .select("id, filial_origem, empresa_origem_id, status, nota_fiscal_id, chave_acesso_nf")
     .eq("id", pedidoId)
     .single();
 
@@ -139,7 +139,12 @@ export async function POST(request: NextRequest) {
       tipo_resolucao: "manual",
       marcadores,
       separacao_galpao_id: separacaoGalpaoId,
-      status_separacao: decisao === "oc" ? null : "aguardando_nf",
+      status_separacao:
+        decisao === "oc"
+          ? null
+          : pedido.nota_fiscal_id && pedido.chave_acesso_nf
+            ? "aguardando_separacao"
+            : "aguardando_nf",
     })
     .eq("id", pedidoId);
 
@@ -192,10 +197,13 @@ export async function POST(request: NextRequest) {
     operador: operadorNome,
   });
 
-  // Kick the worker after response is sent (survives response lifecycle)
+  // Kick the worker after response is sent — drain pending jobs
   after(async () => {
     try {
-      await processQueue(5);
+      for (let round = 0; round < 3; round++) {
+        const result = await processQueue(5);
+        if (result.processed === 0 && result.errors === 0) break;
+      }
     } catch (err) {
       logger.error("aprovar", "Worker kick failed", {
         pedidoId,

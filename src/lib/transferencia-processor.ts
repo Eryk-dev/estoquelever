@@ -127,13 +127,13 @@ export async function processarTransferencia(
           transferencia.empresa_destino_id,
           async () =>
             criarProduto(tokenDestino2, {
-              nome: produtoOrigem.descricao,
-              preco: produtoOrigem.preco || 0.01,
-              codigo: produtoOrigem.sku,
+              descricao: produtoOrigem.descricao,
+              sku: produtoOrigem.sku,
+              preco: produtoOrigem.precos?.preco || 0.01,
               gtin: produtoOrigem.gtin || undefined,
               unidade: produtoOrigem.unidade,
               ncm: produtoOrigem.ncm,
-              origem: produtoOrigem.origem,
+              origem: produtoOrigem.origem ?? undefined,
             }),
         );
 
@@ -141,22 +141,7 @@ export async function processarTransferencia(
         clonado = true;
       }
 
-      // c. Exit stock from origin (Saída)
-      const { token: tokenOrigem3 } = await getValidTokenByEmpresa(
-        transferencia.empresa_origem_id,
-      );
-      await runWithEmpresa(transferencia.empresa_origem_id, async () => {
-        await movimentarEstoque(tokenOrigem3, item.produto_id_tiny_origem, {
-          tipo: "S",
-          quantidade: item.quantidade,
-          deposito: transferencia.deposito_origem_id
-            ? { id: transferencia.deposito_origem_id }
-            : undefined,
-          observacoes: obsSaida,
-        });
-      });
-
-      // d. Entry stock to destination (Entrada)
+      // c. Entry stock to destination FIRST (Entrada) — safer: if this fails, no stock is lost
       const { token: tokenDestino3 } = await getValidTokenByEmpresa(
         transferencia.empresa_destino_id,
       );
@@ -168,6 +153,21 @@ export async function processarTransferencia(
             ? { id: transferencia.deposito_destino_id }
             : undefined,
           observacoes: obsEntrada,
+        });
+      });
+
+      // d. Exit stock from origin (Saída) — only after entry succeeded
+      const { token: tokenOrigem3 } = await getValidTokenByEmpresa(
+        transferencia.empresa_origem_id,
+      );
+      await runWithEmpresa(transferencia.empresa_origem_id, async () => {
+        await movimentarEstoque(tokenOrigem3, item.produto_id_tiny_origem, {
+          tipo: "S",
+          quantidade: item.quantidade,
+          deposito: transferencia.deposito_origem_id
+            ? { id: transferencia.deposito_origem_id }
+            : undefined,
+          observacoes: obsSaida,
         });
       });
 
@@ -271,6 +271,8 @@ export async function reverterTransferencia(
   const obsReversao = `Reversão Transferência SISO - ${dataStr} - ${operadorNome}`;
 
   // 5. Reverse each item
+  let anyReverted = false;
+
   for (const item of itens) {
     if (!item.produto_id_tiny_destino) {
       await supabase
@@ -319,6 +321,8 @@ export async function reverterTransferencia(
         .from("siso_transferencia_itens")
         .update({ status: "pendente" as const, erro_msg: null })
         .eq("id", item.id);
+
+      anyReverted = true;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
 
@@ -337,11 +341,12 @@ export async function reverterTransferencia(
     }
   }
 
-  // 6. Final status → revertido
+  // 6. Final status — revertido if any success, erro if ALL failed
+  const finalStatus = anyReverted ? "revertido" : "erro";
   await supabase
     .from("siso_transferencias")
     .update({
-      status: "revertido",
+      status: finalStatus,
       concluido_em: new Date().toISOString(),
     })
     .eq("id", transferenciaId);

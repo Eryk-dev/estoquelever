@@ -51,7 +51,23 @@ export async function POST(
       );
     }
 
-    // Fire-and-forget
+    // Optimistic lock: atomically set status to revertendo (CAS)
+    const { data: locked, error: lockError } = await supabase
+      .from("siso_transferencias")
+      .update({ status: "revertendo" })
+      .eq("id", id)
+      .eq("status", "concluido")
+      .select("id")
+      .single();
+
+    if (lockError || !locked) {
+      return NextResponse.json(
+        { error: "Transferencia ja esta sendo revertida" },
+        { status: 409 },
+      );
+    }
+
+    // Fire-and-forget (processor skips its own status update since we already set it)
     reverterTransferencia(id).catch((err) =>
       logger.logError({
         error: err,

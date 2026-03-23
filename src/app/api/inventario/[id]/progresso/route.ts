@@ -26,11 +26,19 @@ export async function GET(
     // Fetch inventario status
     const { data: inventario, error: fetchError } = await supabase
       .from("siso_inventarios")
-      .select("id, status")
+      .select("id, status, galpao_id")
       .eq("id", id)
       .single();
 
     if (fetchError || !inventario) {
+      return NextResponse.json(
+        { error: "Inventário não encontrado" },
+        { status: 404 },
+      );
+    }
+
+    // Galpão access check
+    if (session.galpaoId && inventario.galpao_id !== session.galpaoId) {
       return NextResponse.json(
         { error: "Inventário não encontrado" },
         { status: 404 },

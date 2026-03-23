@@ -36,6 +36,19 @@ export async function GET(
       );
     }
 
+    // Galpão access check
+    if (session.galpaoId) {
+      const isAllowed =
+        transferencia.galpao_origem_id === session.galpaoId ||
+        transferencia.galpao_destino_id === session.galpaoId;
+      if (!isAllowed) {
+        return NextResponse.json(
+          { error: "Transferencia nao encontrada" },
+          { status: 404 },
+        );
+      }
+    }
+
     // Fetch all items
     const { data: itens } = await supabase
       .from("siso_transferencia_itens")

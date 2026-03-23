@@ -112,15 +112,34 @@ export default function InventarioPage() {
 
   function handleProcessar() {
     if (!selected) return;
+    if (!confirm("Tem certeza que deseja processar este inventário? Esta ação altera o estoque no Tiny ERP.")) return;
     sisoFetch(`/api/inventario/${selected.id}/processar`, { method: "POST" })
       .then((res) => {
-        if (!res.ok) return res.json().then((d) => { throw new Error(d.error ?? "Erro"); });
+        if (!res.ok) return res.json().catch(() => ({})).then((d: Record<string, string>) => { throw new Error(d.error ?? "Erro"); });
         toast.success("Processamento iniciado");
         setView("progress");
         queryClient.invalidateQueries({ queryKey: ["inventarios"] });
       })
       .catch((err) => {
         toast.error(err instanceof Error ? err.message : "Erro ao processar");
+      });
+  }
+
+  function handleCancelar() {
+    if (!selected) return;
+    if (!confirm("Tem certeza que deseja cancelar este inventário?")) return;
+    sisoFetch(`/api/inventario/${selected.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "cancelado" }),
+    })
+      .then((res) => {
+        if (!res.ok) return res.json().catch(() => ({})).then((d: Record<string, string>) => { throw new Error(d.error ?? "Erro"); });
+        toast.success("Inventário cancelado");
+        handleBack();
+      })
+      .catch((err) => {
+        toast.error(err instanceof Error ? err.message : "Erro ao cancelar");
       });
   }
 
@@ -206,10 +225,10 @@ export default function InventarioPage() {
       {view === "scan" && selected && (
         <ScanInventario
           inventarioId={selected.id}
-          empresaId={selected.empresa_id}
           modo={selected.modo}
           tipoEstoque={selected.tipo_estoque}
           onProcessar={handleProcessar}
+          onCancelar={handleCancelar}
         />
       )}
 

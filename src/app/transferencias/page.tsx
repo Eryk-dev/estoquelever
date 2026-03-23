@@ -86,15 +86,34 @@ export default function TransferenciasPage() {
 
   function handleProcessar() {
     if (!selected) return;
+    if (!confirm("Tem certeza que deseja processar esta transferência? Esta ação altera o estoque no Tiny ERP.")) return;
     sisoFetch(`/api/transferencia/${selected.id}/processar`, { method: "POST" })
       .then((res) => {
-        if (!res.ok) return res.json().then((d) => { throw new Error(d.error ?? "Erro"); });
+        if (!res.ok) return res.json().catch(() => ({})).then((d: Record<string, string>) => { throw new Error(d.error ?? "Erro"); });
         toast.success("Processamento iniciado");
         setView("progress");
         queryClient.invalidateQueries({ queryKey: ["transferencias"] });
       })
       .catch((err) => {
         toast.error(err instanceof Error ? err.message : "Erro ao processar");
+      });
+  }
+
+  function handleCancelar() {
+    if (!selected) return;
+    if (!confirm("Tem certeza que deseja cancelar esta transferência?")) return;
+    sisoFetch(`/api/transferencia/${selected.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "cancelado" }),
+    })
+      .then((res) => {
+        if (!res.ok) return res.json().catch(() => ({})).then((d: Record<string, string>) => { throw new Error(d.error ?? "Erro"); });
+        toast.success("Transferência cancelada");
+        handleBack();
+      })
+      .catch((err) => {
+        toast.error(err instanceof Error ? err.message : "Erro ao cancelar");
       });
   }
 
@@ -177,6 +196,7 @@ export default function TransferenciasPage() {
         <ScanTransferencia
           transferenciaId={selected.id}
           onProcessar={handleProcessar}
+          onCancelar={handleCancelar}
         />
       )}
 

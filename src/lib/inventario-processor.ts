@@ -64,7 +64,7 @@ export function consolidarItens(
     const existing = groups.get(key);
     if (existing) {
       existing.quantidade_total += item.quantidade;
-      existing.localizacoes.add(item.localizacao);
+      if (item.localizacao) existing.localizacoes.add(item.localizacao);
       existing.itens_ids.push(item.id);
     } else {
       groups.set(key, {
@@ -73,7 +73,7 @@ export function consolidarItens(
         produto_id_tiny: item.produto_id_tiny,
         ean: item.ean,
         quantidade_total: item.quantidade,
-        localizacoes: new Set([item.localizacao]),
+        localizacoes: new Set(item.localizacao ? [item.localizacao] : []),
         itens_ids: [item.id],
         status: item.status,
         erro_msg: item.erro_msg,
@@ -342,6 +342,8 @@ export async function reverterInventario(
   const movimentacaoObs = `Reversão Inventário SISO - ${dataStr} - ${operadorNome}`;
 
   // 6. Reverse each consolidated item
+  let anyReverted = false;
+
   for (const consolidado of consolidados) {
     if (!consolidado.produto_id_tiny) {
       await supabase
@@ -366,41 +368,46 @@ export async function reverterInventario(
 
         await atualizarLocalizacaoProduto(token, produtoId, locAnterior);
 
-        // b. Reverse stock if loc_estoque
+        // b. Reverse stock if loc_estoque AND NOT Kit (same check as processamento)
         if (inventario.modo === "loc_estoque") {
-          const tipoOriginal = inventario.tipo_estoque as TipoEstoque;
+          const detalhe = await getProdutoDetalhe(token, produtoId);
+          const isKit = detalhe.tipo === "K";
 
-          if (tipoOriginal === "B") {
-            // Balanço reversal: set Balanço back to saldo_anterior_tiny
-            const saldoAnterior = firstItem?.saldo_anterior_tiny ?? 0;
-            await movimentarEstoque(token, produtoId, {
-              tipo: "B",
-              quantidade: saldoAnterior,
-              deposito: inventario.deposito_id
-                ? { id: inventario.deposito_id }
-                : undefined,
-              observacoes: movimentacaoObs,
-            });
-          } else if (tipoOriginal === "E") {
-            // Entrada reversal: do Saída with same qty
-            await movimentarEstoque(token, produtoId, {
-              tipo: "S",
-              quantidade: consolidado.quantidade_total,
-              deposito: inventario.deposito_id
-                ? { id: inventario.deposito_id }
-                : undefined,
-              observacoes: movimentacaoObs,
-            });
-          } else if (tipoOriginal === "S") {
-            // Saída reversal: do Entrada with same qty
-            await movimentarEstoque(token, produtoId, {
-              tipo: "E",
-              quantidade: consolidado.quantidade_total,
-              deposito: inventario.deposito_id
-                ? { id: inventario.deposito_id }
-                : undefined,
-              observacoes: movimentacaoObs,
-            });
+          if (!isKit) {
+            const tipoOriginal = inventario.tipo_estoque as TipoEstoque;
+
+            if (tipoOriginal === "B") {
+              // Balanço reversal: set Balanço back to saldo_anterior_tiny
+              const saldoAnterior = firstItem?.saldo_anterior_tiny ?? 0;
+              await movimentarEstoque(token, produtoId, {
+                tipo: "B",
+                quantidade: saldoAnterior,
+                deposito: inventario.deposito_id
+                  ? { id: inventario.deposito_id }
+                  : undefined,
+                observacoes: movimentacaoObs,
+              });
+            } else if (tipoOriginal === "E") {
+              // Entrada reversal: do Saída with same qty
+              await movimentarEstoque(token, produtoId, {
+                tipo: "S",
+                quantidade: consolidado.quantidade_total,
+                deposito: inventario.deposito_id
+                  ? { id: inventario.deposito_id }
+                  : undefined,
+                observacoes: movimentacaoObs,
+              });
+            } else if (tipoOriginal === "S") {
+              // Saída reversal: do Entrada with same qty
+              await movimentarEstoque(token, produtoId, {
+                tipo: "E",
+                quantidade: consolidado.quantidade_total,
+                deposito: inventario.deposito_id
+                  ? { id: inventario.deposito_id }
+                  : undefined,
+                observacoes: movimentacaoObs,
+              });
+            }
           }
         }
       });
@@ -410,6 +417,8 @@ export async function reverterInventario(
         .from("siso_inventario_itens")
         .update({ status: "pendente" as const, erro_msg: null })
         .in("id", consolidado.itens_ids);
+
+      anyReverted = true;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
 
@@ -428,11 +437,12 @@ export async function reverterInventario(
     }
   }
 
-  // 7. Final status → revertido
+  // 7. Final status — revertido if any success, erro if ALL failed
+  const finalStatus = anyReverted ? "revertido" : "erro";
   await supabase
     .from("siso_inventarios")
     .update({
-      status: "revertido",
+      status: finalStatus,
       concluido_em: new Date().toISOString(),
     })
     .eq("id", inventarioId);

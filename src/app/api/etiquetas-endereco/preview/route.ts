@@ -73,9 +73,15 @@ export async function POST(request: Request) {
 
     const enderecos = gerarEnderecos(range);
     const total = enderecos.length;
-    const total_labels = Math.ceil(total / 2); // pequena: 2 per label
+    const total_labels_pequena = Math.ceil(total / 2);
+    const total_labels_grande = total;
 
-    return NextResponse.json({ enderecos, total, total_labels });
+    return NextResponse.json({
+      enderecos,
+      total,
+      total_labels_pequena,
+      total_labels_grande,
+    });
   } catch (err) {
     logger.error("etiquetas-endereco", "Erro ao gerar preview", {
       error: err instanceof Error ? err.message : String(err),

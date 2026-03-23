@@ -39,6 +39,14 @@ export async function GET(
       );
     }
 
+    // Galpão access check
+    if (session.galpaoId && inventario.galpao_id !== session.galpaoId) {
+      return NextResponse.json(
+        { error: "Inventário não encontrado" },
+        { status: 404 },
+      );
+    }
+
     // Fetch all items
     const { data: itens } = await supabase
       .from("siso_inventario_itens")

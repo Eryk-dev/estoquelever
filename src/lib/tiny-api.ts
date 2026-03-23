@@ -291,11 +291,11 @@ export interface TinyProdutoCompleto {
   id: number;
   descricao: string;
   sku: string;
-  preco: number;
+  precos?: { preco?: number; precoCusto?: number } | null;
   gtin?: string | null;
   unidade?: string;
   ncm?: string;
-  origem?: string;
+  origem?: number | null;
 }
 
 /** Fetch full product detail for cloning purposes */
@@ -306,24 +306,19 @@ export async function getProdutoCompleto(
   return tinyFetch<TinyProdutoCompleto>(`/produtos/${produtoId}`, { token });
 }
 
-/** Fields for creating a new product in Tiny */
+/** Fields for creating a new product in Tiny (maps to CriarProdutoRequestModel) */
 export interface TinyProdutoCriacao {
-  nome: string;
-  preco: number;
-  codigo?: string;
+  descricao: string;
+  tipo?: string;
+  sku: string;
+  preco?: number;
   gtin?: string;
-  descricao?: string;
   ncm?: string;
   unidade?: string;
-  origem?: string;
-  tipo?: string;
-  precoCusto?: number;
-  localizacao?: string;
-  estoqueMinimo?: number;
-  estoqueMaximo?: number;
+  origem?: number;
 }
 
-/** Create a new product in Tiny */
+/** Create a new product in Tiny — maps fields to API v3 schema */
 export async function criarProduto(
   token: string,
   dados: TinyProdutoCriacao,
@@ -331,7 +326,16 @@ export async function criarProduto(
   return tinyFetch<{ id: number }>("/produtos", {
     token,
     method: "POST",
-    body: dados,
+    body: {
+      descricao: dados.descricao,
+      tipo: dados.tipo ?? "S",
+      sku: dados.sku,
+      precos: dados.preco != null ? { preco: dados.preco } : undefined,
+      gtin: dados.gtin,
+      ncm: dados.ncm,
+      unidade: dados.unidade,
+      origem: dados.origem,
+    },
   });
 }
 

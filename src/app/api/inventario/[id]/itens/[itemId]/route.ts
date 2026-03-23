@@ -141,11 +141,13 @@ export async function DELETE(
       );
     }
 
-    const { error: deleteError } = await supabase
+    const { data: deleted, error: deleteError } = await supabase
       .from("siso_inventario_itens")
       .delete()
       .eq("id", itemId)
-      .eq("inventario_id", id);
+      .eq("inventario_id", id)
+      .select("id")
+      .maybeSingle();
 
     if (deleteError) {
       logger.error("inventario-item-delete", "Erro ao deletar item", {
@@ -156,6 +158,13 @@ export async function DELETE(
       return NextResponse.json(
         { error: "Erro ao remover item" },
         { status: 500 },
+      );
+    }
+
+    if (!deleted) {
+      return NextResponse.json(
+        { error: "Item não encontrado" },
+        { status: 404 },
       );
     }
 

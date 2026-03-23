@@ -22,10 +22,10 @@ import type { InventarioItem } from "@/types";
 
 interface ScanInventarioProps {
   inventarioId: string;
-  empresaId: string;
   modo: string;
   tipoEstoque: string | null;
   onProcessar: () => void;
+  onCancelar?: () => void;
 }
 
 interface ColetarResponse {
@@ -48,10 +48,10 @@ const TIPO_LABELS: Record<string, string> = {
 
 export function ScanInventario({
   inventarioId,
-  empresaId,
   modo,
   tipoEstoque,
   onProcessar,
+  onCancelar,
 }: ScanInventarioProps) {
   const skuInputRef = useRef<HTMLInputElement>(null);
   const [localizacao, setLocalizacao] = useState("");
@@ -385,7 +385,7 @@ export function ScanInventario({
         ))}
       </div>
 
-      {/* Bottom fixed: Processar button */}
+      {/* Bottom fixed: Processar + Cancelar buttons */}
       <div className="fixed inset-x-0 bottom-0 border-t border-line bg-paper p-4">
         <button
           type="button"
@@ -396,6 +396,15 @@ export function ScanInventario({
           Processar Inventário — {totalItens} {totalItens === 1 ? "item" : "itens"}{" "}
           · {modoLabel}
         </button>
+        {onCancelar && (
+          <button
+            type="button"
+            onClick={onCancelar}
+            className="mt-2 flex w-full items-center justify-center rounded-xl border border-line py-2.5 text-xs font-medium text-ink-muted transition-colors hover:bg-surface"
+          >
+            Cancelar Inventário
+          </button>
+        )}
       </div>
     </div>
   );

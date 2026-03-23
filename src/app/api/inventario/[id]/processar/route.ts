@@ -66,7 +66,23 @@ export async function POST(
       );
     }
 
-    // Fire-and-forget
+    // Optimistic lock: atomically set status to processando (CAS)
+    const { data: locked, error: lockError } = await supabase
+      .from("siso_inventarios")
+      .update({ status: "processando", processado_em: new Date().toISOString() })
+      .eq("id", id)
+      .eq("status", "em_andamento")
+      .select("id")
+      .single();
+
+    if (lockError || !locked) {
+      return NextResponse.json(
+        { error: "Inventário já está sendo processado" },
+        { status: 409 },
+      );
+    }
+
+    // Fire-and-forget (processor skips its own status update since we already set it)
     processarInventario(id).catch((err) =>
       logger.logError({
         error: err,

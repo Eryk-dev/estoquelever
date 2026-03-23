@@ -8,7 +8,8 @@ import { sisoFetch } from "@/lib/auth-context";
 export interface PreviewResult {
   enderecos: string[];
   total: number;
-  total_labels: number;
+  total_labels_pequena: number;
+  total_labels_grande: number;
 }
 
 export interface RangeParams {

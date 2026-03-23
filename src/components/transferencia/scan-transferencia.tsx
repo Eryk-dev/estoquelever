@@ -18,6 +18,7 @@ import type { TransferenciaItem } from "@/types";
 interface ScanTransferenciaProps {
   transferenciaId: string;
   onProcessar: () => void;
+  onCancelar?: () => void;
 }
 
 interface ColetarResponse {
@@ -28,6 +29,7 @@ interface ColetarResponse {
 export function ScanTransferencia({
   transferenciaId,
   onProcessar,
+  onCancelar,
 }: ScanTransferenciaProps) {
   const skuInputRef = useRef<HTMLInputElement>(null);
   const [quantidade, setQuantidade] = useState(1);
@@ -303,7 +305,7 @@ export function ScanTransferencia({
         ))}
       </div>
 
-      {/* Bottom fixed: Processar button */}
+      {/* Bottom fixed: Processar + Cancelar buttons */}
       <div className="fixed inset-x-0 bottom-0 border-t border-line bg-paper p-4">
         <button
           type="button"
@@ -314,6 +316,15 @@ export function ScanTransferencia({
           Processar Transferência — {totalItens}{" "}
           {totalItens === 1 ? "item" : "itens"}
         </button>
+        {onCancelar && (
+          <button
+            type="button"
+            onClick={onCancelar}
+            className="mt-2 flex w-full items-center justify-center rounded-xl border border-line py-2.5 text-xs font-medium text-ink-muted transition-colors hover:bg-surface"
+          >
+            Cancelar Transferência
+          </button>
+        )}
       </div>
     </div>
   );

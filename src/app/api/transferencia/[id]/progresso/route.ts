@@ -25,7 +25,7 @@ export async function GET(
   try {
     const { data: transferencia, error: fetchError } = await supabase
       .from("siso_transferencias")
-      .select("id, status")
+      .select("id, status, galpao_origem_id, galpao_destino_id")
       .eq("id", id)
       .single();
 
@@ -34,6 +34,19 @@ export async function GET(
         { error: "Transferencia nao encontrada" },
         { status: 404 },
       );
+    }
+
+    // Galpão access check
+    if (session.galpaoId) {
+      const isAllowed =
+        transferencia.galpao_origem_id === session.galpaoId ||
+        transferencia.galpao_destino_id === session.galpaoId;
+      if (!isAllowed) {
+        return NextResponse.json(
+          { error: "Transferencia nao encontrada" },
+          { status: 404 },
+        );
+      }
     }
 
     // Count by status

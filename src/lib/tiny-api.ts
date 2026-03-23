@@ -286,6 +286,26 @@ export async function buscarProdutoPorGtin(
   return itens.length > 0 ? itens[0] : null;
 }
 
+/** Product data for cloning between empresas (from GET /produtos/{id}) */
+export interface TinyProdutoCompleto {
+  id: number;
+  descricao: string;
+  sku: string;
+  preco: number;
+  gtin?: string | null;
+  unidade?: string;
+  ncm?: string;
+  origem?: string;
+}
+
+/** Fetch full product detail for cloning purposes */
+export async function getProdutoCompleto(
+  token: string,
+  produtoId: number,
+): Promise<TinyProdutoCompleto> {
+  return tinyFetch<TinyProdutoCompleto>(`/produtos/${produtoId}`, { token });
+}
+
 /** Fields for creating a new product in Tiny */
 export interface TinyProdutoCriacao {
   nome: string;

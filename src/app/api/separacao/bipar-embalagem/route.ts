@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
-  const sku: string = body.sku.trim();
+  const sku: string = body.sku.trim().toUpperCase();
   const galpao_id: string | null =
     body.galpao_id && typeof body.galpao_id === "string"
       ? body.galpao_id
@@ -56,8 +56,75 @@ export async function POST(request: NextRequest) {
 
     // TABLE-returning functions return empty array when no match found
     if (!data || (Array.isArray(data) && data.length === 0)) {
+      // Diagnostic: check WHY the SKU wasn't matched for better user feedback
+      let diagnosticMsg = "Nenhum pedido com este SKU pendente de embalagem";
+
+      try {
+        type DiagItem = {
+          pedido_id: string;
+          bipado_completo: boolean;
+          compra_status: string | null;
+          siso_pedidos: unknown;
+        };
+
+        // Check if SKU exists in any pedido (by sku, then by gtin)
+        const selectCols =
+          "pedido_id, bipado_completo, compra_status, siso_pedidos!inner(numero, status_separacao, separacao_galpao_id)";
+
+        const { data: bySku } = await supabase
+          .from("siso_pedido_itens")
+          .select(selectCols)
+          .eq("sku", sku)
+          .limit(5);
+        let diagItems = (bySku ?? []) as DiagItem[];
+
+        if (diagItems.length === 0) {
+          const { data: byGtin } = await supabase
+            .from("siso_pedido_itens")
+            .select(selectCols)
+            .eq("gtin", sku)
+            .limit(5);
+          diagItems = (byGtin ?? []) as DiagItem[];
+        }
+
+        if (diagItems.length > 0) {
+          const reasons: string[] = [];
+          for (const item of diagItems) {
+            const pedido = item.siso_pedidos as {
+              numero: string;
+              status_separacao: string;
+              separacao_galpao_id: string | null;
+            } | null;
+            const num = pedido?.numero ?? item.pedido_id;
+
+            if (item.bipado_completo) {
+              reasons.push(`#${num}: já bipado`);
+            } else if (pedido?.status_separacao !== "separado") {
+              reasons.push(`#${num}: status '${pedido?.status_separacao}'`);
+            } else if (
+              galpao_id &&
+              pedido?.separacao_galpao_id &&
+              pedido.separacao_galpao_id !== galpao_id
+            ) {
+              reasons.push(`#${num}: outro galpão`);
+            } else if (
+              item.compra_status === "cancelado" ||
+              item.compra_status === "indisponivel"
+            ) {
+              reasons.push(`#${num}: item ${item.compra_status}`);
+            }
+          }
+
+          if (reasons.length > 0) {
+            diagnosticMsg = `SKU encontrado mas não disponível: ${reasons.slice(0, 3).join(", ")}`;
+          }
+        }
+      } catch {
+        // Diagnostic failed — use default message
+      }
+
       return NextResponse.json(
-        { error: "Nenhum pedido com este SKU pendente de embalagem" },
+        { error: diagnosticMsg },
         { status: 404 },
       );
     }

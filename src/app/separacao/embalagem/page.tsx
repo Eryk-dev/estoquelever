@@ -79,6 +79,7 @@ function EmbalagemPage() {
   const [expandedPedidoIds, setExpandedPedidoIds] = useState<Set<string>>(new Set());
   const [actionLoading, setActionLoading] = useState(false);
   const scanRef = useRef<HTMLInputElement>(null);
+  const isScanningRef = useRef(false);
 
   const toggleExpandedPedido = useCallback((pedidoId: string) => {
     setExpandedPedidoIds((prev) => {
@@ -96,6 +97,20 @@ function EmbalagemPage() {
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
+
+  // Redirect keyboard input to scan field when it loses focus
+  // (barcode scanners send keystrokes — if input isn't focused, they go nowhere)
+  useEffect(() => {
+    const redirect = (e: KeyboardEvent) => {
+      if (document.activeElement === scanRef.current) return;
+      // Only redirect printable characters, not shortcuts
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        scanRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", redirect);
+    return () => window.removeEventListener("keydown", redirect);
+  }, []);
 
   // Fetch pedidos from API
   const pedidosQueryKey = useMemo(
@@ -121,7 +136,7 @@ function EmbalagemPage() {
     [activeGalpaoId, pedidoIds],
   );
 
-  const { data: itemsData } = useQuery<{ items: PedidoItem[] }>({
+  const { data: itemsData, isLoading: itemsInitialLoading } = useQuery<{ items: PedidoItem[] }>({
     queryKey: itemsQueryKey,
     queryFn: async () => {
       const res = await sisoFetch(
@@ -131,6 +146,7 @@ function EmbalagemPage() {
       return res.json();
     },
     enabled: !!user && pedidoIds.length > 0,
+    staleTime: 30_000,
   });
 
   // Group items by pedido_id
@@ -189,12 +205,14 @@ function EmbalagemPage() {
 
   // Scan handler
   const handleScan = useCallback(async (rawCode?: string) => {
+    if (isScanningRef.current) return; // Prevent concurrent scans
     const sku = (rawCode ?? scanRef.current?.value ?? "").trim();
     if (scanRef.current) {
       scanRef.current.value = "";
     }
     if (!sku) return;
 
+    isScanningRef.current = true;
     const qty = scanQty;
     setScanQty(1);
 
@@ -245,6 +263,7 @@ function EmbalagemPage() {
     } catch {
       toast.error("Erro de conexao");
     } finally {
+      isScanningRef.current = false;
       scanRef.current?.focus();
     }
   }, [
@@ -467,7 +486,16 @@ function EmbalagemPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl space-y-4 px-3 sm:px-4 py-3 sm:py-4">
+      <main
+        className="mx-auto max-w-5xl space-y-4 px-3 sm:px-4 py-3 sm:py-4"
+        onClick={(e) => {
+          // Refocus scan input on click anywhere in main area (unless clicking a button/link)
+          const tag = (e.target as HTMLElement).tagName;
+          if (!["BUTTON", "A", "INPUT", "SELECT"].includes(tag)) {
+            scanRef.current?.focus();
+          }
+        }}
+      >
         {/* Scan input */}
         <div className="rounded-xl border border-line bg-paper px-4 py-3">
           <form onSubmit={handleScanSubmit} className="flex items-center gap-2">
@@ -521,6 +549,7 @@ function EmbalagemPage() {
                 expanded
                 onToggleExpand={() => toggleExpandedPedido(focusedPedido.id)}
                 items={itemsByPedido.get(focusedPedido.id) ?? []}
+                itemsLoading={itemsInitialLoading}
                 onConfirmItem={handleConfirmItem}
                 onReprint={handleReprint}
               />
@@ -551,6 +580,7 @@ function EmbalagemPage() {
                     expanded={expandedPedidoIds.has(pedido.id)}
                     onToggleExpand={() => toggleExpandedPedido(pedido.id)}
                     items={itemsByPedido.get(pedido.id) ?? []}
+                    itemsLoading={itemsInitialLoading}
                     onConfirmItem={handleConfirmItem}
                     onReprint={handleReprint}
                   />
@@ -573,6 +603,7 @@ function EmbalagemPage() {
                     expanded={expandedPedidoIds.has(pedido.id)}
                     onToggleExpand={() => toggleExpandedPedido(pedido.id)}
                     items={itemsByPedido.get(pedido.id) ?? []}
+                    itemsLoading={itemsInitialLoading}
                     onConfirmItem={handleConfirmItem}
                     onReprint={handleReprint}
                   />
@@ -624,6 +655,7 @@ function EmbalagemOrderRow({
   expanded,
   onToggleExpand,
   items,
+  itemsLoading,
   onConfirmItem,
   onReprint,
 }: {
@@ -633,6 +665,7 @@ function EmbalagemOrderRow({
   expanded: boolean;
   onToggleExpand: () => void;
   items: PedidoItem[];
+  itemsLoading?: boolean;
   onConfirmItem: (item: PedidoItem, delta: number) => void;
   onReprint: (pedidoId: string) => Promise<void>;
 }) {
@@ -721,17 +754,23 @@ function EmbalagemOrderRow({
       </button>
 
       {/* Expanded items */}
-      {expanded && items.length > 0 && (
-        <div className="border-t border-line">
-          {items.map((item) => (
-            <EmbalagemItemRow
-              key={item.id}
-              item={item}
-              onConfirm={onConfirmItem}
-              readOnly={isComplete}
-            />
-          ))}
-        </div>
+      {expanded && (
+        items.length > 0 ? (
+          <div className="border-t border-line">
+            {items.map((item) => (
+              <EmbalagemItemRow
+                key={item.id}
+                item={item}
+                onConfirm={onConfirmItem}
+                readOnly={isComplete}
+              />
+            ))}
+          </div>
+        ) : itemsLoading ? (
+          <div className="border-t border-line flex items-center justify-center py-4">
+            <Loader2 className="h-4 w-4 animate-spin text-ink-faint" />
+          </div>
+        ) : null
       )}
 
       {/* Reprint button for completed orders */}

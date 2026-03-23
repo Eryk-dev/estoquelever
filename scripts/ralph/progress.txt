@@ -1,259 +1,291 @@
 # Ralph Progress Log
-Started: Wed Mar 11 12:11:58 -03 2026
+Started: Mon Mar 23 17:22:19 -03 2026
 ---
 
 ## Codebase Patterns
-- All types go in `src/types/index.ts` — no barrel exports, import directly
-- PedidoItem interface maps 1:1 to siso_pedido_itens columns (snake_case)
-- Domain types use Portuguese names, technical types use English
-- Typecheck: `npx tsc --noEmit` (silent output = pass)
-- `siso_pedido_itens.id` is `bigint` (not uuid) — string representation in TypeScript
-- `fornecedor_oc` already existed on siso_pedido_itens — always verify columns before migrations
-- `status_separacao` CHECK constraint name: `siso_pedidos_status_separacao_check`
-- Supabase apply_migration is transactional — all-or-nothing
-- `ProcessedItem` fields in webhook-processor.ts are spread directly into siso_pedido_itens upsert — add a field there to auto-persist to DB
-- `fornecedor_oc` is already populated during webhook enrichment via `getFornecedorBySku()`
-- Supabase `.select()` with FK join uses `table_name(columns)` syntax — e.g. `siso_pedidos(numero)`
-- GET API routes in this codebase don't enforce server-side auth (PIN auth is client-side only). Add `cargo` query param for lightweight checks.
-- `siso_fila_execucao` insert requires: pedido_id, tipo, empresa_id, decisao (filial_execucao/operador are optional)
-- Use `{ count: "exact", head: true }` for count-only queries in Supabase
-- Supabase `.single()` returns error code `PGRST116` when no rows found — use for 404 detection
-- Next.js 16 dynamic route params are a Promise — `const { param } = await params`
-- AppShell handles login redirect + loading state; for custom cargo checks, add logic inside AppShell children
-- GET /api/compras returns `{ counts, data }` — counts has all 3 tab badge numbers regardless of requested status
-
+- Migration files go in `supabase/migrations/` with format `YYYYMMDD_description.sql`
+- All tables prefixed with `siso_`
+- Use `gen_random_uuid()` for UUID PKs
+- Use `timestamptz NOT NULL DEFAULT now()` for created_at
+- FK CASCADE only on child-item tables (itens → parent session)
+- CHECK constraints for status enums directly in CREATE TABLE
+- `tinyFetch` handles rate limiting via `runWithEmpresa` context — all new Tiny API functions must use it (not raw fetch)
+- `buscarProdutoPorSku` pattern: `tinyFetch<{ itens: T[] }>` → return first item or null
+- `getEstoque(token, produtoId)` returns `{ localizacao, depositos[] }` — use `localizacao` for product location and find deposit by `.id` for saldo
+- For fire-and-forget processors: get token INSIDE the loop (not before) to handle expiry during long processing runs
+- `runWithEmpresa(empresaId, fn)` wraps async scope for rate limiting — all tinyFetch calls within are automatically queued
+- `atualizarLocalizacaoProduto` internally does GET+PUT (2 API calls) — fetches descricao+sku then updates location
+- `getValidTokenByEmpresa(empresaId)` returns `{ token, connectionId }` — destructure `.token` before passing to API functions
+- Supabase `select("id", { count: "exact", head: true })` returns `.count` for efficient counting without fetching rows
+- `ilike("sku", value)` for case-insensitive SKU comparison (duplicate detection)
+- Next.js 16 dynamic route params: `{ params }: { params: Promise<{ id: string }> }` — must `await params`
+- Creator-only mutation pattern: `inventario.usuario_id !== session.id && !isAdmin` → 403
+- Resolve deposito_id: `siso_tiny_connections WHERE empresa_id AND ativo=true` → `.maybeSingle()`
+- Pill toggle button pattern: `cn("rounded-md px-3 py-1.5 text-xs font-medium", active ? "bg-ink text-paper shadow-sm" : "bg-zinc-100 text-ink-muted")`
+- Form input pattern: `rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none`
+- `useAuth()` provides `activeGalpaoId` for galpao-scoped client-side filtering
+- Supabase disambiguated FK joins: `alias:table!fk_column(fields)` when a table has multiple FKs to the same target (e.g., `galpao_origem:siso_galpoes!galpao_origem_id(nome)`)
+- useQuery conditional polling: `refetchInterval: (query) => { const s = query.state.data?.status; return s === "x" ? 2000 : false; }`
+- Supabase OR filter for multi-FK galpao: `.or("galpao_origem_id.eq.${id},galpao_destino_id.eq.${id}")` — used when user should see rows where their galpao matches either side
 ---
 
-## 2026-03-11 - US-001
-- Added compras module types: OrdemCompra, OrdemCompraStatus, CompraStatus, CompraItemAgrupado, ConferenciaItem
-- Updated PedidoItem with 8 new compra-related fields (produto_id_tiny, fornecedor_oc, ordem_compra_id, compra_status, compra_quantidade_recebida, comprado_em, comprado_por, recebido_em, recebido_por)
+## 2026-03-23 - US-001
+- Created `supabase/migrations/20260323_modulo_inventario_transferencia.sql`
+- 4 tables: `siso_inventarios`, `siso_inventario_itens`, `siso_transferencias`, `siso_transferencia_itens`
+- 10 indexes for status, empresa, usuario, and item lookups
+- Files changed: `supabase/migrations/20260323_modulo_inventario_transferencia.sql`
+- **Learnings for future iterations:**
+  - PRD section 9.1 has exact SQL — copy verbatim
+  - `siso_inventario_itens` intentionally has NO unique constraint on (inventario_id, sku, localizacao) — same SKU can appear multiple times
+  - `localizacao_antiga_tiny` and `saldo_anterior_tiny` are filled during processing, not during scan
+  - Typecheck passes clean — migration is pure SQL, no TS impact
+---
+
+## 2026-03-23 - US-002
+- Added TypeScript types for Inventário and Transferência modules to `src/types/index.ts`
+- Types: `InventarioModo`, `TipoEstoque`, `InventarioStatus`, `InventarioItemStatus`, `Inventario`, `InventarioItem`, `InventarioItemConsolidado`, `TransferenciaStatus`, `Transferencia`, `TransferenciaItem`
 - Files changed: `src/types/index.ts`
 - **Learnings for future iterations:**
-  - PedidoItem fields are snake_case matching DB columns directly
-  - CompraStatus includes `null` as a union member (not optional — explicitly null when no compra flow)
-  - OrdemCompraStatus is separate from CompraStatus (OC has 'parcialmente_recebido', item doesn't)
+  - All types follow the existing file pattern: type aliases for enums, interfaces for table rows
+  - `timestamptz` columns map to `string | null` (or `string` if NOT NULL with default)
+  - `numeric` SQL type maps to `number | null` in TS
+  - `TransferenciaItem.status` reuses `InventarioItemStatus` type (same CHECK values)
+  - Joined fields are optional (`?`) since they only exist when the query includes joins
+  - Computed counts (`total_itens`, `itens_sucesso`, `itens_erro`) are also optional on the interface
 ---
 
-## 2026-03-11 - US-002
-- Created migration `supabase/migrations/20260311_modulo_compras.sql`
-- Created table `siso_ordens_compra` with status CHECK constraint, FK to siso_empresas and siso_usuarios
-- Added 8 compra columns to `siso_pedido_itens` (produto_id_tiny, ordem_compra_id, compra_status, compra_quantidade_recebida, comprado_em, comprado_por, recebido_em, recebido_por)
-- Created 5 indexes (2 on ordens_compra, 3 partial on pedido_itens)
-- Updated `status_separacao` CHECK constraint on siso_pedidos to include 'aguardando_compra'
-- Applied via Supabase MCP apply_migration
-- Files changed: `supabase/migrations/20260311_modulo_compras.sql`
+## 2026-03-23 - US-003
+- Added `buscarProdutoPorGtin`, `TinyProdutoCriacao` interface, and `criarProduto` to `src/lib/tiny-api.ts`
+- Files changed: `src/lib/tiny-api.ts`
 - **Learnings for future iterations:**
-  - `fornecedor_oc` column already existed on siso_pedido_itens from original schema — always check existing columns before ALTER TABLE ADD COLUMN
-  - Supabase apply_migration runs as a transaction — if any statement fails, the whole migration rolls back
-  - `siso_pedido_itens.id` is `bigint`, not `uuid` — item references use string representation of bigint
-  - `status_separacao` on siso_pedidos has a named CHECK constraint `siso_pedidos_status_separacao_check` — must DROP IF EXISTS before re-adding
+  - `buscarProdutoPorGtin` is identical to `buscarProdutoPorSku` but uses `?gtin=` instead of `?codigo=`
+  - `criarProduto` is a simple POST to `/produtos` — Tiny returns `{ id: number }` directly
+  - All new Tiny API functions placed between existing search functions and `listarDepositos`
+  - `TinyProdutoCriacao` only has `nome` and `preco` required — rest optional per Tiny API
 ---
 
-## 2026-03-11 - US-003
-- Added `produto_id_tiny` field to `ProcessedItem` interface in webhook-processor.ts
-- Set `produto_id_tiny = item.produto.id` (origin empresa's Tiny product ID) during enrichment
-- Added warning log when `produto_id_tiny` cannot be resolved
-- `fornecedor_oc` was already being saved via `ProcessedItem` (line 659 in enrichment, spread into upsert)
-- Files changed: `src/lib/webhook-processor.ts`
+## 2026-03-23 - US-004
+- Added `playDuplicate()` to `src/components/separacao/audio-feedback.ts`
+- Two 880Hz beeps, 100ms each, 250ms total cycle (100ms tone + 150ms gap)
+- Files changed: `src/components/separacao/audio-feedback.ts`
 - **Learnings for future iterations:**
-  - `ProcessedItem` fields are spread directly into the `siso_pedido_itens` upsert — adding a field to `ProcessedItem` automatically persists it to DB
-  - `produto_id_tiny` = `item.produto.id` for origin empresa items (same Tiny product ID as `produto_id`)
-  - `fornecedor_oc` was already being populated by `getFornecedorBySku()` before this story — no extra work needed
-  - For kit components, each expanded item gets its own `produto_id_tiny` from the kit component's Tiny product ID
+  - `playError` uses 0.3s offset between beeps (200ms tone + 100ms gap). `playDuplicate` uses 0.25s (100ms tone + 150ms gap)
+  - All multi-tone functions require `getContext()` call for timing via `ctx.currentTime`
+  - Single-tone functions can skip the context call since `playTone` handles it internally
 ---
 
-## 2026-03-11 - US-004
-- After `executarMarcadoresOnly` (OC flow), added DB updates: set `status_separacao='aguardando_compra'` on siso_pedidos and `compra_status='aguardando_compra'` on all siso_pedido_itens
-- Main pedido `status` still goes to 'concluido' (handled by processQueue after executeJob returns)
-- Changed log source from 'worker' to 'execution-worker' per AC requirement
-- Files changed: `src/lib/execution-worker.ts`
+## 2026-03-23 - US-005
+- Created `src/lib/inventario-processor.ts` with `consolidarItens` and `processarInventario`
+- `consolidarItens`: groups by UPPER(sku), sums quantities, merges unique locations with "; " (deduplicated, sorted)
+- `processarInventario`: fire-and-forget async processor that: sets status→processando, consolidates pendente items, for each consolidated item within runWithEmpresa: detects Kit (K), gets current stock/location, moves stock (if loc_estoque and NOT Kit), computes final location (merge or replace), updates location in Tiny, marks items sucesso/erro
+- Saves `localizacao_antiga_tiny` and `saldo_anterior_tiny` before mutations (for reversal in US-006)
+- Files changed: `src/lib/inventario-processor.ts`
 - **Learnings for future iterations:**
-  - The pedido `status='concluido'` update happens in `processQueue` (lines 133-140), NOT inside `executeJob` — so adding updates inside `executarMarcadoresOnly` doesn't interfere with the main status flow
-  - `status_separacao` is separate from `status` — it tracks the separacao/compra lifecycle while `status` tracks the overall pedido lifecycle
-  - The OC flow (`executarMarcadoresOnly`) is much simpler than propria/transferencia — just marcadores, no NF or stock posting
+  - `getEstoque` returns both `localizacao` and `depositos[]` — use it to get old product location without extra API calls
+  - Token must be fetched inside the processing loop (not before) since Tiny tokens expire quickly and processing can take 30+ min
+  - Supabase `.in('id', array)` works for UPDATE operations (filters by array of UUIDs)
+  - `inventario.usuario` from join query needs type assertion `as { nome: string } | null` since Supabase returns generic types
+  - No counter columns on `siso_inventarios` table — counters are computed via COUNT queries by the progress endpoint
+  - `anySuccess` flag (not `allFailed`) for clearer semantics — final status is `concluido` if ANY item succeeded, `erro` only if ALL failed
 ---
 
-## 2026-03-11 - US-005
-- Created `src/app/api/compras/route.ts` with GET handler
-- Three status modes: aguardando_compra (grouped by fornecedor, consolidated by SKU), comprado (OCs with items), indisponivel (flat list)
-- Returns `{ counts, data }` — counts has tab badge numbers for all 3 statuses
-- Aguardando compra consolidates same SKU+fornecedor across pedidos (sums quantities, collects pedido references)
-- Comprado fetches OCs with joined items and usuario name
-- Auth check via `cargo` query param (lightweight — matches codebase's client-side auth pattern)
-- Files changed: `src/app/api/compras/route.ts`
+## 2026-03-23 - US-006
+- Added `reverterInventario(inventarioId: string)` to `src/lib/inventario-processor.ts`
+- Reversal logic: sets status→revertendo, fetches sucesso items, consolidates by SKU, for each within runWithEmpresa: restores localizacao_antiga_tiny via atualizarLocalizacaoProduto, reverses stock (B→B with saldo_anterior, E→S, S→E), marks items back to pendente
+- Final status→revertido + concluido_em timestamp
+- Files changed: `src/lib/inventario-processor.ts`
 - **Learnings for future iterations:**
-  - Supabase FK join syntax: `siso_pedidos(numero, empresa_origem_id)` in `.select()` — returns nested object
-  - For named FK joins (when multiple FKs to same table): `siso_usuarios:comprado_por(nome)` — use `table:column(fields)` syntax
-  - `{ count: "exact", head: true }` returns only the count without data — good for badge counts
-  - Raw Supabase types need `as unknown as T[]` cast due to generic typing — define local interfaces for raw DB shapes
-  - The `items` result from Supabase join queries have complex nested types — cast to explicit interfaces rather than fighting TS inference
+  - Reversal uses the same consolidarItens function as processing — items grouped by SKU for batch reversal
+  - `localizacao_antiga_tiny` and `saldo_anterior_tiny` are the same for all item rows of the same SKU (set during processamento), so picking from `firstItem` is safe
+  - Stock reversal logic: Balanço is absolute (set back to saldo_anterior), Entrada/Saída are relative (invert the direction with same qty)
+  - Reverted items go back to `pendente` (not a new status) — allows re-processing if needed
+  - TipoEstoque import was needed from @/types for the tipo casting
 ---
 
-## 2026-03-11 - US-006
-- Created `src/app/api/compras/ordens/route.ts` with POST handler
-- Creates an OC in `siso_ordens_compra` (status='comprado') and links all `aguardando_compra` items for that fornecedor
-- Validates: required fields (fornecedor, empresa_id, usuario_id), auth (admin/comprador), items exist for fornecedor
-- Returns 400 if no items found for the given fornecedor
-- Returns created OC + count of linked items
-- Files changed: `src/app/api/compras/ordens/route.ts`
+## 2026-03-23 - US-007
+- Created `src/app/api/inventario/route.ts` with GET (list) and POST (create)
+- Created `src/app/api/inventario/[id]/route.ts` with GET (detail+consolidated) and PATCH (update/cancel)
+- GET list: joins empresa/galpao/usuario, computes total_itens/itens_sucesso/itens_erro via counting item rows, filters by user's galpaoId, optional ?status= param
+- POST: validates empresa_id+modo+tipo_estoque, resolves galpao_id from empresa, resolves deposito_id from siso_tiny_connections, returns 201
+- GET detail: returns full inventario + all items + consolidarItens() consolidated view
+- PATCH: update observacoes or cancel (creator/admin only, only em_andamento can be cancelled)
+- Files changed: `src/app/api/inventario/route.ts`, `src/app/api/inventario/[id]/route.ts`
 - **Learnings for future iterations:**
-  - POST endpoints follow same pattern: parse JSON body, validate, auth check via `cargo` field, createServiceClient(), try/catch with logger
-  - Supabase `.update().select("id")` returns updated rows — use `.length` for count of affected rows
-  - OC creation and item linking are two separate operations (insert OC, then update items) — not transactional but acceptable for this volume
+  - Next.js 16 dynamic route params are `Promise<{id: string}>` — must `await params` before accessing `.id`
+  - Item counts computed by fetching rows with `.select("inventario_id")` and counting in JS — simpler than HEAD count per inventario
+  - `siso_tiny_connections` has `deposito_id` and `ativo` — use `.eq("ativo", true).maybeSingle()` to resolve deposit
+  - `consolidarItens` from `inventario-processor.ts` is reused in the GET detail endpoint for the consolidated view
+  - Pattern: creator-only mutations check `inventario.usuario_id !== session.id && !isAdmin`
 ---
 
-## 2026-03-11 - US-007
-- Created `src/app/api/compras/conferencia/[ordemCompraId]/route.ts` with GET handler
-- Fetches OC by ID (404 if not found via PGRST116 error code), then fetches items with compra_status='comprado'
-- Calculates quantidade_restante = quantidade - compra_quantidade_recebida for each item
-- Joins with siso_pedidos for numero_pedido reference
-- Returns OC info (with comprado_por_nome from siso_usuarios join) + ConferenciaItem array
-- Auth check via cargo query param (admin/comprador)
-- Files changed: `src/app/api/compras/conferencia/[ordemCompraId]/route.ts`
+## 2026-03-23 - US-008
+- Created `src/app/api/inventario/[id]/coletar/route.ts` with POST endpoint
+- Searches Tiny by SKU first (`buscarProdutoPorSku`), then by GTIN (`buscarProdutoPorGtin`) as fallback
+- Inserts item into `siso_inventario_itens` with product data from Tiny
+- Duplicate detection: queries existing items with same SKU (case-insensitive via `ilike`), returns `ja_escaneado` flag + `localizacoes_anteriores` array
+- Total item count via `select("id", { count: "exact", head: true })` for efficiency
+- Files changed: `src/app/api/inventario/[id]/coletar/route.ts`
 - **Learnings for future iterations:**
-  - Supabase `.single()` returns error code `PGRST116` when no rows found — use this for 404 detection
-  - Next.js 16 dynamic route params are a Promise — use `const { param } = await params`
-  - ConferenciaItem maps 1:1 to each siso_pedido_itens row (no consolidation like aguardando_compra) — each item has its own pedido reference
+  - `getValidTokenByEmpresa` returns `{ token, connectionId }` not just a string — must destructure
+  - `select("id", { count: "exact", head: true })` is the efficient Supabase pattern for COUNT without fetching rows
+  - `ilike` for case-insensitive string match (used for SKU duplicate detection)
+  - EAN is only saved when the product was found via GTIN search (not SKU) — avoids extra API call to getProdutoDetalhe
+  - All Tiny API calls wrapped in `runWithEmpresa` for rate limiting
 ---
 
-## 2026-03-11 - US-008
-- Created `src/app/api/compras/conferir/route.ts` with POST handler
-- Processes receiving: for each item with quantidade_recebida > 0, calls Tiny movimentarEstoque tipo='E' if produto_id_tiny exists
-- Uses waitForRateLimit + registerApiCall before each Tiny call, 500ms sleep between calls
-- If Tiny call fails for an item, logs error and continues with remaining items (no abort)
-- Updates compra_quantidade_recebida in DB; sets compra_status='recebido' when fully received
-- Items without produto_id_tiny: logs warning, skips Tiny call, still updates DB quantity
-- Updates OC status: all items recebido → 'recebido', mix → 'parcialmente_recebido'
-- Returns summary: { processados, erros, erros_detalhe, itens_sem_produto_id }
-- Auth check via cargo field (admin/comprador)
-- Files changed: `src/app/api/compras/conferir/route.ts`
+## 2026-03-23 - US-009
+- Created `src/app/api/inventario/[id]/itens/[itemId]/route.ts` with PATCH and DELETE
+- PATCH: updates item quantidade, validates em_andamento + creator-only, returns {item:{id,quantidade}, total_itens}
+- DELETE: deletes item row, validates em_andamento + creator-only, returns {ok:true, total_itens}
+- Both endpoints compute total_itens via COUNT (not increment/decrement)
+- Files changed: `src/app/api/inventario/[id]/itens/[itemId]/route.ts`
 - **Learnings for future iterations:**
-  - `movimentarEstoque` in tiny-api.ts accepts `deposito: { id: number }` (object, not just ID) — match this format when passing deposito
-  - Get deposito_id from `siso_tiny_connections WHERE empresa_id AND ativo=true` — same pattern as execution-worker.ts
-  - For conferir, fetch items individually by ID to get current `compra_quantidade_recebida` (not stale) before incrementing
-  - Sleep between Tiny calls uses index check `idx < length - 1` to avoid unnecessary sleep after last item
+  - Next.js 16 nested dynamic params: `Promise<{ id: string; itemId: string }>` — both segments in one params object
+  - Supabase `.delete()` doesn't return deleted row by default — just check for error
+  - `.eq("inventario_id", id)` on item operations adds safety (prevents cross-inventory item access)
 ---
 
-## 2026-03-11 - US-009
-- Created `src/lib/compras-release.ts` with `checkAndReleasePedidos(itemIds)` function
-- Logic: from item IDs → get distinct pedido_ids → for each pedido check if ALL compra_status items are 'recebido' → if yes, release pedido
-- Release = update siso_pedidos (decisao_final='propria', status='executando', status_separacao='aguardando_nf') + insert job in siso_fila_execucao (tipo='lancar_estoque', decisao='propria')
-- Integrated into POST /api/compras/conferir: tracks processedItemIds, calls checkAndReleasePedidos after OC status update
-- Response now includes `pedidos_liberados` array
-- Only items with non-null compra_status are checked — normal items don't block release
-- Skip pedidos not in 'aguardando_compra' or 'comprado' status_separacao to avoid double-release
-- Files changed: `src/lib/compras-release.ts` (new), `src/app/api/compras/conferir/route.ts`
+## 2026-03-23 - US-010
+- Created `src/app/api/inventario/[id]/processar/route.ts` — POST: validates em_andamento + has items (COUNT>0) + creator-only, fire-and-forget processarInventario with .catch for error logging
+- Created `src/app/api/inventario/[id]/progresso/route.ts` — GET: computes total/processados/sucesso/erro via COUNT queries, builds consolidated item list with aggregated status (any sucesso→sucesso, any erro→erro, else pendente)
+- Created `src/app/api/inventario/[id]/reverter/route.ts` — POST: validates status=concluido + creator-only, fire-and-forget reverterInventario
+- Files changed: `src/app/api/inventario/[id]/processar/route.ts`, `src/app/api/inventario/[id]/progresso/route.ts`, `src/app/api/inventario/[id]/reverter/route.ts`
 - **Learnings for future iterations:**
-  - `siso_fila_execucao` insert needs: pedido_id, tipo, empresa_id, decisao — filial_execucao and operador fields are optional
-  - Release uses decisao='propria' because after OC receiving, the stock is now local — the existing executarSaidaPropria flow handles NF + stock posting
-  - Filter by `status_separacao IN ('aguardando_compra', 'comprado')` to prevent re-releasing already released pedidos
-  - Use `.not("compra_status", "is", null)` in Supabase to filter for non-null values
+  - Fire-and-forget pattern: `fn(id).catch(err => logger.logError({...}))` — no await, server is VPS so process survives response
+  - Progresso consolidated status aggregation: check `sucesso` first, then `erro`, then `processando`, default `pendente` — this is different from consolidarItens which just copies first item's status
+  - COUNT queries via `select("id", { count: "exact", head: true })` are run independently (not computed from fetched rows) for efficiency during polling
+  - Progresso fetches all items then groups in JS (not SQL) for consolidated view — keeps logic simple and reusable
 ---
 
-## 2026-03-11 - US-010
-- Created 3 item action endpoints under `/api/compras/itens/[itemId]/`:
-  - `devolver/route.ts` — returns item to "Aguardando Compra" queue, unlinks from OC
-  - `indisponivel/route.ts` — marks item as unavailable, unlinks from OC
-  - `trocar-fornecedor/route.ts` — changes item's fornecedor_oc, optionally moves to new OC or back to queue
-- All three check if old OC becomes empty after removal → sets OC status to 'cancelado'
-- All three follow same auth pattern (cargo check) and error handling
-- Files changed: `src/app/api/compras/itens/[itemId]/devolver/route.ts` (new), `src/app/api/compras/itens/[itemId]/indisponivel/route.ts` (new), `src/app/api/compras/itens/[itemId]/trocar-fornecedor/route.ts` (new)
+## 2026-03-23 - US-011
+- Created `src/components/inventario/criar-inventario-form.tsx`
+- Form with empresa selector (auto-selects if only 1), mode toggle (loc_estoque/loc_only), stock type toggle (B/E/S), merge toggle (substituir/manter), observações textarea
+- Uses sisoFetch + toast.error pattern, POST /api/inventario → onCreated(id)
+- PillButton helper component for toggle styling (bg-ink text-paper active, bg-zinc-100 text-ink-muted inactive)
+- Files changed: `src/components/inventario/criar-inventario-form.tsx`
 - **Learnings for future iterations:**
-  - Next.js 16 dynamic route params: `{ params }: { params: Promise<{ itemId: string }> }` — always await params
-  - All item action endpoints share same OC cleanup pattern: after unlinking item, count remaining items in OC, cancel if 0
-  - `indisponivel` also unlinks from OC (sets ordem_compra_id=null) so the item doesn't appear in OC conferencia
-  - `trocar-fornecedor` with `nova_ordem_compra_id` moves directly to another OC; without it, item goes back to aguardando_compra with new fornecedor
+  - Pill toggle pattern: flex gap-1, each button rounded-md px-3 py-1.5, active bg-ink text-paper, inactive bg-zinc-100 text-ink-muted — matches Tabs component styling
+  - `useAuth()` provides `activeGalpaoId` for filtering empresas client-side
+  - Admin empresas API (`/api/admin/empresas`) returns all empresas — filter by `galpao_id` and `ativo` client-side
+  - Form inputs use: rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none
+  - Submit buttons use: rounded-xl bg-ink py-3 text-sm font-medium text-paper disabled:opacity-50
 ---
 
-## 2026-03-11 - US-011
-- Added compras cleanup to the cancellation handler in `src/app/api/webhook/tiny/route.ts`
-- When a pedido with `status_separacao` = 'aguardando_compra' or 'comprado' is cancelled:
-  - Clears `compra_status` and `ordem_compra_id` on all pedido items with compra data
-  - Checks for items with `compra_quantidade_recebida > 0` (stock already entered in Tiny) — logs warning per item
-  - Sets `compra_estoque_lancado_alerta = true` on the pedido for UI alerting
-  - Checks each affected OC — cancels OC if no remaining items
-- Created migration `20260311_add_compra_estoque_lancado_alerta.sql` adding boolean column to siso_pedidos
-- Added `compra_estoque_lancado_alerta` to Pedido type in `src/types/index.ts`
-- Files changed: `src/app/api/webhook/tiny/route.ts`, `src/types/index.ts`, `supabase/migrations/20260311_add_compra_estoque_lancado_alerta.sql` (new)
+## 2026-03-23 - US-012
+- Created `src/components/inventario/inventario-card.tsx`
+- Card component: empresa name, galpão, mode badge, status badge (color-coded), total items, sucesso/erro counts for concluido, operator name, date (DD/MM HH:MM)
+- CTA: "Continuar" for em_andamento, "Ver" for all other statuses
+- Card styling: rounded-xl border bg-paper shadow-sm, hover:bg-surface, full-width button for click
+- Files changed: `src/components/inventario/inventario-card.tsx`
 - **Learnings for future iterations:**
-  - Cancellation handler is in `src/app/api/webhook/tiny/route.ts` (not webhook-processor.ts) — lines 131+
-  - `status_separacao` check values for compras flow: 'aguardando_compra' or 'comprado' (not the OC statuses)
-  - Compras cleanup must happen BEFORE the pedido status update (so the item query still finds correct pedido)
-  - Same OC emptiness check pattern as item action endpoints: count remaining items, cancel if 0
-  - No stock reversal on cancellation — stock entered in Tiny stays, only an informational alert is stored
+  - Card-as-button pattern: use `<button>` with `text-left` for full card clickability (better than wrapping `<article>` in onClick)
+  - Status color mapping: blue=active, sky=processing, emerald=done, red=error, zinc=terminal/inactive — consistent across the app
+  - `inventario.total_itens` etc. are optional computed fields (from COUNT queries in list endpoint) — default to 0 with `?? 0`
+  - Mode labels mapping: loc_estoque → "Loc + Estoque", loc_only → "Apenas Loc" — short form for card display
 ---
 
-## 2026-03-11 - US-012
-- Replaced existing pre-approval compras page with new post-approval compras module
-- New page uses tabs (Aguardando Compra, Comprado, Indisponíveis) with counter badges from GET /api/compras
-- React Query fetches data with 30s refetchInterval, passing active tab status as query param
-- Auth guard: shows "Acesso negado" if cargo is not admin/comprador (AppShell handles login redirect)
-- Uses AppShell, Tabs, EmptyState, LoadingSpinner — all existing components
-- Placeholder content (JSON pre) for tab data — real components will be added in US-013, US-014, US-016
-- Files changed: `src/app/compras/page.tsx`
+## 2026-03-23 - US-013
+- Created `src/components/inventario/scan-inventario.tsx` — barcode scanning interface for inventory
+- Location field: sticky top, font-mono text-lg, forces uppercase, disables SKU field when empty
+- SKU field: inputMode='none' by default, Keyboard toggle switches to 'text', clear+refocus after each scan
+- Quantity stepper: [-][num][+] below SKU, default 1, resets to 1 after successful scan
+- Item list: newest first, SKU (mono bold), nome (truncated), location badge (blue), tappable qty (inline number input on tap → PATCH on blur/enter), trash icon (DELETE)
+- Duplicate detection: if ja_escaneado → playDuplicate() + amber "Também em: ..." text
+- Audio: playSuccess on new, playDuplicate on repeat, playError on 404
+- Bottom fixed: "Processar Inventário — N itens · Balanço" button
+- Loads existing items on mount via GET /api/inventario/[id]
+- Files changed: `src/components/inventario/scan-inventario.tsx`
 - **Learnings for future iterations:**
-  - AppShell handles login redirect and loading state — no need to duplicate that logic in pages
-  - AppShell has `requireAdmin` but no generic `requireCargo` — for custom cargo checks, add a check inside the children
-  - The GET /api/compras response is `{ counts, data }` — counts has all 3 tab badge numbers regardless of which status is requested
-  - CompraTab type aligns with API status param values: 'aguardando_compra' | 'comprado' | 'indisponivel'
-  - The old compras page was a pre-approval OC view (fetching pending pedidos); the new one is post-approval (fetching from siso_ordens_compra and siso_pedido_itens compra fields)
+  - ScanInventario needs `modo` and `tipoEstoque` props from the parent (to display in bottom button label)
+  - `empresaId` prop is passed but not used directly — coletar API resolves empresa from inventario
+  - Item display uses `ItemDisplay` interface extending `InventarioItem` with optional `localizacoes_anteriores`
+  - Inline qty editing: `editingItemId` state tracks which item is being edited, `editingQty` holds the temp value
+  - `useCallback` on `handleScan` to stabilize reference (depends on inventarioId, localizacao, quantidade)
+  - Loading existing items on mount uses the GET detail endpoint which returns `.itens` array — reverse for newest-first
 ---
 
-## 2026-03-11 - US-013
-- Created `src/components/compras/fornecedor-card.tsx` — supplier card with SKU list, consolidated quantities, pedido badges
-- Card features: expandable SKU breakdown (click to see per-pedido quantities), "Copiar SKUs" (tab-separated clipboard), "Marcar como Comprado" with observacao form
-- Updated `src/app/compras/page.tsx` to render FornecedorCard for aguardando_compra tab; other tabs still show JSON placeholder
-- Files changed: `src/components/compras/fornecedor-card.tsx` (new), `src/app/compras/page.tsx`
+## 2026-03-23 - US-014
+- Created `src/components/inventario/progresso-processamento.tsx` — reusable progress view for both inventario and transferencia
+- Polls GET /api/{tipo}/[sessionId]/progresso every 2s while status is processando|revertendo (useQuery conditional refetchInterval)
+- Progress bar: h-1.5 rounded-full, blue during processing → emerald on complete → red on error
+- Counters: X de Y, sucesso (emerald), erro (red)
+- Consolidated item list with status icons: Check (green), X (red with erro_msg inline), Loader2 (blue spin), Clock (gray)
+- On concluido: playComplete() sound, banner "Concluído — X ok · Y erros"
+- On erro: banner with Reprocessar button (POST /processar again)
+- Reverter button when status=concluido: inline confirm flow → POST /reverter
+- Props: sessionId + tipo ('inventario' | 'transferencia') — tipo determines API path
+- Files changed: `src/components/inventario/progresso-processamento.tsx`
 - **Learnings for future iterations:**
-  - API returns aguardando_compra data as `FornecedorGroup[]` — each group has `{ fornecedor, empresa_id, itens: CompraItemAgrupado[] }`
-  - FornecedorCard receives `usuario_id` and `cargo` from the page (from useAuth) — needed for POST /api/compras/ordens
-  - Use `queryClient.invalidateQueries({ queryKey: ["compras"] })` to refresh all compras tabs after mutation
-  - Copiar SKUs uses tab-separated format: `SKU\tdescricao\tquantidade` per line
+  - useQuery `refetchInterval` callback receives `query` object — access `query.state.data?.status` to conditionally poll
+  - playComplete() state guard via `playedComplete` useState prevents sound replaying on every re-render during polling
+  - Inline confirm pattern: `confirmReverter` state toggles between "Reverter" button and "Confirmar"/"Cancelar" pair
+  - Error messages shown inline under each item (not tooltip) using AlertTriangle icon — more mobile-friendly than hover tooltips
+  - `setPlayedComplete(false)` must be called when triggering reprocessar/reverter to allow sound on next completion
 ---
 
-## 2026-03-11 - US-014
-- Created `src/components/compras/ordem-compra-card.tsx` — OC card with item list, status badges, progress indicator, and conferir button
-- Card shows: OC header with fornecedor, meta (comprado por / data / relative time), observacao, item list with status badges, conferir button
-- Parcialmente recebido OCs show progress indicator (X/Y recebidos) in header
-- Items show individual status badges (Comprado/Parcial/Recebido) and pedido number badges
-- Conferir Recebimento button navigates to `/compras/conferencia/[id]` via router.push
-- Updated `src/app/compras/page.tsx` to render OrdemCompraCard for comprado tab (indisponivel still placeholder for US-016)
-- Files changed: `src/components/compras/ordem-compra-card.tsx` (new), `src/app/compras/page.tsx`
+## 2026-03-23 - US-015
+- Created `src/app/inventario/page.tsx` — full inventory page with tabs and state machine
+- State machine: list → create → scan → progress (with back navigation)
+- 2 tabs: "Em Andamento" (em_andamento + processando) | "Concluídos" (concluido + erro + revertido + cancelado)
+- List view: InventarioCard for each session, click routes to scan (em_andamento) or progress (all others)
+- Create view: CriarInventarioForm inline, onCreated fetches detail then switches to scan
+- Scan view: ScanInventario with inventarioId, empresaId, modo, tipoEstoque from selected
+- Progress view: ProgressoProcessamento with tipo='inventario'
+- Header: "+Novo" in list view, "Voltar" in other views
+- Processar handler: POST /api/inventario/[id]/processar then switch to progress view
+- Files changed: `src/app/inventario/page.tsx`
 - **Learnings for future iterations:**
-  - API returns OC data with `comprado_por_nome` (string from siso_usuarios join) — not the UUID
-  - OC sequential number (#N) is derived from list index (idx+1) since the DB uses UUIDs
-  - Status badge mapping: `comprado` → amber, `parcialmente_recebido` → blue, `recebido` → emerald
-  - `useRouter` from `next/navigation` for programmatic navigation in App Router
+  - State machine pattern: `useState<View>` + `useState<SelectedData>` for tracking which inventario is active
+  - After creating inventario, fetch the detail endpoint to get modo/tipo_estoque (POST only returns minimal fields)
+  - `handleCardClick` routes based on status: em_andamento→scan, processando/revertendo→progress, terminal→progress
+  - `queryClient.invalidateQueries` on view transitions to keep list fresh
+  - Tab filtering: use `useMemo` with status checks, same pattern as siso/page.tsx
 ---
 
-## 2026-03-11 - US-015
-- Created `src/app/compras/conferencia/[ordemCompraId]/page.tsx` — receiving/checking form page
-- Fetches OC data via GET /api/compras/conferencia/[ordemCompraId] using React Query (no refetchInterval)
-- Shows OC header with fornecedor, comprado por, date, observacao
-- Each item shows: SKU, descricao, pedido badges with quantities, "Esperado" count, number input pre-filled with quantidade_restante
-- Already-received items show blue "Já recebido: N" indicator
-- Confirm button: disabled when all quantities are 0, loading state with spinner during POST
-- On success: toast with processados count + pedidos liberados, navigates to /compras
-- On errors: toast.error with error details (duration 8000ms for readability)
-- Empty state when all items already received
-- Auth guard matches compras page pattern (AppShell + cargo check)
-- Files changed: `src/app/compras/conferencia/[ordemCompraId]/page.tsx` (new)
+## 2026-03-23 - US-016
+- Added Inventário module card to home dashboard (MODULES array in page.tsx)
+- Added inventario count query to /api/dashboard/counts (COUNT siso_inventarios WHERE status='em_andamento', filtered by galpao_id)
+- Updated DashboardCounts interface to include `inventario` field
+- Files changed: `src/app/page.tsx`, `src/app/api/dashboard/counts/route.ts`
 - **Learnings for future iterations:**
-  - `useParams<{ ordemCompraId: string }>()` for dynamic route params in Next.js 16 client components — no await needed (unlike server-side params)
-  - Use controlled state for quantity inputs: initialize from API data via getQuantity helper, track user changes in Record<string, number>
-  - Don't use refetchInterval on forms with user input — it would reset typed values
-  - POST /api/compras/conferir response includes `pedidos_liberados` array — show count in success toast
+  - Dashboard count queries use `select("*", { count: "exact", head: true })` pattern with conditional `.eq("galpao_id", activeGalpaoId)` filter
+  - New modules added to MODULES array need: icon import, DashboardCounts interface update, and count query in counts API
+  - Early return path (allowedEmpresaIds.length === 0) must also include new count fields with 0 default
+  - Module card `color` uses CSS vars: `var(--color-info)`, `var(--color-positive)`, `var(--color-warning)`, `var(--color-danger)`
 ---
 
-## 2026-03-11 - US-016
-- Added per-item action dropdown in `ordem-compra-card.tsx` with 3 options: Devolver pra fila, Marcar indisponível, Trocar fornecedor
-- Dropdown uses MoreVertical icon with backdrop-close pattern, inline trocar-fornecedor form
-- Each action calls the corresponding POST /api/compras/itens/[itemId]/ endpoint, invalidates React Query cache, shows toast
-- Replaced indisponivel tab JSON placeholder in `compras/page.tsx` with proper item list showing SKU, descricao, fornecedor, quantidade, pedido badge, and red "Indisponível" badge
-- Files changed: `src/components/compras/ordem-compra-card.tsx`, `src/app/compras/page.tsx`
+## 2026-03-23 - US-017
+- Created `src/lib/transferencia-processor.ts` with `processarTransferencia` and `reverterTransferencia`
+- Added `TinyProdutoCompleto` interface + `getProdutoCompleto` function to `src/lib/tiny-api.ts` for product cloning
+- `processarTransferencia`: processes each pendente item individually (not consolidated) — searches destination by SKU, clones if not found, Saída from origin, Entrada to destination
+- `reverterTransferencia`: for each sucesso item, Entrada on origin + Saída on destination (reverse movements)
+- Product cloning: fetches full product detail from origin via `getProdutoCompleto`, creates in destination via `criarProduto` with nome+preco+codigo+gtin+unidade+ncm+origem
+- Files changed: `src/lib/transferencia-processor.ts`, `src/lib/tiny-api.ts`
 - **Learnings for future iterations:**
-  - Dropdown menus: use fixed backdrop div + absolute positioned menu for click-outside-to-close pattern (no external library needed)
-  - Item action endpoints accept `{ cargo }` in body for auth check — same pattern as POST endpoints
-  - `confirm()` is acceptable for destructive actions (indisponivel) in this codebase — no custom modal needed
-  - Trocar fornecedor inline form within dropdown: use autoFocus + Enter key handler for quick interaction
+  - Transfer items are processed individually (not consolidated like inventory) — no location merging or stock type complexity
+  - Supabase disambiguated FK joins: `galpao_origem:siso_galpoes!galpao_origem_id(nome)` for tables with multiple FKs to the same target
+  - `getProdutoCompleto` returns `sku` field from GET /produtos/{id}, but `criarProduto` (POST /produtos) expects `codigo` — so map `codigo: produtoOrigem.sku`
+  - Token must be refreshed before each runWithEmpresa call (get fresh token per step, not once at the start)
+  - Alternating runWithEmpresa between origin and destination gives 2x rate limit throughput (separate per-empresa queues)
+  - Cloning only happens once per SKU in practice — subsequent items with the same SKU will find the already-cloned product in destination
+---
+
+## 2026-03-23 - US-018
+- Created all 7 transfer API routes following inventory patterns:
+  - `src/app/api/transferencia/route.ts` — GET (list with galpao origin OR destination filter) + POST (create with origem != destino validation, resolves both galpoes + depositos)
+  - `src/app/api/transferencia/[id]/route.ts` — GET (detail with all items + counts) + PATCH (update/cancel, creator-only)
+  - `src/app/api/transferencia/[id]/coletar/route.ts` — POST (scan in ORIGIN empresa only, no localizacao field, no duplicate detection)
+  - `src/app/api/transferencia/[id]/itens/[itemId]/route.ts` — PATCH (qty update) + DELETE (remove item)
+  - `src/app/api/transferencia/[id]/processar/route.ts` — POST (fire-and-forget processarTransferencia)
+  - `src/app/api/transferencia/[id]/progresso/route.ts` — GET (counters + individual item list, not consolidated)
+  - `src/app/api/transferencia/[id]/reverter/route.ts` — POST (fire-and-forget reverterTransferencia)
+- Files changed: 7 new route files in `src/app/api/transferencia/`
+- **Learnings for future iterations:**
+  - Transfer list galpao filter uses `.or("galpao_origem_id.eq.X,galpao_destino_id.eq.X")` — user sees transfers involving their galpao on either side
+  - Disambiguated FK joins for same-target FKs: `empresa_origem:siso_empresas!empresa_origem_id(nome)` — Supabase needs the FK column name to disambiguate
+  - Transfer coletar has no localizacao field and no duplicate detection (unlike inventory coletar) — simpler flow
+  - Transfer progresso shows individual items (not consolidated by SKU) since transfers are simpler and don't have location grouping
+  - POST create resolves both deposito_ids in parallel via Promise.all for efficiency
+  - `InventarioItemStatus` type is reused for transfer item status display (same values: pendente/processando/sucesso/erro)
+  - Transfer POST create validates both empresa depositos exist (400 if null) — same pattern as inventory but for 2 empresas
 ---

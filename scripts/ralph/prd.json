@@ -1,300 +1,415 @@
 {
-  "project": "SISO - Modulo de Compras",
-  "branchName": "ralph/modulo-compras",
-  "description": "Modulo de ordens de compra para itens sem estoque. OC por fornecedor atendendo N pedidos de venda. Fluxo: aprovacao OC → comprador cria OC por fornecedor → recebimento/conferencia → entrada estoque Tiny tipo E → liberacao automatica de pedidos para separacao.",
+  "project": "SISO - Inventário + Transferência + Etiquetas de Endereço",
+  "branchName": "ralph/inventario-transferencia-etiquetas",
+  "description": "3 novos módulos: inventário físico (contagem estoque + localização), transferência de estoque entre galpões, e etiquetas de endereço ZPL. PRD completo em tasks/prd-inventario-transferencia-etiquetas.md",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Types — Compras module types",
-      "description": "As a developer, I want all compras-related types defined in types/index.ts so that subsequent stories have full type safety.",
+      "title": "Migration SQL: tabelas inventário e transferência",
+      "description": "As a developer, I want to create the database tables for inventory and transfer modules so that the backend can store session and item data.",
       "acceptanceCriteria": [
-        "Add OrdemCompra type with fields: id (string), fornecedor (string), empresa_id (string), status ('aguardando_compra' | 'comprado' | 'parcialmente_recebido' | 'recebido' | 'cancelado'), observacao (string | null), comprado_por (string | null), comprado_em (string | null), created_at (string)",
-        "Add CompraStatus type: 'aguardando_compra' | 'comprado' | 'recebido' | 'indisponivel' | null",
-        "Update PedidoItem type adding: produto_id_tiny (number | null), fornecedor_oc (string | null), ordem_compra_id (string | null), compra_status (CompraStatus), compra_quantidade_recebida (number), comprado_em (string | null), comprado_por (string | null), recebido_em (string | null), recebido_por (string | null)",
-        "Add CompraItemAgrupado type with fields: sku (string), descricao (string), imagem (string | null), quantidade_total (number), fornecedor_oc (string), pedidos (array of {pedido_id: string, numero_pedido: string, quantidade: number}), itens_ids (string[])",
-        "Add ConferenciaItem type with fields: item_id (string), sku (string), descricao (string), imagem (string | null), quantidade_esperada (number), quantidade_ja_recebida (number), quantidade_restante (number), produto_id_tiny (number | null), pedidos (array of {pedido_id: string, numero_pedido: string, quantidade: number})",
+        "Create file supabase/migrations/20260323_modulo_inventario_transferencia.sql",
+        "Table siso_inventarios with: id uuid PK, empresa_id FK siso_empresas, galpao_id FK siso_galpoes, usuario_id FK siso_usuarios, deposito_id int, modo text CHECK ('loc_only','loc_estoque'), tipo_estoque text CHECK ('B','E','S'), manter_localizacao_antiga boolean default false, status text CHECK ('em_andamento','processando','concluido','cancelado','erro','revertendo','revertido') default 'em_andamento', observacoes text, created_at timestamptz default now(), processado_em timestamptz, concluido_em timestamptz",
+        "Table siso_inventario_itens with: id uuid PK, inventario_id FK CASCADE, produto_id_tiny int, sku text NOT NULL, nome_produto text, ean text, localizacao text NOT NULL, quantidade int default 1, status text CHECK ('pendente','processando','sucesso','erro') default 'pendente', erro_msg text, localizacao_antiga_tiny text, saldo_anterior_tiny numeric, created_at timestamptz default now(). NO unique constraint on (inventario_id, sku, localizacao)",
+        "Table siso_transferencias with: id uuid PK, empresa_origem_id FK, empresa_destino_id FK, galpao_origem_id FK, galpao_destino_id FK, usuario_id FK, deposito_origem_id int, deposito_destino_id int, status text same CHECK as inventarios, observacoes text, created_at, processado_em, concluido_em",
+        "Table siso_transferencia_itens with: id uuid PK, transferencia_id FK CASCADE, produto_id_tiny_origem int NOT NULL, produto_id_tiny_destino int, sku text NOT NULL, nome_produto text, ean text, quantidade int default 1, clonado boolean default false, status text CHECK same as inventario_itens, erro_msg text, created_at",
+        "Indexes: idx_inventarios_status, idx_inventarios_empresa, idx_inventarios_usuario, idx_inventario_itens_inv, idx_inventario_itens_sku(inventario_id,sku), idx_transferencias_status, idx_transferencias_empresa_o, idx_transferencias_empresa_d, idx_transferencias_usuario, idx_transferencia_itens_tr",
         "Typecheck passes"
       ],
       "priority": 1,
       "passes": true,
-      "notes": ""
+      "notes": "See PRD section 9.1 for exact SQL. Copy the migration verbatim."
     },
     {
       "id": "US-002",
-      "title": "Schema — Migration for siso_ordens_compra and siso_pedido_itens compra columns",
-      "description": "As a developer, I want the database schema updated with the ordens_compra table and compra tracking columns so that the compras module has persistence.",
+      "title": "Types: adicionar tipos Inventário e Transferência",
+      "description": "As a developer, I want to add TypeScript types for inventory and transfer modules to src/types/index.ts so that all new code is type-safe.",
       "acceptanceCriteria": [
-        "Create migration file supabase/migrations/20260311_modulo_compras.sql",
-        "CREATE TABLE siso_ordens_compra with columns: id (uuid PK default gen_random_uuid()), fornecedor (text NOT NULL), empresa_id (uuid NOT NULL REFERENCES siso_empresas(id)), status (text NOT NULL DEFAULT 'comprado' CHECK IN ('aguardando_compra','comprado','parcialmente_recebido','recebido','cancelado')), observacao (text), comprado_por (uuid REFERENCES siso_usuarios(id)), comprado_em (timestamptz), created_at (timestamptz DEFAULT now())",
-        "ALTER TABLE siso_pedido_itens ADD COLUMNS: produto_id_tiny (bigint), fornecedor_oc (text), ordem_compra_id (uuid REFERENCES siso_ordens_compra(id)), compra_status (text), compra_quantidade_recebida (int DEFAULT 0), comprado_em (timestamptz), comprado_por (uuid), recebido_em (timestamptz), recebido_por (uuid)",
-        "CREATE INDEX idx_pedido_itens_compra_status ON siso_pedido_itens(compra_status) WHERE compra_status IS NOT NULL",
-        "CREATE INDEX idx_pedido_itens_fornecedor_oc ON siso_pedido_itens(fornecedor_oc) WHERE fornecedor_oc IS NOT NULL",
-        "CREATE INDEX idx_pedido_itens_ordem_compra_id ON siso_pedido_itens(ordem_compra_id) WHERE ordem_compra_id IS NOT NULL",
-        "CREATE INDEX idx_ordens_compra_status ON siso_ordens_compra(status)",
-        "CREATE INDEX idx_ordens_compra_fornecedor ON siso_ordens_compra(fornecedor)",
-        "Apply migration via Supabase MCP tool apply_migration",
+        "Add to src/types/index.ts: InventarioModo = 'loc_only' | 'loc_estoque'",
+        "Add TipoEstoque = 'B' | 'E' | 'S'",
+        "Add InventarioStatus = 'em_andamento' | 'processando' | 'concluido' | 'cancelado' | 'erro' | 'revertendo' | 'revertido'",
+        "Add InventarioItemStatus = 'pendente' | 'processando' | 'sucesso' | 'erro'",
+        "Add interface Inventario with all fields from siso_inventarios + optional joins empresa:{nome}, galpao:{nome}, usuario:{nome}",
+        "Add interface InventarioItem with all fields from siso_inventario_itens",
+        "Add interface InventarioItemConsolidado with: sku, nome_produto, produto_id_tiny, ean, quantidade_total, localizacoes (string), itens_ids (string[]), status, erro_msg",
+        "Add TransferenciaStatus = same as InventarioStatus",
+        "Add interface Transferencia with all fields from siso_transferencias + optional joins for empresa_origem, empresa_destino, galpao_origem, galpao_destino, usuario",
+        "Add interface TransferenciaItem with all fields from siso_transferencia_itens",
         "Typecheck passes"
       ],
       "priority": 2,
       "passes": true,
-      "notes": ""
+      "notes": "See PRD section 9.1 for exact field types. Follow existing type patterns in the file."
     },
     {
       "id": "US-003",
-      "title": "Backend — Save produto_id_tiny during webhook enrichment",
-      "description": "As a developer, I want produto_id_tiny saved in siso_pedido_itens during webhook processing so that the conferencia can use it directly without additional Tiny API calls.",
+      "title": "tiny-api.ts: buscarProdutoPorGtin + criarProduto",
+      "description": "As a developer, I want to add two new functions to tiny-api.ts for EAN lookup and product creation so that inventory scan and transfer cloning work.",
       "acceptanceCriteria": [
-        "In webhook-processor.ts, when stock is queried for each item via Tiny API, extract the produto ID from the response",
-        "Save produto_id_tiny in the siso_pedido_itens upsert alongside existing stock data",
-        "Also save fornecedor_oc using the existing sku-fornecedor.ts mapping (getFornecedorBySku function)",
-        "If SKU is not found in Tiny (no stock response), produto_id_tiny remains null",
-        "Log a warning when produto_id_tiny could not be resolved for an item",
+        "Add buscarProdutoPorGtin(token: string, gtin: string): Promise<TinyProdutoBusca | null> — calls GET /produtos?gtin={gtin}&situacao=A, returns first item from itens[] or null",
+        "Add TinyProdutoCriacao interface with fields: nome (required string), preco (required number), codigo?, gtin?, descricao?, ncm?, unidade?, origem?, tipo?, precoCusto?, localizacao?, estoqueMinimo?, estoqueMaximo?",
+        "Add criarProduto(token: string, dados: TinyProdutoCriacao): Promise<{id: number}> — calls POST /produtos with dados as JSON body, returns the new product id",
+        "Both functions use tinyFetch (not raw fetch) so they go through the rate limiting queue",
+        "Follow exact pattern of existing buscarProdutoPorSku for the GTIN function",
         "Typecheck passes"
       ],
       "priority": 3,
       "passes": true,
-      "notes": "Check how webhook-processor.ts currently saves items to siso_pedido_itens. The produto ID comes from the Tiny stock/product API response. Also check sku-fornecedor.ts for the SKU-to-supplier mapping function."
+      "notes": "buscarProdutoPorGtin is identical to buscarProdutoPorSku but uses ?gtin= instead of ?codigo=. criarProduto uses POST method. Tiny API v3 base: https://api.tiny.com.br/public-api/v3"
     },
     {
       "id": "US-004",
-      "title": "Backend — Worker sets compra fields after OC approval",
-      "description": "As a developer, I want the execution worker to set compra fields on pedido items when a pedido is approved as OC, so that items appear in the compras module.",
+      "title": "audio-feedback.ts: playDuplicate",
+      "description": "As a developer, I want to add a playDuplicate() sound function for when a SKU is scanned again in the same inventory session.",
       "acceptanceCriteria": [
-        "In execution-worker.ts, after executarMarcadoresOnly completes (OC flow), update siso_pedidos set status_separacao = 'aguardando_compra'",
-        "Update all siso_pedido_itens of that pedido set compra_status = 'aguardando_compra'",
-        "The main pedido status field continues going to 'concluido' as before (no change there)",
-        "Log the transition: logger.info('execution-worker', 'Pedido OC enviado para modulo de compras', { pedidoId })",
+        "Add export function playDuplicate() to src/components/separacao/audio-feedback.ts",
+        "Two 880Hz beeps, 100ms each, with 150ms gap between them (attention signal, not error)",
+        "Follow exact pattern of playError() but with 880Hz instead of 220Hz and shorter durations",
         "Typecheck passes"
       ],
       "priority": 4,
       "passes": true,
-      "notes": "Check execution-worker.ts for the OC/marcadores flow. The worker already has an executarMarcadoresOnly function. Add the compra field updates after it succeeds."
+      "notes": "Existing functions: playSuccess (880Hz×1 100ms), playError (220Hz×2 200ms), playComplete (440→880→1320 150ms), playAlreadyDone (440Hz×1 200ms)"
     },
     {
       "id": "US-005",
-      "title": "Backend — GET /api/compras endpoint",
-      "description": "As a developer, I want a GET endpoint that returns compra items grouped by supplier and status so that the frontend can render the compras page.",
+      "title": "inventario-processor.ts: consolidação e processamento",
+      "description": "As a developer, I want to create the inventory processor that consolidates scanned items and sends updates to Tiny ERP.",
       "acceptanceCriteria": [
-        "Create file src/app/api/compras/route.ts with GET handler",
-        "Accept query param 'status' to filter: 'aguardando_compra', 'comprado', 'indisponivel' (default: 'aguardando_compra')",
-        "For status='aguardando_compra': query siso_pedido_itens WHERE compra_status='aguardando_compra' AND ordem_compra_id IS NULL, join with siso_pedidos for pedido info, group by fornecedor_oc",
-        "For status='comprado': query siso_ordens_compra WHERE status IN ('comprado','parcialmente_recebido'), include their items from siso_pedido_itens",
-        "For status='indisponivel': query siso_pedido_itens WHERE compra_status='indisponivel'",
-        "Return counts per status for tab badges: {aguardando_compra: N, comprado: N, indisponivel: N}",
-        "For aguardando_compra: consolidate items with same SKU + fornecedor (sum quantities, collect pedido references)",
-        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "Create src/lib/inventario-processor.ts",
+        "Export consolidarItens(itens: InventarioItem[]): InventarioItemConsolidado[] — groups by UPPER(sku), sums quantities, merges unique locations with '; ' (deduplicated, sorted naturally)",
+        "Export processarInventario(inventarioId: string): Promise<void> — async function for fire-and-forget",
+        "processarInventario flow: (1) set status→processando + processado_em=now(), (2) consolidate only items with status='pendente', (3) for each consolidated item within runWithEmpresa(empresaId): call getProdutoDetalhe to detect Kit type K, if loc_estoque and NOT Kit: call getEstoque to save saldo_anterior_tiny per deposit then movimentarEstoque with tipo/quantidade/deposito.id/observacoes, (4) handle merge logic: if manter_localizacao_antiga fetch current loc via the GET inside atualizarLocalizacaoProduto then merge/deduplicate, (5) call atualizarLocalizacaoProduto with final location, (6) update all original item rows status to sucesso or erro with error message",
+        "Counters computed via COUNT queries after each batch (not incremental)",
+        "On completion: set status→concluido + concluido_em. If ALL items fail: status→erro",
+        "movimentarEstoque observacoes: 'Inventário SISO - {YYYY-MM-DD} - {operador nome} - {inventario observacoes}'",
+        "Use logger.logError for errors with category 'external_api' and source 'inventario'",
         "Typecheck passes"
       ],
       "priority": 5,
       "passes": true,
-      "notes": "Use createServiceClient() from supabase-server.ts. Auth is via localStorage session — read the pattern from existing API routes like pedidos/aprovar/route.ts. Items need pedido info (numero_pedido) from siso_pedidos join."
+      "notes": "See PRD section 9.3 for exact algorithms. Use getValidTokenByEmpresa(empresaId). getEstoque returns depositos[] — find by deposito.id to get saldo. atualizarLocalizacaoProduto internally does GET+PUT (2 calls). For merge: split both old and new by '; ', merge arrays, Set to dedupe, sort, join."
     },
     {
       "id": "US-006",
-      "title": "Backend — POST /api/compras/ordens endpoint",
-      "description": "As a developer, I want a POST endpoint that creates an ordem de compra and links aguardando items to it, so that the buyer can track purchases.",
+      "title": "inventario-processor.ts: reversão",
+      "description": "As a developer, I want to add inventory reversal logic that undoes processed changes in Tiny ERP.",
       "acceptanceCriteria": [
-        "Create file src/app/api/compras/ordens/route.ts with POST handler",
-        "Accept body: { fornecedor: string, empresa_id: string, observacao?: string, usuario_id: string }",
-        "Insert new record in siso_ordens_compra with status='comprado', comprado_em=now(), comprado_por=usuario_id",
-        "Update all siso_pedido_itens WHERE fornecedor_oc = fornecedor AND compra_status = 'aguardando_compra' AND ordem_compra_id IS NULL: set ordem_compra_id, compra_status='comprado', comprado_em=now(), comprado_por=usuario_id",
-        "Return the created OC with count of linked items",
-        "If no items found for that fornecedor, return 400 error",
-        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "Add export reverterInventario(inventarioId: string): Promise<void> to inventario-processor.ts",
+        "Set status→revertendo, for each item with status='sucesso' within runWithEmpresa: (1) restore location via atualizarLocalizacaoProduto with localizacao_antiga_tiny, (2) reverse stock if modo=loc_estoque: tipo B → movimentarEstoque tipo B with saldo_anterior_tiny, tipo E → tipo S same qty, tipo S → tipo E same qty",
+        "Update each item status back to 'pendente' on success, 'erro' on failure",
+        "On completion: set inventario status→revertido + concluido_em. Counters reset via COUNT",
         "Typecheck passes"
       ],
       "priority": 6,
       "passes": true,
-      "notes": "empresa_id comes from the frontend — the buyer selects which empresa will receive the goods. Use createServiceClient()."
+      "notes": "localizacao_antiga_tiny and saldo_anterior_tiny were saved during processarInventario BEFORE making API calls."
     },
     {
       "id": "US-007",
-      "title": "Backend — GET /api/compras/conferencia/[ordemCompraId] endpoint",
-      "description": "As a developer, I want a GET endpoint that returns OC items for the receiving/checking screen so the operator can see what to expect.",
+      "title": "API: inventário CRUD routes",
+      "description": "As a developer, I want to create the inventory CRUD API routes for listing and creating inventory sessions.",
       "acceptanceCriteria": [
-        "Create file src/app/api/compras/conferencia/[ordemCompraId]/route.ts with GET handler",
-        "Query siso_ordens_compra by ordemCompraId, return 404 if not found",
-        "Query siso_pedido_itens WHERE ordem_compra_id = ordemCompraId AND compra_status = 'comprado'",
-        "For each item calculate: quantidade_restante = quantidade (from pedido) - compra_quantidade_recebida",
-        "Join with siso_pedidos for pedido numero_pedido reference",
-        "Return OC info + array of ConferenciaItem (sku, descricao, imagem, quantidade_esperada, quantidade_ja_recebida, quantidade_restante, produto_id_tiny, pedidos)",
-        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "Create src/app/api/inventario/route.ts with GET and POST",
+        "GET: list inventarios joined to empresa(nome)/galpao(nome)/usuario(nome), compute total_itens/itens_sucesso/itens_erro via separate COUNT queries on siso_inventario_itens, filter by galpao if user.galpaoId is set (match inventario.galpao_id), optional ?status= query param filter",
+        "POST: validate empresa_id + modo required, tipo_estoque required if modo=loc_estoque. Resolve galpao_id from siso_empresas.galpao_id. Resolve deposito_id from siso_tiny_connections WHERE empresa_id AND ativo=true. Return 400 if deposito_id is null. Insert siso_inventarios. Return 201 with created record",
+        "Create src/app/api/inventario/[id]/route.ts with GET and PATCH",
+        "GET: return inventario with all items + consolidated view (use consolidarItens from inventario-processor). PATCH: update observacoes or set status='cancelado' (creator or admin only)",
+        "All routes: getSessionUser for auth, 401 if unauthenticated. Logger for operations",
         "Typecheck passes"
       ],
       "priority": 7,
       "passes": true,
-      "notes": "quantidade_esperada is the original quantity from the pedido item. quantidade_restante = quantidade_esperada - compra_quantidade_recebida. Items with compra_status='recebido' should NOT appear (they're fully received)."
+      "notes": "See PRD section 9.2 for exact request/response shapes. Use createServiceClient() for DB. Follow pattern of existing /api/compras/route.ts."
     },
     {
       "id": "US-008",
-      "title": "Backend — POST /api/compras/conferir endpoint (receiving + Tiny stock entry)",
-      "description": "As a developer, I want a POST endpoint that processes the receiving confirmation: updates quantities in DB and calls Tiny movimentarEstoque type E for each item.",
+      "title": "API: inventário coletar (scan item)",
+      "description": "As a developer, I want to create the scan endpoint that searches Tiny for a product and adds it to the inventory.",
       "acceptanceCriteria": [
-        "Create file src/app/api/compras/conferir/route.ts with POST handler",
-        "Accept body: { ordem_compra_id: string, usuario_id: string, itens: Array<{ item_id: string, quantidade_recebida: number }> }",
-        "For each item with quantidade_recebida > 0 AND produto_id_tiny is not null: call movimentarEstoque in Tiny with tipo='E', using produto_id_tiny and deposito_id from siso_tiny_connections",
-        "Use waitForRateLimit + registerApiCall from rate-limiter.ts before each Tiny call",
-        "Add 500ms sleep between Tiny API calls to avoid overload",
-        "If Tiny call fails for an item, log the error and continue with remaining items (do not abort)",
-        "Update siso_pedido_itens: compra_quantidade_recebida += quantidade_recebida for each item",
-        "If compra_quantidade_recebida >= quantity from pedido: set compra_status='recebido', recebido_em=now(), recebido_por=usuario_id",
-        "If produto_id_tiny is null for an item, skip Tiny call, log warning 'SKU nao encontrado no Tiny', still update quantity in DB",
-        "Update siso_ordens_compra status: if all items 'recebido' then 'recebido', if mix then 'parcialmente_recebido'",
-        "Return summary: { processados: N, erros: N, erros_detalhe: [...], itens_sem_produto_id: N }",
-        "Auth check: only allow cargo 'admin' or 'comprador'",
+        "Create src/app/api/inventario/[id]/coletar/route.ts with POST",
+        "Validate: inventario status=em_andamento (400), user is creator (403), localizacao not empty (400)",
+        "Get token via getValidTokenByEmpresa(inventario.empresa_id). Wrap in runWithEmpresa",
+        "Search: buscarProdutoPorSku(token, codigo), if null → buscarProdutoPorGtin(token, codigo), if null → 404",
+        "Insert siso_inventario_itens with produto_id_tiny=result.id, sku=result.codigo, nome_produto=result.descricao, localizacao, quantidade (default 1)",
+        "Check duplicate: query siso_inventario_itens WHERE inventario_id AND UPPER(sku)=UPPER(result.codigo) AND id != new_id. If found: return ja_escaneado:true + localizacoes_anteriores as ['LOC (×QTY)'] strings",
+        "Return total_itens via SELECT COUNT(*) FROM siso_inventario_itens WHERE inventario_id",
+        "Response 201 with {item, ja_escaneado, localizacoes_anteriores, total_itens}",
         "Typecheck passes"
       ],
       "priority": 8,
       "passes": true,
-      "notes": "Use tiny-api.ts movimentarEstoque function. Get deposito_id by querying siso_tiny_connections WHERE empresa_id = OC's empresa_id. Use the observacao 'Entrada OC via SISO'. Check rate-limiter.ts for waitForRateLimit pattern used in execution-worker.ts."
+      "notes": "TinyProdutoBusca has: id (number), codigo (string=SKU), descricao (string=name). The ean field comes from getProdutoDetalhe.gtin but for speed we skip that on scan — just save null for ean unless the search was by gtin."
     },
     {
       "id": "US-009",
-      "title": "Backend — Release logic after receiving",
-      "description": "As a developer, I want pedidos de venda automatically released for picking when all their items are received across all OCs, so no manual intervention is needed.",
+      "title": "API: inventário itens (edit qty + delete)",
+      "description": "As a developer, I want to create endpoints for editing item quantity and deleting scanned items.",
       "acceptanceCriteria": [
-        "Create lib function checkAndReleasePedidos(itemIds: string[]) in a new file src/lib/compras-release.ts",
-        "From the received item IDs, get distinct pedido_ids from siso_pedido_itens",
-        "For each pedido: query ALL its items (not just OC items) — check if every item with compra_status has compra_status='recebido'",
-        "If ALL compra items of a pedido are 'recebido': release the pedido",
-        "Release means: update siso_pedidos set decisao_final='propria', status='executando', status_separacao='aguardando_nf'",
-        "Insert job in siso_fila_execucao with tipo='lancar_estoque', decisao='propria', pedido_id, empresa_id",
-        "Log: logger.info('compras-release', 'Pedido liberado apos recebimento OC', { pedidoId })",
-        "Return array of released pedido IDs",
-        "Call this function at the end of POST /api/compras/conferir after DB updates",
+        "Create src/app/api/inventario/[id]/itens/[itemId]/route.ts with PATCH and DELETE",
+        "Both: validate inventario em_andamento, user is creator (403)",
+        "PATCH: update quantidade, return {item:{id,quantidade}, total_itens}",
+        "DELETE: delete row, return {ok:true, total_itens}",
+        "total_itens always computed via COUNT(*) not increment/decrement",
         "Typecheck passes"
       ],
       "priority": 9,
       "passes": true,
-      "notes": "Check execution-worker.ts and siso_fila_execucao table structure for the correct job format. The worker will pick up the job and run executarSaidaPropria (existing flow). Important: only check items that have compra_status set (non-null) — normal items without compra flow should not block release."
+      "notes": ""
     },
     {
       "id": "US-010",
-      "title": "Backend — Item action APIs (devolver, indisponivel, trocar-fornecedor)",
-      "description": "As a developer, I want API endpoints for the buyer to handle unavailable items: return to queue, mark unavailable, or change supplier.",
+      "title": "API: inventário processar + progresso + reverter",
+      "description": "As a developer, I want to create the processing, progress polling, and reversal endpoints.",
       "acceptanceCriteria": [
-        "Create src/app/api/compras/itens/[itemId]/devolver/route.ts with POST handler: set compra_status='aguardando_compra', ordem_compra_id=null. If OC has no more items after this, set OC status='cancelado'",
-        "Create src/app/api/compras/itens/[itemId]/indisponivel/route.ts with POST handler: set compra_status='indisponivel'. Log warning with pedido info.",
-        "Create src/app/api/compras/itens/[itemId]/trocar-fornecedor/route.ts with POST handler: accept { novo_fornecedor: string, nova_ordem_compra_id?: string }. Update fornecedor_oc, move to new OC if provided or remove from current OC (set ordem_compra_id=null, compra_status='aguardando_compra')",
-        "All three endpoints: auth check for cargo 'admin' or 'comprador'",
-        "All three endpoints: return updated item",
+        "Create src/app/api/inventario/[id]/processar/route.ts — POST: validate em_andamento + has items (COUNT>0) + user is creator. Call processarInventario(id) WITHOUT await (fire-and-forget with .catch for error logging). Return 200 {ok:true, message:'Processamento iniciado'}",
+        "Create src/app/api/inventario/[id]/progresso/route.ts — GET: compute total/processados/sucesso/erro via COUNT queries. Build consolidated itens array (group by sku, aggregate status: if any sucesso→sucesso, any erro→erro, else pendente). Return {status, total, processados, sucesso, erro, itens[]}",
+        "Create src/app/api/inventario/[id]/reverter/route.ts — POST: validate status=concluido + user is creator. Call reverterInventario(id) WITHOUT await. Return 200",
         "Typecheck passes"
       ],
       "priority": 10,
       "passes": true,
-      "notes": "When removing an item from an OC, check if OC still has items. If empty, set OC status to 'cancelado'. Use createServiceClient()."
+      "notes": "Fire-and-forget: processarInventario(id).catch(err => logger.logError({error:err, source:'inventario', message:'Falha no processamento', category:'infrastructure'})). Server is VPS — process survives."
     },
     {
       "id": "US-011",
-      "title": "Backend — Webhook cancellation handler for compras",
-      "description": "As a developer, I want the cancellation webhook to detect and clean up compras items so that cancelled orders don't waste purchasing effort.",
+      "title": "Component: criar-inventario-form",
+      "description": "As a developer, I want to create the form component for starting a new inventory session.",
       "acceptanceCriteria": [
-        "In webhook-processor.ts (or the cancellation handler), when a pedido is cancelled, check if status_separacao is 'aguardando_compra' or 'comprado'",
-        "If yes: set compra_status=null and ordem_compra_id=null for all items of that pedido",
-        "Set status_separacao='cancelado' on the pedido",
-        "For each affected OC: recheck if OC still has items, if empty set OC status='cancelado'",
-        "If any item had compra_quantidade_recebida > 0 (stock already entered in Tiny): log a warning with level 'warn' including SKU and quantity that was already entered",
-        "Store a flag or field on the pedido indicating 'compra_estoque_lancado_alerta' = true when stock was already entered, so the UI can show a visible alert",
+        "Create src/components/inventario/criar-inventario-form.tsx",
+        "Props: onCreated(inventarioId: string) callback",
+        "Fetch empresas for user's galpao. If only 1, auto-select. Use existing GET /api/admin/empresas or similar",
+        "Mode toggle: 'Localização + Estoque' (loc_estoque, default) | 'Apenas Localização' (loc_only) — pill-style buttons",
+        "Stock type toggle: Balanço B | Entrada E | Saída S — 3 pill buttons, only visible when modo=loc_estoque, default B",
+        "Merge toggle: 'Substituir' (default) | 'Manter antiga' — 2 pill buttons",
+        "Observações textarea (optional)",
+        "Submit 'Iniciar Inventário' → POST /api/inventario → onCreated(id)",
+        "Use sisoFetch, toast.error on failure. Tailwind styling matching existing forms",
         "Typecheck passes"
       ],
       "priority": 11,
       "passes": true,
-      "notes": "Check how the existing webhook cancellation flow works in webhook-processor.ts or the webhook route. The stock that was already entered in Tiny stays — no reversal. The alert is just informational."
+      "notes": "Pill toggle buttons pattern: flex gap-1, each button rounded-md px-3 py-1.5, active: bg-ink text-paper, inactive: bg-zinc-100 text-ink-muted. Match existing tab styling."
     },
     {
       "id": "US-012",
-      "title": "Frontend — /compras page layout with tabs and data fetching",
-      "description": "As a developer, I want the /compras page skeleton with tabs and React Query data fetching so that the compras module has a home.",
+      "title": "Component: inventario-card",
+      "description": "As a developer, I want to create the card component for displaying inventory sessions in lists.",
       "acceptanceCriteria": [
-        "Create file src/app/compras/page.tsx as a 'use client' page",
-        "Add page to navigation (if there's a nav component, add 'Compras' link)",
-        "Use the existing Tabs component (src/components/ui/tabs.tsx) with 3 tabs: 'Aguardando Compra', 'Comprado', 'Indisponiveis'",
-        "Each tab shows a counter badge from the API response counts",
-        "Use React Query (useQuery) to fetch GET /api/compras with the active tab's status as query param",
-        "Refetch every 30 seconds (refetchInterval: 30000) — but NOT on the conferencia page",
-        "Show LoadingSpinner while loading, EmptyState when no items",
-        "Auth guard: redirect to /login if no user in localStorage, show 'Acesso negado' if cargo is not admin/comprador",
-        "Follow existing page patterns (zinc palette, max-w-3xl on mobile, Outfit font)",
+        "Create src/components/inventario/inventario-card.tsx",
+        "Props: inventario: Inventario (with joins), onClick: () => void",
+        "Show: empresa, galpão, mode badge, total_itens, usuario, created_at (DD/MM HH:MM)",
+        "Status badges: em_andamento=blue, processando=sky, concluido=emerald, erro=red, revertido/cancelado=zinc",
+        "For concluido: show sucesso+erro counts. CTA: 'Continuar' for em_andamento, 'Ver' for others",
+        "Card: rounded-xl border bg-paper shadow-sm transition-colors. Follow pedido-separacao-card pattern",
         "Typecheck passes"
       ],
       "priority": 12,
       "passes": true,
-      "notes": "Follow the same pattern as src/app/page.tsx (dashboard) for page structure, auth check, and React Query usage. Use the existing tabs component from src/components/ui/tabs.tsx."
+      "notes": ""
     },
     {
       "id": "US-013",
-      "title": "Frontend — Aguardando Compra tab with supplier cards",
-      "description": "As a developer, I want the Aguardando Compra tab to show items grouped by supplier with consolidation and a 'Marcar como Comprado' button.",
+      "title": "Component: scan-inventario (scanning interface)",
+      "description": "As a developer, I want to create the barcode scanning interface for inventory with location sticky field and rapid SKU scanning.",
       "acceptanceCriteria": [
-        "Create component src/components/compras/fornecedor-card.tsx for the supplier card",
-        "Card shows: fornecedor name as header, list of SKUs with descricao + quantidade (consolidated across pedidos), pedido numbers as small badges",
-        "Items with same SKU from different pedidos show summed quantity with breakdown on hover/expand",
-        "'Copiar SKUs' button copies tab-separated text (SKU, descricao, quantidade) to clipboard via navigator.clipboard.writeText, show toast.success on copy",
-        "'Marcar como Comprado' button opens a small form: textarea for observacao (optional), confirm button",
-        "On confirm: POST /api/compras/ordens with fornecedor + empresa_id + observacao + usuario_id, invalidate React Query cache, show toast.success",
-        "Use Lucide icons: Package for supplier, Copy for copy button, ShoppingCart for comprar",
+        "Create src/components/inventario/scan-inventario.tsx",
+        "Props: inventarioId, empresaId, onProcessar callback",
+        "Location field: sticky top, font-mono text-lg, accepts text or barcode scan. Stored in useState. If empty: disable SKU field, toast 'Defina uma localização'",
+        "SKU field: auto-focus, inputMode='none' default, keyboard toggle icon (Keyboard from lucide) switches to inputMode='text'. Form onSubmit → POST /coletar with {codigo, localizacao, quantidade}. Clear+refocus after each scan",
+        "Quantity: stepper [-][num][+] below SKU, default 1, resets to 1 after successful scan",
+        "Item list: newest first, each shows SKU (mono bold), nome (truncated), loc badge, qty (tappable→inline number input→PATCH), trash icon (DELETE)",
+        "Duplicate: if ja_escaneado → playDuplicate() + show 'Também em: ...' in item card",
+        "Audio: playSuccess on new, playDuplicate on repeat, playError on 404",
+        "Header counter: 'N itens' from total_itens in API response",
+        "Bottom fixed: 'Processar Inventário — N itens · Balanço' button → onProcessar()",
+        "All API calls via sisoFetch",
         "Typecheck passes"
       ],
       "priority": 13,
       "passes": true,
-      "notes": "empresa_id: for now use the empresa_id from the first item's pedido (empresa_origem_id from siso_pedidos). The consolidation groups items by SKU within a supplier — same SKU from pedido #100 (2un) and #101 (1un) shows as '3un' with breakdown."
+      "notes": "Follow scan-input.tsx pattern for SKU field. Location is separate non-autofocus input. Quantity edit: on tap show <input type='number' min=1> inline, on blur/enter → PATCH. Use useRef for SKU input focus management."
     },
     {
       "id": "US-014",
-      "title": "Frontend — Comprado tab with OC cards",
-      "description": "As a developer, I want the Comprado tab to show individual OC cards with their items and a 'Conferir Recebimento' button.",
+      "title": "Component: progresso-processamento (reusable progress view)",
+      "description": "As a developer, I want to create a reusable progress component for inventory and transfer processing.",
       "acceptanceCriteria": [
-        "Create component src/components/compras/ordem-compra-card.tsx",
-        "Card shows: 'OC #N — {fornecedor}' as header, observacao text, 'Comprado por {nome} em {data}', 'Ha X dias' relative time",
-        "List of items in the OC: SKU, descricao, quantidade, status badge (comprado/parcialmente recebido/recebido)",
-        "If OC status is 'parcialmente_recebido', show progress indicator (X de Y itens recebidos)",
-        "'Conferir Recebimento' button navigates to /compras/conferencia/[ordemCompraId]",
-        "Multiple OCs from the same fornecedor appear as separate cards",
-        "Use Lucide icons: Truck for delivery, ClipboardCheck for conferir",
+        "Create src/components/inventario/progresso-processamento.tsx",
+        "Props: sessionId: string, tipo: 'inventario' | 'transferencia'",
+        "Poll GET /api/{tipo}/[id]/progresso every 2s while status is processando|revertendo (useQuery with conditional refetchInterval)",
+        "Progress bar: h-1.5 rounded-full bg-zinc-100, fill blue→emerald on complete, transition-all duration-300",
+        "Counters: X de Y, sucesso (emerald), erro (red)",
+        "Item list: consolidated items with status icons (Check green, X red with erro_msg tooltip, Clock gray)",
+        "On concluido: playComplete(), banner 'Concluído — X ok · Y erros'",
+        "On erro: banner + Reprocessar button (POST /processar again)",
+        "Reverter button when status=concluido: inline confirm → POST /reverter",
+        "QueryKey: ['{tipo}-progresso', sessionId]",
         "Typecheck passes"
       ],
       "priority": 14,
       "passes": true,
-      "notes": "The API returns OCs with their items for status='comprado'. Use Next.js router.push for navigation to conferencia page."
+      "notes": "Reusable for both inventario and transferencia. The tipo prop determines the API path. Progress bar pattern from separacao-card.tsx."
     },
     {
       "id": "US-015",
-      "title": "Frontend — Conferencia page (receiving form)",
-      "description": "As a developer, I want the conferencia page where the operator enters received quantities and confirms, triggering Tiny stock entry.",
+      "title": "Page: /inventario with tabs and state management",
+      "description": "As a developer, I want to create the inventory page with listing, creation, scanning, and progress views.",
       "acceptanceCriteria": [
-        "Create file src/app/compras/conferencia/[ordemCompraId]/page.tsx as 'use client' page",
-        "Fetch OC data via GET /api/compras/conferencia/[ordemCompraId] using React Query",
-        "Show OC info header: fornecedor, observacao, data da compra",
-        "For each item: show SKU, descricao, imagem (if available), quantidade_restante as 'Esperado', number input for 'Recebido' pre-filled with quantidade_restante",
-        "Show pedido numbers linked to each item as small badges",
-        "Number input: min=0, no max (allows > expected), step=1, integer only",
-        "Do NOT auto-refresh this page (no refetchInterval) to avoid losing typed values",
-        "'Confirmar Recebimento' button: disabled when all quantities are 0, shows loading state during POST",
-        "On confirm: POST /api/compras/conferir, show results toast with processados/erros counts and released pedidos",
-        "After successful confirm: navigate back to /compras",
-        "If there were errors: show error details (which items failed) before navigating",
+        "Create src/app/inventario/page.tsx as 'use client'",
+        "AppShell title='Inventário', backHref='/', headerRight: '+Novo' button",
+        "Tabs: 'Em Andamento' | 'Concluídos' using Tabs component. Em Andamento = em_andamento+processando. Concluídos = concluido+erro+revertido+cancelado",
+        "Fetch via useQuery queryKey=['inventarios', galpaoId], GET /api/inventario, refetchInterval 30000",
+        "State machine for view: 'list' | 'create' | 'scan' | 'progress'. Clicking +Novo → create. onCreated → scan. onProcessar → progress",
+        "List view: inventario-cards filtered by tab. Click 'Continuar' on em_andamento → scan view. Click processando → progress view",
+        "Create view: criar-inventario-form inline",
+        "Scan view: scan-inventario with inventarioId+empresaId",
+        "Progress view: progresso-processamento",
+        "EmptyState for empty tabs. Cancel via PATCH (creator/admin)",
         "Typecheck passes"
       ],
       "priority": 15,
       "passes": true,
-      "notes": "Use controlled inputs with useState for quantities. The confirm POST may take a while (multiple Tiny API calls with sleeps) so show a good loading state. Use Sonner toast for feedback."
+      "notes": "Follow src/app/siso/page.tsx pattern for tab management. useAuth() for user+galpaoId. State management via useState for current view+selectedId."
     },
     {
       "id": "US-016",
-      "title": "Frontend — Item actions and Indisponiveis tab",
-      "description": "As a developer, I want item-level actions (devolver, indisponivel, trocar fornecedor) in OC cards and an Indisponiveis tab for visibility.",
+      "title": "Dashboard: inventário card + count",
+      "description": "As a developer, I want to add the inventory module card to the home dashboard with active session count.",
       "acceptanceCriteria": [
-        "In ordem-compra-card.tsx: add a dropdown menu (or action buttons) per item with 3 options: 'Devolver pra fila', 'Marcar indisponivel', 'Trocar fornecedor'",
-        "'Devolver pra fila': POST /api/compras/itens/[itemId]/devolver, invalidate cache, toast.success('Item devolvido para fila de compras')",
-        "'Marcar indisponivel': confirm dialog, POST /api/compras/itens/[itemId]/indisponivel, invalidate cache, toast.success",
-        "'Trocar fornecedor': small modal/form with text input for new fornecedor name, POST /api/compras/itens/[itemId]/trocar-fornecedor with { novo_fornecedor }, invalidate cache",
-        "Indisponiveis tab: simple list of items with compra_status='indisponivel', showing SKU, descricao, fornecedor original, pedido number, and a badge 'Indisponivel'",
-        "Use Lucide icons: RotateCcw for devolver, XCircle for indisponivel, ArrowRightLeft for trocar",
+        "Add to MODULES array in src/app/page.tsx: id='inventario', href='/inventario', title='Inventário', subtitle='Contagem de estoque', cta='Abrir Inventário', icon=ClipboardCheck from lucide-react, color='var(--color-info)'",
+        "In src/app/api/dashboard/counts/route.ts: add COUNT query for siso_inventarios WHERE status='em_andamento', filtered by galpao_id if user.galpaoId. Add 'inventario' field to response",
+        "In page.tsx: handle 'inventario' in getModuleCount function",
         "Typecheck passes"
       ],
       "priority": 16,
       "passes": true,
-      "notes": "The trocar-fornecedor action on the backend sets ordem_compra_id=null and compra_status='aguardando_compra' with the new fornecedor. The item will appear in Aguardando Compra under the new supplier name."
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "transferencia-processor.ts: processamento e reversão",
+      "description": "As a developer, I want to create the transfer processor for moving stock between empresas.",
+      "acceptanceCriteria": [
+        "Create src/lib/transferencia-processor.ts",
+        "Export processarTransferencia(transferenciaId: string): Promise<void>",
+        "Flow per item: (1) runWithEmpresa(destino) → buscarProdutoPorSku(tokenDestino, sku), (2) if not found → runWithEmpresa(origem) get full product via tinyFetch GET /produtos/{id} then runWithEmpresa(destino) → criarProduto with nome+preco+codigo+gtin+unidade+ncm+origem, set clonado=true, (3) runWithEmpresa(origem) → movimentarEstoque tipo:'S' with obs 'Transferência SISO para {galpao_destino} - {operador}', (4) runWithEmpresa(destino) → movimentarEstoque tipo:'E' with obs, (5) update item with produto_id_tiny_destino + status",
+        "Export reverterTransferencia: for each sucesso item: Entrada on origin + Saída on destination (reverse)",
+        "Checkpoint: only pendente items processed",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "Alternating runWithEmpresa between 2 empresas gives 2x rate limit throughput. criarProduto minimum fields: nome (=descricao), preco (get from origin or 0.01)."
+    },
+    {
+      "id": "US-018",
+      "title": "API: transferência all routes",
+      "description": "As a developer, I want to create all transfer API routes following the same patterns as inventory.",
+      "acceptanceCriteria": [
+        "Create src/app/api/transferencia/route.ts GET+POST — list (filter by galpao: user sees where their galpao is origin OR destination) + create (validate origem != destino, resolve galpoes+depositos)",
+        "Create src/app/api/transferencia/[id]/route.ts GET+PATCH — detail with items + cancel",
+        "Create src/app/api/transferencia/[id]/coletar/route.ts POST — search in ORIGIN empresa only (no localizacao field). Save produto_id_tiny_origem",
+        "Create src/app/api/transferencia/[id]/itens/[itemId]/route.ts PATCH+DELETE — same as inventario",
+        "Create src/app/api/transferencia/[id]/processar/route.ts POST — fire-and-forget processarTransferencia",
+        "Create src/app/api/transferencia/[id]/progresso/route.ts GET — counters + item list",
+        "Create src/app/api/transferencia/[id]/reverter/route.ts POST — fire-and-forget reverterTransferencia",
+        "All routes: auth, creator-only mutations, logger",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "Copy inventario route patterns. Key difference: coletar has no localizacao, list filter checks galpao on BOTH origem and destino sides."
+    },
+    {
+      "id": "US-019",
+      "title": "Components: transferência form + card + scan",
+      "description": "As a developer, I want to create the transfer UI components.",
+      "acceptanceCriteria": [
+        "Create src/components/transferencia/criar-transferencia-form.tsx — empresa origem (filtered by user galpao), empresa destino (all active EXCEPT origin), observacoes. POST /api/transferencia → onCreated(id)",
+        "Create src/components/transferencia/transferencia-card.tsx — origem→destino with ArrowRight icon, total_itens, operador, data, status badge. Same card styling as inventario-card",
+        "Create src/components/transferencia/scan-transferencia.tsx — same as scan-inventario but WITHOUT location field and WITHOUT duplicate detection. SKU+qty+item list+processar button",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": "scan-transferencia is a simplified scan-inventario. Remove: location input, ja_escaneado logic, playDuplicate. Keep: SKU input with keyboard toggle, quantity stepper, item list with edit/delete."
+    },
+    {
+      "id": "US-020",
+      "title": "Page: /transferencias + dashboard card",
+      "description": "As a developer, I want to create the transfer page and dashboard integration.",
+      "acceptanceCriteria": [
+        "Create src/app/transferencias/page.tsx — same structure as /inventario: AppShell, 2 tabs, list/create/scan/progress views",
+        "Reuse progresso-processamento with tipo='transferencia'",
+        "Add to MODULES in page.tsx: id='transferencias', href='/transferencias', title='Transferência', subtitle='Estoque entre galpões', icon=ArrowLeftRight, color='var(--color-warning)'",
+        "Add transfer count to dashboard/counts: COUNT siso_transferencias WHERE status='em_andamento', filter by galpao (origem OR destino)",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "zpl-endereco.ts: address generation + ZPL templates",
+      "description": "As a developer, I want to create the ZPL generation logic for address labels.",
+      "acceptanceCriteria": [
+        "Create src/lib/zpl-endereco.ts",
+        "Export EnderecoRange interface: corredorInicio/Fim string, horizontalInicio/Fim number, verticalInicio/Fim number",
+        "Export getCorridorRange(start, end): string[] — equal→[start]; single letters→alpha range; numbers→numeric range; else→[start]. Uppercase+trim",
+        "Export gerarEnderecos(range): string[] — loop corridors×horizontals×verticals, format CORRIDOR-HH-V (horizontal padStart 2 '0', vertical no pad)",
+        "Export gerarZplPequena(enderecos): string — ^XA^PW812^LL184^CF0,70 + 2-per-label (x=10,450) + handle odd last label. Exact coords from scripts.js GERARSEMFIXA",
+        "Export gerarZplGrande(enderecos): string — ^XA^FWR^CF0,250 + 1-per-label rotated. Exact coords from scripts.js GERARZPL_VERTICAL",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": "Small label: 100mm×23mm = ^PW812^LL184. See PRD section 6 for exact ZPL. getCorridorRange is ported from scripts.js. Code128: ^BCN (horiz), ^BCR (rotated). QR: ^BQN."
+    },
+    {
+      "id": "US-022",
+      "title": "API: etiquetas-endereco preview + imprimir",
+      "description": "As a developer, I want to create the API routes for address label preview and printing.",
+      "acceptanceCriteria": [
+        "Create src/app/api/etiquetas-endereco/preview/route.ts POST — receive EnderecoRange, return {enderecos[], total, total_labels}. total_labels: ceil(total/2) if tipo implied or just return total for both counts",
+        "Create src/app/api/etiquetas-endereco/imprimir/route.ts POST — receive EnderecoRange + tipo ('pequena'|'grande') + printer_id (number). Generate ZPL, get apiKey via getConfig('printnode_api_key'), send via enviarImpressaoZpl. For grande without printer_id: resolve via resolverImpressora. Return {ok, job_id, total_labels}",
+        "Validate: horizontal/vertical start <= end (400 if invalid). Auth: any logged-in user",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": "enviarImpressaoZpl({apiKey, printerId, zpl, titulo}) takes raw ZPL string (auto base64 encoded internally). resolverImpressora(userId, galpaoId) returns {printerId, printerNome} or null."
+    },
+    {
+      "id": "US-023",
+      "title": "Components + Page: /etiquetas",
+      "description": "As a developer, I want to create the address label page with form, preview, and print.",
+      "acceptanceCriteria": [
+        "Create src/components/etiquetas/etiqueta-endereco-form.tsx — inputs: corredor início/fim (text, forced uppercase), horizontal início/fim (number), vertical início/fim (number). Button 'Gerar Preview' → POST /preview → callback with results",
+        "Create src/components/etiquetas/endereco-preview.tsx — grid of address badges (font-mono, rounded-full bg-zinc-100 px-2 py-1), total+labels count. Printer selector: fetch /api/admin/printnode/printers for dropdown. Print button. Warning if >100",
+        "Create src/app/etiquetas/page.tsx — AppShell 'Etiquetas de Endereço', 2 tabs: 'Pequena (2/label)' | 'Grande (1/label)'. Each tab: form+preview. Pequena: user selects printer. Grande: use resolverImpressora with fallback to selector",
+        "No empresa/galpao restrictions — any logged-in user",
+        "Add to MODULES: id='etiquetas', href='/etiquetas', title='Etiquetas', subtitle='Endereçamento', icon=Tag, color='var(--color-positive)'. No count badge",
+        "Typecheck passes"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": "Check if /api/admin/printnode/printers already exists for listing printers. If so, reuse. If not, it should already exist per CLAUDE.md project structure."
+    },
+    {
+      "id": "US-024",
+      "title": "Documentation: api-reference.md + CLAUDE.md",
+      "description": "As a developer, I want to update project documentation with all new routes, tables, and structure.",
+      "acceptanceCriteria": [
+        "Update docs/api-reference.md: add sections for Inventário (7 routes), Transferência (7 routes), Etiquetas (2 routes) with method, path, auth, request/response bodies, error codes",
+        "Update CLAUDE.md Project Structure: add inventario/, transferencias/, etiquetas/ under app/, components/inventario/, components/transferencia/, components/etiquetas/, lib/inventario-processor.ts, lib/transferencia-processor.ts, lib/zpl-endereco.ts",
+        "Update CLAUDE.md Database Tables: add siso_inventarios, siso_inventario_itens, siso_transferencias, siso_transferencia_itens with purpose descriptions",
+        "Typecheck passes"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": "See PRD section 9.2 for all route contracts. Follow existing documentation format exactly."
     }
   ]
 }

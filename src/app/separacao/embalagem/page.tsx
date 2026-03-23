@@ -105,7 +105,7 @@ function EmbalagemPage() {
       if (document.activeElement === scanRef.current) return;
       // Only redirect printable characters, not shortcuts
       if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        scanRef.current?.focus();
+        scanRef.current?.focus({ preventScroll: true });
       }
     };
     window.addEventListener("keydown", redirect);
@@ -229,14 +229,14 @@ function EmbalagemPage() {
 
       if (res.status === 404) {
         toast.error("Nenhum pedido com este SKU pendente");
-        scanRef.current?.focus();
+        scanRef.current?.focus({ preventScroll: true });
         return;
       }
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         toast.error(body.error ?? "Erro ao bipar");
-        scanRef.current?.focus();
+        scanRef.current?.focus({ preventScroll: true });
         return;
       }
 
@@ -264,7 +264,7 @@ function EmbalagemPage() {
       toast.error("Erro de conexao");
     } finally {
       isScanningRef.current = false;
-      scanRef.current?.focus();
+      scanRef.current?.focus({ preventScroll: true });
     }
   }, [
     scanQty,
@@ -492,7 +492,7 @@ function EmbalagemPage() {
           // Refocus scan input on click anywhere in main area (unless clicking a button/link)
           const tag = (e.target as HTMLElement).tagName;
           if (!["BUTTON", "A", "INPUT", "SELECT"].includes(tag)) {
-            scanRef.current?.focus();
+            scanRef.current?.focus({ preventScroll: true });
           }
         }}
       >

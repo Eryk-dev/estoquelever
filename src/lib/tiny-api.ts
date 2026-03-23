@@ -273,6 +273,48 @@ export async function buscarProdutoPorSku(
   return itens.length > 0 ? itens[0] : null;
 }
 
+/** Search product by GTIN (EAN barcode) in a specific Tiny account */
+export async function buscarProdutoPorGtin(
+  token: string,
+  gtin: string,
+): Promise<TinyProdutoBusca | null> {
+  const res = await tinyFetch<{ itens: TinyProdutoBusca[] }>(
+    `/produtos?gtin=${encodeURIComponent(gtin)}&situacao=A`,
+    { token },
+  );
+  const itens = res.itens ?? [];
+  return itens.length > 0 ? itens[0] : null;
+}
+
+/** Fields for creating a new product in Tiny */
+export interface TinyProdutoCriacao {
+  nome: string;
+  preco: number;
+  codigo?: string;
+  gtin?: string;
+  descricao?: string;
+  ncm?: string;
+  unidade?: string;
+  origem?: string;
+  tipo?: string;
+  precoCusto?: number;
+  localizacao?: string;
+  estoqueMinimo?: number;
+  estoqueMaximo?: number;
+}
+
+/** Create a new product in Tiny */
+export async function criarProduto(
+  token: string,
+  dados: TinyProdutoCriacao,
+): Promise<{ id: number }> {
+  return tinyFetch<{ id: number }>("/produtos", {
+    token,
+    method: "POST",
+    body: dados,
+  });
+}
+
 /** List all deposits (warehouses) from Tiny by fetching stock of any active product */
 export async function listarDepositos(token: string): Promise<TinyDeposito[]> {
   // Tiny v3 has no /depositos endpoint — deposits come from stock queries.

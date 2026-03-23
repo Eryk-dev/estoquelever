@@ -111,6 +111,9 @@ src/
     compras/
       page.tsx                     # Purchase orders — Aguardando/Comprado/Indisponível
       conferencia/[ordemCompraId]/page.tsx  # Receiving screen for specific PO
+    inventario/page.tsx            # Inventory — barcode scanning, location tagging, stock updates
+    transferencias/page.tsx        # Transfers — inter-galpão stock transfer
+    etiquetas/page.tsx             # Address labels — ZPL generation + PrintNode printing
     configuracoes/page.tsx         # Settings — Galpao/Empresa hierarchy, Grupos, Tiny, PrintNode
     monitoramento/page.tsx         # Monitoring dashboard (admin only)
     admin/usuarios/page.tsx        # User CRUD (admin only)
@@ -152,6 +155,25 @@ src/
         itens/[itemId]/indisponivel/route.ts  # Mark item unavailable (POST)
         itens/[itemId]/devolver/route.ts      # Return received item (POST)
         itens/[itemId]/trocar-fornecedor/route.ts  # Change supplier (POST)
+      inventario/
+        route.ts                   # List + create inventory sessions (GET/POST)
+        [id]/route.ts              # Inventory detail + cancel (GET/PATCH)
+        [id]/coletar/route.ts      # Scan product into inventory (POST)
+        [id]/itens/[itemId]/route.ts  # Edit qty + delete item (PATCH/DELETE)
+        [id]/processar/route.ts    # Start processing — fire-and-forget (POST)
+        [id]/progresso/route.ts    # Processing progress — polling (GET)
+        [id]/reverter/route.ts     # Reverse completed inventory (POST)
+      transferencia/
+        route.ts                   # List + create transfers (GET/POST)
+        [id]/route.ts              # Transfer detail + cancel (GET/PATCH)
+        [id]/coletar/route.ts      # Scan product from origin empresa (POST)
+        [id]/itens/[itemId]/route.ts  # Edit qty + delete item (PATCH/DELETE)
+        [id]/processar/route.ts    # Start processing — fire-and-forget (POST)
+        [id]/progresso/route.ts    # Processing progress — polling (GET)
+        [id]/reverter/route.ts     # Reverse completed transfer (POST)
+      etiquetas-endereco/
+        preview/route.ts           # Generate address preview (POST)
+        imprimir/route.ts          # Generate ZPL + print via PrintNode (POST)
       worker/processar/route.ts    # Execution worker trigger (POST/GET)
       dashboard/counts/route.ts    # Module card counts (GET)
       painel/route.ts              # Control tower / Torre de Controle (GET)
@@ -198,6 +220,18 @@ src/
     compras/
       fornecedor-card.tsx          # Supplier card with items by SKU
       ordem-compra-card.tsx        # Purchase order card
+    inventario/
+      criar-inventario-form.tsx    # New inventory session form
+      inventario-card.tsx          # Inventory session card for lists
+      scan-inventario.tsx          # Barcode scanning interface with location
+      progresso-processamento.tsx  # Reusable progress view (inventario + transferencia)
+    transferencia/
+      criar-transferencia-form.tsx # New transfer session form
+      transferencia-card.tsx       # Transfer session card for lists
+      scan-transferencia.tsx       # Barcode scanning interface (no location)
+    etiquetas/
+      etiqueta-endereco-form.tsx   # Address range input form
+      endereco-preview.tsx         # Address preview grid + printer selector
     configuracoes/
       galpoes-empresas-section.tsx # Galpao > Empresa hierarchy editor
       galpao-card.tsx              # Single galpao card
@@ -220,6 +254,8 @@ src/
     nf-webhook-handler.ts          # Handle nota_fiscal webhooks, transition aguardando_nf → aguardando_separacao
     execution-worker.ts            # Post-approval: deduct stock following tier order
     compras-release.ts             # When all OC items received → resume execution
+    inventario-processor.ts        # Consolidate + process/reverse inventory sessions via Tiny
+    transferencia-processor.ts     # Process/reverse inter-galpão stock transfers via Tiny
     # ── Tiny ERP integration ──
     tiny-api.ts                    # Tiny ERP API v3 client
     tiny-oauth.ts                  # OAuth2 token management — getValidTokenByEmpresa()
@@ -230,6 +266,7 @@ src/
     etiqueta-service.ts            # Print shipping labels via PrintNode (fast: cached ZPL, slow: API)
     etiqueta-download.ts           # Download/extract ZPL from Tiny ZIP files
     printnode.ts                   # PrintNode API client (PDF + ZPL, printer resolution)
+    zpl-endereco.ts                # Address label ZPL generation (small 2-per-label + large rotated)
     # ── Auth & sessions ──
     auth-context.tsx               # AuthProvider + useAuth (localStorage + sessionId)
     session.ts                     # Server-side session validation (X-Session-Id header)
@@ -270,6 +307,10 @@ All tables are prefixed with `siso_`:
 | `siso_sessoes` | Server-side sessions (id, usuario_id, expira_em) |
 | `siso_pedido_historico` | Immutable audit trail (evento, detalhes, timestamps) |
 | `siso_ordens_compra` | Purchase orders by supplier |
+| `siso_inventarios` | Inventory sessions with empresa, galpao, mode, stock type, status lifecycle |
+| `siso_inventario_itens` | Per-item scan data (SKU, location, qty). No unique constraint — same SKU can appear multiple times |
+| `siso_transferencias` | Inter-galpão transfer sessions with origin/destination empresa+galpao+deposito |
+| `siso_transferencia_itens` | Per-item transfer data (SKU, qty, clonado flag for auto-created products) |
 
 ### Hierarchy Tables
 

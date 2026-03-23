@@ -25,6 +25,9 @@ DB access via `createServiceClient()` (Supabase service role). Logging via `logg
 - [Admin - Grupos](#admin---grupos)
 - [Admin - PrintNode](#admin---printnode)
 - [Tiny ERP](#tiny-erp)
+- [Inventário](#inventário)
+- [Transferência](#transferência)
+- [Etiquetas de Endereço](#etiquetas-de-endereço)
 
 ---
 
@@ -1649,3 +1652,947 @@ Sets stock to exact value in Tiny (balanco).
 - Calls `movimentarEstoque(tipo: "B")` (balanco)
 - Re-fetches actual values from Tiny after adjustment
 - Updates both normalized and legacy stock columns
+
+---
+
+## Inventário
+
+Physical inventory module — barcode scanning of products into location-tagged sessions, with Tiny ERP stock/location updates.
+
+### `GET /api/inventario`
+
+**File:** `src/app/api/inventario/route.ts`
+**Auth:** Session required
+
+Lists inventory sessions with item counts.
+
+**Query Params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `status` | string | Optional. Filter by inventory status |
+
+**Response 200:**
+```json
+{
+  "inventarios": [
+    {
+      "id": "uuid",
+      "empresa_id": "uuid",
+      "galpao_id": "uuid",
+      "usuario_id": "uuid",
+      "deposito_id": 1,
+      "modo": "loc_estoque",
+      "tipo_estoque": "B",
+      "manter_localizacao_antiga": false,
+      "status": "em_andamento",
+      "observacoes": "...",
+      "created_at": "2026-03-23T...",
+      "processado_em": null,
+      "concluido_em": null,
+      "empresa": { "nome": "NetAir" },
+      "galpao": { "nome": "CWB" },
+      "usuario": { "nome": "Eryk" },
+      "total_itens": 42,
+      "itens_sucesso": 0,
+      "itens_erro": 0
+    }
+  ]
+}
+```
+
+**Business Logic:**
+- Item counts computed via separate COUNT queries per inventory
+- Galpão filtering applied if user has `galpaoId` (non-admin users)
+- Ordered by created_at desc
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 401 | Invalid session |
+| 500 | Database error |
+
+---
+
+### `POST /api/inventario`
+
+**File:** `src/app/api/inventario/route.ts`
+**Auth:** Session required
+
+Creates a new inventory session.
+
+**Request Body:**
+```json
+{
+  "empresa_id": "uuid (required)",
+  "modo": "loc_estoque | loc_only (required)",
+  "tipo_estoque": "B | E | S (required if modo=loc_estoque)",
+  "manter_localizacao_antiga": false,
+  "observacoes": "optional text"
+}
+```
+
+**Response 201:**
+```json
+{
+  "id": "uuid",
+  "empresa_id": "uuid",
+  "galpao_id": "uuid",
+  "deposito_id": 1,
+  "modo": "loc_estoque",
+  "status": "em_andamento"
+}
+```
+
+**Business Logic:**
+- Resolves `galpao_id` from empresa FK
+- Resolves `deposito_id` from `siso_tiny_connections` (active connection for empresa)
+- Fails if empresa not found, no active Tiny connection, or no deposito configured
+
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "empresa_id e obrigatorio" }` | Missing empresa_id |
+| 400 | `{ error: "modo e obrigatorio" }` | Missing modo |
+| 400 | `{ error: "tipo_estoque e obrigatorio..." }` | Missing tipo_estoque when modo=loc_estoque |
+| 400 | `{ error: "Empresa nao encontrada" }` | Invalid empresa_id |
+| 400 | `{ error: "Deposito nao configurado..." }` | No active connection/deposito |
+| 401 | | Invalid session |
+| 500 | | Insert error |
+
+---
+
+### `GET /api/inventario/[id]`
+
+**File:** `src/app/api/inventario/[id]/route.ts`
+**Auth:** Session required
+
+Returns full inventory detail with all items and consolidated view.
+
+**Response 200:**
+```json
+{
+  "id": "uuid",
+  "empresa_id": "uuid",
+  "galpao_id": "uuid",
+  "usuario_id": "uuid",
+  "deposito_id": 1,
+  "modo": "loc_estoque",
+  "tipo_estoque": "B",
+  "status": "em_andamento",
+  "observacoes": "...",
+  "created_at": "...",
+  "processado_em": null,
+  "concluido_em": null,
+  "empresa": { "nome": "NetAir" },
+  "galpao": { "nome": "CWB" },
+  "usuario": { "nome": "Eryk" },
+  "total_itens": 5,
+  "itens_sucesso": 0,
+  "itens_erro": 0,
+  "itens": [
+    {
+      "id": "uuid",
+      "inventario_id": "uuid",
+      "produto_id_tiny": 123,
+      "sku": "19ABC",
+      "nome_produto": "Filtro de Ar",
+      "ean": null,
+      "localizacao": "A-01-1",
+      "quantidade": 2,
+      "status": "pendente",
+      "erro_msg": null,
+      "created_at": "..."
+    }
+  ],
+  "consolidados": [
+    {
+      "sku": "19ABC",
+      "nome_produto": "Filtro de Ar",
+      "quantidade_total": 5,
+      "localizacoes": "A-01-1; B-02-3",
+      "status": "pendente",
+      "erro_msg": null
+    }
+  ]
+}
+```
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 401 | Invalid session |
+| 404 | Inventory not found |
+| 500 | Query error |
+
+---
+
+### `PATCH /api/inventario/[id]`
+
+**File:** `src/app/api/inventario/[id]/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Updates observacoes or cancels inventory.
+
+**Request Body:**
+```json
+{
+  "observacoes": "optional text",
+  "status": "cancelado"
+}
+```
+
+**Response 200:**
+```json
+{
+  "id": "uuid",
+  "status": "cancelado",
+  "observacoes": "...",
+  "concluido_em": "2026-03-23T..."
+}
+```
+
+**Business Logic:**
+- Can only cancel if status = `em_andamento`
+- Sets `concluido_em` when cancelling
+
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "Nenhuma alteracao informada" }` | No updates provided |
+| 400 | `{ error: "So e possivel cancelar inventarios em andamento" }` | Wrong status for cancel |
+| 401 | | Invalid session |
+| 403 | `{ error: "Apenas o criador pode modificar..." }` | Not creator/admin |
+| 404 | | Inventory not found |
+| 500 | | Update error |
+
+---
+
+### `POST /api/inventario/[id]/coletar`
+
+**File:** `src/app/api/inventario/[id]/coletar/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Scans a product (by SKU or EAN) and adds it to the inventory session.
+
+**Request Body:**
+```json
+{
+  "codigo": "SKU or EAN string (required)",
+  "localizacao": "A-01-1 (required)",
+  "quantidade": 1
+}
+```
+
+**Response 201:**
+```json
+{
+  "item": {
+    "id": "uuid",
+    "produto_id_tiny": 123,
+    "sku": "19ABC",
+    "nome_produto": "Filtro de Ar",
+    "ean": null,
+    "localizacao": "A-01-1",
+    "quantidade": 1,
+    "status": "pendente",
+    "created_at": "..."
+  },
+  "ja_escaneado": true,
+  "localizacoes_anteriores": ["B-02-3 (×2)"],
+  "total_itens": 5
+}
+```
+
+**Business Logic:**
+- Searches Tiny: first by SKU (`buscarProdutoPorSku`), then by GTIN (`buscarProdutoPorGtin`) as fallback
+- Uses `runWithEmpresa()` for rate limiting
+- Detects duplicate SKU in same inventory (case-insensitive via `ilike`)
+- Returns previous locations if already scanned
+- `ean` is set when found via GTIN search, null otherwise
+
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "Inventario nao esta em andamento" }` | Wrong status |
+| 400 | `{ error: "Codigo e obrigatorio" }` | Missing codigo |
+| 400 | `{ error: "Localizacao e obrigatoria" }` | Missing localizacao |
+| 400 | `{ error: "Quantidade deve ser >= 1" }` | Invalid quantidade |
+| 401 | | Invalid session |
+| 403 | | Not creator/admin |
+| 404 | `{ error: "Inventario nao encontrado" }` | Invalid id |
+| 404 | `{ error: "Produto nao encontrado no Tiny" }` | SKU/EAN not in Tiny |
+| 500 | | Insert error |
+
+---
+
+### `PATCH /api/inventario/[id]/itens/[itemId]`
+
+**File:** `src/app/api/inventario/[id]/itens/[itemId]/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Updates item quantity.
+
+**Request Body:**
+```json
+{ "quantidade": 3 }
+```
+
+**Response 200:**
+```json
+{
+  "item": { "id": "uuid", "quantidade": 3 },
+  "total_itens": 5
+}
+```
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 400 | Inventory not em_andamento, or quantidade < 1 |
+| 401 | Invalid session |
+| 403 | Not creator/admin |
+| 404 | Inventory or item not found |
+| 500 | Update error |
+
+---
+
+### `DELETE /api/inventario/[id]/itens/[itemId]`
+
+**File:** `src/app/api/inventario/[id]/itens/[itemId]/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Removes item from inventory.
+
+**Response 200:**
+```json
+{ "ok": true, "total_itens": 4 }
+```
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 400 | Inventory not em_andamento |
+| 401 | Invalid session |
+| 403 | Not creator/admin |
+| 404 | Inventory not found |
+| 500 | Delete error |
+
+---
+
+### `POST /api/inventario/[id]/processar`
+
+**File:** `src/app/api/inventario/[id]/processar/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Starts inventory processing (fire-and-forget).
+
+**Response 200:**
+```json
+{ "ok": true, "message": "Processamento iniciado" }
+```
+
+**Business Logic:**
+- Validates status = `em_andamento` and has items (COUNT > 0)
+- Calls `processarInventario(id)` async — does NOT await
+- For each item: updates location in Tiny + adjusts stock (if modo=loc_estoque, skip Kit type K)
+- Errors logged via `logger.logError` with category `infrastructure`
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 400 | Not em_andamento, or no items |
+| 401 | Invalid session |
+| 403 | Not creator/admin |
+| 404 | Inventory not found |
+| 500 | Unexpected error |
+
+---
+
+### `GET /api/inventario/[id]/progresso`
+
+**File:** `src/app/api/inventario/[id]/progresso/route.ts`
+**Auth:** Session required
+
+Returns processing progress — designed for polling every 2s.
+
+**Response 200:**
+```json
+{
+  "status": "processando",
+  "total": 10,
+  "processados": 7,
+  "sucesso": 5,
+  "erro": 2,
+  "itens": [
+    {
+      "sku": "19ABC",
+      "nome_produto": "Filtro de Ar",
+      "quantidade_total": 3,
+      "localizacoes": "A-01-1; B-02-3",
+      "status": "sucesso",
+      "erro_msg": null
+    }
+  ]
+}
+```
+
+**Business Logic:**
+- Groups items by SKU (case-insensitive), aggregates quantities and locations
+- Consolidates status: sucesso > erro > processando > pendente
+- `processados = sucesso + erro`
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 401 | Invalid session |
+| 404 | Inventory not found |
+| 500 | Query error |
+
+---
+
+### `POST /api/inventario/[id]/reverter`
+
+**File:** `src/app/api/inventario/[id]/reverter/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Starts reversal of completed inventory (fire-and-forget).
+
+**Response 200:**
+```json
+{ "ok": true, "message": "Reversão iniciada" }
+```
+
+**Business Logic:**
+- Validates status = `concluido`
+- Calls `reverterInventario(id)` async — does NOT await
+- Restores locations and reverses stock movements in Tiny
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 400 | Not concluido |
+| 401 | Invalid session |
+| 403 | Not creator/admin |
+| 404 | Inventory not found |
+| 500 | Unexpected error |
+
+---
+
+## Transferência
+
+Inter-galpão stock transfer module — scan products from origin empresa, process transfers to destination empresa (with auto-cloning of products if needed).
+
+### `GET /api/transferencia`
+
+**File:** `src/app/api/transferencia/route.ts`
+**Auth:** Session required
+
+Lists transfer sessions with item counts.
+
+**Query Params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `status` | string | Optional. Filter by transfer status |
+
+**Response 200:**
+```json
+{
+  "transferencias": [
+    {
+      "id": "uuid",
+      "empresa_origem_id": "uuid",
+      "empresa_destino_id": "uuid",
+      "galpao_origem_id": "uuid",
+      "galpao_destino_id": "uuid",
+      "usuario_id": "uuid",
+      "deposito_origem_id": 1,
+      "deposito_destino_id": 2,
+      "status": "em_andamento",
+      "observacoes": "...",
+      "created_at": "...",
+      "processado_em": null,
+      "concluido_em": null,
+      "empresa_origem": { "nome": "NetAir" },
+      "empresa_destino": { "nome": "NetParts" },
+      "galpao_origem": { "nome": "CWB" },
+      "galpao_destino": { "nome": "SP" },
+      "usuario": { "nome": "Eryk" },
+      "total_itens": 10,
+      "itens_sucesso": 0,
+      "itens_erro": 0
+    }
+  ]
+}
+```
+
+**Business Logic:**
+- Galpão filtering: user sees transfers where their galpão is origin OR destination
+- Ordered by created_at desc
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 401 | Invalid session |
+| 500 | Database error |
+
+---
+
+### `POST /api/transferencia`
+
+**File:** `src/app/api/transferencia/route.ts`
+**Auth:** Session required
+
+Creates a new transfer session.
+
+**Request Body:**
+```json
+{
+  "empresa_origem_id": "uuid (required)",
+  "empresa_destino_id": "uuid (required)",
+  "observacoes": "optional text"
+}
+```
+
+**Response 201:**
+```json
+{
+  "id": "uuid",
+  "empresa_origem_id": "uuid",
+  "empresa_destino_id": "uuid",
+  "galpao_origem_id": "uuid",
+  "galpao_destino_id": "uuid",
+  "deposito_origem_id": 1,
+  "deposito_destino_id": 2,
+  "status": "em_andamento"
+}
+```
+
+**Business Logic:**
+- Validates origem != destino
+- Resolves galpao_ids from empresas
+- Resolves deposito_ids from active `siso_tiny_connections`
+
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "empresa_origem_id e obrigatorio" }` | Missing field |
+| 400 | `{ error: "empresa_destino_id e obrigatorio" }` | Missing field |
+| 400 | `{ error: "Origem e destino devem ser diferentes" }` | Same empresa |
+| 400 | `{ error: "Empresa origem nao encontrada" }` | Invalid empresa |
+| 400 | `{ error: "Empresa destino nao encontrada" }` | Invalid empresa |
+| 400 | `{ error: "Deposito nao configurado para empresa origem" }` | No active connection |
+| 400 | `{ error: "Deposito nao configurado para empresa destino" }` | No active connection |
+| 401 | | Invalid session |
+| 500 | | Insert error |
+
+---
+
+### `GET /api/transferencia/[id]`
+
+**File:** `src/app/api/transferencia/[id]/route.ts`
+**Auth:** Session required
+
+Returns full transfer detail with all items.
+
+**Response 200:**
+```json
+{
+  "id": "uuid",
+  "empresa_origem_id": "uuid",
+  "empresa_destino_id": "uuid",
+  "galpao_origem_id": "uuid",
+  "galpao_destino_id": "uuid",
+  "usuario_id": "uuid",
+  "deposito_origem_id": 1,
+  "deposito_destino_id": 2,
+  "status": "em_andamento",
+  "observacoes": "...",
+  "created_at": "...",
+  "processado_em": null,
+  "concluido_em": null,
+  "empresa_origem": { "nome": "NetAir" },
+  "empresa_destino": { "nome": "NetParts" },
+  "galpao_origem": { "nome": "CWB" },
+  "galpao_destino": { "nome": "SP" },
+  "usuario": { "nome": "Eryk" },
+  "total_itens": 3,
+  "itens_sucesso": 0,
+  "itens_erro": 0,
+  "itens": [
+    {
+      "id": "uuid",
+      "transferencia_id": "uuid",
+      "produto_id_tiny_origem": 123,
+      "sku": "19ABC",
+      "nome_produto": "Filtro de Ar",
+      "ean": null,
+      "quantidade": 2,
+      "status": "pendente",
+      "erro_msg": null,
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 401 | Invalid session |
+| 404 | Transfer not found |
+| 500 | Query error |
+
+---
+
+### `PATCH /api/transferencia/[id]`
+
+**File:** `src/app/api/transferencia/[id]/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Updates observacoes or cancels transfer.
+
+**Request Body:**
+```json
+{
+  "observacoes": "optional text",
+  "status": "cancelado"
+}
+```
+
+**Response 200:**
+```json
+{
+  "id": "uuid",
+  "status": "cancelado",
+  "observacoes": "...",
+  "concluido_em": "2026-03-23T..."
+}
+```
+
+**Business Logic:**
+- Can only cancel if status = `em_andamento`
+- Sets `concluido_em` when cancelling
+
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "Nenhuma alteracao informada" }` | No updates |
+| 400 | `{ error: "So e possivel cancelar transferencias em andamento" }` | Wrong status |
+| 401 | | Invalid session |
+| 403 | `{ error: "Apenas o criador pode modificar..." }` | Not creator/admin |
+| 404 | | Transfer not found |
+| 500 | | Update error |
+
+---
+
+### `POST /api/transferencia/[id]/coletar`
+
+**File:** `src/app/api/transferencia/[id]/coletar/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Scans a product (by SKU or EAN) from the **origin empresa** and adds it to the transfer.
+
+**Request Body:**
+```json
+{
+  "codigo": "SKU or EAN string (required)",
+  "quantidade": 1
+}
+```
+
+**Response 201:**
+```json
+{
+  "item": {
+    "id": "uuid",
+    "produto_id_tiny_origem": 123,
+    "sku": "19ABC",
+    "nome_produto": "Filtro de Ar",
+    "ean": null,
+    "quantidade": 1,
+    "status": "pendente",
+    "created_at": "..."
+  },
+  "total_itens": 5
+}
+```
+
+**Business Logic:**
+- Searches in **origin empresa only** (not destination)
+- Uses `buscarProdutoPorSku` then `buscarProdutoPorGtin` as fallback
+- No localizacao field (unlike inventario coletar)
+- No duplicate detection (unlike inventario)
+
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "Transferencia nao esta em andamento" }` | Wrong status |
+| 400 | `{ error: "Codigo e obrigatorio" }` | Missing codigo |
+| 401 | | Invalid session |
+| 403 | | Not creator/admin |
+| 404 | `{ error: "Transferencia nao encontrada" }` | Invalid id |
+| 404 | `{ error: "Produto nao encontrado no Tiny" }` | SKU/EAN not found |
+| 500 | | Insert error |
+
+---
+
+### `PATCH /api/transferencia/[id]/itens/[itemId]`
+
+**File:** `src/app/api/transferencia/[id]/itens/[itemId]/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Updates item quantity.
+
+**Request Body:**
+```json
+{ "quantidade": 3 }
+```
+
+**Response 200:**
+```json
+{
+  "item": { "id": "uuid", "quantidade": 3 },
+  "total_itens": 5
+}
+```
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 400 | Not em_andamento, or quantidade < 1 |
+| 401 | Invalid session |
+| 403 | Not creator/admin |
+| 404 | Transfer or item not found |
+| 500 | Update error |
+
+---
+
+### `DELETE /api/transferencia/[id]/itens/[itemId]`
+
+**File:** `src/app/api/transferencia/[id]/itens/[itemId]/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Removes item from transfer.
+
+**Response 200:**
+```json
+{ "ok": true, "total_itens": 4 }
+```
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 400 | Not em_andamento |
+| 401 | Invalid session |
+| 403 | Not creator/admin |
+| 404 | Transfer not found |
+| 500 | Delete error |
+
+---
+
+### `POST /api/transferencia/[id]/processar`
+
+**File:** `src/app/api/transferencia/[id]/processar/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Starts transfer processing (fire-and-forget).
+
+**Response 200:**
+```json
+{ "ok": true, "message": "Processamento iniciado" }
+```
+
+**Business Logic:**
+- Validates status = `em_andamento` and has items
+- Calls `processarTransferencia(id)` async — does NOT await
+- Per item: searches product in destination, clones if not found, Saída in origin, Entrada in destination
+- Alternates `runWithEmpresa` between origin/destination for 2x throughput
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 400 | Not em_andamento, or no items |
+| 401 | Invalid session |
+| 403 | Not creator/admin |
+| 404 | Transfer not found |
+| 500 | Unexpected error |
+
+---
+
+### `GET /api/transferencia/[id]/progresso`
+
+**File:** `src/app/api/transferencia/[id]/progresso/route.ts`
+**Auth:** Session required
+
+Returns processing progress — designed for polling every 2s.
+
+**Response 200:**
+```json
+{
+  "status": "processando",
+  "total": 10,
+  "processados": 7,
+  "sucesso": 5,
+  "erro": 2,
+  "itens": [
+    {
+      "sku": "19ABC",
+      "nome_produto": "Filtro de Ar",
+      "quantidade_total": 3,
+      "localizacoes": "",
+      "status": "sucesso",
+      "erro_msg": null
+    }
+  ]
+}
+```
+
+**Notes:**
+- `localizacoes` is always empty string for transfers (no location tracking)
+- `processados = sucesso + erro`
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 401 | Invalid session |
+| 404 | Transfer not found |
+| 500 | Query error |
+
+---
+
+### `POST /api/transferencia/[id]/reverter`
+
+**File:** `src/app/api/transferencia/[id]/reverter/route.ts`
+**Auth:** Session required. Creator or admin only.
+
+Starts reversal of completed transfer (fire-and-forget).
+
+**Response 200:**
+```json
+{ "ok": true, "message": "Reversao iniciada" }
+```
+
+**Business Logic:**
+- Validates status = `concluido`
+- Calls `reverterTransferencia(id)` async — does NOT await
+- Reverses stock: Entrada on origin + Saída on destination
+
+**Errors:**
+| Status | Cause |
+|--------|-------|
+| 400 | Not concluido |
+| 401 | Invalid session |
+| 403 | Not creator/admin |
+| 404 | Transfer not found |
+| 500 | Unexpected error |
+
+---
+
+## Etiquetas de Endereço
+
+Address label generation and printing — generates ZPL for thermal printers from corridor/horizontal/vertical ranges.
+
+### `POST /api/etiquetas-endereco/preview`
+
+**File:** `src/app/api/etiquetas-endereco/preview/route.ts`
+**Auth:** Session required (any logged-in user)
+
+Generates preview of address labels from range parameters.
+
+**Request Body:**
+```json
+{
+  "corredor_inicio": "A",
+  "corredor_fim": "B",
+  "horizontal_inicio": 1,
+  "horizontal_fim": 5,
+  "vertical_inicio": 1,
+  "vertical_fim": 3
+}
+```
+
+**Response 200:**
+```json
+{
+  "enderecos": ["A-01-1", "A-01-2", "A-01-3", "A-02-1", "..."],
+  "total": 30,
+  "total_labels": 15
+}
+```
+
+**Business Logic:**
+- Generates address combinations: corridors × horizontals × verticals
+- Address format: `{CORRIDOR}-{HH padded}-{V}`
+- `total_labels = ceil(total / 2)` (small labels fit 2 per label)
+- Corridor range supports: single letter (A-Z), numeric ranges, or single value
+
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "Corredor início e fim são obrigatórios" }` | Missing corridors |
+| 400 | `{ error: "Horizontal e vertical início/fim são obrigatórios" }` | Missing range numbers |
+| 400 | `{ error: "Horizontal início deve ser <= fim" }` | Invalid range |
+| 400 | `{ error: "Vertical início deve ser <= fim" }` | Invalid range |
+| 401 | | Invalid session |
+| 500 | | Generation error |
+
+---
+
+### `POST /api/etiquetas-endereco/imprimir`
+
+**File:** `src/app/api/etiquetas-endereco/imprimir/route.ts`
+**Auth:** Session required (any logged-in user)
+
+Generates ZPL and sends print job to PrintNode.
+
+**Request Body:**
+```json
+{
+  "corredor_inicio": "A",
+  "corredor_fim": "B",
+  "horizontal_inicio": 1,
+  "horizontal_fim": 5,
+  "vertical_inicio": 1,
+  "vertical_fim": 3,
+  "tipo": "pequena | grande",
+  "printer_id": 12345
+}
+```
+
+**Response 200:**
+```json
+{
+  "ok": true,
+  "job_id": 67890,
+  "total_labels": 15
+}
+```
+
+**Business Logic:**
+- Generates addresses, then ZPL based on `tipo`:
+  - `pequena`: 100mm×23mm, 2 addresses/label (`gerarZplPequena`)
+  - `grande`: 4"×6", 1 address/label, rotated 90° (`gerarZplGrande`)
+- `total_labels`: pequena = `ceil(total/2)`, grande = `total`
+- Printer resolution:
+  - `pequena`: `printer_id` required in body
+  - `grande`: `printer_id` optional — falls back to `resolverImpressora(userId, galpaoId)`
+- Sends ZPL via `enviarImpressaoZpl()` to PrintNode API
+- PrintNode API key from `siso_configuracoes` (key: `printnode_api_key`)
+
+**Side Effects:**
+- Sends print job to PrintNode (external API call)
+- Logs successful print to `siso_logs`
+
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "Corredor início e fim são obrigatórios" }` | Missing corridors |
+| 400 | `{ error: "Horizontal e vertical início/fim são obrigatórios" }` | Missing ranges |
+| 400 | `{ error: "Horizontal início deve ser <= fim" }` | Invalid range |
+| 400 | `{ error: "Vertical início deve ser <= fim" }` | Invalid range |
+| 400 | `{ error: "Tipo deve ser 'pequena' ou 'grande'" }` | Invalid tipo |
+| 400 | `{ error: "Nenhum endereço gerado..." }` | Empty result |
+| 400 | `{ error: "Nenhuma impressora configurada" }` | No printer |
+| 400 | `{ error: "PrintNode API key não configurada" }` | No API key |
+| 401 | | Invalid session |
+| 500 | | Print error |

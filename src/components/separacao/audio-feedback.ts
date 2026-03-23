@@ -56,3 +56,11 @@ export function playComplete(): void {
 export function playAlreadyDone(): void {
   playTone(440, 200);
 }
+
+/** Double high beep — duplicate SKU in inventory session (attention, not error) */
+export function playDuplicate(): void {
+  const ctx = getContext();
+  if (!ctx) return;
+  playTone(880, 100, ctx.currentTime);
+  playTone(880, 100, ctx.currentTime + 0.25);
+}

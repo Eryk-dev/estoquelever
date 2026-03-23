@@ -394,6 +394,12 @@ npm run lint      # ESLint
 
 **When you add new lib services**, update the Project Structure section in this file.
 
+**When you change any business flow** (state transitions, decision logic, webhook handling, separation steps, compras flow, auth, label printing), you MUST update the corresponding diagram in `docs/fluxos-siso.md` in the same commit. This includes:
+- Adding/removing/renaming status values -> update the state machine diagrams
+- Changing decision logic or branching -> update the flowcharts
+- Adding new steps to a flow -> update the relevant flow diagram
+- Changing integrations with external systems -> update the diagrams
+
 Failure to update documentation means the next developer or LLM will work with stale information and introduce bugs.
 
 ## Coding Conventions

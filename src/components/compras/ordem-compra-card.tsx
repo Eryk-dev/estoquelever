@@ -33,6 +33,7 @@ interface OrdemCompraCardProps {
   observacao: string | null;
   comprado_por_nome: string | null;
   comprado_em: string | null;
+  recebido_em?: string | null;
   aging_dias: number;
   prioridade: "critica" | "alta" | "normal";
   pedidos_bloqueados: number;
@@ -332,6 +333,7 @@ export function OrdemCompraCard({
   observacao,
   comprado_por_nome,
   comprado_em,
+  recebido_em,
   aging_dias,
   prioridade,
   pedidos_bloqueados,
@@ -348,6 +350,7 @@ export function OrdemCompraCard({
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const selectionEnabled = typeof onToggleSelect === "function";
+  const isCompleted = status === "recebido";
 
   const progresso = quantidade_total > 0
     ? Math.min((quantidade_recebida / quantidade_total) * 100, 100)
@@ -360,93 +363,93 @@ export function OrdemCompraCard({
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-paper">
-      <div className="border-b border-line bg-[linear-gradient(135deg,rgba(59,130,246,0.10),rgba(59,130,246,0.03)_55%,rgba(255,255,255,0.92))] px-4 py-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="flex min-w-0 gap-3">
-            {selectionEnabled && (
-              <label className="mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center">
-                <input
-                  type="checkbox"
-                  checked={selected}
-                  onChange={() => onToggleSelect?.()}
-                  className="h-4 w-4 rounded border-line text-ink focus:ring-ink/20"
-                  aria-label={`Selecionar OC ${fornecedor}`}
-                />
-              </label>
-            )}
+    <div className="overflow-hidden rounded-xl border border-line bg-paper">
+      <div className="px-4 py-3">
+        <div className="flex items-start gap-3">
+          {selectionEnabled && (
+            <label className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center">
+              <input
+                type="checkbox"
+                checked={selected}
+                onChange={() => onToggleSelect?.()}
+                className="h-4 w-4 rounded border-line text-ink focus:ring-ink/20"
+                aria-label={`Selecionar OC ${fornecedor}`}
+              />
+            </label>
+          )}
 
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={cn(
-                    "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold",
-                    statusBadge.className,
-                  )}
-                >
-                  {statusBadge.label}
-                </span>
-                <span
-                  className={cn(
-                    "inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold",
-                    prioridadeMeta.className,
-                  )}
-                >
-                  {prioridadeMeta.label}
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-full bg-paper/80 px-2.5 py-1 text-[11px] font-medium text-ink-muted">
-                  <MapPin className="h-3.5 w-3.5" />
-                  {galpao_nome ?? "Galpão não definido"}
-                </span>
-              </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-ink">
+                    {fornecedor}
+                  </h3>
+                  <span className="text-xs font-mono text-ink-faint">#{shortOcId(id)}</span>
+                </div>
 
-              <div className="mt-3 flex items-center gap-2">
-                <Truck className="h-4 w-4 text-ink-faint" />
-                <h3 className="text-base font-semibold text-ink">
-                  OC #{shortOcId(id)} · {fornecedor}
-                </h3>
-              </div>
-
-              <p className="mt-2 text-sm text-ink-muted">
-                Próxima ação: <span className="font-medium text-ink">{proxima_acao}</span>
-              </p>
-
-              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
-                {comprado_por_nome && (
-                  <span>
-                    Comprado por <span className="font-medium text-ink">{comprado_por_nome}</span>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <span
+                    className={cn(
+                      "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                      statusBadge.className,
+                    )}
+                  >
+                    {statusBadge.label}
                   </span>
-                )}
-                <span>Data da compra: {formatDate(comprado_em)}</span>
+                  <span
+                    className={cn(
+                      "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                      prioridadeMeta.className,
+                    )}
+                  >
+                    {prioridadeMeta.label}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[11px] text-ink-muted">
+                    <MapPin className="h-3 w-3" />
+                    {galpao_nome ?? "—"}
+                  </span>
+                </div>
               </div>
-            </div>
-          </div>
 
-          <div className="grid gap-2 sm:grid-cols-3 lg:min-w-[420px]">
-            <div className="rounded-xl border border-line bg-paper/80 px-3 py-2">
-              <p className="text-[11px] uppercase tracking-wide text-ink-faint">Recebido</p>
-              <p className="mt-1 text-lg font-semibold text-ink">
-                {quantidade_recebida}/{quantidade_total} un
-              </p>
-              <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface">
-                <div
-                  className="h-full rounded-full bg-blue-500"
-                  style={{ width: `${progresso}%` }}
-                />
+              <div className="flex flex-wrap items-center gap-3 text-xs tabular-nums text-ink-muted sm:text-right">
+                <div>
+                  <span className="font-semibold text-ink">{quantidade_recebida}/{quantidade_total}</span> un
+                </div>
+                <div>
+                  <span className="font-semibold text-ink">{pedidos_bloqueados}</span> pedido{pedidos_bloqueados !== 1 ? "s" : ""}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Clock3 className="h-3 w-3" />
+                  {formatDaysLabel(aging_dias)}
+                </div>
               </div>
             </div>
-            <div className="rounded-xl border border-line bg-paper/80 px-3 py-2">
-              <p className="text-[11px] uppercase tracking-wide text-ink-faint">Pedidos</p>
-              <p className="mt-1 text-lg font-semibold text-ink">{pedidos_bloqueados}</p>
-              <p className="text-xs text-ink-muted">ainda aguardando esta OC</p>
+
+            {/* Progress bar */}
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface">
+              <div
+                className={cn(
+                  "h-full rounded-full transition-all",
+                  progresso >= 100 ? "bg-emerald-500" : "bg-blue-500",
+                )}
+                style={{ width: `${progresso}%` }}
+              />
             </div>
-            <div className="rounded-xl border border-line bg-paper/80 px-3 py-2">
-              <p className="text-[11px] uppercase tracking-wide text-ink-faint">Aging</p>
-              <p className="mt-1 flex items-center gap-1 text-lg font-semibold text-ink">
-                <Clock3 className="h-4 w-4 text-ink-faint" />
-                {formatDaysLabel(aging_dias)}
-              </p>
-              <p className="text-xs text-ink-muted">{itens_recebidos}/{total_itens} itens fechados</p>
+
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-ink-faint">
+              <span>{proxima_acao}</span>
+              <span>·</span>
+              {comprado_por_nome && <span>{comprado_por_nome}</span>}
+              <span>{formatDate(comprado_em)}</span>
+              {isCompleted && recebido_em && (
+                <>
+                  <span>·</span>
+                  <span>Recebida {formatDate(recebido_em)}</span>
+                </>
+              )}
+              <span>·</span>
+              <span>{itens_recebidos}/{total_itens} itens</span>
             </div>
           </div>
         </div>
@@ -461,11 +464,11 @@ export function OrdemCompraCard({
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between border-b border-line/60 px-4 py-2.5 text-xs font-medium text-ink-muted hover:bg-surface/30 transition-colors"
+        className="flex w-full items-center justify-between border-t border-line/60 px-4 py-2 text-xs font-medium text-ink-muted hover:bg-surface/30 transition-colors"
       >
         <span>{total_itens} ite{total_itens !== 1 ? "ns" : "m"}</span>
         <span className="inline-flex items-center gap-1">
-          {expanded ? "Ocultar" : "Ver itens"}
+          {expanded ? "Ocultar" : "Ver"}
           {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
         </span>
       </button>
@@ -513,10 +516,12 @@ export function OrdemCompraCard({
                       {restante > 0 ? `${restante} un pendente` : "item fechado"}
                     </p>
                   </div>
-                  <ItemActions
-                    item={item}
-                    onActionComplete={handleActionComplete}
-                  />
+                  {!isCompleted && (
+                    <ItemActions
+                      item={item}
+                      onActionComplete={handleActionComplete}
+                    />
+                  )}
                 </div>
               </div>
             );
@@ -524,15 +529,22 @@ export function OrdemCompraCard({
         </div>
       )}
 
-      <div className="border-t border-line px-4 py-4">
-        <button
-          type="button"
-          onClick={() => router.push(`/compras/conferencia/${id}?ocs=${id}`)}
-          className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-medium text-paper hover:bg-ink/90"
-        >
-          <ClipboardCheck className="h-4 w-4" />
-          Conferir recebimento
-        </button>
+      <div className="border-t border-line px-4 py-2.5">
+        {isCompleted ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+            <ClipboardCheck className="h-3.5 w-3.5" />
+            Concluída
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => router.push(`/compras/conferencia/${id}?ocs=${id}`)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 text-xs font-medium text-paper hover:bg-ink/90"
+          >
+            <ClipboardCheck className="h-3.5 w-3.5" />
+            Conferir recebimento
+          </button>
+        )}
       </div>
     </div>
   );

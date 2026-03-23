@@ -13,11 +13,17 @@ import {
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import type { CompraItemAgrupado } from "@/types";
 
-type CompraStatusFilter = "aguardando_compra" | "comprado" | "indisponivel" | "excecoes";
+type CompraStatusFilter =
+  | "aguardando_compra"
+  | "comprado"
+  | "recebido"
+  | "indisponivel"
+  | "excecoes";
 
 const VALID_STATUSES: CompraStatusFilter[] = [
   "aguardando_compra",
   "comprado",
+  "recebido",
   "indisponivel",
   "excecoes",
 ];
@@ -86,7 +92,7 @@ type SummaryAccumulator = {
  *
  * Returns compra items grouped by supplier and status.
  * Query params:
- *   - status: 'aguardando_compra' | 'comprado' | 'excecoes' (legacy: 'indisponivel')
+ *   - status: 'aguardando_compra' | 'comprado' | 'recebido' | 'excecoes' (legacy: 'indisponivel')
  *   - cargo: user cargo for auth check
  */
 export async function GET(request: NextRequest) {
@@ -117,6 +123,8 @@ export async function GET(request: NextRequest) {
       data = await fetchAguardandoCompra(supabase);
     } else if (status === "comprado") {
       data = await fetchComprado(supabase);
+    } else if (status === "recebido") {
+      data = await fetchRecebido(supabase);
     } else {
       data = await fetchExcecoes(supabase);
     }
@@ -170,7 +178,7 @@ function getTimelineBaseDate(item: {
 }
 
 async function fetchCounts(supabase: ReturnType<typeof createServiceClient>) {
-  const [aguardando, comprado, excecoes] = await Promise.all([
+  const [aguardando, comprado, recebido, excecoes] = await Promise.all([
     supabase
       .from("siso_pedido_itens")
       .select("id", { count: "exact", head: true })
@@ -180,6 +188,10 @@ async function fetchCounts(supabase: ReturnType<typeof createServiceClient>) {
       .select("id", { count: "exact", head: true })
       .in("status", [...OPEN_OC_LIST_STATUSES]),
     supabase
+      .from("siso_ordens_compra")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "recebido"),
+    supabase
       .from("siso_pedido_itens")
       .select("id", { count: "exact", head: true })
       .in("compra_status", [...COMPRA_EXCEPTION_STATUSES]),
@@ -188,6 +200,7 @@ async function fetchCounts(supabase: ReturnType<typeof createServiceClient>) {
   return {
     aguardando_compra: aguardando.count ?? 0,
     comprado: comprado.count ?? 0,
+    recebido: recebido.count ?? 0,
     indisponivel: excecoes.count ?? 0,
   };
 }
@@ -489,8 +502,42 @@ async function fetchComprado(
 
   if (itemsError) throw new Error(`Erro ao buscar itens OC: ${itemsError.message}`);
 
+  return buildOcList(ocs, (items ?? []) as unknown as RawCompraBaseItem[], "aberta");
+}
+
+async function fetchRecebido(
+  supabase: ReturnType<typeof createServiceClient>,
+) {
+  const { data: ordens, error: ordensError } = await supabase
+    .from("siso_ordens_compra")
+    .select("id, fornecedor, empresa_id, galpao_id, status, observacao, comprado_por, comprado_em, created_at, siso_usuarios:comprado_por(nome), siso_galpoes:galpao_id(nome)")
+    .eq("status", "recebido")
+    .order("created_at", { ascending: false });
+
+  if (ordensError) throw new Error(`Erro ao buscar OCs recebidas: ${ordensError.message}`);
+  if (!ordens || ordens.length === 0) return [];
+
+  const ocs = ordens as unknown as RawCompradoOc[];
+
+  const { data: items, error: itemsError } = await supabase
+    .from("siso_pedido_itens")
+    .select(
+      "id, sku, descricao, quantidade_pedida, compra_quantidade_solicitada, compra_quantidade_recebida, compra_status, compra_solicitada_em, comprado_em, recebido_em, imagem_url, pedido_id, ordem_compra_id, siso_pedidos(numero, empresa_origem_id)",
+    )
+    .in("ordem_compra_id", ocs.map((oc) => oc.id));
+
+  if (itemsError) throw new Error(`Erro ao buscar itens OC recebida: ${itemsError.message}`);
+
+  return buildOcList(ocs, (items ?? []) as unknown as RawCompraBaseItem[], "recebida");
+}
+
+function buildOcList(
+  ocs: RawCompradoOc[],
+  rawItems: RawCompraBaseItem[],
+  mode: "aberta" | "recebida",
+) {
   const itemsByOc = new Map<string, RawCompraBaseItem[]>();
-  for (const item of (items ?? []) as unknown as RawCompraBaseItem[]) {
+  for (const item of rawItems) {
     const ordemCompraId = item.ordem_compra_id;
     if (!ordemCompraId) continue;
     const list = itemsByOc.get(ordemCompraId) ?? [];
@@ -511,11 +558,23 @@ async function fetchComprado(
         0,
       );
       const itensRecebidos = ocItems.filter((item) => item.compra_status === "recebido").length;
-      const agingDias = getAgingDays(oc.comprado_em ?? oc.created_at);
+      const recebidoEm = ocItems.reduce<string | null>(
+        (latest, item) => {
+          if (!item.recebido_em) return latest;
+          return !latest || item.recebido_em > latest ? item.recebido_em : latest;
+        },
+        null,
+      );
+      const agingDias = getAgingDays(
+        mode === "recebida"
+          ? (recebidoEm ?? oc.comprado_em ?? oc.created_at)
+          : (oc.comprado_em ?? oc.created_at),
+      );
       const prioridade = getCompraPrioridade({
         agingDias,
         pedidosBloqueados,
-        quantidadeTotal: Math.max(quantidadeTotal - quantidadeRecebida, 0),
+        quantidadeTotal:
+          mode === "recebida" ? quantidadeTotal : Math.max(quantidadeTotal - quantidadeRecebida, 0),
       });
 
       return {
@@ -527,6 +586,7 @@ async function fetchComprado(
         observacao: oc.observacao,
         comprado_por_nome: oc.siso_usuarios?.nome ?? null,
         comprado_em: oc.comprado_em,
+        recebido_em: recebidoEm,
         created_at: oc.created_at,
         aging_dias: agingDias,
         prioridade,
@@ -536,9 +596,11 @@ async function fetchComprado(
         total_itens: ocItems.length,
         itens_recebidos: itensRecebidos,
         proxima_acao:
-          oc.status === "parcialmente_recebido"
-            ? "Conferir saldo restante e cobrar fornecedor"
-            : "Conferir recebimento da OC",
+          mode === "recebida"
+            ? "OC concluída. Pedidos já liberados após recebimento total."
+            : oc.status === "parcialmente_recebido"
+              ? "Conferir saldo restante e cobrar fornecedor"
+              : "Conferir recebimento da OC",
         itens: ocItems.map((item) => ({
           id: String(item.id),
           sku: item.sku,
@@ -549,14 +611,23 @@ async function fetchComprado(
           compra_quantidade_recebida: item.compra_quantidade_recebida,
           pedido_id: item.pedido_id,
           numero_pedido: item.siso_pedidos?.numero ?? "?",
-          aging_dias: getAgingDays(getTimelineBaseDate(item)),
+          aging_dias: getAgingDays(
+            mode === "recebida"
+              ? (item.recebido_em ?? getTimelineBaseDate(item))
+              : getTimelineBaseDate(item),
+          ),
         })),
       };
     })
     .sort((a, b) => {
-      // Default: most recently purchased first
-      const aDate = a.comprado_em ?? a.created_at;
-      const bDate = b.comprado_em ?? b.created_at;
+      const aDate =
+        mode === "recebida"
+          ? (a.recebido_em ?? a.comprado_em ?? a.created_at)
+          : (a.comprado_em ?? a.created_at);
+      const bDate =
+        mode === "recebida"
+          ? (b.recebido_em ?? b.comprado_em ?? b.created_at)
+          : (b.comprado_em ?? b.created_at);
       return bDate.localeCompare(aDate);
     });
 }

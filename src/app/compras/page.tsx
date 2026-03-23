@@ -7,10 +7,11 @@ import {
   AlertTriangle,
   ArrowDownUp,
   Clock3,
-  Filter,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   ShoppingCart,
+  X,
 } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
@@ -21,10 +22,11 @@ import { FornecedorCard } from "@/components/compras/fornecedor-card";
 import { OrdemCompraCard } from "@/components/compras/ordem-compra-card";
 import { ExceptionItemCard } from "@/components/compras/exception-item-card";
 import { sisoFetch, useAuth } from "@/lib/auth-context";
+import { cn } from "@/lib/utils";
 
 import type { Tab, CompraItemAgrupado, CompraOcItem, CompraExceptionItem } from "@/types";
 
-type CompraTab = "aguardando_compra" | "comprado" | "excecoes";
+type CompraTab = "aguardando_compra" | "comprado" | "recebido" | "excecoes";
 type Prioridade = "critica" | "alta" | "normal";
 type PrioridadeFilter = "todas" | Prioridade;
 type AgingFilter = "todos" | "hoje" | "1-2" | "3+";
@@ -34,6 +36,7 @@ type OcStatusFilter = "todas" | "comprado" | "parcialmente_recebido";
 interface ComprasCounts {
   aguardando_compra: number;
   comprado: number;
+  recebido: number;
   indisponivel: number;
 }
 
@@ -91,6 +94,7 @@ interface OcData {
   observacao: string | null;
   comprado_por_nome: string | null;
   comprado_em: string | null;
+  recebido_em?: string | null;
   created_at: string;
   aging_dias: number;
   prioridade: Prioridade;
@@ -109,6 +113,12 @@ interface ComprasResponse {
   counts: ComprasCounts;
   summary: ComprasSummary;
   data: unknown[];
+}
+
+interface ActiveFilterPill {
+  key: string;
+  label: string;
+  clear: () => void;
 }
 
 const ALLOWED_CARGOS = ["admin", "comprador"];
@@ -181,6 +191,7 @@ export default function ComprasPage() {
   const [ocSort, setOcSort] = useState<OcSortOption>("recente");
   const [ocStatusFilter, setOcStatusFilter] = useState<OcStatusFilter>("todas");
   const [selectedOcIds, setSelectedOcIds] = useState<string[]>([]);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const deferredSearch = useDeferredValue(search);
 
   const cargos = user?.cargos ?? (user?.cargo ? [user.cargo] : []);
@@ -215,6 +226,7 @@ export default function ComprasPage() {
   const counts = data?.counts ?? {
     aguardando_compra: 0,
     comprado: 0,
+    recebido: 0,
     indisponivel: 0,
   };
   const summary = data?.summary ?? {
@@ -233,16 +245,18 @@ export default function ComprasPage() {
   const tabs: Tab[] = [
     {
       id: "aguardando_compra",
-      label: "Planejamento",
+      label: "1. Planejamento",
       count: counts.aguardando_compra,
     },
-    { id: "comprado", label: "OCs Em Aberto", count: counts.comprado },
-    { id: "excecoes", label: "Intercambiáveis / Exceções", count: counts.indisponivel },
+    { id: "comprado", label: "2. Em aberto", count: counts.comprado },
+    { id: "recebido", label: "3. Concluídas", count: counts.recebido },
+    { id: "excecoes", label: "4. Exceções", count: counts.indisponivel },
   ];
 
   const emptyMessages: Record<CompraTab, string> = {
     aguardando_compra: "Nenhuma demanda aguardando decisão de compra.",
     comprado: "Nenhuma ordem de compra aberta.",
+    recebido: "Nenhuma OC concluída até agora.",
     excecoes: "Nenhum item bloqueado por intercambiável ou exceção.",
   };
 
@@ -252,7 +266,7 @@ export default function ComprasPage() {
       for (const group of items as FornecedorGroup[]) {
         if (group.galpao_sugerido_id) map.set(group.galpao_sugerido_id, group.galpao_sugerido_nome ?? group.galpao_sugerido_id);
       }
-    } else if (activeTab === "comprado") {
+    } else if (activeTab === "comprado" || activeTab === "recebido") {
       for (const oc of items as OcData[]) {
         if (oc.galpao_id) map.set(oc.galpao_id, oc.galpao_nome ?? oc.galpao_id);
       }
@@ -293,9 +307,9 @@ export default function ComprasPage() {
       });
     }
 
-    if (activeTab === "comprado") {
+    if (activeTab === "comprado" || activeTab === "recebido") {
       const filtered = (items as OcData[]).filter((oc) => {
-        if (ocStatusFilter !== "todas" && oc.status !== ocStatusFilter) return false;
+        if (activeTab === "comprado" && ocStatusFilter !== "todas" && oc.status !== ocStatusFilter) return false;
         if (galpaoFilter !== "todos" && oc.galpao_id !== galpaoFilter) return false;
         if (prioridadeFilter !== "todas" && oc.prioridade !== prioridadeFilter) return false;
         if (!matchesAging(oc.aging_dias, agingFilter)) return false;
@@ -391,6 +405,15 @@ export default function ComprasPage() {
 
   const canStartBatchConference = selectedOcs.length > 0 && selectedOcGalpoes.length <= 1;
 
+  function resetFilters() {
+    setSearch("");
+    setGalpaoFilter("todos");
+    setPrioridadeFilter("todas");
+    setAgingFilter("todos");
+    setOcSort("recente");
+    setOcStatusFilter("todas");
+  }
+
   function toggleOcSelection(ocId: string) {
     setSelectedOcIds((prev) =>
       prev.includes(ocId)
@@ -430,12 +453,113 @@ export default function ComprasPage() {
     </button>
   );
 
+  const resultEntityLabel =
+    activeTab === "aguardando_compra"
+      ? filteredItems.length === 1
+        ? "fornecedor"
+        : "fornecedores"
+      : activeTab === "comprado" || activeTab === "recebido"
+        ? filteredItems.length === 1
+          ? "OC"
+          : "OCs"
+        : filteredItems.length === 1
+          ? "item"
+          : "itens";
+
+  const galpaoFilterLabel =
+    galpaoFilter === "todos"
+      ? null
+      : galpaoOptions.find((option) => option.value === galpaoFilter)?.label ?? galpaoFilter;
+
+  const activeFilterPills: ActiveFilterPill[] = [
+    ...(search.trim()
+      ? [
+          {
+            key: "search",
+            label: `Busca: ${search.trim().slice(0, 28)}${search.trim().length > 28 ? "..." : ""}`,
+            clear: () => setSearch(""),
+          },
+        ]
+      : []),
+    ...(galpaoFilterLabel
+      ? [
+          {
+            key: "galpao",
+            label: `Galpão: ${galpaoFilterLabel}`,
+            clear: () => setGalpaoFilter("todos"),
+          },
+        ]
+      : []),
+    ...(prioridadeFilter !== "todas"
+      ? [
+          {
+            key: "prioridade",
+            label: `Prioridade: ${
+              prioridadeFilter === "critica"
+                ? "Crítica"
+                : prioridadeFilter === "alta"
+                  ? "Alta"
+                  : "Normal"
+            }`,
+            clear: () => setPrioridadeFilter("todas"),
+          },
+        ]
+      : []),
+    ...(agingFilter !== "todos"
+      ? [
+          {
+            key: "aging",
+            label: `Aging: ${
+              agingFilter === "hoje"
+                ? "Hoje"
+                : agingFilter === "1-2"
+                  ? "1 a 2 dias"
+                  : "3 dias ou mais"
+            }`,
+            clear: () => setAgingFilter("todos"),
+          },
+        ]
+      : []),
+    ...(activeTab === "comprado" && ocStatusFilter !== "todas"
+      ? [
+          {
+            key: "oc-status",
+            label:
+              ocStatusFilter === "comprado"
+                ? "Status: aguardando chegada"
+                : "Status: para conferir",
+            clear: () => setOcStatusFilter("todas"),
+          },
+        ]
+      : []),
+    ...((activeTab === "comprado" || activeTab === "recebido") && ocSort !== "recente"
+      ? [
+          {
+            key: "oc-sort",
+            label: `Ordem: ${ocSort === "prioridade" ? "prioridade" : "aging"}`,
+            clear: () => setOcSort("recente"),
+          },
+        ]
+      : []),
+  ];
+
+  const activeFilterCount = activeFilterPills.length;
+  const compactSummaryCards = [
+    { label: "Pendentes", value: String(summary.itens_pendentes), highlight: summary.itens_pendentes > 0 },
+    { label: "OCs abertas", value: String(summary.ocs_abertas), highlight: false },
+    { label: "Concluídas", value: String(counts.recebido), highlight: false },
+    { label: "Exceções", value: String(summary.excecoes), highlight: summary.excecoes > 0 },
+    { label: "Pedidos travados", value: String(summary.pedidos_bloqueados), highlight: summary.pedidos_bloqueados > 0 },
+    { label: "Mais antigo", value: formatDays(summary.mais_antigo_dias), highlight: summary.mais_antigo_dias >= 3 },
+  ];
+
   return (
     <AppShell
       title="Compras"
       subtitle="Operação do comprador"
       backHref="/"
       headerRight={allowed ? headerRight : undefined}
+      mainClassName="max-w-[1480px] px-4 py-4 sm:px-5 sm:py-6"
     >
       {!allowed ? (
         <div className="flex flex-col items-center justify-center gap-3 py-16">
@@ -465,317 +589,344 @@ export default function ComprasPage() {
         <LoadingSpinner message="Carregando compras..." />
       ) : (
         <>
-          <section className="mb-5 overflow-hidden rounded-2xl border border-line bg-[linear-gradient(135deg,rgba(244,244,245,0.95),rgba(255,255,255,1)_60%)] p-4">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-              <div className="rounded-xl border border-line bg-paper px-3 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-ink-faint">Itens pendentes</p>
-                <p className="mt-1 text-2xl font-semibold text-ink">{summary.itens_pendentes}</p>
-              </div>
-              <div className="rounded-xl border border-line bg-paper px-3 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-ink-faint">Pedidos travados</p>
-                <p className="mt-1 text-2xl font-semibold text-ink">{summary.pedidos_bloqueados}</p>
-              </div>
-              <div className="rounded-xl border border-line bg-paper px-3 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-ink-faint">Quantidade</p>
-                <p className="mt-1 text-2xl font-semibold text-ink">{summary.quantidade_pendente} un</p>
-              </div>
-              <div className="rounded-xl border border-line bg-paper px-3 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-ink-faint">OCs abertas</p>
-                <p className="mt-1 text-2xl font-semibold text-ink">{summary.ocs_abertas}</p>
-              </div>
-              <div className="rounded-xl border border-line bg-paper px-3 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-ink-faint">Empresas</p>
-                <p className="mt-1 text-2xl font-semibold text-ink">{summary.empresas_em_compra}</p>
-              </div>
-              <div className="rounded-xl border border-line bg-paper px-3 py-3">
-                <p className="text-[11px] uppercase tracking-wide text-ink-faint">Mais antigo</p>
-                <p className="mt-1 flex items-center gap-1 text-2xl font-semibold text-ink">
-                  <Clock3 className="h-5 w-5 text-ink-faint" />
-                  {formatDays(summary.mais_antigo_dias)}
-                </p>
-              </div>
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              {compactSummaryCards.map((card) => (
+                <div
+                  key={card.label}
+                  className={cn(
+                    "rounded-lg px-2.5 py-2",
+                    card.highlight
+                      ? "border border-amber-200 bg-amber-50/60"
+                      : "border border-line bg-surface/50",
+                  )}
+                >
+                  <p className="text-[10px] uppercase tracking-wide text-ink-faint">
+                    {card.label}
+                  </p>
+                  <p className={cn(
+                    "mt-0.5 text-lg font-semibold",
+                    card.highlight ? "text-amber-800" : "text-ink",
+                  )}>{card.value}</p>
+                </div>
+              ))}
             </div>
 
-            {(summary.gargalos_fornecedor.length > 0 || summary.gargalos_empresa.length > 0) && (
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                {summary.gargalos_fornecedor.length > 0 && (
-                  <div className="rounded-xl border border-line bg-paper px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-wide text-ink-faint">Gargalos por fornecedor</p>
-                    <div className="mt-2 space-y-1.5">
-                      {summary.gargalos_fornecedor.map((g) => (
-                        <div key={g.nome} className="flex items-center justify-between text-xs">
-                          <span className="font-medium text-ink truncate">{g.nome ?? "Sem fornecedor"}</span>
-                          <span className="shrink-0 text-ink-muted">{g.quantidade} un · {g.pedidos} ped.</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {summary.gargalos_empresa.length > 0 && (
-                  <div className="rounded-xl border border-line bg-paper px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-wide text-ink-faint">Gargalos por empresa</p>
-                    <div className="mt-2 space-y-1.5">
-                      {summary.gargalos_empresa.map((g) => (
-                        <div key={g.empresa_id ?? "sem"} className="flex items-center justify-between text-xs">
-                          <span className="font-medium text-ink truncate">{g.nome ?? "Sem empresa"}</span>
-                          <span className="shrink-0 text-ink-muted">{g.quantidade} un · {g.pedidos} ped.</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
-
-          <div className="mb-4">
-            <Tabs
-              tabs={tabs}
-              activeTab={activeTab}
-              onChange={(id) => {
-                setActiveTab(id as CompraTab);
-                setGalpaoFilter("todos");
-                setPrioridadeFilter("todas");
-                setAgingFilter("todos");
-                setOcStatusFilter("todas");
-                setSelectedOcIds([]);
-              }}
-            />
-          </div>
-
-          <section className="mb-5 rounded-2xl border border-line bg-paper p-4">
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-ink-faint" />
-              <h3 className="text-sm font-semibold text-ink">Filtrar operação</h3>
-            </div>
-            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.6fr),repeat(3,minmax(0,1fr))]">
-              <label className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Buscar fornecedor, SKU, pedido ou ação"
-                  className="w-full rounded-xl border border-line bg-surface py-2 pl-10 pr-3 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+            <div className="min-w-0 space-y-4">
+              <div>
+                <Tabs
+                  tabs={tabs}
+                  activeTab={activeTab}
+                  onChange={(id) => {
+                    setActiveTab(id as CompraTab);
+                    resetFilters();
+                    setShowAdvancedFilters(false);
+                    setSelectedOcIds([]);
+                  }}
                 />
-              </label>
+              </div>
 
-              <select
-                value={galpaoFilter}
-                onChange={(e) => setGalpaoFilter(e.target.value)}
-                className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
-              >
-                <option value="todos">Todos os galpões</option>
-                {galpaoOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              <section className="rounded-2xl border border-line bg-paper p-3 sm:p-4">
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
+                      <label className="relative flex-1">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+                        <input
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                          placeholder="Buscar fornecedor, SKU, pedido ou ação"
+                          className="w-full rounded-xl border border-line bg-surface py-2 pl-10 pr-10 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+                        />
+                        {search.trim() && (
+                          <button
+                            type="button"
+                            onClick={() => setSearch("")}
+                            className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-paper hover:text-ink"
+                            title="Limpar busca"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </label>
 
-              <select
-                value={prioridadeFilter}
-                onChange={(e) => setPrioridadeFilter(e.target.value as PrioridadeFilter)}
-                className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
-              >
-                <option value="todas">Todas as prioridades</option>
-                <option value="critica">Crítica</option>
-                <option value="alta">Alta</option>
-                <option value="normal">Normal</option>
-              </select>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowAdvancedFilters((current) => !current)}
+                          className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
+                            showAdvancedFilters || activeFilterCount > 0
+                              ? "border-ink bg-ink text-paper"
+                              : "border-line bg-surface text-ink hover:bg-paper"
+                          }`}
+                          aria-expanded={showAdvancedFilters}
+                        >
+                          <SlidersHorizontal className="h-4 w-4" />
+                          {showAdvancedFilters ? "Ocultar filtros" : "Mais filtros"}
+                          {activeFilterCount > 0 && (
+                            <span className="rounded-full bg-paper/15 px-1.5 py-0.5 text-[10px] font-semibold text-paper">
+                              {activeFilterCount}
+                            </span>
+                          )}
+                        </button>
 
-              <select
-                value={agingFilter}
-                onChange={(e) => setAgingFilter(e.target.value as AgingFilter)}
-                className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
-              >
-                <option value="todos">Todo aging</option>
-                <option value="hoje">Hoje</option>
-                <option value="1-2">1 a 2 dias</option>
-                <option value="3+">3 dias ou mais</option>
-              </select>
-            </div>
+                        {activeFilterCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={resetFilters}
+                            className="inline-flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2 text-sm font-medium text-ink transition-colors hover:bg-paper"
+                          >
+                            <X className="h-4 w-4" />
+                            Limpar
+                          </button>
+                        )}
+                      </div>
+                    </div>
 
-            {activeTab === "comprado" && (
-              <div className="mt-3 flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-ink-muted">Status:</span>
-                  {([
-                    { value: "todas", label: "Todas" },
-                    { value: "comprado", label: "Aguardando chegada" },
-                    { value: "parcialmente_recebido", label: "Para conferir" },
-                  ] as const).map((opt) => (
+                    <span className="shrink-0 text-xs text-ink-muted">
+                      {filteredItems.length}/{items.length} {resultEntityLabel}
+                    </span>
+                  </div>
+
+                  {activeFilterPills.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {activeFilterPills.map((pill) => (
+                        <button
+                          key={pill.key}
+                          type="button"
+                          onClick={pill.clear}
+                          className="inline-flex items-center gap-1 rounded-full border border-line bg-surface px-3 py-1 text-xs font-medium text-ink transition-colors hover:bg-paper"
+                        >
+                          {pill.label}
+                          <X className="h-3 w-3 text-ink-faint" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {showAdvancedFilters && (
+                    <div className="grid gap-3 border-t border-line pt-3 lg:grid-cols-4">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                          Galpão
+                        </span>
+                        <select
+                          value={galpaoFilter}
+                          onChange={(e) => setGalpaoFilter(e.target.value)}
+                          className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
+                        >
+                          <option value="todos">Todos os galpões</option>
+                          {galpaoOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                          Prioridade
+                        </span>
+                        <select
+                          value={prioridadeFilter}
+                          onChange={(e) => setPrioridadeFilter(e.target.value as PrioridadeFilter)}
+                          className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
+                        >
+                          <option value="todas">Todas as prioridades</option>
+                          <option value="critica">Crítica</option>
+                          <option value="alta">Alta</option>
+                          <option value="normal">Normal</option>
+                        </select>
+                      </label>
+
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                          Aging
+                        </span>
+                        <select
+                          value={agingFilter}
+                          onChange={(e) => setAgingFilter(e.target.value as AgingFilter)}
+                          className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
+                        >
+                          <option value="todos">Todo aging</option>
+                          <option value="hoje">Hoje</option>
+                          <option value="1-2">1 a 2 dias</option>
+                          <option value="3+">3 dias ou mais</option>
+                        </select>
+                      </label>
+
+                      {(activeTab === "comprado" || activeTab === "recebido") ? (
+                        <label className="flex flex-col gap-1">
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                            <ArrowDownUp className="h-3.5 w-3.5" />
+                            Ordenação
+                          </span>
+                          <select
+                            value={ocSort}
+                            onChange={(e) => setOcSort(e.target.value as OcSortOption)}
+                            className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
+                          >
+                            <option value="recente">Mais recente</option>
+                            <option value="prioridade">Prioridade</option>
+                            <option value="aging">Aging</option>
+                          </select>
+                        </label>
+                      ) : (
+                        <div className="hidden lg:block" />
+                      )}
+
+                      {activeTab === "comprado" && (
+                        <div className="space-y-2 lg:col-span-4">
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                            Status das OCs
+                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {([
+                              { value: "todas", label: "Todas" },
+                              { value: "comprado", label: "Aguardando chegada" },
+                              { value: "parcialmente_recebido", label: "Para conferir" },
+                            ] as const).map((opt) => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => setOcStatusFilter(opt.value)}
+                                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                                  ocStatusFilter === opt.value
+                                    ? "bg-ink text-paper"
+                                    : "bg-surface text-ink-muted hover:bg-zinc-200"
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {activeTab === "comprado" && selectedOcs.length > 0 && (
+                <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50/60 px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="font-medium text-blue-800">
+                      {selectedOcs.length} OC{selectedOcs.length !== 1 ? "s" : ""} selecionada{selectedOcs.length !== 1 ? "s" : ""}
+                    </span>
+                    {selectedOcs.length > 0 && (
+                      <span className="text-blue-600">
+                        · {selectedOcs[0].galpao_nome ?? "sem galpão"}
+                      </span>
+                    )}
+                    {selectedOcs.length > 0 && !canStartBatchConference && (
+                      <span className="text-xs text-red-600">
+                        Selecione OCs do mesmo galpão
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
                     <button
-                      key={opt.value}
                       type="button"
-                      onClick={() => setOcStatusFilter(opt.value)}
-                      className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                        ocStatusFilter === opt.value
-                          ? "bg-ink text-paper"
-                          : "bg-surface text-ink-muted hover:bg-zinc-200"
-                      }`}
+                      onClick={clearOcSelection}
+                      className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
                     >
-                      {opt.label}
+                      Limpar
                     </button>
-                  ))}
-                </div>
-                <div className="flex items-center gap-2">
-                  <ArrowDownUp className="h-4 w-4 text-ink-faint" />
-                  <span className="text-xs font-medium text-ink-muted">Ordenar:</span>
-                  <select
-                    value={ocSort}
-                    onChange={(e) => setOcSort(e.target.value as OcSortOption)}
-                    className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
-                  >
-                    <option value="recente">Mais recente</option>
-                    <option value="prioridade">Prioridade</option>
-                    <option value="aging">Aging</option>
-                  </select>
-                </div>
-              </div>
-            )}
-          </section>
-
-          {activeTab === "comprado" && (
-            <section className="mb-5 rounded-2xl border border-line bg-paper p-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-ink">Recebimento em lote</h3>
-                  <p className="mt-1 text-sm text-ink-muted">
-                    Selecione manualmente as OCs que chegaram juntas. Ao final da última conferência, o SISO oferece a embalagem direta dos pedidos dessas OCs.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={startBatchConference}
-                    disabled={!canStartBatchConference}
-                    className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-medium text-paper transition-colors hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Conferir selecionadas
-                  </button>
-                  <button
-                    type="button"
-                    onClick={clearOcSelection}
-                    disabled={selectedOcs.length === 0}
-                    className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Limpar seleção
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
-                <span>{selectedOcs.length} OC(s) selecionada(s)</span>
-                {selectedOcs.length > 0 && (
-                  <span>
-                    Galpão: {selectedOcs[0].galpao_nome ?? "não definido"}
-                  </span>
-                )}
-              </div>
-
-              {selectedOcs.length > 0 && !canStartBatchConference && (
-                <p className="mt-2 text-xs text-red-700">
-                  Para cair no mesmo checklist de embalagem, selecione OCs do mesmo galpão.
-                </p>
-              )}
-            </section>
-          )}
-
-          {items.length === 0 ? (
-            <EmptyState message={emptyMessages[activeTab]} />
-          ) : filteredItems.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-line bg-paper px-6 py-10 text-center">
-              <AlertTriangle className="mx-auto h-6 w-6 text-ink-faint" />
-              <p className="mt-3 text-sm text-ink-muted">
-                Nenhum resultado com os filtros atuais.
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <p className="text-xs text-ink-faint">
-                {filteredItems.length} resultado{filteredItems.length !== 1 ? "s" : ""} exibido{filteredItems.length !== 1 ? "s" : ""} ·{" "}
-                {summary.excecoes} {summary.excecoes === 1 ? "exceção" : "exceções"} no fluxo ·{" "}
-                {formatDays(summary.mais_antigo_dias)} no item mais antigo
-              </p>
-
-              {activeTab === "aguardando_compra" && (
-                <section className="rounded-2xl border border-line bg-surface/40 px-4 py-4">
-                  <h3 className="text-sm font-semibold text-ink">Planejamento por fornecedor</h3>
-                  <p className="mt-1 text-sm text-ink-muted">
-                    Abra só o fornecedor que vai trabalhar agora. Dentro dele, selecione a rodada e confirme a OC.
-                  </p>
+                    <button
+                      type="button"
+                      onClick={startBatchConference}
+                      disabled={!canStartBatchConference}
+                      className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40"
+                    >
+                      Conferir em lote
+                    </button>
+                  </div>
                 </section>
               )}
 
-              {activeTab === "aguardando_compra" &&
-                (filteredItems as FornecedorGroup[]).map((group) => (
-                  <FornecedorCard
-                    key={group.fornecedor}
-                    fornecedor={group.fornecedor}
-                    galpao_sugerido_id={group.galpao_sugerido_id}
-                    galpao_sugerido_nome={group.galpao_sugerido_nome}
-                    empresas={group.empresas}
-                    galpoes={galpoes}
-                    prioridade={group.prioridade}
-                    aging_dias={group.aging_dias}
-                    pedidos_bloqueados={group.pedidos_bloqueados}
-                    quantidade_total={group.quantidade_total}
-                    total_skus={group.total_skus}
-                    rascunho_ocs={group.rascunho_ocs}
-                    itens_em_rascunho={group.itens_em_rascunho}
-                    proxima_acao={group.proxima_acao}
-                    itens={group.itens}
-                  />
-                ))}
+              {items.length === 0 ? (
+                <EmptyState message={emptyMessages[activeTab]} />
+              ) : filteredItems.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-line bg-paper px-6 py-10 text-center">
+                  <AlertTriangle className="mx-auto h-6 w-6 text-ink-faint" />
+                  <p className="mt-3 text-sm text-ink-muted">
+                    Nenhum resultado com os filtros atuais.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {activeTab === "aguardando_compra" &&
+                    (filteredItems as FornecedorGroup[]).map((group) => (
+                      <FornecedorCard
+                        key={group.fornecedor}
+                        fornecedor={group.fornecedor}
+                        galpao_sugerido_id={group.galpao_sugerido_id}
+                        galpao_sugerido_nome={group.galpao_sugerido_nome}
+                        empresas={group.empresas}
+                        galpoes={galpoes}
+                        prioridade={group.prioridade}
+                        aging_dias={group.aging_dias}
+                        pedidos_bloqueados={group.pedidos_bloqueados}
+                        quantidade_total={group.quantidade_total}
+                        total_skus={group.total_skus}
+                        rascunho_ocs={group.rascunho_ocs}
+                        itens_em_rascunho={group.itens_em_rascunho}
+                        proxima_acao={group.proxima_acao}
+                        itens={group.itens}
+                      />
+                    ))}
 
-              {activeTab === "comprado" &&
-                (filteredItems as OcData[]).map((oc) => (
-                  <OrdemCompraCard
-                    key={oc.id}
-                    id={oc.id}
-                    fornecedor={oc.fornecedor}
-                    galpao_nome={oc.galpao_nome}
-                    status={oc.status}
-                    observacao={oc.observacao}
-                    comprado_por_nome={oc.comprado_por_nome}
-                    comprado_em={oc.comprado_em}
-                    aging_dias={oc.aging_dias}
-                    prioridade={oc.prioridade}
-                    pedidos_bloqueados={oc.pedidos_bloqueados}
-                    quantidade_total={oc.quantidade_total}
-                    quantidade_recebida={oc.quantidade_recebida}
-                    total_itens={oc.total_itens}
-                    itens_recebidos={oc.itens_recebidos}
-                  proxima_acao={oc.proxima_acao}
-                  itens={oc.itens}
-                  selected={effectiveSelectedOcIds.includes(oc.id)}
-                  onToggleSelect={() => toggleOcSelection(oc.id)}
-                />
-                ))}
+                  {(activeTab === "comprado" || activeTab === "recebido") &&
+                    (filteredItems as OcData[]).map((oc) => (
+                      <OrdemCompraCard
+                        key={oc.id}
+                        id={oc.id}
+                        fornecedor={oc.fornecedor}
+                        galpao_nome={oc.galpao_nome}
+                        status={oc.status}
+                        observacao={oc.observacao}
+                        comprado_por_nome={oc.comprado_por_nome}
+                        comprado_em={oc.comprado_em}
+                        recebido_em={oc.recebido_em}
+                        aging_dias={oc.aging_dias}
+                        prioridade={oc.prioridade}
+                        pedidos_bloqueados={oc.pedidos_bloqueados}
+                        quantidade_total={oc.quantidade_total}
+                        quantidade_recebida={oc.quantidade_recebida}
+                        total_itens={oc.total_itens}
+                        itens_recebidos={oc.itens_recebidos}
+                        proxima_acao={oc.proxima_acao}
+                        itens={oc.itens}
+                        selected={activeTab === "comprado" ? effectiveSelectedOcIds.includes(oc.id) : false}
+                        onToggleSelect={activeTab === "comprado" ? () => toggleOcSelection(oc.id) : undefined}
+                      />
+                    ))}
 
-              {activeTab === "excecoes" &&
-                exceptionSections.map((section) => (
-                  <section
-                    key={section.status}
-                    className="rounded-2xl border border-line bg-paper p-4"
-                  >
-                    <div className="flex flex-col gap-1 border-b border-line pb-3">
-                      <h3 className="text-sm font-semibold text-ink">{section.title}</h3>
-                      <p className="text-xs text-ink-muted">{section.description}</p>
-                    </div>
-                    <div className="mt-4 flex flex-col gap-3">
-                      {section.items.map((item) => (
-                        <ExceptionItemCard
-                          key={item.id}
-                          item={item}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                ))}
+                  {activeTab === "excecoes" &&
+                    exceptionSections.map((section) => (
+                      <section
+                        key={section.status}
+                        className="rounded-2xl border border-line bg-paper p-4"
+                      >
+                        <div className="flex flex-col gap-1 border-b border-line pb-3">
+                          <h3 className="text-sm font-semibold text-ink">{section.title}</h3>
+                          <p className="text-xs text-ink-muted">{section.description}</p>
+                        </div>
+                        <div className="mt-4 flex flex-col gap-3">
+                          {section.items.map((item) => (
+                            <ExceptionItemCard
+                              key={item.id}
+                              item={item}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    ))}
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </>
       )}
     </AppShell>

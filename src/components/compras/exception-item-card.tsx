@@ -168,22 +168,23 @@ export function ExceptionItemCard({
 
   return (
     <div className="rounded-xl border border-line bg-paper overflow-hidden">
-      <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+      {/* Item info */}
+      <div className="px-4 py-3">
         <div className="flex gap-3 min-w-0">
           {item.imagem ? (
             <img
               src={item.imagem}
               alt={item.sku}
-              className="h-14 w-14 rounded-lg border border-line bg-surface object-cover"
+              className="h-11 w-11 shrink-0 rounded-lg border border-line bg-surface object-cover"
             />
           ) : (
-            <div className="flex h-14 w-14 items-center justify-center rounded-lg border border-dashed border-line bg-surface text-ink-faint">
-              <PackageX className="h-5 w-5" />
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-dashed border-line bg-surface text-ink-faint">
+              <PackageX className="h-4 w-4" />
             </div>
           )}
 
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
               <p className="text-sm font-semibold text-ink">{item.sku}</p>
               <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusMeta.className}`}>
                 {statusMeta.label}
@@ -191,244 +192,203 @@ export function ExceptionItemCard({
               <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${prioridadeClassName}`}>
                 {item.prioridade === "critica" ? "Crítica" : item.prioridade === "alta" ? "Alta" : "Normal"}
               </span>
-              <span className="inline-flex items-center rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
-                #{item.numero_pedido}
-              </span>
+              <span className="text-[11px] text-ink-faint">#{item.numero_pedido}</span>
             </div>
-            <p className="mt-0.5 text-xs text-ink-muted">{item.descricao}</p>
-            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-ink-faint">
+            <p className="mt-0.5 text-xs text-ink-muted line-clamp-1">{item.descricao}</p>
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-ink-faint">
               <span>{item.quantidade}un</span>
-              <span>Aging: {item.aging_dias <= 0 ? "Hoje" : `${item.aging_dias}d`}</span>
-              {item.empresa_nome && <span>Empresa: {item.empresa_nome}</span>}
-              {item.fornecedor_oc && <span>Fornecedor atual: {item.fornecedor_oc}</span>}
+              <span>{item.aging_dias <= 0 ? "Hoje" : `${item.aging_dias}d`}</span>
+              {item.empresa_nome && <span>{item.empresa_nome}</span>}
+              {item.fornecedor_oc && <span>{item.fornecedor_oc}</span>}
             </div>
-            <p className="mt-2 text-xs text-ink-muted">
-              Próxima ação: <span className="font-medium text-ink">{item.proxima_acao}</span>
-            </p>
-            <p className="mt-1 text-xs text-ink-muted">{helperText}</p>
+
             {isEquivalentePendente && (
-              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                <p className="font-medium">
-                  Equivalente: {item.compra_equivalente_sku ?? "?"}
-                  {item.compra_equivalente_fornecedor ? ` · ${item.compra_equivalente_fornecedor}` : ""}
-                </p>
-                {item.compra_equivalente_descricao && (
-                  <p className="mt-0.5">{item.compra_equivalente_descricao}</p>
-                )}
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
+                Equivalente: <span className="font-semibold">{item.compra_equivalente_sku ?? "?"}</span>
+                {item.compra_equivalente_fornecedor ? ` · ${item.compra_equivalente_fornecedor}` : ""}
               </div>
             )}
             {isCancelamentoPendente && item.compra_cancelamento_motivo && (
-              <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+              <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-[11px] text-zinc-700">
                 Motivo: {item.compra_cancelamento_motivo}
               </div>
             )}
           </div>
         </div>
-
-        <div className="flex flex-col gap-2 shrink-0">
-          {confirmingAction && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
-              <p className="text-xs font-semibold text-red-800">
-                {confirmingAction === "cancelar-pedido" && `Cancelar o pedido #${item.numero_pedido} inteiro?`}
-                {confirmingAction === "confirmar-equivalente" && "Confirmar que a troca já foi aplicada externamente?"}
-                {confirmingAction === "confirmar-cancelamento" && "Confirmar que o item já foi cancelado externamente?"}
-              </p>
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (confirmingAction === "cancelar-pedido") handleCancelarPedido();
-                    else if (confirmingAction === "confirmar-equivalente") handleConfirmarEquivalente();
-                    else handleConfirmarCancelamento();
-                  }}
-                  disabled={loading !== null}
-                  className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                >
-                  {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Confirmar"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmingAction(null)}
-                  className="text-xs text-ink-muted hover:text-ink"
-                >
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2">
-            {!isEquivalentePendente && !isCancelamentoPendente && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setMode(mode === "equivalente" ? null : "equivalente")}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors"
-                >
-                  <CircleDashed className="h-3.5 w-3.5" />
-                  SKU equivalente
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode(mode === "cancelamento" ? null : "cancelamento")}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors"
-                >
-                  <Ban className="h-3.5 w-3.5" />
-                  Cancelar item
-                </button>
-              </>
-            )}
-
-            {isEquivalentePendente && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setConfirmingAction("confirmar-equivalente")}
-                  disabled={loading !== null}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-xs font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
-                >
-                  {loading === "confirmar-equivalente" ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <ShoppingCart className="h-3.5 w-3.5" />
-                  )}
-                  Confirmar troca
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode(mode === "equivalente" ? null : "equivalente")}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors"
-                >
-                  <RefreshCcw className="h-3.5 w-3.5" />
-                  Editar
-                </button>
-              </>
-            )}
-
-            {isCancelamentoPendente && (
-              <button
-                type="button"
-                onClick={() => setConfirmingAction("confirmar-cancelamento")}
-                disabled={loading !== null}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-xs font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
-              >
-                {loading === "confirmar-cancelamento" ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Ban className="h-3.5 w-3.5" />
-                )}
-                Confirmar cancelamento
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={handleVoltarFila}
-              disabled={loading !== null}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors disabled:opacity-50"
-            >
-              {loading === "fila" ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <ArrowLeft className="h-3.5 w-3.5" />
-              )}
-              Voltar pra fila
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmingAction("cancelar-pedido")}
-              disabled={loading !== null}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 transition-colors disabled:opacity-50"
-            >
-              {loading === "pedido" ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <AlertTriangle className="h-3.5 w-3.5" />
-              )}
-              Cancelar pedido
-            </button>
-          </div>
-        </div>
       </div>
 
-      {mode === "equivalente" && (
-        <div className="border-t border-line bg-surface/40 px-4 py-3">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <input
-              type="text"
-              value={skuEquivalente}
-              onChange={(e) => setSkuEquivalente(e.target.value)}
-              placeholder="SKU equivalente"
-              className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
-            />
-            <input
-              type="text"
-              value={fornecedorEquivalente}
-              onChange={(e) => setFornecedorEquivalente(e.target.value)}
-              placeholder="Fornecedor do equivalente"
-              className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
-            />
-            <input
-              type="text"
-              value={obsEquivalente}
-              onChange={(e) => setObsEquivalente(e.target.value)}
-              placeholder="Observação opcional"
-              className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
-            />
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+      {/* Confirmation banner */}
+      {confirmingAction && (
+        <div className="flex items-center justify-between gap-2 border-t border-red-200 bg-red-50 px-4 py-2.5">
+          <p className="text-xs font-medium text-red-800">
+            {confirmingAction === "cancelar-pedido" && `Cancelar pedido #${item.numero_pedido}?`}
+            {confirmingAction === "confirmar-equivalente" && "Confirmar troca externa?"}
+            {confirmingAction === "confirmar-cancelamento" && "Confirmar cancelamento externo?"}
+          </p>
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleRegistrarEquivalente}
-              disabled={loading !== null}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-xs font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
+              onClick={() => setConfirmingAction(null)}
+              className="text-xs text-red-600 hover:text-red-800"
             >
-              {loading === "equivalente" ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <CircleDashed className="h-3.5 w-3.5" />
-              )}
-              Salvar equivalente
+              Cancelar
             </button>
             <button
               type="button"
-              onClick={() => setMode(null)}
-              className="text-xs text-ink-muted hover:text-ink transition-colors"
+              onClick={() => {
+                if (confirmingAction === "cancelar-pedido") handleCancelarPedido();
+                else if (confirmingAction === "confirmar-equivalente") handleConfirmarEquivalente();
+                else handleConfirmarCancelamento();
+              }}
+              disabled={loading !== null}
+              className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
             >
-              Fechar
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Sim"}
             </button>
           </div>
         </div>
       )}
 
+      {/* Actions bar */}
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-line/60 px-4 py-2">
+        {!isEquivalentePendente && !isCancelamentoPendente && (
+          <>
+            <button
+              type="button"
+              onClick={() => setMode(mode === "equivalente" ? null : "equivalente")}
+              className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1.5 text-[11px] font-medium text-ink hover:bg-surface transition-colors"
+            >
+              <CircleDashed className="h-3 w-3" />
+              Equivalente
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode(mode === "cancelamento" ? null : "cancelamento")}
+              className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1.5 text-[11px] font-medium text-ink hover:bg-surface transition-colors"
+            >
+              <Ban className="h-3 w-3" />
+              Cancelar item
+            </button>
+          </>
+        )}
+
+        {isEquivalentePendente && (
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmingAction("confirmar-equivalente")}
+              disabled={loading !== null}
+              className="inline-flex items-center gap-1 rounded-lg bg-ink px-2.5 py-1.5 text-[11px] font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
+            >
+              {loading === "confirmar-equivalente" ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShoppingCart className="h-3 w-3" />}
+              Confirmar troca
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode(mode === "equivalente" ? null : "equivalente")}
+              className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1.5 text-[11px] font-medium text-ink hover:bg-surface transition-colors"
+            >
+              <RefreshCcw className="h-3 w-3" />
+              Editar
+            </button>
+          </>
+        )}
+
+        {isCancelamentoPendente && (
+          <button
+            type="button"
+            onClick={() => setConfirmingAction("confirmar-cancelamento")}
+            disabled={loading !== null}
+            className="inline-flex items-center gap-1 rounded-lg bg-ink px-2.5 py-1.5 text-[11px] font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
+          >
+            {loading === "confirmar-cancelamento" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Ban className="h-3 w-3" />}
+            Confirmar cancelamento
+          </button>
+        )}
+
+        <div className="flex-1" />
+
+        <button
+          type="button"
+          onClick={handleVoltarFila}
+          disabled={loading !== null}
+          className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1.5 text-[11px] font-medium text-ink hover:bg-surface transition-colors disabled:opacity-50"
+        >
+          {loading === "fila" ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowLeft className="h-3 w-3" />}
+          Fila
+        </button>
+        <button
+          type="button"
+          onClick={() => setConfirmingAction("cancelar-pedido")}
+          disabled={loading !== null}
+          className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2.5 py-1.5 text-[11px] font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+        >
+          {loading === "pedido" ? <Loader2 className="h-3 w-3 animate-spin" /> : <AlertTriangle className="h-3 w-3" />}
+          Cancelar pedido
+        </button>
+      </div>
+
+      {mode === "equivalente" && (
+        <div className="border-t border-line bg-surface/30 px-4 py-2.5">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              type="text"
+              value={skuEquivalente}
+              onChange={(e) => setSkuEquivalente(e.target.value)}
+              placeholder="SKU equivalente"
+              autoFocus
+              className="flex-1 rounded-lg border border-line bg-paper px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+            />
+            <input
+              type="text"
+              value={fornecedorEquivalente}
+              onChange={(e) => setFornecedorEquivalente(e.target.value)}
+              placeholder="Fornecedor"
+              className="flex-1 rounded-lg border border-line bg-paper px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+            />
+            <input
+              type="text"
+              value={obsEquivalente}
+              onChange={(e) => setObsEquivalente(e.target.value)}
+              placeholder="Obs (opcional)"
+              className="flex-1 rounded-lg border border-line bg-paper px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRegistrarEquivalente}
+                disabled={loading !== null}
+                className="inline-flex items-center gap-1 rounded-lg bg-ink px-2.5 py-1.5 text-[11px] font-medium text-paper hover:bg-ink/90 disabled:opacity-50"
+              >
+                {loading === "equivalente" ? <Loader2 className="h-3 w-3 animate-spin" /> : "Salvar"}
+              </button>
+              <button type="button" onClick={() => setMode(null)} className="text-[11px] text-ink-muted hover:text-ink">
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {mode === "cancelamento" && (
-        <div className="border-t border-line bg-surface/40 px-4 py-3">
-          <textarea
-            value={motivoCancelamento}
-            onChange={(e) => setMotivoCancelamento(e.target.value)}
-            placeholder="Motivo do cancelamento do item (opcional)"
-            rows={2}
-            className="w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none resize-none"
-          />
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="border-t border-line bg-surface/30 px-4 py-2.5">
+          <div className="flex items-start gap-2">
+            <textarea
+              value={motivoCancelamento}
+              onChange={(e) => setMotivoCancelamento(e.target.value)}
+              placeholder="Motivo do cancelamento (opcional)"
+              rows={1}
+              className="flex-1 rounded-lg border border-line bg-paper px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none resize-none"
+            />
             <button
               type="button"
               onClick={handleRegistrarCancelamento}
               disabled={loading !== null}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-xs font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-ink px-2.5 py-1.5 text-[11px] font-medium text-paper hover:bg-ink/90 disabled:opacity-50"
             >
-              {loading === "cancelamento" ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Ban className="h-3.5 w-3.5" />
-              )}
-              Salvar cancelamento
+              {loading === "cancelamento" ? <Loader2 className="h-3 w-3 animate-spin" /> : "Salvar"}
             </button>
-            <button
-              type="button"
-              onClick={() => setMode(null)}
-              className="text-xs text-ink-muted hover:text-ink transition-colors"
-            >
+            <button type="button" onClick={() => setMode(null)} className="shrink-0 py-1.5 text-[11px] text-ink-muted hover:text-ink">
               Fechar
             </button>
           </div>

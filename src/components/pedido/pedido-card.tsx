@@ -243,6 +243,18 @@ function EditableStockPill({
       </span>
       {isNull ? (
         <span className="font-semibold text-zinc-400 dark:text-zinc-600">—</span>
+      ) : produtoId === 0 ? (
+        <span
+          className={cn(
+            "font-semibold tabular-nums",
+            isZero && "text-red-500 dark:text-red-400",
+            !isZero && isSufficient && "text-emerald-600 dark:text-emerald-400",
+            !isZero && !isSufficient && "text-amber-600 dark:text-amber-400",
+          )}
+          title="Produto sem ID no Tiny — não é possível editar"
+        >
+          {disponivel}
+        </span>
       ) : (
         <button
           type="button"

@@ -27,9 +27,15 @@ export async function POST(request: Request) {
     };
     const quantidade = body.quantidade ?? body.novaQuantidade;
 
-    if (!pedidoId || !produtoId || !galpao || quantidade == null) {
+    if (!pedidoId || produtoId == null || !galpao || quantidade == null) {
       return NextResponse.json(
         { error: "Campos obrigatórios: pedidoId, produtoId, galpao, quantidade" },
+        { status: 400 },
+      );
+    }
+    if (produtoId === 0) {
+      return NextResponse.json(
+        { error: "Produto sem ID no Tiny — não é possível ajustar estoque" },
         { status: 400 },
       );
     }

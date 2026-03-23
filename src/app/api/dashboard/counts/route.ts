@@ -80,20 +80,32 @@ export async function GET(request: NextRequest) {
         siso: await sisoPromise,
         separacao: 0,
         compras: 0,
+        inventario: 0,
       });
     }
     comprasQuery = comprasQuery.in("empresa_origem_id", allowedEmpresaIds);
   }
 
-  const [siso, separacao, compras] = await Promise.all([
+  let inventarioQuery = supabase
+    .from("siso_inventarios")
+    .select("*", { count: "exact", head: true })
+    .eq("status", "em_andamento");
+
+  if (activeGalpaoId) {
+    inventarioQuery = inventarioQuery.eq("galpao_id", activeGalpaoId);
+  }
+
+  const [siso, separacao, compras, inventario] = await Promise.all([
     sisoPromise,
     separacaoQuery,
     comprasQuery,
+    inventarioQuery,
   ]);
 
   return NextResponse.json({
     siso,
     separacao: separacao.count ?? 0,
     compras: compras.count ?? 0,
+    inventario: inventario.count ?? 0,
   });
 }

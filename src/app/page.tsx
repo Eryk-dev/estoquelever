@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  ClipboardCheck,
   ClipboardList,
   Clock3,
   Layers3,
@@ -66,6 +67,17 @@ const MODULES: Module[] = [
     color: "var(--color-warning)",
   },
   {
+    id: "inventario",
+    href: "/inventario",
+    title: "Inventário",
+    subtitle: "Contagem de estoque",
+    description:
+      "Faça contagem física, atualize localizações e ajuste saldos de estoque direto no Tiny ERP.",
+    cta: "Abrir Inventário",
+    icon: ClipboardCheck,
+    color: "var(--color-info)",
+  },
+  {
     id: "painel",
     href: "/painel",
     title: "Painel",
@@ -82,6 +94,7 @@ interface DashboardCounts {
   siso: number;
   separacao: number;
   compras: number;
+  inventario: number;
 }
 
 interface OverviewResponse {

@@ -320,6 +320,137 @@ export interface CompraExceptionItem {
   compra_cancelamento_motivo: string | null;
 }
 
+// ─── Inventário ─────────────────────────────────────────────────────────────
+
+/** Inventory mode: location only or location + stock */
+export type InventarioModo = "loc_only" | "loc_estoque";
+
+/** Stock movement type: Balanço, Entrada, Saída */
+export type TipoEstoque = "B" | "E" | "S";
+
+/** Status of an inventory session */
+export type InventarioStatus =
+  | "em_andamento"
+  | "processando"
+  | "concluido"
+  | "cancelado"
+  | "erro"
+  | "revertendo"
+  | "revertido";
+
+/** Status of an individual inventory item */
+export type InventarioItemStatus = "pendente" | "processando" | "sucesso" | "erro";
+
+/** An inventory session (siso_inventarios) */
+export interface Inventario {
+  id: string;
+  empresa_id: string;
+  galpao_id: string;
+  usuario_id: string;
+  deposito_id: number | null;
+  modo: InventarioModo;
+  tipo_estoque: TipoEstoque | null;
+  manter_localizacao_antiga: boolean;
+  status: InventarioStatus;
+  observacoes: string | null;
+  created_at: string;
+  processado_em: string | null;
+  concluido_em: string | null;
+  /** Joined fields */
+  empresa?: { nome: string };
+  galpao?: { nome: string };
+  usuario?: { nome: string };
+  /** Computed counts */
+  total_itens?: number;
+  itens_sucesso?: number;
+  itens_erro?: number;
+}
+
+/** A scanned item in an inventory session (siso_inventario_itens) */
+export interface InventarioItem {
+  id: string;
+  inventario_id: string;
+  produto_id_tiny: number | null;
+  sku: string;
+  nome_produto: string | null;
+  ean: string | null;
+  localizacao: string;
+  quantidade: number;
+  status: InventarioItemStatus;
+  erro_msg: string | null;
+  localizacao_antiga_tiny: string | null;
+  saldo_anterior_tiny: number | null;
+  created_at: string;
+}
+
+/** Consolidated view of inventory items grouped by SKU */
+export interface InventarioItemConsolidado {
+  sku: string;
+  nome_produto: string | null;
+  produto_id_tiny: number | null;
+  ean: string | null;
+  quantidade_total: number;
+  localizacoes: string;
+  itens_ids: string[];
+  status: InventarioItemStatus;
+  erro_msg: string | null;
+}
+
+// ─── Transferência ──────────────────────────────────────────────────────────
+
+/** Status of a transfer session (same values as InventarioStatus) */
+export type TransferenciaStatus =
+  | "em_andamento"
+  | "processando"
+  | "concluido"
+  | "cancelado"
+  | "erro"
+  | "revertendo"
+  | "revertido";
+
+/** A stock transfer session between empresas (siso_transferencias) */
+export interface Transferencia {
+  id: string;
+  empresa_origem_id: string;
+  empresa_destino_id: string;
+  galpao_origem_id: string;
+  galpao_destino_id: string;
+  usuario_id: string;
+  deposito_origem_id: number | null;
+  deposito_destino_id: number | null;
+  status: TransferenciaStatus;
+  observacoes: string | null;
+  created_at: string;
+  processado_em: string | null;
+  concluido_em: string | null;
+  /** Joined fields */
+  empresa_origem?: { nome: string };
+  empresa_destino?: { nome: string };
+  galpao_origem?: { nome: string };
+  galpao_destino?: { nome: string };
+  usuario?: { nome: string };
+  /** Computed counts */
+  total_itens?: number;
+  itens_sucesso?: number;
+  itens_erro?: number;
+}
+
+/** An item in a transfer session (siso_transferencia_itens) */
+export interface TransferenciaItem {
+  id: string;
+  transferencia_id: string;
+  produto_id_tiny_origem: number;
+  produto_id_tiny_destino: number | null;
+  sku: string;
+  nome_produto: string | null;
+  ean: string | null;
+  quantidade: number;
+  clonado: boolean;
+  status: InventarioItemStatus;
+  erro_msg: string | null;
+  created_at: string;
+}
+
 // ─── Auth / Usuarios ────────────────────────────────────────────────────────
 
 /** User role — determines what they see */

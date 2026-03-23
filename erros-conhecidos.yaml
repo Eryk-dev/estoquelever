@@ -225,3 +225,14 @@ erros:
       - src/app/api/pedidos/aprovar/route.ts
       - src/lib/execution-worker.ts
     tags: [nf, aprovacao, race-condition, aguardando_nf, aguardando_separacao, worker, webhook]
+
+  - id: localizacao-sku-nulo-tiny-put
+    date: "2026-03-23"
+    source: localizacao
+    category: external_api
+    message: "Tiny API PUT /produtos/{id} → 400: campo sku — Este valor não deve ser nulo"
+    cause: "atualizarLocalizacaoProduto fazia GET do produto para pegar descricao (campo obrigatorio no PUT), mas nao incluia sku no body. Tiny v3 valida que sku nao pode ser nulo no PUT, mesmo que nao esteja sendo alterado."
+    fix: "Alterado para buscar tambem sku no GET e inclui-lo no body do PUT."
+    files:
+      - src/lib/tiny-api.ts
+    tags: [localizacao, tiny-api, sku, put, validacao, checklist, separacao]

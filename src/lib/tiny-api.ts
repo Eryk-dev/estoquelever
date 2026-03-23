@@ -520,8 +520,8 @@ export async function atualizarLocalizacaoProduto(
   produtoId: number,
   localizacao: string,
 ): Promise<void> {
-  // PUT /produtos/{id} requires descricao — fetch it first
-  const produto = await tinyFetch<{ descricao: string }>(
+  // PUT /produtos/{id} requires descricao + sku — fetch them first
+  const produto = await tinyFetch<{ descricao: string; sku: string }>(
     `/produtos/${produtoId}`,
     { token },
   );
@@ -531,6 +531,7 @@ export async function atualizarLocalizacaoProduto(
     method: "PUT",
     body: {
       descricao: produto.descricao,
+      sku: produto.sku,
       estoque: { localizacao },
     },
   });

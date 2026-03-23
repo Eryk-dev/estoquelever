@@ -11,6 +11,11 @@
  *   3. movimentarEstoque (if loc_estoque and NOT Kit)
  *   4. atualizarLocalizacaoProduto (with merge if manter_localizacao_antiga)
  *   5. Update item rows status (sucesso/erro)
+ *
+ * reverterInventario: undoes processed changes (sucesso items only).
+ *   1. Restore localizacao_antiga_tiny via atualizarLocalizacaoProduto
+ *   2. Reverse stock: B→B(saldo_anterior), E→S(same qty), S→E(same qty)
+ *   3. Reset item status to pendente
  */
 
 import { createServiceClient } from "./supabase-server";
@@ -27,6 +32,7 @@ import type {
   InventarioItem,
   InventarioItemConsolidado,
   InventarioItemStatus,
+  TipoEstoque,
 } from "@/types";
 
 // ── Consolidation ────────────────────────────────────────────────────────────
@@ -268,6 +274,165 @@ export async function processarInventario(
     .from("siso_inventarios")
     .update({
       status: finalStatus,
+      concluido_em: new Date().toISOString(),
+    })
+    .eq("id", inventarioId);
+}
+
+// ── Reversal ─────────────────────────────────────────────────────────────────
+
+/**
+ * Reverts a completed inventory session — undoes processed changes in Tiny ERP.
+ * For each sucesso item: restores original location and reverses stock movement.
+ * Fire-and-forget: called without await by the API route.
+ */
+export async function reverterInventario(
+  inventarioId: string,
+): Promise<void> {
+  const supabase = createServiceClient();
+
+  // 1. Set status → revertendo
+  await supabase
+    .from("siso_inventarios")
+    .update({ status: "revertendo" })
+    .eq("id", inventarioId);
+
+  // 2. Fetch inventario
+  const { data: inventario } = await supabase
+    .from("siso_inventarios")
+    .select("*, usuario:siso_usuarios(nome)")
+    .eq("id", inventarioId)
+    .single();
+
+  if (!inventario) {
+    logger.logError({
+      error: new Error("Inventário não encontrado para reversão"),
+      source: "inventario",
+      message: `Inventário ${inventarioId} não encontrado para reversão`,
+      category: "database",
+    });
+    return;
+  }
+
+  // 3. Fetch only sucesso items (only these were applied to Tiny)
+  const { data: itens } = await supabase
+    .from("siso_inventario_itens")
+    .select("*")
+    .eq("inventario_id", inventarioId)
+    .eq("status", "sucesso");
+
+  if (!itens || itens.length === 0) {
+    await supabase
+      .from("siso_inventarios")
+      .update({
+        status: "revertido",
+        concluido_em: new Date().toISOString(),
+      })
+      .eq("id", inventarioId);
+    return;
+  }
+
+  // 4. Consolidate sucesso items by SKU (same grouping as processamento)
+  const consolidados = consolidarItens(itens as InventarioItem[]);
+
+  // 5. Build reversal observacao
+  const dataStr = new Date().toISOString().split("T")[0];
+  const operadorNome =
+    (inventario.usuario as { nome: string } | null)?.nome ?? "Desconhecido";
+  const movimentacaoObs = `Reversão Inventário SISO - ${dataStr} - ${operadorNome}`;
+
+  // 6. Reverse each consolidated item
+  for (const consolidado of consolidados) {
+    if (!consolidado.produto_id_tiny) {
+      await supabase
+        .from("siso_inventario_itens")
+        .update({ status: "erro" as const, erro_msg: "produto_id_tiny ausente" })
+        .in("id", consolidado.itens_ids);
+      continue;
+    }
+
+    try {
+      const { token } = await getValidTokenByEmpresa(inventario.empresa_id);
+
+      await runWithEmpresa(inventario.empresa_id, async () => {
+        const produtoId = consolidado.produto_id_tiny!;
+
+        // a. Restore original location
+        // Pick localizacao_antiga_tiny from the first item (all rows for same SKU have the same value)
+        const firstItem = itens.find(
+          (i) => consolidado.itens_ids.includes(i.id),
+        );
+        const locAnterior = firstItem?.localizacao_antiga_tiny ?? "";
+
+        await atualizarLocalizacaoProduto(token, produtoId, locAnterior);
+
+        // b. Reverse stock if loc_estoque
+        if (inventario.modo === "loc_estoque") {
+          const tipoOriginal = inventario.tipo_estoque as TipoEstoque;
+
+          if (tipoOriginal === "B") {
+            // Balanço reversal: set Balanço back to saldo_anterior_tiny
+            const saldoAnterior = firstItem?.saldo_anterior_tiny ?? 0;
+            await movimentarEstoque(token, produtoId, {
+              tipo: "B",
+              quantidade: saldoAnterior,
+              deposito: inventario.deposito_id
+                ? { id: inventario.deposito_id }
+                : undefined,
+              observacoes: movimentacaoObs,
+            });
+          } else if (tipoOriginal === "E") {
+            // Entrada reversal: do Saída with same qty
+            await movimentarEstoque(token, produtoId, {
+              tipo: "S",
+              quantidade: consolidado.quantidade_total,
+              deposito: inventario.deposito_id
+                ? { id: inventario.deposito_id }
+                : undefined,
+              observacoes: movimentacaoObs,
+            });
+          } else if (tipoOriginal === "S") {
+            // Saída reversal: do Entrada with same qty
+            await movimentarEstoque(token, produtoId, {
+              tipo: "E",
+              quantidade: consolidado.quantidade_total,
+              deposito: inventario.deposito_id
+                ? { id: inventario.deposito_id }
+                : undefined,
+              observacoes: movimentacaoObs,
+            });
+          }
+        }
+      });
+
+      // Mark items back to pendente (reverted successfully)
+      await supabase
+        .from("siso_inventario_itens")
+        .update({ status: "pendente" as const, erro_msg: null })
+        .in("id", consolidado.itens_ids);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+
+      await supabase
+        .from("siso_inventario_itens")
+        .update({ status: "erro" as const, erro_msg: errorMsg })
+        .in("id", consolidado.itens_ids);
+
+      logger.logError({
+        error: err,
+        source: "inventario",
+        message: `Erro revertendo SKU ${consolidado.sku}`,
+        category: "external_api",
+        metadata: { inventarioId, sku: consolidado.sku },
+      });
+    }
+  }
+
+  // 7. Final status → revertido
+  await supabase
+    .from("siso_inventarios")
+    .update({
+      status: "revertido",
       concluido_em: new Date().toISOString(),
     })
     .eq("id", inventarioId);

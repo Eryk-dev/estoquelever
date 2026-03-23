@@ -16,6 +16,7 @@ import {
   PackageSearch,
   Settings,
   ShoppingCart,
+  Tag,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -88,6 +89,17 @@ const MODULES: Module[] = [
     cta: "Abrir Transferências",
     icon: ArrowLeftRight,
     color: "var(--color-warning)",
+  },
+  {
+    id: "etiquetas",
+    href: "/etiquetas",
+    title: "Etiquetas",
+    subtitle: "Endereçamento",
+    description:
+      "Gere e imprima etiquetas de endereço para prateleiras em dois formatos: pequena (2 por etiqueta) e grande (1 por etiqueta).",
+    cta: "Abrir Etiquetas",
+    icon: Tag,
+    color: "var(--color-positive)",
   },
   {
     id: "painel",

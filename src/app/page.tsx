@@ -4,6 +4,7 @@ import { type ElementType, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  ArrowLeftRight,
   ArrowRight,
   CheckCircle2,
   ClipboardCheck,
@@ -78,6 +79,17 @@ const MODULES: Module[] = [
     color: "var(--color-info)",
   },
   {
+    id: "transferencias",
+    href: "/transferencias",
+    title: "Transferência",
+    subtitle: "Estoque entre galpões",
+    description:
+      "Mova produtos entre galpões: saída na origem, entrada no destino e clonagem automática de cadastro.",
+    cta: "Abrir Transferências",
+    icon: ArrowLeftRight,
+    color: "var(--color-warning)",
+  },
+  {
     id: "painel",
     href: "/painel",
     title: "Painel",
@@ -95,6 +107,7 @@ interface DashboardCounts {
   separacao: number;
   compras: number;
   inventario: number;
+  transferencias: number;
 }
 
 interface OverviewResponse {

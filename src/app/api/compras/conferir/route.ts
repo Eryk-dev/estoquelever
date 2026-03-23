@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getSessionUser } from "@/lib/session";
 import { movimentarEstoque } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
-import { getCompraQuantidadeRestante, getCompraQuantidadeSolicitada } from "@/lib/compras-utils";
-
-const ALLOWED_CARGOS = ["admin", "comprador"];
+import { getCompraQuantidadeRestante, getCompraQuantidadeSolicitada, hasComprasAccess } from "@/lib/compras-utils";
 
 interface ConferirItemInput {
   item_id: string;
@@ -16,8 +15,6 @@ interface ConferirItemInput {
 
 interface ConferirBody {
   ordem_compra_id?: string;
-  usuario_id?: string;
-  cargo?: string;
   itens?: ConferirItemInput[];
 }
 
@@ -41,6 +38,10 @@ interface RawItem {
  * Tiny movimentarEstoque type E for each item with produto_id_tiny.
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   let body: ConferirBody;
 
   try {
@@ -49,17 +50,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { ordem_compra_id, usuario_id, cargo, itens } = body;
-
-  // Auth check
-  if (cargo && !ALLOWED_CARGOS.includes(cargo)) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
+  const { ordem_compra_id, itens } = body;
+  const usuario_id = session.id;
 
   // Validate required fields
-  if (!ordem_compra_id || !usuario_id || !itens || !Array.isArray(itens)) {
+  if (!ordem_compra_id || !itens || !Array.isArray(itens)) {
     return NextResponse.json(
-      { error: "ordem_compra_id, usuario_id e itens são obrigatórios" },
+      { error: "ordem_compra_id e itens são obrigatórios" },
       { status: 400 },
     );
   }
@@ -157,45 +154,12 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Call Tiny movimentarEstoque if produto_id_tiny exists
-      if (item.produto_id_tiny) {
-        try {
-          await runWithEmpresa(empresaRecebimentoId, () => movimentarEstoque(token, item.produto_id_tiny!, {
-            tipo: "E",
-            quantidade: input.quantidade_recebida,
-            deposito: depositoId ? { id: depositoId } : undefined,
-            observacoes: `Entrada OC via SISO — ${item.sku}`,
-          }));
+      // Cap at remaining quantity to prevent over-receiving
+      const quantidadeAReceber = Math.min(input.quantidade_recebida, quantidadeRestante);
 
-          logger.info("compras-conferir", `Entrada estoque Tiny: ${item.sku} x${input.quantidade_recebida}`, {
-            ordemCompraId: ordem_compra_id,
-            produtoIdTiny: item.produto_id_tiny,
-            sku: item.sku,
-            quantidade: input.quantidade_recebida,
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          erros++;
-          errosDetalhe.push(`${item.sku}: ${msg}`);
-          logger.error("compras-conferir", `Falha entrada estoque Tiny: ${item.sku}`, {
-            ordemCompraId: ordem_compra_id,
-            sku: item.sku,
-            error: msg,
-          });
-          // Continue with remaining items — don't abort
-          continue;
-        }
-      } else {
-        itensSemProdutoId++;
-        logger.warn("compras-conferir", "SKU não encontrado no Tiny — entrada pulada", {
-          ordemCompraId: ordem_compra_id,
-          sku: item.sku,
-          itemId: item.id,
-        });
-      }
-
-      // Update quantity in DB (even if Tiny call was skipped)
-      const novaQuantidadeRecebida = item.compra_quantidade_recebida + input.quantidade_recebida;
+      // 1. DB update FIRST with optimistic lock — prevents race conditions
+      //    and ensures we don't call Tiny if a concurrent update already changed the value.
+      const novaQuantidadeRecebida = item.compra_quantidade_recebida + quantidadeAReceber;
       const totalmenteRecebido = novaQuantidadeRecebida >= quantidadeEsperada;
 
       const updateFields: Record<string, unknown> = {
@@ -208,17 +172,80 @@ export async function POST(request: NextRequest) {
         updateFields.recebido_por = usuario_id;
       }
 
-      const { error: updateItemError } = await supabase
+      const { data: updatedItem, error: updateItemError } = await supabase
         .from("siso_pedido_itens")
         .update(updateFields)
-        .eq("id", item.id);
+        .eq("id", item.id)
+        .eq("compra_quantidade_recebida", item.compra_quantidade_recebida)
+        .select("id")
+        .maybeSingle();
+
+      if (!updatedItem && !updateItemError) {
+        erros++;
+        errosDetalhe.push(`${item.sku}: atualização concorrente detectada, tente novamente`);
+        logger.warn("compras-conferir", "Optimistic lock conflict", {
+          ordemCompraId: ordem_compra_id,
+          itemId: item.id,
+          sku: item.sku,
+        });
+        continue;
+      }
 
       if (updateItemError) {
+        erros++;
+        errosDetalhe.push(`${item.sku}: falha ao atualizar DB`);
         logger.warn("compras-conferir", "Falha ao atualizar item no DB", {
           ordemCompraId: ordem_compra_id,
           itemId: item.id,
           sku: item.sku,
           error: updateItemError.message,
+        });
+        continue;
+      }
+
+      // 2. Call Tiny movimentarEstoque AFTER DB success
+      //    If Tiny fails, rollback the DB update.
+      if (item.produto_id_tiny) {
+        try {
+          await runWithEmpresa(empresaRecebimentoId, () => movimentarEstoque(token, item.produto_id_tiny!, {
+            tipo: "E",
+            quantidade: quantidadeAReceber,
+            deposito: depositoId ? { id: depositoId } : undefined,
+            observacoes: `Entrada OC via SISO — ${item.sku}`,
+          }));
+
+          logger.info("compras-conferir", `Entrada estoque Tiny: ${item.sku} x${quantidadeAReceber}`, {
+            ordemCompraId: ordem_compra_id,
+            produtoIdTiny: item.produto_id_tiny,
+            sku: item.sku,
+            quantidade: quantidadeAReceber,
+          });
+        } catch (err) {
+          // Rollback DB update since Tiny call failed
+          await supabase
+            .from("siso_pedido_itens")
+            .update({
+              compra_quantidade_recebida: item.compra_quantidade_recebida,
+              ...(totalmenteRecebido ? { compra_status: "comprado", recebido_em: null, recebido_por: null } : {}),
+            })
+            .eq("id", item.id);
+
+          const msg = err instanceof Error ? err.message : String(err);
+          erros++;
+          errosDetalhe.push(`${item.sku}: ${msg}`);
+          logger.error("compras-conferir", `Falha entrada estoque Tiny (DB rolled back): ${item.sku}`, {
+            ordemCompraId: ordem_compra_id,
+            sku: item.sku,
+            error: msg,
+          });
+          continue;
+        }
+      } else {
+        itensSemProdutoId++;
+        logger.warn("compras-conferir", "SKU não encontrado no Tiny — entrada pulada", {
+          ordemCompraId: ordem_compra_id,
+          sku: item.sku,
+          itemId: item.id,
         });
       }
 

@@ -3,11 +3,17 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
+import { obterNotaFiscal } from "@/lib/tiny-api";
+import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
+import { runWithEmpresa } from "@/lib/tiny-queue";
+
+const NF_AUTORIZADA = [6, 7]; // 6=Autorizada, 7=Emitida Danfe
 
 /**
  * POST /api/separacao/forcar-pendente
  *
  * Admin-only: force multiple orders from aguardando_nf → aguardando_separacao.
+ * Consults Tiny API for each pedido to verify NF is authorized.
  *
  * Body: { pedido_ids: string[] }
  * Headers: X-Session-Id (for auth)
@@ -44,26 +50,70 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // Update only pedidos that are currently aguardando_nf
-    const { data: updated, error: updateError } = await supabase
+    // Fetch pedidos that are in aguardando_nf with nota_fiscal_id
+    const { data: pedidos, error: fetchError } = await supabase
       .from("siso_pedidos")
-      .update({ status_separacao: "aguardando_separacao" })
+      .select("id, nota_fiscal_id, empresa_origem_id")
       .in("id", pedido_ids)
-      .eq("status_separacao", "aguardando_nf")
-      .select("id");
+      .eq("status_separacao", "aguardando_nf");
 
-    if (updateError) {
-      logger.error("separacao-forcar-pendente", "Failed to update pedidos", {
-        error: updateError.message,
-        pedido_ids,
-      });
-      return NextResponse.json(
-        { error: updateError.message },
-        { status: 500 },
-      );
+    if (fetchError) {
+      return NextResponse.json({ error: fetchError.message }, { status: 500 });
     }
 
-    const updatedIds = (updated ?? []).map((p) => p.id);
+    if (!pedidos || pedidos.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        pedidos_atualizados: [],
+        pedidos_nf_nao_autorizada: [],
+        pedidos_sem_nf: [],
+        total: 0,
+      });
+    }
+
+    const updatedIds: string[] = [];
+    const naoAutorizados: Array<{ id: string; situacao: number | null }> = [];
+    const semNf: string[] = [];
+
+    for (const pedido of pedidos) {
+      if (!pedido.nota_fiscal_id || !pedido.empresa_origem_id) {
+        semNf.push(pedido.id);
+        continue;
+      }
+
+      try {
+        const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
+        const nf = await runWithEmpresa(pedido.empresa_origem_id, () =>
+          obterNotaFiscal(token, Number(pedido.nota_fiscal_id)),
+        );
+
+        if (!NF_AUTORIZADA.includes(Number(nf.situacao))) {
+          naoAutorizados.push({ id: pedido.id, situacao: nf.situacao ?? null });
+          continue;
+        }
+
+        // NF authorized — transition
+        const { error: updateError } = await supabase
+          .from("siso_pedidos")
+          .update({
+            status_separacao: "aguardando_separacao",
+            chave_acesso_nf: nf.chaveAcesso ?? null,
+          })
+          .eq("id", pedido.id)
+          .eq("status_separacao", "aguardando_nf");
+
+        if (!updateError) {
+          updatedIds.push(pedido.id);
+        }
+      } catch (err) {
+        logger.warn("separacao-forcar-pendente", "Falha ao consultar NF no Tiny", {
+          pedidoId: pedido.id,
+          notaFiscalId: pedido.nota_fiscal_id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        naoAutorizados.push({ id: pedido.id, situacao: null });
+      }
+    }
 
     if (updatedIds.length > 0) {
       registrarEventos(
@@ -72,19 +122,23 @@ export async function POST(request: NextRequest) {
           evento: "nf_autorizada" as const,
           usuarioId: session.id,
           usuarioNome: session.nome,
-          detalhes: { forcado: true },
+          detalhes: { forcado: true, verificado_tiny: true },
         })),
       ).catch(() => {});
     }
 
-    logger.info("separacao", "NF forcada por admin", {
-      pedido_ids: updatedIds,
+    logger.info("separacao", "Forçar pendente com verificação NF", {
+      autorizados: updatedIds,
+      nao_autorizados: naoAutorizados,
+      sem_nf: semNf,
       admin: session.nome,
     });
 
     return NextResponse.json({
       ok: true,
       pedidos_atualizados: updatedIds,
+      pedidos_nf_nao_autorizada: naoAutorizados,
+      pedidos_sem_nf: semNf,
       total: updatedIds.length,
     });
   } catch (err) {

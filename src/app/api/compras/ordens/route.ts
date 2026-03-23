@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { getCompraQuantidadeSolicitada } from "@/lib/compras-utils";
-
-const ALLOWED_CARGOS = ["admin", "comprador"];
+import { getSessionUser } from "@/lib/session";
+import { getCompraQuantidadeSolicitada, hasComprasAccess } from "@/lib/compras-utils";
 
 /**
  * POST /api/compras/ordens
@@ -13,13 +12,15 @@ const ALLOWED_CARGOS = ["admin", "comprador"];
  * Body: { fornecedor, galpao_id, observacao?, usuario_id, cargo, item_ids? }
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   let body: {
     fornecedor?: string;
     galpao_id?: string;
     empresa_id?: string; // legacy — ignored if galpao_id is present
     observacao?: string;
-    usuario_id?: string;
-    cargo?: string;
     item_ids?: string[];
   };
 
@@ -29,18 +30,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { fornecedor, observacao, usuario_id, cargo, item_ids } = body;
+  const { fornecedor, observacao, item_ids } = body;
+  const usuario_id = session.id;
   const galpaoId = body.galpao_id ?? null;
 
-  // Auth check
-  if (cargo && !ALLOWED_CARGOS.includes(cargo)) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
-
   // Validate required fields
-  if (!fornecedor || !galpaoId || !usuario_id) {
+  if (!fornecedor || !galpaoId) {
     return NextResponse.json(
-      { error: "fornecedor, galpao_id e usuario_id são obrigatórios" },
+      { error: "fornecedor e galpao_id são obrigatórios" },
       { status: 400 },
     );
   }

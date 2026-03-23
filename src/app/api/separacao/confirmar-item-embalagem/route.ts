@@ -96,12 +96,14 @@ export async function POST(request: NextRequest) {
     // Check if ALL packable items of this pedido have bipado_completo = true.
     // Exclude indisponivel/cancelado items — they're hidden from the UI and
     // don't need to be packed.
+    // NOTE: compra_status is NULL for most items. Using .or() to correctly
+    // include NULL values (SQL: NULL NOT IN (...) returns NULL, excluding the row).
     const { count: pendingCount, error: countError } = await supabase
       .from("siso_pedido_itens")
       .select("*", { count: "exact", head: true })
       .eq("pedido_id", item.pedido_id)
       .eq("bipado_completo", false)
-      .not("compra_status", "in", '("indisponivel","cancelado")');
+      .or("compra_status.is.null,compra_status.not.in.(indisponivel,cancelado)");
 
     if (countError) {
       logger.error("confirmar-item-embalagem", "Failed to count pending items", {

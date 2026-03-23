@@ -1,7 +1,8 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowDownUp,
@@ -19,15 +20,16 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { FornecedorCard } from "@/components/compras/fornecedor-card";
 import { OrdemCompraCard } from "@/components/compras/ordem-compra-card";
 import { ExceptionItemCard } from "@/components/compras/exception-item-card";
-import { useAuth } from "@/lib/auth-context";
+import { sisoFetch, useAuth } from "@/lib/auth-context";
 
-import type { Tab, CompraItemAgrupado } from "@/types";
+import type { Tab, CompraItemAgrupado, CompraOcItem, CompraExceptionItem } from "@/types";
 
 type CompraTab = "aguardando_compra" | "comprado" | "excecoes";
 type Prioridade = "critica" | "alta" | "normal";
 type PrioridadeFilter = "todas" | Prioridade;
 type AgingFilter = "todos" | "hoje" | "1-2" | "3+";
 type OcSortOption = "recente" | "prioridade" | "aging";
+type OcStatusFilter = "todas" | "comprado" | "parcialmente_recebido";
 
 interface ComprasCounts {
   aguardando_compra: number;
@@ -98,42 +100,10 @@ interface OcData {
   total_itens: number;
   itens_recebidos: number;
   proxima_acao: string;
-  itens: Array<{
-    id: string;
-    sku: string;
-    descricao: string;
-    imagem: string | null;
-    quantidade: number;
-    compra_status: string | null;
-    compra_quantidade_recebida: number;
-    pedido_id: string;
-    numero_pedido: string;
-    aging_dias: number;
-  }>;
+  itens: CompraOcItem[];
 }
 
-interface ExceptionData {
-  id: string;
-  sku: string;
-  descricao: string;
-  imagem: string | null;
-  quantidade: number;
-  aging_dias: number;
-  prioridade: Prioridade;
-  proxima_acao: string;
-  fornecedor_oc: string | null;
-  pedido_id: string;
-  numero_pedido: string;
-  empresa_nome: string | null;
-  galpao_id: string | null;
-  galpao_nome: string | null;
-  compra_status: string | null;
-  compra_equivalente_sku: string | null;
-  compra_equivalente_descricao: string | null;
-  compra_equivalente_fornecedor: string | null;
-  compra_equivalente_observacao: string | null;
-  compra_cancelamento_motivo: string | null;
-}
+type ExceptionData = CompraExceptionItem;
 
 interface ComprasResponse {
   counts: ComprasCounts;
@@ -145,16 +115,16 @@ const ALLOWED_CARGOS = ["admin", "comprador"];
 
 async function fetchCompras(
   status: CompraTab,
-  cargo: string,
 ): Promise<ComprasResponse> {
-  const res = await fetch(`/api/compras?status=${status}&cargo=${cargo}`);
+  const res = await sisoFetch(`/api/compras?status=${status}`);
+  if (res.status === 401) throw new Error("Sessão expirada");
   if (res.status === 403) throw new Error("Acesso negado");
   if (!res.ok) throw new Error("Erro ao carregar compras");
   return res.json();
 }
 
 async function fetchGalpoes(): Promise<GalpaoOption[]> {
-  const res = await fetch("/api/admin/galpoes");
+  const res = await sisoFetch("/api/admin/galpoes");
   if (!res.ok) return [];
   const data = await res.json();
   // API returns array directly (not wrapped in { galpoes: [...] })
@@ -201,6 +171,7 @@ const EXCEPTION_META = {
 
 export default function ComprasPage() {
   const { user } = useAuth();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<CompraTab>("aguardando_compra");
   const [search, setSearch] = useState("");
@@ -208,15 +179,27 @@ export default function ComprasPage() {
   const [prioridadeFilter, setPrioridadeFilter] = useState<PrioridadeFilter>("todas");
   const [agingFilter, setAgingFilter] = useState<AgingFilter>("todos");
   const [ocSort, setOcSort] = useState<OcSortOption>("recente");
+  const [ocStatusFilter, setOcStatusFilter] = useState<OcStatusFilter>("todas");
+  const [selectedOcIds, setSelectedOcIds] = useState<string[]>([]);
   const deferredSearch = useDeferredValue(search);
 
   const cargos = user?.cargos ?? (user?.cargo ? [user.cargo] : []);
   const cargo = cargos.find((c) => ALLOWED_CARGOS.includes(c)) ?? "";
   const allowed = cargo !== "";
 
+  const handleSwitchTab = useCallback((e: Event) => {
+    const tab = (e as CustomEvent).detail as CompraTab;
+    if (tab) setActiveTab(tab);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("compras:switch-tab", handleSwitchTab);
+    return () => window.removeEventListener("compras:switch-tab", handleSwitchTab);
+  }, [handleSwitchTab]);
+
   const { data, error, isError, isLoading, isRefetching } = useQuery({
-    queryKey: ["compras", activeTab, cargo],
-    queryFn: () => fetchCompras(activeTab, cargo),
+    queryKey: ["compras", activeTab],
+    queryFn: () => fetchCompras(activeTab),
     enabled: !!user && allowed,
     refetchInterval: 30_000,
   });
@@ -312,6 +295,7 @@ export default function ComprasPage() {
 
     if (activeTab === "comprado") {
       const filtered = (items as OcData[]).filter((oc) => {
+        if (ocStatusFilter !== "todas" && oc.status !== ocStatusFilter) return false;
         if (galpaoFilter !== "todos" && oc.galpao_id !== galpaoFilter) return false;
         if (prioridadeFilter !== "todas" && oc.prioridade !== prioridadeFilter) return false;
         if (!matchesAging(oc.aging_dias, agingFilter)) return false;
@@ -366,7 +350,7 @@ export default function ComprasPage() {
       );
       return haystack.includes(searchTerm);
     });
-  }, [activeTab, agingFilter, deferredSearch, galpaoFilter, items, ocSort, prioridadeFilter]);
+  }, [activeTab, agingFilter, deferredSearch, galpaoFilter, items, ocSort, ocStatusFilter, prioridadeFilter]);
 
   const exceptionSections = useMemo(() => {
     if (activeTab !== "excecoes") return [];
@@ -388,6 +372,50 @@ export default function ComprasPage() {
       }))
       .filter((section) => section.items.length > 0);
   }, [activeTab, filteredItems]);
+
+  const effectiveSelectedOcIds = useMemo(() => {
+    if (activeTab !== "comprado") return [];
+    const availableIds = new Set((items as OcData[]).map((oc) => oc.id));
+    return selectedOcIds.filter((id) => availableIds.has(id));
+  }, [activeTab, items, selectedOcIds]);
+
+  const selectedOcs = useMemo(
+    () => (items as OcData[]).filter((oc) => effectiveSelectedOcIds.includes(oc.id)),
+    [effectiveSelectedOcIds, items],
+  );
+
+  const selectedOcGalpoes = useMemo(
+    () => [...new Set(selectedOcs.map((oc) => oc.galpao_id ?? "__sem_galpao__"))],
+    [selectedOcs],
+  );
+
+  const canStartBatchConference = selectedOcs.length > 0 && selectedOcGalpoes.length <= 1;
+
+  function toggleOcSelection(ocId: string) {
+    setSelectedOcIds((prev) =>
+      prev.includes(ocId)
+        ? prev.filter((id) => id !== ocId)
+        : [...prev, ocId],
+    );
+  }
+
+  function clearOcSelection() {
+    setSelectedOcIds([]);
+  }
+
+  function startBatchConference() {
+    if (!canStartBatchConference) return;
+
+    const orderedIds = (items as OcData[])
+      .filter((oc) => effectiveSelectedOcIds.includes(oc.id))
+      .map((oc) => oc.id);
+
+    if (orderedIds.length === 0) return;
+
+    router.push(
+      `/compras/conferencia/${orderedIds[0]}?ocs=${orderedIds.join(",")}`,
+    );
+  }
 
   const headerRight = (
     <button
@@ -467,6 +495,37 @@ export default function ComprasPage() {
                 </p>
               </div>
             </div>
+
+            {(summary.gargalos_fornecedor.length > 0 || summary.gargalos_empresa.length > 0) && (
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                {summary.gargalos_fornecedor.length > 0 && (
+                  <div className="rounded-xl border border-line bg-paper px-3 py-3">
+                    <p className="text-[11px] uppercase tracking-wide text-ink-faint">Gargalos por fornecedor</p>
+                    <div className="mt-2 space-y-1.5">
+                      {summary.gargalos_fornecedor.map((g) => (
+                        <div key={g.nome} className="flex items-center justify-between text-xs">
+                          <span className="font-medium text-ink truncate">{g.nome ?? "Sem fornecedor"}</span>
+                          <span className="shrink-0 text-ink-muted">{g.quantidade} un · {g.pedidos} ped.</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {summary.gargalos_empresa.length > 0 && (
+                  <div className="rounded-xl border border-line bg-paper px-3 py-3">
+                    <p className="text-[11px] uppercase tracking-wide text-ink-faint">Gargalos por empresa</p>
+                    <div className="mt-2 space-y-1.5">
+                      {summary.gargalos_empresa.map((g) => (
+                        <div key={g.empresa_id ?? "sem"} className="flex items-center justify-between text-xs">
+                          <span className="font-medium text-ink truncate">{g.nome ?? "Sem empresa"}</span>
+                          <span className="shrink-0 text-ink-muted">{g.quantidade} un · {g.pedidos} ped.</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           <div className="mb-4">
@@ -478,6 +537,8 @@ export default function ComprasPage() {
                 setGalpaoFilter("todos");
                 setPrioridadeFilter("todas");
                 setAgingFilter("todos");
+                setOcStatusFilter("todas");
+                setSelectedOcIds([]);
               }}
             />
           </div>
@@ -535,21 +596,91 @@ export default function ComprasPage() {
             </div>
 
             {activeTab === "comprado" && (
-              <div className="mt-3 flex items-center gap-2">
-                <ArrowDownUp className="h-4 w-4 text-ink-faint" />
-                <span className="text-xs font-medium text-ink-muted">Ordenar:</span>
-                <select
-                  value={ocSort}
-                  onChange={(e) => setOcSort(e.target.value as OcSortOption)}
-                  className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
-                >
-                  <option value="recente">Mais recente</option>
-                  <option value="prioridade">Prioridade</option>
-                  <option value="aging">Aging</option>
-                </select>
+              <div className="mt-3 flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-ink-muted">Status:</span>
+                  {([
+                    { value: "todas", label: "Todas" },
+                    { value: "comprado", label: "Aguardando chegada" },
+                    { value: "parcialmente_recebido", label: "Para conferir" },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setOcStatusFilter(opt.value)}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                        ocStatusFilter === opt.value
+                          ? "bg-ink text-paper"
+                          : "bg-surface text-ink-muted hover:bg-zinc-200"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <ArrowDownUp className="h-4 w-4 text-ink-faint" />
+                  <span className="text-xs font-medium text-ink-muted">Ordenar:</span>
+                  <select
+                    value={ocSort}
+                    onChange={(e) => setOcSort(e.target.value as OcSortOption)}
+                    className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
+                  >
+                    <option value="recente">Mais recente</option>
+                    <option value="prioridade">Prioridade</option>
+                    <option value="aging">Aging</option>
+                  </select>
+                </div>
               </div>
             )}
           </section>
+
+          {activeTab === "comprado" && (
+            <section className="mb-5 rounded-2xl border border-line bg-paper p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">Recebimento em lote</h3>
+                  <p className="mt-1 text-sm text-ink-muted">
+                    Selecione manualmente as OCs que chegaram juntas. Ao final da última conferência, o SISO oferece a embalagem direta dos pedidos dessas OCs.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={startBatchConference}
+                    disabled={!canStartBatchConference}
+                    className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-medium text-paper transition-colors hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Conferir selecionadas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearOcSelection}
+                    disabled={selectedOcs.length === 0}
+                    className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Limpar seleção
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
+                <span>{selectedOcs.length} OC(s) selecionada(s)</span>
+                {selectedOcs.length > 0 && (
+                  <span>
+                    Galpão: {selectedOcs[0].galpao_nome ?? "não definido"}
+                  </span>
+                )}
+              </div>
+
+              {selectedOcs.length > 0 && !canStartBatchConference && (
+                <p className="mt-2 text-xs text-red-700">
+                  Para cair no mesmo checklist de embalagem, selecione OCs do mesmo galpão.
+                </p>
+              )}
+            </section>
+          )}
 
           {items.length === 0 ? (
             <EmptyState message={emptyMessages[activeTab]} />
@@ -595,17 +726,14 @@ export default function ComprasPage() {
                     itens_em_rascunho={group.itens_em_rascunho}
                     proxima_acao={group.proxima_acao}
                     itens={group.itens}
-                    usuario_id={user!.id}
-                    cargo={cargo}
                   />
                 ))}
 
               {activeTab === "comprado" &&
-                (filteredItems as OcData[]).map((oc, idx) => (
+                (filteredItems as OcData[]).map((oc) => (
                   <OrdemCompraCard
                     key={oc.id}
                     id={oc.id}
-                    index={idx + 1}
                     fornecedor={oc.fornecedor}
                     galpao_nome={oc.galpao_nome}
                     status={oc.status}
@@ -619,10 +747,11 @@ export default function ComprasPage() {
                     quantidade_recebida={oc.quantidade_recebida}
                     total_itens={oc.total_itens}
                     itens_recebidos={oc.itens_recebidos}
-                    proxima_acao={oc.proxima_acao}
-                    itens={oc.itens}
-                    cargo={cargo}
-                  />
+                  proxima_acao={oc.proxima_acao}
+                  itens={oc.itens}
+                  selected={effectiveSelectedOcIds.includes(oc.id)}
+                  onToggleSelect={() => toggleOcSelection(oc.id)}
+                />
                 ))}
 
               {activeTab === "excecoes" &&
@@ -640,8 +769,6 @@ export default function ComprasPage() {
                         <ExceptionItemCard
                           key={item.id}
                           item={item}
-                          cargo={cargo}
-                          usuario_id={user!.id}
                         />
                       ))}
                     </div>

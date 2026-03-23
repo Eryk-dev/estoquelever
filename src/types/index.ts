@@ -282,6 +282,44 @@ export interface ConferenciaItem {
   }>;
 }
 
+/** Item within a purchase order (OC) for the comprado tab card */
+export interface CompraOcItem {
+  id: string;
+  sku: string;
+  descricao: string;
+  imagem: string | null;
+  quantidade: number;
+  compra_status: string | null;
+  compra_quantidade_recebida: number;
+  pedido_id: string;
+  numero_pedido: string;
+  aging_dias: number;
+}
+
+/** Item in the exceptions tab (indisponivel, equivalente_pendente, cancelamento_pendente) */
+export interface CompraExceptionItem {
+  id: string;
+  sku: string;
+  descricao: string;
+  imagem: string | null;
+  quantidade: number;
+  aging_dias: number;
+  prioridade: "critica" | "alta" | "normal";
+  proxima_acao: string;
+  fornecedor_oc: string | null;
+  pedido_id: string;
+  numero_pedido: string;
+  empresa_nome: string | null;
+  galpao_id: string | null;
+  galpao_nome: string | null;
+  compra_status: string | null;
+  compra_equivalente_sku: string | null;
+  compra_equivalente_descricao: string | null;
+  compra_equivalente_fornecedor: string | null;
+  compra_equivalente_observacao: string | null;
+  compra_cancelamento_motivo: string | null;
+}
+
 // ─── Auth / Usuarios ────────────────────────────────────────────────────────
 
 /** User role — determines what they see */

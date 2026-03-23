@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { COMPRAS_ALLOWED_CARGOS } from "@/lib/compras-utils";
+import { getSessionUser } from "@/lib/session";
+import { hasComprasAccess } from "@/lib/compras-utils";
 import { carregarDadosEquivalentePorSku } from "@/lib/compras-equivalencia";
 
 /**
@@ -14,19 +15,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ itemId: string }> },
 ) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   const { itemId } = await params;
-
-  let body: { cargo?: string };
-  try {
-    body = await request.json();
-  } catch {
-    body = {};
-  }
-
-  if (body.cargo && !COMPRAS_ALLOWED_CARGOS.includes(body.cargo as "admin" | "comprador")) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
-
   const supabase = createServiceClient();
 
   try {

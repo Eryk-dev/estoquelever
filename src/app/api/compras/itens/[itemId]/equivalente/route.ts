@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getSessionUser } from "@/lib/session";
 import { buscarProdutoPorSku, getProdutoDetalhe } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
-import { cancelOcIfEmpty, COMPRAS_ALLOWED_CARGOS } from "@/lib/compras-utils";
+import { cancelOcIfEmpty, hasComprasAccess } from "@/lib/compras-utils";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 
 /**
@@ -17,14 +18,16 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ itemId: string }> },
 ) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   const { itemId } = await params;
 
   let body: {
     sku_equivalente?: string;
     fornecedor_equivalente?: string;
     observacao?: string;
-    usuario_id?: string;
-    cargo?: string;
   };
 
   try {
@@ -37,13 +40,8 @@ export async function POST(
     sku_equivalente,
     fornecedor_equivalente,
     observacao,
-    usuario_id,
-    cargo,
   } = body;
-
-  if (cargo && !COMPRAS_ALLOWED_CARGOS.includes(cargo as "admin" | "comprador")) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
+  const usuario_id = session.id;
 
   if (!sku_equivalente?.trim()) {
     return NextResponse.json(

@@ -1,14 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ClipboardCheck, Loader2, Package } from "lucide-react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/app-shell";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { useAuth } from "@/lib/auth-context";
+import { sisoFetch, useAuth } from "@/lib/auth-context";
 
 import type { ConferenciaItem } from "@/types";
 
@@ -36,6 +36,19 @@ interface ConferirResult {
   pedidos_liberados: string[];
 }
 
+interface PrepararEmbalagemResult {
+  pedido_ids: string[];
+  preparados: string[];
+  ja_separados: string[];
+  ignorados: Array<{
+    pedido_id: string;
+    status_atual: string | null;
+    motivo: string;
+  }>;
+  total_relacionados: number;
+  galpao_id: string | null;
+}
+
 const ALLOWED_CARGOS = ["admin", "comprador"];
 
 function formatDate(iso: string | null): string {
@@ -50,13 +63,13 @@ function formatDate(iso: string | null): string {
 
 async function fetchConferencia(
   ordemCompraId: string,
-  cargo: string,
 ): Promise<ConferenciaResponse> {
-  const res = await fetch(
-    `/api/compras/conferencia/${ordemCompraId}?cargo=${cargo}`,
+  const res = await sisoFetch(
+    `/api/compras/conferencia/${ordemCompraId}`,
   );
   if (res.status === 404)
     throw new Error("Ordem de compra não encontrada");
+  if (res.status === 401) throw new Error("Sessão expirada");
   if (res.status === 403) throw new Error("Acesso negado");
   if (!res.ok) throw new Error("Erro ao carregar conferência");
   return res.json();
@@ -65,19 +78,61 @@ async function fetchConferencia(
 export default function ConferenciaPage() {
   const { ordemCompraId } = useParams<{ ordemCompraId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { user, setActiveGalpao } = useAuth();
 
   const cargos = user?.cargos ?? (user?.cargo ? [user.cargo] : []);
   const cargo = cargos.find((c) => ALLOWED_CARGOS.includes(c)) ?? "";
   const allowed = cargo !== "";
 
-  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const storageKey = `conferencia_qtd_${ordemCompraId}`;
+  const [quantities, setQuantities] = useState<Record<string, number>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const stored = sessionStorage.getItem(storageKey);
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  });
   const [submitting, setSubmitting] = useState(false);
+  const [showEmbalarConfirm, setShowEmbalarConfirm] = useState(false);
+
+  const persistQuantities = useCallback((qty: Record<string, number>) => {
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify(qty));
+    } catch { /* quota exceeded — ignore */ }
+  }, [storageKey]);
+
+  // Clear sessionStorage after successful submit
+  useEffect(() => {
+    return () => {
+      // Don't clear on unmount — we want persistence across navigations
+    };
+  }, []);
+
+  const batchOcIds = useMemo(() => {
+    const param = searchParams.get("ocs");
+    const ids = param ? param.split(",").filter(Boolean) : [];
+    if (!ids.includes(ordemCompraId)) {
+      ids.unshift(ordemCompraId);
+    }
+    return [...new Set(ids)];
+  }, [ordemCompraId, searchParams]);
+
+  const currentBatchIndex = useMemo(
+    () => batchOcIds.indexOf(ordemCompraId),
+    [batchOcIds, ordemCompraId],
+  );
+
+  const nextOcId =
+    currentBatchIndex >= 0 ? batchOcIds[currentBatchIndex + 1] ?? null : null;
+  const hasBatchFlow = searchParams.has("ocs");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["conferencia", ordemCompraId],
-    queryFn: () => fetchConferencia(ordemCompraId, cargo),
+    queryFn: () => fetchConferencia(ordemCompraId),
     enabled: !!user && allowed && !!ordemCompraId,
     // No refetchInterval — avoid losing typed values
   });
@@ -92,7 +147,11 @@ export default function ConferenciaPage() {
   };
 
   const setQuantity = (itemId: string, value: number) => {
-    setQuantities((prev) => ({ ...prev, [itemId]: value }));
+    setQuantities((prev) => {
+      const next = { ...prev, [itemId]: value };
+      persistQuantities(next);
+      return next;
+    });
   };
 
   const allZero = itens.every((item) => getQuantity(item) === 0);
@@ -109,13 +168,11 @@ export default function ConferenciaPage() {
         }))
         .filter((i) => i.quantidade_recebida > 0);
 
-      const res = await fetch("/api/compras/conferir", {
+      const res = await sisoFetch("/api/compras/conferir", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ordem_compra_id: oc.id,
-          usuario_id: user.id,
-          cargo,
           itens: itensPayload,
         }),
       });
@@ -144,9 +201,28 @@ export default function ConferenciaPage() {
         toast.success(msg);
       }
 
+      // Clear persisted quantities on success
+      try { sessionStorage.removeItem(storageKey); } catch { /* ignore */ }
+
       // Invalidate caches
       queryClient.invalidateQueries({ queryKey: ["compras"] });
       queryClient.invalidateQueries({ queryKey: ["conferencia"] });
+      queryClient.invalidateQueries({ queryKey: ["separacao"] });
+
+      if (nextOcId) {
+        toast.success(
+          `OC ${Math.max(currentBatchIndex + 1, 1)} de ${batchOcIds.length} conferida. Abrindo a próxima.`,
+        );
+        router.push(`/compras/conferencia/${nextOcId}?ocs=${batchOcIds.join(",")}`);
+        return;
+      }
+
+      if (hasBatchFlow) {
+        // Show inline confirm instead of window.confirm
+        setShowEmbalarConfirm(true);
+        setSubmitting(false);
+        return;
+      }
 
       router.push("/compras");
     } catch (err) {
@@ -161,7 +237,13 @@ export default function ConferenciaPage() {
   return (
     <AppShell
       title="Conferência"
-      subtitle={oc ? `OC — ${oc.fornecedor}` : "Carregando..."}
+      subtitle={
+        oc
+          ? batchOcIds.length > 1
+            ? `OC — ${oc.fornecedor} · ${Math.max(currentBatchIndex + 1, 1)}/${batchOcIds.length}`
+            : `OC — ${oc.fornecedor}`
+          : "Carregando..."
+      }
       backHref="/compras"
     >
       {!allowed ? (
@@ -190,6 +272,17 @@ export default function ConferenciaPage() {
         </div>
       ) : (
         <>
+          {batchOcIds.length > 1 && (
+            <div className="mb-4 rounded-xl border border-line bg-surface px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
+                Rodada de conferência
+              </p>
+              <p className="mt-1 text-sm text-ink">
+                Você está conferindo a OC {Math.max(currentBatchIndex + 1, 1)} de {batchOcIds.length}. Ao final da última, o SISO pergunta se deseja abrir a embalagem dos pedidos vinculados.
+              </p>
+            </div>
+          )}
+
           {/* OC Header Info */}
           <div className="mb-5 rounded-xl border border-line bg-paper p-4">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
@@ -207,7 +300,7 @@ export default function ConferenciaPage() {
               )}
             </div>
             <p className="mt-3 text-xs text-ink-muted">
-              Informe o que realmente chegou. Se o fornecedor mandou a mais, o SISO agora aceita quantidades acima do restante esperado.
+              Informe o que realmente chegou. Quantidades serão limitadas ao restante esperado de cada item.
             </p>
           </div>
 
@@ -228,7 +321,6 @@ export default function ConferenciaPage() {
               <div className="rounded-xl border border-line bg-paper divide-y divide-line/50 overflow-hidden">
                 {itens.map((item) => {
                   const qty = getQuantity(item);
-                  const excedente = Math.max(qty - item.quantidade_restante, 0);
                   return (
                     <div key={item.item_id} className="px-4 py-3">
                       <div className="flex items-start justify-between gap-3">
@@ -277,6 +369,7 @@ export default function ConferenciaPage() {
                             id={`qty-${item.item_id}`}
                             type="number"
                             min={0}
+                            max={item.quantidade_restante}
                             step={1}
                             value={qty}
                             onChange={(e) => {
@@ -294,11 +387,6 @@ export default function ConferenciaPage() {
                             Já recebido: {item.quantidade_ja_recebida}
                           </span>
                         )}
-                        {excedente > 0 && (
-                          <span className="text-[10px] text-amber-700">
-                            Excedente desta conferência: +{excedente}
-                          </span>
-                        )}
                       </div>
                     </div>
                   );
@@ -306,26 +394,90 @@ export default function ConferenciaPage() {
               </div>
 
               {/* Confirm button */}
-              <div className="mt-2">
-                <button
-                  type="button"
-                  disabled={allZero || submitting}
-                  onClick={handleConfirm}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-3 text-sm font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Processando...
-                    </>
-                  ) : (
-                    <>
-                      <ClipboardCheck className="h-4 w-4" />
-                      Confirmar Recebimento
-                    </>
-                  )}
-                </button>
-              </div>
+              {!showEmbalarConfirm && (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    disabled={allZero || submitting}
+                    onClick={handleConfirm}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-3 text-sm font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Processando...
+                      </>
+                    ) : (
+                      <>
+                        <ClipboardCheck className="h-4 w-4" />
+                        Confirmar Recebimento
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {showEmbalarConfirm && (
+                <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <p className="text-sm font-semibold text-emerald-800">
+                    {batchOcIds.length > 1
+                      ? "Deseja embalar os pedidos dessas OCs agora?"
+                      : "Deseja embalar os pedidos desta OC agora?"}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={async () => {
+                        setSubmitting(true);
+                        try {
+                          const prepRes = await sisoFetch("/api/compras/preparar-embalagem", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ ordem_compra_ids: batchOcIds }),
+                          });
+                          if (!prepRes.ok) {
+                            const err = await prepRes.json().catch(() => null);
+                            throw new Error(err?.error ?? "Erro ao preparar pedidos para embalagem");
+                          }
+                          const prepResult: PrepararEmbalagemResult = await prepRes.json();
+                          if (prepResult.pedido_ids.length === 0) {
+                            const skippedMsg =
+                              prepResult.ignorados.length > 0
+                                ? prepResult.ignorados[0]?.motivo ?? "Nenhum pedido pronto para embalagem"
+                                : "Nenhum pedido dessas OCs ficou pronto para embalagem";
+                            toast.success(skippedMsg);
+                            router.push("/compras");
+                            return;
+                          }
+                          if (prepResult.galpao_id) setActiveGalpao(prepResult.galpao_id);
+                          const extras = prepResult.ignorados.length;
+                          const msg = extras > 0
+                            ? `${prepResult.pedido_ids.length} pedido(s) enviado(s) para embalagem — ${extras} ainda não ficaram prontos`
+                            : `${prepResult.pedido_ids.length} pedido(s) enviado(s) para embalagem`;
+                          toast.success(msg);
+                          router.push(`/separacao/embalagem?pedidos=${prepResult.pedido_ids.join(",")}`);
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : "Erro ao preparar embalagem");
+                        } finally {
+                          setSubmitting(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
+                      Sim, embalar agora
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => router.push("/compras")}
+                      className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-ink hover:bg-surface"
+                    >
+                      Voltar para compras
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>

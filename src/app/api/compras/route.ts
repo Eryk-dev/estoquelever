@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getSessionUser } from "@/lib/session";
 import {
   COMPRA_EXCEPTION_STATUSES,
   getAgingDays,
   getCompraPrioridade,
   getCompraQuantidadeRestante,
   getCompraQuantidadeSolicitada,
+  hasComprasAccess,
 } from "@/lib/compras-utils";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import type { CompraItemAgrupado } from "@/types";
@@ -20,7 +22,6 @@ const VALID_STATUSES: CompraStatusFilter[] = [
   "excecoes",
 ];
 
-const ALLOWED_CARGOS = ["admin", "comprador"];
 const OPEN_OC_LIST_STATUSES = ["comprado", "parcialmente_recebido"] as const;
 const UNRESOLVED_COMPRA_STATUSES = [
   "aguardando_compra",
@@ -89,13 +90,11 @@ type SummaryAccumulator = {
  *   - cargo: user cargo for auth check
  */
 export async function GET(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   const { searchParams } = new URL(request.url);
-
-  const cargo = searchParams.get("cargo");
-  if (cargo && !ALLOWED_CARGOS.includes(cargo)) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
-
   const statusParam = searchParams.get("status") ?? "aguardando_compra";
   if (!VALID_STATUSES.includes(statusParam as CompraStatusFilter)) {
     return NextResponse.json(

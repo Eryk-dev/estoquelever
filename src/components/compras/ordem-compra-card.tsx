@@ -18,23 +18,15 @@ import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { sisoFetch } from "@/lib/auth-context";
+import type { CompraOcItem } from "@/types";
 
-interface OcItem {
-  id: string;
-  sku: string;
-  descricao: string;
-  imagem: string | null;
-  quantidade: number;
-  compra_status: string | null;
-  compra_quantidade_recebida: number;
-  pedido_id: string;
-  numero_pedido: string;
-  aging_dias: number;
+function shortOcId(id: string): string {
+  return id.replace(/-/g, "").slice(-6).toUpperCase();
 }
 
 interface OrdemCompraCardProps {
   id: string;
-  index: number;
   fornecedor: string;
   galpao_nome: string | null;
   status: string;
@@ -49,8 +41,9 @@ interface OrdemCompraCardProps {
   total_itens: number;
   itens_recebidos: number;
   proxima_acao: string;
-  itens: OcItem[];
-  cargo: string;
+  itens: CompraOcItem[];
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }
 
 const PRIORIDADE_META = {
@@ -101,25 +94,26 @@ function formatDaysLabel(days: number) {
 
 function ItemActions({
   item,
-  cargo,
   onActionComplete,
 }: {
-  item: OcItem;
-  cargo: string;
+  item: CompraOcItem;
   onActionComplete: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showTrocar, setShowTrocar] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<"devolver" | "indisponivel" | null>(null);
   const [novoFornecedor, setNovoFornecedor] = useState("");
+
+  const hasStockPosted = item.compra_quantidade_recebida > 0;
 
   async function handleDevolver() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/compras/itens/${item.id}/devolver`, {
+      const res = await sisoFetch(`/api/compras/itens/${item.id}/devolver`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cargo }),
+        body: JSON.stringify({}),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: "Erro" }));
@@ -132,17 +126,17 @@ function ItemActions({
     } finally {
       setLoading(false);
       setOpen(false);
+      setConfirmAction(null);
     }
   }
 
   async function handleIndisponivel() {
-    if (!confirm("Marcar este item como indisponível?")) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/compras/itens/${item.id}/indisponivel`, {
+      const res = await sisoFetch(`/api/compras/itens/${item.id}/indisponivel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cargo }),
+        body: JSON.stringify({}),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: "Erro" }));
@@ -157,6 +151,7 @@ function ItemActions({
     } finally {
       setLoading(false);
       setOpen(false);
+      setConfirmAction(null);
     }
   }
 
@@ -167,14 +162,13 @@ function ItemActions({
     }
     setLoading(true);
     try {
-      const res = await fetch(
+      const res = await sisoFetch(
         `/api/compras/itens/${item.id}/trocar-fornecedor`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             novo_fornecedor: novoFornecedor.trim(),
-            cargo,
           }),
         },
       );
@@ -229,12 +223,43 @@ function ItemActions({
             }}
           />
 
-          <div className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-lg border border-line bg-paper shadow-lg">
-            {!showTrocar ? (
+          <div className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-lg border border-line bg-paper shadow-lg">
+            {confirmAction ? (
+              <div className="space-y-2 p-3">
+                <p className="text-xs font-semibold text-ink">
+                  {confirmAction === "indisponivel"
+                    ? "Marcar este item como indisponível?"
+                    : hasStockPosted
+                      ? `Devolver item com ${item.compra_quantidade_recebida} un já lançadas no estoque?`
+                      : "Devolver item para a fila de compras?"}
+                </p>
+                {confirmAction === "devolver" && hasStockPosted && (
+                  <p className="text-[11px] text-red-600">
+                    O estoque já lançado no Tiny não será revertido automaticamente.
+                  </p>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={confirmAction === "indisponivel" ? handleIndisponivel : handleDevolver}
+                    className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700"
+                  >
+                    Confirmar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmAction(null)}
+                    className="text-xs text-ink-muted hover:text-ink"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : !showTrocar ? (
               <>
                 <button
                   type="button"
-                  onClick={handleDevolver}
+                  onClick={() => setConfirmAction("devolver")}
                   className="flex w-full items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface"
                 >
                   <RotateCcw className="h-3.5 w-3.5 text-ink-muted" />
@@ -242,7 +267,7 @@ function ItemActions({
                 </button>
                 <button
                   type="button"
-                  onClick={handleIndisponivel}
+                  onClick={() => setConfirmAction("indisponivel")}
                   className="flex w-full items-center gap-2 px-3 py-2 text-sm text-ink hover:bg-surface"
                 >
                   <XCircle className="h-3.5 w-3.5 text-ink-muted" />
@@ -301,7 +326,6 @@ function ItemActions({
 
 export function OrdemCompraCard({
   id,
-  index,
   fornecedor,
   galpao_nome,
   status,
@@ -317,11 +341,13 @@ export function OrdemCompraCard({
   itens_recebidos,
   proxima_acao,
   itens,
-  cargo,
+  selected = false,
+  onToggleSelect,
 }: OrdemCompraCardProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
+  const selectionEnabled = typeof onToggleSelect === "function";
 
   const progresso = quantidade_total > 0
     ? Math.min((quantidade_recebida / quantidade_total) * 100, 100)
@@ -337,48 +363,62 @@ export function OrdemCompraCard({
     <div className="overflow-hidden rounded-2xl border border-line bg-paper">
       <div className="border-b border-line bg-[linear-gradient(135deg,rgba(59,130,246,0.10),rgba(59,130,246,0.03)_55%,rgba(255,255,255,0.92))] px-4 py-4">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={cn(
-                  "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold",
-                  statusBadge.className,
-                )}
-              >
-                {statusBadge.label}
-              </span>
-              <span
-                className={cn(
-                  "inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold",
-                  prioridadeMeta.className,
-                )}
-              >
-                {prioridadeMeta.label}
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-paper/80 px-2.5 py-1 text-[11px] font-medium text-ink-muted">
-                <MapPin className="h-3.5 w-3.5" />
-                {galpao_nome ?? "Galpão não definido"}
-              </span>
-            </div>
+          <div className="flex min-w-0 gap-3">
+            {selectionEnabled && (
+              <label className="mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center">
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={() => onToggleSelect?.()}
+                  className="h-4 w-4 rounded border-line text-ink focus:ring-ink/20"
+                  aria-label={`Selecionar OC ${fornecedor}`}
+                />
+              </label>
+            )}
 
-            <div className="mt-3 flex items-center gap-2">
-              <Truck className="h-4 w-4 text-ink-faint" />
-              <h3 className="text-base font-semibold text-ink">
-                OC #{index} · {fornecedor}
-              </h3>
-            </div>
-
-            <p className="mt-2 text-sm text-ink-muted">
-              Próxima ação: <span className="font-medium text-ink">{proxima_acao}</span>
-            </p>
-
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
-              {comprado_por_nome && (
-                <span>
-                  Comprado por <span className="font-medium text-ink">{comprado_por_nome}</span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold",
+                    statusBadge.className,
+                  )}
+                >
+                  {statusBadge.label}
                 </span>
-              )}
-              <span>Data da compra: {formatDate(comprado_em)}</span>
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+                    prioridadeMeta.className,
+                  )}
+                >
+                  {prioridadeMeta.label}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-paper/80 px-2.5 py-1 text-[11px] font-medium text-ink-muted">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {galpao_nome ?? "Galpão não definido"}
+                </span>
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <Truck className="h-4 w-4 text-ink-faint" />
+                <h3 className="text-base font-semibold text-ink">
+                  OC #{shortOcId(id)} · {fornecedor}
+                </h3>
+              </div>
+
+              <p className="mt-2 text-sm text-ink-muted">
+                Próxima ação: <span className="font-medium text-ink">{proxima_acao}</span>
+              </p>
+
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
+                {comprado_por_nome && (
+                  <span>
+                    Comprado por <span className="font-medium text-ink">{comprado_por_nome}</span>
+                  </span>
+                )}
+                <span>Data da compra: {formatDate(comprado_em)}</span>
+              </div>
             </div>
           </div>
 
@@ -475,7 +515,6 @@ export function OrdemCompraCard({
                   </div>
                   <ItemActions
                     item={item}
-                    cargo={cargo}
                     onActionComplete={handleActionComplete}
                   />
                 </div>
@@ -488,7 +527,7 @@ export function OrdemCompraCard({
       <div className="border-t border-line px-4 py-4">
         <button
           type="button"
-          onClick={() => router.push(`/compras/conferencia/${id}`)}
+          onClick={() => router.push(`/compras/conferencia/${id}?ocs=${id}`)}
           className="inline-flex items-center gap-2 rounded-lg bg-ink px-4 py-2 text-sm font-medium text-paper hover:bg-ink/90"
         >
           <ClipboardCheck className="h-4 w-4" />

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { cancelOcIfEmpty, COMPRAS_ALLOWED_CARGOS } from "@/lib/compras-utils";
+import { getSessionUser } from "@/lib/session";
+import { buildCompraFieldReset, cancelOcIfEmpty, hasComprasAccess } from "@/lib/compras-utils";
 
 /**
  * POST /api/compras/itens/[itemId]/cancelamento
@@ -12,17 +13,17 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ itemId: string }> },
 ) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   const { itemId } = await params;
 
-  let body: { motivo?: string; usuario_id?: string; cargo?: string };
+  let body: { motivo?: string };
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
-  }
-
-  if (body.cargo && !COMPRAS_ALLOWED_CARGOS.includes(body.cargo as "admin" | "comprador")) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+    body = {};
   }
 
   const supabase = createServiceClient();
@@ -47,22 +48,12 @@ export async function POST(
     const { data: updated, error: updateError } = await supabase
       .from("siso_pedido_itens")
       .update({
+        ...buildCompraFieldReset(),
         compra_status: "cancelamento_pendente",
         ordem_compra_id: null,
-        compra_equivalente_sku: null,
-        compra_equivalente_descricao: null,
-        compra_equivalente_produto_id_tiny: null,
-        compra_equivalente_fornecedor: null,
-        compra_equivalente_imagem_url: null,
-        compra_equivalente_gtin: null,
-        compra_equivalente_observacao: null,
-        compra_equivalente_definido_em: null,
-        compra_equivalente_definido_por: null,
         compra_cancelamento_motivo: body.motivo?.trim() || null,
         compra_cancelamento_solicitado_em: now,
-        compra_cancelamento_solicitado_por: body.usuario_id ?? null,
-        compra_cancelado_em: null,
-        compra_cancelado_por: null,
+        compra_cancelamento_solicitado_por: session.id,
       })
       .eq("id", itemId)
       .select("id, sku, descricao, compra_status, compra_cancelamento_motivo")

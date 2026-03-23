@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { getCompraQuantidadeSolicitada } from "@/lib/compras-utils";
+import { getSessionUser } from "@/lib/session";
+import { getCompraQuantidadeSolicitada, hasComprasAccess } from "@/lib/compras-utils";
 import type { ConferenciaItem } from "@/types";
-
-const ALLOWED_CARGOS = ["admin", "comprador"];
 
 interface RawConferenciaItem {
   id: string;
@@ -30,15 +29,11 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ ordemCompraId: string }> },
 ) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   const { ordemCompraId } = await params;
-  const { searchParams } = new URL(request.url);
-
-  // Auth check
-  const cargo = searchParams.get("cargo");
-  if (cargo && !ALLOWED_CARGOS.includes(cargo)) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
-
   const supabase = createServiceClient();
 
   try {

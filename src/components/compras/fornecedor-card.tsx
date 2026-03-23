@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { cn } from "@/lib/utils";
+import { sisoFetch } from "@/lib/auth-context";
 import type { CompraItemAgrupado } from "@/types";
 
 interface EmpresaBadge {
@@ -44,8 +45,6 @@ interface FornecedorCardProps {
   itens_em_rascunho: number;
   proxima_acao: string;
   itens: CompraItemAgrupado[];
-  usuario_id: string;
-  cargo: string;
 }
 
 const PRIORIDADE_META = {
@@ -102,8 +101,6 @@ export function FornecedorCard({
   itens_em_rascunho,
   proxima_acao,
   itens,
-  usuario_id,
-  cargo,
 }: FornecedorCardProps) {
   const queryClient = useQueryClient();
   const [observacao, setObservacao] = useState("");
@@ -196,15 +193,13 @@ export function FornecedorCard({
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/compras/ordens", {
+      const res = await sisoFetch("/api/compras/ordens", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fornecedor,
           galpao_id: selectedGalpaoId,
           observacao: observacao.trim() || undefined,
-          usuario_id,
-          cargo,
           item_ids: selectedItemIds,
         }),
       });
@@ -217,6 +212,14 @@ export function FornecedorCard({
       const data = await res.json();
       toast.success(
         `OC confirmada: ${selectedSkuCount} SKU(s), ${data.quantidade_total ?? selectedQuantity} un → ${selectedGalpaoNome}`,
+        {
+          action: {
+            label: "Ver OC",
+            onClick: () => {
+              window.dispatchEvent(new CustomEvent("compras:switch-tab", { detail: "comprado" }));
+            },
+          },
+        },
       );
       setObservacao("");
       setExpanded(false);

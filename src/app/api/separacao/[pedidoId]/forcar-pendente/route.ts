@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
+import { obterNotaFiscal } from "@/lib/tiny-api";
+import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
+import { runWithEmpresa } from "@/lib/tiny-queue";
+
+const NF_AUTORIZADA = [6, 7]; // 6=Autorizada, 7=Emitida Danfe
 
 /**
  * PATCH /api/separacao/{pedidoId}/forcar-pendente
  *
- * Admin-only: force an order from aguardando_nf → aguardando_separacao
- * when the NF webhook fails and the order needs to proceed.
+ * Admin-only: force an order from aguardando_nf → aguardando_separacao.
+ * Consults Tiny API to verify NF is authorized before transitioning.
  *
  * Headers: X-Session-Id
  */
@@ -35,7 +40,7 @@ export async function PATCH(
     // 1. Fetch the pedido
     const { data: pedido, error: fetchError } = await supabase
       .from("siso_pedidos")
-      .select("id, status_separacao")
+      .select("id, status_separacao, nota_fiscal_id, empresa_origem_id")
       .eq("id", pedidoId)
       .single();
 
@@ -57,10 +62,37 @@ export async function PATCH(
       );
     }
 
-    // 3. Update to aguardando_separacao
+    // 3. Check NF authorization via Tiny API
+    if (!pedido.nota_fiscal_id || !pedido.empresa_origem_id) {
+      return NextResponse.json(
+        { error: "pedido sem nota_fiscal_id ou empresa_origem_id" },
+        { status: 400 },
+      );
+    }
+
+    const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
+    const nf = await runWithEmpresa(pedido.empresa_origem_id, () =>
+      obterNotaFiscal(token, Number(pedido.nota_fiscal_id)),
+    );
+
+    if (!NF_AUTORIZADA.includes(Number(nf.situacao))) {
+      return NextResponse.json(
+        {
+          error: "NF não está autorizada",
+          situacao: nf.situacao,
+          nota_fiscal_id: pedido.nota_fiscal_id,
+        },
+        { status: 400 },
+      );
+    }
+
+    // 4. NF authorized — update pedido
     const { error: updateError } = await supabase
       .from("siso_pedidos")
-      .update({ status_separacao: "aguardando_separacao" })
+      .update({
+        status_separacao: "aguardando_separacao",
+        chave_acesso_nf: nf.chaveAcesso ?? null,
+      })
       .eq("id", pedidoId)
       .eq("status_separacao", "aguardando_nf");
 
@@ -75,9 +107,10 @@ export async function PATCH(
       );
     }
 
-    logger.info("separacao-forcar-pendente", "Pedido forçado para aguardando_separacao", {
+    logger.info("separacao-forcar-pendente", "Pedido forçado para aguardando_separacao (NF autorizada)", {
       pedidoId,
       admin: session.nome,
+      situacao: nf.situacao,
     });
 
     return NextResponse.json({ success: true, pedido_id: pedidoId });

@@ -18,12 +18,67 @@ import {
   lancarEstoqueNota,
   movimentarEstoque,
   buscarProdutoPorSku,
+  obterNotaFiscal,
 } from "./tiny-api";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
 import { getOrdemDeducao } from "./grupo-resolver";
 import { getEmpresaById } from "./empresa-lookup";
 import { logger } from "./logger";
+
+// ─── Shared: enrich NF data + transition if already authorized ──────────────
+// After NF generation, checks Tiny API for authorization status.
+// If situacao is 6 (Autorizada) or 7 (Emitida Danfe), transitions immediately.
+// Otherwise saves chave_acesso_nf if available and lets the webhook handle transition.
+
+async function enriquecerDadosNf(
+  supabase: ReturnType<typeof createServiceClient>,
+  pedidoId: string,
+  empresaId: string,
+  notaId: number | null,
+): Promise<void> {
+  if (!notaId) return;
+
+  try {
+    const { token } = await getValidTokenByEmpresa(empresaId);
+    const nfData = await runWithEmpresa(empresaId, () =>
+      obterNotaFiscal(token, notaId),
+    );
+
+    const NF_AUTORIZADA = [6, 7]; // 6=Autorizada, 7=Emitida Danfe
+    const autorizada = NF_AUTORIZADA.includes(Number(nfData.situacao));
+
+    if (autorizada && nfData.chaveAcesso) {
+      // NF already authorized — save data and transition
+      const { data: transitioned } = await supabase
+        .from("siso_pedidos")
+        .update({
+          chave_acesso_nf: nfData.chaveAcesso,
+          status_separacao: "aguardando_separacao",
+        })
+        .eq("id", pedidoId)
+        .eq("status_separacao", "aguardando_nf")
+        .select("id")
+        .maybeSingle();
+
+      if (transitioned) {
+        logger.info("worker", "NF já autorizada — transição aguardando_nf → aguardando_separacao", {
+          pedidoId,
+          notaId,
+          situacao: nfData.situacao,
+        });
+      }
+    } else if (nfData.chaveAcesso) {
+      // Has chaveAcesso but not in authorized situacao — save data only
+      await supabase
+        .from("siso_pedidos")
+        .update({ chave_acesso_nf: nfData.chaveAcesso })
+        .eq("id", pedidoId);
+    }
+  } catch {
+    // Non-critical — webhook or reconciliation will handle later
+  }
+}
 
 interface FilaJob {
   id: string;
@@ -343,6 +398,7 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
       .from("siso_pedidos")
       .update({ estoque_lancado: true })
       .eq("id", job.pedido_id);
+    await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, null);
     logger.warn("worker", "NF externa — marcando estoque como lançado", {
       pedidoId: job.pedido_id,
     });

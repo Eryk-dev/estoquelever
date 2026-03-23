@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getSessionUser } from "@/lib/session";
 import { atualizarStatusPedido } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
-import { COMPRAS_ALLOWED_CARGOS } from "@/lib/compras-utils";
+import { cancelOcIfEmpty, hasComprasAccess } from "@/lib/compras-utils";
 
 /**
  * POST /api/compras/pedidos/[pedidoId]/cancelar
@@ -15,19 +16,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ pedidoId: string }> },
 ) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   const { pedidoId } = await params;
-
-  let body: { cargo?: string };
-  try {
-    body = await request.json();
-  } catch {
-    body = {};
-  }
-
-  if (body.cargo && !COMPRAS_ALLOWED_CARGOS.includes(body.cargo as "admin" | "comprador")) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
-
   const supabase = createServiceClient();
 
   try {
@@ -79,24 +72,14 @@ export async function POST(
     await supabase
       .from("siso_pedido_itens")
       .update({
-        compra_status: null,
+        compra_status: "cancelado",
         ordem_compra_id: null,
       })
       .eq("pedido_id", pedidoId)
       .not("compra_status", "is", null);
 
     for (const ocId of affectedOcIds) {
-      const { count } = await supabase
-        .from("siso_pedido_itens")
-        .select("id", { count: "exact", head: true })
-        .eq("ordem_compra_id", ocId);
-
-      if (count === 0) {
-        await supabase
-          .from("siso_ordens_compra")
-          .update({ status: "cancelado" })
-          .eq("id", ocId);
-      }
+      await cancelOcIfEmpty(supabase, ocId, "compras-cancelar-pedido");
     }
 
     await supabase

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-
-const ALLOWED_CARGOS = ["admin", "comprador"];
+import { getSessionUser } from "@/lib/session";
+import { buildCompraFieldReset, cancelOcIfEmpty, hasComprasAccess } from "@/lib/compras-utils";
 
 /**
  * POST /api/compras/itens/[itemId]/trocar-fornecedor
@@ -17,12 +17,15 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ itemId: string }> },
 ) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   const { itemId } = await params;
 
   let body: {
     novo_fornecedor?: string;
     nova_ordem_compra_id?: string;
-    cargo?: string;
   };
 
   try {
@@ -31,12 +34,7 @@ export async function POST(
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
 
-  const { novo_fornecedor, nova_ordem_compra_id, cargo } = body;
-
-  // Auth check
-  if (cargo && !ALLOWED_CARGOS.includes(cargo)) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
+  const { novo_fornecedor, nova_ordem_compra_id } = body;
 
   if (!novo_fornecedor) {
     return NextResponse.json(
@@ -66,21 +64,8 @@ export async function POST(
 
     // Build update fields
     const updateFields: Record<string, unknown> = {
+      ...buildCompraFieldReset(),
       fornecedor_oc: novo_fornecedor,
-      compra_equivalente_sku: null,
-      compra_equivalente_descricao: null,
-      compra_equivalente_produto_id_tiny: null,
-      compra_equivalente_fornecedor: null,
-      compra_equivalente_imagem_url: null,
-      compra_equivalente_gtin: null,
-      compra_equivalente_observacao: null,
-      compra_equivalente_definido_em: null,
-      compra_equivalente_definido_por: null,
-      compra_cancelamento_motivo: null,
-      compra_cancelamento_solicitado_em: null,
-      compra_cancelamento_solicitado_por: null,
-      compra_cancelado_em: null,
-      compra_cancelado_por: null,
     };
 
     if (nova_ordem_compra_id) {
@@ -107,23 +92,9 @@ export async function POST(
 
     if (updateError) throw new Error(`Erro ao atualizar item: ${updateError.message}`);
 
-    // Check if old OC still has items — if empty, cancel it
+    // Recalculate old OC status (may become cancelado, recebido, or parcialmente_recebido)
     if (ordemCompraIdAnterior && ordemCompraIdAnterior !== nova_ordem_compra_id) {
-      const { count } = await supabase
-        .from("siso_pedido_itens")
-        .select("id", { count: "exact", head: true })
-        .eq("ordem_compra_id", ordemCompraIdAnterior);
-
-      if (count === 0) {
-        await supabase
-          .from("siso_ordens_compra")
-          .update({ status: "cancelado" })
-          .eq("id", ordemCompraIdAnterior);
-
-        logger.info("compras-trocar-fornecedor", "OC anterior cancelada (sem itens restantes)", {
-          ordemCompraId: ordemCompraIdAnterior,
-        });
-      }
+      await cancelOcIfEmpty(supabase, ordemCompraIdAnterior, "compras-trocar-fornecedor");
     }
 
     logger.info("compras-trocar-fornecedor", "Fornecedor do item alterado", {

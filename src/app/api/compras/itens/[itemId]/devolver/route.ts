@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { cancelOcIfEmpty } from "@/lib/compras-utils";
-
-const ALLOWED_CARGOS = ["admin", "comprador"];
+import { getSessionUser } from "@/lib/session";
+import { buildCompraFieldReset, cancelOcIfEmpty, hasComprasAccess } from "@/lib/compras-utils";
 
 /**
  * POST /api/compras/itens/[itemId]/devolver
@@ -15,20 +14,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ itemId: string }> },
 ) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   const { itemId } = await params;
-
-  let body: { cargo?: string };
-  try {
-    body = await request.json();
-  } catch {
-    body = {};
-  }
-
-  // Auth check
-  if (body.cargo && !ALLOWED_CARGOS.includes(body.cargo)) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
-
   const supabase = createServiceClient();
 
   try {
@@ -52,24 +42,11 @@ export async function POST(
     const { data: updated, error: updateError } = await supabase
       .from("siso_pedido_itens")
       .update({
+        ...buildCompraFieldReset(),
         compra_status: "aguardando_compra",
         ordem_compra_id: null,
         comprado_em: null,
         comprado_por: null,
-        compra_equivalente_sku: null,
-        compra_equivalente_descricao: null,
-        compra_equivalente_produto_id_tiny: null,
-        compra_equivalente_fornecedor: null,
-        compra_equivalente_imagem_url: null,
-        compra_equivalente_gtin: null,
-        compra_equivalente_observacao: null,
-        compra_equivalente_definido_em: null,
-        compra_equivalente_definido_por: null,
-        compra_cancelamento_motivo: null,
-        compra_cancelamento_solicitado_em: null,
-        compra_cancelamento_solicitado_por: null,
-        compra_cancelado_em: null,
-        compra_cancelado_por: null,
         compra_solicitada_em: item.compra_solicitada_em ?? new Date().toISOString(),
       })
       .eq("id", itemId)

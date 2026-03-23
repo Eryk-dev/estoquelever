@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getSessionUser } from "@/lib/session";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
-import { COMPRAS_ALLOWED_CARGOS } from "@/lib/compras-utils";
+import { hasComprasAccess } from "@/lib/compras-utils";
 
 /**
  * POST /api/compras/itens/[itemId]/cancelamento/confirmar
@@ -13,19 +14,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ itemId: string }> },
 ) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
+  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
   const { itemId } = await params;
-
-  let body: { usuario_id?: string; cargo?: string };
-  try {
-    body = await request.json();
-  } catch {
-    body = {};
-  }
-
-  if (body.cargo && !COMPRAS_ALLOWED_CARGOS.includes(body.cargo as "admin" | "comprador")) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
-
   const supabase = createServiceClient();
 
   try {
@@ -62,7 +55,7 @@ export async function POST(
         compra_status: "cancelado",
         ordem_compra_id: null,
         compra_cancelado_em: now,
-        compra_cancelado_por: body.usuario_id ?? null,
+        compra_cancelado_por: session.id,
         separacao_marcado: false,
         separacao_marcado_em: null,
         quantidade_bipada: 0,

@@ -4,32 +4,11 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, Ban, CircleDashed, Loader2, PackageX, RefreshCcw, ShoppingCart } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-
-interface ExceptionItem {
-  id: string;
-  sku: string;
-  descricao: string;
-  imagem: string | null;
-  quantidade: number;
-  aging_dias: number;
-  prioridade: "critica" | "alta" | "normal";
-  proxima_acao: string;
-  fornecedor_oc: string | null;
-  pedido_id: string;
-  numero_pedido: string;
-  empresa_nome: string | null;
-  compra_status: string | null;
-  compra_equivalente_sku: string | null;
-  compra_equivalente_descricao: string | null;
-  compra_equivalente_fornecedor: string | null;
-  compra_equivalente_observacao: string | null;
-  compra_cancelamento_motivo: string | null;
-}
+import { sisoFetch } from "@/lib/auth-context";
+import type { CompraExceptionItem } from "@/types";
 
 interface ExceptionItemCardProps {
-  item: ExceptionItem;
-  cargo: string;
-  usuario_id: string;
+  item: CompraExceptionItem;
 }
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
@@ -57,12 +36,11 @@ type ActionMode = "equivalente" | "cancelamento" | null;
 
 export function ExceptionItemCard({
   item,
-  cargo,
-  usuario_id,
 }: ExceptionItemCardProps) {
   const queryClient = useQueryClient();
   const [loading, setLoading] = useState<string | null>(null);
   const [mode, setMode] = useState<ActionMode>(null);
+  const [confirmingAction, setConfirmingAction] = useState<"cancelar-pedido" | "confirmar-equivalente" | "confirmar-cancelamento" | null>(null);
   const [skuEquivalente, setSkuEquivalente] = useState(item.compra_equivalente_sku ?? "");
   const [fornecedorEquivalente, setFornecedorEquivalente] = useState(
     item.compra_equivalente_fornecedor ?? "",
@@ -107,7 +85,7 @@ export function ExceptionItemCard({
   }
 
   async function postJson(url: string, body: Record<string, unknown>) {
-    const res = await fetch(url, {
+    const res = await sisoFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -122,16 +100,15 @@ export function ExceptionItemCard({
 
   async function handleVoltarFila() {
     await runAction("fila", async () => {
-      await postJson(`/api/compras/itens/${item.id}/devolver`, { cargo });
+      await postJson(`/api/compras/itens/${item.id}/devolver`, {});
       toast.success("Item devolvido para a fila de compras");
     });
   }
 
   async function handleCancelarPedido() {
-    if (!window.confirm(`Cancelar o pedido #${item.numero_pedido} inteiro?`)) return;
-
     await runAction("pedido", async () => {
-      const data = await postJson(`/api/compras/pedidos/${item.pedido_id}/cancelar`, { cargo });
+      const data = await postJson(`/api/compras/pedidos/${item.pedido_id}/cancelar`, {});
+      setConfirmingAction(null);
       if (data.estoque_lancado_alerta) {
         toast.warning("Pedido cancelado, mas já havia estoque lançado para parte da compra");
       } else {
@@ -151,8 +128,6 @@ export function ExceptionItemCard({
         sku_equivalente: skuEquivalente.trim(),
         fornecedor_equivalente: fornecedorEquivalente.trim() || undefined,
         observacao: obsEquivalente.trim() || undefined,
-        usuario_id,
-        cargo,
       });
       setMode(null);
       toast.success("Equivalente registrado. Falta confirmar a troca externa.");
@@ -163,8 +138,6 @@ export function ExceptionItemCard({
     await runAction("cancelamento", async () => {
       await postJson(`/api/compras/itens/${item.id}/cancelamento`, {
         motivo: motivoCancelamento.trim() || undefined,
-        usuario_id,
-        cargo,
       });
       setMode(null);
       toast.success("Cancelamento pendente registrado");
@@ -172,22 +145,17 @@ export function ExceptionItemCard({
   }
 
   async function handleConfirmarEquivalente() {
-    if (!window.confirm("Confirmar que a troca do item já foi aplicada externamente?")) return;
-
     await runAction("confirmar-equivalente", async () => {
-      await postJson(`/api/compras/itens/${item.id}/equivalente/confirmar`, { cargo });
+      await postJson(`/api/compras/itens/${item.id}/equivalente/confirmar`, {});
+      setConfirmingAction(null);
       toast.success("Item sincronizado com o SKU equivalente e devolvido para a fila");
     });
   }
 
   async function handleConfirmarCancelamento() {
-    if (!window.confirm("Confirmar que o item já foi cancelado/removido externamente?")) return;
-
     await runAction("confirmar-cancelamento", async () => {
-      const data = await postJson(`/api/compras/itens/${item.id}/cancelamento/confirmar`, {
-        usuario_id,
-        cargo,
-      });
+      const data = await postJson(`/api/compras/itens/${item.id}/cancelamento/confirmar`, {});
+      setConfirmingAction(null);
       if (data.pedido_cancelado) {
         toast.success("Item confirmado e pedido cancelado localmente");
       } else if (Array.isArray(data.pedidos_liberados) && data.pedidos_liberados.length > 0) {
@@ -257,96 +225,129 @@ export function ExceptionItemCard({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {!isEquivalentePendente && !isCancelamentoPendente && (
-            <>
-              <button
-                type="button"
-                onClick={() => setMode(mode === "equivalente" ? null : "equivalente")}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors"
-              >
-                <CircleDashed className="h-3.5 w-3.5" />
-                SKU equivalente
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode(mode === "cancelamento" ? null : "cancelamento")}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors"
-              >
-                <Ban className="h-3.5 w-3.5" />
-                Cancelar item
-              </button>
-            </>
+        <div className="flex flex-col gap-2 shrink-0">
+          {confirmingAction && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+              <p className="text-xs font-semibold text-red-800">
+                {confirmingAction === "cancelar-pedido" && `Cancelar o pedido #${item.numero_pedido} inteiro?`}
+                {confirmingAction === "confirmar-equivalente" && "Confirmar que a troca já foi aplicada externamente?"}
+                {confirmingAction === "confirmar-cancelamento" && "Confirmar que o item já foi cancelado externamente?"}
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirmingAction === "cancelar-pedido") handleCancelarPedido();
+                    else if (confirmingAction === "confirmar-equivalente") handleConfirmarEquivalente();
+                    else handleConfirmarCancelamento();
+                  }}
+                  disabled={loading !== null}
+                  className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Confirmar"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingAction(null)}
+                  className="text-xs text-ink-muted hover:text-ink"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
           )}
 
-          {isEquivalentePendente && (
-            <>
+          <div className="flex flex-wrap items-center gap-2">
+            {!isEquivalentePendente && !isCancelamentoPendente && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setMode(mode === "equivalente" ? null : "equivalente")}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors"
+                >
+                  <CircleDashed className="h-3.5 w-3.5" />
+                  SKU equivalente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode(mode === "cancelamento" ? null : "cancelamento")}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors"
+                >
+                  <Ban className="h-3.5 w-3.5" />
+                  Cancelar item
+                </button>
+              </>
+            )}
+
+            {isEquivalentePendente && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingAction("confirmar-equivalente")}
+                  disabled={loading !== null}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-xs font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
+                >
+                  {loading === "confirmar-equivalente" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ShoppingCart className="h-3.5 w-3.5" />
+                  )}
+                  Confirmar troca
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode(mode === "equivalente" ? null : "equivalente")}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors"
+                >
+                  <RefreshCcw className="h-3.5 w-3.5" />
+                  Editar
+                </button>
+              </>
+            )}
+
+            {isCancelamentoPendente && (
               <button
                 type="button"
-                onClick={handleConfirmarEquivalente}
+                onClick={() => setConfirmingAction("confirmar-cancelamento")}
                 disabled={loading !== null}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-xs font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
               >
-                {loading === "confirmar-equivalente" ? (
+                {loading === "confirmar-cancelamento" ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <ShoppingCart className="h-3.5 w-3.5" />
+                  <Ban className="h-3.5 w-3.5" />
                 )}
-                Confirmar troca
+                Confirmar cancelamento
               </button>
-              <button
-                type="button"
-                onClick={() => setMode(mode === "equivalente" ? null : "equivalente")}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors"
-              >
-                <RefreshCcw className="h-3.5 w-3.5" />
-                Editar
-              </button>
-            </>
-          )}
+            )}
 
-          {isCancelamentoPendente && (
             <button
               type="button"
-              onClick={handleConfirmarCancelamento}
+              onClick={handleVoltarFila}
               disabled={loading !== null}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-xs font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors disabled:opacity-50"
             >
-              {loading === "confirmar-cancelamento" ? (
+              {loading === "fila" ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Ban className="h-3.5 w-3.5" />
+                <ArrowLeft className="h-3.5 w-3.5" />
               )}
-              Confirmar cancelamento
+              Voltar pra fila
             </button>
-          )}
-
-          <button
-            type="button"
-            onClick={handleVoltarFila}
-            disabled={loading !== null}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink hover:bg-surface transition-colors disabled:opacity-50"
-          >
-            {loading === "fila" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <ArrowLeft className="h-3.5 w-3.5" />
-            )}
-            Voltar pra fila
-          </button>
-          <button
-            type="button"
-            onClick={handleCancelarPedido}
-            disabled={loading !== null}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 transition-colors disabled:opacity-50"
-          >
-            {loading === "pedido" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <AlertTriangle className="h-3.5 w-3.5" />
-            )}
-            Cancelar pedido
-          </button>
+            <button
+              type="button"
+              onClick={() => setConfirmingAction("cancelar-pedido")}
+              disabled={loading !== null}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 transition-colors disabled:opacity-50"
+            >
+              {loading === "pedido" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <AlertTriangle className="h-3.5 w-3.5" />
+              )}
+              Cancelar pedido
+            </button>
+          </div>
         </div>
       </div>
 

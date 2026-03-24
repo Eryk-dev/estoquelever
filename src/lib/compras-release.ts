@@ -11,6 +11,7 @@
 import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
 import { isCompraResolvedForRelease } from "./compras-utils";
+import { kickWorker } from "./execution-worker";
 
 /**
  * Check if pedidos linked to the given item IDs can be released.
@@ -194,6 +195,14 @@ export async function checkAndReleasePedidos(
       });
       continue;
     }
+
+    // Kick the worker to process the newly enqueued job
+    kickWorker().catch((err) => {
+      logger.error("compras-release", "Worker kick failed after release", {
+        pedidoId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 
     released.push(pedidoId);
 

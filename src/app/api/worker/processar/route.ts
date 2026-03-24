@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { processQueue } from "@/lib/execution-worker";
+import { processQueue, kickWorker } from "@/lib/execution-worker";
 import { logger } from "@/lib/logger";
 
 /**
@@ -14,7 +14,7 @@ import { logger } from "@/lib/logger";
  * Optional auth via WORKER_SECRET env var for external cron calls.
  *
  * Query params:
- * - limit: max jobs to process (default 5)
+ * - limit: max jobs to process (default 5). Use limit=0 to drain the entire queue.
  */
 export async function POST(request: NextRequest) {
   // Optional auth for cron calls
@@ -26,9 +26,20 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const limit = Number(request.nextUrl.searchParams.get("limit") ?? "5");
+  const limitParam = request.nextUrl.searchParams.get("limit");
+  const limit = limitParam === null ? 5 : Number(limitParam);
 
   try {
+    // limit=0 → drain entire queue via singleton loop
+    if (limit === 0) {
+      kickWorker().catch((err) => {
+        logger.error("worker-api", "kickWorker failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      return NextResponse.json({ status: "draining" });
+    }
+
     const result = await processQueue(Math.min(limit, 20));
 
     logger.info("worker-api", "Queue processed", {

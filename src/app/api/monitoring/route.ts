@@ -118,7 +118,28 @@ export async function GET() {
       .order("timestamp", { ascending: false })
       .limit(10);
 
-    // ── 4. System health ─────────────────────────────────────────────────────
+    // ── 4. Execution queue health ──────────────────────────────────────────
+    const { data: queueRows } = await supabase
+      .from("siso_fila_execucao")
+      .select("status")
+      .in("status", ["pendente", "executando"]);
+
+    const queuePending = (queueRows ?? []).filter((j) => j.status === "pendente").length;
+    const queueExecuting = (queueRows ?? []).filter((j) => j.status === "executando").length;
+
+    const { data: oldestPending } = await supabase
+      .from("siso_fila_execucao")
+      .select("criado_em")
+      .eq("status", "pendente")
+      .order("criado_em", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    const oldestPendingAgeMs = oldestPending?.criado_em
+      ? Date.now() - new Date(oldestPending.criado_em as string).getTime()
+      : 0;
+
+    // ── 5. System health ────────────────────────────────────────────────────
     const { data: lastWebhook } = await supabase
       .from("siso_webhook_logs")
       .select("criado_em, status")
@@ -139,6 +160,8 @@ export async function GET() {
         ? Math.round((webhookStats.errors / webhookStats.received) * 100)
         : 0;
 
+    const queueStuck = queuePending > 0 && oldestPendingAgeMs > 120_000;
+
     return NextResponse.json({
       generatedAt: now.toISOString(),
       orders: {
@@ -151,16 +174,25 @@ export async function GET() {
         throughputPerHour: webhookThroughput,
         errorRate,
       },
+      queue: {
+        pending: queuePending,
+        executing: queueExecuting,
+        oldestPendingAgeMs,
+        stuck: queueStuck,
+      },
       recentErrors: recentErrors ?? [],
       health: {
         lastWebhookReceivedAt: lastWebhook?.criado_em ?? null,
         lastSuccessfulProcessingAt: lastSuccess?.processado_em ?? null,
+        queueStuck,
         status:
-          errorRate >= 50
+          queueStuck
             ? "degraded"
-            : errorRate >= 20
-              ? "warning"
-              : "healthy",
+            : errorRate >= 50
+              ? "degraded"
+              : errorRate >= 20
+                ? "warning"
+                : "healthy",
       },
     });
   } catch (err) {

@@ -857,6 +857,33 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
   });
 }
 
+// ─── Singleton drain loop ────────────────────────────────────────────────────
+// Ensures only one processQueue loop runs at a time. When kicked, it drains
+// the entire pending queue in batches. Concurrent kicks are no-ops (the
+// running loop will pick up newly inserted jobs).
+
+let _draining = false;
+
+export async function kickWorker(): Promise<void> {
+  if (_draining) return;
+  _draining = true;
+
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const result = await processQueue(5);
+      if (result.processed === 0 && result.errors === 0) break;
+      await sleep(500);
+    }
+  } catch (err) {
+    logger.error("worker", "Drain loop error", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  } finally {
+    _draining = false;
+  }
+}
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }

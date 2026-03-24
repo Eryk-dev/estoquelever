@@ -3,7 +3,7 @@ import { after } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getEmpresaById } from "@/lib/empresa-lookup";
 import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
-import { processQueue } from "@/lib/execution-worker";
+import { kickWorker } from "@/lib/execution-worker";
 import { logger } from "@/lib/logger";
 import { registrarEvento } from "@/lib/historico-service";
 
@@ -197,19 +197,14 @@ export async function POST(request: NextRequest) {
     operador: operadorNome,
   });
 
-  // Kick the worker after response is sent — drain pending jobs
-  after(async () => {
-    try {
-      for (let round = 0; round < 3; round++) {
-        const result = await processQueue(5);
-        if (result.processed === 0 && result.errors === 0) break;
-      }
-    } catch (err) {
+  // Kick the worker after response is sent — singleton loop drains all pending jobs
+  after(() => {
+    kickWorker().catch((err) => {
       logger.error("aprovar", "Worker kick failed", {
         pedidoId,
         error: err instanceof Error ? err.message : String(err),
       });
-    }
+    });
   });
 
   return NextResponse.json({

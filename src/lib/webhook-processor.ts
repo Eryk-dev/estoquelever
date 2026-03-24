@@ -3,7 +3,7 @@ import { getPedido, getEstoque, buscarProdutoPorSku, getProdutoDetalhe, getProdu
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
-import { processQueue } from "./execution-worker";
+import { kickWorker } from "./execution-worker";
 import { getEmpresasDoGrupo, agregarEstoquePorGalpao } from "./grupo-resolver";
 import type { EmpresaGrupo } from "./grupo-resolver";
 import { logger, getCorrelationId } from "./logger";
@@ -363,7 +363,7 @@ export async function processWebhook(
         decisao: "propria",
       });
 
-      processQueue(1).catch((err) => {
+      kickWorker().catch((err) => {
         logger.error("processor", "Auto-approve worker kick failed", {
           pedidoId: pedidoTinyId,
           error: err instanceof Error ? err.message : String(err),

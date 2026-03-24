@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { LogOut, RefreshCw, Settings } from "lucide-react";
+import { LogOut, RefreshCw, Settings, Search } from "lucide-react";
 import Link from "next/link";
 
 import { AppShell } from "@/components/app-shell";
@@ -30,7 +30,8 @@ async function fetchPedidos(): Promise<Pedido[]> {
 export default function DashboardPage() {
   const { user, logout, activeGalpaoNome } = useAuth();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<Tab["id"]>("pendente");
+  const [activeTab, setActiveTab] = useState<Tab["id"]>("todos");
+  const [busca, setBusca] = useState("");
 
   const { data: allPedidos = [], isRefetching } = useQuery({
     queryKey: ["pedidos"],
@@ -53,21 +54,45 @@ export default function DashboardPage() {
     [allPedidos],
   );
 
-  // Filter by active galpão
+  // Search filter — matches cliente nome, EC number, or SKU
+  function matchBusca(p: Pedido): boolean {
+    const q = busca.trim().toLowerCase();
+    if (!q) return true;
+    if (p.cliente.nome.toLowerCase().includes(q)) return true;
+    if (p.idPedidoEcommerce?.toLowerCase().includes(q)) return true;
+    if (p.numero?.toLowerCase().includes(q)) return true;
+    if (p.itens?.some((i) => i.sku.toLowerCase().includes(q))) return true;
+    return false;
+  }
+
+  // Filter by active galpão + search
   const pendentesFiltrados = useMemo(
-    () => filtrarPendentesGalpao(pendentes, activeGalpaoNome),
-    [pendentes, activeGalpaoNome],
+    () => filtrarPendentesGalpao(pendentes, activeGalpaoNome).filter(matchBusca),
+    [pendentes, activeGalpaoNome, busca],
   );
   const concluidosFiltrados = useMemo(
-    () => filtrarConcluidosGalpao(concluidos, activeGalpaoNome),
-    [concluidos, activeGalpaoNome],
+    () => filtrarConcluidosGalpao(concluidos, activeGalpaoNome).filter(matchBusca),
+    [concluidos, activeGalpaoNome, busca],
   );
   const autoFiltrados = useMemo(
-    () => filtrarAutoGalpao(auto, activeGalpaoNome),
-    [auto, activeGalpaoNome],
+    () => filtrarAutoGalpao(auto, activeGalpaoNome).filter(matchBusca),
+    [auto, activeGalpaoNome, busca],
   );
+  const todosFiltrados = useMemo(() => {
+    // Combine all filtered lists, dedup by id
+    const seen = new Set<string>();
+    const result: Pedido[] = [];
+    for (const p of [...pendentesFiltrados, ...concluidosFiltrados, ...autoFiltrados]) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        result.push(p);
+      }
+    }
+    return result;
+  }, [pendentesFiltrados, concluidosFiltrados, autoFiltrados]);
 
   const tabs: Tab[] = [
+    { id: "todos", label: "Todos", count: todosFiltrados.length },
     { id: "pendente", label: "Pendente", count: pendentesFiltrados.length },
     { id: "concluidos", label: "Concluídos", count: concluidosFiltrados.length },
     { id: "auto", label: "Auto", count: autoFiltrados.length },
@@ -160,6 +185,45 @@ export default function DashboardPage() {
           onChange={(id) => setActiveTab(id as Tab["id"])}
         />
       </div>
+
+      {/* Search */}
+      <div className="relative mb-4">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+        <input
+          type="text"
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar cliente, EC, SKU..."
+          className="w-full rounded-lg border border-line bg-surface py-2 pl-9 pr-3 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+        />
+      </div>
+
+      {/* Todos tab */}
+      {activeTab === "todos" && (
+        <div className="flex flex-col gap-1.5">
+          {todosFiltrados.length === 0 ? (
+            <EmptyState message="Nenhum pedido encontrado." />
+          ) : (
+            <>
+              <p className="mb-2 text-xs text-ink-faint">
+                {todosFiltrados.length} pedido{todosFiltrados.length !== 1 ? "s" : ""}
+              </p>
+              {todosFiltrados.map((pedido) => (
+                pedido.status === "pendente" ? (
+                  <PedidoCard
+                    key={pedido.id}
+                    pedido={pedido}
+                    onAprovar={handleAprovar}
+                    onStockUpdated={() => queryClient.invalidateQueries({ queryKey: ["pedidos"] })}
+                  />
+                ) : (
+                  <PedidoCardConcluido key={pedido.id} pedido={pedido} />
+                )
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Pendente tab */}
       {activeTab === "pendente" && (

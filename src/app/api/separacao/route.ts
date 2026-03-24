@@ -81,13 +81,20 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // 1. Counts — parallel HEAD queries per status (NOT affected by empresa/busca filters)
+    // 1. Counts — parallel HEAD queries per status (affected by all active filters)
     const countPromises = COUNT_STATUSES.map((status) => {
       let q = supabase
         .from("siso_pedidos")
         .select("*", { count: "exact", head: true })
         .eq("status_separacao", status);
       if (activeGalpaoId) q = q.eq("separacao_galpao_id", activeGalpaoId);
+      if (empresaFilter) q = q.eq("empresa_origem_id", empresaFilter);
+      if (marketplaceFilter) q = q.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
+      if (busca) {
+        q = q.or(
+          `numero.ilike.%${busca}%,id_pedido_ecommerce.ilike.%${busca}%,cliente_nome.ilike.%${busca}%`,
+        );
+      }
       return q;
     });
 

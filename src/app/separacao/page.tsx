@@ -727,7 +727,7 @@ function SeparacaoPageContent() {
                 type="text"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar pedido, cliente..."
+                placeholder="Buscar pedido, EC, cliente..."
                 className="h-9 w-full rounded-xl border border-line bg-surface pl-8 pr-3 text-xs text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
               />
             </div>

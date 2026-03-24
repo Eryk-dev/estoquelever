@@ -174,6 +174,7 @@ src/
       etiquetas-endereco/
         preview/route.ts           # Generate address preview (POST)
         imprimir/route.ts          # Generate ZPL + print via PrintNode (POST)
+      reconciliacao/route.ts        # Reconciliation: find & reprocess lost orders (GET)
       worker/processar/route.ts    # Execution worker trigger (POST/GET)
       dashboard/counts/route.ts    # Module card counts (GET)
       painel/route.ts              # Control tower / Torre de Controle (GET)
@@ -279,6 +280,7 @@ src/
     supabase-server.ts             # Supabase service-role client
     logger.ts                      # Structured logger (stdout JSON + Supabase siso_logs + siso_erros)
     utils.ts                       # cn() helper (clsx + tailwind-merge)
+    reconciliacao.ts               # Reconciliation: reprocess stuck webhooks + find missing orders from Tiny
     # ── Deprecated ──
     cnpj-filial.ts                 # DEPRECATED — thin wrapper, use empresa-lookup.ts
   hooks/

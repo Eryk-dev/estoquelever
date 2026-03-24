@@ -176,6 +176,47 @@ export interface TinyProdutoBusca {
 
 // ─── API calls ──────────────────────────────────────────────────────────────
 
+/** Item returned by GET /pedidos (list) */
+export interface TinyPedidoListItem {
+  id: number;
+  numeroPedido: number;
+  data: string;
+  situacao: string;
+  ecommerce?: {
+    id: number;
+    nome: string;
+    numeroPedidoEcommerce: string;
+  };
+  cliente?: {
+    id: number;
+    nome: string;
+  };
+}
+
+/** List orders with optional filters (situacao + date range) */
+export async function listarPedidos(
+  token: string,
+  params: {
+    situacao?: string;
+    dataInicialEmissao?: string;
+    dataFinalEmissao?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<{ itens: TinyPedidoListItem[]; total?: number }> {
+  const query = new URLSearchParams();
+  if (params.situacao) query.set("situacao", params.situacao);
+  if (params.dataInicialEmissao) query.set("dataInicialEmissao", params.dataInicialEmissao);
+  if (params.dataFinalEmissao) query.set("dataFinalEmissao", params.dataFinalEmissao);
+  query.set("limit", String(params.limit ?? 100));
+  if (params.offset) query.set("offset", String(params.offset));
+  const qs = query.toString();
+  return tinyFetch<{ itens: TinyPedidoListItem[]; total?: number }>(
+    `/pedidos${qs ? `?${qs}` : ""}`,
+    { token },
+  );
+}
+
 /** Fetch full order details (maps API v3 field names to normalized shape) */
 export async function getPedido(
   token: string,

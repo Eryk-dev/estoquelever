@@ -18,6 +18,7 @@ DB access via `createServiceClient()` (Supabase service role). Logging via `logg
 - [Separacao](#separacao)
 - [Compras](#compras)
 - [Worker](#worker)
+- [Reconciliação](#reconciliação)
 - [Dashboard & Monitoring](#dashboard--monitoring)
 - [Admin - Usuarios](#admin---usuarios)
 - [Admin - Galpoes](#admin---galpoes)
@@ -1344,6 +1345,65 @@ Triggers execution worker to process pending jobs from `siso_fila_execucao`.
 ### `GET /api/worker/processar`
 
 Health check. Returns `{ status: "ok", service: "SISO Execution Worker" }`.
+
+---
+
+## Reconciliação
+
+### `GET /api/reconciliacao`
+
+**File:** `src/app/api/reconciliacao/route.ts`
+
+Two-pronged reconciliation that catches orders lost due to fire-and-forget webhook failures:
+
+1. **Internal**: finds webhook_logs stuck in `processando` for >5 min and reprocesses them
+2. **External**: queries Tiny API for approved/preparando/faturado orders within the lookback window and cross-references with `siso_pedidos` to find missing orders
+
+**Auth:** None (should be called by cron or admin)
+
+**Query params:**
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `hours` | number | 48 | Lookback window in hours |
+| `dryRun` | string | - | Set to `"true"` to only report without reprocessing |
+
+**Response `200`:**
+
+```json
+{
+  "stuckWebhooks": [
+    {
+      "pedidoId": "1044892037",
+      "empresaId": "uuid",
+      "stuckSince": "2026-03-23T16:37:39Z",
+      "reprocessed": true,
+      "error": "optional error message"
+    }
+  ],
+  "missingOrders": [
+    {
+      "pedidoId": "123456",
+      "empresaId": "uuid",
+      "numero": "132500",
+      "reprocessed": true,
+      "error": "optional error message"
+    }
+  ],
+  "summary": {
+    "stuckFound": 4,
+    "missingFound": 2,
+    "totalReprocessed": 6,
+    "dryRun": false,
+    "lookbackHours": 48
+  }
+}
+```
+
+**Side effects:**
+- Resets stuck webhook_logs and re-runs `processWebhook`
+- Creates `tipo=reconciliacao` webhook_log entries for missing orders
+- Calls Tiny API (`GET /pedidos`) for each active empresa (rate-limited)
 
 ---
 

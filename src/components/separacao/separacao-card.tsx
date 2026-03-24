@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { sisoFetch } from "@/lib/auth-context";
-import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin, RotateCcw } from "lucide-react";
+import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin, RotateCcw, Tag } from "lucide-react";
 import { getEcommerceAbbr, getEcommerceColors } from "@/lib/domain-helpers";
 import { PedidoTimeline } from "./pedido-timeline";
 import type { Decisao, StatusSeparacao } from "@/types";
@@ -50,6 +50,7 @@ export interface SeparacaoPedido {
   compra_stats: CompraStatsData | null;
   etiqueta_status: string | null;
   etiqueta_pronta: boolean;
+  separacao_tags: string[];
 }
 
 interface SeparacaoCardProps {
@@ -429,8 +430,14 @@ export function SeparacaoCard({
               </span>
             )}
 
-            {/* Label readiness indicator (separado + embalado) */}
-            {isSeparado && (
+            {/* Label readiness indicator (aguardando_separacao, em_separacao, separado, embalado) */}
+            {pedido.status_separacao === "aguardando_separacao" && pedido.etiqueta_pronta && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
+                <Printer className="h-2.5 w-2.5" />
+                Etiqueta pronta
+              </span>
+            )}
+            {(isEmSeparacao || isSeparado) && (
               pedido.etiqueta_pronta ? (
                 <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
                   <Printer className="h-2.5 w-2.5" />
@@ -490,15 +497,24 @@ export function SeparacaoCard({
             </div>
           )}
 
-          {/* Marcadores */}
-          {pedido.marcadores.length > 0 && (
+          {/* Marcadores + Tags */}
+          {(pedido.marcadores.length > 0 || pedido.separacao_tags.length > 0) && (
             <div className="flex flex-wrap gap-1 mt-0.5">
               {pedido.marcadores.map((m) => (
                 <span
-                  key={m}
+                  key={`m-${m}`}
                   className="rounded bg-zinc-50 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800/50 dark:text-zinc-500"
                 >
                   {m}
+                </span>
+              ))}
+              {pedido.separacao_tags.map((tag) => (
+                <span
+                  key={`t-${tag}`}
+                  className="inline-flex items-center gap-0.5 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/30 dark:text-blue-400"
+                >
+                  <Tag className="h-2 w-2" />
+                  {tag}
                 </span>
               ))}
             </div>

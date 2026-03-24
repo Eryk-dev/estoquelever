@@ -347,6 +347,8 @@ Lists orders in separation pipeline with counts.
 | `empresa_origem_id` | string | Filter by origin empresa |
 | `sort` | string | `data_pedido` (default), `localizacao`, `sku` |
 | `busca` | string | Search in numero, id_pedido_ecommerce, cliente_nome |
+| `marketplace` | string | Filter by e-commerce name (ilike) |
+| `tag` | string | Filter by separacao_tag (array contains) |
 
 **Response 200:**
 ```json
@@ -376,7 +378,8 @@ Lists orders in separation pipeline with counts.
     "itens_bipados": 0,
     "compra_stats": null,
     "etiqueta_status": null,
-    "etiqueta_pronta": false
+    "etiqueta_pronta": false,
+    "separacao_tags": ["urgente"]
   }],
   "empresas": [{ "id": "uuid", "nome": "NetAir" }]
 }
@@ -386,6 +389,60 @@ Lists orders in separation pipeline with counts.
 - `admin` -> sees all
 - `operador_cwb` -> sees only pedidos where empresa's galpao = CWB
 - `operador_sp` -> sees only pedidos where empresa's galpao = SP
+
+---
+
+### `GET /api/separacao/tags`
+
+**File:** `src/app/api/separacao/tags/route.ts`
+**Auth:** `X-Session-Id` (validates session via `getSessionUser`)
+
+Returns all unique user-created tags (`separacao_tags`) across pedidos in the separation pipeline. Used for tag filter dropdown and autocomplete.
+
+**Response 200:**
+```json
+{
+  "tags": ["urgente", "conferir", "especial"]
+}
+```
+
+**Galpão filtering:** Non-admin users only see tags from their active galpão.
+
+---
+
+### `POST /api/separacao/tags`
+
+**File:** `src/app/api/separacao/tags/route.ts`
+**Auth:** `X-Session-Id` (validates session via `getSessionUser`)
+
+Add, remove, or replace tags on pedidos. Tags are stored in `siso_pedidos.separacao_tags` (separate from Tiny `marcadores`).
+
+**Request Body:**
+```json
+{
+  "pedido_ids": ["uuid-1", "uuid-2"],
+  "tags": ["urgente"],
+  "action": "add"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pedido_ids` | string[] | Target pedido IDs |
+| `tags` | string[] | Tags to add/remove/set |
+| `action` | string | `add` (append, dedup), `remove`, or `set` (replace all) |
+
+**Response 200:**
+```json
+{
+  "ok": true,
+  "action": "add",
+  "tags": ["urgente"],
+  "total": 2
+}
+```
+
+Tags are sanitized: trimmed, lowercased, max 50 chars, empty strings removed.
 
 ---
 

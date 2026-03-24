@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useState, useEffect, useMemo } from "react";
+import { Suspense, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle, RotateCcw } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle, RotateCcw, Tag, X, Plus } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -154,6 +154,7 @@ function SeparacaoPageContent() {
   const { user, loading, logout, activeGalpaoId, activeGalpaoNome } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const requestedTab = useMemo(
     () => parseTabParam(searchParams.get("tab")),
     [searchParams],
@@ -174,6 +175,11 @@ function SeparacaoPageContent() {
   const [marketplaceFilter, setMarketplaceFilter] = useState("");
   const [sortFilter, setSortFilter] = useState("data_pedido");
   const [busca, setBusca] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
+  // Tag modal state
+  const [tagModalOpen, setTagModalOpen] = useState(false);
+  const [tagInput, setTagInput] = useState("");
+  const [tagActionLoading, setTagActionLoading] = useState(false);
   // Action loading states
   const [actionLoading, setActionLoading] = useState(false);
   const [revertMenuState, setRevertMenuState] = useState<{
@@ -236,8 +242,9 @@ function SeparacaoPageContent() {
     if (marketplaceFilter) params.set("marketplace", marketplaceFilter);
     if (sortFilter !== "data_pedido") params.set("sort", sortFilter);
     if (busca.trim()) params.set("busca", busca.trim());
+    if (tagFilter) params.set("tag", tagFilter);
     return params.toString();
-  }, [activeTab, empresaFilter, marketplaceFilter, sortFilter, busca]);
+  }, [activeTab, empresaFilter, marketplaceFilter, sortFilter, busca, tagFilter]);
 
   // Fetch pedidos for active tab + counts for all tabs
   const {
@@ -271,6 +278,18 @@ function SeparacaoPageContent() {
     enabled: canFetch,
     refetchInterval: 10000,
   });
+  // Fetch all existing tags for filter/autocomplete
+  const { data: tagsData } = useQuery<{ tags: string[] }>({
+    queryKey: ["separacao-tags", activeGalpaoId ?? "all"],
+    queryFn: async () => {
+      const res = await sisoFetch("/api/separacao/tags");
+      return res.json();
+    },
+    enabled: canFetch,
+    staleTime: 30000,
+  });
+  const allTags = tagsData?.tags ?? [];
+
   const queryError = error instanceof Error ? error.message : "Erro ao carregar separação";
 
   const counts = data?.counts ?? EMPTY_COUNTS;
@@ -458,6 +477,59 @@ function SeparacaoPageContent() {
     }
   }
 
+  async function handleAddTag(tag: string) {
+    const ids = selectedIds.size > 0 ? Array.from(selectedIds) : [];
+    if (ids.length === 0 || !tag.trim()) return;
+    setTagActionLoading(true);
+    try {
+      const res = await sisoFetch("/api/separacao/tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_ids: ids, tags: [tag.trim()], action: "add" }),
+      });
+      if (res.ok) {
+        const body = await res.json();
+        toast.success(`Tag "${tag.trim()}" adicionada a ${body.total} pedido(s)`);
+        setTagInput("");
+        setTagModalOpen(false);
+        refetch();
+        queryClient.invalidateQueries({ queryKey: ["separacao-tags"] });
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao adicionar tag");
+      }
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setTagActionLoading(false);
+    }
+  }
+
+  async function handleRemoveTag(tag: string, pedidoIds?: string[]) {
+    const ids = pedidoIds ?? (selectedIds.size > 0 ? Array.from(selectedIds) : []);
+    if (ids.length === 0) return;
+    setTagActionLoading(true);
+    try {
+      const res = await sisoFetch("/api/separacao/tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_ids: ids, tags: [tag], action: "remove" }),
+      });
+      if (res.ok) {
+        toast.success(`Tag "${tag}" removida`);
+        refetch();
+        queryClient.invalidateQueries({ queryKey: ["separacao-tags"] });
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao remover tag");
+      }
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setTagActionLoading(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface">
@@ -543,12 +615,14 @@ function SeparacaoPageContent() {
     busca.trim().length > 0 ||
     empresaFilter.length > 0 ||
     marketplaceFilter.length > 0 ||
-    sortFilter !== "data_pedido";
+    sortFilter !== "data_pedido" ||
+    tagFilter.length > 0;
   const activeFilterCount = [
     busca.trim().length > 0,
     empresaFilter.length > 0,
     marketplaceFilter.length > 0,
     sortFilter !== "data_pedido",
+    tagFilter.length > 0,
   ].filter(Boolean).length;
   const markedItemsTotal = pedidos.reduce((sum, pedido) => sum + pedido.itens_marcados, 0);
   const itemsTotal = pedidos.reduce((sum, pedido) => sum + pedido.total_itens, 0);
@@ -613,6 +687,7 @@ function SeparacaoPageContent() {
     setEmpresaFilter("");
     setMarketplaceFilter("");
     setSortFilter("data_pedido");
+    setTagFilter("");
   }
 
   return (
@@ -769,6 +844,21 @@ function SeparacaoPageContent() {
               ))}
             </select>
 
+            {allTags.length > 0 && (
+              <select
+                value={tagFilter}
+                onChange={(e) => setTagFilter(e.target.value)}
+                className="h-9 rounded-xl border border-line bg-surface px-3 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+              >
+                <option value="">Todas tags</option>
+                {allTags.map((tag) => (
+                  <option key={tag} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
+            )}
+
             {hasFilters && (
               <button
                 type="button"
@@ -799,6 +889,7 @@ function SeparacaoPageContent() {
                   value={SORT_OPTIONS.find((option) => option.value === sortFilter)?.label ?? sortFilter}
                 />
               )}
+              {tagFilter && <ContextChip label="Tag" value={tagFilter} />}
             </div>
           )}
         </section>
@@ -821,6 +912,99 @@ function SeparacaoPageContent() {
                     : `Selecionar todos (${pedidos.length})`}
               </span>
             </label>
+          </div>
+        )}
+
+        {/* Tag action — all tabs when items selected */}
+        {selectedIds.size > 0 && (
+          <div className="relative flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setTagModalOpen((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/50"
+            >
+              <Tag className="h-3.5 w-3.5" />
+              Tag ({selectedIds.size})
+            </button>
+
+            {tagModalOpen && (
+              <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border border-line bg-paper p-3 shadow-lg">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && tagInput.trim()) {
+                        e.preventDefault();
+                        handleAddTag(tagInput);
+                      }
+                      if (e.key === "Escape") setTagModalOpen(false);
+                    }}
+                    placeholder="Nome da tag..."
+                    autoFocus
+                    className="h-8 flex-1 rounded-lg border border-line bg-surface px-2.5 text-xs text-ink placeholder:text-ink-faint focus:border-blue-400 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    disabled={!tagInput.trim() || tagActionLoading}
+                    onClick={() => handleAddTag(tagInput)}
+                    className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-40"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Add
+                  </button>
+                </div>
+
+                {/* Existing tags as quick-add */}
+                {allTags.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {allTags.map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        disabled={tagActionLoading}
+                        onClick={() => handleAddTag(tag)}
+                        className="rounded bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600 transition-colors hover:bg-blue-100 disabled:opacity-40 dark:bg-blue-950/30 dark:text-blue-400 dark:hover:bg-blue-950/50"
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Remove tags from selection */}
+                {(() => {
+                  const selectedPedidos = pedidos.filter((p) => selectedIds.has(p.id));
+                  const tagsInSelection = new Set<string>();
+                  for (const p of selectedPedidos) {
+                    for (const t of p.separacao_tags) tagsInSelection.add(t);
+                  }
+                  if (tagsInSelection.size === 0) return null;
+                  return (
+                    <div className="mt-2 border-t border-line pt-2">
+                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                        Remover
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {Array.from(tagsInSelection).map((tag) => (
+                          <button
+                            key={tag}
+                            type="button"
+                            disabled={tagActionLoading}
+                            onClick={() => handleRemoveTag(tag)}
+                            className="inline-flex items-center gap-0.5 rounded bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-600 transition-colors hover:bg-red-100 disabled:opacity-40 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
+                          >
+                            <X className="h-2 w-2" />
+                            {tag}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
         )}
 

@@ -142,6 +142,7 @@ src/
         cancelar/route.ts          # Cancel separation (POST)
         reiniciar/route.ts         # Restart separation (POST)
         voltar-etapa/route.ts      # Go back one step (POST)
+        tags/route.ts              # Manage separacao tags (GET list, POST add/remove/set)
         produto-esgotado/route.ts  # Mark product out of stock (POST)
         reimprimir/route.ts        # Reprint label (POST)
         forcar-pendente/route.ts   # Force orders back to pending — batch (POST)
@@ -301,7 +302,7 @@ All tables are prefixed with `siso_`:
 
 | Table | Purpose |
 |---|---|
-| `siso_pedidos` | Orders with stock enrichment, suggestion, status, separation status. Has `empresa_origem_id` FK. |
+| `siso_pedidos` | Orders with stock enrichment, suggestion, status, separation status. Has `empresa_origem_id` FK. `separacao_tags text[]` for user-created tags (separate from Tiny `marcadores`). |
 | `siso_pedido_itens` | Per-item data (unique: `pedido_id + produto_id`). Has legacy `estoque_cwb_*`/`estoque_sp_*` columns + normalized FK. |
 | `siso_pedido_item_estoques` | **Primary stock source.** Normalized stock per empresa (pedido_id, produto_id, empresa_id). API reads from here. |
 | `siso_fila_execucao` | Execution queue with empresa_id, retry logic, exponential backoff |

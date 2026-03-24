@@ -51,6 +51,7 @@ export async function GET(request: NextRequest) {
   const empresaFilter = searchParams.get("empresa_origem_id");
   const marketplaceFilter = searchParams.get("marketplace");
   const busca = searchParams.get("busca");
+  const tagFilter = searchParams.get("tag");
 
   if (statusFilter && !VALID_STATUSES.includes(statusFilter)) {
     return NextResponse.json(
@@ -95,6 +96,7 @@ export async function GET(request: NextRequest) {
           `numero.ilike.%${busca}%,id_pedido_ecommerce.ilike.%${busca}%,cliente_nome.ilike.%${busca}%`,
         );
       }
+      if (tagFilter) q = q.contains("separacao_tags", [tagFilter]);
       return q;
     });
 
@@ -113,7 +115,7 @@ export async function GET(request: NextRequest) {
       .from("siso_pedidos")
       .select(
         `id, numero, data, id_pedido_ecommerce, cliente_nome,
-         nome_ecommerce, forma_envio_descricao, status_separacao, decisao_final, filial_origem, marcadores,
+         nome_ecommerce, forma_envio_descricao, status_separacao, decisao_final, filial_origem, marcadores, separacao_tags,
          empresa_origem_id, separacao_galpao_id, etiqueta_status, etiqueta_zpl, embalagem_concluida_em,
          siso_empresas(nome)`,
       )
@@ -136,6 +138,9 @@ export async function GET(request: NextRequest) {
       pedidosQuery = pedidosQuery.or(
         `numero.ilike.%${busca}%,id_pedido_ecommerce.ilike.%${busca}%,cliente_nome.ilike.%${busca}%`,
       );
+    }
+    if (tagFilter) {
+      pedidosQuery = pedidosQuery.contains("separacao_tags", [tagFilter]);
     }
     if (statusFilter === "embalado") {
       pedidosQuery = pedidosQuery
@@ -271,6 +276,7 @@ export async function GET(request: NextRequest) {
         decisao_final: p.decisao_final ?? null,
         status_separacao: p.status_separacao,
         marcadores: p.marcadores ?? [],
+        separacao_tags: p.separacao_tags ?? [],
         total_itens: stats.total,
         itens_marcados: stats.marcados,
         itens_bipados: stats.bipados,

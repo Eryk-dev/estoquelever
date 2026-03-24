@@ -289,3 +289,19 @@ Started: Mon Mar 23 17:22:19 -03 2026
   - `InventarioItemStatus` type is reused for transfer item status display (same values: pendente/processando/sucesso/erro)
   - Transfer POST create validates both empresa depositos exist (400 if null) — same pattern as inventory but for 2 empresas
 ---
+
+## 2026-03-23 - US-024
+- Updated `docs/api-reference.md` with 16 new route documentation entries:
+  - Inventário: 7 routes (GET/POST list+create, GET/PATCH detail, POST coletar, PATCH/DELETE itens, POST processar, GET progresso, POST reverter)
+  - Transferência: 7 routes (same structure as inventário with origin/destination semantics)
+  - Etiquetas de Endereço: 2 routes (POST preview, POST imprimir)
+- Updated `CLAUDE.md` Project Structure: added inventario/, transferencias/, etiquetas/ pages, all API routes, components, and lib files
+- Updated `CLAUDE.md` Database Tables: added siso_inventarios, siso_inventario_itens, siso_transferencias, siso_transferencia_itens
+- Added TOC entries for all 3 new sections in api-reference.md
+- Files changed: `CLAUDE.md`, `docs/api-reference.md`
+- **Learnings for future iterations:**
+  - api-reference.md follows a consistent format: section header → route with method, file path, auth, request/response JSON, business logic, errors table
+  - CLAUDE.md Project Structure must stay alphabetical within sections (app pages, api routes, components, lib)
+  - Documentation-only stories still need typecheck verification (changes to .md don't break types, but good to confirm nothing else drifted)
+  - All 24 user stories now complete — PRD fully implemented
+---

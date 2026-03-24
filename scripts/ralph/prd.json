@@ -332,7 +332,7 @@
         "Typecheck passes"
       ],
       "priority": 19,
-      "passes": false,
+      "passes": true,
       "notes": "scan-transferencia is a simplified scan-inventario. Remove: location input, ja_escaneado logic, playDuplicate. Keep: SKU input with keyboard toggle, quantity stepper, item list with edit/delete."
     },
     {
@@ -347,7 +347,7 @@
         "Typecheck passes"
       ],
       "priority": 20,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -364,7 +364,7 @@
         "Typecheck passes"
       ],
       "priority": 21,
-      "passes": false,
+      "passes": true,
       "notes": "Small label: 100mm×23mm = ^PW812^LL184. See PRD section 6 for exact ZPL. getCorridorRange is ported from scripts.js. Code128: ^BCN (horiz), ^BCR (rotated). QR: ^BQN."
     },
     {
@@ -378,7 +378,7 @@
         "Typecheck passes"
       ],
       "priority": 22,
-      "passes": false,
+      "passes": true,
       "notes": "enviarImpressaoZpl({apiKey, printerId, zpl, titulo}) takes raw ZPL string (auto base64 encoded internally). resolverImpressora(userId, galpaoId) returns {printerId, printerNome} or null."
     },
     {
@@ -394,7 +394,7 @@
         "Typecheck passes"
       ],
       "priority": 23,
-      "passes": false,
+      "passes": true,
       "notes": "Check if /api/admin/printnode/printers already exists for listing printers. If so, reuse. If not, it should already exist per CLAUDE.md project structure."
     },
     {
@@ -408,7 +408,7 @@
         "Typecheck passes"
       ],
       "priority": 24,
-      "passes": false,
+      "passes": true,
       "notes": "See PRD section 9.2 for all route contracts. Follow existing documentation format exactly."
     }
   ]

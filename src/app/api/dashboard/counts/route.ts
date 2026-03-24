@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   const activeGalpaoId = session.galpaoId;
 
   if (!isAdmin && !activeGalpaoId) {
-    return NextResponse.json({ siso: 0, separacao: 0, compras: 0, inventario: 0, transferencias: 0 });
+    return NextResponse.json({ siso: 0, separacao: 0, compras: 0 });
   }
 
   let activeGalpaoNome: string | null = null;
@@ -87,49 +87,15 @@ export async function GET(request: NextRequest) {
     comprasQuery = comprasQuery.in("empresa_origem_id", allowedEmpresaIds);
   }
 
-  let inventarioQuery = supabase
-    .from("siso_inventarios")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "em_andamento");
-
-  if (activeGalpaoId) {
-    inventarioQuery = inventarioQuery.eq("galpao_id", activeGalpaoId);
-  }
-
-  // Transferencias: user sees transfers where their galpao is origin OR destination
-  const transferenciasPromise = activeGalpaoId
-    ? Promise.all([
-        supabase
-          .from("siso_transferencias")
-          .select("*", { count: "exact", head: true })
-          .eq("status", "em_andamento")
-          .eq("galpao_origem_id", activeGalpaoId),
-        supabase
-          .from("siso_transferencias")
-          .select("*", { count: "exact", head: true })
-          .eq("status", "em_andamento")
-          .eq("galpao_destino_id", activeGalpaoId)
-          .neq("galpao_origem_id", activeGalpaoId),
-      ]).then(([origem, destino]) => (origem.count ?? 0) + (destino.count ?? 0))
-    : supabase
-        .from("siso_transferencias")
-        .select("*", { count: "exact", head: true })
-        .eq("status", "em_andamento")
-        .then(({ count }) => count ?? 0);
-
-  const [siso, separacao, compras, inventario, transferencias] = await Promise.all([
+  const [siso, separacao, compras] = await Promise.all([
     sisoPromise,
     separacaoQuery,
     comprasQuery,
-    inventarioQuery,
-    transferenciasPromise,
   ]);
 
   return NextResponse.json({
     siso,
     separacao: separacao.count ?? 0,
     compras: compras.count ?? 0,
-    inventario: inventario.count ?? 0,
-    transferencias,
   });
 }

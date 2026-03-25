@@ -213,12 +213,12 @@ export async function reconciliar(opts: {
 
         const existingIds = new Set((existingPedidos ?? []).map((p) => p.id));
 
-        // Exclude those with active webhook_logs (handled in Phase 1 or already OK)
+        // Exclude those with active/handled webhook_logs (handled in Phase 1, already OK, or ignored)
         const { data: activeWebhooks } = await supabase
           .from("siso_webhook_logs")
           .select("tiny_pedido_id")
           .in("tiny_pedido_id", tinyIds)
-          .in("status", ["processando", "concluido"]);
+          .in("status", ["processando", "concluido", "ignorado"]);
 
         const activeWebhookIds = new Set(
           (activeWebhooks ?? []).map((w) => w.tiny_pedido_id),

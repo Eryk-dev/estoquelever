@@ -172,8 +172,8 @@ export async function reconciliar(opts: {
         // Fetch orders from Tiny in multiple situacoes
         const allTinyPedidos: { id: string; numero: string }[] = [];
 
-        // Tiny v3 situacao codes: 3=Aprovada, 4=Preparando Envio, 1=Faturada
-        for (const situacao of [3, 4, 1]) {
+        // Tiny v3 situacao codes: 3=Aprovada only (skip 4=Preparando Envio, 1=Faturada)
+        for (const situacao of [3]) {
           let offset = 0;
           const limit = 100;
 

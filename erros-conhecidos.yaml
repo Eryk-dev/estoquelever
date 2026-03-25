@@ -236,3 +236,23 @@ erros:
     files:
       - src/lib/tiny-api.ts
     tags: [localizacao, tiny-api, sku, put, validacao, checklist, separacao]
+
+  - id: non-marketplace-order-ingested
+    date: "2026-03-25"
+    source: reconciliacao
+    category: business_logic
+    message: "Internal/manual Tiny order entered SISO — pedido #132533 'FULL SEPARADO EM CURITIBA' with no ecommerce"
+    cause: >
+      Neither the webhook processor nor the reconciliation service filtered
+      orders by marketplace origin. Any approved order in Tiny (including
+      internal, manual, or wholesale orders) was ingested into SISO. Order
+      #132533 was picked up by Phase 2 of reconciliation (missing orders
+      polling) because it was an approved order without a webhook_log entry.
+    fix: >
+      Added marketplace filter in webhook-processor.ts after fetching order
+      from Tiny (step 4a). If pedido has no nomeEcommerce AND no
+      idPedidoEcommerce, skip processing and mark webhook_log as 'ignorado'.
+      Deleted order #132533 and all related data from DB.
+    files:
+      - src/lib/webhook-processor.ts
+    tags: [marketplace, ecommerce, reconciliacao, filtro, full, manual-order, webhook-processor]

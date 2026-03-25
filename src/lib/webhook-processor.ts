@@ -177,6 +177,26 @@ export async function processWebhook(
       getPedido(origemToken, pedidoTinyId),
     );
 
+    // 4a. Skip non-marketplace orders (internal/manual Tiny orders should not enter SISO)
+    if (!pedido.nomeEcommerce && !pedido.idPedidoEcommerce) {
+      logger.info("processor", "Skipping non-marketplace order", {
+        pedidoId: pedidoTinyId,
+        numero: pedido.numero,
+        clienteNome: pedido.cliente.nome,
+      });
+
+      await supabase
+        .from("siso_webhook_logs")
+        .update({
+          status: "ignorado",
+          processado_em: new Date().toISOString(),
+          erro: "Pedido sem ecommerce — não é marketplace",
+        })
+        .eq("id", webhookLogId);
+
+      return;
+    }
+
     // 5. Enrich each item with stock from all empresas in the grupo
     const itensProcessados: ProcessedItem[] = [];
     const itensEstoques: Array<{

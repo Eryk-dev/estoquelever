@@ -1,25 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
-import { reconciliar } from "@/lib/reconciliacao";
+import { NextResponse } from "next/server";
 
 /**
  * GET /api/reconciliacao
  *
- * Two-pronged reconciliation:
- * 1. Internal: reprocess stuck webhook_logs (status=processando > 5 min)
- * 2. External: query Tiny for approved orders not in siso_pedidos
- *
- * Query params:
- *   ?hours=48    — lookback window (default 48)
- *   ?dryRun=true — only report, don't reprocess
- *
- * Also runs automatically every 20 min via instrumentation.ts polling.
+ * DISABLED — reconciliation was pulling non-marketplace orders into SISO.
+ * The Tiny LIST API returns ecommerce data inconsistently, causing
+ * internal/manual orders to bypass marketplace filters.
  */
-export async function GET(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams;
-  const lookbackHours = parseInt(searchParams.get("hours") ?? "48", 10);
-  const dryRun = searchParams.get("dryRun") === "true";
-
-  const results = await reconciliar({ lookbackHours, dryRun });
-
-  return NextResponse.json(results);
+export async function GET() {
+  return NextResponse.json(
+    {
+      error: "Reconciliação desativada",
+      reason: "Puxando pedidos sem marketplace vinculado",
+    },
+    { status: 410 },
+  );
 }

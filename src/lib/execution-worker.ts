@@ -119,6 +119,7 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
     )
     .eq("status", "pendente")
     .or(`proximo_retry_em.is.null,proximo_retry_em.lte.${now}`)
+    .order("prioridade", { ascending: false })
     .order("criado_em", { ascending: true })
     .limit(limit);
 
@@ -698,7 +699,7 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
   // Get enriched stock data per empresa (captured at webhook time)
   const { data: estoques } = await supabase
     .from("siso_pedido_item_estoques")
-    .select("produto_id, empresa_id, disponivel")
+    .select("produto_id, empresa_id, disponivel, produto_id_na_empresa")
     .eq("pedido_id", job.pedido_id);
 
   // Get deduction order (tier-based)
@@ -774,31 +775,39 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
 
   for (const item of itens) {
     try {
-      // Find product in this empresa by SKU
-      const produto = await runWithEmpresa(empresaEscolhida.empresaId, () =>
-        buscarProdutoPorSku(suporteToken, item.sku),
+      // Find product ID in this empresa — prefer cached produto_id_na_empresa, fallback to SKU search
+      const cachedEst = estoques?.find(
+        (e) => e.empresa_id === empresaEscolhida.empresaId && e.produto_id === item.produto_id,
       );
+      let produtoIdNaEmpresa = cachedEst?.produto_id_na_empresa as number | null;
 
-      if (!produto) {
-        errors++;
-        failedSkus.push(item.sku);
-        logger.logError({
-          error: new Error(`Produto não encontrado na empresa suporte: ${item.sku}`),
-          source: "worker",
-          message: `Produto não encontrado na empresa suporte: ${item.sku}`,
-          category: "business_logic",
-          pedidoId: job.pedido_id,
-          empresaId: empresaEscolhida.empresaId,
-          empresaNome: empresaEscolhida.empresaNome,
-          metadata: { sku: item.sku, operation: "transferencia" },
-        });
-        continue;
+      if (!produtoIdNaEmpresa) {
+        // Fallback: search by SKU (backwards compat for old records without produto_id_na_empresa)
+        const produto = await runWithEmpresa(empresaEscolhida.empresaId, () =>
+          buscarProdutoPorSku(suporteToken, item.sku),
+        );
+
+        if (!produto) {
+          errors++;
+          failedSkus.push(item.sku);
+          logger.logError({
+            error: new Error(`Produto não encontrado na empresa suporte: ${item.sku}`),
+            source: "worker",
+            message: `Produto não encontrado na empresa suporte: ${item.sku}`,
+            category: "business_logic",
+            pedidoId: job.pedido_id,
+            empresaId: empresaEscolhida.empresaId,
+            empresaNome: empresaEscolhida.empresaNome,
+            metadata: { sku: item.sku, operation: "transferencia" },
+          });
+          continue;
+        }
+        produtoIdNaEmpresa = produto.id;
+        await sleep(500);
       }
 
-      await sleep(500);
-
       // Deduct stock
-      await runWithEmpresa(empresaEscolhida.empresaId, () => movimentarEstoque(suporteToken, produto.id, {
+      await runWithEmpresa(empresaEscolhida.empresaId, () => movimentarEstoque(suporteToken, produtoIdNaEmpresa!, {
         tipo: "S",
         quantidade: item.quantidade_pedida as number,
         deposito: depositoId ? { id: depositoId } : undefined,

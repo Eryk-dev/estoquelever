@@ -159,13 +159,24 @@ export async function GET(request: NextRequest) {
       return query;
     }
 
-    let trackedOrdersQuery = supabase
+    // Pipeline counts: use exact count queries to bypass Supabase max_rows (1000)
+    const pipelineCountQueries = TRACKED_STATUSES.map((status) => {
+      let q = supabase
+        .from("siso_pedidos")
+        .select("*", { count: "exact", head: true })
+        .eq("status_separacao", status);
+      q = applyFilter(q);
+      return q.then(({ count }) => [status, count ?? 0] as const);
+    });
+
+    // Row-level data: only fetch backlog orders (not expedido) for aging/deadlines
+    let backlogRowsQuery = supabase
       .from("siso_pedidos")
       .select(
         "status_separacao, criado_em, separacao_iniciada_em, embalagem_concluida_em, prazo_envio, decisao_final, nome_ecommerce, separacao_galpao_id, separacao_operador_id, etiqueta_zpl",
       )
-      .in("status_separacao", [...TRACKED_STATUSES]);
-    trackedOrdersQuery = applyFilter(trackedOrdersQuery);
+      .in("status_separacao", [...BACKLOG_STATUSES]);
+    backlogRowsQuery = applyFilter(backlogRowsQuery);
 
     let cycleRowsQuery = supabase
       .from("siso_pedidos")
@@ -192,27 +203,48 @@ export async function GET(request: NextRequest) {
       .order("timestamp", { ascending: false })
       .limit(3);
 
+    // Paginate backlog rows to get all (Supabase max_rows = 1000)
+    async function fetchAllBacklog(): Promise<PainelOrderRow[]> {
+      const PAGE = 1000;
+      const all: PainelOrderRow[] = [];
+      let from = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        let q = supabase
+          .from("siso_pedidos")
+          .select(
+            "status_separacao, criado_em, separacao_iniciada_em, embalagem_concluida_em, prazo_envio, decisao_final, nome_ecommerce, separacao_galpao_id, separacao_operador_id, etiqueta_zpl",
+          )
+          .in("status_separacao", [...BACKLOG_STATUSES])
+          .range(from, from + PAGE - 1);
+        q = applyFilter(q);
+        const { data } = await q;
+        if (!data || data.length === 0) break;
+        all.push(...(data as PainelOrderRow[]));
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+      return all;
+    }
+
     const [
-      { data: trackedOrdersData },
+      pipelinePairs,
+      backlogOrders,
       { data: cycleRowsData },
       errorsCountResult,
       { data: errorSamplesData },
       { data: galpoesData },
     ] = await Promise.all([
-      trackedOrdersQuery,
+      Promise.all(pipelineCountQueries),
+      fetchAllBacklog(),
       cycleRowsQuery,
       errorsCountQuery,
       errorSamplesQuery,
       galpoesQuery,
     ]);
-
-    const trackedOrders = (trackedOrdersData ?? []) as PainelOrderRow[];
-    const backlogOrders = trackedOrders.filter((order) =>
-      isBacklogStatus(order.status_separacao),
-    );
-    const shippedTotal = trackedOrders.filter(
-      (order) => order.status_separacao === "expedido",
-    ).length;
+    // Build pipeline counts from exact count queries
+    const pipelineExact = Object.fromEntries(pipelinePairs) as Record<string, number>;
+    const shippedTotal = pipelineExact["expedido"] ?? 0;
 
     const galpoes = galpoesData ?? [];
     const galpaoNameById = new Map(galpoes.map((galpao) => [galpao.id, galpao.nome]));
@@ -241,12 +273,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Use exact counts for pipeline (not row-based)
     const legacyPipeline: Record<string, number> = {};
-    for (const status of BACKLOG_STATUSES) legacyPipeline[status] = 0;
-    for (const order of backlogOrders) {
-      if (!order.status_separacao) continue;
-      legacyPipeline[order.status_separacao] =
-        (legacyPipeline[order.status_separacao] ?? 0) + 1;
+    for (const status of BACKLOG_STATUSES) {
+      legacyPipeline[status] = pipelineExact[status] ?? 0;
     }
 
     const activeBacklog = Object.values(legacyPipeline).reduce(
@@ -267,7 +297,7 @@ export async function GET(request: NextRequest) {
         count,
         share_pct:
           status === "expedido"
-            ? safePct(count, trackedOrders.length)
+            ? safePct(count, activeBacklog + shippedTotal)
             : safePct(count, activeBacklog),
       };
     });

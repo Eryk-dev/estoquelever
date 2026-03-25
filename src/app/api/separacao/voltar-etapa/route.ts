@@ -108,11 +108,7 @@ export async function POST(request: NextRequest) {
         pedidoUpdate.embalagem_concluida_em = null;
       }
 
-      // Clear etiqueta data when reverting
-      pedidoUpdate.etiqueta_url = null;
-      pedidoUpdate.etiqueta_zpl = null;
-      pedidoUpdate.agrupamento_expedicao_id = null;
-      pedidoUpdate.expedicao_id = null;
+      // Keep etiqueta/agrupamento data — never clear cached ZPL labels
     }
 
     // ── Going forward: set timestamps ───────────────────────────────────

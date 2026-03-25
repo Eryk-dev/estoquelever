@@ -105,6 +105,59 @@ export function getCompraPrioridade(params: {
   return "normal";
 }
 
+const TERMINAL_COMPRA_STATUSES = new Set(["indisponivel", "cancelado"]);
+
+/**
+ * Checks if ALL compra items of a pedido are in terminal states (indisponivel/cancelado).
+ * If no active items remain, cancels the pedido and its pending queue jobs.
+ */
+export async function checkAndCancelPedidoIfAllTerminal(
+  supabase: ReturnType<typeof createServiceClient>,
+  pedidoId: string,
+  logSource: string,
+): Promise<{ pedidoCancelado: boolean }> {
+  const { data: allItems, error } = await supabase
+    .from("siso_pedido_itens")
+    .select("id, compra_status")
+    .eq("pedido_id", pedidoId);
+
+  if (error || !allItems || allItems.length === 0) {
+    return { pedidoCancelado: false };
+  }
+
+  // If any item has no compra_status (non-OC item) or is not terminal → pedido stays
+  const hasActiveItem = allItems.some((item) => {
+    if (item.compra_status === null) return true;
+    return !TERMINAL_COMPRA_STATUSES.has(item.compra_status);
+  });
+
+  if (hasActiveItem) return { pedidoCancelado: false };
+
+  const now = new Date().toISOString();
+
+  await supabase
+    .from("siso_pedidos")
+    .update({
+      status: "cancelado",
+      status_separacao: null,
+      processado_em: now,
+    })
+    .eq("id", pedidoId);
+
+  await supabase
+    .from("siso_fila_execucao")
+    .update({ status: "cancelado", atualizado_em: now })
+    .eq("pedido_id", pedidoId)
+    .eq("status", "pendente");
+
+  logger.warn(logSource, "Pedido cancelado — todos itens de compra terminais", {
+    pedidoId,
+    totalItens: allItems.length,
+  });
+
+  return { pedidoCancelado: true };
+}
+
 /**
  * Recalculates OC status after an item is removed or changes status.
  * - No items left → status = cancelado

@@ -25,6 +25,7 @@ export const pedidosPendentes: Pedido[] = [
     formaEnvio: { id: "me2", descricao: "Mercado Envios Full" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 90001,
         sku: "19-0432",
         descricao: "Pastilha de Freio Dianteira Cerâmica - Civic 2018/2022",
@@ -36,6 +37,7 @@ export const pedidosPendentes: Pedido[] = [
         fornecedorOC: "Diversos",
       },
       {
+        itemId: crypto.randomUUID(),
         produtoId: 90002,
         sku: "19-0871",
         descricao: "Disco de Freio Ventilado 280mm - Civic 2018/2022",
@@ -64,6 +66,7 @@ export const pedidosPendentes: Pedido[] = [
     formaEnvio: { id: "me2", descricao: "Mercado Envios Coleta" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 90003,
         sku: "LD-7821",
         descricao: "Amortecedor Dianteiro Esquerdo - Corolla 2020/2024",
@@ -75,6 +78,7 @@ export const pedidosPendentes: Pedido[] = [
         fornecedorOC: "LDRU",
       },
       {
+        itemId: crypto.randomUUID(),
         produtoId: 90004,
         sku: "LD-7822",
         descricao: "Amortecedor Dianteiro Direito - Corolla 2020/2024",
@@ -86,6 +90,7 @@ export const pedidosPendentes: Pedido[] = [
         fornecedorOC: "LDRU",
       },
       {
+        itemId: crypto.randomUUID(),
         produtoId: 90005,
         sku: "TH-3120",
         descricao: "Kit Coxim Superior Amortecedor - Corolla 2020/2024",
@@ -114,6 +119,7 @@ export const pedidosPendentes: Pedido[] = [
     formaEnvio: { id: "shopee_std", descricao: "Shopee Envios Standard" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 90006,
         sku: "CAK-0912",
         descricao: "Bomba de Combustível Elétrica - Onix 2017/2023",
@@ -142,6 +148,7 @@ export const pedidosPendentes: Pedido[] = [
     formaEnvio: { id: "me2", descricao: "Mercado Envios Full" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 90007,
         sku: "G-44021",
         descricao: "Sensor de Rotação ABS Traseiro - HB20 2016/2022",
@@ -153,6 +160,7 @@ export const pedidosPendentes: Pedido[] = [
         fornecedorOC: "GAUSS",
       },
       {
+        itemId: crypto.randomUUID(),
         produtoId: 90008,
         sku: "M-22091",
         descricao: "Bieleta Barra Estabilizadora Dianteira - HB20 2016/2022",
@@ -181,6 +189,7 @@ export const pedidosPendentes: Pedido[] = [
     formaEnvio: { id: "me2", descricao: "Mercado Envios Coleta" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 90009,
         sku: "L0-5540",
         descricao: "Terminal de Direção Esquerdo - Tracker 2021/2025",
@@ -192,6 +201,7 @@ export const pedidosPendentes: Pedido[] = [
         fornecedorOC: "LEFS",
       },
       {
+        itemId: crypto.randomUUID(),
         produtoId: 90010,
         sku: "L0-5541",
         descricao: "Terminal de Direção Direito - Tracker 2021/2025",
@@ -223,6 +233,7 @@ export const pedidosConcluidos: Pedido[] = [
     formaEnvio: { id: "me2", descricao: "Mercado Envios Full" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 91001,
         sku: "19-1120",
         descricao: "Filtro de Óleo Motor - Hilux 2016/2023",
@@ -255,6 +266,7 @@ export const pedidosConcluidos: Pedido[] = [
     formaEnvio: { id: "me2", descricao: "Mercado Envios Coleta" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 91002,
         sku: "CS-4410",
         descricao: "Bobina de Ignição - Gol G5 1.0 2009/2014",
@@ -287,6 +299,7 @@ export const pedidosConcluidos: Pedido[] = [
     formaEnvio: { id: "shopee_std", descricao: "Shopee Envios Standard" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 91003,
         sku: "TH-2200",
         descricao: "Pivô de Suspensão Inferior Esquerdo - T-Cross 2019/2024",
@@ -323,6 +336,7 @@ export const pedidosAuto: Pedido[] = [
     formaEnvio: { id: "me2", descricao: "Mercado Envios Full" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 92001,
         sku: "19-0550",
         descricao: "Correia Dentada Motor - Fit 2015/2021",
@@ -354,6 +368,7 @@ export const pedidosAuto: Pedido[] = [
     formaEnvio: { id: "me2", descricao: "Mercado Envios Coleta" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 92002,
         sku: "L0-4410",
         descricao: "Bucha Bandeja Dianteira - Kicks 2022/2025",
@@ -385,6 +400,7 @@ export const pedidosAuto: Pedido[] = [
     formaEnvio: { id: "shopee_std", descricao: "Shopee Envios Standard" },
     itens: [
       {
+        itemId: crypto.randomUUID(),
         produtoId: 92003,
         sku: "G-33012",
         descricao: "Sensor de Temperatura Água Motor - Onix 2020/2024",

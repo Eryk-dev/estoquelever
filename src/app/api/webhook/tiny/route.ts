@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
         processado_em: new Date().toISOString(),
       };
       if (existingOrder.status_separacao != null) {
-        cancelUpdate.status_separacao = "cancelado";
+        cancelUpdate.status_separacao = null;
       }
 
       // --- Compras cleanup ---

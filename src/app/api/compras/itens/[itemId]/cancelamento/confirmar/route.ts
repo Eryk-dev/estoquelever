@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
-import { hasComprasAccess } from "@/lib/compras-utils";
+import { checkAndCancelPedidoIfAllTerminal, hasComprasAccess } from "@/lib/compras-utils";
 
 /**
  * POST /api/compras/itens/[itemId]/cancelamento/confirmar
@@ -71,34 +71,14 @@ export async function POST(
       throw new Error(`Erro ao confirmar cancelamento: ${updateError.message}`);
     }
 
-    const { data: remainingItems } = await supabase
-      .from("siso_pedido_itens")
-      .select("id")
-      .eq("pedido_id", item.pedido_id)
-      .or("compra_status.is.null,compra_status.neq.cancelado");
+    const { pedidoCancelado } = await checkAndCancelPedidoIfAllTerminal(
+      supabase,
+      item.pedido_id,
+      "compras-cancelamento-confirmar",
+    );
 
     let pedidosLiberados: string[] = [];
-    const totalRestante = remainingItems?.length ?? 0;
-
-    if (totalRestante === 0) {
-      await supabase
-        .from("siso_pedidos")
-        .update({
-          status: "cancelado",
-          status_separacao: "cancelado",
-          processado_em: now,
-        })
-        .eq("id", item.pedido_id);
-
-      await supabase
-        .from("siso_fila_execucao")
-        .update({
-          status: "cancelado",
-          atualizado_em: now,
-        })
-        .eq("pedido_id", item.pedido_id)
-        .eq("status", "pendente");
-    } else {
+    if (!pedidoCancelado) {
       pedidosLiberados = await checkAndReleasePedidos([itemId]);
     }
 
@@ -106,14 +86,14 @@ export async function POST(
       itemId,
       pedidoId: item.pedido_id,
       sku: item.sku,
-      pedidoCancelado: totalRestante === 0,
+      pedidoCancelado,
       pedidosLiberados: pedidosLiberados.length,
     });
 
     return NextResponse.json({
       ok: true,
       item: updated,
-      pedido_cancelado: totalRestante === 0 ? item.pedido_id : null,
+      pedido_cancelado: pedidoCancelado ? item.pedido_id : null,
       pedidos_liberados: pedidosLiberados,
     });
   } catch (err) {

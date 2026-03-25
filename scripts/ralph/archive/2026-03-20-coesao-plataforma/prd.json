@@ -1,0 +1,320 @@
+{
+  "project": "SISO - Modulos Inventario + Etiquetas de Endereco",
+  "branchName": "ralph/inventario-etiquetas",
+  "description": "Migrate physical inventory (stock counting + location updates) and address label printing from Google Sheets + Tiny API v2 to SISO using existing OAuth2, rate limiting, and PrintNode infrastructure.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Database migration for inventario tables",
+      "description": "As a developer, I want the inventario database schema created so that all other stories have the foundation to build on.",
+      "acceptanceCriteria": [
+        "Create file supabase/migrations/20260320_modulo_inventario.sql",
+        "Table siso_inventarios with columns: id (uuid PK default gen_random_uuid()), empresa_id (uuid NOT NULL FK siso_empresas), galpao_id (uuid NOT NULL FK siso_galpoes), usuario_id (uuid NOT NULL FK siso_usuarios), modo (text NOT NULL CHECK IN ('loc_only','loc_estoque')), tipo_estoque (text nullable CHECK IN ('B','E','S')), status (text NOT NULL DEFAULT 'em_andamento' CHECK IN ('em_andamento','processando','concluido','cancelado')), total_itens (int NOT NULL DEFAULT 0), itens_processados (int NOT NULL DEFAULT 0), itens_sucesso (int NOT NULL DEFAULT 0), itens_erro (int NOT NULL DEFAULT 0), observacoes (text nullable), created_at (timestamptz NOT NULL DEFAULT now()), processado_em (timestamptz nullable), concluido_em (timestamptz nullable)",
+        "Table siso_inventario_itens with columns: id (uuid PK default gen_random_uuid()), inventario_id (uuid NOT NULL FK siso_inventarios ON DELETE CASCADE), produto_id_tiny (int nullable), sku (text NOT NULL), nome_produto (text nullable), ean (text nullable), localizacao (text NOT NULL), quantidade (int NOT NULL DEFAULT 1), status (text NOT NULL DEFAULT 'pendente' CHECK IN ('pendente','processando','sucesso','erro')), erro_msg (text nullable), created_at (timestamptz NOT NULL DEFAULT now())",
+        "Index idx_inventarios_status on siso_inventarios(status)",
+        "Index idx_inventarios_empresa on siso_inventarios(empresa_id)",
+        "Index idx_inventario_itens_inv on siso_inventario_itens(inventario_id)",
+        "Apply migration via Supabase MCP tool apply_migration",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "TypeScript types and buscarProdutoPorGtin function",
+      "description": "As a developer, I want inventario types in the central types file and a new Tiny API function to search products by EAN/GTIN.",
+      "acceptanceCriteria": [
+        "Add to src/types/index.ts: type InventarioModo = 'loc_only' | 'loc_estoque'",
+        "Add type TipoEstoque = 'B' | 'E' | 'S'",
+        "Add type InventarioStatus = 'em_andamento' | 'processando' | 'concluido' | 'cancelado'",
+        "Add type InventarioItemStatus = 'pendente' | 'processando' | 'sucesso' | 'erro'",
+        "Add interface Inventario with all DB columns plus optional joined fields: empresa_nome, galpao_nome, usuario_nome",
+        "Add interface InventarioItem with all DB columns",
+        "Add interface InventarioItemConsolidado with: sku (string), produto_id_tiny (number), nome_produto (string), ean (string|null), localizacao_merged (string), quantidade_total (number), itens_ids (string[]), status (InventarioItemStatus), erro_msg (string|null)",
+        "Add buscarProdutoPorGtin(token: string, gtin: string) to src/lib/tiny-api.ts — calls GET /produtos with query params gtin={gtin}&situacao=A, returns first product or null. Follow same pattern as buscarProdutoPorSku",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Check existing buscarProdutoPorSku in tiny-api.ts for the exact return type and pattern to follow. The Tiny v3 API GET /produtos accepts gtin as query param."
+    },
+    {
+      "id": "US-003",
+      "title": "Inventario processor business logic",
+      "description": "As a developer, I want the core processing logic that consolidates scanned items and sends updates to Tiny ERP.",
+      "acceptanceCriteria": [
+        "Create src/lib/inventario-processor.ts",
+        "Export function consolidarItens(itens: InventarioItem[]): InventarioItemConsolidado[] — groups by SKU, sums quantities, merges unique locations with '; ' separator, collects all itens_ids",
+        "Export async function processarInventario(inventarioId: string): Promise<void>",
+        "processarInventario: (1) fetches inventario + items from DB via createServiceClient, (2) sets inventario status='processando' and processado_em=now()",
+        "processarInventario: (3) calls consolidarItens, (4) fetches deposito_id from siso_tiny_connections WHERE empresa_id = inventario.empresa_id",
+        "processarInventario: (5) if no deposito configured, sets status='erro' on all items with erro_msg='Deposito nao configurado', updates counters, sets inventario status='concluido', returns early",
+        "processarInventario: (6) for each consolidated product, uses runWithEmpresa from tiny-queue.ts for rate limiting",
+        "processarInventario: (7) if modo='loc_estoque': calls movimentarEstoque(token, produtoId, {tipo: inventario.tipo_estoque, quantidade, deposito: {id: depositoId}}) then atualizarLocalizacaoProduto(token, produtoId, localizacao_merged)",
+        "processarInventario: (8) if modo='loc_only': calls only atualizarLocalizacaoProduto(token, produtoId, localizacao_merged)",
+        "processarInventario: (9) skips movimentarEstoque for Kit products (check produto type='K' or similar flag)",
+        "processarInventario: (10) after each product, updates all corresponding item statuses (sucesso/erro) and inventario counters (itens_processados, itens_sucesso, itens_erro) atomically",
+        "processarInventario: (11) when all done, sets inventario status='concluido' and concluido_em=now()",
+        "Uses getValidTokenByEmpresa from tiny-oauth.ts for OAuth2 token",
+        "Uses logger for structured logging throughout",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Follow same fire-and-forget pattern as execution-worker.ts. Check tiny-queue.ts for runWithEmpresa usage. Check tiny-api.ts for movimentarEstoque and atualizarLocalizacaoProduto signatures."
+    },
+    {
+      "id": "US-004",
+      "title": "API routes: list and create inventario",
+      "description": "As a developer, I want GET/POST /api/inventario to list inventarios and create new sessions.",
+      "acceptanceCriteria": [
+        "Create src/app/api/inventario/route.ts with GET and POST handlers",
+        "GET: requires getSessionUser() from session.ts, returns inventarios joined with empresa.nome, galpao.nome, usuario.nome ordered by created_at DESC",
+        "GET: also returns counts object: { em_andamento: N, processando: N, concluido: N, cancelado: N }",
+        "POST: requires getSessionUser(), body: { empresa_id, galpao_id, modo, tipo_estoque?, observacoes? }. Sets usuario_id from session user",
+        "POST: checks if empresa already has em_andamento inventario — returns 409 { error: 'Empresa ja possui um inventario em andamento' }",
+        "POST: when modo='loc_only', ignores tipo_estoque (stores null). When modo='loc_estoque', tipo_estoque is required — returns 400 if missing",
+        "POST: returns 201 with created inventario record",
+        "Error responses use NextResponse.json({ error: '...' }, { status: N })",
+        "Uses createServiceClient() from supabase-server.ts",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Follow existing API route patterns from src/app/api/pedidos/route.ts or similar. The join for empresa/galpao/usuario names can use Supabase's select syntax with references."
+    },
+    {
+      "id": "US-005",
+      "title": "API routes: inventario detail and cancel",
+      "description": "As a developer, I want GET/PATCH /api/inventario/[id] to view inventory details and cancel sessions.",
+      "acceptanceCriteria": [
+        "Create src/app/api/inventario/[id]/route.ts with GET and PATCH handlers",
+        "GET: requires getSessionUser(), returns inventario with joined empresa/galpao/usuario names plus all items ordered by created_at DESC",
+        "GET: returns 404 { error: 'Inventario nao encontrado' } if not found",
+        "PATCH: requires getSessionUser(), body can have: status (only 'cancelado' allowed) and/or observacoes (string)",
+        "PATCH: only allows cancellation if current status is 'em_andamento' — returns 400 { error: 'Inventario nao pode ser cancelado neste status' } otherwise",
+        "PATCH: returns updated inventario",
+        "Uses createServiceClient() from supabase-server.ts",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Route params: { params: { id: string } }. Check Next.js 16 App Router pattern for dynamic route params."
+    },
+    {
+      "id": "US-006",
+      "title": "API route: coletar (scan item into inventory)",
+      "description": "As a developer, I want POST /api/inventario/[id]/coletar to search Tiny by SKU/EAN and insert scanned items into the inventory session.",
+      "acceptanceCriteria": [
+        "Create src/app/api/inventario/[id]/coletar/route.ts with POST handler",
+        "Requires getSessionUser()",
+        "Body: { codigo: string, localizacao: string, quantidade?: number } — quantidade defaults to 1",
+        "Validates inventario exists and status is 'em_andamento' — returns 400 if not",
+        "Gets OAuth2 token via getValidTokenByEmpresa(inventario.empresa_id) from tiny-oauth.ts",
+        "First calls buscarProdutoPorSku(token, codigo), if null then calls buscarProdutoPorGtin(token, codigo)",
+        "If product not found by either: returns 404 { error: 'Produto nao encontrado' }",
+        "If found: inserts into siso_inventario_itens with produto_id_tiny from Tiny response, sku (produto.codigo), nome_produto (produto.nome or produto.descricao), ean (produto.gtin), localizacao, quantidade",
+        "Increments total_itens on parent siso_inventarios record",
+        "Returns 201 with the created item including all fields",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Check buscarProdutoPorSku return shape in tiny-api.ts to know which fields to extract (codigo, nome/descricao, gtin, id). Use runWithEmpresa from tiny-queue.ts if needed for rate limiting."
+    },
+    {
+      "id": "US-007",
+      "title": "API routes: processar, progresso, and delete item",
+      "description": "As a developer, I want the remaining inventory API routes for batch processing, progress polling, and item deletion.",
+      "acceptanceCriteria": [
+        "Create src/app/api/inventario/[id]/processar/route.ts — POST handler: validates inventario status is 'em_andamento', calls processarInventario(id) WITHOUT awaiting (fire-and-forget), returns 200 { message: 'Processamento iniciado' } immediately",
+        "Create src/app/api/inventario/[id]/progresso/route.ts — GET handler: returns { status, total_itens, itens_processados, itens_sucesso, itens_erro } from siso_inventarios plus array of consolidated items with their current status and erro_msg",
+        "Create src/app/api/inventario/[id]/itens/[itemId]/route.ts — DELETE handler: validates inventario status is 'em_andamento', deletes the item from siso_inventario_itens, decrements total_itens on parent inventario, returns 200",
+        "All three routes require getSessionUser()",
+        "All return 404 if inventario not found",
+        "processar returns 400 if inventario is not em_andamento",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "processar fire-and-forget pattern: call processarInventario(id) without await, then respond. The function runs in the background. See execution-worker.ts for a similar pattern. For progresso, use consolidarItens from inventario-processor.ts to build the consolidated view."
+    },
+    {
+      "id": "US-008",
+      "title": "Frontend: inventario card and create form components",
+      "description": "As a developer, I want the inventory list card and creation form components for the inventory UI.",
+      "acceptanceCriteria": [
+        "Create src/components/inventario/inventario-card.tsx — 'use client' component showing: empresa nome, galpao nome, usuario nome, modo badge ('loc_only'/'loc_estoque'), total_itens count, status badge with color coding (em_andamento=blue, processando=yellow, concluido=green, cancelado=red), created_at formatted. Receives onClick prop for navigation",
+        "Create src/components/inventario/criar-inventario-form.tsx — 'use client' form component with: empresa select dropdown, galpao select dropdown, modo radio/select ('Apenas Localizacao' / 'Localizacao + Estoque'), tipo_estoque select (Balanco/Entrada/Saida — visible only when modo=loc_estoque), observacoes textarea (optional), submit button",
+        "Form fetches empresas from GET /api/admin/empresas and galpoes from GET /api/admin/galpoes for dropdowns",
+        "On submit: POST /api/inventario, shows toast on success/error, calls onSuccess prop callback",
+        "Uses sisoFetch from auth-context.tsx for all API calls",
+        "Both use Tailwind, zinc palette, consistent with existing app style",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Follow patterns from existing components in src/components/pedido/ and src/components/separacao/. Check auth-context.tsx for sisoFetch usage pattern."
+    },
+    {
+      "id": "US-009",
+      "title": "Frontend: scan inventario component",
+      "description": "As a developer, I want the main scanning interface where operators collect inventory items by scanning SKUs.",
+      "acceptanceCriteria": [
+        "Create src/components/inventario/scan-inventario.tsx — 'use client' component",
+        "Props: inventarioId (string), empresaId (string), onProcessar callback, onBack callback",
+        "Sticky location input at top that persists its value across scans (user changes when moving shelves)",
+        "SKU/EAN text input that auto-focuses after each submission",
+        "Quantity number input (default 1) between location and SKU inputs",
+        "On Enter in SKU input: POST /api/inventario/{id}/coletar with { codigo, localizacao, quantidade }. On success: add item to local list, play audio via playBeep from audio-feedback.ts, clear SKU input and re-focus it. On 404: toast.error('Produto nao encontrado'), clear and re-focus",
+        "Items list below inputs showing: nome_produto, sku, localizacao, quantidade — most recent first",
+        "Each item row has delete (X) button: DELETE /api/inventario/{id}/itens/{itemId}, removes from local list",
+        "Counter showing total items scanned at the top",
+        "'Processar' button at bottom calls onProcessar callback",
+        "Uses sisoFetch for API calls, sonner for toasts",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "Check src/components/separacao/scan-input.tsx for existing barcode input patterns. Import playBeep from src/components/separacao/audio-feedback.ts."
+    },
+    {
+      "id": "US-010",
+      "title": "Frontend: processing progress component",
+      "description": "As a developer, I want a progress tracking component that polls the processing status and shows per-item results.",
+      "acceptanceCriteria": [
+        "Create src/components/inventario/progresso-processamento.tsx — 'use client' component",
+        "Props: inventarioId (string), onBack callback",
+        "Polls GET /api/inventario/{id}/progresso every 2 seconds using setInterval while status is 'processando'",
+        "Shows progress bar with percentage: itens_processados / total items, plus fraction text (e.g., '45/120')",
+        "Shows consolidated items list with status badges: pendente (zinc/gray), processando (blue), sucesso (green), erro (red)",
+        "Error items display erro_msg text below the item",
+        "When status becomes 'concluido': stops polling interval, shows summary card with itens_sucesso count (green) and itens_erro count (red)",
+        "Back button calls onBack prop",
+        "Uses sisoFetch for API calls",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "Remember to clean up setInterval on unmount via useEffect return. Use sisoFetch from auth-context.tsx."
+    },
+    {
+      "id": "US-011",
+      "title": "Frontend: inventario page",
+      "description": "As a developer, I want the /inventario page that ties all inventory components into a complete flow.",
+      "acceptanceCriteria": [
+        "Create src/app/inventario/page.tsx — 'use client' page wrapped in AppShell with title 'Inventario'",
+        "Two tabs using Tabs component from src/components/ui/tabs.tsx: 'Em Andamento' (count of em_andamento + processando) and 'Concluidos' (count of concluido + cancelado)",
+        "Fetches inventarios via useQuery GET /api/inventario with TanStack React Query, refetchInterval 30s",
+        "Em Andamento tab: 'Novo Inventario' button that toggles criar-inventario-form visibility. Below: list of inventario-card for em_andamento and processando inventarios",
+        "Clicking em_andamento card switches view to scan-inventario inline (hides list, shows scan with back button)",
+        "Clicking processando card switches view to progresso-processamento inline",
+        "When user clicks 'Processar' in scan view: POST /processar, then switch to progresso view for that inventario",
+        "Concluidos tab: list of inventario-card for concluido and cancelado, showing itens_sucesso/itens_erro in card",
+        "EmptyState from src/components/ui/empty-state.tsx when no inventarios in active tab",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "Follow same page pattern as src/app/separacao/page.tsx. Use useState to manage which view is active (list/scan/progress) and which inventarioId is selected."
+    },
+    {
+      "id": "US-012",
+      "title": "ZPL address label generation logic",
+      "description": "As a developer, I want the business logic for generating warehouse address combinations and ZPL label code.",
+      "acceptanceCriteria": [
+        "Create src/lib/zpl-endereco.ts",
+        "Export gerarEnderecos(params: { corredorInicio: string, corredorFim: string, horizontalInicio: string, horizontalFim: string, verticalInicio: string, verticalFim: string }): string[] — generates all address combos in format {corredor}-{horizontal}-{vertical}",
+        "Internal function getCorridorRange(start: string, end: string): string[] — handles numeric ranges (e.g., '1' to '5' = ['1','2','3','4','5']), alphabetic ranges (e.g., 'A' to 'E' = ['A','B','C','D','E']), and single values (start === end)",
+        "Export gerarZplEtiquetaPequena(enderecos: string[]): string — ZPL with 2 addresses per label side-by-side: each has ^FO positioned text, ^BC Code128 barcode, ^BQ QR code. Label starts with ^XA ends with ^XZ",
+        "Export gerarZplEtiquetaGrande(enderecos: string[]): string — ZPL with 1 address per label, 90deg rotation (^FWR), ~250pt font (^A0R,250,250), large text with barcode",
+        "gerarEnderecos throws error if any start > end in its range",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "ZPL reference: ^XA=start label, ^XZ=end label, ^FO=field origin(x,y), ^FD=field data, ^FS=field separator, ^BC=Code128, ^BQ=QR code, ^FWR=rotate 90deg, ^A0=scalable font. Pequena label: ~4x1.5 inch thermal. Grande: ~4x6 inch."
+    },
+    {
+      "id": "US-013",
+      "title": "API routes: etiquetas preview and print",
+      "description": "As a developer, I want API routes to preview generated addresses and send ZPL labels to PrintNode for printing.",
+      "acceptanceCriteria": [
+        "Create src/app/api/etiquetas/preview/route.ts — POST handler: body { corredorInicio, corredorFim, horizontalInicio, horizontalFim, verticalInicio, verticalFim }. Calls gerarEnderecos, returns { enderecos: string[], total: number, warning: boolean } where warning=true if total>1000. Returns 400 on invalid range",
+        "Create src/app/api/etiquetas/imprimir/route.ts — POST handler: same range params plus tipo ('pequena'|'grande'). Calls gerarEnderecos then gerarZplEtiquetaPequena or gerarZplEtiquetaGrande. Gets user printer via resolverImpressora(userId) from printnode.ts. Sends ZPL via enviarImpressaoZpl from printnode.ts. Returns 200 { message: 'Impressao enviada', total: number }",
+        "Both require getSessionUser()",
+        "imprimir returns 400 { error: 'Impressora nao configurada' } if no printer found for user",
+        "Uses logger for structured logging",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "Check printnode.ts for resolverImpressora and enviarImpressaoZpl signatures. Check config.ts for getConfig('PRINTNODE_API_KEY') pattern."
+    },
+    {
+      "id": "US-014",
+      "title": "Frontend: etiqueta form and preview components",
+      "description": "As a developer, I want the form and preview components for address label generation and visualization.",
+      "acceptanceCriteria": [
+        "Create src/components/etiquetas/etiqueta-form.tsx — 'use client' component with 3 range pairs: corredor (inicio/fim inputs), horizontal (inicio/fim inputs), vertical (inicio/fim inputs). Each input is a text field supporting numbers or letters. Submit button with label 'Gerar Preview'. Calls onSubmit(formValues) prop",
+        "Create src/components/etiquetas/endereco-preview.tsx — 'use client' component. Props: enderecos (string[]), total (number), warning (boolean). Renders addresses as small rounded badge pills in flex-wrap layout. Shows 'Total: N enderecos' text. If warning=true, shows yellow warning: 'Atencao: mais de 1000 etiquetas serao impressas'",
+        "Both use Tailwind, zinc palette, consistent with app style",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Frontend: etiquetas page",
+      "description": "As a developer, I want the /etiquetas page with tabs for small and large label generation and printing.",
+      "acceptanceCriteria": [
+        "Create src/app/etiquetas/page.tsx — 'use client' page wrapped in AppShell with title 'Etiquetas'",
+        "Two tabs using Tabs component: 'Pequena' and 'Grande'",
+        "Each tab contains: etiqueta-form for range input, endereco-preview displayed after form submit, 'Imprimir' button visible only after preview is generated",
+        "On form submit: POST /api/etiquetas/preview with range params, display results in endereco-preview",
+        "On Imprimir click: POST /api/etiquetas/imprimir with range params + tipo='pequena' or 'grande' matching active tab",
+        "If preview.warning is true: show confirm dialog before printing ('Serao impressas N etiquetas. Continuar?')",
+        "Toast success on print sent, toast error on failure",
+        "Uses sisoFetch for API calls",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Dashboard: module cards and inventory count",
+      "description": "As a developer, I want Inventario and Etiquetas cards on the home dashboard with an active inventory count badge.",
+      "acceptanceCriteria": [
+        "Edit src/app/page.tsx: add 'Inventario' card linking to /inventario and 'Etiquetas' card linking to /etiquetas. Follow same card pattern/style as existing module cards (SISO, Separacao, Compras etc.)",
+        "Edit src/app/api/dashboard/counts/route.ts: add inventario_ativos count by querying siso_inventarios WHERE status IN ('em_andamento','processando'). Include in response object",
+        "Inventario card shows inventario_ativos as count badge (same as other modules)",
+        "Etiquetas card has no count badge (stateless module)",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "Check src/app/page.tsx for existing card pattern and how counts are fetched/displayed."
+    },
+    {
+      "id": "US-017",
+      "title": "Documentation: API reference and CLAUDE.md updates",
+      "description": "As a developer, I want all new routes documented and project structure updated so future developers have accurate references.",
+      "acceptanceCriteria": [
+        "Edit docs/api-reference.md: add documentation for all 10 new routes following existing format — method, path, file location, auth requirements, request body shape, response body shape for each status code, business logic summary, side effects",
+        "Routes to document: GET /api/inventario, POST /api/inventario, GET /api/inventario/[id], PATCH /api/inventario/[id], POST /api/inventario/[id]/coletar, DELETE /api/inventario/[id]/itens/[itemId], POST /api/inventario/[id]/processar, GET /api/inventario/[id]/progresso, POST /api/etiquetas/preview, POST /api/etiquetas/imprimir",
+        "Edit CLAUDE.md Project Structure section: add inventario/ and etiquetas/ entries under app/, api/, components/, and lib/ sections",
+        "Edit CLAUDE.md Database Tables section: add siso_inventarios and siso_inventario_itens with their purpose",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "Read the existing docs/api-reference.md format first. Each route needs: method, path, source file, auth, request shape, response shape per status code, business logic notes."
+    }
+  ]
+}

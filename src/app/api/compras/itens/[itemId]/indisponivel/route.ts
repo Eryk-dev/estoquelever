@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
-import { buildCompraFieldReset, cancelOcIfEmpty, hasComprasAccess } from "@/lib/compras-utils";
+import { buildCompraFieldReset, cancelOcIfEmpty, checkAndCancelPedidoIfAllTerminal, hasComprasAccess } from "@/lib/compras-utils";
 
 /**
  * POST /api/compras/itens/[itemId]/indisponivel
@@ -18,6 +18,8 @@ export async function POST(
   if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
   const { itemId } = await params;
+  const body = await request.json().catch(() => ({}));
+  const motivo = (body as { motivo?: string }).motivo ?? null;
   const supabase = createServiceClient();
 
   try {
@@ -45,6 +47,7 @@ export async function POST(
         compra_status: "indisponivel",
         ordem_compra_id: null,
         compra_solicitada_em: item.compra_solicitada_em ?? new Date().toISOString(),
+        ...(motivo ? { compra_cancelamento_motivo: motivo } : {}),
       })
       .eq("id", itemId)
       .select("id, sku, descricao, fornecedor_oc, compra_status, pedido_id")
@@ -54,14 +57,25 @@ export async function POST(
 
     await cancelOcIfEmpty(supabase, ordemCompraId, "compras-indisponivel");
 
+    const { pedidoCancelado } = await checkAndCancelPedidoIfAllTerminal(
+      supabase,
+      item.pedido_id,
+      "compras-indisponivel",
+    );
+
     logger.warn("compras-indisponivel", "Item marcado como indisponível", {
       itemId,
       sku: item.sku,
       pedidoId: item.pedido_id,
       fornecedor: item.fornecedor_oc,
+      pedidoCancelado,
     });
 
-    return NextResponse.json({ ok: true, item: updated });
+    return NextResponse.json({
+      ok: true,
+      item: updated,
+      pedido_cancelado: pedidoCancelado ? item.pedido_id : null,
+    });
   } catch (err) {
     logger.error("compras-indisponivel", "Erro ao marcar item indisponível", {
       error: err instanceof Error ? err.message : String(err),

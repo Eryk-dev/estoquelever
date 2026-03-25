@@ -86,7 +86,7 @@ export async function POST(
       .from("siso_pedidos")
       .update({
         status: "cancelado",
-        status_separacao: pedido.status_separacao ? "cancelado" : null,
+        status_separacao: null,
         processado_em: new Date().toISOString(),
         compra_estoque_lancado_alerta: hadStockEntrada || undefined,
       })

@@ -2,9 +2,8 @@
  * Agrupamento (expedition grouping) pre-creation service.
  *
  * Called fire-and-forget when separation concludes (pedidos → "separado").
- * Groups pedidos by empresa_origem_id + shipping method (forma_envio_id,
- * forma_frete_id, transportador_id), creates one Tiny agrupamento per group,
- * downloads ZPL labels per expedition, and caches everything in DB.
+ * Creates one Tiny agrupamento per pedido (1:1) to isolate failures —
+ * if one pedido has a problem, it does not affect the others.
  *
  * Uses atomic claim (siso_claim_pedidos_para_agrupamento) to prevent duplicate
  * agrupamentos when called concurrently (e.g. double-click on "iniciar").
@@ -38,18 +37,9 @@ interface PedidoClaimed {
 }
 
 /**
- * Build a grouping key from empresa + shipping fields.
- * Pedidos with the same key can be in the same Tiny agrupamento.
- */
-function buildGroupKey(p: PedidoClaimed): string {
-  return `${p.empresa_origem_id}|${p.forma_envio_id ?? ""}|${p.forma_frete_id ?? ""}|${p.transportador_id ?? ""}`;
-}
-
-/**
- * Pre-create Tiny agrupamentos in batch for pedidos that just became "separado".
+ * Pre-create Tiny agrupamentos for pedidos that just became "separado".
+ * Creates one agrupamento per pedido (1:1) to isolate failures.
  * Uses atomic claim to prevent duplicate agrupamentos on concurrent calls.
- * Groups by empresa + shipping method, creates one agrupamento per group,
- * downloads ZPL labels, and caches them in etiqueta_zpl column.
  *
  * Errors are logged but never thrown — this is fire-and-forget.
  */
@@ -85,21 +75,18 @@ export async function preCriarAgrupamentosEmLote(
     return;
   }
 
-  // Group by empresa + shipping method
-  const groups = new Map<string, PedidoClaimed[]>();
+  // Group by empresa for token reuse + rate limiting
+  const byEmpresa = new Map<string, PedidoClaimed[]>();
   for (const p of pedidos as PedidoClaimed[]) {
-    const key = buildGroupKey(p);
-    const lista = groups.get(key) ?? [];
-    lista.push(p);
-    groups.set(key, lista);
+    const list = byEmpresa.get(p.empresa_origem_id) ?? [];
+    list.push(p);
+    byEmpresa.set(p.empresa_origem_id, list);
   }
 
-  // Process each group in parallel
-  const promises = Array.from(groups.entries()).map(
-    ([key, pedidosGrupo]) => {
-      const empresaId = pedidosGrupo[0].empresa_origem_id;
-      return processarGrupo(supabase, empresaId, key, pedidosGrupo);
-    },
+  // Process each empresa's pedidos (each pedido gets its own agrupamento)
+  const promises = Array.from(byEmpresa.entries()).map(
+    ([empresaId, pedidosEmpresa]) =>
+      processarPedidosEmpresa(supabase, empresaId, pedidosEmpresa),
   );
 
   await Promise.allSettled(promises);
@@ -113,9 +100,6 @@ export async function preCriarAgrupamentosEmLote(
  *    gets re-created on next iniciar/concluir via preCriarAgrupamentosEmLote.
  * 2. Agrupamento exists but not concluded → concludes it, then fetches labels.
  * 3. Agrupamento exists and concluded → fetches labels per expedition.
- *
- * Groups by agrupamento to minimize API calls (1 obterAgrupamento per group
- * instead of 1 per pedido).
  *
  * Errors are logged but never thrown — fire-and-forget.
  */
@@ -158,7 +142,7 @@ export async function recarregarEtiquetasFaltantes(
     pedidoIds: pedidosValidos.map((p) => p.id),
   });
 
-  // Group by empresa first (for token resolution)
+  // Group by empresa for token resolution
   const byEmpresa = new Map<string, typeof pedidosValidos>();
   for (const p of pedidosValidos) {
     const list = byEmpresa.get(p.empresa_origem_id) ?? [];
@@ -171,30 +155,20 @@ export async function recarregarEtiquetasFaltantes(
       try {
         const { token } = await getValidTokenByEmpresa(empresaId);
 
-        // Group by agrupamento within this empresa
-        const byAgrupamento = new Map<string, typeof pedidosEmpresa>();
-        for (const p of pedidosEmpresa) {
-          const agId = p.agrupamento_expedicao_id!;
-          const list = byAgrupamento.get(agId) ?? [];
-          list.push(p);
-          byAgrupamento.set(agId, list);
-        }
-
         await runWithEmpresa(empresaId, async () => {
-          for (const [agrupamentoIdStr, pedidosAgrup] of byAgrupamento) {
+          for (const p of pedidosEmpresa) {
             try {
               await retryAgrupamento(
                 supabase,
                 token,
-                empresaId,
-                parseInt(agrupamentoIdStr, 10),
-                pedidosAgrup,
+                parseInt(p.agrupamento_expedicao_id!, 10),
+                p,
               );
             } catch (err) {
               logger.warn(LOG_SOURCE, "Falha ao processar agrupamento no retry", {
-                agrupamentoId: agrupamentoIdStr,
+                agrupamentoId: p.agrupamento_expedicao_id,
                 empresaId,
-                pedidoIds: pedidosAgrup.map((p) => p.id),
+                pedidoId: p.id,
                 error: err instanceof Error ? err.message : String(err),
               });
             }
@@ -217,36 +191,189 @@ export async function recarregarEtiquetasFaltantes(
 type SupabaseClient = ReturnType<typeof createServiceClient>;
 
 /**
- * Smart retry for a single agrupamento — handles each state:
+ * Process all pedidos for one empresa: get token once, then create
+ * one agrupamento per pedido within the empresa's rate limit.
+ */
+async function processarPedidosEmpresa(
+  supabase: SupabaseClient,
+  empresaId: string,
+  pedidos: PedidoClaimed[],
+): Promise<void> {
+  const pedidoIds = pedidos.map((p) => p.id);
+
+  try {
+    const { token } = await getValidTokenByEmpresa(empresaId);
+
+    await runWithEmpresa(empresaId, async () => {
+      for (const pedido of pedidos) {
+        await processarPedido(supabase, token, pedido);
+      }
+    });
+  } catch (err) {
+    // Clear pending so pedidos can be retried
+    await supabase
+      .from("siso_pedidos")
+      .update({ agrupamento_expedicao_id: null, expedicao_id: null })
+      .in("id", pedidoIds)
+      .eq("agrupamento_expedicao_id", "pending");
+
+    logger.error(LOG_SOURCE, "Falha ao processar agrupamentos da empresa", {
+      empresaId,
+      pedidoIds,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Create a single Tiny agrupamento for one pedido, download its ZPL label,
+ * and cache everything in DB.
+ */
+async function processarPedido(
+  supabase: SupabaseClient,
+  token: string,
+  pedido: PedidoClaimed,
+): Promise<void> {
+  try {
+    if (!pedido.nota_fiscal_id) {
+      logger.warn(LOG_SOURCE, "Pedido sem nota fiscal, skip", { pedidoId: pedido.id });
+      return;
+    }
+
+    // 1. Create agrupamento with single NF
+    const formaFreteId = pedido.forma_frete_id
+      ? parseInt(pedido.forma_frete_id, 10)
+      : undefined;
+    const safeFormaFrete = isNaN(formaFreteId as number) ? undefined : formaFreteId;
+
+    let agrupamentoId: number;
+    try {
+      const agrupamento = await criarAgrupamento(token, [pedido.nota_fiscal_id], safeFormaFrete);
+      agrupamentoId = agrupamento.id;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("já foi expedida")) {
+        logger.warn(LOG_SOURCE, "NF já expedida no Tiny", {
+          pedidoId: pedido.id,
+          nfId: String(pedido.nota_fiscal_id),
+        });
+        await supabase
+          .from("siso_pedidos")
+          .update({ agrupamento_expedicao_id: "expedido_externo" })
+          .eq("id", pedido.id);
+        return;
+      }
+      throw err;
+    }
+
+    logger.info(LOG_SOURCE, "Agrupamento criado", {
+      pedidoId: pedido.id,
+      agrupamentoId: String(agrupamentoId),
+    });
+
+    // Save agrupamento ID (replacing 'pending')
+    await supabase
+      .from("siso_pedidos")
+      .update({ agrupamento_expedicao_id: String(agrupamentoId) })
+      .eq("id", pedido.id);
+
+    // 2. Conclude agrupamento (required before labels are available)
+    //    Non-fatal: Mercado Envios orders auto-request pickup, so concluir
+    //    may return 400. We still attempt to fetch labels regardless.
+    try {
+      await concluirAgrupamento(token, agrupamentoId);
+    } catch (err) {
+      logger.warn(LOG_SOURCE, "Não foi possível concluir agrupamento (tentando etiqueta mesmo assim)", {
+        pedidoId: pedido.id,
+        agrupamentoId: String(agrupamentoId),
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // 3. Get agrupamento details to find expedition ID
+    const details = await obterAgrupamento(token, agrupamentoId);
+
+    if (!details.expedicoes || details.expedicoes.length === 0) {
+      logger.warn(LOG_SOURCE, "Agrupamento sem expedições", {
+        pedidoId: pedido.id,
+        agrupamentoId: String(agrupamentoId),
+      });
+      return;
+    }
+
+    // Single pedido per agrupamento → use first expedition
+    const exp = details.expedicoes[0];
+
+    // 4. Fetch label
+    const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, exp.id);
+
+    if (!etiquetas.urls || etiquetas.urls.length === 0) {
+      // Save expedicao_id even without label (retry can use it)
+      await supabase
+        .from("siso_pedidos")
+        .update({ expedicao_id: String(exp.id) })
+        .eq("id", pedido.id);
+      logger.warn(LOG_SOURCE, "Sem URL de etiqueta", {
+        pedidoId: pedido.id,
+        agrupamentoId: String(agrupamentoId),
+        expedicaoId: String(exp.id),
+      });
+      return;
+    }
+
+    const url = etiquetas.urls[0];
+    const zpl = await baixarZpl(url);
+
+    await salvarEtiqueta(supabase, pedido.id, url, zpl, exp.id);
+
+    logger.info(LOG_SOURCE, "Etiqueta ZPL pré-cacheada", {
+      pedidoId: pedido.id,
+      agrupamentoId: String(agrupamentoId),
+      expedicaoId: String(exp.id),
+      cached: String(!!zpl),
+    });
+  } catch (err) {
+    // Clear pending so it can be retried
+    await supabase
+      .from("siso_pedidos")
+      .update({ agrupamento_expedicao_id: null, expedicao_id: null })
+      .eq("id", pedido.id)
+      .eq("agrupamento_expedicao_id", "pending");
+
+    logger.error(LOG_SOURCE, "Falha ao pré-criar agrupamento", {
+      pedidoId: pedido.id,
+      empresaId: pedido.empresa_origem_id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Smart retry for a single agrupamento (1 pedido) — handles each state:
  *
  * 1. Agrupamento not found (404) → clear agrupamento_expedicao_id
- * 2. Exists but not concluded → conclude, then fetch labels
- * 3. Concluded → fetch labels per expedition
- *
- * If pedidos already have `expedicao_id` saved from creation, skips the
- * obterAgrupamento call entirely (saves 1-2 API calls per agrupamento).
+ * 2. Exists but not concluded → conclude, then fetch label
+ * 3. Concluded → fetch label
  */
 async function retryAgrupamento(
   supabase: SupabaseClient,
   token: string,
-  empresaId: string,
   agrupamentoId: number,
-  pedidos: Array<{
+  pedido: {
     id: string;
     empresa_origem_id: string;
     agrupamento_expedicao_id: string | null;
     expedicao_id: string | null;
     etiqueta_url: string | null;
     etiqueta_zpl: string | null;
-  }>,
+  },
 ): Promise<void> {
-  const pedidoIds = pedidos.map((p) => p.id);
-
   // 1. Try to conclude (idempotent — if already concluded, Tiny returns 400)
   try {
     await concluirAgrupamento(token, agrupamentoId);
     logger.info(LOG_SOURCE, "Agrupamento concluído no retry", {
       agrupamentoId: String(agrupamentoId),
+      pedidoId: pedido.id,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -254,59 +381,40 @@ async function retryAgrupamento(
     if (msg.includes("404")) {
       logger.warn(LOG_SOURCE, "Agrupamento não encontrado no Tiny (404) — limpando para re-criação", {
         agrupamentoId: String(agrupamentoId),
-        pedidoIds,
+        pedidoId: pedido.id,
       });
       await supabase
         .from("siso_pedidos")
         .update({ agrupamento_expedicao_id: null, expedicao_id: null, etiqueta_url: null })
-        .in("id", pedidoIds);
+        .eq("id", pedido.id);
       return;
     }
-    // 400 = already concluded (Mercado Envios etc) — continue to fetch labels
+    // 400 = already concluded (Mercado Envios etc) — continue to fetch label
     if (!msg.includes("400")) {
       throw err;
     }
-    logger.warn(LOG_SOURCE, "Concluir agrupamento no retry (não-fatal)", {
+  }
+
+  // 2. Fast path: expedicao_id already saved → skip obterAgrupamento
+  if (pedido.expedicao_id) {
+    await fetchAndSaveLabel(supabase, token, agrupamentoId, parseInt(pedido.expedicao_id, 10), pedido.id);
+    return;
+  }
+
+  // 3. Slow path: discover expedition via obterAgrupamento
+  const details = await obterAgrupamento(token, agrupamentoId);
+
+  if (!details.expedicoes || details.expedicoes.length === 0) {
+    logger.warn(LOG_SOURCE, "Agrupamento sem expedições no retry", {
       agrupamentoId: String(agrupamentoId),
-      error: msg,
+      pedidoId: pedido.id,
     });
+    return;
   }
 
-  // 2. Fast path: if all pedidos already have expedicao_id saved, skip obterAgrupamento
-  const pedidosComExpedicao = pedidos.filter((p) => p.expedicao_id);
-  const pedidosSemExpedicao = pedidos.filter((p) => !p.expedicao_id);
-
-  // Fetch labels for pedidos with saved expedicao_id (no extra API call needed)
-  for (const p of pedidosComExpedicao) {
-    await fetchAndSaveLabel(supabase, token, agrupamentoId, parseInt(p.expedicao_id!, 10), p.id);
-  }
-
-  // 3. Slow path: pedidos without expedicao_id — need to discover via obterAgrupamento
-  if (pedidosSemExpedicao.length > 0) {
-    const details = await obterAgrupamento(token, agrupamentoId);
-
-    if (!details.expedicoes || details.expedicoes.length === 0) {
-      logger.warn(LOG_SOURCE, "Agrupamento sem expedições no retry", {
-        agrupamentoId: String(agrupamentoId),
-      });
-      return;
-    }
-
-    // Map pedido Tiny IDs for matching expeditions
-    const pedidoPorTinyId = new Map<number, string>();
-    for (const p of pedidosSemExpedicao) {
-      const tinyId = parseInt(p.id, 10);
-      if (!isNaN(tinyId)) pedidoPorTinyId.set(tinyId, p.id);
-    }
-
-    for (const exp of details.expedicoes) {
-      const pedidoId =
-        pedidoPorTinyId.get(exp.idObjeto) ??
-        (exp.venda?.id ? pedidoPorTinyId.get(exp.venda.id) : undefined);
-      if (!pedidoId) continue;
-      await fetchAndSaveLabel(supabase, token, agrupamentoId, exp.id, pedidoId);
-    }
-  }
+  // Single pedido per agrupamento → use first expedition
+  const exp = details.expedicoes[0];
+  await fetchAndSaveLabel(supabase, token, agrupamentoId, exp.id, pedido.id);
 }
 
 /** Fetch label for a single expedition and save to DB */
@@ -344,224 +452,6 @@ async function fetchAndSaveLabel(
       agrupamentoId: String(agrupamentoId),
       expedicaoId: String(expedicaoId),
       pedidoId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-async function processarGrupo(
-  supabase: SupabaseClient,
-  empresaId: string,
-  groupKey: string,
-  pedidos: PedidoClaimed[],
-): Promise<void> {
-  const pedidoIds = pedidos.map((p) => p.id);
-
-  try {
-    const { token } = await getValidTokenByEmpresa(empresaId);
-
-    // All Tiny API calls within this scope are rate-limited for this empresa
-    return await runWithEmpresa(empresaId, async () => {
-
-    // Build NF IDs + pedido mapping for expedition matching
-    const idsNotasFiscais: number[] = [];
-    const pedidoPorTinyId = new Map<number, string>();
-    const nfToPedidoId = new Map<number, string>();
-
-    for (const p of pedidos) {
-      if (!p.nota_fiscal_id) {
-        logger.warn(LOG_SOURCE, "Pedido sem nota fiscal, skip", { pedidoId: p.id });
-        continue;
-      }
-      idsNotasFiscais.push(p.nota_fiscal_id);
-      nfToPedidoId.set(p.nota_fiscal_id, p.id);
-      // Map both pedido ID and NF ID for expedition matching
-      const tinyId = parseInt(p.id, 10);
-      if (!isNaN(tinyId)) pedidoPorTinyId.set(tinyId, p.id);
-      pedidoPorTinyId.set(p.nota_fiscal_id, p.id);
-    }
-
-    if (idsNotasFiscais.length === 0) return;
-
-    // 1. Create agrupamento with NF IDs + forma de frete.
-    //    Retry loop: if Tiny reports a NF as "já foi expedida", remove it
-    //    from the batch and retry with the remaining NFs.
-    const formaFreteId = pedidos[0].forma_frete_id
-      ? parseInt(pedidos[0].forma_frete_id, 10)
-      : undefined;
-    const safeFormaFrete = isNaN(formaFreteId as number) ? undefined : formaFreteId;
-
-    let remainingNFs = [...idsNotasFiscais];
-    const MAX_RETRY_EXPEDIDA = 5;
-    let agrupamentoId: number | undefined;
-
-    for (let attempt = 0; attempt <= MAX_RETRY_EXPEDIDA; attempt++) {
-      try {
-        const agrupamento = await criarAgrupamento(token, remainingNFs, safeFormaFrete);
-        agrupamentoId = agrupamento.id;
-        break;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const nfMatch = msg.match(/Nota fiscal com id '(\d+)' já foi expedida/);
-
-        if (!nfMatch || attempt === MAX_RETRY_EXPEDIDA) {
-          throw err; // Not a "já expedida" error or max retries reached
-        }
-
-        const nfExpedida = parseInt(nfMatch[1], 10);
-        const pedidoAfetado = nfToPedidoId.get(nfExpedida);
-
-        logger.warn(LOG_SOURCE, "NF já expedida no Tiny — removendo do lote e retentando", {
-          nfId: String(nfExpedida),
-          pedidoId: pedidoAfetado ?? "desconhecido",
-          attempt: String(attempt + 1),
-          remainingBefore: String(remainingNFs.length),
-        });
-
-        // Remove the offending NF from the batch
-        remainingNFs = remainingNFs.filter((nf) => nf !== nfExpedida);
-
-        // Persist the external-expedition marker, but do not advance the local
-        // packing workflow here. Retrying labels must never move a pedido from
-        // separado -> embalado on its own.
-        if (pedidoAfetado) {
-          await supabase
-            .from("siso_pedidos")
-            .update({
-              agrupamento_expedicao_id: "expedido_externo",
-            })
-            .eq("id", pedidoAfetado);
-        }
-
-        if (remainingNFs.length === 0) {
-          logger.info(LOG_SOURCE, "Todas as NFs do grupo já foram expedidas", { groupKey });
-          return;
-        }
-      }
-    }
-
-    if (!agrupamentoId) return;
-
-    logger.info(LOG_SOURCE, "Agrupamento criado em lote", {
-      empresaId,
-      agrupamentoId: String(agrupamentoId),
-      qtdNFs: String(remainingNFs.length),
-      nfsRemovidas: String(idsNotasFiscais.length - remainingNFs.length),
-      groupKey,
-    });
-
-    // Save real agrupamento_expedicao_id (replacing 'pending') — only for NFs that were included
-    const remainingPedidoIds = remainingNFs
-      .map((nf) => nfToPedidoId.get(nf))
-      .filter((id): id is string => !!id);
-    const allPedidoIds = remainingPedidoIds;
-    await supabase
-      .from("siso_pedidos")
-      .update({ agrupamento_expedicao_id: String(agrupamentoId) })
-      .in("id", allPedidoIds);
-
-    // 2. Complete the agrupamento (required before labels are available)
-    //    Non-fatal: Mercado Envios orders auto-request pickup, so concluir
-    //    may return 400. We still attempt to fetch labels regardless.
-    try {
-      await concluirAgrupamento(token, agrupamentoId);
-      logger.info(LOG_SOURCE, "Agrupamento concluído", {
-        empresaId,
-        agrupamentoId: String(agrupamentoId),
-      });
-    } catch (err) {
-      logger.warn(LOG_SOURCE, "Não foi possível concluir agrupamento (tentando etiquetas mesmo assim)", {
-        empresaId,
-        agrupamentoId: String(agrupamentoId),
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-
-    // 3. Get agrupamento details to discover expedition IDs per pedido
-    const agrupamentoDetails = await obterAgrupamento(token, agrupamentoId);
-
-    if (!agrupamentoDetails.expedicoes || agrupamentoDetails.expedicoes.length === 0) {
-      logger.warn(LOG_SOURCE, "Agrupamento sem expedições", {
-        agrupamentoId: String(agrupamentoId),
-      });
-      return;
-    }
-
-    // 4. Fetch labels per expedition (one per pedido) in parallel
-    //    idObjeto is the pedido ID when tipoObjeto=pedido, or the NF ID when
-    //    tipoObjeto=nota_fiscal. Use venda.id as fallback to always find the pedido.
-    const labelPromises = agrupamentoDetails.expedicoes.map(async (exp) => {
-      const pedidoId = pedidoPorTinyId.get(exp.idObjeto)
-        ?? (exp.venda?.id ? pedidoPorTinyId.get(exp.venda.id) : undefined);
-      if (!pedidoId) {
-        logger.warn(LOG_SOURCE, "Expedição sem pedido correspondente", {
-          agrupamentoId: String(agrupamentoId),
-          expedicaoId: String(exp.id),
-          idObjeto: String(exp.idObjeto),
-          tipoObjeto: exp.tipoObjeto,
-          vendaId: String(exp.venda?.id ?? ""),
-        });
-        return;
-      }
-
-      try {
-        const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, exp.id);
-
-        if (!etiquetas.urls || etiquetas.urls.length === 0) {
-          logger.warn(LOG_SOURCE, "Sem URL de etiqueta para expedição", {
-            agrupamentoId: String(agrupamentoId),
-            expedicaoId: String(exp.id),
-            pedidoId,
-          });
-          return;
-        }
-
-        const url = etiquetas.urls[0];
-        const zpl = await baixarZpl(url);
-
-        await salvarEtiqueta(supabase, pedidoId, url, zpl, exp.id);
-
-        logger.info(LOG_SOURCE, "Etiqueta ZPL pré-cacheada", {
-          pedidoId,
-          expedicaoId: String(exp.id),
-          cached: String(!!zpl),
-        });
-      } catch (err) {
-        // Save expedicao_id even if label download failed — retry can use it
-        await supabase
-          .from("siso_pedidos")
-          .update({ expedicao_id: String(exp.id) })
-          .eq("id", pedidoId);
-
-        logger.warn(LOG_SOURCE, "Falha ao buscar etiqueta da expedição", {
-          agrupamentoId: String(agrupamentoId),
-          expedicaoId: String(exp.id),
-          pedidoId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    });
-
-    await Promise.allSettled(labelPromises);
-
-    logger.info(LOG_SOURCE, "Etiquetas processadas", {
-      empresaId,
-      agrupamentoId: String(agrupamentoId),
-      totalExpedicoes: String(agrupamentoDetails.expedicoes.length),
-    });
-    }); // end runWithEmpresa
-  } catch (err) {
-    // On failure, clear 'pending' so it can be retried
-    await supabase
-      .from("siso_pedidos")
-      .update({ agrupamento_expedicao_id: null, expedicao_id: null })
-      .in("id", pedidoIds)
-      .eq("agrupamento_expedicao_id", "pending");
-
-    logger.error(LOG_SOURCE, "Falha ao pré-criar agrupamento", {
-      empresaId,
-      groupKey,
-      pedidoIds,
       error: err instanceof Error ? err.message : String(err),
     });
   }

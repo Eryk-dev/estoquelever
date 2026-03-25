@@ -47,7 +47,7 @@ export async function GET(request: Request) {
   const [itensResult, estoquesResult] = await Promise.all([
     supabase
       .from("siso_pedido_itens")
-      .select("pedido_id, produto_id, sku, descricao, quantidade_pedida, fornecedor_oc, imagem_url")
+      .select("id, pedido_id, produto_id, sku, descricao, quantidade_pedida, fornecedor_oc, imagem_url")
       .in("pedido_id", pedidoIds),
     supabase
       .from("siso_pedido_item_estoques")
@@ -157,6 +157,7 @@ export async function GET(request: Request) {
         }
 
         return {
+          itemId: item.id,
           produtoId: item.produto_id,
           sku: item.sku ?? "",
           descricao: item.descricao ?? "",

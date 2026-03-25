@@ -11,7 +11,6 @@ const VALID_STATUSES: StatusSeparacao[] = [
   "em_separacao",
   "separado",
   "embalado",
-  "cancelado",
 ];
 
 const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [

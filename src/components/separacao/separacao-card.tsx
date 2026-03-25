@@ -58,7 +58,7 @@ interface SeparacaoCardProps {
   activeGalpaoNome?: string | null;
   checkbox?: boolean;
   checked?: boolean;
-  onToggle?: (id: string) => void;
+  onToggle?: (id: string, event?: React.MouseEvent | React.ChangeEvent) => void;
 }
 
 function formatDate(iso: string): string {
@@ -216,7 +216,7 @@ export function SeparacaoCard({
             <input
               type="checkbox"
               checked={checked}
-              onChange={() => onToggle?.(pedido.id)}
+              onChange={(e) => onToggle?.(pedido.id, e)}
               className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
             />
           </label>

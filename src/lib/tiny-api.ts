@@ -197,7 +197,7 @@ export interface TinyPedidoListItem {
 export async function listarPedidos(
   token: string,
   params: {
-    situacao?: string;
+    situacao?: string | number;
     dataInicialEmissao?: string;
     dataFinalEmissao?: string;
     limit?: number;
@@ -205,7 +205,7 @@ export async function listarPedidos(
   } = {},
 ): Promise<{ itens: TinyPedidoListItem[]; total?: number }> {
   const query = new URLSearchParams();
-  if (params.situacao) query.set("situacao", params.situacao);
+  if (params.situacao != null) query.set("situacao", String(params.situacao));
   if (params.dataInicialEmissao) query.set("dataInicialEmissao", params.dataInicialEmissao);
   if (params.dataFinalEmissao) query.set("dataFinalEmissao", params.dataFinalEmissao);
   query.set("limit", String(params.limit ?? 100));

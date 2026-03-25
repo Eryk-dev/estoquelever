@@ -189,6 +189,7 @@ export async function processWebhook(
       reservado: number;
       disponivel: number;
       localizacao: string | null;
+      produto_id_na_empresa: number | null;
     }> = [];
 
     for (const item of pedido.itens) {
@@ -272,6 +273,7 @@ export async function processWebhook(
             reservado: est.reservado,
             disponivel: est.disponivel,
             localizacao: est.localizacao,
+            produto_id_na_empresa: est.produtoIdNaEmpresa,
           });
         }
 
@@ -846,22 +848,22 @@ function calcularSugestaoMultiGalpao(
     .join(", ");
 
   // Transferencia ONLY when a galpão covers 100% (handled above).
-  // Partial case: propria if origin has some coverage, otherwise oc.
-  if (origemCovers > 0) {
-    return {
-      sugestao: "propria",
-      motivo: `Estoque parcial. ${coverageDesc}`,
-      parcial: true,
-      separacaoGalpaoId: galpaoOrigemId,
-    };
-  }
+  // Partial: items without stock need purchasing → always suggest OC.
+  const itensFaltantes = itens.filter((item) => {
+    const totalDisponivel = itensEstoques
+      .filter((e) => e.produto_id === item.produto_id)
+      .reduce((sum, e) => sum + Math.max(0, e.saldo), 0);
+    return totalDisponivel < item.quantidade_pedida;
+  });
 
   const fornecedores = [
-    ...new Set(itens.map((i) => i.fornecedor_oc).filter(Boolean)),
+    ...new Set(itensFaltantes.map((i) => i.fornecedor_oc).filter(Boolean)),
   ];
+  const faltantesDesc = itensFaltantes.map((i) => i.sku).join(", ");
+
   return {
     sugestao: "oc",
-    motivo: `Estoque parcial — origem sem cobertura. ${coverageDesc}${fornecedores.length > 0 ? ` (Fornecedor: ${fornecedores.join(", ")})` : ""}`,
+    motivo: `Estoque parcial. ${coverageDesc}. Itens sem estoque: ${faltantesDesc}${fornecedores.length > 0 ? ` (Fornecedor: ${fornecedores.join(", ")})` : ""}`,
     parcial: true,
     separacaoGalpaoId: galpaoOrigemId,
   };

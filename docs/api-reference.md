@@ -928,111 +928,293 @@ Updates product warehouse location in Tiny ERP and local DB.
 ### `GET /api/compras`
 
 **File:** `src/app/api/compras/route.ts`
-**Auth:** `cargo` query param (admin or comprador)
+**Auth:** Session (`X-Session-Id`) — cargo `admin` or `comprador`
 
-Returns the buyer operational view for purchase flow, with counts, summary metrics, bottlenecks and the requested tab data.
+Supplier-first view for the purchase flow (Compras v2). No OC references.
 
 **Query Params:**
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `status` | string | `aguardando_compra` | `aguardando_compra`, `comprado`, `excecoes` (`indisponivel` ainda aceito por compatibilidade) |
-| `cargo` | string | - | User cargo for auth check |
+| `tab` | string | `pendentes` | `pendentes` or `recebidos` |
+
+**Response 200 — tab `pendentes`:**
+```json
+{
+  "counts": {
+    "para_comprar": 5,
+    "aguardando_entrega": 2,
+    "pedidos_bloqueados": 7
+  },
+  "fornecedores": [{
+    "fornecedor": "ACA",
+    "galpao_sugerido_id": "uuid | null",
+    "galpao_sugerido_nome": "CWB | null",
+    "para_comprar": 3,
+    "aguardando_entrega": 1,
+    "pedidos_bloqueados": 4,
+    "aging_dias": 4,
+    "itens": [{
+      "sku": "19ABC",
+      "descricao": "Filtro de Óleo",
+      "imagem_url": "https://... | null",
+      "compra_status": "aguardando_compra",
+      "quantidade_necessaria": 5,
+      "quantidade_comprada": null,
+      "quantidade_recebida": 0,
+      "aging_dias": 4,
+      "comprado_em": null,
+      "pedidos": [{
+        "pedido_id": "uuid",
+        "numero": "12345",
+        "cliente_nome": "João Silva",
+        "quantidade": 2,
+        "aging_dias": 4,
+        "item_id": "uuid"
+      }]
+    }]
+  }]
+}
+```
+
+**Notes on tab `pendentes`:**
+- Queries `siso_pedido_itens` where `compra_status IN ('aguardando_compra', 'comprado')`.
+- Items are consolidated by SKU within each supplier — same SKU from different orders becomes one entry with summed quantities.
+- `quantidade_necessaria` = sum of `compra_quantidade_solicitada` across all order lines for that SKU.
+- `compra_status` on the consolidated entry is `'comprado'` if any order line for that SKU has been ordered; otherwise `'aguardando_compra'`.
+- Items within a supplier are sorted: `aguardando_compra` first, then by `aging_dias` desc.
+- Suppliers sorted by `pedidos_bloqueados` desc, then `aging_dias` desc.
+- `galpao_sugerido_*` derived from first SKU via `sku-fornecedor.ts → filialOC`.
+- Aging base: `comprado_em` for `comprado` lines; `siso_pedidos.criado_em` otherwise.
+- Suppliers with no pending or awaiting items are excluded (guard only — filter ensures they are never included).
+
+**Response 200 — tab `recebidos`:**
+```json
+{
+  "counts": {
+    "para_comprar": 5,
+    "aguardando_entrega": 2,
+    "pedidos_bloqueados": 7
+  },
+  "fornecedores": [{
+    "fornecedor": "ACA",
+    "data_recebimento": "2026-03-22",
+    "itens": [{
+      "sku": "19ABC",
+      "descricao": "Filtro de Óleo",
+      "quantidade_recebida": 3,
+      "recebido_em": "2026-03-22T14:30:00Z"
+    }]
+  }]
+}
+```
+
+**Notes on tab `recebidos`:**
+- Queries `siso_pedido_itens` where `compra_status = 'recebido'` and `recebido_em IS NOT NULL`.
+- Grouped by supplier + calendar date (`YYYY-MM-DD`).
+- Sorted by `data_recebimento` desc (most recent first), then supplier name alphabetically.
+- Counts are always global (same as `pendentes` tab — not filtered to recebidos).
+
+**Response 400:** Invalid `tab` value.
+**Response 401:** Missing or expired session.
+**Response 403:** User does not have comprador or admin cargo.
+
+---
+
+### `POST /api/compras/comprar`
+
+**File:** `src/app/api/compras/comprar/route.ts`
+**Auth:** Session (`X-Session-Id`) — cargo `admin` or `comprador`
+
+Marks items as purchased for a supplier. Qty is consolidated by SKU and distributed across order items by aging (oldest first).
+
+**Request Body:**
+```json
+{
+  "itens": [
+    { "sku": "19ABC", "quantidade_comprada": 5 },
+    { "sku": "EW123", "quantidade_comprada": 3 }
+  ]
+}
+```
 
 **Response 200:**
 ```json
 {
-  "counts": { "aguardando_compra": 5, "comprado": 2, "indisponivel": 1 },
-  "summary": {
-    "itens_pendentes": 12,
-    "quantidade_pendente": 34,
-    "pedidos_bloqueados": 7,
-    "empresas_em_compra": 3,
-    "ocs_abertas": 2,
-    "excecoes": 1,
-    "mais_antigo_dias": 4,
-    "gargalos_fornecedor": [{ "nome": "ACA", "quantidade": 10, "pedidos": 4 }],
-    "gargalos_empresa": [{ "nome": "NetAir", "quantidade": 12, "pedidos": 3 }]
-  },
-  "data": [...]
+  "ok": true,
+  "resultados": [{
+    "sku": "19ABC",
+    "itens_marcados": 2,
+    "quantidade_alocada": 5,
+    "quantidade_excedente": 0
+  }]
 }
 ```
 
-**Data shapes by status:**
+**Business Logic:**
+- Fetches all `siso_pedido_itens` for each SKU with `compra_status = 'aguardando_compra'`
+- Sorts by `siso_pedidos.criado_em` ascending (oldest pedido first)
+- Distributes `quantidade_comprada` across items: each item gets `min(remaining, compra_quantidade_solicitada)`
+- Each allocated item: `compra_status → 'comprado'`, `compra_quantidade_comprada` set, `comprado_em`, `comprado_por`, `comprado_por_nome` recorded
+- If `quantidade_comprada < sum(solicitada)`: newest items stay as `aguardando_compra`
+- If `quantidade_comprada > sum(solicitada)`: excess reported in `quantidade_excedente`
 
-**`aguardando_compra`:** Array grouped by supplier (across all empresas):
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "Envie { itens: [...] }" }` | Missing or empty `itens` array |
+| 401 | `{ error: "Sessão inválida" }` | Missing or expired session |
+| 403 | `{ error: "Apenas compradores podem marcar como comprado" }` | User lacks comprador/admin cargo |
+
+---
+
+### `POST /api/compras/receber`
+
+**File:** `src/app/api/compras/receber/route.ts`
+**Auth:** Session (`X-Session-Id`) — cargo `admin` or `comprador`
+
+Confirms receiving of purchased items. Supports partial receiving. Allocates received qty to orders by aging (oldest first). Identifies and releases orders where all purchase items are now received.
+
+**Request Body:**
 ```json
-[{
-  "fornecedor": "ACA",
-  "galpao_sugerido_id": "uuid | null",
-  "galpao_sugerido_nome": "CWB | null",
-  "empresas": [{ "id": "uuid", "nome": "NetAir" }],
-  "prioridade": "critica",
-  "aging_dias": 4,
-  "pedidos_bloqueados": 3,
-  "quantidade_total": 9,
-  "total_skus": 2,
-  "rascunho_ocs": 0,
-  "itens_em_rascunho": 0,
-  "proxima_acao": "Selecionar a rodada ideal e confirmar com o fornecedor",
-  "itens": [{
-    "sku": "19ABC",
-    "descricao": "Filtro",
-    "imagem": "https://...",
-    "quantidade_total": 5,
-    "pedidos_bloqueados": 2,
-    "aging_dias": 4,
-    "primeira_solicitacao_em": "2026-03-18T12:00:00Z",
-    "fornecedor_oc": "ACA",
-    "pedidos": [{ "pedido_id": "123", "numero_pedido": "12345", "quantidade": 2 }],
-    "itens_ids": ["uuid1", "uuid2"]
-  }]
-}]
+{
+  "itens": [
+    { "sku": "19ABC", "quantidade_recebida": 3, "observacao": "1 com defeito" }
+  ]
+}
 ```
 
-Groups are split by `fornecedor` only (items from all empresas for same supplier are grouped together). The `galpao_sugerido_id`/`galpao_sugerido_nome` default comes from `sku-fornecedor.ts` → `filialOC`. `empresas` is an informative array of unique empresas with items in the group. `compra_quantidade_solicitada` is the real quantity to buy. Sorted by priority/aging.
-
-**`comprado`:** Array of OCs with items:
+**Response 200:**
 ```json
-[{
-  "id": "uuid",
-  "fornecedor": "ACA",
-  "galpao_id": "uuid | null",
-  "galpao_nome": "CWB | null",
-  "status": "comprado",
-  "comprado_por_nome": "Eryk",
-  "comprado_em": "2026-03-17T...",
-  "aging_dias": 2,
-  "prioridade": "alta",
-  "pedidos_bloqueados": 3,
-  "quantidade_total": 12,
-  "quantidade_recebida": 5,
-  "total_itens": 3,
-  "itens_recebidos": 1,
-  "proxima_acao": "Conferir recebimento da OC",
-  "itens": [{
-    "id": "uuid",
+{
+  "ok": true,
+  "recebimento": [{
     "sku": "19ABC",
-    "quantidade": 2,
-    "compra_status": "comprado",
-    "compra_quantidade_recebida": 0,
-    "aging_dias": 2
-  }]
-}]
+    "itens_atualizados": 2,
+    "quantidade_alocada": 3
+  }],
+  "pedidos_desbloqueados": ["pedido-id-1"]
+}
 ```
 
-**`excecoes`:** Flat array of itens com `compra_status` em `indisponivel`, `equivalente_pendente` ou `cancelamento_pendente`.
+**Business Logic:**
+- Fetches all `siso_pedido_itens` for each SKU with `compra_status = 'comprado'`
+- Sorts by `siso_pedidos.criado_em` ascending (oldest first)
+- Distributes `quantidade_recebida` across items by aging: each item gets `min(remaining, faltante)`
+- `compra_quantidade_recebida` incremented; if fully received → `compra_status = 'recebido'`
+- After allocation, checks each affected pedido: if ALL compra items resolved → releases pedido
+- Released pedidos: `status → 'executando'`, `status_separacao → 'aguardando_nf'` (or `'aguardando_separacao'` if NF already arrived)
+- Creates priority job in `siso_fila_execucao` with `prioridade: true`
+- Kicks execution worker to process priority jobs immediately
+- Divergence `observacao` saved to `compra_equivalente_observacao` (never blocks the flow)
 
-Cada item de exceção inclui, além dos dados básicos, campos como:
-- `compra_status`
-- `empresa_nome`
-- `aging_dias`
-- `prioridade`
-- `proxima_acao`
-- `compra_equivalente_sku`
-- `compra_equivalente_descricao`
-- `compra_equivalente_fornecedor`
-- `compra_equivalente_observacao`
-- `compra_cancelamento_motivo`
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "Envie { itens: [...] }" }` | Missing or empty `itens` array |
+| 401 | `{ error: "Sessão inválida" }` | Missing or expired session |
+| 403 | `{ error: "Acesso negado" }` | User lacks comprador/admin cargo |
+
+---
+
+### `GET /api/compras/progresso`
+
+**File:** `src/app/api/compras/progresso/route.ts`
+**Auth:** Session (`X-Session-Id`) — cargo `admin` or `comprador`
+
+Returns processing status for pedidos released after receiving. Used for polling (every 2-3s) to show progress bar.
+
+**Query Params:**
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `pedidos` | string | yes | Comma-separated pedido IDs |
+
+**Response 200:**
+```json
+{
+  "concluido": false,
+  "pedidos": [{
+    "pedido_id": "uuid",
+    "numero": "12345",
+    "status": "processando",
+    "etapa": "Aguardando NF..."
+  }],
+  "prontos": ["uuid-1"],
+  "erros": ["uuid-2"]
+}
+```
+
+**Status values per pedido:**
+| Status | Meaning |
+|--------|---------|
+| `processando` | Job in queue or executing |
+| `pronto` | Pedido reached `separado`, `embalado`, or `aguardando_separacao` with `etiqueta_status = 'carregada'` |
+| `erro` | Job failed |
+
+**`concluido`** is `true` when every pedido is either `pronto` or `erro`.
+
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "Parâmetro pedidos obrigatório" }` | Missing `pedidos` query param |
+| 401 | `{ error: "Sessão inválida" }` | Missing or expired session |
+| 403 | `{ error: "Acesso negado" }` | User lacks comprador/admin cargo |
+
+---
+
+### `POST /api/compras/trocar-sku`
+
+**File:** `src/app/api/compras/trocar-sku/route.ts`
+**Auth:** Session (`X-Session-Id`) — cargo `admin` or `comprador`
+
+Swaps the SKU of purchase items to an equivalent. Recalculates supplier by prefix. Checks stock across all empresas in the group. If stock exists, item leaves compras and pedido is released; otherwise item stays under the new supplier.
+
+**Request Body:**
+```json
+{
+  "item_ids": ["uuid-1", "uuid-2"],
+  "novo_sku": "EW456"
+}
+```
+
+**Response 200 — stock found (item released):**
+```json
+{
+  "ok": true,
+  "acao": "liberado",
+  "novo_sku": "EW456",
+  "novo_fornecedor": "Eletricway",
+  "pedidos_liberados": ["pedido-id-1"]
+}
+```
+
+**Response 200 — no stock (item migrated to new supplier):**
+```json
+{
+  "ok": true,
+  "acao": "migrado",
+  "novo_sku": "EW456",
+  "novo_fornecedor": "Eletricway",
+  "pedidos_liberados": []
+}
+```
+
+**Business Logic:**
+- Resolves new supplier via `getFornecedorBySku()` (prefix-based mapping)
+- Finds origin empresa from the first item's pedido
+- Gets all empresas in the same grupo via `getEmpresasDoGrupo()`
+- For each empresa: calls `buscarProdutoPorSku` then `getEstoque` to check availability
+- If any empresa has stock > 0:
+  - Clears all compra fields (`compra_status → null`, etc.)
+  - Checks if pedido has remaining compra items; if none → releases pedido (`status_separacao → 'aguardando_nf'`)
+- If no stock: updates `sku` and `fornecedor_oc` only (item moves to new supplier's card in UI)
+
+**Errors:**
+| Status | Body | Cause |
+|--------|------|-------|
+| 400 | `{ error: "Envie { item_ids, novo_sku }" }` | Missing or empty fields |
+| 401 | `{ error: "Sessão inválida" }` | Missing or expired session |
+| 403 | `{ error: "Acesso negado" }` | User lacks comprador/admin cargo |
+| 404 | `{ error: "Itens não encontrados" }` | No items match provided IDs |
 
 ---
 

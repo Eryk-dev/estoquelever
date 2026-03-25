@@ -3,16 +3,19 @@
 import { useState, useRef, useEffect } from "react";
 import {
   ArrowRight,
+  Check,
   ChevronDown,
   Loader2,
   MapPin,
   Package,
-
+  Pencil,
   ShoppingCart,
   Truck,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { sisoFetch } from "@/lib/auth-context";
 import {
   getEcommerceAbbr,
   getEcommerceColors,
@@ -304,6 +307,45 @@ function ProductRow({ item, decisao, pedido, onStockUpdated }: ProductRowProps) 
   const filialOrigem = pedido.filialOrigem;
   const location = getRelevantLocation(item, decisao, filialOrigem, pedido);
   const galpoes = Object.keys(item.estoques).sort();
+  const [editingSku, setEditingSku] = useState(false);
+  const [newSku, setNewSku] = useState(item.sku);
+  const [swapping, setSwapping] = useState(false);
+  const skuInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingSku && skuInputRef.current) {
+      skuInputRef.current.focus();
+      skuInputRef.current.select();
+    }
+  }, [editingSku]);
+
+  async function handleSkuSwap() {
+    if (!newSku.trim() || newSku === item.sku) {
+      setEditingSku(false);
+      setNewSku(item.sku);
+      return;
+    }
+    setSwapping(true);
+    try {
+      const res = await sisoFetch("/api/compras/trocar-sku", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_ids: [item.itemId], novo_sku: newSku.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error ?? "Erro ao trocar SKU");
+        return;
+      }
+      toast.success(`SKU trocado para ${newSku}`);
+      setEditingSku(false);
+      onStockUpdated?.();
+    } catch {
+      toast.error("Erro ao trocar SKU");
+    } finally {
+      setSwapping(false);
+    }
+  }
 
   /** Determine which galpão is "relevant" (will be used for this decision) */
   function isGalpaoRelevant(g: string): boolean {
@@ -338,17 +380,53 @@ function ProductRow({ item, decisao, pedido, onStockUpdated }: ProductRowProps) 
 
       {/* SKU + description + metadata */}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-baseline gap-2">
-          <span
-            className={cn(
-              "inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5",
-              "bg-zinc-900 font-mono text-[11px] font-bold tracking-wide text-white",
-              "dark:bg-zinc-100 dark:text-zinc-900",
-            )}
-            title={`SKU: ${item.sku}`}
-          >
-            {item.sku}
-          </span>
+        <div className="flex items-center gap-2">
+          {editingSku ? (
+            <div className="flex items-center gap-1">
+              <input
+                ref={skuInputRef}
+                type="text"
+                value={newSku}
+                onChange={(e) => setNewSku(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSkuSwap();
+                  if (e.key === "Escape") { setEditingSku(false); setNewSku(item.sku); }
+                }}
+                disabled={swapping}
+                className="w-24 rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[11px] font-bold text-ink outline-none focus:border-ink/30"
+              />
+              <button type="button" onClick={handleSkuSwap} disabled={swapping} className="text-emerald-600 hover:text-emerald-500" title="Confirmar">
+                {swapping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              </button>
+              <button type="button" onClick={() => { setEditingSku(false); setNewSku(item.sku); }} disabled={swapping} className="text-ink-faint hover:text-ink" title="Cancelar">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <span
+                className={cn(
+                  "inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5",
+                  "bg-zinc-900 font-mono text-[11px] font-bold tracking-wide text-white",
+                  "dark:bg-zinc-100 dark:text-zinc-900",
+                )}
+                title={`SKU: ${item.sku}`}
+              >
+                {item.sku}
+              </span>
+              {/* Show pencil when item has no stock in any galpão */}
+              {!Object.values(item.estoques).some((g) => g.atende) && (
+                <button
+                  type="button"
+                  onClick={() => setEditingSku(true)}
+                  className="text-ink-faint transition-colors hover:text-ink"
+                  title="Trocar SKU"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+              )}
+            </>
+          )}
         </div>
         <span
           className="min-w-0 truncate text-sm font-medium text-ink"
@@ -359,7 +437,7 @@ function ProductRow({ item, decisao, pedido, onStockUpdated }: ProductRowProps) 
 
         {/* Location + stock numbers */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          {decisao === "oc" ? (
+          {!Object.values(item.estoques).some((g) => g.atende) ? (
             <>
               <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[11px] text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
                 <ShoppingCart className="h-2.5 w-2.5" aria-hidden="true" />
@@ -578,7 +656,12 @@ function ActionRow({ pedido, decisao, loading, onSelectDecisao, onAprovar }: Act
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProps) {
-  const [decisao, setDecisao] = useState<Decisao>(pedido.sugestao);
+  const hasItemSemEstoque = pedido.itens.some(
+    (item) => !Object.values(item.estoques).some((g) => g.atende),
+  );
+  const [decisao, setDecisao] = useState<Decisao>(
+    hasItemSemEstoque ? "oc" : pedido.sugestao,
+  );
   const [loading, setLoading] = useState(false);
 
   async function handleAprovar() {

@@ -18,7 +18,7 @@ import {
 import { GalpaoSelector } from "@/components/galpao-selector";
 import type { Tab, StatusSeparacao, SeparacaoCounts } from "@/types";
 
-type VisibleSeparacaoTab = Exclude<StatusSeparacao, "cancelado">;
+type VisibleSeparacaoTab = StatusSeparacao;
 
 // 6 tabs mapping 1:1 to StatusSeparacao values
 const TAB_CONFIG: {
@@ -180,6 +180,7 @@ function SeparacaoPageContent() {
   const [tagModalOpen, setTagModalOpen] = useState(false);
   const [tagInput, setTagInput] = useState("");
   const [tagActionLoading, setTagActionLoading] = useState(false);
+  const lastCheckedIdx = useRef<number | null>(null);
   // Action loading states
   const [actionLoading, setActionLoading] = useState(false);
   const [revertMenuState, setRevertMenuState] = useState<{
@@ -198,7 +199,29 @@ function SeparacaoPageContent() {
   // Realtime: auto-refresh when other operators change order statuses
   useRealtimeSeparacao();
 
-  function toggleSelected(id: string) {
+  function toggleSelected(id: string, event?: React.MouseEvent | React.ChangeEvent) {
+    const nativeEvent = event?.nativeEvent as MouseEvent | undefined;
+    const isShift = nativeEvent?.shiftKey ?? false;
+
+    if (isShift && lastCheckedIdx.current !== null && pedidos.length > 0) {
+      const curIdx = pedidos.findIndex((p) => p.id === id);
+      if (curIdx !== -1) {
+        const start = Math.min(lastCheckedIdx.current, curIdx);
+        const end = Math.max(lastCheckedIdx.current, curIdx);
+        setSelectionState((prev) => {
+          const baseIds = prev.key === contextKey ? prev.ids : new Set<string>();
+          const next = new Set(baseIds);
+          for (let i = start; i <= end; i++) next.add(pedidos[i].id);
+          return { key: contextKey, ids: next };
+        });
+        lastCheckedIdx.current = curIdx;
+        return;
+      }
+    }
+
+    const idx = pedidos.findIndex((p) => p.id === id);
+    if (idx !== -1) lastCheckedIdx.current = idx;
+
     setSelectionState((prev) => {
       const baseIds = prev.key === contextKey ? prev.ids : new Set<string>();
       const next = new Set(baseIds);
@@ -362,17 +385,35 @@ function SeparacaoPageContent() {
   }
 
   async function handleForcarPendente() {
-    if (selectedIds.size === 0) return;
+    const ids = selectedIds.size > 0
+      ? Array.from(selectedIds)
+      : pedidos.map((p) => p.id);
+    if (ids.length === 0) return;
     setActionLoading(true);
     try {
       const res = await sisoFetch("/api/separacao/forcar-pendente", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pedido_ids: Array.from(selectedIds) }),
+        body: JSON.stringify({ pedido_ids: ids }),
       });
       if (res.ok) {
         const body = await res.json();
-        toast.success(`${body.total ?? selectedIds.size} pedido(s) movido(s) para Aguardando Separacao`);
+        const semNf = body.pedidos_sem_nf?.length ?? 0;
+        const naoAutorizados = body.pedidos_nf_nao_autorizada?.length ?? 0;
+        const movidos = body.total ?? 0;
+
+        if (movidos > 0) {
+          toast.success(`${movidos} pedido(s) movido(s) para Aguardando Separacao`);
+        }
+        if (semNf > 0) {
+          toast.warning(`${semNf} pedido(s) sem NF — não puderam ser movidos`);
+        }
+        if (naoAutorizados > 0) {
+          toast.warning(`${naoAutorizados} pedido(s) com NF não autorizada no Tiny`);
+        }
+        if (movidos === 0 && semNf === 0 && naoAutorizados === 0) {
+          toast.info("Nenhum pedido elegível para mover");
+        }
         clearSelection();
         refetch();
       } else {
@@ -449,7 +490,10 @@ function SeparacaoPageContent() {
   }
 
   async function handleMoverEtapa(novoStatus: StatusSeparacao) {
-    if (selectedIds.size === 0) return;
+    const ids = selectedIds.size > 0
+      ? Array.from(selectedIds)
+      : pedidos.map((p) => p.id);
+    if (ids.length === 0) return;
     setActionLoading(true);
     closeRevertMenu();
     try {
@@ -457,7 +501,7 @@ function SeparacaoPageContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          pedido_ids: Array.from(selectedIds),
+          pedido_ids: ids,
           novo_status: novoStatus,
         }),
       });
@@ -1075,16 +1119,16 @@ function SeparacaoPageContent() {
                   count={selectedIds.size || pedidos.length}
                 />
               )}
-              {semEtiqueta > 0 && comEtiqueta > 0 && (
-                <button
-                  type="button"
-                  onClick={handleEmbalarComEtiqueta}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 sm:px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700"
-                >
-                  <PackageCheck className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Embalar</span> {comEtiqueta} <span className="hidden sm:inline">com etiqueta</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleEmbalarSelecionados}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-3 sm:px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              >
+                <PackageCheck className="h-3.5 w-3.5" />
+                {selectedIds.size > 0
+                  ? `Embalar ${selectedIds.size}`
+                  : `Embalar todos (${pedidos.length})`}
+              </button>
               {semEtiqueta > 0 && (
                 <button
                   type="button"
@@ -1098,16 +1142,16 @@ function SeparacaoPageContent() {
                     : `Gerar ${semEtiqueta} etiqueta(s)`}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={handleEmbalarSelecionados}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-3 sm:px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-              >
-                <PackageCheck className="h-3.5 w-3.5" />
-                {selectedIds.size > 0
-                  ? `Embalar ${selectedIds.size}`
-                  : `Embalar todos (${pedidos.length})`}
-              </button>
+              {semEtiqueta > 0 && comEtiqueta > 0 && (
+                <button
+                  type="button"
+                  onClick={handleEmbalarComEtiqueta}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 sm:px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700"
+                >
+                  <PackageCheck className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Embalar</span> {comEtiqueta} <span className="hidden sm:inline">com etiqueta</span>
+                </button>
+              )}
             </div>
           </div>
           </>

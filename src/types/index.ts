@@ -35,6 +35,8 @@ export interface GalpaoEstoque {
 
 /** Stock info for one product across galpões */
 export interface EstoqueItem {
+  /** siso_pedido_itens row ID */
+  itemId: string;
   produtoId: number;
   sku: string;
   descricao: string;
@@ -116,8 +118,7 @@ export type StatusSeparacao =
   | "aguardando_separacao"
   | "em_separacao"
   | "separado"
-  | "embalado"
-  | "cancelado";
+  | "embalado";
 
 /** Consolidated product for wave picking */
 export interface ProdutoConsolidado {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Package, Printer, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -40,8 +40,30 @@ export function TabEmbalados({ pedidos, onUpdated }: TabEmbaladosProps) {
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
   const [reprintingIds, setReprintingIds] = useState<Set<string>>(new Set());
+  const lastCheckedIdx = useRef<number | null>(null);
 
-  function toggleSelect(id: string) {
+  function toggleSelect(id: string, event?: React.ChangeEvent) {
+    const nativeEvent = event?.nativeEvent as MouseEvent | undefined;
+    const isShift = nativeEvent?.shiftKey ?? false;
+
+    if (isShift && lastCheckedIdx.current !== null) {
+      const curIdx = pedidos.findIndex((p) => p.id === id);
+      if (curIdx !== -1) {
+        const start = Math.min(lastCheckedIdx.current, curIdx);
+        const end = Math.max(lastCheckedIdx.current, curIdx);
+        setSelected((prev) => {
+          const next = new Set(prev);
+          for (let i = start; i <= end; i++) next.add(pedidos[i].id);
+          return next;
+        });
+        lastCheckedIdx.current = curIdx;
+        return;
+      }
+    }
+
+    const idx = pedidos.findIndex((p) => p.id === id);
+    if (idx !== -1) lastCheckedIdx.current = idx;
+
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -204,7 +226,7 @@ export function TabEmbalados({ pedidos, onUpdated }: TabEmbaladosProps) {
               <input
                 type="checkbox"
                 checked={isChecked}
-                onChange={() => toggleSelect(pedido.id)}
+                onChange={(e) => toggleSelect(pedido.id, e)}
                 className="h-3.5 w-3.5 shrink-0 rounded border-zinc-300 accent-blue-600"
                 aria-label={`Selecionar pedido ${pedido.numero}`}
               />

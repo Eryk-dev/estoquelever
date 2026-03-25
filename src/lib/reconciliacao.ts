@@ -190,6 +190,10 @@ export async function reconciliar(opts: {
 
             const itens = res.itens ?? [];
             for (const item of itens) {
+              // Skip non-marketplace orders (no ecommerce = internal/manual Tiny order)
+              if (!item.ecommerce?.nome && !item.ecommerce?.numeroPedidoEcommerce) {
+                continue;
+              }
               allTinyPedidos.push({
                 id: String(item.id),
                 numero: String(item.numeroPedido),

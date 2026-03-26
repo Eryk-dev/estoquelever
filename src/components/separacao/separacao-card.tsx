@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { sisoFetch } from "@/lib/auth-context";
-import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin, RotateCcw, Tag } from "lucide-react";
+import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin, RotateCcw, Tag, MoreVertical, ArrowRightLeft } from "lucide-react";
 import { getEcommerceAbbr, getEcommerceColors } from "@/lib/domain-helpers";
 import { PedidoTimeline } from "./pedido-timeline";
 import type { Decisao, StatusSeparacao } from "@/types";
@@ -51,6 +51,7 @@ export interface SeparacaoPedido {
   etiqueta_status: string | null;
   etiqueta_pronta: boolean;
   separacao_tags: string[];
+  encaminhado_de: string | null;
 }
 
 interface SeparacaoCardProps {
@@ -59,6 +60,8 @@ interface SeparacaoCardProps {
   checkbox?: boolean;
   checked?: boolean;
   onToggle?: (id: string, event?: React.MouseEvent | React.ChangeEvent) => void;
+  galpoes?: Array<{ id: string; nome: string }>;
+  onEncaminhar?: (pedidoId: string, galpaoDestinoId: string) => Promise<void>;
 }
 
 function formatDate(iso: string): string {
@@ -89,6 +92,8 @@ export function SeparacaoCard({
   checkbox,
   checked,
   onToggle,
+  galpoes,
+  onEncaminhar,
 }: SeparacaoCardProps) {
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -96,12 +101,31 @@ export function SeparacaoCard({
   const [itemsLoading, setItemsLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [retryingLabel, setRetryingLabel] = useState(false);
+  const [kebabOpen, setKebabOpen] = useState(false);
+  const [encaminhando, setEncaminhando] = useState(false);
+  const kebabRef = useRef<HTMLDivElement>(null);
   const isEmbalado = pedido.status_separacao === "embalado";
   const isSeparado = pedido.status_separacao === "separado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
   const isAguardandoOC = pedido.status_separacao === "aguardando_compra";
   const canRetryEtiqueta = (isSeparado || isEmbalado) && !pedido.etiqueta_pronta;
+  const canEncaminhar =
+    onEncaminhar &&
+    (pedido.status_separacao === "aguardando_separacao" || isEmSeparacao);
+  const otherGalpoes = (galpoes ?? []).filter((g) => g.id !== pedido.galpao_id);
   const cs = pedido.compra_stats;
+
+  // Close kebab on outside click
+  useEffect(() => {
+    if (!kebabOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (kebabRef.current && !kebabRef.current.contains(e.target as Node)) {
+        setKebabOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [kebabOpen]);
   const transferLabel =
     pedido.decisao_final === "transferencia" && pedido.filial_origem
       ? activeGalpaoNome && activeGalpaoNome !== pedido.filial_origem
@@ -199,7 +223,7 @@ export function SeparacaoCard({
   return (
     <article
       className={cn(
-        "overflow-hidden rounded-xl border bg-paper shadow-sm transition-colors",
+        "rounded-xl border bg-paper shadow-sm transition-colors",
         isEmbalado
           ? "border-emerald-200 dark:border-emerald-800"
           : isAguardandoOC
@@ -339,6 +363,63 @@ export function SeparacaoCard({
               </button>
             )}
 
+            {/* Kebab menu (encaminhar) */}
+            {canEncaminhar && otherGalpoes.length > 0 && (
+              <div ref={kebabRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  disabled={encaminhando}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setKebabOpen((v) => !v);
+                  }}
+                  className={cn(
+                    "rounded p-1 transition-colors",
+                    kebabOpen
+                      ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                      : "text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300",
+                    encaminhando && "opacity-50",
+                  )}
+                  title="Mais ações"
+                  aria-label="Mais ações"
+                >
+                  {encaminhando ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <MoreVertical className="h-3.5 w-3.5" />
+                  )}
+                </button>
+                {kebabOpen && (
+                  <div className="absolute right-0 top-full z-30 mt-1 min-w-[180px] rounded-lg border border-line bg-paper py-1 shadow-lg">
+                    <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                      Encaminhar para
+                    </p>
+                    {otherGalpoes.map((g) => (
+                      <button
+                        key={g.id}
+                        type="button"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink transition-colors hover:bg-surface"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!window.confirm(`Encaminhar pedido #${pedido.numero_pedido} para ${g.nome}? O estoque será revertido.`)) return;
+                          setKebabOpen(false);
+                          setEncaminhando(true);
+                          try {
+                            await onEncaminhar!(pedido.id, g.id);
+                          } finally {
+                            setEncaminhando(false);
+                          }
+                        }}
+                      >
+                        <ArrowRightLeft className="h-3 w-3 text-ink-faint" />
+                        {g.nome}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Timeline toggle */}
             <button
               type="button"
@@ -390,6 +471,13 @@ export function SeparacaoCard({
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
                 <Truck className="h-2.5 w-2.5" />
                 {transferLabel}
+              </span>
+            )}
+
+            {pedido.encaminhado_de && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700 dark:bg-purple-950/30 dark:text-purple-300">
+                <ArrowRightLeft className="h-2.5 w-2.5" />
+                Enc. de {pedido.encaminhado_de}
               </span>
             )}
 

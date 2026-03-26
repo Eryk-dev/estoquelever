@@ -27,7 +27,8 @@ export type EventoPedido =
   | "etiqueta_falhou"
   | "cancelado"
   | "erro"
-  | "status_revertido";
+  | "status_revertido"
+  | "encaminhado";
 
 /**
  * Record a single event in the order history.

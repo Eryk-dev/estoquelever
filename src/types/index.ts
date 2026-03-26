@@ -107,6 +107,8 @@ export interface Pedido {
   agrupamento_expedicao_id?: string | null;
   /** Alert: stock was already entered in Tiny before cancellation */
   compra_estoque_lancado_alerta?: boolean;
+  /** Galpão name the order was forwarded from (manual encaminhar) */
+  encaminhado_de?: string | null;
 }
 
 // ─── Separacao / Embalagem ──────────────────────────────────────────────────

@@ -141,6 +141,7 @@ interface SeparacaoResponse {
   counts: SeparacaoCounts;
   pedidos: SeparacaoPedido[];
   empresas: { id: string; nome: string }[];
+  galpoes: { id: string; nome: string }[];
 }
 
 function SeparacaoPageFallback() {
@@ -321,6 +322,7 @@ function SeparacaoPageContent() {
 
   // Empresa options from API (stable, not affected by filters)
   const empresaOptions = data?.empresas ?? [];
+  const allGalpoes = data?.galpoes ?? [];
 
   const activeConfig = TAB_CONFIG.find((t) => t.id === activeTab)!;
 
@@ -572,6 +574,30 @@ function SeparacaoPageContent() {
       toast.error("Erro de conexao");
     } finally {
       setTagActionLoading(false);
+    }
+  }
+
+  async function handleEncaminhar(pedidoId: string, galpaoDestinoId: string) {
+    try {
+      const res = await sisoFetch("/api/separacao/encaminhar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_ids: [pedidoId], galpao_destino_id: galpaoDestinoId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(body.error ?? "Erro ao encaminhar pedido");
+        return;
+      }
+      if (body.encaminhados?.length > 0) {
+        toast.success(`Pedido encaminhado para ${body.galpao_destino_nome}`);
+        refetch();
+      }
+      if (body.falhas?.length > 0) {
+        toast.error(body.falhas[0].erro ?? "Falha ao encaminhar");
+      }
+    } catch {
+      toast.error("Erro de conexao");
     }
   }
 
@@ -1262,6 +1288,8 @@ function SeparacaoPageContent() {
                 checkbox={showCheckbox}
                 checked={selectedIds.has(pedido.id)}
                 onToggle={toggleSelected}
+                galpoes={allGalpoes}
+                onEncaminhar={handleEncaminhar}
               />
             ))}
           </div>

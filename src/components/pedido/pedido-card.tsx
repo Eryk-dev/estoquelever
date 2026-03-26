@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   ArrowRight,
+  ArrowRightLeft,
   Check,
   ChevronDown,
   Loader2,
@@ -746,6 +747,14 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
               {pedido.filialOrigem}
             </span>
           </span>
+
+          {/* Encaminhado badge */}
+          {pedido.encaminhado_de && (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700 dark:bg-purple-950/30 dark:text-purple-300">
+              <ArrowRightLeft className="h-2.5 w-2.5" />
+              Encaminhado de {pedido.encaminhado_de}
+            </span>
+          )}
         </header>
 
         {/* ── DIVIDER ──────────────────────────────────────────────────────── */}

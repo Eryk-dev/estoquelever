@@ -116,7 +116,7 @@ export async function GET(request: NextRequest) {
         `id, numero, data, id_pedido_ecommerce, cliente_nome,
          nome_ecommerce, forma_envio_descricao, status_separacao, decisao_final, filial_origem, marcadores, separacao_tags,
          empresa_origem_id, separacao_galpao_id, etiqueta_status, etiqueta_zpl, embalagem_concluida_em,
-         siso_empresas(nome)`,
+         encaminhado_de, siso_empresas(nome)`,
       )
       .not("status_separacao", "is", null);
 
@@ -149,9 +149,16 @@ export async function GET(request: NextRequest) {
       pedidosQuery = pedidosQuery.order("data", { ascending: true });
     }
 
-    // Execute counts + pedidos + empresas in parallel
-    const [countResults, { data: pedidos, error: pedidosError }, { data: empresasList }] =
-      await Promise.all([Promise.all(countPromises), pedidosQuery, empresasPromise]);
+    // 1c. Fetch all active galpões (for encaminhar dropdown)
+    const galpoesPromise = supabase
+      .from("siso_galpoes")
+      .select("id, nome")
+      .eq("ativo", true)
+      .order("nome");
+
+    // Execute counts + pedidos + empresas + galpoes in parallel
+    const [countResults, { data: pedidos, error: pedidosError }, { data: empresasList }, { data: galpoesList }] =
+      await Promise.all([Promise.all(countPromises), pedidosQuery, empresasPromise, galpoesPromise]);
 
     if (pedidosError) {
       logger.error("separacao-list", "Failed to fetch pedidos", {
@@ -282,6 +289,7 @@ export async function GET(request: NextRequest) {
         compra_stats: cs,
         etiqueta_status: p.etiqueta_status ?? null,
         etiqueta_pronta: !!p.etiqueta_zpl,
+        encaminhado_de: p.encaminhado_de ?? null,
       };
     });
 
@@ -303,7 +311,7 @@ export async function GET(request: NextRequest) {
       .map(([id, nome]) => ({ id, nome }))
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
-    return NextResponse.json({ counts, pedidos: result, empresas });
+    return NextResponse.json({ counts, pedidos: result, empresas, galpoes: galpoesList ?? [] });
   } catch (err) {
     logger.error("separacao-list", "Unexpected error", {
       error: err instanceof Error ? err.message : String(err),

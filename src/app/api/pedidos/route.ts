@@ -177,6 +177,7 @@ export async function GET(request: Request) {
       marcadores: p.marcadores ?? [],
       erro: p.erro ?? undefined,
       criadoEm: p.criado_em ?? "",
+      encaminhado_de: p.encaminhado_de ?? null,
     };
   });
 

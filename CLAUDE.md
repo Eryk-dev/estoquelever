@@ -139,6 +139,7 @@ src/
         confirmar-item-embalagem/route.ts  # Confirm item packed (POST)
         expedir/route.ts           # Dispatch order (POST)
         checklist-items/route.ts   # Get checklist items (GET)
+        encaminhar/route.ts        # Forward order to another galpão (POST)
         cancelar/route.ts          # Cancel separation (POST)
         reiniciar/route.ts         # Restart separation (POST)
         voltar-etapa/route.ts      # Go back one step (POST)

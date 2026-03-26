@@ -13,7 +13,7 @@ import { sisoFetch } from "@/lib/auth-context";
 import { FornecedorComprarCard } from "@/components/compras/fornecedor-comprar-card";
 import { FornecedorReceberCard } from "@/components/compras/fornecedor-receber-card";
 import { ExcecoesBanner } from "@/components/compras/excecoes-banner";
-import { ProgressModal } from "@/components/compras/progress-modal";
+
 import { formatDate } from "@/components/compras/compras-helpers";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -120,8 +120,6 @@ interface HistoricoResponse {
 export default function ComprasPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<TabId>("comprar");
-  const [progressPedidos, setProgressPedidos] = useState<string[] | null>(null);
-
   // Queries — only fetch active tab
   const comprarQuery = useQuery<ComprarResponse>({
     queryKey: ["compras", "comprar"],
@@ -152,10 +150,6 @@ export default function ComprasPage() {
     { id: "receber", label: "Aguardando recebimento", count: counts?.receber ?? 0 },
     { id: "historico", label: "Recebidos", count: counts?.historico ?? 0 },
   ];
-
-  function handleRecebimentoConcluido(pedidos: string[]) {
-    setProgressPedidos(pedidos);
-  }
 
   function invalidateAll() {
     queryClient.invalidateQueries({ queryKey: ["compras"] });
@@ -189,7 +183,7 @@ export default function ComprasPage() {
             {comprarQuery.data && (
               <div className="space-y-3">
                 {/* Excecoes banner */}
-                {comprarQuery.data.excecoes.length > 0 && (
+                {(comprarQuery.data.excecoes?.length ?? 0) > 0 && (
                   <ExcecoesBanner
                     excecoes={comprarQuery.data.excecoes}
                     onMutated={invalidateAll}
@@ -197,10 +191,10 @@ export default function ComprasPage() {
                 )}
 
                 {/* Fornecedor cards */}
-                {comprarQuery.data.fornecedores.length === 0 ? (
+                {(comprarQuery.data.fornecedores?.length ?? 0) === 0 ? (
                   <EmptyState message="Nenhum item para comprar" />
                 ) : (
-                  comprarQuery.data.fornecedores.map((f) => (
+                  comprarQuery.data.fornecedores?.map((f) => (
                     <FornecedorComprarCard key={f.fornecedor} fornecedor={f} />
                   ))
                 )}
@@ -225,7 +219,6 @@ export default function ComprasPage() {
                     <FornecedorReceberCard
                       key={f.fornecedor}
                       fornecedor={f}
-                      onRecebimentoConcluido={handleRecebimentoConcluido}
                     />
                   ))
                 )}
@@ -284,16 +277,6 @@ export default function ComprasPage() {
         )}
       </div>
 
-      {/* Progress Modal */}
-      {progressPedidos && (
-        <ProgressModal
-          pedidoIds={progressPedidos}
-          onClose={() => {
-            setProgressPedidos(null);
-            invalidateAll();
-          }}
-        />
-      )}
     </AppShell>
   );
 }

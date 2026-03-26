@@ -52,10 +52,8 @@ interface FornecedorReceberGroup {
 
 export function FornecedorReceberCard({
   fornecedor: f,
-  onRecebimentoConcluido,
 }: {
   fornecedor: FornecedorReceberGroup;
-  onRecebimentoConcluido: (pedidosDesbloqueados: string[]) => void;
 }) {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
@@ -96,13 +94,9 @@ export function FornecedorReceberCard({
         const d = await res.json().catch(() => ({ error: "Erro desconhecido" }));
         throw new Error(d.error ?? "Erro ao confirmar recebimento");
       }
-      const data: { ok: boolean; pedidos_desbloqueados: string[] } = await res.json();
       toast.success("Recebimento confirmado");
       queryClient.invalidateQueries({ queryKey: ["compras"] });
       setExpanded(false);
-      if (data.pedidos_desbloqueados?.length > 0) {
-        onRecebimentoConcluido(data.pedidos_desbloqueados);
-      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erro ao confirmar recebimento");
     } finally {

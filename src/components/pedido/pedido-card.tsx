@@ -698,10 +698,15 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
 
         {/* ── HEADER ROW ─────────────────────────────────────────────────── */}
         <header className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 sm:px-4 py-2.5 sm:py-3">
-          {/* Order number */}
+          {/* Order number + EC number */}
           <span className="shrink-0 font-mono text-sm font-bold text-ink">
             #{pedido.numero}
           </span>
+          {pedido.idPedidoEcommerce && (
+            <span className="shrink-0 font-mono text-[11px] text-ink-faint" title="Número ecommerce">
+              EC {pedido.idPedidoEcommerce}
+            </span>
+          )}
 
           {/* Client name */}
           <span

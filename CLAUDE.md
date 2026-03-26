@@ -365,14 +365,15 @@ Stock is stored normalized in `siso_pedido_item_estoques` (one row per empresa p
 | Prefix | Supplier | Default Galpao |
 |---|---|---|
 | `19` | Diversos | CWB |
-| `EW` | Eletricway | SP |
+| `EW`, `TG` | Tiger | SP |
 | `LD` | LDRU | SP |
-| `TH`, `TG` | Tiger | SP |
 | `L0` | LEFS | SP |
 | 6-digit numeric | ACA | CWB |
-| `G` | GAUSS | CWB |
-| `M` | MRMK | SP |
+| `GB`, `GE`, `GS`, `GI` | GAUSS | CWB |
+| `MK`, `M0`, `B0` | MRMK | SP |
 | `CAK`, `CS` | Delphi | SP |
+| `KT` | Kintop | SP |
+| `MQ`, `APX`, `WDC`, `AT`, `FD`, `FI`, `GM`, `HO`, `HY`, `KI`, `MAN`, `MB`, `NI`, `PG`, `RN`, `SC`, `TO`, `UN`, `VO`, `VW`, `AG`, `BI`, `BA` | Multiqualita | CWB |
 
 ## Environment Variables
 
@@ -412,21 +413,19 @@ npm run lint      # ESLint
 
 ## Documentation
 
-### API Reference (`docs/api-reference.md`)
+The `docs/` directory contains comprehensive, ground-truth documentation generated from source code:
 
-**`docs/api-reference.md`** is the **complete, authoritative reference** for every API route in the system. It documents:
-- HTTP method + path + file location
-- Auth requirements (headers, session, role)
-- Request body/query params with exact JSON shapes
-- Response body with exact JSON shapes for every status code
-- Business logic summary and side effects
-- Error codes and causes
-
-**This file exists so that any LLM or developer can understand the full API contract without reading the route source code.** Always consult it before making API changes.
+| Document | Purpose | When to consult |
+|---|---|---|
+| [`docs/api-reference-complete.md`](docs/api-reference-complete.md) | **All 79 API routes** — method, path, auth, request/response shapes, business logic, side effects | Before making any API change; understanding any endpoint contract |
+| [`docs/database-schema.md`](docs/database-schema.md) | **All 20+ tables** — columns, types, FKs, indexes, constraints, ER diagram (Mermaid), migration history | Before writing migrations; understanding data model; debugging queries |
+| [`docs/architecture-and-flows.md`](docs/architecture-and-flows.md) | **System architecture** — webhook pipeline, state machines, separation/compras/inventario/transfer flows, Tiny/PrintNode integration, auth, error handling | Understanding business flows; onboarding; debugging cross-module issues |
+| [`docs/fluxos-siso.md`](docs/fluxos-siso.md) | **Visual flow diagrams** — Mermaid state machines and flowcharts for all business processes | Quick visual reference for status transitions and decision logic |
+| [`docs/api-reference.md`](docs/api-reference.md) | Legacy API reference (may be incomplete) | Superseded by `api-reference-complete.md` — kept for reference |
 
 ### MANDATORY: Keeping Documentation Updated
 
-**When you modify any API route, you MUST update `docs/api-reference.md` in the same commit.** This includes:
+**When you modify any API route**, update `docs/api-reference-complete.md` in the same commit:
 - Adding a new route -> add full documentation entry
 - Changing request/response shape -> update the documented shapes
 - Adding/removing query params or body fields -> update the docs
@@ -434,15 +433,13 @@ npm run lint      # ESLint
 - Changing business logic or side effects -> update the docs
 - Removing a route -> remove from docs
 
-**When you modify `CLAUDE.md` itself** (project structure, conventions, architecture), ensure it stays consistent with `docs/api-reference.md`.
+**When you modify database schema** (new migration, alter table, new index), update `docs/database-schema.md` in the same commit.
+
+**When you change any business flow** (state transitions, decision logic, webhook handling, separation steps, compras flow, auth, label printing), update both `docs/architecture-and-flows.md` and `docs/fluxos-siso.md` in the same commit.
+
+**When you modify `CLAUDE.md` itself** (project structure, conventions, architecture), ensure it stays consistent with the docs above.
 
 **When you add new lib services**, update the Project Structure section in this file.
-
-**When you change any business flow** (state transitions, decision logic, webhook handling, separation steps, compras flow, auth, label printing), you MUST update the corresponding diagram in `docs/fluxos-siso.md` in the same commit. This includes:
-- Adding/removing/renaming status values -> update the state machine diagrams
-- Changing decision logic or branching -> update the flowcharts
-- Adding new steps to a flow -> update the relevant flow diagram
-- Changing integrations with external systems -> update the diagrams
 
 Failure to update documentation means the next developer or LLM will work with stale information and introduce bugs.
 

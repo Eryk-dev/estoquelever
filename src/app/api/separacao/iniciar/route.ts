@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
-import { preCriarAgrupamentosEmLote } from "@/lib/agrupamento-service";
+
 import type { ProdutoConsolidado } from "@/types";
 
 /**
@@ -156,14 +156,6 @@ export async function POST(request: NextRequest) {
       pedido_ids,
       operador_id,
       produtos_count: consolidados.length,
-    });
-
-    // Fire-and-forget: pre-create Tiny agrupamentos + download ZPL labels
-    // early so they're cached before packing even starts
-    preCriarAgrupamentosEmLote(pedido_ids).catch((err) => {
-      logger.error("separacao-iniciar", "Falha ao pré-criar agrupamentos", {
-        error: err instanceof Error ? err.message : String(err),
-      });
     });
 
     return NextResponse.json({ pedido_ids, produtos: consolidados });

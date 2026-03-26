@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, ArrowLeft } from "lucide-react";
+import { Plus } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { Tabs } from "@/components/ui/tabs";
@@ -133,19 +133,10 @@ export default function TransferenciasPage() {
         <Plus className="h-3.5 w-3.5" />
         Nova
       </button>
-    ) : (
-      <button
-        type="button"
-        onClick={handleBack}
-        className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:bg-surface hover:text-ink"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        Voltar
-      </button>
-    );
+    ) : undefined;
 
   return (
-    <AppShell title="Transferência" backHref="/" headerRight={headerRight}>
+    <AppShell title="Transferência" headerRight={headerRight}>
       {view === "list" && (
         <>
           <div className="mb-5">

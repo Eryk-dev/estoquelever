@@ -91,7 +91,6 @@ export default function AdminUsuariosPage() {
     <AppShell
       title="Usuários"
       subtitle="Gerenciar acessos, cargos e galpões"
-      backHref="/configuracoes"
       requireAdmin={true}
       mainClassName="space-y-4"
     >

@@ -1,0 +1,1294 @@
+# SISO Database Schema Reference
+
+Comprehensive schema documentation for the SISO (Sistema Inteligente de Separacao de Ordens) PostgreSQL database on Supabase project `wrbrbhuhsaaupqsimkqz`.
+
+All tables are prefixed with `siso_`. This document covers all tables, columns, relationships, and lifecycle patterns.
+
+---
+
+## Table of Contents
+
+1. [Core Business Tables](#core-business-tables)
+2. [Hierarchy Tables (Galpão/Empresa/Grupo)](#hierarchy-tables)
+3. [Stock & Inventory Tables](#stock--inventory-tables)
+4. [Separation & Packing Tables](#separation--packing-tables)
+5. [Purchase Orders (Compras) Tables](#purchase-orders-compras-tables)
+6. [Inventory & Transfer Modules](#inventory--transfer-modules)
+7. [Infrastructure Tables](#infrastructure-tables)
+8. [Authentication & Sessions](#authentication--sessions)
+9. [Entity-Relationship Diagram](#entity-relationship-diagram)
+10. [Data Lifecycle Patterns](#data-lifecycle-patterns)
+11. [Important Queries & Access Patterns](#important-queries--access-patterns)
+12. [Migration History Summary](#migration-history-summary)
+
+---
+
+## Core Business Tables
+
+### siso_pedidos
+
+**Purpose:** Orders from Tiny ERP e-commerce webhooks. Central table for the order lifecycle.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | text | NO | (PK) | Order ID from Tiny ERP |
+| `numero` | text | NO | | Display number (e.g., "#123456") |
+| `data` | timestamptz | NO | | Order date from Tiny |
+| `filial_origem` | text | NO | | Origin branch code (legacy; use `empresa_origem_id`) |
+| `empresa_origem_id` | uuid | YES | FK | Empresa that received the order |
+| `idPedidoEcommerce` | text | YES | | E-commerce order ID (Mercado Livre, Shopee) |
+| `nomeEcommerce` | text | YES | | E-commerce name |
+| `cliente_nome` | text | YES | | Customer name |
+| `cliente_cpf_cnpj` | text | YES | | Customer CPF/CNPJ |
+| `forma_envio_id` | text | YES | | Tiny shipping method ID |
+| `forma_envio_descricao` | text | YES | | Tiny shipping method name |
+| `forma_frete_id` | text | YES | | Tiny freight form ID |
+| `transportador_id` | text | YES | | Tiny carrier ID |
+| `status` | text | NO | 'pendente' | Order processing status: `pendente`, `executando`, `concluido`, `cancelado`, `erro` |
+| `sugestao` | text | YES | | System suggestion: `propria`, `transferencia`, `oc` |
+| `sugestao_motivo` | text | YES | | Explanation of suggestion |
+| `decisao_final` | text | YES | | Operator decision (same values as sugestao) |
+| `tipo_resolucao` | text | YES | | `auto` (auto-approved) or `manual` (operator review) |
+| `operador_id` | uuid | YES | FK | User who processed (if manual) |
+| `operador_nome` | text | YES | | User name (denormalized) |
+| `processado_em` | timestamptz | YES | | When operator approved/rejected |
+| `marcadores` | text[] | YES | | Tiny order markers/tags |
+| `separacao_tags` | text[] | YES | `{}` | User-created tags in separation module |
+| `erro` | text | YES | | Error message if status = 'erro' |
+| `estoque_lancado` | boolean | NO | false | Flag: stock already deducted in Tiny |
+| `compra_estoque_lancado_alerta` | boolean | NO | false | Flag: alert if stock entered before cancellation |
+| `status_separacao` | text | YES | | Separation status: `aguardando_compra`, `aguardando_nf`, `aguardando_separacao`, `em_separacao`, `separado`, `embalado` |
+| `separacao_galpao_id` | uuid | YES | FK | Galpão where separation happens |
+| `separacao_operador_id` | uuid | YES | FK | User performing separation |
+| `separacao_iniciada_em` | timestamptz | YES | | When wave picking started |
+| `separacao_concluida_em` | timestamptz | YES | | When picking completed |
+| `embalagem_concluida_em` | timestamptz | YES | | When packing completed |
+| `etiqueta_status` | text | YES | | Shipping label status: `pendente`, `imprimindo`, `impresso`, `falhou` |
+| `etiqueta_url` | text | YES | | Shipping label URL (PrintNode receipt) |
+| `etiqueta_zpl` | text | YES | | Raw ZPL content cached at separation |
+| `url_danfe` | text | YES | | DANFE (NF invoice) URL |
+| `chave_acesso_nf` | text | YES | | NF access key (unique NFe identifier) |
+| `nota_fiscal_id` | bigint | YES | | Tiny NF ID |
+| `agrupamento_tiny_id` | bigint | YES | | Deprecated: Tiny agrupamento (grouping) ID |
+| `agrupamento_expedicao_id` | text | YES | | Tiny expedition grouping ID (used for label printing) |
+| `expedicao_id` | text | YES | | Tiny expedition ID within agrupamento |
+| `prazo_envio` | text | YES | | Shipping deadline string |
+| `criado_em` | timestamptz | NO | now() | Record creation timestamp |
+| `atualizado_em` | timestamptz | YES | | Last update timestamp |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `empresa_origem_id` → `siso_empresas(id)`
+- `separacao_galpao_id` → `siso_galpoes(id)`
+- `separacao_operador_id` → `siso_usuarios(id)`
+- `operador_id` → `siso_usuarios(id)`
+
+**Indexes:**
+- `idx_pedidos_separacao_galpao` (separacao_galpao_id, status_separacao) WHERE status_separacao IN ('aguardando_separacao', 'em_separacao')
+- `idx_pedidos_separacao_aguardando` (separacao_galpao_id) WHERE status_separacao = 'aguardando_nf'
+- `idx_pedidos_separacao_embalado` (separacao_galpao_id) WHERE status_separacao = 'embalado'
+- `idx_pedidos_separacao_data` (separacao_galpao_id, data ASC) WHERE status_separacao IN ('aguardando_separacao', 'em_separacao')
+- `idx_siso_pedidos_separacao_tags` GIN index on separacao_tags
+
+**Constraints:**
+- `CHECK (status IN ('pendente', 'executando', 'concluido', 'cancelado', 'erro'))`
+- `CHECK (status_separacao IS NULL OR status_separacao IN (...))`
+- `CHECK (etiqueta_status IS NULL OR etiqueta_status IN (...))`
+
+**Notes:**
+- `filial_origem` is legacy (text like "CWB", "SP") — prefer `empresa_origem_id` in new code
+- Stock is stored in normalized `siso_pedido_item_estoques`, not in `siso_pedidos`
+- `marcadores` come from Tiny API; `separacao_tags` are user-created in the UI
+- Column `imagem_url` removed (now joined via `siso_pedido_itens`)
+
+---
+
+### siso_pedido_itens
+
+**Purpose:** Line items for each order, with barcode tracking and purchase information.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Unique item ID |
+| `pedido_id` | text | NO | FK | Order ID |
+| `produto_id` | bigint | NO | | Tiny product ID (in origin empresa) |
+| `sku` | text | NO | | Product SKU |
+| `descricao` | text | YES | | Product description |
+| `quantidade_pedida` | integer | NO | | Ordered quantity |
+| `quantidade` | integer | YES | | Current quantity (used in some contexts) |
+| `imagem_url` | text | YES | | Product image URL (from Tiny) |
+| `gtin` | text | YES | | EAN/GTIN barcode |
+| `quantidade_bipada` | integer | NO | 0 | Quantity scanned during wave picking |
+| `bipado_completo` | boolean | NO | false | Flag: all items picked for this product |
+| `bipado_em` | timestamptz | YES | | When last item was scanned |
+| `bipado_por` | uuid | YES | FK | User who scanned (last) |
+| `separacao_marcado` | boolean | NO | false | Deprecated flag |
+| `separacao_marcado_em` | timestamptz | YES | | Deprecated timestamp |
+| `estoque_saida_lancada` | boolean | NO | false | Flag: stock deduction posted in Tiny (idempotency) |
+| `produto_id_suporte` | bigint | YES | | Tiny product ID in support branch (if transferencia) |
+| `produto_id_tiny` | bigint | YES | | Tiny product ID for direct API calls |
+| `empresa_deducao_id` | uuid | YES | FK | Empresa where stock was deducted |
+| `fornecedor_oc` | text | YES | | Supplier code for purchase order (SKU prefix match) |
+| **Purchase-related columns:** | | | | |
+| `ordem_compra_id` | uuid | YES | FK | Purchase order ID |
+| `compra_status` | text | YES | | Item purchase status: `aguardando_compra`, `comprado`, `recebido`, `indisponivel`, `equivalente_pendente`, `cancelamento_pendente`, `cancelado` |
+| `compra_quantidade_solicitada` | integer | NO | 0 | Quantity requested for purchase |
+| `compra_quantidade_recebida` | integer | NO | 0 | Quantity already received |
+| `compra_solicitada_em` | timestamptz | YES | | When purchase was requested |
+| `comprado_em` | timestamptz | YES | | When item was purchased |
+| `comprado_por` | uuid | YES | FK | User who purchased |
+| `recebido_em` | timestamptz | YES | | When received at warehouse |
+| `recebido_por` | uuid | YES | FK | User who received |
+| **Equivalence handling:** | | | | |
+| `compra_equivalente_sku` | text | YES | | Alternative SKU approved |
+| `compra_equivalente_descricao` | text | YES | | Alternative product description |
+| `compra_equivalente_produto_id_tiny` | bigint | YES | | Alternative Tiny product ID |
+| `compra_equivalente_fornecedor` | text | YES | | Alternative supplier |
+| `compra_equivalente_imagem_url` | text | YES | | Alternative product image |
+| `compra_equivalente_gtin` | text | YES | | Alternative GTIN |
+| `compra_equivalente_observacao` | text | YES | | Notes on equivalence |
+| `compra_equivalente_definido_em` | timestamptz | YES | | When equivalence was set |
+| `compra_equivalente_definido_por` | uuid | YES | FK | User who set equivalence |
+| `compra_equivalente_sku_original` | text | YES | | Original SKU (before equivalence) |
+| `compra_equivalente_descricao_original` | text | YES | | Original description |
+| `compra_equivalente_produto_id_original` | bigint | YES | | Original Tiny product ID |
+| **Cancellation handling:** | | | | |
+| `compra_cancelamento_motivo` | text | YES | | Reason for cancellation |
+| `compra_cancelamento_solicitado_em` | timestamptz | YES | | When cancellation was requested |
+| `compra_cancelamento_solicitado_por` | uuid | YES | FK | User who requested cancellation |
+| `compra_cancelado_em` | timestamptz | YES | | When cancellation was confirmed |
+| `compra_cancelado_por` | uuid | YES | FK | User who confirmed |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `pedido_id` → `siso_pedidos(id)` ON DELETE CASCADE
+- `bipado_por` → `siso_usuarios(id)`
+- `empresa_deducao_id` → `siso_empresas(id)`
+- `ordem_compra_id` → `siso_ordens_compra(id)`
+- `comprado_por` → `siso_usuarios(id)`
+- `recebido_por` → `siso_usuarios(id)`
+- And similar FKs for equivalence and cancellation user references
+
+**Indexes:**
+- `idx_pedido_itens_gtin` (gtin) WHERE gtin IS NOT NULL AND bipado_completo = false
+- `idx_pedido_itens_sku` (sku) WHERE bipado_completo = false
+- `idx_pedido_itens_compra_status` (compra_status) WHERE compra_status IS NOT NULL
+- `idx_pedido_itens_fornecedor_oc` (fornecedor_oc) WHERE fornecedor_oc IS NOT NULL
+- `idx_pedido_itens_ordem_compra_id` (ordem_compra_id) WHERE ordem_compra_id IS NOT NULL
+- `idx_pedido_itens_compra_equivalente_sku` (compra_equivalente_sku) WHERE compra_equivalente_sku IS NOT NULL
+- `idx_pedido_itens_compra_cancelado` (pedido_id) WHERE compra_status = 'cancelado'
+- `idx_pedido_itens_compra_solicitada_em` (compra_solicitada_em) WHERE compra_status IS NOT NULL
+
+**Notes:**
+- Unique constraint (pedido_id, produto_id) is implicit because each product appears once per order
+- `bipado_*` columns track wave picking progress
+- `estoque_saida_lancada` prevents double-deduction on job retries
+- Purchase columns support full lifecycle: request → buy → receive → exceptions (equivalence, cancellation)
+
+---
+
+### siso_pedido_item_estoques
+
+**Purpose:** Normalized stock per empresa for each order item. Replaces hardcoded per-galpão columns.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Unique row ID |
+| `pedido_id` | text | NO | | Order ID |
+| `produto_id` | bigint | NO | | Product ID in origin empresa |
+| `empresa_id` | uuid | NO | FK | Empresa holding this stock |
+| `produto_id_na_empresa` | bigint | YES | | Product ID in this specific empresa (may differ from produto_id) |
+| `deposito_id` | integer | YES | | Tiny deposit (warehouse) ID |
+| `deposito_nome` | text | YES | | Deposit name (cached) |
+| `saldo` | numeric | NO | 0 | Available balance |
+| `reservado` | numeric | NO | 0 | Reserved quantity |
+| `disponivel` | numeric | NO | 0 | Available after reservation |
+| `localizacao` | text | YES | | Product location in warehouse |
+| `criado_em` | timestamptz | NO | now() | Record creation |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `pedido_id` → `siso_pedidos(id)` ON DELETE CASCADE
+- `empresa_id` → `siso_empresas(id)`
+
+**Unique Constraint:**
+- `(pedido_id, produto_id, empresa_id)`
+
+**Indexes:**
+- `idx_item_estoques_unique` (pedido_id, produto_id, empresa_id)
+- `idx_item_estoques_pedido` (pedido_id)
+
+**Notes:**
+- One row per (pedido, produto, empresa) combination
+- API aggregates by galpão for dynamic stock display
+- `produto_id_na_empresa` added in migration 20260324 to support cloning products to other empresas
+- Replaces deprecated `estoque_cwb_*` / `estoque_sp_*` columns in `siso_pedido_itens`
+
+---
+
+## Hierarchy Tables
+
+### siso_galpoes
+
+**Purpose:** Physical warehouse locations.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Galpão ID |
+| `nome` | text | NO | UNIQUE | Display name (e.g., "CWB", "SP") |
+| `descricao` | text | YES | | Description |
+| `ativo` | boolean | NO | true | Active flag |
+| `printnode_printer_id` | bigint | YES | | Default PrintNode printer ID for this galpão |
+| `printnode_printer_nome` | text | YES | | Printer name (cached) |
+| `criado_em` | timestamptz | NO | now() | Creation timestamp |
+| `atualizado_em` | timestamptz | NO | now() | Last update |
+
+**Primary Key:** `id`
+
+**Unique Constraint:** `nome`
+
+**Notes:**
+- Seeded with "CWB" and "SP" but flexible for additional locations
+- Multiple empresas can belong to one galpão
+
+---
+
+### siso_empresas
+
+**Purpose:** Tiny ERP accounts, one per CNPJ.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Empresa ID |
+| `nome` | text | NO | | Display name (e.g., "NetAir", "NetParts") |
+| `cnpj` | text | NO | UNIQUE | 14-digit CNPJ |
+| `galpao_id` | uuid | NO | FK | Physical location |
+| `ativo` | boolean | NO | true | Active flag |
+| `criado_em` | timestamptz | NO | now() | Creation |
+| `atualizado_em` | timestamptz | NO | now() | Last update |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `galpao_id` → `siso_galpoes(id)`
+
+**Unique Constraint:** `cnpj`
+
+**Indexes:**
+- `idx_empresas_galpao` (galpao_id)
+- `idx_empresas_cnpj` (cnpj)
+
+**Notes:**
+- One CNPJ = one Tiny ERP account = one empresa
+- CNPJ is used to identify orders in webhooks
+- Multiple empresas can share a galpão
+
+---
+
+### siso_grupos
+
+**Purpose:** Business affinity groups for cross-empresa stock sharing.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Grupo ID |
+| `nome` | text | NO | UNIQUE | Display name (e.g., "Autopeças") |
+| `descricao` | text | YES | | Description |
+| `criado_em` | timestamptz | NO | now() | Creation |
+| `atualizado_em` | timestamptz | NO | now() | Last update |
+
+**Primary Key:** `id`
+
+**Unique Constraint:** `nome`
+
+**Notes:**
+- Seeded with "Autopeças" but can have multiple grupos
+- Empresas in same grupo check stock across each other
+
+---
+
+### siso_grupo_empresas
+
+**Purpose:** N:M relationship between grupos and empresas with deduction tier.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Relation ID |
+| `grupo_id` | uuid | NO | FK | Grupo |
+| `empresa_id` | uuid | NO | FK | Empresa |
+| `tier` | integer | NO | 1 | Deduction priority (1 = highest, origin always gets override) |
+| `criado_em` | timestamptz | NO | now() | Creation |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `grupo_id` → `siso_grupos(id)` ON DELETE CASCADE
+- `empresa_id` → `siso_empresas(id)` ON DELETE CASCADE
+
+**Unique Constraint:** `(empresa_id)` — each empresa in at most one grupo
+
+**Indexes:**
+- `idx_grupo_empresas_grupo` (grupo_id)
+
+**Notes:**
+- Execution worker deducts stock in tier order: tier 1 first, then tier 2, etc.
+- Origin empresa gets automatic tier 1 override at runtime regardless of table value
+- CHECK constraint: `tier > 0`
+
+---
+
+## Stock & Inventory Tables
+
+### siso_fila_execucao
+
+**Purpose:** Execution queue for approved orders. Jobs post stock to Tiny ERP with retry logic.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Job ID |
+| `pedido_id` | text | NO | | Order ID |
+| `tipo` | text | NO | 'lancar_estoque' | Job type (currently only 'lancar_estoque') |
+| `filial_execucao` | text | YES | | Legacy: branch code |
+| `empresa_id` | uuid | YES | FK | Empresa for this job |
+| `decisao` | text | NO | | Decision: `propria`, `transferencia`, `oc` |
+| `status` | text | NO | 'pendente' | Queue status: `pendente`, `executando`, `concluido`, `erro`, `cancelado` |
+| `tentativas` | integer | NO | 0 | Retry count |
+| `max_tentativas` | integer | NO | 3 | Max retries allowed |
+| `erro` | text | YES | | Error message on failure |
+| `operador_id` | text | YES | | User who approved |
+| `operador_nome` | text | YES | | User name (denormalized) |
+| `executado_em` | timestamptz | YES | | When job completed |
+| `proximo_retry_em` | timestamptz | YES | | Exponential backoff: next retry time |
+| `criado_em` | timestamptz | NO | now() | Creation |
+| `atualizado_em` | timestamptz | NO | now() | Last update |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `empresa_id` → `siso_empresas(id)`
+
+**Indexes:**
+- `idx_fila_status_retry` (status, proximo_retry_em) WHERE status = 'pendente'
+- `idx_fila_pedido` (pedido_id)
+- `idx_fila_empresa` (empresa_id)
+
+**Constraints:**
+- `CHECK (tipo IN ('lancar_estoque'))`
+- `CHECK (decisao IN ('propria', 'transferencia', 'oc'))`
+- `CHECK (status IN ('pendente', 'executando', 'concluido', 'erro', 'cancelado'))`
+
+**Notes:**
+- Fire-and-forget: webhook returns 200, queue processes async
+- Exponential backoff on retry: 60s → 300s → 1800s
+- Max 3 retries, then transitions to `erro` status
+- `filial_execucao` is legacy; prefer `empresa_id`
+
+---
+
+## Separation & Packing Tables
+
+### siso_pedido_historico
+
+**Purpose:** Immutable audit trail of order lifecycle events.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Event ID |
+| `pedido_id` | text | NO | FK | Order ID |
+| `evento` | text | NO | | Event type (see notes) |
+| `usuario_id` | uuid | YES | FK | User who triggered event |
+| `usuario_nome` | text | YES | | User name (denormalized) |
+| `detalhes` | jsonb | NO | '{}' | Structured event data |
+| `criado_em` | timestamptz | NO | now() | Event timestamp |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `pedido_id` → `siso_pedidos(id)` ON DELETE CASCADE
+- `usuario_id` → `siso_usuarios(id)`
+
+**Indexes:**
+- `idx_pedido_historico_pedido` (pedido_id, criado_em ASC)
+
+**Event Types (documented, not enforced for flexibility):**
+- `recebido` — webhook received, order created
+- `auto_aprovado` — auto-approved (propria, no review)
+- `aprovado` — manually approved by operator
+- `aguardando_nf` — waiting for NF authorization
+- `nf_autorizada` — NF authorized via webhook
+- `aguardando_separacao` — ready for wave picking
+- `separacao_iniciada` — wave picking started
+- `item_separado` — individual item scanned
+- `separacao_concluida` — all items separated
+- `embalagem_iniciada` — packing started
+- `item_embalado` — item confirmed in packing
+- `embalagem_concluida` — all items packed
+- `etiqueta_impressa` — shipping label printed
+- `etiqueta_falhou` — label print failed
+- `cancelado` — order cancelled
+- `erro` — processing error
+
+**Notes:**
+- Write via `registrarEvento()` in historico-service.ts
+- Fire-and-forget safe (async)
+- `detalhes` JSONB field can contain arbitrary context
+
+---
+
+## Purchase Orders (Compras) Tables
+
+### siso_ordens_compra
+
+**Purpose:** Purchase orders grouped by supplier.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | PO ID |
+| `fornecedor` | text | NO | | Supplier name |
+| `empresa_id` | uuid | NO | FK | Empresa placing the order |
+| `galpao_id` | uuid | YES | FK | Galpão receiving goods |
+| `status` | text | NO | 'comprado' | PO status: `aguardando_compra`, `comprado`, `parcialmente_recebido`, `recebido`, `cancelado` |
+| `observacao` | text | YES | | Notes |
+| `comprado_por` | uuid | YES | FK | User who purchased |
+| `comprado_em` | timestamptz | YES | | When purchase was made |
+| `created_at` | timestamptz | NO | now() | Record creation |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `empresa_id` → `siso_empresas(id)`
+- `galpao_id` → `siso_galpoes(id)`
+- `comprado_por` → `siso_usuarios(id)`
+
+**Indexes:**
+- `idx_ordens_compra_status` (status)
+- `idx_ordens_compra_fornecedor` (fornecedor)
+
+**Notes:**
+- PO created when an order item needs purchase (`decisao = 'oc'`)
+- Multiple items can belong to same PO if from same supplier
+- Status transitions: waiting → purchased → partially/fully received
+- Items linked via `siso_pedido_itens.ordem_compra_id`
+
+---
+
+## Inventory & Transfer Modules
+
+### siso_inventarios
+
+**Purpose:** Inventory audit sessions (stock count or movements).
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Session ID |
+| `empresa_id` | uuid | NO | FK | Conducting empresa |
+| `galpao_id` | uuid | NO | FK | Galpão being counted |
+| `usuario_id` | uuid | NO | FK | User conducting inventory |
+| `deposito_id` | integer | YES | | Tiny deposit to process |
+| `modo` | text | NO | | Mode: `loc_only` (location only) or `loc_estoque` (location + stock count) |
+| `tipo_estoque` | text | YES | | Movement type: `B` (balance), `E` (entry), `S` (exit) |
+| `manter_localizacao_antiga` | boolean | NO | false | Keep old location if not overwriting |
+| `status` | text | NO | 'em_andamento' | Session status: `em_andamento`, `processando`, `concluido`, `cancelado`, `erro`, `revertendo`, `revertido` |
+| `observacoes` | text | YES | | User notes |
+| `created_at` | timestamptz | NO | now() | Session creation |
+| `processado_em` | timestamptz | YES | | When processing started |
+| `concluido_em` | timestamptz | YES | | When processing completed |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `empresa_id` → `siso_empresas(id)`
+- `galpao_id` → `siso_galpoes(id)`
+- `usuario_id` → `siso_usuarios(id)`
+
+**Indexes:**
+- `idx_inventarios_status` (status)
+- `idx_inventarios_empresa` (empresa_id)
+- `idx_inventarios_usuario` (usuario_id)
+
+**Notes:**
+- `modo` determines what data is collected: location only, or location + quantity
+- `tipo_estoque` specifies the type of inventory movement (Balanço, Entrada, Saída)
+- Status lifecycle: em_andamento → processando → concluido (or error/revert paths)
+
+---
+
+### siso_inventario_itens
+
+**Purpose:** Scanned items within an inventory session.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Item ID |
+| `inventario_id` | uuid | NO | FK | Parent session |
+| `produto_id_tiny` | integer | YES | | Tiny product ID (resolved during processing) |
+| `sku` | text | NO | | Scanned SKU |
+| `nome_produto` | text | YES | | Product name (from Tiny) |
+| `ean` | text | YES | | EAN/GTIN |
+| `localizacao` | text | NO | | Scanned location (e.g., "A1-2-3") |
+| `quantidade` | integer | NO | 1 | Counted/scanned quantity |
+| `status` | text | NO | 'pendente' | Item status: `pendente`, `processando`, `sucesso`, `erro` |
+| `erro_msg` | text | YES | | Error on processing |
+| `localizacao_antiga_tiny` | text | YES | | Previous location in Tiny (snapshot before update) |
+| `saldo_anterior_tiny` | numeric | YES | | Previous balance (snapshot before movement) |
+| `created_at` | timestamptz | NO | now() | Item scanned time |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `inventario_id` → `siso_inventarios(id)` ON DELETE CASCADE
+
+**Indexes:**
+- `idx_inventario_itens_inv` (inventario_id)
+- `idx_inventario_itens_sku` (inventario_id, sku)
+
+**Notes:**
+- No unique constraint — same SKU can appear multiple times per session
+- `localizacao_antiga_tiny` and `saldo_anterior_tiny` filled during processing before update
+- `status` tracks processing state; `erro_msg` captures Tiny API errors
+
+---
+
+### siso_transferencias
+
+**Purpose:** Inter-galpão stock transfer sessions.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Transfer session ID |
+| `empresa_origem_id` | uuid | NO | FK | Source empresa |
+| `empresa_destino_id` | uuid | NO | FK | Destination empresa |
+| `galpao_origem_id` | uuid | NO | FK | Source galpão |
+| `galpao_destino_id` | uuid | NO | FK | Destination galpão |
+| `usuario_id` | uuid | NO | FK | User initiating transfer |
+| `deposito_origem_id` | integer | YES | | Source deposit |
+| `deposito_destino_id` | integer | YES | | Destination deposit |
+| `status` | text | NO | 'em_andamento' | Session status: `em_andamento`, `processando`, `concluido`, `cancelado`, `erro`, `revertendo`, `revertido` |
+| `observacoes` | text | YES | | Notes |
+| `created_at` | timestamptz | NO | now() | Creation |
+| `processado_em` | timestamptz | YES | | When processing started |
+| `concluido_em` | timestamptz | YES | | When completed |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `empresa_origem_id` → `siso_empresas(id)`
+- `empresa_destino_id` → `siso_empresas(id)`
+- `galpao_origem_id` → `siso_galpoes(id)`
+- `galpao_destino_id` → `siso_galpoes(id)`
+- `usuario_id` → `siso_usuarios(id)`
+
+**Indexes:**
+- `idx_transferencias_status` (status)
+- `idx_transferencias_empresa_o` (empresa_origem_id)
+- `idx_transferencias_empresa_d` (empresa_destino_id)
+- `idx_transferencias_usuario` (usuario_id)
+
+**Notes:**
+- Source and destination empresas (can be same galpão but different empresas)
+- Status lifecycle mirrors inventario table
+- Items tracked in `siso_transferencia_itens`
+
+---
+
+### siso_transferencia_itens
+
+**Purpose:** Individual items within a transfer session.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Item ID |
+| `transferencia_id` | uuid | NO | FK | Parent transfer session |
+| `produto_id_tiny_origem` | integer | NO | | Product ID in source empresa |
+| `produto_id_tiny_destino` | integer | YES | | Product ID in destination empresa (resolved during processing) |
+| `sku` | text | NO | | Scanned SKU |
+| `nome_produto` | text | YES | | Product name |
+| `ean` | text | YES | | EAN/GTIN |
+| `quantidade` | integer | NO | 1 | Transfer quantity |
+| `clonado` | boolean | NO | false | Flag: product was cloned to destination empresa during processing |
+| `status` | text | NO | 'pendente' | Item status: `pendente`, `processando`, `sucesso`, `erro` |
+| `erro_msg` | text | YES | | Error message if processing failed |
+| `created_at` | timestamptz | NO | now() | Scanned time |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `transferencia_id` → `siso_transferencias(id)` ON DELETE CASCADE
+
+**Indexes:**
+- `idx_transferencia_itens_tr` (transferencia_id)
+
+**Notes:**
+- `produto_id_tiny_origem` is always set at scan time
+- `produto_id_tiny_destino` may differ due to product cloning
+- `clonado` = true if producto had to be created in destination empresa
+
+---
+
+## Infrastructure Tables
+
+### siso_logs
+
+**Purpose:** Structured application logging for debugging and monitoring.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Log entry ID |
+| `timestamp` | timestamptz | NO | now() | When event occurred |
+| `level` | text | NO | | Log level: `info`, `warn`, `error` |
+| `source` | text | NO | | Source module (e.g., "webhook", "oauth", "processor") |
+| `message` | text | NO | | Log message |
+| `metadata` | jsonb | NO | '{}' | Additional structured data |
+| `pedido_id` | text | YES | | Optional order reference |
+| `filial` | text | YES | | Optional branch reference (legacy) |
+| `created_at` | timestamptz | NO | now() | Record creation |
+
+**Primary Key:** `id`
+
+**Indexes:**
+- `idx_siso_logs_timestamp` (timestamp DESC)
+- `idx_siso_logs_level` (level)
+- `idx_siso_logs_source` (source)
+- `idx_siso_logs_pedido` (pedido_id) WHERE pedido_id IS NOT NULL
+
+**Notes:**
+- Written via `logger.info/warn/error()` throughout codebase
+- `metadata` JSONB allows flexible context capture
+- Used for audit trail and debugging
+
+---
+
+### siso_erros
+
+**Purpose:** Dedicated error tracking with diagnostics and resolution tracking.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Error record ID |
+| `timestamp` | timestamptz | NO | now() | When error occurred |
+| `source` | text | NO | | Source: "webhook", "api", "oauth", "processor", etc. |
+| `category` | text | NO | 'unknown' | Category: `validation`, `database`, `external_api`, `auth`, `config`, `business_logic`, `infrastructure`, `unknown` |
+| `severity` | text | NO | 'error' | Level: `warning`, `error`, `critical` |
+| `message` | text | NO | | Error message |
+| `stack_trace` | text | YES | | Full stack trace |
+| `error_code` | text | YES | | Searchable error code (e.g., "TINY_AUTH_FAILED") |
+| `pedido_id` | text | YES | | Optional order reference |
+| `empresa_id` | uuid | YES | FK | Optional empresa reference |
+| `empresa_nome` | text | YES | | Empresa name (denormalized) |
+| `galpao_nome` | text | YES | | Galpão name (denormalized) |
+| `correlation_id` | text | YES | | Request correlation ID for tracing |
+| `request_path` | text | YES | | API path (e.g., "/api/webhook/tiny") |
+| `request_method` | text | YES | | HTTP method |
+| `metadata` | jsonb | NO | '{}' | Structured context |
+| `resolved` | boolean | NO | false | Resolution status |
+| `resolved_at` | timestamptz | YES | | When resolved |
+| `resolved_by` | text | YES | | Who resolved it (user name/ID) |
+| `resolution_notes` | text | YES | | How it was resolved |
+| `created_at` | timestamptz | NO | now() | Record creation |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `empresa_id` → `siso_empresas(id)`
+
+**Indexes:**
+- `idx_siso_erros_timestamp` (timestamp DESC)
+- `idx_siso_erros_source` (source)
+- `idx_siso_erros_category` (category)
+- `idx_siso_erros_severity` (severity)
+- `idx_siso_erros_pedido` (pedido_id) WHERE pedido_id IS NOT NULL
+- `idx_siso_erros_empresa` (empresa_id) WHERE empresa_id IS NOT NULL
+- `idx_siso_erros_correlation` (correlation_id) WHERE correlation_id IS NOT NULL
+- `idx_siso_erros_resolved` (resolved) WHERE resolved = false
+- `idx_siso_erros_error_code` (error_code) WHERE error_code IS NOT NULL
+- `idx_siso_erros_unresolved_by_source` (source, timestamp DESC) WHERE resolved = false
+
+**Notes:**
+- Richer structure than `siso_logs` for diagnostics
+- Written via `logger.logError(opts)` which writes to both siso_logs and siso_erros
+- `correlation_id` generated per webhook request for tracing
+- Used for post-mortem analysis and documentation in `erros-conhecidos.yaml`
+
+---
+
+### siso_configuracoes
+
+**Purpose:** Key-value store for system configuration.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `chave` | text | NO | (PK) | Configuration key |
+| `valor` | text | NO | | Configuration value |
+| `atualizado_em` | timestamptz | NO | now() | Last update |
+
+**Primary Key:** `chave`
+
+**Current Keys:**
+- `printnode_api_key` — PrintNode API key (secret)
+
+**Notes:**
+- Managed via `/api/admin/printnode/api-key` endpoints
+- Accessed via `getConfig(chave)` and `setConfig(chave, valor)`
+- Used for credentials and system-wide settings
+
+---
+
+### siso_webhook_logs
+
+**Purpose:** Webhook deduplication and processing tracking.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Log entry ID |
+| `dedup_key` | text | NO | UNIQUE | Dedup key (webhook payload hash or ID) |
+| `cnpj` | text | YES | | Tiny account CNPJ (legacy) |
+| `empresa_id` | uuid | YES | FK | Empresa (replaces cnpj) |
+| `tipo` | text | YES | | Webhook type: `pedido`, `nota_fiscal` |
+| `pedido_tiny_id` | text | YES | | Tiny order ID |
+| `status` | text | NO | 'pendente' | Processing status: `pendente`, `processando`, `concluido`, `erro`, `ignorado` |
+| `payload` | jsonb | YES | | Full webhook payload |
+| `processado_em` | timestamptz | YES | | When processing completed |
+| `erro` | text | YES | | Error message if any |
+| `criado_em` | timestamptz | NO | now() | Record creation |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `empresa_id` → `siso_empresas(id)`
+
+**Unique Constraint:** `dedup_key`
+
+**Notes:**
+- Prevents duplicate webhook processing
+- `cnpj` is legacy; prefer `empresa_id`
+- `status` tracks: pending processing, processing, completed, error, ignored (non-marketplace)
+- Payload stored for debugging
+
+---
+
+### siso_api_calls
+
+**Purpose:** Rate limiter tracking for Tiny API calls per empresa.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Call record ID |
+| `filial` | text | YES | | Legacy: branch code |
+| `endpoint` | text | YES | | Tiny API endpoint |
+| `empresa_id` | uuid | YES | FK | Empresa (replaces filial) |
+| `called_at` | timestamptz | NO | now() | When called |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `empresa_id` → `siso_empresas(id)`
+
+**Indexes:**
+- `idx_api_calls_rate` (filial, called_at DESC)
+- `idx_api_calls_empresa` (empresa_id, called_at DESC)
+
+**Notes:**
+- Used by rate-limiter.ts to enforce 60 req/min per empresa
+- Rows auto-cleanup via migration cronjob (older than 2 hours)
+- `filial` is legacy; prefer `empresa_id`
+
+---
+
+### siso_tiny_connections
+
+**Purpose:** Tiny ERP OAuth2 connection state per empresa.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Connection ID |
+| `cnpj` | text | YES | | Account CNPJ (legacy identifier) |
+| `empresa_id` | uuid | YES | FK | Empresa |
+| `access_token` | text | YES | | Current OAuth2 access token |
+| `refresh_token` | text | YES | | OAuth2 refresh token |
+| `token_expira_em` | timestamptz | YES | | Token expiration |
+| `deposito_id` | integer | YES | | Configured Tiny deposit (warehouse) ID |
+| `deposito_nome` | text | YES | | Deposit name (cached) |
+| `ativo` | boolean | NO | true | Active flag |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `empresa_id` → `siso_empresas(id)`
+
+**Indexes:**
+- `idx_tiny_connections_empresa` (empresa_id)
+
+**Notes:**
+- One row per empresa with OAuth2 state
+- Tokens auto-refreshed with 60s buffer before expiry
+- `deposito_id` selects which Tiny warehouse to use for stock operations
+- `cnpj` is legacy; prefer `empresa_id`
+
+---
+
+## Authentication & Sessions
+
+### siso_usuarios
+
+**Purpose:** User accounts with PIN-based authentication.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | User ID |
+| `nome` | text | NO | | Display name |
+| `pin` | text | NO | | 4-digit PIN (not hashed — simple system) |
+| `cargo` | text | YES | | Legacy: single role |
+| `cargos` | text[] | NO | '{}' | Array of roles: `admin`, `operador`, `operador_cwb`, `operador_sp`, `comprador` |
+| `ativo` | boolean | NO | true | Active flag |
+| `printnode_printer_id` | bigint | YES | | Per-user PrintNode printer override |
+| `printnode_printer_nome` | text | YES | | Printer name (cached) |
+| `criado_em` | timestamptz | NO | now() | Creation |
+| `atualizado_em` | timestamptz | NO | now() | Last update |
+
+**Primary Key:** `id`
+
+**Notes:**
+- PIN is 4 digits, unencrypted (suitable for warehouse environment)
+- `cargos` array replaces legacy `cargo` column (new code uses array)
+- Seed user: Eryk / 1234 / admin
+- `printnode_printer_id` allows per-user label printer assignment
+
+---
+
+### siso_usuario_galpoes
+
+**Purpose:** N:M association between users and galpões (access control).
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `usuario_id` | uuid | NO | FK | User |
+| `galpao_id` | uuid | NO | FK | Galpão |
+
+**Primary Key:** `(usuario_id, galpao_id)`
+
+**Foreign Keys:**
+- `usuario_id` → `siso_usuarios(id)`
+- `galpao_id` → `siso_galpoes(id)`
+
+**Notes:**
+- Controls which galpões each user can see/operate
+- Fetched in user API to populate UI filtering
+- Currently used for informational purposes; not enforced in API
+
+---
+
+### siso_sessoes
+
+**Purpose:** Server-side session tracking for active users.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Session ID |
+| `usuario_id` | uuid | NO | FK | User |
+| `criado_em` | timestamptz | NO | now() | Session creation |
+| `expira_em` | timestamptz | NO | now() + 12h | Expiration |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `usuario_id` → `siso_usuarios(id)`
+
+**Indexes:**
+- `idx_sessoes_expira` (expira_em)
+
+**Notes:**
+- Created on login, sent to client as `X-Session-Id` header
+- Client persists session in localStorage (`siso_user` key)
+- Validated server-side on protected endpoints via `getSessionUser()`
+- Expires after 12 hours or manual logout
+
+---
+
+## Entity-Relationship Diagram
+
+```mermaid
+erDiagram
+    GALPAO ||--o{ EMPRESA : contains
+    GALPAO ||--o{ INVENTARIO : used_by
+    GALPAO ||--o{ TRANSFERENCIA : origin_destination
+    GALPAO ||--o{ USUARIO_GALPAO : assigned_to
+
+    EMPRESA ||--o{ PEDIDO : receives
+    EMPRESA ||--o{ GRUPO_EMPRESA : member_of
+    EMPRESA ||--o{ FILA_EXECUCAO : executes
+    EMPRESA ||--o{ PEDIDO_ITEM_ESTOQUE : holds_stock
+    EMPRESA ||--o{ TRANSFERENCIA : origin_destination
+    EMPRESA ||--o{ INVENTARIO : conducts
+    EMPRESA ||--o{ ORDEN_COMPRA : places
+
+    GRUPO ||--o{ GRUPO_EMPRESA : organizes
+
+    GRUPO_EMPRESA }o--|| EMPRESA : has_tier
+
+    PEDIDO ||--o{ PEDIDO_ITEM : contains
+    PEDIDO ||--o{ PEDIDO_ITEM_ESTOQUE : has_normalized_stock
+    PEDIDO ||--o{ FILA_EXECUCAO : queued_for
+    PEDIDO ||--o{ PEDIDO_HISTORICO : tracked_by
+
+    PEDIDO_ITEM ||--o{ ORDEN_COMPRA : requires
+    PEDIDO_ITEM ||--o{ PEDIDO_ITEM_ESTOQUE : references
+
+    PEDIDO_ITEM_ESTOQUE }o--|| EMPRESA : per_empresa
+
+    USUARIO ||--o{ PEDIDO : approves
+    USUARIO ||--o{ PEDIDO_HISTORICO : records
+    USUARIO ||--o{ SESSAO : creates
+    USUARIO ||--o{ USUARIO_GALPAO : assigned_to
+    USUARIO ||--o{ INVENTARIO : conducts
+    USUARIO ||--o{ TRANSFERENCIA : initiates
+    USUARIO ||--o{ ORDEN_COMPRA : purchases
+
+    INVENTARIO ||--o{ INVENTARIO_ITEM : contains
+    INVENTARIO }o--|| EMPRESA : empresa_id
+    INVENTARIO }o--|| USUARIO : usuario_id
+
+    TRANSFERENCIA ||--o{ TRANSFERENCIA_ITEM : contains
+    TRANSFERENCIA }o--|| EMPRESA : origin_destination
+
+    WEBHOOK_LOG ||--o{ EMPRESA : tracks
+    TINY_CONNECTION }o--|| EMPRESA : oauth_state
+    ERROR_LOG ||--o{ EMPRESA : references
+```
+
+**Key Relationships:**
+
+1. **Galpão → Empresa (1:N):** One physical location can have multiple businesses
+2. **Empresa → Grupo (N:M):** via `siso_grupo_empresas` with tier
+3. **Pedido → Empresa:** Order received by origin empresa
+4. **Pedido → PedidoItem (1:N):** One order has multiple line items
+5. **PedidoItem → PedidoItemEstoque (1:N):** One item has stock in multiple empresas
+6. **Pedido → FilaExecucao (1:1):** After approval, queued for stock posting
+7. **Usuario → Galpão (N:M):** via `siso_usuario_galpoes`
+8. **Usuario → Sessao (1:N):** Active sessions per user
+9. **Inventario → InventarioItem (1:N):** Session contains scanned items
+10. **Transferencia → TransferenciaItem (1:N):** Session contains transfer items
+11. **PedidoItem → OrdenCompra (N:1):** Multiple items per purchase order
+12. **PedidoItem → PedidoHistorico:** Audit trail events
+
+---
+
+## Data Lifecycle Patterns
+
+### Order Lifecycle (siso_pedidos)
+
+```
+1. WEBHOOK RECEIVED
+   ├─ siso_webhook_logs created (dedup_key, status='pendente')
+   ├─ siso_pedidos created (status='pendente')
+   ├─ siso_pedido_itens created (one per product)
+   └─ siso_pedido_item_estoques created (one per empresa per product)
+
+2. DECISION LOGIC (webhook processor)
+   ├─ Fetch stock across all empresas in grupo
+   ├─ Aggregate by galpão
+   ├─ Calculate suggestion (propria/transferencia/oc)
+   └─ If propria + auto-approval: status='executando', decision='propria', tipo_resolucao='auto'
+      Else: status='pendente', awaiting operator
+
+3. OPERATOR REVIEW (if manual)
+   ├─ GET /api/pedidos returns order with stock + suggestion
+   ├─ Operator chooses decision (propria/transferencia/oc)
+   └─ POST /api/pedidos/aprovar sets decision_final, operador_id, status='executando'
+
+4. EXECUTION QUEUE
+   ├─ siso_fila_execucao row created (status='pendente')
+   ├─ POST /api/worker/processar async worker starts
+   ├─ Worker deducts stock item-by-item from Tiny following tier order
+   └─ On success: siso_pedidos.status='concluido', estoque_lancado=true
+
+5. SEPARATION (if not cancelled)
+   ├─ NF webhook arrives (or manual authorization)
+   ├─ siso_pedidos.status_separacao='aguardando_separacao'
+   ├─ GET /api/separacao lists ready orders
+   ├─ POST /api/separacao/iniciar starts wave picking
+   └─ Operator scans products (GTIN/SKU) via /api/separacao/bipar
+      - siso_pedido_itens.quantidade_bipada incremented
+      - When all items complete: status_separacao='embalado'
+
+6. PACKING & DISPATCH
+   ├─ Operator scans items again via /api/separacao/bipar-embalagem
+   └─ On completion: status_separacao='embalado', label printed
+
+7. COMPLETION
+   └─ Order removed from active views, available in history
+```
+
+**Status Transitions:**
+- `pendente` → `executando` (approval)
+- `executando` → `concluido` (execution complete) or `erro` (retry exhausted)
+- `concluido` (final)
+- `cancelado` (via webhook or operator)
+
+**Separation Status Transitions:**
+- NULL (initial)
+- `aguardando_compra` (if needs purchase)
+- `aguardando_nf` (waiting for invoice)
+- `aguardando_separacao` (ready for picking)
+- `em_separacao` (picking in progress)
+- `separado` → `embalado` (picking done)
+
+---
+
+### Purchase Order Lifecycle
+
+```
+1. CREATION
+   └─ When order item status='oc', siso_ordens_compra created
+
+2. PURCHASE MANAGEMENT
+   ├─ Operator views pending items per supplier
+   ├─ Sets compra_status='comprado', comprado_em=now(), comprado_por=usuario_id
+   └─ PO status transitions: aguardando_compra → comprado
+
+3. RECEIVING
+   ├─ POST /api/compras/conferir marks items received
+   ├─ compra_quantidade_recebida incremented
+   ├─ recebido_em, recebido_por recorded
+   └─ When all items received: compra_status='recebido'
+
+4. EXECUTION RESUME
+   ├─ compras-release.ts checks if all OC items received
+   ├─ If yes: resumes execution, updates siso_fila_execucao
+   └─ Stock posted to Tiny (propria decision)
+
+5. EXCEPTIONS (optional)
+   ├─ Mark item as indisponivel: compra_status='indisponivel'
+   ├─ Or set equivalente: compra_equivalente_sku, etc.
+   ├─ Or request cancelamento: compra_cancelamento_motivo
+   └─ Status transitions handled manually
+```
+
+---
+
+### Inventory Session Lifecycle
+
+```
+1. CREATION
+   ├─ POST /api/inventario (modo, tipo_estoque, deposito_id)
+   ├─ siso_inventarios created (status='em_andamento')
+   └─ User enters session ID
+
+2. SCANNING
+   ├─ POST /api/inventario/[id]/coletar (sku, localizacao, quantidade)
+   ├─ siso_inventario_itens created (status='pendente')
+   └─ Repeat until all items scanned
+
+3. PROCESSING
+   ├─ POST /api/inventario/[id]/processar (fire-and-forget)
+   ├─ siso_inventarios.status='processando'
+   ├─ For each item: resolve SKU → Tiny product
+   ├─ Fetch old location/balance from Tiny
+   ├─ Update location or stock movement in Tiny
+   └─ Set item status='sucesso' or 'erro'
+
+4. COMPLETION
+   ├─ GET /api/inventario/[id]/progresso polls status
+   └─ When all items processed: status='concluido'
+
+5. OPTIONAL: REVERT
+   ├─ POST /api/inventario/[id]/reverter
+   ├─ siso_inventarios.status='revertendo'
+   ├─ Undo all Tiny movements (opposite operations)
+   └─ Final status='revertido'
+```
+
+---
+
+## Important Queries & Access Patterns
+
+### Get Order with Stock
+
+```sql
+SELECT p.*, p.siso_empresas(nome) AS empresa_origem,
+       array_agg(pi.id) AS item_ids
+FROM siso_pedidos p
+LEFT JOIN siso_empresas ON p.empresa_origem_id = siso_empresas.id
+LEFT JOIN siso_pedido_itens pi ON pi.pedido_id = p.id
+WHERE p.id = $1
+GROUP BY p.id;
+
+-- Get stock per empresa
+SELECT pie.*, e.nome, g.nome
+FROM siso_pedido_item_estoques pie
+JOIN siso_empresas e ON pie.empresa_id = e.id
+JOIN siso_galpoes g ON e.galpao_id = g.id
+WHERE pie.pedido_id = $1
+GROUP BY pie.pedido_id, pie.produto_id, g.nome;
+```
+
+### Pending Orders by Galpão
+
+```sql
+SELECT p.id, p.numero, p.data, COUNT(pi.id) AS item_count,
+       SUM(CASE WHEN pi.bipado_completo THEN 0 ELSE 1 END) AS items_pending
+FROM siso_pedidos p
+JOIN siso_pedido_itens pi ON pi.pedido_id = p.id
+WHERE p.separacao_galpao_id = $1
+  AND p.status_separacao IN ('aguardando_separacao', 'em_separacao')
+  AND p.status != 'cancelado'
+GROUP BY p.id
+ORDER BY p.data ASC;
+```
+
+### Purchase Items Grouped by Supplier
+
+```sql
+SELECT pi.fornecedor_oc, COUNT(*) AS item_count,
+       array_agg(DISTINCT pi.pedido_id) AS pedido_ids
+FROM siso_pedido_itens pi
+WHERE pi.compra_status = 'aguardando_compra'
+  AND pi.ordem_compra_id IS NULL
+GROUP BY pi.fornecedor_oc
+ORDER BY item_count DESC;
+```
+
+### Recent Errors by Source
+
+```sql
+SELECT source, category, COUNT(*) AS count
+FROM siso_erros
+WHERE resolved = false
+  AND timestamp > now() - interval '24 hours'
+GROUP BY source, category
+ORDER BY count DESC;
+```
+
+### Ordem Histórico (Timeline)
+
+```sql
+SELECT evento, usuario_nome, detalhes, criado_em
+FROM siso_pedido_historico
+WHERE pedido_id = $1
+ORDER BY criado_em ASC;
+```
+
+### Rate Limit Check
+
+```sql
+SELECT COUNT(*) AS call_count
+FROM siso_api_calls
+WHERE empresa_id = $1
+  AND called_at > now() - interval '1 minute'
+LIMIT 61;  -- Fail if > 60
+```
+
+---
+
+## Migration History Summary
+
+Migrations are stored in `supabase/migrations/` in chronological order:
+
+| Date | Migration | Purpose |
+|------|-----------|---------|
+| 2026-03-09 | `create_execution_queue.sql` | siso_fila_execucao + rate limit tracking |
+| 2026-03-09 | `create_siso_logs.sql` | Application logging table |
+| 2026-03-09 | `add_estoque_saida_lancada.sql` | Idempotency flags for stock deduction |
+| 2026-03-09 | `add_deposito_columns.sql` | Deposit selection per Tiny connection |
+| 2026-03-10 | `create_galpao_empresa_grupo.sql` | Hierarchy tables + seeding |
+| 2026-03-10 | `create_siso_api_calls.sql` | Rate limiter tracking |
+| 2026-03-11 | `create_siso_sessoes.sql` | Server-side session table |
+| 2026-03-11 | `add_separacao_columns.sql` | Wave picking tracking columns |
+| 2026-03-11 | `add_printnode_config.sql` | Printer config columns |
+| 2026-03-11 | `add_etiqueta_zpl.sql` | ZPL label caching |
+| 2026-03-11 | `create_pedido_historico.sql` | Audit trail table |
+| 2026-03-11 | `modulo_compras.sql` | siso_ordens_compra + purchase columns |
+| 2026-03-11 | `create_siso_configuracoes.sql` | KV config store |
+| 2026-03-11 | `add_compra_estoque_lancado_alerta.sql` | Alert flag for cancelled orders |
+| 2026-03-11 | `add_nota_fiscal_id.sql` | NF tracking column |
+| 2026-03-11 | Various PL/pgSQL functions | siso_processar_bip, siso_processar_bip_embalagem, etc. |
+| 2026-03-16 | `create_siso_erros_table.sql` | Dedicated error tracking |
+| 2026-03-16 | `add_cargos_array.sql` | Multi-role support for users |
+| 2026-03-16 | `add_shipping_group_columns.sql` | forma_frete_id, transportador_id |
+| 2026-03-16 | `add_updated_at_to_siso_pedidos.sql` | Timestamp tracking |
+| 2026-03-17 | `add_expedicao_id_to_pedidos.sql` | Expedition caching |
+| 2026-03-17 | `add_prazo_envio.sql` | Shipping deadline tracking |
+| 2026-03-18 | `compras_excecoes.sql` | Equivalence + cancellation handling |
+| 2026-03-18 | `compras_quantidade_operacao.sql` | Partial purchase tracking |
+| 2026-03-19 | `oc_galpao_recebimento.sql` | PO galpão selection |
+| 2026-03-23 | `modulo_inventario_transferencia.sql` | Inventory and transfer modules |
+| 2026-03-24 | `add_separacao_tags.sql` | User-created order tags |
+| 2026-03-24 | `add_produto_id_na_empresa.sql` | Per-empresa product ID tracking |
+| 2026-03-24 | `compras_v2_missing_columns.sql` | Additional purchase columns |
+
+**Key Phases:**
+1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging
+2. **Phase 2 (Mar 10):** Galpão/Empresa/Grupo hierarchy
+3. **Phase 3 (Mar 11):** Separation module + purchases
+4. **Phase 4 (Mar 16-19):** Error tracking + exceptions
+5. **Phase 5 (Mar 23-24):** Inventory + transfer modules
+
+---
+
+## Notes for Developers
+
+### Adding a New Column
+
+1. Create a migration file: `supabase/migrations/YYYYMMDD_description.sql`
+2. Use `ALTER TABLE table_name ADD COLUMN IF NOT EXISTS ...`
+3. Add comments and indexes as needed
+4. Update `src/types/index.ts` if the type interface changes
+5. Update `docs/database-schema.md`
+
+### Updating API Documentation
+
+If a migration changes request/response shapes:
+1. Update `docs/api-reference.md` with new field documentation
+2. Update TypeScript types in `src/types/index.ts`
+3. Update the table documentation in this file
+
+### Querying Across Galpões
+
+Never hardcode "CWB" or "SP" in queries. Always join through:
+```sql
+siso_empresas.galpao_id → siso_galpoes.nome
+```
+
+This ensures the schema scales to new galpões without code changes.
+
+### Stock Aggregation
+
+Stock is stored normalized in `siso_pedido_item_estoques` (one per empresa). Always aggregate by galpão:
+```sql
+GROUP BY galpao_nome
+```
+
+See `/api/pedidos` for reference implementation.
+
+### Session Management
+
+Sessions are validated server-side. Client sends `X-Session-Id` header:
+```typescript
+const user = await getSessionUser();  // throws if expired
+```
+
+Sessions expire after 12 hours or manual logout.
+
+### Error Tracking
+
+Use `logger.logError(opts)` for actual errors:
+```typescript
+logger.logError({
+  category: 'external_api',
+  source: 'tiny-api',
+  message: 'Failed to fetch order',
+  error: err,
+  pedidoId: '12345',
+  correlationId: getCorrelationId(),
+});
+```
+
+This writes to both `siso_logs` and `siso_erros`.
+
+---
+
+**Schema Last Updated:** 2026-03-25
+**Database Version:** PostgreSQL 14+ (Supabase)
+**Supabase Project:** `wrbrbhuhsaaupqsimkqz`

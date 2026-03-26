@@ -33,6 +33,9 @@ yarn-error.log*
 # runtime logs
 logs.txt
 
+# misc files (not part of the project)
+_misc/
+
 # ralph runtime state
 scripts/ralph/.last-branch
 

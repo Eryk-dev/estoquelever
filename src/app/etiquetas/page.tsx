@@ -79,7 +79,7 @@ export default function EtiquetasPage() {
   ];
 
   return (
-    <AppShell title="Etiquetas de Endereço" backHref="/">
+    <AppShell title="Etiquetas de Endereço">
       {/* Tabs */}
       <div className="mb-5 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
         <div className="flex items-center gap-1 rounded-lg bg-zinc-100 p-1 w-fit min-w-0">

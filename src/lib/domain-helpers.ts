@@ -65,6 +65,48 @@ export function getFilialColors(galpao: string): string {
   return GALPAO_COLORS[galpao] ?? DEFAULT_GALPAO_COLOR;
 }
 
+// ─── Galpão accent (visual identity per warehouse) ──────────────────────────
+
+export interface GalpaoAccent {
+  /** CSS color value for inline styles (e.g. accent bar) */
+  color: string;
+  /** Tailwind classes for active pill background */
+  pillBg: string;
+  /** Tailwind class for colored dot indicator */
+  dot: string;
+}
+
+const GALPAO_ACCENT_MAP: Record<string, GalpaoAccent> = {
+  CWB: {
+    color: "var(--color-cwb)",
+    pillBg: "bg-cwb text-white",
+    dot: "bg-cwb",
+  },
+  SP: {
+    color: "var(--color-sp)",
+    pillBg: "bg-sp text-white",
+    dot: "bg-sp",
+  },
+};
+
+const NEUTRAL_ACCENT: GalpaoAccent = {
+  color: "transparent",
+  pillBg: "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900",
+  dot: "bg-ink-faint",
+};
+
+const FALLBACK_ACCENT: GalpaoAccent = {
+  color: "var(--color-info)",
+  pillBg: "bg-info text-white",
+  dot: "bg-info",
+};
+
+/** Returns accent colors for the active galpão. Pass null for "Todos" (neutral). */
+export function getGalpaoAccent(galpaoNome: string | null): GalpaoAccent {
+  if (!galpaoNome) return NEUTRAL_ACCENT;
+  return GALPAO_ACCENT_MAP[galpaoNome.toUpperCase()] ?? FALLBACK_ACCENT;
+}
+
 // ─── Localizacao (natural sort) ─────────────────────────────────────────────
 
 /**

@@ -156,7 +156,7 @@ export default function ComprasPage() {
   }
 
   return (
-    <AppShell title="Compras">
+    <AppShell title="Compras" subtitle="Reposição imediata">
       <div className="space-y-4">
         {/* Summary */}
         {counts && (

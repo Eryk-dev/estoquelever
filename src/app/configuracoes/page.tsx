@@ -85,7 +85,6 @@ function ConfiguracoesContent() {
     <AppShell
       title="Configurações"
       subtitle="Galpões, Empresas, Grupos e Conexões Tiny"
-      backHref="/"
       mainClassName="space-y-6"
     >
       {/* ── Links rápidos ───────────────────────────────────────── */}

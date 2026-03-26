@@ -135,7 +135,7 @@ export default function DashboardPage() {
   }
 
   const headerRight = (
-    <>
+    <div className="flex items-center gap-2">
       {(user?.cargos ?? [user?.cargo]).includes("admin") && (
         <Link
           href="/configuracoes"
@@ -153,28 +153,31 @@ export default function DashboardPage() {
       >
         <RefreshCw className={`h-4 w-4 ${isRefetching ? "animate-spin" : ""}`} />
       </button>
+
       <GalpaoSelector />
-      <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
-        <span className="font-mono text-xs font-semibold text-ink">
+
+      <div className="h-4 w-px bg-line" />
+
+      <div className="flex items-center gap-1">
+        <span className="hidden font-mono text-xs font-semibold text-ink-muted sm:inline">
           {user?.nome}
         </span>
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
+          title="Sair"
+        >
+          <LogOut className="h-4 w-4" />
+        </button>
       </div>
-      <button
-        type="button"
-        onClick={handleLogout}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
-        title="Sair"
-      >
-        <LogOut className="h-4 w-4" />
-      </button>
-    </>
+    </div>
   );
 
   return (
     <AppShell
       title="SISO"
       subtitle="Separação de Ordens"
-      backHref="/"
       headerRight={headerRight}
     >
       {/* Tab bar */}

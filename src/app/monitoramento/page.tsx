@@ -205,7 +205,7 @@ export default function MonitoramentoPage() {
   }, [fetchData]);
 
   const headerRight = (
-    <>
+    <div className="flex items-center gap-2">
       {data && <HealthBadge status={data.health.status} />}
       <button
         type="button"
@@ -219,14 +219,13 @@ export default function MonitoramentoPage() {
         <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
         Atualizar
       </button>
-    </>
+    </div>
   );
 
   return (
     <AppShell
       title="Monitoramento"
       subtitle="Logs, webhooks e saúde do sistema"
-      backHref="/configuracoes"
       requireAdmin={true}
       headerRight={headerRight}
       mainClassName="space-y-6"

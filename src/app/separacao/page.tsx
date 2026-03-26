@@ -1,12 +1,13 @@
 "use client";
 
-import { Suspense, useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { Suspense, useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Home, LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle, RotateCcw, Tag, X, Plus } from "lucide-react";
-import Link from "next/link";
+import { LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle, RotateCcw, Tag, X, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { AppHeader } from "@/components/app-header";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
+import { getGalpaoAccent } from "@/lib/domain-helpers";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import { Tabs } from "@/components/ui/tabs";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -584,25 +585,15 @@ function SeparacaoPageContent() {
 
   if (!user) return null;
 
+  const accent = getGalpaoAccent(activeGalpaoNome);
+
   if (isError) {
     return (
       <div className="min-h-screen bg-surface">
-        <header className="sticky top-0 z-10 border-b border-line bg-paper">
-          <div className="mx-auto flex max-w-5xl items-center gap-2 px-3 py-3 sm:px-4">
-            <Link
-              href="/"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink shrink-0"
-              title="Inicio"
-            >
-              <Home className="h-4 w-4" />
-            </Link>
-            <div className="min-w-0 flex-1">
-              <h1 className="text-sm font-bold tracking-tight text-ink sm:text-base">
-                Separacao
-              </h1>
-            </div>
-          </div>
-        </header>
+        <AppHeader
+          title="Separacao"
+          accentColor={accent.color}
+        />
 
         <main className="mx-auto max-w-5xl px-3 py-4 sm:px-4">
           <div className="rounded-2xl border border-red-200 bg-red-50 p-5">
@@ -736,42 +727,30 @@ function SeparacaoPageContent() {
 
   return (
     <div className="min-h-screen bg-surface">
-      {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-5xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
-          <Link
-            href="/"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink shrink-0"
-            title="Inicio"
-          >
-            <Home className="h-4 w-4" />
-          </Link>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-sm sm:text-base font-bold tracking-tight text-ink">
-              Separacao
-            </h1>
-            <p className="text-[11px] text-ink-faint hidden sm:block">
-              Separacao fisica por galpao
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+      <AppHeader
+        title="Separacao"
+        subtitle={<span className="hidden sm:inline">Separacao fisica por galpao</span>}
+        accentColor={accent.color}
+        rightSlot={(
+          <div className="flex items-center gap-2">
             <GalpaoSelector />
-            <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
-              <span className="font-mono text-xs font-semibold text-ink">
+            <div className="h-4 w-px bg-line" />
+            <div className="flex items-center gap-1">
+              <span className="hidden font-mono text-xs font-semibold text-ink-muted sm:inline">
                 {user.nome}
               </span>
+              <button
+                type="button"
+                onClick={logout}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
+                title="Sair"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={logout}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
-              title="Sair"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
           </div>
-        </div>
-      </header>
+        )}
+      />
 
       <main className="mx-auto max-w-5xl space-y-4 px-3 sm:px-4 py-3 sm:py-4">
         {/* Tabs */}

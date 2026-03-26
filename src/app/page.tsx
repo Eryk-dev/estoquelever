@@ -15,8 +15,10 @@ import {
   ShoppingCart,
 } from "lucide-react";
 import Link from "next/link";
+import { AppHeader } from "@/components/app-header";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { GalpaoSelector } from "@/components/galpao-selector";
+import { getGalpaoAccent } from "@/lib/domain-helpers";
 import { cn } from "@/lib/utils";
 
 interface Module {
@@ -117,7 +119,6 @@ function formatCycleTime(minutes: number | null): string {
 function getModuleCount(
   moduleId: Module["id"],
   counts: DashboardCounts | null,
-  overview: OverviewResponse | null,
 ): number | null {
   if (moduleId === "painel") return null;
   return counts?.[moduleId as keyof DashboardCounts] ?? null;
@@ -192,20 +193,21 @@ export default function HomePage() {
 
   if (!user) return null;
 
+  const accent = getGalpaoAccent(activeGalpaoNome);
+
   return (
     <div className="min-h-screen bg-surface">
-      {/* ── Header ── */}
-      <header className="sticky top-0 z-10 border-b border-line bg-paper/95 backdrop-blur">
-        <div className="mx-auto flex max-w-2xl items-center gap-2 px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-base font-bold tracking-tight text-ink">
-              Estoque Lever
-            </h1>
-            <p className="text-[11px] text-ink-faint">
-              {activeGalpaoNome ?? "Todos os galpões"}
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+      <AppHeader
+        title="Estoque Lever"
+        subtitle={(
+          <span className="flex items-center gap-1.5">
+            <span className={cn("inline-block h-2 w-2 rounded-full transition-colors duration-300", accent.dot)} />
+            {activeGalpaoNome ?? "Todos os galpões"}
+          </span>
+        )}
+        accentColor={accent.color}
+        rightSlot={(
+          <div className="flex items-center gap-2">
             {(user.cargos ?? [user.cargo]).includes("admin") && (
               <Link
                 href="/configuracoes"
@@ -215,23 +217,29 @@ export default function HomePage() {
                 <Settings className="h-4 w-4" />
               </Link>
             )}
-            <GalpaoSelector />
-            <span className="hidden sm:inline font-mono text-xs font-semibold text-ink-muted">
-              {user.nome}
-            </span>
-            <button
-              type="button"
-              onClick={logout}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
-              title="Sair"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </header>
 
-      <main className="mx-auto max-w-2xl px-4 py-6 space-y-6">
+            <GalpaoSelector />
+
+            <div className="h-4 w-px bg-line" />
+
+            <div className="flex items-center gap-1">
+              <span className="hidden font-mono text-xs font-semibold text-ink-muted sm:inline">
+                {user.nome}
+              </span>
+              <button
+                type="button"
+                onClick={logout}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink"
+                title="Sair"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+      />
+
+      <main className="mx-auto max-w-5xl px-3 sm:px-4 py-3 sm:py-4 space-y-6">
         {/* ── Alert banner (only when something needs attention) ── */}
         {alertCount > 0 && (
           <Link
@@ -256,7 +264,7 @@ export default function HomePage() {
         <div className="grid grid-cols-2 gap-3">
           {MODULES.map((mod) => {
             const Icon = mod.icon;
-            const count = getModuleCount(mod.id, counts, overview);
+            const count = getModuleCount(mod.id, counts);
 
             return (
               <Link

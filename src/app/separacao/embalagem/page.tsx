@@ -18,9 +18,10 @@ import {
   Printer,
   Loader2,
 } from "lucide-react";
-import Link from "next/link";
+import { AppHeader } from "@/components/app-header";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
+import { getGalpaoAccent } from "@/lib/domain-helpers";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GalpaoSelector } from "@/components/galpao-selector";
@@ -61,7 +62,7 @@ export default function EmbalagemPageWrapper() {
 }
 
 function EmbalagemPage() {
-  const { user, loading, activeGalpaoId } = useAuth();
+  const { user, loading, activeGalpaoId, activeGalpaoNome } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
@@ -457,34 +458,24 @@ function EmbalagemPage() {
     .map((id) => completedPedidoData.current.get(id) ?? pedidos.find((p) => p.id === id))
     .filter((p): p is SeparacaoPedido => p !== undefined);
 
+  const accent = getGalpaoAccent(activeGalpaoNome);
+
   return (
     <div className="min-h-screen bg-surface">
-      {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-5xl items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3">
-          <Link
-            href="/separacao"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink shrink-0"
-            title="Voltar"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-sm sm:text-base font-bold tracking-tight text-ink">
-              Embalagem
-            </h1>
-            <p className="text-[11px] text-ink-faint">
-              {pedidoIds.length} pedido(s) — Bipagem e conferencia
-            </p>
-          </div>
-          <GalpaoSelector />
-          <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5">
-            <span className="font-mono text-xs font-semibold text-ink">
+      <AppHeader
+        title="Embalagem"
+        subtitle={`${pedidoIds.length} pedido(s) — Bipagem e conferencia`}
+        accentColor={accent.color}
+        rightSlot={(
+          <div className="flex items-center gap-2">
+            <GalpaoSelector />
+            <div className="h-4 w-px bg-line" />
+            <span className="hidden font-mono text-xs font-semibold text-ink-muted sm:inline">
               {user.nome}
             </span>
           </div>
-        </div>
-      </header>
+        )}
+      />
 
       <main
         className="mx-auto max-w-5xl space-y-4 px-3 sm:px-4 py-3 sm:py-4"

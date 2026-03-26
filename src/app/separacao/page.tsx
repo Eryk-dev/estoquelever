@@ -685,54 +685,6 @@ function SeparacaoPageContent() {
     sortFilter !== "data_pedido",
     tagFilter.length > 0,
   ].filter(Boolean).length;
-  const markedItemsTotal = pedidos.reduce((sum, pedido) => sum + pedido.itens_marcados, 0);
-  const itemsTotal = pedidos.reduce((sum, pedido) => sum + pedido.total_itens, 0);
-  const queueInsight = (() => {
-    if (activeTab === "aguardando_compra") {
-      const waitingItems = pedidos.reduce(
-        (sum, pedido) => sum + (pedido.compra_stats?.aguardando ?? 0),
-        0,
-      );
-      return {
-        label: "Itens aguardando compra",
-        value: waitingItems,
-        helper: "Volume de itens ainda sem pedido de compra iniciado.",
-      };
-    }
-
-    if (activeTab === "em_separacao") {
-      return {
-        label: "Itens marcados",
-        value: itemsTotal > 0 ? `${markedItemsTotal}/${itemsTotal}` : "0/0",
-        helper: "Avanço consolidado dos pedidos já em execução.",
-      };
-    }
-
-    if (activeTab === "separado") {
-      const readyLabels = pedidos.filter((pedido) => pedido.etiqueta_pronta).length;
-      return {
-        label: "Com etiqueta pronta",
-        value: readyLabels,
-        helper: "Pedidos que entram na embalagem sem perda de ritmo.",
-      };
-    }
-
-    if (activeTab === "embalado") {
-      const missingLabels = pedidos.filter((pedido) => !pedido.etiqueta_pronta).length;
-      return {
-        label: "Sem etiqueta",
-        value: missingLabels,
-        helper: "Pedidos embalados que ainda precisam recuperar a etiqueta no Tiny.",
-      };
-    }
-
-    return {
-      label: "Prontos para agir",
-      value: pedidos.length,
-      helper: "Pedidos visíveis na etapa atual para execução imediata.",
-    };
-  })();
-
   function handleTabChange(nextTab: StatusSeparacao) {
     clearSelection();
     closeRevertMenu();
@@ -787,60 +739,6 @@ function SeparacaoPageContent() {
             onChange={(id) => handleTabChange(id as StatusSeparacao)}
           />
         </div>
-
-        <section className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(180px,1fr)_minmax(180px,1fr)]">
-          <div className="rounded-2xl border border-line bg-paper p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-ink-faint">
-              Etapa atual
-            </p>
-            <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                <h2 className="text-lg font-semibold tracking-tight text-ink">
-                  {activeConfig.label}
-                </h2>
-                <p className="mt-1 text-sm text-ink-muted">
-                  {activeConfig.description}
-                </p>
-              </div>
-              <div className="inline-flex w-fit flex-col rounded-2xl border border-line bg-surface px-4 py-3 text-left">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-faint">
-                  Na fila
-                </span>
-                <span className="font-mono text-2xl font-bold tracking-tight text-ink">
-                  {counts[activeTab]}
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <ContextChip
-                label="Galpão"
-                value={activeGalpaoNome ?? "Todos"}
-              />
-              <ContextChip
-                label="Selecionados"
-                value={selectedIds.size}
-              />
-              {hasFilters && (
-                <ContextChip
-                  label="Filtros"
-                  value={`${activeFilterCount} ativo(s)`}
-                />
-              )}
-            </div>
-          </div>
-
-          <QueueInsightCard
-            label="Selecionados"
-            value={selectedIds.size}
-            helper="Pedidos marcados para ação em lote nesta etapa."
-          />
-          <QueueInsightCard
-            label={queueInsight.label}
-            value={queueInsight.value}
-            helper={queueInsight.helper}
-          />
-        </section>
 
         {/* Filter bar — all tabs */}
         <section className="rounded-2xl border border-line bg-paper p-3">
@@ -1304,28 +1202,6 @@ export default function SeparacaoPage() {
     <Suspense fallback={<SeparacaoPageFallback />}>
       <SeparacaoPageContent />
     </Suspense>
-  );
-}
-
-function QueueInsightCard({
-  label,
-  value,
-  helper,
-}: {
-  label: string;
-  value: string | number;
-  helper: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-line bg-paper p-4">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
-        {label}
-      </p>
-      <p className="mt-3 font-mono text-3xl font-bold tracking-tight text-ink">
-        {value}
-      </p>
-      <p className="mt-2 text-xs text-ink-faint">{helper}</p>
-    </div>
   );
 }
 

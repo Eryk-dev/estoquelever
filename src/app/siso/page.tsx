@@ -30,7 +30,7 @@ async function fetchPedidos(): Promise<Pedido[]> {
 export default function DashboardPage() {
   const { user, logout, activeGalpaoNome } = useAuth();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<Tab["id"]>("todos");
+  const [activeTab, setActiveTab] = useState<Tab["id"]>("pendente");
   const [busca, setBusca] = useState("");
 
   const { data: allPedidos = [], isRefetching } = useQuery({

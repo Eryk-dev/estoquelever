@@ -82,13 +82,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 2. Find items with this SKU in those pedidos
+    // 2. Find items with this SKU in those pedidos (any compra_status)
     const { data: matchingItems, error: itemsErr } = await supabase
       .from("siso_pedido_itens")
       .select("id, pedido_id, produto_id, quantidade_pedida")
       .eq("sku", sku)
-      .in("pedido_id", activePedidoIds)
-      .is("compra_status", null);
+      .in("pedido_id", activePedidoIds);
 
     if (itemsErr) {
       logger.error("produto-esgotado", "Erro ao buscar itens", {

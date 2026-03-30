@@ -23,6 +23,7 @@ export interface CompraStatsData {
     quantidade: number;
     compra_status: string | null;
     fornecedor_oc: string | null;
+    imagem_url: string | null;
   }>;
 }
 
@@ -685,6 +686,7 @@ export function SeparacaoCard({
                   <table className="w-full text-[11px]">
                     <thead>
                       <tr className="border-b border-line text-left text-ink-faint">
+                        <th className="w-10 px-2 py-1"></th>
                         <th className="px-2 py-1 font-medium">SKU</th>
                         <th className="px-2 py-1 font-medium">Descricao</th>
                         <th className="px-2 py-1 font-medium text-center">Qtd</th>
@@ -698,6 +700,17 @@ export function SeparacaoCard({
                           key={`${item.sku}-${idx}`}
                           className="border-b border-line/50 last:border-0"
                         >
+                          <td className="px-2 py-1">
+                            {item.imagem_url ? (
+                              <img
+                                src={item.imagem_url}
+                                alt={item.sku}
+                                className="h-8 w-8 rounded border border-line object-cover bg-surface"
+                              />
+                            ) : (
+                              <div className="h-8 w-8 rounded border border-line bg-surface" />
+                            )}
+                          </td>
                           <td className="px-2 py-1 font-mono font-medium text-ink whitespace-nowrap">
                             {item.sku}
                           </td>

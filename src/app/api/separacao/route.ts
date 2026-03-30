@@ -32,7 +32,7 @@ const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
  *   status_separacao — filter by status
  *   empresa_origem_id — filter by origin empresa
  *   sort — data_pedido (default) | localizacao | sku
- *   busca — search string (matches numero, id_pedido_ecommerce, cliente_nome)
+ *   busca — search string (matches numero, id_pedido_ecommerce, cliente_nome, item sku, item gtin)
  *
  * Galpão filtering:
  *   uses the authenticated session and filters by siso_pedidos.separacao_galpao_id.
@@ -81,6 +81,32 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Pre-fetch pedido_ids matching SKU/GTIN when searching
+    let buscaItemPedidoIds: string[] | null = null;
+    if (busca) {
+      const { data: matchingItems } = await supabase
+        .from("siso_pedido_itens")
+        .select("pedido_id")
+        .or(`sku.ilike.%${busca}%,gtin.ilike.%${busca}%`);
+      if (matchingItems && matchingItems.length > 0) {
+        buscaItemPedidoIds = [...new Set(matchingItems.map((i) => i.pedido_id))];
+      }
+    }
+
+    // Build the busca OR filter combining pedido fields + item-matched IDs
+    function applyBuscaFilter<T extends { or: (filter: string) => T; in: (col: string, values: string[]) => T }>(q: T): T {
+      if (!busca) return q;
+      const parts = [
+        `numero.ilike.%${busca}%`,
+        `id_pedido_ecommerce.ilike.%${busca}%`,
+        `cliente_nome.ilike.%${busca}%`,
+      ];
+      if (buscaItemPedidoIds && buscaItemPedidoIds.length > 0) {
+        parts.push(`id.in.(${buscaItemPedidoIds.join(",")})`);
+      }
+      return q.or(parts.join(","));
+    }
+
     // 1. Counts — parallel HEAD queries per status (affected by all active filters)
     const countPromises = COUNT_STATUSES.map((status) => {
       let q = supabase
@@ -90,11 +116,7 @@ export async function GET(request: NextRequest) {
       if (activeGalpaoId) q = q.eq("separacao_galpao_id", activeGalpaoId);
       if (empresaFilter) q = q.eq("empresa_origem_id", empresaFilter);
       if (marketplaceFilter) q = q.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
-      if (busca) {
-        q = q.or(
-          `numero.ilike.%${busca}%,id_pedido_ecommerce.ilike.%${busca}%,cliente_nome.ilike.%${busca}%`,
-        );
-      }
+      q = applyBuscaFilter(q);
       if (tagFilter) q = q.contains("separacao_tags", [tagFilter]);
       return q;
     });
@@ -133,11 +155,7 @@ export async function GET(request: NextRequest) {
     if (statusFilter) {
       pedidosQuery = pedidosQuery.eq("status_separacao", statusFilter);
     }
-    if (busca) {
-      pedidosQuery = pedidosQuery.or(
-        `numero.ilike.%${busca}%,id_pedido_ecommerce.ilike.%${busca}%,cliente_nome.ilike.%${busca}%`,
-      );
-    }
+    pedidosQuery = applyBuscaFilter(pedidosQuery);
     if (tagFilter) {
       pedidosQuery = pedidosQuery.contains("separacao_tags", [tagFilter]);
     }
@@ -203,6 +221,7 @@ export async function GET(request: NextRequest) {
           quantidade: number;
           compra_status: string | null;
           fornecedor_oc: string | null;
+          imagem_url: string | null;
         }>;
       }
     > = {};
@@ -210,7 +229,7 @@ export async function GET(request: NextRequest) {
     if (pedidoIds.length > 0) {
       const { data: items } = await supabase
         .from("siso_pedido_itens")
-        .select("pedido_id, separacao_marcado, bipado_completo, compra_status, fornecedor_oc, sku, descricao, quantidade_pedida, compra_quantidade_solicitada")
+        .select("pedido_id, separacao_marcado, bipado_completo, compra_status, fornecedor_oc, sku, descricao, quantidade_pedida, compra_quantidade_solicitada, imagem_url")
         .in("pedido_id", pedidoIds);
 
       for (const item of items ?? []) {
@@ -254,6 +273,7 @@ export async function GET(request: NextRequest) {
                 : item.quantidade_pedida,
             compra_status: item.compra_status,
             fornecedor_oc: item.fornecedor_oc,
+            imagem_url: item.imagem_url ?? null,
           });
         }
       }

@@ -97,6 +97,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Return incomplete pedidos to aguardando_compra
+    if (pendentes.length > 0) {
+      await supabase
+        .from("siso_pedido_itens")
+        .update({ separacao_marcado: false, separacao_marcado_em: null })
+        .in("pedido_id", pendentes);
+
+      await supabase
+        .from("siso_pedidos")
+        .update({
+          status_separacao: "aguardando_compra",
+          separacao_operador_id: null,
+          separacao_iniciada_em: null,
+        })
+        .in("id", pendentes);
+    }
+
     if (separados.length === 0) {
       return NextResponse.json({ separados, pendentes });
     }

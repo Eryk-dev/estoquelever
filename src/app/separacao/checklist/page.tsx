@@ -398,7 +398,8 @@ function ChecklistPage() {
 
   // Handle cancelar
   async function handleCancelar() {
-    if (!window.confirm("Cancelar separacao? Pedidos voltarao para Aguardando Separacao.")) return;
+    const destino = isPickOC ? "Aguardando OC" : "Aguardando Separacao";
+    if (!window.confirm(`Cancelar separacao? Pedidos voltarao para ${destino}.`)) return;
 
     setActionLoading(true);
     try {

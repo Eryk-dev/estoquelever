@@ -415,17 +415,14 @@ function ProductRow({ item, decisao, pedido, onStockUpdated }: ProductRowProps) 
               >
                 {item.sku}
               </span>
-              {/* Show pencil when item has no stock in any galpão */}
-              {!Object.values(item.estoques).some((g) => g.atende) && (
-                <button
-                  type="button"
-                  onClick={() => setEditingSku(true)}
-                  className="text-ink-faint transition-colors hover:text-ink"
-                  title="Trocar SKU"
-                >
-                  <Pencil className="h-3 w-3" />
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setEditingSku(true)}
+                className="text-ink-faint transition-colors hover:text-ink"
+                title="Trocar SKU"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
             </>
           )}
         </div>

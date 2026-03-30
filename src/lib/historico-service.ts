@@ -28,7 +28,8 @@ export type EventoPedido =
   | "cancelado"
   | "erro"
   | "status_revertido"
-  | "encaminhado";
+  | "encaminhado"
+  | "separacao_oc_concluida";
 
 /**
  * Record a single event in the order history.

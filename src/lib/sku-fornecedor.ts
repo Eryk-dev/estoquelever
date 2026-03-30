@@ -17,6 +17,9 @@ const PREFIX_MAP: Record<string, FornecedorInfo> = {
   // ── Diversos ──
   "19": { fornecedor: "Diversos", filialOC: "CWB" },
 
+  // ── 141 (CWB) ──
+  "A1": { fornecedor: "141", filialOC: "SP" },
+
   // ── Tiger (SP) ──
   "EW": { fornecedor: "Tiger", filialOC: "SP" },
   "TG": { fornecedor: "Tiger", filialOC: "SP" },

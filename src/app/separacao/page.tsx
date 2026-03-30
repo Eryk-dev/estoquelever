@@ -334,7 +334,7 @@ function SeparacaoPageContent() {
 
   // --- Action handlers ---
 
-  async function handleSepararSelecionados() {
+  async function handleSepararSelecionados(modo?: string) {
     if (!user) return;
     const ids =
       selectedIds.size > 0
@@ -353,7 +353,8 @@ function SeparacaoPageContent() {
       });
       if (res.ok) {
         toast.success(`Separacao iniciada para ${ids.length} pedido(s)`);
-        router.push(`/separacao/checklist?pedidos=${ids.join(",")}`);
+        const checklistUrl = `/separacao/checklist?pedidos=${ids.join(",")}${modo ? `&modo=${modo}` : ""}`;
+        router.push(checklistUrl);
       } else {
         const body = await res.json().catch(() => ({}));
         toast.error(body.error ?? "Erro ao iniciar separacao");
@@ -851,7 +852,7 @@ function SeparacaoPageContent() {
                 type="text"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar pedido, EC, cliente..."
+                placeholder="Buscar pedido, cliente, SKU, GTIN..."
                 className="h-9 w-full rounded-xl border border-line bg-surface pl-8 pr-3 text-xs text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
               />
             </div>
@@ -1058,6 +1059,39 @@ function SeparacaoPageContent() {
         )}
 
         {/* Action buttons per tab */}
+        {activeTab === "aguardando_compra" && pedidos.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs text-ink-faint">
+              {selectedIds.size > 0
+                ? `${selectedIds.size} selecionado(s)`
+                : `${pedidos.length} pedido(s)`}
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {isAdmin && moveTargets && (
+                <MoveButton
+                  targets={moveTargets}
+                  open={revertMenuOpen}
+                  onToggle={toggleRevertMenu}
+                  onSelect={handleMoverEtapa}
+                  disabled={actionLoading || selectedIds.size === 0}
+                  count={selectedIds.size || pedidos.length}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => handleSepararSelecionados("pick-oc")}
+                disabled={actionLoading}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              >
+                <Play className="h-3.5 w-3.5" />
+                {actionLoading
+                  ? "Iniciando..."
+                  : `Separar ${selectedIds.size > 0 ? selectedIds.size : pedidos.length} pedido(s)`}
+              </button>
+            </div>
+          </div>
+        )}
+
         {activeTab === "aguardando_separacao" && pedidos.length > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-ink-faint">
@@ -1078,7 +1112,7 @@ function SeparacaoPageContent() {
               )}
               <button
                 type="button"
-                onClick={handleSepararSelecionados}
+                onClick={() => handleSepararSelecionados()}
                 disabled={actionLoading}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
               >
@@ -1227,7 +1261,7 @@ function SeparacaoPageContent() {
               )}
               <button
                 type="button"
-                onClick={handleSepararSelecionados}
+                onClick={() => handleSepararSelecionados()}
                 disabled={actionLoading}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
               >

@@ -162,6 +162,7 @@ export async function GET(request: NextRequest) {
         quantidade_bipada: item.quantidade_bipada ?? 0,
         bipado_completo: item.bipado_completo ?? false,
         imagem_url: item.imagem_url ?? null,
+        compra_status: item.compra_status ?? null,
         localizacao:
           locMap.get(`${item.pedido_id}:${item.produto_id}`) ?? null,
         saldo: stockMap.get(`${item.pedido_id}:${item.produto_id}`)?.saldo ?? 0,

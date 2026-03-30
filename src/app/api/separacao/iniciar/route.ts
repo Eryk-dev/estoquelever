@@ -70,15 +70,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate all have status_separacao = 'aguardando_separacao' or 'em_separacao' (resume)
-    const ALLOWED_STATUSES = ["aguardando_separacao", "em_separacao"];
+    // Validate all have an allowed status (aguardando_separacao, aguardando_compra, or em_separacao for resume)
+    const ALLOWED_STATUSES = ["aguardando_separacao", "aguardando_compra", "em_separacao"];
     const invalidPedidos = (pedidos ?? []).filter(
       (p) => !ALLOWED_STATUSES.includes(p.status_separacao),
     );
     if (invalidPedidos.length > 0) {
       return NextResponse.json(
         {
-          error: "todos os pedidos devem estar com status 'aguardando_separacao' ou 'em_separacao'",
+          error: "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra' ou 'em_separacao'",
           pedido_ids: invalidPedidos.map((p) => p.id),
           statuses: invalidPedidos.map((p) => p.status_separacao),
         },
@@ -86,9 +86,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Update pedidos that are aguardando_separacao to em_separacao (skip already em_separacao)
+    // 2. Update pedidos that are aguardando_separacao or aguardando_compra to em_separacao (skip already em_separacao)
+    const TRANSITION_STATUSES = ["aguardando_separacao", "aguardando_compra"];
     const toStart = (pedidos ?? [])
-      .filter((p) => p.status_separacao === "aguardando_separacao")
+      .filter((p) => TRANSITION_STATUSES.includes(p.status_separacao))
       .map((p) => p.id);
 
     if (toStart.length > 0) {
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest) {
           separacao_iniciada_em: new Date().toISOString(),
         })
         .in("id", toStart)
-        .eq("status_separacao", "aguardando_separacao");
+        .in("status_separacao", TRANSITION_STATUSES);
 
       if (updateError) {
         logger.error("separacao-iniciar", "Failed to update pedidos", {

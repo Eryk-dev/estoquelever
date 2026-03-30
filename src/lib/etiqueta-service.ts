@@ -14,7 +14,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { criarAgrupamento, concluirAgrupamento, obterAgrupamento, obterEtiquetasExpedicao } from "@/lib/tiny-api";
 import { runWithEmpresa } from "@/lib/tiny-queue";
-import { baixarZpl, splitZplLabels } from "@/lib/etiqueta-download";
+import { baixarZpl } from "@/lib/etiqueta-download";
 import { enviarImpressaoZpl } from "@/lib/printnode";
 import { resolverImpressora } from "@/lib/printnode";
 import { getConfig } from "@/lib/config";
@@ -160,15 +160,12 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
       return { success: false, error: "Nenhuma impressora configurada" };
     }
 
-    // Safety: ensure we only print one label even if multiple were cached
-    const singleLabel = splitZplLabels(zpl)[0] ?? zpl;
-
-    // Send ZPL directly to PrintNode
+    // Send full ZPL to PrintNode (may contain multiple labels: envio + DANFE)
     const tPrint = performance.now();
     await enviarImpressaoZpl({
       apiKey: printNodeApiKey,
       printerId: printer.printerId,
-      zpl: singleLabel,
+      zpl,
       titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId}`,
     });
     const printMs = Math.round(performance.now() - tPrint);
@@ -267,13 +264,11 @@ export async function imprimirEtiquetaDireta(data: EtiquetaPreClaimed): Promise<
       return { success: false, error: "Nenhuma impressora configurada" };
     }
 
-    const singleLabel = splitZplLabels(zpl)[0] ?? zpl;
-
     const tPrint = performance.now();
     await enviarImpressaoZpl({
       apiKey: printNodeApiKey,
       printerId: printer.printerId,
-      zpl: singleLabel,
+      zpl,
       titulo: `Etiqueta Pedido #${pedido.numero ?? data.pedidoId}`,
     });
     const printMs = Math.round(performance.now() - tPrint);

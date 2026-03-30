@@ -47,6 +47,7 @@ interface ChecklistItem {
   saldo: number;
   disponivel: number;
   galpao_nome: string | null;
+  compra_status: string | null;
 }
 
 interface ConsolidatedProduct {
@@ -64,6 +65,7 @@ interface ConsolidatedProduct {
   disponivel: number;
   galpao_nome: string | null;
   first_pedido_id: string;
+  compra_status: string | null;
 }
 
 const SORT_OPTIONS = [
@@ -184,6 +186,7 @@ function ChecklistPage() {
           disponivel: item.disponivel,
           galpao_nome: item.galpao_nome,
           first_pedido_id: item.pedido_id,
+          compra_status: item.compra_status,
         });
       }
     }
@@ -789,6 +792,20 @@ function ChecklistPage() {
                       >
                         {product.sku}
                       </span>
+                      {product.compra_status && (
+                        <span
+                          className={cn(
+                            "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                            product.compra_status === "recebido"
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                              : product.compra_status === "comprado"
+                                ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+                          )}
+                        >
+                          OC
+                        </span>
+                      )}
                       {product.gtin && (
                         <span className="text-[10px] text-ink-faint">
                           <span className="hidden sm:inline">GTIN </span>{product.gtin}

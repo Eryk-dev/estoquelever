@@ -234,6 +234,9 @@ stateDiagram-v2
 
     em_separacao --> aguardando_separacao: Forcar pendente ou Reiniciar
     separado --> em_separacao: Voltar etapa
+
+    aguardando_compra --> em_separacao: Pick OC (iniciar)
+    note right of aguardando_compra: Pick OC: atalho para separar<br/>itens OC fisicamente disponiveis
 ```
 
 ### Acoes especiais durante separacao
@@ -247,6 +250,38 @@ stateDiagram-v2
 | Voltar etapa | `POST /api/separacao/voltar-etapa` | Retrocede um status |
 | Cancelar separacao | `POST /api/separacao/cancelar` | Cancela separacao em andamento |
 | Reiniciar separacao | `POST /api/separacao/reiniciar` | Reseta marcacoes e reinicia |
+| Concluir OC | `POST /api/separacao/concluir-oc` | Conclui pick OC: auto-resolve compra, enfileira execucao |
+
+### Pick OC — Atalho de Separacao para Itens Aguardando Compra
+
+Quando os itens estao fisicamente disponiveis no galpao (ex.: fornecedor entregou antes), o operador pode separar diretamente sem esperar o fluxo formal de compras.
+
+```mermaid
+flowchart TD
+    A["Operador na aba Aguardando OC<br/>Seleciona pedidos"] --> B["POST /api/separacao/iniciar<br/>Agora aceita aguardando_compra"]
+
+    B --> C["status_separacao = em_separacao<br/>Checklist com badges OC"]
+    C --> D["WAVE PICKING<br/>Itens OC mostram badge colorido:<br/>amarelo=aguardando, azul=comprado, verde=recebido"]
+
+    D --> E["POST /api/separacao/concluir-oc<br/>Endpoint especifico para Pick OC"]
+
+    E --> F["1. Verifica todos itens marcados"]
+    F --> G["2. Auto-resolve itens OC<br/>compra_status → recebido"]
+    G --> H["3. Resolve decisao"]
+
+    H --> I{"Galpao OC == Galpao origem?"}
+    I -->|sim| J["decisao = propria"]
+    I -->|nao| K["decisao = transferencia"]
+    I -->|"sem OC vinculada"| J
+
+    J --> L["4. Update pedido:<br/>status=executando<br/>status_separacao=separado<br/>tag 'pick oc'"]
+    K --> L
+
+    L --> M["5. Enfileira job execucao<br/>siso_fila_execucao"]
+    M --> N["6. Fire-and-forget:<br/>kickWorker + agrupamentos + historico"]
+
+    N --> O["Execution Worker processa:<br/>lanca estoque, gera NF, marcadores"]
+```
 
 ---
 

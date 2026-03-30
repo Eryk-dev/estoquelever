@@ -632,6 +632,80 @@ flowchart TD
 
 ---
 
+## Pick OC Flow
+
+Shortcut for operators to physically pick OC items before the formal purchase order cycle completes. The operator picks items from the shelf (they're physically available), and the system auto-resolves the compra bureaucracy in the background.
+
+### When to Use
+
+When an order is in `aguardando_compra` but the items are physically available in the warehouse (e.g., supplier delivered early, items were found during picking), the operator can skip the formal compra receiving flow and go straight to separation.
+
+### Pick OC Process
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator<br/>/separacao
+    participant API as Separation API
+    participant DB as Supabase
+    participant Worker as Execution Worker
+
+    Op->>API: GET /api/separacao<br/>(Tab: Aguardando OC)
+    API->>DB: Query status_separacao = aguardando_compra
+    DB-->>API: Orders waiting for purchase
+    API-->>Op: Display orders with OC items
+
+    Op->>Op: Select orders to pick
+    Op->>API: POST /api/separacao/iniciar<br/>{pedido_ids, operador_id}
+    Note over API: Now accepts aguardando_compra status
+    API->>DB: Update status_separacao → em_separacao
+    API-->>Op: OK + checklist items
+
+    Op->>Op: Wave picking checklist<br/>(OC items show amber/blue badge)
+    loop For each item
+        Op->>Op: Scan barcode
+        Op->>API: POST /api/separacao/bipar
+        API->>DB: Mark as picked
+        API-->>Op: Item checked off
+    end
+
+    Op->>API: POST /api/separacao/concluir-oc<br/>{pedido_ids}
+    Note over API: Different endpoint from normal concluir
+
+    API->>DB: Verify ALL items marked
+    API->>DB: Auto-resolve OC items<br/>(compra_status → recebido)
+    API->>API: Resolve decisao<br/>(OC galpao vs origin galpao)
+    API->>DB: Update pedido:<br/>status=executando, status_separacao=separado<br/>decisao_final, tag 'pick oc'
+    API->>DB: Insert execution job<br/>(siso_fila_execucao)
+    API-->>Op: { separados, pendentes }
+
+    activate Worker
+    Note over Worker: Async: post stock,<br/>generate NF, set marcadores
+    Worker->>DB: Process execution job
+    deactivate Worker
+```
+
+### Key Differences from Normal Separation
+
+| Aspect | Normal Flow | Pick OC Flow |
+|---|---|---|
+| Starting status | `aguardando_separacao` | `aguardando_compra` |
+| Concluir endpoint | `POST /api/separacao/concluir` | `POST /api/separacao/concluir-oc` |
+| Compra items | N/A (no OC items) | Auto-resolved as received |
+| Decisao | Already set from approval | Resolved at concluir time (propria vs transferencia) |
+| Execution job | Already enqueued | Created at concluir time |
+| Tag | None | `pick oc` appended to `separacao_tags` |
+
+### Decisao Resolution
+
+The `concluir-oc` endpoint determines the final decision by comparing the OC galpão with the pedido's origin galpão:
+
+1. **No OC linked or same galpão** → `propria` (items are in the origin warehouse)
+2. **Different galpão** → `transferencia` (items came from another warehouse)
+
+The execution worker then processes the job normally: posting stock to Tiny, generating NF, and setting marcadores.
+
+---
+
 ## Inventory Flow
 
 Stock adjustment sessions for physical inventory counts.

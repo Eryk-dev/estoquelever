@@ -659,7 +659,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Response (400 - Invalid status):**
 ```json
 {
-  "error": "todos os pedidos devem estar com status 'aguardando_separacao' ou 'em_separacao'",
+  "error": "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra' ou 'em_separacao'",
   "pedido_ids": ["string"],
   "statuses": ["string"]
 }
@@ -675,8 +675,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Business Logic:**
 - Validates pedido_ids is non-empty array of strings
-- Fetches all pedidos, validates ALL have status_separacao = "aguardando_separacao" or "em_separacao"
-- Filters pedidos with status = "aguardando_separacao" (ignores already "em_separacao")
+- Fetches all pedidos, validates ALL have status_separacao = "aguardando_separacao", "aguardando_compra", or "em_separacao"
+- Filters pedidos with status = "aguardando_separacao" or "aguardando_compra" (ignores already "em_separacao")
 - Updates those to "em_separacao" with separacao_operador_id and separacao_iniciada_em
 - Calls RPC `siso_consolidar_produtos_separacao` to get consolidated product list (aggregates by SKU/localizacao)
 - Returns consolidated products sorted by localizacao
@@ -1004,6 +1004,74 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
+### POST /api/separacao/concluir-oc
+
+**File:** `src/app/api/separacao/concluir-oc/route.ts`
+
+**Purpose:** Complete OC separation (Pick OC flow). Auto-resolves pending compra items as received, resolves decisao (propria vs transferencia), enqueues execution job, and transitions directly to 'separado' with tag 'pick oc'. Used when the operator physically picks items before the formal purchase order cycle completes.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:**
+```json
+{
+  "pedido_ids": ["string"],
+  "operador_id": "string (optional)"
+}
+```
+
+**Response (200):**
+```json
+{
+  "separados": ["string (pedido IDs successfully completed)"],
+  "pendentes": ["string (pedido IDs with unmarked items)"]
+}
+```
+
+**Response (401 - Unauthorized):**
+```json
+{
+  "error": "Não autenticado"
+}
+```
+
+**Response (400 - Validation):**
+```json
+{
+  "error": "'pedido_ids' (string[]) é obrigatório"
+}
+```
+
+**Business Logic:**
+- Validates pedido_ids is non-empty array of strings
+- Fetches all items from `siso_pedido_itens` for the given pedidos
+- Groups by pedido_id, checks if ALL items have `separacao_marcado = true`
+- Pedidos where any item is unmarked go to `pendentes[]`
+- For fully-marked pedidos:
+  1. **Auto-resolve OC items:** Updates items with `compra_status` NOT IN ('recebido', 'cancelado', null) → sets `compra_status = 'recebido'`, `compra_quantidade_recebida = compra_quantidade_solicitada`
+  2. **Resolve decisao:** Compares OC galpao_id (from `siso_ordens_compra`) vs pedido origin galpao_id (from `siso_empresas`). Same galpao or no OC linked → `propria`. Different galpao → `transferencia`
+  3. **Resolve separacao_galpao_id:** For `propria` uses origin galpao; for `transferencia` uses OC galpao. Finds first active empresa in that galpao for execution
+  4. **Update pedido:** `decisao_final`, `status = 'executando'`, `status_separacao = 'separado'`, `separacao_concluida_em = now()`, `separacao_galpao_id`, appends `'pick oc'` to `separacao_tags`
+  5. **Enqueue execution:** Inserts job in `siso_fila_execucao` with `tipo = 'lancar_estoque'`, `empresa_id`, `decisao`, `tentativas = 0`, `status = 'pendente'`
+  6. **Fire-and-forget:** `kickWorker()`, `preCriarAgrupamentosEmLote()`, `registrarEventos()` (event: `separacao_oc_concluida`)
+
+**Side Effects:**
+- Updates `siso_pedido_itens.compra_status`, `compra_quantidade_recebida` for OC items
+- Updates `siso_pedidos.decisao_final`, `status`, `status_separacao`, `separacao_concluida_em`, `separacao_galpao_id`, `separacao_tags`
+- Inserts to `siso_fila_execucao`
+- Inserts to `siso_pedido_historico` (event: `separacao_oc_concluida`)
+- Fire-and-forget: kicks execution worker, pre-creates agrupamentos
+- Logs to `siso_logs`, `siso_erros` (on failures)
+
+**Rate Limiting:** None
+
+**Notes:**
+- This endpoint is the "shortcut" for Pick OC: operator physically picks items while compra flow is still pending, then this endpoint auto-resolves everything
+- The execution worker then handles Tiny API calls (marcadores, stock posting, NF generation) asynchronously
+- Unlike normal `concluir`, this also sets `status = 'executando'` and `decisao_final`, since these pedidos skip the approval flow
+
+---
+
 ### GET /api/separacao/checklist-items?pedidos=id1,id2,id3
 
 **File:** `src/app/api/separacao/checklist-items/route.ts`
@@ -1032,6 +1100,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
       "quantidade_bipada": "number",
       "bipado_completo": "boolean",
       "imagem_url": "string | null",
+      "compra_status": "string | null",
       "localizacao": "string | null",
       "saldo": "number",
       "disponivel": "number",

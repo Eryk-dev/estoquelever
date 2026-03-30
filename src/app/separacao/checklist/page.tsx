@@ -96,6 +96,8 @@ function ChecklistPage() {
     return param ? param.split(",").filter(Boolean) : [];
   }, [searchParams]);
 
+  const isPickOC = searchParams.get("modo") === "pick-oc";
+
   const [sort, setSort] = useState<string>("localizacao");
   const [scanValue, setScanValue] = useState("");
   const [highlightedSku, setHighlightedSku] = useState<string | null>(null);
@@ -313,7 +315,11 @@ function ChecklistPage() {
   async function handleConcluir() {
     setActionLoading(true);
     try {
-      const res = await sisoFetch("/api/separacao/concluir", {
+      const endpoint = isPickOC
+        ? "/api/separacao/concluir-oc"
+        : "/api/separacao/concluir";
+
+      const res = await sisoFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pedido_ids: pedidoIds }),
@@ -330,13 +336,21 @@ function ChecklistPage() {
         pendentes: string[];
       };
 
-      const parts: string[] = [];
-      if (separados.length > 0) parts.push(`${separados.length} separado(s)`);
-      if (pendentes.length > 0) parts.push(`${pendentes.length} pendente(s)`);
-      toast.success(parts.join(", "));
+      if (isPickOC) {
+        toast.success(
+          `Separacao OC concluida — ${separados.length} pedido(s) liberado(s)`,
+        );
+      } else {
+        const parts: string[] = [];
+        if (separados.length > 0)
+          parts.push(`${separados.length} separado(s)`);
+        if (pendentes.length > 0)
+          parts.push(`${pendentes.length} pendente(s)`);
+        toast.success(parts.join(", "));
+      }
 
       queryClient.invalidateQueries({ queryKey: ["separacao"] });
-      router.push("/separacao");
+      router.push("/separacao?tab=separado");
     } catch {
       toast.error("Erro de conexao");
     } finally {

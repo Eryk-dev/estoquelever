@@ -8,6 +8,7 @@ import {
   getAgingDays,
   getCompraQuantidadeSolicitada,
 } from "@/lib/compras-utils";
+import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -347,6 +348,14 @@ async function fetchReceber(supabase: SupabaseClient): Promise<FornecedorReceber
     logger.info("compras-api", "Auto-fix: itens sobre-recebidos marcados como recebido", {
       count: stuckIds.length,
       ids: stuckIds,
+    });
+
+    // Trigger release check — the auto-fix may have completed all compra items for some pedidos
+    checkAndReleasePedidos(stuckIds).catch((err) => {
+      logger.error("compras-api", "Auto-fix: falha ao verificar release de pedidos", {
+        error: err instanceof Error ? err.message : String(err),
+        stuckIds,
+      });
     });
   }
 

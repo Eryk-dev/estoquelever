@@ -256,3 +256,50 @@ erros:
     files:
       - src/lib/webhook-processor.ts
     tags: [marketplace, ecommerce, reconciliacao, filtro, full, manual-order, webhook-processor]
+
+  - id: ghost-reservation-transferencia
+    date: "2026-03-30"
+    source: worker
+    category: business_logic
+    message: "Reservas fantasma acumulam na empresa origem em pedidos transferencia"
+    cause: >
+      Quando um pedido era atendido por outra empresa (transferencia), o
+      execution-worker gerava NF na origem mas NAO fazia lancarEstoqueNota.
+      Isso deixava a reserva do Tiny ativa na empresa origem permanentemente.
+      O campo 'disponivel' (saldo - reservado) ficava cada vez mais baixo
+      por acumular reservas de pedidos ja atendidos por outras unidades.
+      Afetava tanto transferencias diretas quanto OCs recebidos em outro galpao
+      (via compras-release.ts que reclassifica como transferencia).
+    fix: >
+      Adicionado lancarEstoqueNota na empresa origem para pedidos transferencia.
+      Isso limpa a reserva e abaixa o saldo. Em seguida, para cada item,
+      movimentarEstoque(E) na origem compensa o saldo (net zero na origem).
+      A saida fisica continua sendo movimentarEstoque(S) na empresa suporte.
+      Tambem adicionado estoque_lancado=true e transicao aguardando_nf→aguardando_separacao.
+    files:
+      - src/lib/execution-worker.ts
+    tags: [reserva, estoque, transferencia, fantasma, disponivel, saldo, tiny, worker, oc, compras]
+
+  - id: compras-autofix-no-release
+    date: "2026-03-30"
+    source: compras-api
+    category: business_logic
+    message: "Pedidos ficam travados em aguardando_compra apesar de todos os itens estarem recebidos"
+    cause: >
+      Dois caminhos marcavam itens como recebido sem chamar checkAndReleasePedidos:
+      1) O auto-fix no GET /api/compras (fetchReceber) detecta itens com
+         compra_quantidade_recebida >= solicitada mas compra_status != recebido,
+         e corrige o status. Porem nao dispara a logica de release.
+      2) O POST /api/compras/receber tinha uma funcao duplicada findAndReleasePedidos
+         com logica divergente da canonica (usava status=concluido em vez de executando,
+         resolvia galpao do pedido em vez do galpao da OC, nao chamava checkAndReleasePedidos).
+      9 pedidos SP ficaram travados. Logs confirmam: auto-fix marcou itens em
+      2026-03-30 09:56 e 18:37, sem nenhum log de release para esses pedidos.
+    fix: >
+      1) Auto-fix no GET /api/compras agora chama checkAndReleasePedidos apos marcar itens.
+      2) POST /api/compras/receber agora usa checkAndReleasePedidos (de compras-release.ts)
+         em vez da funcao duplicada findAndReleasePedidos que foi removida.
+    files:
+      - src/app/api/compras/route.ts
+      - src/app/api/compras/receber/route.ts
+    tags: [compras, release, aguardando_compra, recebido, auto-fix, stuck, receber, checkAndReleasePedidos]

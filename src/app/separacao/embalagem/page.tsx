@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Printer,
   Loader2,
+  Copy,
 } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -845,10 +846,21 @@ function EmbalagemItemRow({
         >
           {item.descricao}
         </p>
-        <p className="text-[11px] text-ink-faint">
-          <span className="font-mono">{item.sku}</span>
+        <p className="flex items-center gap-1 text-[11px] text-ink-faint">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded px-1 py-0.5 font-mono transition-colors hover:bg-zinc-200/60 active:bg-zinc-300/60 dark:hover:bg-zinc-700/60 dark:active:bg-zinc-600/60"
+            onClick={() => {
+              navigator.clipboard.writeText(item.sku);
+              toast.success(`SKU ${item.sku} copiado`);
+            }}
+            title="Copiar SKU"
+          >
+            {item.sku}
+            <Copy className="h-3 w-3 text-ink-faint" />
+          </button>
           {item.localizacao && (
-            <span className="ml-2">Loc: {item.localizacao}</span>
+            <span className="ml-1">Loc: {item.localizacao}</span>
           )}
         </p>
       </div>

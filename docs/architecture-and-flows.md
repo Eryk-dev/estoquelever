@@ -1464,6 +1464,28 @@ The execution worker is triggered via:
 2. **Manual trigger:** `POST /api/worker/processar` (requires `WORKER_SECRET`)
 3. **Scheduled:** (Optional) cron job calling manual trigger every N minutes
 
+### Execution Worker Stock Posting (per decisao)
+
+**Propria:** Origin empresa has stock, ships directly.
+1. Insert marcadores on Tiny order
+2. Generate NF on origin empresa
+3. `lancarEstoqueNota` on origin → clears Tiny reservation, deducts saldo
+
+**Transferencia:** Another empresa ships on behalf of origin.
+1. Insert marcadores on Tiny order (origin)
+2. Generate NF on origin empresa
+3. `lancarEstoqueNota` on origin → clears Tiny reservation, deducts saldo on origin
+4. Per item: `movimentarEstoque(E)` on origin → compensates saldo (net zero on origin)
+5. Per item: `movimentarEstoque(S)` on support empresa → physical stock exit
+
+The reservation clearing (steps 3-4) ensures Tiny's `reservado` field doesn't accumulate ghost reservations from orders fulfilled by other empresas. Without this, `disponivel` (saldo - reservado) would drift lower over time.
+
+**OC:** No stock available, purchase needed.
+1. Insert marcadores on Tiny order
+2. Calculate shortfall per item, create purchase orders (`siso_ordens_compra`)
+3. No NF or stock posting — waits for compras module to receive items
+4. After all items received → `compras-release.ts` re-evaluates as propria or transferencia
+
 ---
 
 ## File Reference Guide

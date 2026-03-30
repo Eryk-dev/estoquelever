@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
-import { hasComprasAccess, isCompraResolvedForRelease } from "@/lib/compras-utils";
-import { kickWorker } from "@/lib/execution-worker";
+import { hasComprasAccess } from "@/lib/compras-utils";
+import { checkAndReleasePedidos } from "@/lib/compras-release";
 
 /**
  * POST /api/compras/receber
@@ -38,7 +38,6 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
-  const now = new Date().toISOString();
   const allAffectedItemIds: string[] = [];
   const recebimentoLog: Array<{
     sku: string;
@@ -128,11 +127,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check which pedidos are now fully received and can be released
-    const pedidosDesbloqueados = await findAndReleasePedidos(
-      supabase,
-      allAffectedItemIds,
-      now,
-    );
+    const pedidosDesbloqueados = await checkAndReleasePedidos(allAffectedItemIds);
 
     logger.info("compras-receber", "Recebimento confirmado", {
       usuario: session.nome,
@@ -157,124 +152,3 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * For each affected item, check if its pedido now has all compra items resolved.
- * If so, release the pedido with a priority job.
- */
-async function findAndReleasePedidos(
-  supabase: ReturnType<typeof createServiceClient>,
-  itemIds: string[],
-  now: string,
-): Promise<string[]> {
-  if (itemIds.length === 0) return [];
-
-  // Get distinct pedido_ids
-  const { data: items } = await supabase
-    .from("siso_pedido_itens")
-    .select("pedido_id")
-    .in("id", itemIds);
-
-  if (!items) return [];
-
-  const pedidoIds = [...new Set(items.map((i) => i.pedido_id as string))];
-  const released: string[] = [];
-
-  for (const pedidoId of pedidoIds) {
-    // Check if all compra items of this pedido are resolved
-    const { data: compraItems } = await supabase
-      .from("siso_pedido_itens")
-      .select("id, compra_status")
-      .eq("pedido_id", pedidoId)
-      .not("compra_status", "is", null);
-
-    if (!compraItems || compraItems.length === 0) continue;
-
-    const todosResolvidos = compraItems.every((item) =>
-      isCompraResolvedForRelease(item.compra_status),
-    );
-    if (!todosResolvidos) continue;
-
-    // Check pedido is still in compra flow
-    const { data: pedido } = await supabase
-      .from("siso_pedidos")
-      .select("id, empresa_origem_id, status_separacao, nota_fiscal_id")
-      .eq("id", pedidoId)
-      .single();
-
-    if (!pedido) continue;
-    if (
-      pedido.status_separacao !== "aguardando_compra" &&
-      pedido.status_separacao !== "comprado"
-    ) {
-      continue;
-    }
-
-    // Resolve galpao for the pedido
-    const { data: empresa } = await supabase
-      .from("siso_empresas")
-      .select("galpao_id")
-      .eq("id", pedido.empresa_origem_id)
-      .single();
-
-    const galpaoId = empresa?.galpao_id ?? null;
-    const nfJaChegou = !!pedido.nota_fiscal_id;
-    // OC items were physically received — skip picking, go straight to packing
-    const novoStatus = nfJaChegou ? "separado" : "aguardando_nf";
-
-    // Release pedido
-    const { error: updateErr } = await supabase
-      .from("siso_pedidos")
-      .update({
-        status: "concluido",
-        status_separacao: novoStatus,
-        ...(galpaoId ? { separacao_galpao_id: galpaoId } : {}),
-      })
-      .eq("id", pedidoId);
-
-    if (updateErr) {
-      logger.error("compras-receber", "Erro ao liberar pedido", {
-        pedidoId,
-        error: updateErr.message,
-      });
-      continue;
-    }
-
-    // Create PRIORITY job in execution queue
-    const { error: queueErr } = await supabase
-      .from("siso_fila_execucao")
-      .insert({
-        pedido_id: pedidoId,
-        tipo: "lancar_estoque",
-        empresa_id: pedido.empresa_origem_id,
-        decisao: "propria",
-        prioridade: true,
-      });
-
-    if (queueErr) {
-      logger.error("compras-receber", "Erro ao enfileirar job prioritário", {
-        pedidoId,
-        error: queueErr.message,
-      });
-      continue;
-    }
-
-    released.push(pedidoId);
-
-    logger.info("compras-receber", "Pedido desbloqueado por recebimento", {
-      pedidoId,
-      novoStatus,
-      prioridade: true,
-    });
-  }
-
-  // Kick worker to process priority jobs
-  if (released.length > 0) {
-    kickWorker().catch((err) => {
-      logger.error("compras-receber", "Worker kick failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-  }
-
-  return released;
-}

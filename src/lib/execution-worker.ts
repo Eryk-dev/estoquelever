@@ -7,7 +7,9 @@
  * Stock posting flow (per decisao):
  * - ALL: insert marcadores on Tiny order
  * - "propria": marcadores → gerar NF → lançar estoque da NF
- * - "transferencia": marcadores → gerar NF on origin + movimentarEstoque on support empresas
+ * - "transferencia": marcadores → gerar NF on origin → lançar estoque NF (clears reservation)
+ *     → movimentarEstoque(E) on origin per item (compensates saldo)
+ *     → movimentarEstoque(S) on support empresa per item (physical exit)
  * - "oc": marcadores only (no NF, no stock)
  */
 
@@ -668,13 +670,49 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
   await inserirMarcadoresTiny(pedido.empresa_origem_id, origemToken, job.pedido_id, marcadores);
   await sleep(500);
 
-  await gerarNotaFiscalPedido(
+  const notaIdOrigem = await gerarNotaFiscalPedido(
     pedido.empresa_origem_id,
     origemToken,
     job.pedido_id,
     pedido.nota_fiscal_id ?? null,
   );
   await sleep(500);
+
+  // ── Post stock from NF on origin to clear Tiny reservation ────────────────
+  // The NF belongs to the origin empresa where the marketplace created the order.
+  // lancarEstoqueNota clears the reservation AND drops saldo on origin.
+  // We compensate the saldo drop later with movimentarEstoque(E) per item.
+  if (notaIdOrigem) {
+    try {
+      await runWithEmpresa(pedido.empresa_origem_id, () =>
+        lancarEstoqueNota(origemToken, notaIdOrigem),
+      );
+      logger.info("worker", "Estoque da NF lançado na origem (limpa reserva)", {
+        pedidoId: job.pedido_id,
+        notaId: notaIdOrigem,
+        empresaOrigemId: pedido.empresa_origem_id,
+      });
+    } catch (err) {
+      // Non-fatal: if posting fails, reservation stays (existing behavior)
+      // but the rest of the flow should continue
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn("worker", "Falha ao lançar estoque NF na origem (reserva pode persistir)", {
+        pedidoId: job.pedido_id,
+        notaId: notaIdOrigem,
+        error: msg,
+      });
+    }
+    await sleep(500);
+  }
+
+  // Get origin empresa deposit for compensating entries
+  const { data: connOrigem } = await supabase
+    .from("siso_tiny_connections")
+    .select("deposito_id")
+    .eq("empresa_id", pedido.empresa_origem_id)
+    .eq("ativo", true)
+    .single();
+  const depositoIdOrigem = connOrigem?.deposito_id ?? null;
 
   // ── Stock deduction: find ONE empresa that covers 100% of items ───────────
 
@@ -806,7 +844,31 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
         await sleep(500);
       }
 
-      // Deduct stock
+      // Compensate saldo on origin: lancarEstoqueNota dropped saldo on origin,
+      // but the physical stock didn't leave origin — add it back.
+      if (notaIdOrigem) {
+        const produtoIdOrigem = item.produto_id as number;
+        try {
+          await runWithEmpresa(pedido.empresa_origem_id, () =>
+            movimentarEstoque(origemToken, produtoIdOrigem, {
+              tipo: "E",
+              quantidade: item.quantidade_pedida as number,
+              deposito: depositoIdOrigem ? { id: depositoIdOrigem } : undefined,
+              observacoes: `Compensação: transferência pedido ${pedido.numero} atendido por ${empresaEscolhida.empresaNome}`,
+            }),
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn("worker", `Falha na entrada compensatória na origem: ${item.sku}`, {
+            pedidoId: job.pedido_id,
+            sku: item.sku,
+            error: msg,
+          });
+        }
+        await sleep(500);
+      }
+
+      // Deduct stock from support empresa (physical exit)
       await runWithEmpresa(empresaEscolhida.empresaId, () => movimentarEstoque(suporteToken, produtoIdNaEmpresa!, {
         tipo: "S",
         quantidade: item.quantidade_pedida as number,
@@ -857,8 +919,34 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     );
   }
 
+  // Mark stock as posted (NF was posted on origin)
+  if (notaIdOrigem) {
+    await supabase
+      .from("siso_pedidos")
+      .update({ estoque_lancado: true })
+      .eq("id", job.pedido_id);
+
+    // Transition aguardando_nf → aguardando_separacao
+    await enriquecerDadosNf(supabase, job.pedido_id, pedido.empresa_origem_id, notaIdOrigem);
+
+    const { data: transitioned } = await supabase
+      .from("siso_pedidos")
+      .update({ status_separacao: "aguardando_separacao" })
+      .eq("id", job.pedido_id)
+      .eq("status_separacao", "aguardando_nf")
+      .select("id")
+      .maybeSingle();
+
+    if (transitioned) {
+      logger.info("worker", "Transição aguardando_nf → aguardando_separacao (transferência)", {
+        pedidoId: job.pedido_id,
+      });
+    }
+  }
+
   logger.info("worker", "Saídas de transferência concluídas", {
     pedidoId: job.pedido_id,
+    notaIdOrigem,
     empresaId: empresaEscolhida.empresaId,
     empresaNome: empresaEscolhida.empresaNome,
     totalItens: itens.length,

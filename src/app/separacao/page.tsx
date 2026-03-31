@@ -349,7 +349,6 @@ function SeparacaoPageContent() {
         body: JSON.stringify({
           pedido_ids: ids,
           operador_id: user.id,
-          ...(modo ? { modo } : {}),
         }),
       });
       if (res.ok) {

@@ -36,10 +36,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { pedido_ids, operador_id, modo } = body as {
+  const { pedido_ids, operador_id } = body as {
     pedido_ids: string[];
     operador_id: string;
-    modo?: string;
   };
 
   const supabase = createServiceClient();
@@ -88,14 +87,24 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Update pedidos to em_separacao (skip already em_separacao)
-    // In pick-oc mode, keep aguardando_compra orders in their current status —
-    // they only advance when concluir-oc confirms all items are picked.
-    const isPickOC = modo === "pick-oc";
-    const TRANSITION_STATUSES = isPickOC
-      ? ["aguardando_separacao"]
-      : ["aguardando_separacao", "aguardando_compra"];
+    // BLINDAGEM: pedidos with pending compra items NEVER transition to em_separacao.
+    // They stay in aguardando_compra and only advance via concluir-oc.
+    const { data: pendingCompraRows } = await supabase
+      .from("siso_pedido_itens")
+      .select("pedido_id")
+      .in("pedido_id", pedido_ids)
+      .in("compra_status", ["aguardando_compra", "comprado"]);
+
+    const pedidosWithPendingCompra = new Set(
+      (pendingCompraRows ?? []).map((r) => r.pedido_id),
+    );
+
     const toStart = (pedidos ?? [])
-      .filter((p) => TRANSITION_STATUSES.includes(p.status_separacao))
+      .filter(
+        (p) =>
+          p.status_separacao === "aguardando_separacao" &&
+          !pedidosWithPendingCompra.has(p.id),
+      )
       .map((p) => p.id);
 
     if (toStart.length > 0) {
@@ -107,7 +116,7 @@ export async function POST(request: NextRequest) {
           separacao_iniciada_em: new Date().toISOString(),
         })
         .in("id", toStart)
-        .in("status_separacao", TRANSITION_STATUSES);
+        .eq("status_separacao", "aguardando_separacao");
 
       if (updateError) {
         logger.error("separacao-iniciar", "Failed to update pedidos", {

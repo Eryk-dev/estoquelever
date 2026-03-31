@@ -18,9 +18,11 @@ import {
   PackageCheck,
   PackageSearch,
   Printer,
+  RefreshCw,
   Send,
   ShoppingCart,
   Tag,
+  Undo2,
   UserCheck,
   XCircle,
   AlertCircle,
@@ -637,6 +639,144 @@ function ObservacoesSection({
   );
 }
 
+// ─── Acoes section ────────────────────────────────────────────────────────
+
+function AcoesSection({ pedido }: { pedido: PedidoDetalhe }) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const isAdmin = user?.cargos?.includes("admin") ?? false;
+
+  const showReimprimir = !!pedido.etiqueta_status;
+  const showReprocessar = pedido.status === "erro" && isAdmin;
+  const showForcarPendente = isAdmin;
+
+  const reimprimir = useMutation({
+    mutationFn: async () => {
+      const res = await sisoFetch("/api/separacao/reimprimir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_id: pedido.id }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Erro ao reimprimir etiqueta");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Etiqueta enviada para impressao");
+      queryClient.invalidateQueries({ queryKey: ["pedido-detalhe", pedido.id] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const reprocessar = useMutation({
+    mutationFn: async () => {
+      const res = await sisoFetch("/api/webhook/reprocessar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedidoId: pedido.id }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Erro ao reprocessar");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Reprocessamento iniciado");
+      queryClient.invalidateQueries({ queryKey: ["pedido-detalhe", pedido.id] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const forcarPendente = useMutation({
+    mutationFn: async () => {
+      const res = await sisoFetch(`/api/separacao/${pedido.id}/forcar-pendente`, {
+        method: "PATCH",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Erro ao forcar pendente");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Pedido forcado para pendente");
+      queryClient.invalidateQueries({ queryKey: ["pedido-detalhe", pedido.id] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  if (!showReimprimir && !showReprocessar && !showForcarPendente) return null;
+
+  return (
+    <Section title="Acoes">
+      <div className="flex flex-wrap gap-2">
+        {showReimprimir && (
+          <button
+            type="button"
+            onClick={() => reimprimir.mutate()}
+            disabled={reimprimir.isPending}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm font-medium text-ink transition-colors",
+              "hover:bg-zinc-50 dark:hover:bg-zinc-800",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+            )}
+          >
+            {reimprimir.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Printer className="h-4 w-4" />
+            )}
+            Reimprimir etiqueta
+          </button>
+        )}
+
+        {showReprocessar && (
+          <button
+            type="button"
+            onClick={() => reprocessar.mutate()}
+            disabled={reprocessar.isPending}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 transition-colors",
+              "hover:bg-red-100 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+            )}
+          >
+            {reprocessar.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            Reprocessar
+          </button>
+        )}
+
+        {showForcarPendente && (
+          <button
+            type="button"
+            onClick={() => forcarPendente.mutate()}
+            disabled={forcarPendente.isPending}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 transition-colors",
+              "hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-400 dark:hover:bg-amber-950/50",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+            )}
+          >
+            {forcarPendente.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Undo2 className="h-4 w-4" />
+            )}
+            Forcar pendente
+          </button>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 // ─── Page content ───────────────────────────────────────────────────────────
 
 export default function PedidoDetalhePage() {
@@ -1037,6 +1177,9 @@ export default function PedidoDetalhePage() {
 
         {/* ── Observacoes section ─────────────────────────────────────── */}
         <ObservacoesSection pedidoId={pedido.id} observacoes={pedido.observacoes} />
+
+        {/* ── Acoes section ──────────────────────────────────────────── */}
+        <AcoesSection pedido={pedido} />
       </div>
     </AppShell>
   );

@@ -711,6 +711,14 @@ function EmbalagemOrderRow({
                 </span>
               </>
             )}
+            {pedido.numero_ec && (
+              <>
+                <span className="h-3 w-px bg-line" aria-hidden="true" />
+                <span className="font-mono text-xs text-ink-faint">
+                  EC {pedido.numero_ec}
+                </span>
+              </>
+            )}
             <span className="h-3 w-px bg-line" aria-hidden="true" />
             <span
               className="min-w-0 flex-1 truncate text-sm text-zinc-600 dark:text-zinc-300"

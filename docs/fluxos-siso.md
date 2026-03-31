@@ -24,7 +24,8 @@ graph TB
     end
 
     subgraph SEPARACAO
-        SEP[Picking<br/>Bipagem por codigo de barras]
+        SEP[Picking Normal<br/>Bipagem por codigo de barras]
+        PICKOC[Pick OC<br/>Atalho para itens fisicamente disponiveis]
         EMB[Embalagem<br/>Conferencia + etiqueta]
         EXP[Expedicao<br/>Despacho final]
     end
@@ -37,9 +38,12 @@ graph TB
     AUTO --> WORKER
     WORKER -->|propria/transferencia| NF
     WORKER -->|oc| OC
-    OC -->|itens recebidos| WORKER
+    OC -->|itens recebidos via conferencia| WORKER
+    OC -->|itens fisicamente disponiveis| PICKOC
+    PICKOC -->|auto-resolve compra| WORKER
     NF -->|aguardando_separacao| SEP
     SEP --> EMB
+    PICKOC --> EMB
     EMB --> EXP
 ```
 
@@ -165,54 +169,63 @@ flowchart TD
 
 ## 4. Fluxo de Separacao (Picking - Embalagem - Expedicao)
 
-O fluxo de separacao usa **wave picking** com bipagem por codigo de barras. Multiplos pedidos sao processados simultaneamente num checklist consolidado por SKU.
+O fluxo de separacao usa **wave picking** com bipagem por codigo de barras. Multiplos pedidos sao processados simultaneamente num checklist consolidado por SKU. O checklist mostra TODOS os itens, incluindo itens OC com badges de status de compra.
 
 ```mermaid
 flowchart TD
-    A["Operador seleciona pedidos<br/>Tab: Aguardando Separacao"] --> B["POST /api/separacao/iniciar<br/>pedido_ids + operador_id"]
+    A["Operador seleciona pedidos<br/>Tab: Aguardando Separacao ou Aguardando OC"] --> B["POST /api/separacao/iniciar<br/>pedido_ids + operador_id"]
 
-    B --> C["status_separacao = em_separacao<br/>operador_id atribuido"]
-    C --> D["RPC: consolidar_produtos_separacao<br/>Checklist consolidado por SKU"]
-    C --> E["preCriarAgrupamentosEmLote<br/>Cria agrupamentos Tiny + cache ZPL<br/>ASYNC fire-and-forget"]
+    B --> C["BLINDAGEM: Verifica compra_status pendente<br/>Se houver itens nao resolvidos, aborta"]
+    C -->|Sim - bloqueado| D["Erro 400: Resolve compra items antes<br/>Via /api/compras/conferir"]
+    D --> A
+    C -->|Nao - ok| E["status_separacao = em_separacao<br/>operador_id atribuido<br/>Modo pick-oc ativado se necessario"]
 
-    D --> F["WAVE PICKING<br/>Operador bipa codigos de barras"]
+    E --> F["RPC: consolidar_produtos_separacao<br/>Checklist consolidado por SKU<br/>INCLUI itens OC com badges"]
+    E --> G["preCriarAgrupamentosEmLote<br/>Cria agrupamentos Tiny + cache ZPL<br/>ASYNC fire-and-forget"]
 
-    F --> G["POST /api/separacao/bipar<br/>codigo = GTIN ou SKU"]
-    G --> H["Rate limit: max 2 bips/seg"]
-    H --> I["RPC: processar_bip"]
+    F --> H["WAVE PICKING<br/>Operador bipa codigos de barras<br/>Itens OC mostram badge amarelo/azul/verde"]
 
-    I --> J{"Resultado?"}
-    J -->|parcial| F
-    J -->|item_completo| F
-    J -->|nao_encontrado| K["Audio erro + mensagem"]
-    J -->|ja_completo| L["Audio aviso"]
+    H --> I["POST /api/separacao/bipar<br/>codigo = GTIN ou SKU"]
+    I --> J["Rate limit: max 2 bips/seg"]
+    J --> K["RPC: processar_bip"]
 
-    J -->|pedido_completo| M["IMPRIME ETIQUETA<br/>buscarEImprimirEtiqueta"]
-    M -->|"ZPL cached"| N["FAST PATH ~200ms<br/>Envia direto pro PrintNode"]
-    M -->|"ZPL nao cached"| O["SLOW PATH ~3-5s<br/>Cria agrupamento - download ZPL"]
+    K --> L{"Resultado?"}
+    L -->|parcial| H
+    L -->|item_completo| H
+    L -->|nao_encontrado| M["Audio erro + mensagem"]
+    L -->|ja_completo| N["Audio aviso"]
 
-    N --> F
-    O --> F
+    L -->|pedido_completo| O["IMPRIME ETIQUETA<br/>buscarEImprimirEtiqueta"]
+    O -->|"ZPL cached"| P["FAST PATH ~200ms<br/>Envia direto pro PrintNode"]
+    O -->|"ZPL nao cached"| Q["SLOW PATH ~3-5s<br/>Cria agrupamento - download ZPL"]
 
-    F -->|"todos bipados"| P["POST /api/separacao/concluir"]
-    P --> Q["status_separacao = separado<br/>Retry etiquetas faltantes"]
+    P --> H
+    Q --> H
 
-    Q --> R["EMBALAGEM<br/>Tab: Separados"]
+    H -->|"todos bipados"| R{"Modo Pick OC?"}
+    R -->|Nao - normal| S["POST /api/separacao/concluir"]
+    R -->|Sim - OC| T["POST /api/separacao/concluir-oc"]
 
-    R --> S{"Metodo?"}
-    S -->|barcode| T["POST /api/separacao/bipar-embalagem<br/>SKU por SKU"]
-    S -->|manual| U["POST /api/separacao/confirmar-item-embalagem<br/>Click no item"]
+    S --> U["status_separacao = separado<br/>Retry etiquetas faltantes"]
+    T --> V["Auto-resolve compra items<br/>Determina decisao (propria/transferencia)<br/>Enfileira execution job<br/>Adiciona tag 'pick oc'"]
 
-    T --> V["Incrementa quantidade_embalado"]
-    U --> V
+    U --> W["EMBALAGEM<br/>Tab: Separados"]
+    V --> W
 
-    V --> W{"Pedido completo?"}
-    W -->|nao| R
-    W -->|sim| X["status_separacao = embalado<br/>Claim atomico - imprime etiqueta"]
+    W --> X{"Metodo?"}
+    X -->|barcode| Y["POST /api/separacao/bipar-embalagem<br/>SKU por SKU"]
+    X -->|manual| Z["POST /api/separacao/confirmar-item-embalagem<br/>Click no item"]
 
-    X --> Y["EXPEDICAO<br/>Tab: Embalados"]
-    Y --> Z["POST /api/separacao/expedir"]
-    Z --> AA["status_separacao = expedido<br/>expedido_em = now"]
+    Y --> AA["Incrementa quantidade_embalado"]
+    Z --> AA
+
+    AA --> AB{"Pedido completo?"}
+    AB -->|nao| W
+    AB -->|sim| AC["status_separacao = embalado<br/>Claim atomico - imprime etiqueta"]
+
+    AC --> AD["EXPEDICAO<br/>Tab: Embalados"]
+    AD --> AE["POST /api/separacao/expedir"]
+    AE --> AF["status_separacao = expedido<br/>expedido_em = now"]
 ```
 
 ### Maquina de estados da separacao
@@ -223,65 +236,90 @@ stateDiagram-v2
     [*] --> aguardando_nf: Aprovado, esperando NF
     [*] --> aguardando_separacao: NF chegou ou auto-aprovado
 
-    aguardando_compra --> aguardando_nf: Compra concluida
+    aguardando_compra --> aguardando_nf: Compra concluida via conferencia
     aguardando_compra --> aguardando_separacao: Compra concluida + NF ja chegou
     aguardando_nf --> aguardando_separacao: Webhook NF recebido
     aguardando_separacao --> em_separacao: Operador inicia picking
-    em_separacao --> separado: Todos itens bipados + concluido
+    em_separacao --> separado: Todos itens bipados + concluir
     separado --> embalado: Todos itens embalados
     embalado --> expedido: Operador despacha
     expedido --> [*]
 
-    em_separacao --> aguardando_separacao: Forcar pendente ou Reiniciar
+    em_separacao --> aguardando_separacao: Forcar pendente
     separado --> em_separacao: Voltar etapa
 
-    aguardando_compra --> em_separacao: Pick OC (iniciar)
-    note right of aguardando_compra: Pick OC: atalho para separar<br/>itens OC fisicamente disponiveis
+    aguardando_compra --> em_separacao: Pick OC - inicia separacao OC<br/>Operador resolve compra items primeiro
+    em_separacao --> separado: Concluir OC - auto-resolve compra
+    note right of aguardando_compra: Pick OC: atalho para separar<br/>itens OC fisicamente disponiveis<br/>Blindagem: itens com compra pendente<br/>nao transitam para em_separacao
 ```
 
 ### Acoes especiais durante separacao
 
-| Acao | Endpoint | Efeito |
-|---|---|---|
-| Desfazer bip | `POST /api/separacao/desfazer-bip` | Reverte ultima bipagem |
-| Produto esgotado | `POST /api/separacao/produto-esgotado` | Marca item como indisponivel |
-| Reimprimir etiqueta | `POST /api/separacao/reimprimir` | Reenvia ZPL para PrintNode |
-| Forcar pendente | `POST /api/separacao/forcar-pendente` | Volta pedido(s) para aguardando_separacao |
-| Voltar etapa | `POST /api/separacao/voltar-etapa` | Retrocede um status |
-| Cancelar separacao | `POST /api/separacao/cancelar` | Cancela separacao em andamento |
-| Reiniciar separacao | `POST /api/separacao/reiniciar` | Reseta marcacoes e reinicia |
-| Concluir OC | `POST /api/separacao/concluir-oc` | Conclui pick OC: auto-resolve compra, enfileira execucao |
+| Acao | Endpoint | Entrada | Efeito |
+|---|---|---|---|
+| Desfazer bip | `POST /api/separacao/desfazer-bip` | pedido_id, codigo | Reverte ultima bipagem, atualiza quantidade_bipada |
+| Produto esgotado | `POST /api/separacao/produto-esgotado` | pedido_id, item_id | Marca item como indisponivel, desconta do checklist |
+| Reimprimir etiqueta | `POST /api/separacao/reimprimir` | pedido_id, printer_id | Reenvia ZPL cacheado para PrintNode |
+| Forcar pendente | `POST /api/separacao/forcar-pendente` | pedido_ids | Volta pedido(s) para aguardando_separacao, reseta marcacoes |
+| Voltar etapa | `POST /api/separacao/voltar-etapa` | pedido_id | Retrocede um status (embalado → separado, separado → em_separacao) |
+| Cancelar separacao | `POST /api/separacao/cancelar` | pedido_ids | Cancela separacao em andamento, volta para aguardando_separacao |
+| Reiniciar separacao | `POST /api/separacao/reiniciar` | pedido_ids | Reseta marcacoes (separacao_marcado=false) mantendo status em_separacao |
+| Concluir separacao | `POST /api/separacao/concluir` | pedido_ids | Conclui picking normal: valida todos itens marcados, move para separado |
+| Concluir OC | `POST /api/separacao/concluir-oc` | pedido_ids, operador_id | Conclui pick OC: auto-resolve compra items, enfileira execucao, adiciona tag 'pick oc' |
+| Encaminhar | `POST /api/separacao/encaminhar` | pedido_id, galpao_destino_id | Encaminha pedido para outro galpao, reseta separacao |
+| Marcar item | `POST /api/separacao/marcar-item` | item_id | Marca item como separacao_marcado=true via API (alternativa ao scan) |
 
 ### Pick OC — Atalho de Separacao para Itens Aguardando Compra
 
-Quando os itens estao fisicamente disponiveis no galpao (ex.: fornecedor entregou antes), o operador pode separar diretamente sem esperar o fluxo formal de compras.
+Quando os itens estao fisicamente disponiveis no galpao (ex.: fornecedor entregou antes), o operador pode separar diretamente sem esperar o fluxo formal de compras via conferencia.
+
+#### Fluxo Completo com Blindagem
 
 ```mermaid
 flowchart TD
-    A["Operador na aba Aguardando OC<br/>Seleciona pedidos"] --> B["POST /api/separacao/iniciar<br/>Agora aceita aguardando_compra"]
+    A["Operador na aba Aguardando OC<br/>Seleciona pedidos"] --> B["POST /api/separacao/iniciar<br/>com pedidos status=aguardando_compra"]
 
-    B --> C["status_separacao = em_separacao<br/>Checklist com badges OC"]
-    C --> D["WAVE PICKING<br/>Itens OC mostram badge colorido:<br/>amarelo=aguardando, azul=comprado, verde=recebido"]
+    B --> C["BLINDAGEM CHECK:<br/>Itens tem compra_status pendente?"]
 
-    D --> E["POST /api/separacao/concluir-oc<br/>Endpoint especifico para Pick OC"]
+    C -->|Sim - itens nao resolvidos| D["BLOQUEIA TRANSICAO<br/>Retorna erro 400<br/>Pedidos ficam em aguardando_compra"]
+    D --> E["Operador deve resolver compra items ANTES<br/>Via /api/compras/conferir<br/>ou marcar como indisponivel"]
+    E --> B
 
-    E --> F["1. Verifica todos itens marcados"]
-    F --> G["2. Auto-resolve itens OC<br/>compra_status → recebido"]
-    G --> H["3. Resolve decisao"]
+    C -->|Nao - todos itens ok| F["status_separacao = em_separacao<br/>Modo pick-oc ativado"]
+    F --> G["Checklist com badges de compra:<br/>amarelo=aguardando, azul=comprado, verde=recebido"]
 
-    H --> I{"Galpao OC == Galpao origem?"}
-    I -->|sim| J["decisao = propria"]
-    I -->|nao| K["decisao = transferencia"]
-    I -->|"sem OC vinculada"| J
+    G --> H["WAVE PICKING<br/>Operador bipa codigos de barras<br/>Itens OC transitam para recebido"]
 
-    J --> L["4. Update pedido:<br/>status=executando<br/>status_separacao=separado<br/>tag 'pick oc'"]
-    K --> L
+    H --> I["POST /api/separacao/concluir-oc<br/>Endpoint especifico para Pick OC"]
 
-    L --> M["5. Enfileira job execucao<br/>siso_fila_execucao"]
-    M --> N["6. Fire-and-forget:<br/>kickWorker + agrupamentos + historico"]
+    I --> J["1. Verifica todos itens marcados<br/>separacao_marcado = true"]
+    J --> K["2. Auto-resolve itens OC<br/>compra_status → recebido<br/>compra_quantidade_recebida = solicitada"]
+    K --> L["3. Resolve decisao final"]
 
-    N --> O["Execution Worker processa:<br/>lanca estoque, gera NF, marcadores"]
+    L --> M{"Galpao OC == Galpao origem?"}
+    M -->|sim| N["decisao = propria"]
+    M -->|nao| O["decisao = transferencia"]
+    M -->|"sem OC vinculada"| N
+
+    N --> P["4. Update pedido:<br/>status=executando<br/>status_separacao=separado<br/>Adiciona tag 'pick oc'"]
+    O --> P
+
+    P --> Q["5. Enfileira job execucao<br/>siso_fila_execucao<br/>tipo=lancar_estoque"]
+    Q --> R["6. Fire-and-forget:<br/>- kickWorker<br/>- preCriarAgrupamentos<br/>- registrarEvento"]
+
+    R --> S["Execution Worker processa:<br/>1. Lanca estoque no Tiny<br/>2. Gera NF<br/>3. Insere marcadores"]
+
+    S --> T["Pedido pronto para<br/>embalagem → expedicao"]
 ```
+
+#### Regras Importantes
+
+1. **Blindagem:** Nenhum pedido com `compra_status IN ('aguardando_compra', 'comprado')` pode transicionar para `em_separacao` no fluxo normal
+2. **Desbloqueio:** Operador deve resolver itens via `/api/compras/conferir` antes de tentar pick OC
+3. **Auto-Resolucao:** `/api/separacao/concluir-oc` marca TODOS os itens OC como `recebido`
+4. **Decisao:** Usa `galpao_id` da OC para determinar propria vs transferencia
+5. **Tag:** Todos os pick OC recebem a tag `'pick oc'` para auditoria
+6. **Execution:** Job fica na fila e é processado normalmente pelo execution worker
 
 ---
 
@@ -589,16 +627,21 @@ stateDiagram-v2
     [*] --> aguardando_nf: Decisao = propria/transferencia
     [*] --> aguardando_separacao: Auto-aprovado + NF simultanea
 
-    aguardando_compra --> aguardando_nf: Todos itens OC recebidos
+    aguardando_compra --> aguardando_nf: Todos itens OC recebidos via conferencia
     aguardando_compra --> aguardando_separacao: OC recebido + NF ja chegou
+    aguardando_compra --> em_separacao: Operador inicia pick OC
     aguardando_nf --> aguardando_separacao: Webhook NF processado
     aguardando_separacao --> em_separacao: Operador inicia picking
-    em_separacao --> separado: Picking concluido
+    em_separacao --> separado: Picking concluido via /concluir
+    em_separacao --> separado: Pick OC concluido via /concluir-oc<br/>+ status=executando
     separado --> embalado: Embalagem concluida
     embalado --> expedido: Despacho realizado
 
-    em_separacao --> aguardando_separacao: Forcar pendente
-    separado --> em_separacao: Voltar etapa
+    em_separacao --> aguardando_separacao: Forcar pendente / Cancelar
+    em_separacao --> aguardando_compra: Forcar pendente (pick OC)
+    separado --> em_separacao: Voltar etapa / Reiniciar
+
+    note right of em_separacao: BLINDAGEM: pedidos com<br/>compra_status pendente nao<br/>transitam aqui automaticamente<br/>Operador deve resolver compra antes
 ```
 
 ### pedido_itens.compra_status

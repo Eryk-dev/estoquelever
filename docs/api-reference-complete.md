@@ -2,7 +2,7 @@
 
 This is the **authoritative, comprehensive reference** for every API route in the SISO system. Use this before reading route source code or making API changes.
 
-**Last updated:** 2026-03-25
+**Last updated:** 2026-03-31
 
 ---
 
@@ -21,6 +21,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
 11. [Worker & Background Jobs](#worker--background-jobs)
 12. [Dashboard & Monitoring](#dashboard--monitoring)
 13. [Reconciliation API](#reconciliation-api)
+
+**Total API Routes Documented:** 90+ endpoints across all sections
 
 ---
 
@@ -1714,6 +1716,98 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
+### POST /api/separacao/retry-etiqueta
+
+**File:** `src/app/api/separacao/retry-etiqueta/route.ts`
+
+**Purpose:** Retries label (etiqueta) acquisition for packed/separated orders that reached final stages without cached ZPL. Does not print anything, only recovers/re-generates labels.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:**
+```json
+{
+  "pedido_id": "string"
+}
+```
+OR
+```json
+{
+  "pedido_ids": ["string"]
+}
+```
+
+**Response (200):**
+```json
+{
+  "total": "number",
+  "recuperadas": "number",
+  "ja_disponiveis": "number",
+  "em_andamento": "number",
+  "falhas": "number",
+  "pedidos": [
+    {
+      "id": "uuid",
+      "numero": "string",
+      "status": "ja_disponivel" | "recuperada" | "em_andamento" | "falhou",
+      "etiqueta_pronta": "boolean",
+      "agrupamento_expedicao_id": "string | null",
+      "expedicao_id": "string | null"
+    }
+  ]
+}
+```
+
+**Response (400 - Missing/invalid body):**
+```json
+{
+  "error": "envie 'pedido_id' ou 'pedido_ids'"
+}
+```
+
+**Response (404 - Orders not found):**
+```json
+{
+  "error": "pedidos_nao_encontrados",
+  "pedido_ids": ["string"]
+}
+```
+
+**Response (403 - Wrong galpão):**
+```json
+{
+  "error": "pedidos_nao_pertencem_ao_seu_galpao",
+  "pedido_ids": ["string"]
+}
+```
+
+**Response (400 - Invalid stage):**
+```json
+{
+  "error": "pedido_em_etapa_invalida",
+  "pedido_ids": ["string"]
+}
+```
+
+**Business Logic:**
+- Validates orders exist and user has galpão access
+- Validates orders are in "separado" or "embalado" status
+- For orders without cached ZPL:
+  - Calls `preCriarAgrupamentosEmLote` to create Tiny agrupamentos
+  - Calls `recarregarEtiquetasFaltantes` to fetch/generate ZPL
+  - Retries once if second pass still missing ZPL
+- Restores orders moved to "embalado" back to "separado" (label generation auto-advances)
+- Classifies each order: already_available | recovered | in_progress | failed
+- Updates etiqueta_status based on classification
+
+**Side Effects:**
+- Updates `siso_pedidos.agrupamento_expedicao_id`, `etiqueta_status`, `status_separacao`
+- Calls Tiny agrupamento creation via `preCriarAgrupamentosEmLote`
+- Calls label fetch via `recarregarEtiquetasFaltantes`
+- Logs to `siso_logs`
+
+---
+
 ### POST /api/separacao/localizacao
 
 **File:** `src/app/api/separacao/localizacao/route.ts`
@@ -2143,6 +2237,609 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
+### POST /api/compras/comprar
+
+**File:** `src/app/api/compras/comprar/route.ts`
+
+**Purpose:** Marks items as purchased (comprado) for a supplier. Qty is consolidated by SKU and distributed across order items by aging (oldest first).
+
+**Auth:** X-Session-Id (required), must be comprador or admin
+
+**Request Body:**
+```json
+{
+  "itens": [
+    {
+      "sku": "string",
+      "quantidade_comprada": "number"
+    }
+  ]
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "resultados": [
+    {
+      "sku": "string",
+      "itens_marcados": "number",
+      "quantidade_alocada": "number",
+      "quantidade_excedente": "number"
+    }
+  ]
+}
+```
+
+**Response (400 - Missing fields):**
+```json
+{
+  "error": "Envie { itens: [{ sku, quantidade_comprada }] }"
+}
+```
+
+**Response (403 - Insufficient permissions):**
+```json
+{
+  "error": "Apenas compradores podem marcar como comprado"
+}
+```
+
+**Business Logic:**
+- Validates user is comprador or admin
+- For each SKU with quantidade_comprada > 0:
+  - Fetches all items with this SKU and compra_status = "aguardando_compra"
+  - Sorts by order age (oldest first)
+  - Distributes purchased quantity across items
+  - Updates compra_status = "comprado" and timestamps
+
+**Side Effects:**
+- Updates `siso_pedido_itens.compra_status`, `compra_quantidade_comprada`, `comprado_em`, `comprado_por`
+- Logs to `siso_logs`
+
+**Rate Limiting:** None
+
+---
+
+### POST /api/compras/trocar-sku
+
+**File:** `src/app/api/compras/trocar-sku/route.ts`
+
+**Purpose:** Swaps the SKU of order items to an equivalent product. Looks up product in Tiny across all group empresas, updates description, image, stock, and supplier. Does not auto-release the order.
+
+**Auth:** X-Session-Id (required), must have compras access
+
+**Request Body:**
+```json
+{
+  "item_ids": ["uuid"],
+  "novo_sku": "string"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "novo_sku": "string",
+  "novo_fornecedor": "string",
+  "descricao": "string | null"
+}
+```
+
+**Response (400 - Missing fields):**
+```json
+{
+  "error": "Envie { item_ids: string[], novo_sku: string }"
+}
+```
+
+**Response (404 - SKU not found):**
+```json
+{
+  "error": "SKU \"...\" não encontrado em nenhuma empresa do grupo"
+}
+```
+
+**Business Logic:**
+- Fetches items and validates they exist
+- Resolves empresa_origem from first item's pedido
+- Determines group empresas to search
+- Searches for new SKU in all group empresas
+- Updates items with new SKU, description, image, produto_id, fornecedor
+- Deletes old stock rows (siso_pedido_item_estoques) for old produto
+- Inserts stock rows for new produto
+
+**Side Effects:**
+- Updates `siso_pedido_itens.sku`, `descricao`, `imagem_url`, `produto_id`, `fornecedor_oc`
+- Deletes from `siso_pedido_item_estoques` for old produto
+- Inserts to `siso_pedido_item_estoques` for new produto
+- Logs to `siso_logs`
+
+---
+
+### POST /api/compras/itens/[itemId]/equivalente
+
+**File:** `src/app/api/compras/itens/[itemId]/equivalente/route.ts`
+
+**Purpose:** Registers an equivalent SKU for an item and moves case to pending exception until swap is applied externally on Tiny/marketplace.
+
+**Auth:** X-Session-Id (required), must have compras access
+
+**Request Body:**
+```json
+{
+  "sku_equivalente": "string",
+  "fornecedor_equivalente": "string (optional)",
+  "observacao": "string (optional)"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "item": {
+    "id": "uuid",
+    "sku": "string (original)",
+    "descricao": "string",
+    "compra_status": "equivalente_pendente",
+    "compra_equivalente_sku": "string",
+    "compra_equivalente_descricao": "string",
+    "compra_equivalente_fornecedor": "string"
+  }
+}
+```
+
+**Response (404 - Item not found):**
+```json
+{
+  "error": "Item não encontrado"
+}
+```
+
+**Response (409 - Stock already received):**
+```json
+{
+  "error": "Não é possível trocar por equivalente após entrada de estoque. Cancele o item/pedido ou trate manualmente."
+}
+```
+
+**Business Logic:**
+- Fetches item and validates compra_quantidade_recebida = 0
+- Resolves empresa_origem from pedido
+- Looks up new SKU in Tiny for empresa_origem
+- Fetches product details (image, GTIN)
+- Updates item to compra_status = "equivalente_pendente"
+- Stores equivalent product metadata in compra_equivalente_* fields
+- Clears compra_* fields (resets state)
+- Cancels associated OC if it becomes empty
+
+**Side Effects:**
+- Updates `siso_pedido_itens` with equivalente data and reset compra fields
+- May delete `siso_ordens_compra` if OC becomes empty
+- Logs to `siso_logs`
+
+---
+
+### POST /api/compras/itens/[itemId]/equivalente/confirmar
+
+**File:** `src/app/api/compras/itens/[itemId]/equivalente/confirmar/route.ts`
+
+**Purpose:** Confirms that the item swap has been applied externally and synchronizes the local item with the equivalent SKU.
+
+**Auth:** X-Session-Id (required), must have compras access
+
+**Request Body:** Empty
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "item": {
+    "id": "uuid",
+    "sku": "string (new)",
+    "descricao": "string",
+    "compra_status": "aguardando_compra",
+    "fornecedor_oc": "string"
+  }
+}
+```
+
+**Response (404 - Item not found):**
+```json
+{
+  "error": "Item não encontrado"
+}
+```
+
+**Response (409 - Invalid state):**
+```json
+{
+  "error": "O item não está aguardando confirmação de equivalente"
+}
+```
+
+**Business Logic:**
+- Fetches item and validates compra_status = "equivalente_pendente"
+- Validates compra_equivalente_sku is set
+- Loads equivalent product data from Tiny (description, image, GTIN, stock)
+- Checks for duplicate products in the same pedido (merge not supported)
+- Deletes old stock rows (siso_pedido_item_estoques)
+- Inserts stock rows for equivalent product
+- Updates item with new product metadata
+- Sets compra_status = "aguardando_compra" to restart purchase flow
+
+**Side Effects:**
+- Deletes from `siso_pedido_item_estoques` for old produto
+- Inserts to `siso_pedido_item_estoques` for equivalent produto
+- Updates `siso_pedido_itens` with equivalent product data
+- Logs to `siso_logs`
+
+---
+
+### POST /api/compras/itens/[itemId]/cancelamento
+
+**File:** `src/app/api/compras/itens/[itemId]/cancelamento/route.ts`
+
+**Purpose:** Marks an item as pending external cancellation with optional reason.
+
+**Auth:** X-Session-Id (required), must have compras access
+
+**Request Body:**
+```json
+{
+  "motivo": "string (optional)"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "item": {
+    "id": "uuid",
+    "sku": "string",
+    "descricao": "string",
+    "compra_status": "cancelamento_pendente",
+    "compra_cancelamento_motivo": "string | null"
+  }
+}
+```
+
+**Response (404 - Item not found):**
+```json
+{
+  "error": "Item não encontrado"
+}
+```
+
+**Business Logic:**
+- Fetches item
+- Updates compra_status = "cancelamento_pendente"
+- Stores reason and timestamp
+- Cancels associated OC if it becomes empty
+
+**Side Effects:**
+- Updates `siso_pedido_itens` with cancelamento status and metadata
+- May delete `siso_ordens_compra` if OC becomes empty
+- Logs to `siso_logs` with warning level
+
+---
+
+### POST /api/compras/itens/[itemId]/cancelamento/confirmar
+
+**File:** `src/app/api/compras/itens/[itemId]/cancelamento/confirmar/route.ts`
+
+**Purpose:** Confirms that item cancellation has been processed externally.
+
+**Auth:** X-Session-Id (required), must have compras access
+
+**Request Body:** Empty
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "item": {
+    "id": "uuid",
+    "sku": "string",
+    "compra_status": "cancelado"
+  }
+}
+```
+
+**Response (404 - Item not found):**
+```json
+{
+  "error": "Item não encontrado"
+}
+```
+
+**Response (409 - Invalid state):**
+```json
+{
+  "error": "O item não está aguardando confirmação de cancelamento"
+}
+```
+
+**Business Logic:**
+- Fetches item and validates compra_status = "cancelamento_pendente"
+- Sets compra_status = "cancelado"
+- Clears compra_cancelamento_* fields
+
+**Side Effects:**
+- Updates `siso_pedido_itens.compra_status`
+- Logs to `siso_logs`
+
+---
+
+### POST /api/compras/preparar-embalagem
+
+**File:** `src/app/api/compras/preparar-embalagem/route.ts`
+
+**Purpose:** Prepares orders from purchase orders for packing (embalagem). Transitions items to "aguardando_embalagem" status.
+
+**Auth:** X-Session-Id (required), must have compras access
+
+**Request Body:**
+```json
+{
+  "ordem_compra_ids": ["uuid"]
+}
+```
+
+**Response (200):**
+```json
+{
+  "pedidos_preparados": ["string"],
+  "itens_preparados": "number",
+  "avisos": ["string (if any)"]
+}
+```
+
+**Response (400 - Missing/invalid fields):**
+```json
+{
+  "error": "ordem_compra_ids deve ser um array com pelo menos uma OC"
+}
+```
+
+**Response (400 - Galpão mismatch):**
+```json
+{
+  "error": "string"
+}
+```
+
+**Business Logic:**
+- Validates ordem_compra_ids is a non-empty array
+- For each OC:
+  - Fetches items linked to OC
+  - Fetches associated pedidos
+  - Checks all pedidos are in same galpão (must all go to same location)
+  - Transitions items to "aguardando_embalagem"
+  - Marks pedidos as ready for packing
+- Returns list of prepared pedidos and item count
+
+**Side Effects:**
+- Updates `siso_pedido_itens` status
+- Updates `siso_pedidos` embalagem fields
+- Logs to `siso_logs`
+
+---
+
+### POST /api/compras/itens/[itemId]/indisponivel
+
+**File:** `src/app/api/compras/itens/[itemId]/indisponivel/route.ts`
+
+**Purpose:** Marks an item as unavailable from the supplier. Auto-cancels OC if empty and pedido if all items reach terminal status.
+
+**Auth:** X-Session-Id (required), must have compras access
+
+**Request Body:**
+```json
+{
+  "motivo": "string (optional)"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "item": {
+    "id": "uuid",
+    "sku": "string",
+    "descricao": "string",
+    "fornecedor_oc": "string",
+    "compra_status": "indisponivel",
+    "pedido_id": "uuid"
+  },
+  "pedido_cancelado": "uuid | null"
+}
+```
+
+**Response (404 - Item not found):**
+```json
+{
+  "error": "Item não encontrado"
+}
+```
+
+**Business Logic:**
+- Fetches item
+- Sets compra_status = "indisponivel"
+- Unlinks from OC
+- Cancels OC if it becomes empty
+- Checks pedido: if all items are in terminal status (recebido, indisponivel, cancelado), cancels entire pedido
+- May cancel execution job
+
+**Side Effects:**
+- Updates `siso_pedido_itens.compra_status`
+- May delete `siso_ordens_compra` if OC becomes empty
+- May update `siso_pedidos.status` if pedido cancelled
+- May update `siso_fila_execucao.status` if execution job cancelled
+- Logs to `siso_logs` with warning level
+
+---
+
+### POST /api/compras/itens/[itemId]/devolver
+
+**File:** `src/app/api/compras/itens/[itemId]/devolver/route.ts`
+
+**Purpose:** Returns an item to the "Aguardando Compra" queue by unlinking it from its OC.
+
+**Auth:** X-Session-Id (required), must have compras access
+
+**Request Body:** Empty
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "item": {
+    "id": "uuid",
+    "sku": "string",
+    "descricao": "string",
+    "fornecedor_oc": "string",
+    "compra_status": "aguardando_compra"
+  }
+}
+```
+
+**Response (404 - Item not found):**
+```json
+{
+  "error": "Item não encontrado"
+}
+```
+
+**Business Logic:**
+- Fetches item
+- Sets compra_status = "aguardando_compra"
+- Unlinks from OC (ordem_compra_id = null)
+- Preserves compra_solicitada_em (original request timestamp)
+- Cancels OC if it becomes empty
+- Item can be re-purchased via another OC
+
+**Side Effects:**
+- Updates `siso_pedido_itens.compra_status`, `ordem_compra_id`
+- May delete `siso_ordens_compra` if OC becomes empty
+- Logs to `siso_logs`
+
+---
+
+### POST /api/compras/itens/[itemId]/trocar-fornecedor
+
+**File:** `src/app/api/compras/itens/[itemId]/trocar-fornecedor/route.ts`
+
+**Purpose:** Changes the supplier of an item. Optionally moves it to a new OC.
+
+**Auth:** X-Session-Id (required), must have compras access
+
+**Request Body:**
+```json
+{
+  "novo_fornecedor": "string",
+  "nova_ordem_compra_id": "uuid (optional)"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "item": {
+    "id": "uuid",
+    "sku": "string",
+    "descricao": "string",
+    "fornecedor_oc": "string (new)",
+    "compra_status": "comprado" | "aguardando_compra",
+    "ordem_compra_id": "uuid | null"
+  }
+}
+```
+
+**Response (400 - Missing novo_fornecedor):**
+```json
+{
+  "error": "novo_fornecedor é obrigatório"
+}
+```
+
+**Response (404 - Item not found):**
+```json
+{
+  "error": "Item não encontrado"
+}
+```
+
+**Business Logic:**
+- Fetches item
+- Updates fornecedor_oc to novo_fornecedor
+- If nova_ordem_compra_id provided:
+  - Links item to new OC
+  - Sets compra_status = "comprado"
+- If NOT provided:
+  - Unlinks from any OC
+  - Sets compra_status = "aguardando_compra"
+- Cancels old OC if it becomes empty
+
+**Side Effects:**
+- Updates `siso_pedido_itens.fornecedor_oc`, `ordem_compra_id`, `compra_status`
+- May delete old `siso_ordens_compra` if it becomes empty
+- Logs to `siso_logs`
+
+---
+
+### POST /api/compras/pedidos/[pedidoId]/cancelar
+
+**File:** `src/app/api/compras/pedidos/[pedidoId]/cancelar/route.ts`
+
+**Purpose:** Cancels entire order in Tiny and cleans up local purchase flow.
+
+**Auth:** X-Session-Id (required), must have compras access
+
+**Request Body:** Empty
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "pedido_id": "uuid",
+  "estoque_lancado_alerta": "boolean"
+}
+```
+
+**Response (404 - Order not found):**
+```json
+{
+  "error": "Pedido não encontrado"
+}
+```
+
+**Business Logic:**
+- Fetches pedido and resolves empresa_origem
+- If pedido not already cancelled in DB: cancels in Tiny
+- Fetches all compra items for pedido
+- Marks compra items as "cancelado"
+- Tracks if any items had estoque entrada (received stock)
+- Cancels associated OCs that become empty
+- Sets pedido.status = "cancelado"
+- Cancels execution job in fila_execucao
+
+**Side Effects:**
+- Calls Tiny API atualizarStatusPedido
+- Updates `siso_pedido_itens.compra_status`
+- May delete `siso_ordens_compra` if OC becomes empty
+- Updates `siso_pedidos.status`, `status_separacao`, `compra_estoque_lancado_alerta`
+- Updates `siso_fila_execucao.status` to "cancelado"
+- Logs to `siso_logs` with warning level
+
+---
+
 ## Inventário API
 
 ### GET /api/inventario
@@ -2252,6 +2949,224 @@ Additional endpoints for inventory items:
 - POST `/api/inventario/[id]/processar` - Start processing (fire-and-forget)
 - GET `/api/inventario/[id]/progresso` - Poll processing progress
 - POST `/api/inventario/[id]/reverter` - Reverse completed inventory
+
+---
+
+## Transferência API
+
+### GET /api/transferencia
+
+**File:** `src/app/api/transferencia/route.ts`
+
+**Purpose:** List inter-galpão transfer sessions with computed item counts. User sees transfers where their galpão is origin or destination.
+
+**Auth:** X-Session-Id (required)
+
+**Query Params:**
+- `status`: filter by transfer status (optional)
+
+**Response (200):**
+```json
+{
+  "transferencias": [
+    {
+      "id": "uuid",
+      "empresa_origem_id": "uuid",
+      "empresa_destino_id": "uuid",
+      "galpao_origem_id": "uuid",
+      "galpao_destino_id": "uuid",
+      "usuario_id": "uuid",
+      "deposito_origem_id": "number | null",
+      "deposito_destino_id": "number | null",
+      "status": "em_andamento" | "processado" | "concluido" | "reversao",
+      "observacoes": "string | null",
+      "created_at": "ISO datetime",
+      "processado_em": "ISO datetime | null",
+      "concluido_em": "ISO datetime | null",
+      "empresa_origem": { "nome": "string" } | null,
+      "empresa_destino": { "nome": "string" } | null,
+      "galpao_origem": { "nome": "string" } | null,
+      "galpao_destino": { "nome": "string" } | null,
+      "usuario": { "nome": "string" } | null,
+      "total_itens": "number",
+      "itens_sucesso": "number",
+      "itens_erro": "number"
+    }
+  ]
+}
+```
+
+**Business Logic:**
+- Fetches transfer sessions filtered by galpaoId (origin or destination)
+- Computes item counts per status (total, sucesso, erro)
+- Returns in descending order of creation
+
+**Side Effects:** None (read-only)
+
+---
+
+### POST /api/transferencia
+
+**File:** `src/app/api/transferencia/route.ts`
+
+**Purpose:** Create a new inter-galpão transfer session.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:**
+```json
+{
+  "empresa_origem_id": "uuid",
+  "empresa_destino_id": "uuid",
+  "galpao_origem_id": "uuid",
+  "galpao_destino_id": "uuid",
+  "deposito_origem_id": "number | null",
+  "deposito_destino_id": "number | null",
+  "observacoes": "string (optional)"
+}
+```
+
+**Response (201):**
+```json
+{
+  "id": "uuid",
+  "empresa_origem_id": "uuid",
+  "empresa_destino_id": "uuid",
+  "galpao_origem_id": "uuid",
+  "galpao_destino_id": "uuid",
+  "status": "em_andamento"
+}
+```
+
+**Response (400 - Missing fields):**
+```json
+{
+  "error": "empresa_origem_id e empresa_destino_id são obrigatórios"
+}
+```
+
+**Business Logic:**
+- Validates required fields
+- Creates transfer session with status = "em_andamento"
+
+**Side Effects:**
+- Inserts to `siso_transferencias`
+- Logs to `siso_logs`
+
+---
+
+### Transferência Item Operations
+
+Additional endpoints for transfer items (parallel to inventory):
+- GET `/api/transferencia/[id]` - Fetch transfer session detail
+- POST `/api/transferencia/[id]/coletar` - Scan product from origin
+- PATCH `/api/transferencia/[id]/itens/[itemId]` - Edit qty or delete
+- POST `/api/transferencia/[id]/processar` - Start processing (fire-and-forget)
+- GET `/api/transferencia/[id]/progresso` - Poll processing progress
+- POST `/api/transferencia/[id]/reverter` - Reverse completed transfer
+
+---
+
+## Etiquetas API
+
+### POST /api/etiquetas-endereco/preview
+
+**File:** `src/app/api/etiquetas-endereco/preview/route.ts`
+
+**Purpose:** Generates address label preview for a range of orders. Shows layout and formatting before printing.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:**
+```json
+{
+  "pedido_ids": ["string"],
+  "tamanho": "pequeno" | "grande"
+}
+```
+
+**Response (200):**
+```json
+{
+  "labels": [
+    {
+      "pedido_id": "string",
+      "numero": "string",
+      "endereço": "string",
+      "zpl": "string",
+      "imagem_url": "string | null"
+    }
+  ],
+  "total": "number"
+}
+```
+
+**Response (400 - Missing fields):**
+```json
+{
+  "error": "pedido_ids é obrigatório"
+}
+```
+
+**Business Logic:**
+- Fetches pedidos with their addresses
+- Generates ZPL based on tamanho (pequeno = 2 labels per page rotated, grande = large label)
+- Returns preview data for display
+
+**Side Effects:** None (read-only)
+
+---
+
+### POST /api/etiquetas-endereco/imprimir
+
+**File:** `src/app/api/etiquetas-endereco/imprimir/route.ts`
+
+**Purpose:** Generates ZPL address labels and sends to PrintNode for printing via selected printer.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:**
+```json
+{
+  "pedido_ids": ["string"],
+  "tamanho": "pequeno" | "grande",
+  "printer_id": "number (PrintNode printer ID)"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "impressoes": "number",
+  "printjob_ids": ["number"]
+}
+```
+
+**Response (400 - Missing fields):**
+```json
+{
+  "error": "pedido_ids, tamanho e printer_id são obrigatórios"
+}
+```
+
+**Response (500 - PrintNode error):**
+```json
+{
+  "error": "Erro ao enviar para impressora: ..."
+}
+```
+
+**Business Logic:**
+- Validates all fields
+- Fetches pedidos with addresses
+- Generates ZPL labels
+- Sends to PrintNode API with specified printer
+- Returns print job IDs for tracking
+
+**Side Effects:**
+- Calls PrintNode API
+- Logs to `siso_logs`
 
 ---
 
@@ -2508,21 +3423,39 @@ Additional endpoints for inventory items:
 
 ---
 
-### Additional Admin Routes
+### Additional Admin Routes - Galpões
 
-- GET `/api/admin/galpoes/[id]` - Fetch galpão detail
-- PUT `/api/admin/galpoes/[id]` - Update galpão
-- DELETE `/api/admin/galpoes/[id]` - Delete galpão
-- GET `/api/admin/empresas` - List empresas
-- POST `/api/admin/empresas` - Create empresa
-- PUT `/api/admin/empresas/[id]` - Update empresa
-- DELETE `/api/admin/empresas/[id]` - Delete empresa
-- GET `/api/admin/grupos` - List grupos
-- POST `/api/admin/grupos` - Create grupo
-- PUT `/api/admin/grupos/[id]` - Update grupo
-- DELETE `/api/admin/grupos/[id]` - Delete grupo
-- POST `/api/admin/grupos/[id]/empresas` - Add empresa to grupo
-- PUT/DELETE `/api/admin/grupos/[id]/empresas/[empresaId]` - Update tier / remove
+- **GET** `/api/admin/galpoes/[id]` - Fetch galpão detail with nested empresas and grupo info
+- **PUT** `/api/admin/galpoes/[id]` - Update galpão name, descricao, ativo status
+- **DELETE** `/api/admin/galpoes/[id]` - Delete galpão (cascades to empresas)
+
+### Additional Admin Routes - Empresas
+
+- **GET** `/api/admin/empresas` - List all empresas with galpão, grupo, and Tiny connection info
+- **POST** `/api/admin/empresas` - Create new empresa (CNPJ, name, galpão)
+- **PUT** `/api/admin/empresas/[id]` - Update empresa name, CNPJ, ativo status
+- **DELETE** `/api/admin/empresas/[id]` - Delete empresa (cascades to grupo relations and connections)
+
+### Additional Admin Routes - Grupos
+
+- **GET** `/api/admin/grupos` - List all grupos
+- **POST** `/api/admin/grupos` - Create new grupo (name, descricao)
+- **PUT** `/api/admin/grupos/[id]` - Update grupo name, descricao
+- **DELETE** `/api/admin/grupos/[id]` - Delete grupo (cascades to empresa relations)
+
+### Additional Admin Routes - Grupo-Empresa Relations
+
+- **POST** `/api/admin/grupos/[id]/empresas` - Add empresa to grupo (updates or creates empresa_id + tier)
+- **PUT** `/api/admin/grupos/[id]/empresas/[empresaId]` - Update empresa tier in grupo
+- **DELETE** `/api/admin/grupos/[id]/empresas/[empresaId]` - Remove empresa from grupo
+
+### Additional Admin Routes - PrintNode
+
+- **GET** `/api/admin/printnode/api-key` - Fetch stored PrintNode API key
+- **PUT** `/api/admin/printnode/api-key` - Update PrintNode API key
+- **DELETE** `/api/admin/printnode/api-key` - Delete PrintNode API key
+- **GET** `/api/admin/printnode/printers` - List available printers from PrintNode
+- **POST** `/api/admin/printnode/test` - Test PrintNode connection
 
 ---
 
@@ -2892,5 +3825,5 @@ Most list endpoints return up to 200 rows by default. Larger datasets are pagina
 
 ---
 
-**Last updated:** 2026-03-25
+**Last updated:** 2026-03-31
 **API Version:** v3 (compatible with Tiny ERP API v3, OAuth2)

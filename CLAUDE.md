@@ -104,18 +104,22 @@ src/
     layout.tsx                     # Root layout (Outfit + JetBrains Mono fonts)
     login/page.tsx                 # PIN login page
     siso/page.tsx                  # SISO Dashboard — 3 tabs (Pendente/Concluidos/Auto)
+    painel/
+      page.tsx                     # Painel redirect to operacao
+      operacao/page.tsx            # Operational dashboard — real-time wave picking status
+      gerencial/page.tsx           # Management dashboard (admin only)
     separacao/
       page.tsx                     # Separation dashboard — 6 tabs by status
       checklist/page.tsx           # Wave picking checklist view
       embalagem/page.tsx           # Packing view
     compras/
-      page.tsx                     # Purchase orders — Aguardando/Comprado/Indisponível
+      page.tsx                     # Purchase orders — Comprar/Receber tabs with supplier consolidation
       conferencia/[ordemCompraId]/page.tsx  # Receiving screen for specific PO
     inventario/page.tsx            # Inventory — barcode scanning, location tagging, stock updates
     transferencias/page.tsx        # Transfers — inter-galpão stock transfer
     etiquetas/page.tsx             # Address labels — ZPL generation + PrintNode printing
     configuracoes/page.tsx         # Settings — Galpao/Empresa hierarchy, Grupos, Tiny, PrintNode
-    monitoramento/page.tsx         # Monitoring dashboard (admin only)
+    monitoramento/page.tsx         # Monitoring dashboard (admin only) — DEPRECATED, see painel/gerencial
     admin/usuarios/page.tsx        # User CRUD (admin only)
     api/
       webhook/
@@ -135,9 +139,11 @@ src/
         marcar-item/route.ts       # Mark item as picked (POST)
         desfazer-bip/route.ts      # Undo a barcode scan (POST)
         concluir/route.ts          # Complete separation (POST)
+        concluir-oc/route.ts       # Complete OC separation: auto-resolve compra + enqueue execution (POST)
         bipar-embalagem/route.ts   # Barcode scan during packing (POST)
         confirmar-item-embalagem/route.ts  # Confirm item packed (POST)
         expedir/route.ts           # Dispatch order (POST)
+        retry-etiqueta/route.ts    # Retry label printing after failure (POST)
         checklist-items/route.ts   # Get checklist items (GET)
         encaminhar/route.ts        # Forward order to another galpão (POST)
         cancelar/route.ts          # Cancel separation (POST)
@@ -150,13 +156,22 @@ src/
         [pedidoId]/forcar-pendente/route.ts  # Force single order back to pending (PATCH)
         localizacao/route.ts       # Update product location in Tiny + DB (POST)
       compras/
-        route.ts                   # List purchase items grouped by supplier (GET)
-        ordens/route.ts            # List purchase orders (GET)
-        conferir/route.ts          # Mark items as received (POST)
+        route.ts                   # List purchase items by status: comprar/receber (GET)
+        comprar/route.ts           # Mark items as purchased (comprado) by SKU, distribute across orders (POST)
+        receber/route.ts           # Receive/consolidate purchases into comprado items (POST)
+        preparar-embalagem/route.ts  # Prepare/stage orders for packing via compras/embalagem (POST)
+        trocar-sku/route.ts        # Change product SKU for a compra item (POST)
+        ordens/route.ts            # List purchase orders by supplier (GET)
+        conferir/route.ts          # DEPRECATED (POST)
         conferencia/[ordemCompraId]/route.ts  # Receive items for PO (GET/POST)
-        itens/[itemId]/indisponivel/route.ts  # Mark item unavailable (POST)
-        itens/[itemId]/devolver/route.ts      # Return received item (POST)
-        itens/[itemId]/trocar-fornecedor/route.ts  # Change supplier (POST)
+        pedidos/[pedidoId]/cancelar/route.ts  # Cancel purchase decision for pedido (POST)
+        itens/[itemId]/indisponivel/route.ts  # Mark item unavailable — trigger alternatives (POST)
+        itens/[itemId]/devolver/route.ts      # Return received item to supplier state (POST)
+        itens/[itemId]/cancelamento/route.ts  # Propose cancelamento exception (POST)
+        itens/[itemId]/cancelamento/confirmar/route.ts  # Confirm cancelamento + generate credit note (POST)
+        itens/[itemId]/equivalente/route.ts   # Propose equivalente SKU (POST)
+        itens/[itemId]/equivalente/confirmar/route.ts  # Confirm equivalente + update product mappings (POST)
+        itens/[itemId]/trocar-fornecedor/route.ts  # Change supplier (DEPRECATED, use compras-equivalencia) (POST)
       inventario/
         route.ts                   # List + create inventory sessions (GET/POST)
         [id]/route.ts              # Inventory detail + cancel (GET/PATCH)
@@ -195,16 +210,19 @@ src/
           printers/route.ts        # List printers (GET)
           test/route.ts            # Test PrintNode connection (POST)
       tiny/
-        connections/route.ts       # Tiny connections CRUD (GET/POST/PUT)
+        connections/route.ts       # Tiny connections CRUD (GET/POST/PUT) — empresa-scoped
         test-connection/route.ts   # Test Tiny connection (POST)
-        deposits/route.ts          # List Tiny deposits (GET)
+        deposits/route.ts          # List Tiny deposits per empresa (GET)
         stock/ajustar/route.ts     # Adjust stock in Tiny (POST)
-        oauth/route.ts             # OAuth2 initiation (GET -> redirect)
-        oauth/callback/route.ts    # OAuth2 callback (GET)
+        oauth/route.ts             # OAuth2 initiation — step 1 (GET -> redirect to Keycloak)
+        oauth/callback/route.ts    # OAuth2 callback — step 2 (GET, save token to siso_tiny_connections)
       monitoring/route.ts          # Monitoring data (GET)
   components/
     app-shell.tsx                  # Page wrapper — header, auth check, admin-only pages
-    providers.tsx                  # QueryClientProvider + Toaster
+    app-header.tsx                 # Header component with breadcrumbs + user menu
+    galpao-selector.tsx            # Dropdown to filter by galpao (multi-galpao support)
+    sw-register.tsx                # Service worker registration for PWA
+    providers.tsx                  # QueryClientProvider + Toaster + AppShell wrapper
     pedido/
       pedido-card.tsx              # Pending order card (dynamic stock per galpão)
       pedido-card-concluido.tsx    # Completed order row (compact, expandable)
@@ -221,8 +239,14 @@ src/
       tab-expedidos.tsx            # Dispatched orders tab
       audio-feedback.ts            # Audio beep on scan
     compras/
-      fornecedor-card.tsx          # Supplier card with items by SKU
-      ordem-compra-card.tsx        # Purchase order card
+      fornecedor-comprar-card.tsx  # Supplier card with items by SKU for Comprar tab
+      fornecedor-receber-card.tsx  # Supplier card with received items for Receber tab
+      qty-input.tsx                # Quantity input component for purchases
+      item-context-menu.tsx        # Context menu for compra item actions
+      indisponivel-dialog.tsx      # Dialog to mark item indisponível + alternatives
+      equivalente-dialog.tsx       # Dialog to set/confirm equivalente SKU
+      cancelamento-dialog.tsx      # Dialog to propose/confirm cancelamento
+      excecoes-banner.tsx          # Banner showing compra exceptions/resolutions
     inventario/
       criar-inventario-form.tsx    # New inventory session form
       inventario-card.tsx          # Inventory session card for lists
@@ -257,12 +281,16 @@ src/
     nf-webhook-handler.ts          # Handle nota_fiscal webhooks, transition aguardando_nf → aguardando_separacao
     execution-worker.ts            # Post-approval: deduct stock following tier order
     compras-release.ts             # When all OC items received → resume execution
+    compras-equivalencia.ts        # Handle equivalente SKU resolution for compras items
+    compras-embalagem.ts           # Staging/preparation logic for compras items before separacao
+    compras-utils.ts               # Shared utilities for compras module (allowed cargos, field reset)
     inventario-processor.ts        # Consolidate + process/reverse inventory sessions via Tiny
     transferencia-processor.ts     # Process/reverse inter-galpão stock transfers via Tiny
     # ── Tiny ERP integration ──
     tiny-api.ts                    # Tiny ERP API v3 client
     tiny-oauth.ts                  # OAuth2 token management — getValidTokenByEmpresa()
-    rate-limiter.ts                # Rate limiting per empresa_id
+    tiny-queue.ts                  # Rate limiting + queue per empresa_id (runWithEmpresa wrapper)
+    rate-limiter.ts                # Underlying rate limiter implementation
     sku-fornecedor.ts              # SKU prefix -> supplier/galpao for purchase orders
     # ── Printing & labels ──
     agrupamento-service.ts         # Pre-create Tiny agrupamentos, download ZPL labels
@@ -418,7 +446,7 @@ The `docs/` directory contains comprehensive, ground-truth documentation generat
 
 | Document | Purpose | When to consult |
 |---|---|---|
-| [`docs/api-reference-complete.md`](docs/api-reference-complete.md) | **All 79 API routes** — method, path, auth, request/response shapes, business logic, side effects | Before making any API change; understanding any endpoint contract |
+| [`docs/api-reference-complete.md`](docs/api-reference-complete.md) | **All 81+ API routes** — method, path, auth, request/response shapes, business logic, side effects | Before making any API change; understanding any endpoint contract |
 | [`docs/database-schema.md`](docs/database-schema.md) | **All 20+ tables** — columns, types, FKs, indexes, constraints, ER diagram (Mermaid), migration history | Before writing migrations; understanding data model; debugging queries |
 | [`docs/architecture-and-flows.md`](docs/architecture-and-flows.md) | **System architecture** — webhook pipeline, state machines, separation/compras/inventario/transfer flows, Tiny/PrintNode integration, auth, error handling | Understanding business flows; onboarding; debugging cross-module issues |
 | [`docs/fluxos-siso.md`](docs/fluxos-siso.md) | **Visual flow diagrams** — Mermaid state machines and flowcharts for all business processes | Quick visual reference for status transitions and decision logic |
@@ -486,11 +514,33 @@ Failure to update documentation means the next developer or LLM will work with s
 
 ## Current Status
 
-- **Working:** Full order pipeline (webhook → stock check → approval → execution), separation/picking/packing flow, purchase order management, label printing via PrintNode, Galpao/Empresa/Grupo hierarchy CRUD, monitoring dashboard, user management, Tiny OAuth2, NF webhook reconciliation.
-- **Not yet implemented:**
-  - Real-time notifications for new pending orders (polling at 30s currently)
-  - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens`
-  - Remove deprecated `cnpj-filial.ts`
+### Fully Working
+- Full order pipeline (webhook → stock check → approval → execution)
+- Separation/picking/packing flow with barcode scanning and real-time updates
+- Advanced purchase order management (v2):
+  - SKU-based purchasing with supplier consolidation (comprar tab)
+  - Receiving with validation and exceptions (receber tab)
+  - Equivalente SKU resolution for unavailable items
+  - Cancelamento workflow with credit notes
+  - Preparation/staging orders for packing (preparar-embalagem)
+- Label printing via PrintNode (ZPL + PDF)
+- Galpao/Empresa/Grupo hierarchy CRUD with tier-based stock deduction
+- Operational dashboard (painel/operacao) with real-time wave picking status
+- Management dashboard (painel/gerencial) with KPIs and analytics
+- User management with role-based access control (admin, operador_cwb/sp, comprador)
+- Tiny OAuth2 connection management per empresa
+- NF webhook reconciliation (aguardando_nf transition)
+- OC auto-resolution in wave picking (concluir-oc endpoint)
+
+### In Progress / Minor
+- Real-time notifications for new pending orders (polling at 30s for now)
+- PWA service worker registration (basic structure in place)
+
+### Deprecated / To Remove
+- Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)
+- Remove deprecated `cnpj-filial.ts` (replaced by empresa-lookup.ts)
+- Remove deprecated `/api/compras/conferir` (replaced by comprar/receber flow)
+- Remove deprecated `monitoramento/page.tsx` (replaced by painel/gerencial)
 
 ## Tiny ERP API Notes
 

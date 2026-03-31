@@ -73,6 +73,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `agrupamento_expedicao_id` | text | YES | | Tiny expedition grouping ID (used for label printing) |
 | `expedicao_id` | text | YES | | Tiny expedition ID within agrupamento |
 | `prazo_envio` | text | YES | | Shipping deadline string |
+| `encaminhado_de` | text | YES | | Name of origin galpão when manually forwarded to another galpão |
 | `criado_em` | timestamptz | NO | now() | Record creation timestamp |
 | `atualizado_em` | timestamptz | YES | | Last update timestamp |
 
@@ -134,10 +135,12 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `ordem_compra_id` | uuid | YES | FK | Purchase order ID |
 | `compra_status` | text | YES | | Item purchase status: `aguardando_compra`, `comprado`, `recebido`, `indisponivel`, `equivalente_pendente`, `cancelamento_pendente`, `cancelado` |
 | `compra_quantidade_solicitada` | integer | NO | 0 | Quantity requested for purchase |
+| `compra_quantidade_comprada` | integer | YES | | Quantity actually ordered by buyer (may differ from needed) |
 | `compra_quantidade_recebida` | integer | NO | 0 | Quantity already received |
 | `compra_solicitada_em` | timestamptz | YES | | When purchase was requested |
 | `comprado_em` | timestamptz | YES | | When item was purchased |
 | `comprado_por` | uuid | YES | FK | User who purchased |
+| `comprado_por_nome` | text | YES | | Buyer name (denormalized for display) |
 | `recebido_em` | timestamptz | YES | | When received at warehouse |
 | `recebido_por` | uuid | YES | FK | User who received |
 | **Equivalence handling:** | | | | |
@@ -357,6 +360,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `status` | text | NO | 'pendente' | Queue status: `pendente`, `executando`, `concluido`, `erro`, `cancelado` |
 | `tentativas` | integer | NO | 0 | Retry count |
 | `max_tentativas` | integer | NO | 3 | Max retries allowed |
+| `prioridade` | boolean | NO | false | High-priority flag: processed before normal jobs |
 | `erro` | text | YES | | Error message on failure |
 | `operador_id` | text | YES | | User who approved |
 | `operador_nome` | text | YES | | User name (denormalized) |
@@ -374,6 +378,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `idx_fila_status_retry` (status, proximo_retry_em) WHERE status = 'pendente'
 - `idx_fila_pedido` (pedido_id)
 - `idx_fila_empresa` (empresa_id)
+- `idx_fila_prioridade` (prioridade DESC, criado_em ASC) WHERE status = 'pendente'
 
 **Constraints:**
 - `CHECK (tipo IN ('lancar_estoque'))`
@@ -1216,7 +1221,9 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-03-23 | `modulo_inventario_transferencia.sql` | Inventory and transfer modules |
 | 2026-03-24 | `add_separacao_tags.sql` | User-created order tags |
 | 2026-03-24 | `add_produto_id_na_empresa.sql` | Per-empresa product ID tracking |
-| 2026-03-24 | `compras_v2_missing_columns.sql` | Additional purchase columns |
+| 2026-03-24 | `worker_heartbeat_cron.sql` | CRON job for worker monitoring |
+| 2026-03-24 | `compras_v2_missing_columns.sql` | Additional purchase columns (compra_quantidade_comprada, comprado_por_nome, prioridade) |
+| 2026-03-26 | `add_encaminhado_de.sql` | Forward tracking: origin galpão name when order manually transferred |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging
@@ -1289,6 +1296,25 @@ This writes to both `siso_logs` and `siso_erros`.
 
 ---
 
-**Schema Last Updated:** 2026-03-25
+**Schema Last Updated:** 2026-03-31
 **Database Version:** PostgreSQL 14+ (Supabase)
 **Supabase Project:** `wrbrbhuhsaaupqsimkqz`
+
+---
+
+## Recent Updates (2026-03-24 to 2026-03-26)
+
+### March 24: Compras v2 Columns
+Added three columns to support improved purchase order workflow:
+- `siso_pedido_itens.compra_quantidade_comprada` — tracks actual quantity ordered (distinct from quantity needed)
+- `siso_pedido_itens.comprado_por_nome` — denormalized buyer name for UI display
+- `siso_fila_execucao.prioridade` — flag for high-priority jobs, processed before normal jobs with dedicated index
+
+### March 24: Product ID per Empresa
+Added `siso_pedido_item_estoques.produto_id_na_empresa` to support product cloning across empresas. Enables transferencia and inventory modules to use correct product IDs in destination empresas.
+
+### March 24: Order Tags
+Added `siso_pedidos.separacao_tags` (text[] with GIN index) for user-created tags in separation module, separate from Tiny's native marcadores.
+
+### March 26: Forward Tracking
+Added `siso_pedidos.encaminhado_de` (text) to track the name of the origin galpão when an order is manually forwarded to another galpão during separation.

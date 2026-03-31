@@ -338,16 +338,19 @@ stateDiagram-v2
 
     aguardando_compra --> comprado: All OC items received<br/>via /api/compras/conferir
     comprado --> aguardando_nf: Purchase release logic
+    aguardando_compra --> em_separacao: Operator picks OC items<br/>via /api/separacao/iniciar
     aguardando_nf --> aguardando_separacao: NF authorized
 
     aguardando_separacao --> em_separacao: /api/separacao/iniciar<br/>(Wave picking started)
     em_separacao --> separado: /api/separacao/concluir<br/>(All items picked)
+    em_separacao --> separado: /api/separacao/concluir-oc<br/>(Pick OC completed)
 
     separado --> embalado: /api/separacao/embalar<br/>(Packing completed)
 
     embalado --> expedido: /api/separacao/expedir<br/>(Shipment dispatched)
 
     em_separacao --> aguardando_separacao: /api/separacao/cancelar
+    em_separacao --> aguardando_compra: /api/separacao/forcar-pendente
     separado --> em_separacao: /api/separacao/reiniciar
     separado --> aguardando_separacao: /api/separacao/voltar-etapa
 
@@ -366,8 +369,12 @@ stateDiagram-v2
 | `aguardando_nf` | Worker detects NF authorized | `aguardando_separacao` | `execution-worker.ts` |
 | `aguardando_compra` | All OC items received | `comprado` | `/api/compras/conferir` |
 | `comprado` | Release logic runs | `aguardando_nf` | `compras-release.ts` |
+| `aguardando_compra` | Operator picks OC items | `em_separacao` | `/api/separacao/iniciar` (pick OC mode) |
 | `aguardando_separacao` | Operator clicks "Iniciar Separação" | `em_separacao` | `/api/separacao/iniciar` |
-| `em_separacao` | Operator clicks "Concluir" | `separado` | `/api/separacao/concluir` |
+| `em_separacao` | Operator clicks "Concluir" (normal) | `separado` | `/api/separacao/concluir` |
+| `em_separacao` | Operator clicks "Concluir OC" (pick OC) | `separado` + `executando` | `/api/separacao/concluir-oc` |
+| `em_separacao` | Operator cancels | `aguardando_separacao` | `/api/separacao/cancelar` |
+| `em_separacao` | Force back to pending | `aguardando_compra` | `/api/separacao/forcar-pendente` |
 | `separado` | Operator clicks "Embalar" | `embalado` | `/api/separacao/embalar` |
 | `embalado` | Operator clicks "Expedir" | `expedido` | `/api/separacao/expedir` |
 
@@ -523,6 +530,55 @@ flowchart TD
 - Max 2 scans/second per session (configured in `session.ts`)
 - Prevents accidental double-scans
 - Returned to frontend as `{ allowed: false, retryAfterMs: N }`
+
+### Pick OC Flow (Purchase Order Early Picking)
+
+**Location:** `src/app/api/separacao/iniciar/route.ts`, `/api/separacao/concluir-oc`
+
+When items ordered via purchase order are physically available in the warehouse before formal purchase order completion, operators can separate them directly. This flow bypasses normal purchase order confirmation and automatically resolves compra items as received.
+
+```mermaid
+flowchart TD
+    A["Pedidos in aguardando_compra<br/>with OC items"] --> B["Operator selects pedidos"]
+    B --> C["POST /api/separacao/iniciar<br/>with aguardando_compra pedidos"]
+
+    C --> D["Blindagem Check:<br/>Items have pending compra?"]
+    D -->|Yes - with unresolved items| E["Block transition to em_separacao<br/>Return 400 error<br/>Stay in aguardando_compra"]
+    D -->|No - can proceed| F["Transition to em_separacao<br/>Show checklist with OC badges"]
+
+    E --> Z["Operator resolves compra items first<br/>via /api/compras/conferir<br/>or marks items unavailable"]
+    Z --> C
+
+    F --> G["Wave Picking (Pick OC Mode)<br/>Scan items by SKU/GTIN<br/>Checklist shows compra status"]
+
+    G --> H["All items marked<br/>separacao_marcado = true"]
+    H --> I["POST /api/separacao/concluir-oc"]
+
+    I --> J["Auto-Resolve OC Items:<br/>Set compra_status = recebido<br/>Set compra_quantidade_recebida"]
+
+    J --> K["Determine Decisao:<br/>Check OC galpao vs origin galpao"]
+    K -->|Same galpao| L["decisao = propria"]
+    K -->|Different galpao| M["decisao = transferencia"]
+
+    L --> N["Update Pedido:<br/>status = executando<br/>status_separacao = separado<br/>Add 'pick oc' tag"]
+    M --> N
+
+    N --> O["Enqueue Execution Job<br/>siso_fila_execucao"]
+
+    O --> P["Fire-and-Forget:<br/>1. Kick execution worker<br/>2. Pre-create agrupamentos<br/>3. Register history event"]
+
+    P --> Q["Execution Worker Processes:<br/>Lanca estoque no Tiny<br/>Gera NF<br/>Insere marcadores"]
+
+    Q --> R["Pedido ready for<br/>embalagem/expedicao"]
+```
+
+**Key Rules:**
+
+- **Blindagem (Protection):** Orders with ANY pending compra items (`compra_status IN ('aguardando_compra', 'comprado')`) cannot transition to `em_separacao` during normal flow
+- **Pick OC Bypass:** Even with pending compra items, operator can use `/api/separacao/iniciar` with `aguardando_compra` orders if they manually resolve them first
+- **Auto-Resolution:** `/api/separacao/concluir-oc` automatically marks all OC items as `recebido` with full quantity
+- **Decision Resolution:** Uses OC's `galpao_id` to determine if transfer is needed
+- **Tag Assignment:** All pick OC completions get the `pick oc` tag for audit trail
 
 ---
 

@@ -1,0 +1,92 @@
+# Ralph Progress Log
+Started: Mon Mar 30 17:27:35 -03 2026
+---
+
+## Codebase Patterns
+- In `separacao/iniciar/route.ts`, status validation uses `ALLOWED_STATUSES` array at line 74 and transition filter uses `TRANSITION_STATUSES` at line 90. Both must be updated together when adding new allowed statuses.
+- When `handleSepararSelecionados` has optional params, all `onClick` refs must use arrow wrappers `() => handleSepararSelecionados()` to avoid TS type mismatch with MouseEventHandler.
+- Supabase `.eq()` for single value filter, `.in()` for multiple values — use `.in()` when filtering by an array of statuses.
+- OC decisao resolution: compare OC's galpao_id (from siso_ordens_compra) vs pedido's origin galpao_id (from empresa → galpao). Same = 'propria', different = 'transferencia'. Default to 'propria' if no OC linked.
+- After concluir/separado, always fire-and-forget: `kickWorker()`, `preCriarAgrupamentosEmLote()`, and `registrarEventos()`.
+
+---
+
+## 2026-03-30 - US-002
+- Added `compra_status: item.compra_status ?? null` to the result mapping in checklist-items route
+- Files changed: `src/app/api/separacao/checklist-items/route.ts`
+- **Learnings for future iterations:**
+  - The checklist-items select query already includes `compra_status` in the column list (line 41) — it was just missing from the response mapping
+  - The response mapping is in `visibleItems.map()` around line 150. When adding new fields, add them here next to `imagem_url`
+  - The `visibleItems` filter (line 141-148) already uses `compra_status` for filtering — items with `indisponivel` or `cancelado` are excluded, and for `aguardando_compra` pedidos only non-OC items are shown
+---
+
+## 2026-03-30 - US-003
+- Created POST /api/separacao/concluir-oc endpoint
+- Added 'separacao_oc_concluida' to EventoPedido type in historico-service.ts
+- Endpoint: validates auth, checks all items marked, auto-resolves OC items (sets compra_status='recebido'), resolves decisao (propria vs transferencia based on OC galpao vs origin galpao), updates pedido to 'separado' with tag 'pick oc', enqueues execution job, kicks worker, pre-creates agrupamentos
+- Files changed: `src/app/api/separacao/concluir-oc/route.ts` (new), `src/lib/historico-service.ts`
+- **Learnings for future iterations:**
+  - The compras-release.ts has reusable patterns for resolving OC galpao and empresa galpao — functions `resolveOcGalpaoId` and `resolveEmpresaGalpaoId` are private but the logic can be replicated
+  - Tags (separacao_tags) are text[] in siso_pedidos — must read current, append, then update (no native array_append in Supabase JS client)
+  - The execution queue (siso_fila_execucao) insert uses `tipo: 'lancar_estoque'`, `empresa_id`, `decisao`, `tentativas: 0`, `status: 'pendente'`
+  - After inserting execution jobs, must call `kickWorker()` fire-and-forget to trigger processing
+  - `preCriarAgrupamentosEmLote` is the fire-and-forget call for agrupamento creation at concluir time
+---
+
+## 2026-03-30 - US-001
+- Added `aguardando_compra` to ALLOWED_STATUSES in POST /api/separacao/iniciar
+- Updated TRANSITION_STATUSES to include `aguardando_compra` so these pedidos also transition to `em_separacao`
+- Changed `.eq("status_separacao", "aguardando_separacao")` to `.in("status_separacao", TRANSITION_STATUSES)` for the update query
+- Updated error message to mention all 3 allowed statuses
+- Files changed: `src/app/api/separacao/iniciar/route.ts`
+- **Learnings for future iterations:**
+  - The iniciar route has two separate places where status filtering happens: validation (ALLOWED_STATUSES) and the update query filter (TRANSITION_STATUSES). Both must stay in sync.
+  - `em_separacao` is in ALLOWED_STATUSES but NOT in TRANSITION_STATUSES because it's a resume — those pedidos are already started.
+---
+
+## 2026-03-30 - US-004
+- Added 'Separar' action button block to aguardando_compra tab in separacao/page.tsx
+- Modified `handleSepararSelecionados` to accept optional `modo` param, appending `&modo=pick-oc` to the checklist redirect URL
+- Updated all existing onClick references to use arrow wrappers for TS compatibility
+- Files changed: `src/app/separacao/page.tsx`
+- **Learnings for future iterations:**
+  - Action button blocks per tab follow a consistent pattern: count label + MoveButton (admin) + primary action button, wrapped in flex container
+  - When adding optional params to handler functions used as React onClick, all call sites must wrap in arrow functions to avoid TS MouseEventHandler type mismatch
+  - The aguardando_compra tab button uses `() => handleSepararSelecionados("pick-oc")` while other tabs use `() => handleSepararSelecionados()` (no modo)
+---
+
+## 2026-03-30 - US-005
+- Added `compra_status` field to `ChecklistItem` and `ConsolidatedProduct` interfaces
+- Derived `compra_status` in the consolidation logic from the first item's value
+- Rendered OC badge next to SKU with color coding: amber (aguardando_compra), blue (comprado), emerald (recebido)
+- Items without compra_status (null) show no badge
+- Files changed: `src/app/separacao/checklist/page.tsx`
+- **Learnings for future iterations:**
+  - The checklist item rendering is in a single `consolidated.map()` block starting ~line 734. SKU, GTIN, qty badge, description, stock, location, and esgotado button are all inline
+  - The `ConsolidatedProduct` derives from first item for single-value fields (compra_status, localizacao, imagem_url) — for multi-item consolidation, only the first item's value is used
+  - Badge placement: best spot is between SKU span and GTIN span in the flex row at ~line 781
+---
+
+## 2026-03-30 - US-006
+- Added `isPickOC` flag derived from `searchParams.get("modo") === "pick-oc"`
+- Modified `handleConcluir` to use `/api/separacao/concluir-oc` endpoint when in pick-oc mode
+- Custom success toast for pick-oc: "Separacao OC concluida — N pedido(s) liberado(s)"
+- Updated redirect to `/separacao?tab=separado` (both modes)
+- Normal concluir flow unchanged when isPickOC is false
+- Files changed: `src/app/separacao/checklist/page.tsx`
+- **Learnings for future iterations:**
+  - The `handleConcluir` function is a single handler used by the Concluir button at ~line 990. Mode detection via searchParams is the cleanest way to branch behavior without duplicating the function
+  - The redirect was `/separacao` before — changed to `/separacao?tab=separado` per AC. This applies to both normal and pick-oc flows now
+  - `searchParams.get("modo")` is already available since the page uses `useSearchParams()` — no new hooks needed
+---
+
+## 2026-03-30 - US-007
+- Updated docs/api-reference-complete.md: added POST /api/separacao/concluir-oc full entry, updated POST /api/separacao/iniciar to mention aguardando_compra, added compra_status to GET /api/separacao/checklist-items response
+- Updated docs/architecture-and-flows.md: added "Pick OC Flow" section with sequence diagram, comparison table, and decisao resolution explanation
+- Updated docs/fluxos-siso.md: added aguardando_compra → em_separacao transition to state machine, added Pick OC flowchart diagram, added concluir-oc to special actions table
+- Files changed: `docs/api-reference-complete.md`, `docs/architecture-and-flows.md`, `docs/fluxos-siso.md`
+- **Learnings for future iterations:**
+  - Documentation sections follow consistent format: each endpoint gets File, Purpose, Auth, Request/Response, Business Logic, Side Effects, Rate Limiting, Notes
+  - Mermaid diagrams in fluxos-siso.md use flowchart TD and stateDiagram-v2 — follow existing patterns
+  - The state machine in fluxos-siso.md at ~line 221 is the canonical representation of all separacao transitions — add new transitions there
+---

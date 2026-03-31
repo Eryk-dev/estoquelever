@@ -14,6 +14,13 @@ import { getSessionUser } from "@/lib/session";
  *   limit — items per page (default 50, max 200)
  *   data_inicio — start date filter (ISO, default 30 days ago)
  *   data_fim — end date filter (ISO, default now)
+ *   busca — text search (matches numero, id_pedido_ecommerce, cliente_nome, item sku)
+ *   status — comma-separated status filter (e.g. "pendente,concluido")
+ *   status_separacao — comma-separated status_separacao filter
+ *   decisao — comma-separated decisao_final filter
+ *   empresa_origem_id — filter by origin empresa
+ *   marketplace — ilike filter on nome_ecommerce
+ *   tab — "expedidos" for final-state orders, default for all others
  *
  * Role-based filtering:
  *   admin — sees all
@@ -38,11 +45,127 @@ export async function GET(request: NextRequest) {
   const dataInicio = searchParams.get("data_inicio") ?? thirtyDaysAgo.toISOString().split("T")[0];
   const dataFim = searchParams.get("data_fim") ?? now.toISOString().split("T")[0];
 
+  // Search & filters
+  const busca = searchParams.get("busca");
+  const statusFilter = searchParams.get("status");
+  const statusSeparacaoFilter = searchParams.get("status_separacao");
+  const decisaoFilter = searchParams.get("decisao");
+  const empresaOrigemId = searchParams.get("empresa_origem_id");
+  const marketplaceFilter = searchParams.get("marketplace");
+  const tab = searchParams.get("tab");
+
   const supabase = createServiceClient();
   const isAdmin = session.cargos.includes("admin");
   const isComprador = !isAdmin && session.cargos.includes("comprador");
 
   try {
+    // Pre-fetch pedido_ids matching SKU search
+    let buscaItemPedidoIds: string[] | null = null;
+    if (busca) {
+      const { data: matchingItems } = await supabase
+        .from("siso_pedido_itens")
+        .select("pedido_id")
+        .ilike("sku", `%${busca}%`);
+      if (matchingItems && matchingItems.length > 0) {
+        buscaItemPedidoIds = [...new Set(matchingItems.map((i) => i.pedido_id))];
+      }
+    }
+
+    // Helper: apply busca OR filter combining pedido fields + item-matched IDs
+    function applyBuscaFilter<T extends { or: (filter: string) => T }>(q: T): T {
+      if (!busca) return q;
+      const parts = [
+        `numero.ilike.%${busca}%`,
+        `id_pedido_ecommerce.ilike.%${busca}%`,
+        `cliente_nome.ilike.%${busca}%`,
+      ];
+      if (buscaItemPedidoIds && buscaItemPedidoIds.length > 0) {
+        parts.push(`id.in.(${buscaItemPedidoIds.join(",")})`);
+      }
+      return q.or(parts.join(","));
+    }
+
+    // Helper: apply all shared filters (role, date, search, status, tab) to a query
+    function applyFilters<
+      T extends {
+        gte: (col: string, val: string) => T;
+        lte: (col: string, val: string) => T;
+        eq: (col: string, val: string) => T;
+        in: (col: string, vals: string[]) => T;
+        ilike: (col: string, val: string) => T;
+        or: (filter: string) => T;
+        not: (col: string, op: string, val: unknown) => T;
+      },
+    >(q: T, empresaIds?: string[]): T {
+      // Date range
+      q = q.gte("data", dataInicio).lte("data", dataFim);
+
+      // Role-based filtering
+      if (isComprador) {
+        q = q.eq("decisao_final", "oc");
+      } else if (!isAdmin && empresaIds && empresaIds.length > 0) {
+        q = q.in("empresa_origem_id", empresaIds);
+      }
+
+      // Tab filter
+      if (tab === "expedidos") {
+        // Expedidos: embalado with etiqueta impresso, or cancelado
+        q = q.or(
+          "and(status_separacao.eq.embalado,etiqueta_status.eq.impresso),status.eq.cancelado"
+        );
+      } else {
+        // Default tab: exclude expedidos — NOT cancelado AND NOT (embalado+impresso)
+        q = q.not("status", "eq", "cancelado");
+        // NOT(A AND B) = (NOT A) OR (NOT B): keep rows where status_separacao != embalado OR etiqueta_status != impresso
+        q = q.or("status_separacao.neq.embalado,status_separacao.is.null,etiqueta_status.neq.impresso,etiqueta_status.is.null");
+      }
+
+      // Text search
+      q = applyBuscaFilter(q);
+
+      // Status filter (comma-separated)
+      if (statusFilter) {
+        const statuses = statusFilter.split(",").map((s) => s.trim()).filter(Boolean);
+        if (statuses.length === 1) {
+          q = q.eq("status", statuses[0]);
+        } else if (statuses.length > 1) {
+          q = q.in("status", statuses);
+        }
+      }
+
+      // Status separacao filter (comma-separated)
+      if (statusSeparacaoFilter) {
+        const statuses = statusSeparacaoFilter.split(",").map((s) => s.trim()).filter(Boolean);
+        if (statuses.length === 1) {
+          q = q.eq("status_separacao", statuses[0]);
+        } else if (statuses.length > 1) {
+          q = q.in("status_separacao", statuses);
+        }
+      }
+
+      // Decisao filter (comma-separated)
+      if (decisaoFilter && !isComprador) {
+        const decisoes = decisaoFilter.split(",").map((s) => s.trim()).filter(Boolean);
+        if (decisoes.length === 1) {
+          q = q.eq("decisao_final", decisoes[0]);
+        } else if (decisoes.length > 1) {
+          q = q.in("decisao_final", decisoes);
+        }
+      }
+
+      // Empresa filter
+      if (empresaOrigemId) {
+        q = q.eq("empresa_origem_id", empresaOrigemId);
+      }
+
+      // Marketplace filter
+      if (marketplaceFilter) {
+        q = q.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
+      }
+
+      return q;
+    }
+
     // Build base query with empresa/galpao JOINs
     const selectFields = `
       id, numero, id_pedido_ecommerce, nome_ecommerce,
@@ -53,43 +176,33 @@ export async function GET(request: NextRequest) {
       siso_empresas(nome, galpao_id, siso_galpoes(nome))
     `;
 
-    // Count query (same filters, no pagination)
-    let countQuery = supabase
-      .from("siso_pedidos")
-      .select("*", { count: "exact", head: true })
-      .gte("data", dataInicio)
-      .lte("data", dataFim);
-
-    // Data query (with pagination)
-    let dataQuery = supabase
-      .from("siso_pedidos")
-      .select(selectFields)
-      .gte("data", dataInicio)
-      .lte("data", dataFim)
-      .order("criado_em", { ascending: false })
-      .range((page - 1) * limit, page * limit - 1);
-
-    // Role-based filtering
-    if (isComprador) {
-      countQuery = countQuery.eq("decisao_final", "oc");
-      dataQuery = dataQuery.eq("decisao_final", "oc");
-    } else if (!isAdmin && session.galpaoId) {
-      // Operador: filter by galpao via empresa_origem_id -> siso_empresas.galpao_id
-      // Get empresa IDs for this galpao
+    // For operador role: pre-fetch empresa IDs in their galpao
+    let empresaIds: string[] | undefined;
+    if (!isAdmin && !isComprador && session.galpaoId) {
       const { data: empresasInGalpao } = await supabase
         .from("siso_empresas")
         .select("id")
         .eq("galpao_id", session.galpaoId);
 
-      const empresaIds = (empresasInGalpao ?? []).map((e) => e.id);
-      if (empresaIds.length > 0) {
-        countQuery = countQuery.in("empresa_origem_id", empresaIds);
-        dataQuery = dataQuery.in("empresa_origem_id", empresaIds);
-      } else {
-        // No empresas in this galpao — return empty
+      empresaIds = (empresasInGalpao ?? []).map((e) => e.id);
+      if (empresaIds.length === 0) {
         return NextResponse.json({ pedidos: [], total: 0, page, totalPages: 0 });
       }
     }
+
+    // Count query (same filters, no pagination)
+    let countQuery = supabase
+      .from("siso_pedidos")
+      .select("*", { count: "exact", head: true });
+    countQuery = applyFilters(countQuery, empresaIds);
+
+    // Data query (with pagination)
+    let dataQuery = supabase
+      .from("siso_pedidos")
+      .select(selectFields)
+      .order("criado_em", { ascending: false })
+      .range((page - 1) * limit, page * limit - 1);
+    dataQuery = applyFilters(dataQuery, empresaIds);
 
     // Execute count + data in parallel
     const [countResult, dataResult] = await Promise.all([countQuery, dataQuery]);

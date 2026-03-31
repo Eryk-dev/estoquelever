@@ -8,7 +8,9 @@ import {
   ArrowRightLeft,
   Copy,
   Loader2,
+  MapPin,
   Package,
+  ShoppingCart,
   Tag,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -147,6 +149,26 @@ const DECISAO_LABELS: Record<string, string> = {
   oc: "OC",
 };
 
+const COMPRA_STATUS_COLORS: Record<string, string> = {
+  aguardando_compra: "bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300",
+  comprado: "bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300",
+  recebido: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300",
+  indisponivel: "bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300",
+  equivalente_pendente: "bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300",
+  cancelamento_pendente: "bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300",
+  cancelado: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+};
+
+const COMPRA_STATUS_LABELS: Record<string, string> = {
+  aguardando_compra: "Ag. Compra",
+  comprado: "Comprado",
+  recebido: "Recebido",
+  indisponivel: "Indisponivel",
+  equivalente_pendente: "Equiv. Pendente",
+  cancelamento_pendente: "Cancel. Pendente",
+  cancelado: "Cancelado",
+};
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string): string {
@@ -177,6 +199,130 @@ function formatDateTime(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+// ─── Item card ──────────────────────────────────────────────────────────────
+
+function ItemCard({ item }: { item: DetalheItem }) {
+  const galpoes = Object.keys(item.estoques).sort();
+  const isOC = !!item.fornecedor_oc;
+
+  return (
+    <div className="flex items-start gap-3 py-3">
+      {/* Thumbnail + quantity badge */}
+      <div className="relative shrink-0">
+        <div className="h-12 w-12 overflow-hidden rounded-lg border border-line bg-surface">
+          {item.imagem_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={item.imagem_url}
+              alt={item.sku}
+              className="h-full w-full object-contain"
+              loading="lazy"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-zinc-50 dark:bg-zinc-800/50">
+              <Package className="h-5 w-5 text-ink-faint" aria-hidden="true" />
+            </div>
+          )}
+        </div>
+        <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-900 px-1 font-mono text-[10px] font-bold text-white ring-2 ring-paper dark:bg-zinc-100 dark:text-zinc-900">
+          {item.quantidade}
+        </span>
+      </div>
+
+      {/* Content */}
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        {/* SKU + description */}
+        <div className="flex items-center gap-2">
+          <span className="inline-flex shrink-0 items-center rounded-md bg-zinc-900 px-1.5 py-0.5 font-mono text-[11px] font-bold tracking-wide text-white dark:bg-zinc-100 dark:text-zinc-900">
+            {item.sku}
+          </span>
+        </div>
+        <span className="min-w-0 truncate text-sm font-medium text-ink" title={item.descricao}>
+          {item.descricao}
+        </span>
+
+        {/* Stock grid per galpao */}
+        {galpoes.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {galpoes.map((galpao) => {
+              const est = item.estoques[galpao];
+              if (!est) return null;
+              return (
+                <div
+                  key={galpao}
+                  className={cn(
+                    "rounded-lg border px-2.5 py-1.5 text-xs",
+                    est.atende
+                      ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20"
+                      : "border-red-200 bg-red-50/50 dark:border-red-900/50 dark:bg-red-950/20",
+                  )}
+                >
+                  <div className="mb-1 flex items-center gap-1">
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+                      {galpao}
+                    </span>
+                    {est.atende ? (
+                      <span className="rounded bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">OK</span>
+                    ) : (
+                      <span className="rounded bg-red-500 px-1 py-px text-[9px] font-bold text-white">FALTA</span>
+                    )}
+                  </div>
+                  <div className="flex gap-2 font-mono tabular-nums">
+                    <span className="text-ink-faint">
+                      S:<span className="font-semibold text-ink">{est.deposito.saldo}</span>
+                    </span>
+                    <span className="text-ink-faint">
+                      R:<span className="font-semibold text-ink">{est.deposito.reservado}</span>
+                    </span>
+                    <span className="text-ink-faint">
+                      D:<span className={cn(
+                        "font-semibold",
+                        est.atende ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400",
+                      )}>{est.deposito.disponivel}</span>
+                    </span>
+                  </div>
+                  {est.localizacao && (
+                    <div className="mt-1 flex items-center gap-0.5 text-[10px] text-ink-faint">
+                      <MapPin className="h-2.5 w-2.5" />
+                      {est.localizacao}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* OC / purchase info */}
+        {isOC && (
+          <div className="mt-0.5 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200/50 bg-amber-50/30 px-2.5 py-1.5 dark:border-amber-900/30 dark:bg-amber-950/10">
+            <ShoppingCart className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+            <span className="text-xs font-medium text-ink">
+              {item.fornecedor_oc}
+            </span>
+            {item.compra_status && (
+              <span
+                className={cn(
+                  "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                  COMPRA_STATUS_COLORS[item.compra_status] ?? "bg-zinc-100 text-zinc-600",
+                )}
+              >
+                {COMPRA_STATUS_LABELS[item.compra_status] ?? item.compra_status}
+              </span>
+            )}
+            <span className="h-3 w-px bg-amber-300/50 dark:bg-amber-700/50" aria-hidden="true" />
+            <span className="font-mono text-[11px] text-ink-faint tabular-nums">
+              Solicitado: {item.compra_quantidade_solicitada ?? 0}
+              {" | "}Comprado: {item.compra_quantidade_comprada ?? 0}
+              {" | "}Recebido: {item.compra_quantidade_recebida ?? 0}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── Section wrapper ────────────────────────────────────────────────────────
@@ -493,7 +639,16 @@ export default function PedidoDetalhePage() {
           </Section>
         )}
 
-        {/* Placeholder for future sections (itens, timeline, observacoes, acoes) */}
+        {/* ── Items section ──────────────────────────────────────── */}
+        <Section title={`Itens (${pedido.itens.length})`}>
+          <div className="divide-y divide-line">
+            {pedido.itens.map((item) => (
+              <ItemCard key={item.id} item={item} />
+            ))}
+          </div>
+        </Section>
+
+        {/* Placeholder for future sections (timeline, observacoes, acoes) */}
       </div>
     </AppShell>
   );

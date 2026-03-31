@@ -1,9 +1,16 @@
 "use client";
 
-import { Suspense, useState, useMemo } from "react";
+import { Suspense, useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  AlertTriangle,
+  Search,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Tabs } from "@/components/ui/tabs";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -14,7 +21,6 @@ import {
   getEcommerceColors,
   getDecisaoStripColor,
   getFilialColors,
-  formatRelativeTime,
 } from "@/lib/domain-helpers";
 import { cn } from "@/lib/utils";
 import type { Tab, Decisao } from "@/types";
@@ -91,6 +97,88 @@ const DECISAO_LABELS: Record<string, string> = {
   transferencia: "Transferencia",
   oc: "OC",
 };
+
+// ─── Filter options ─────────────────────────────────────────────────────────
+
+const STATUS_OPTIONS = [
+  { value: "pendente", label: "Pendente" },
+  { value: "executando", label: "Executando" },
+  { value: "concluido", label: "Concluido" },
+  { value: "cancelado", label: "Cancelado" },
+  { value: "erro", label: "Erro" },
+];
+
+const STATUS_SEPARACAO_OPTIONS = [
+  { value: "aguardando_compra", label: "Ag. Compra" },
+  { value: "aguardando_nf", label: "Ag. NF" },
+  { value: "aguardando_separacao", label: "Ag. Separacao" },
+  { value: "em_separacao", label: "Em Separacao" },
+  { value: "separado", label: "Separado" },
+  { value: "embalado", label: "Embalado" },
+];
+
+const DECISAO_OPTIONS = [
+  { value: "propria", label: "Propria" },
+  { value: "transferencia", label: "Transferencia" },
+  { value: "oc", label: "OC" },
+];
+
+const MARKETPLACE_OPTIONS = [
+  { value: "Mercado Livre", label: "Mercado Livre" },
+  { value: "Shopee", label: "Shopee" },
+];
+
+// ─── Checkbox group ─────────────────────────────────────────────────────────
+
+function CheckboxGroup({
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+}) {
+  function toggle(value: string) {
+    if (selected.includes(value)) {
+      onChange(selected.filter((v) => v !== value));
+    } else {
+      onChange([...selected, value]);
+    }
+  }
+
+  return (
+    <div>
+      <span className="mb-1.5 block text-xs font-semibold text-ink-faint uppercase tracking-wide">
+        {label}
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => {
+          const active = selected.includes(opt.value);
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => toggle(opt.value)}
+              className={cn(
+                "rounded-lg px-2.5 py-1 text-xs font-medium transition-colors",
+                active
+                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700",
+              )}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string): string {
   if (!iso) return "";
@@ -244,18 +332,99 @@ function PedidosPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // ─── Read URL state ────────────────────────────────────────────────────────
   const tab = searchParams.get("tab") ?? "pedidos";
   const page = parseInt(searchParams.get("page") ?? "1", 10);
+  const urlBusca = searchParams.get("busca") ?? "";
+  const urlStatus = searchParams.get("status") ?? "";
+  const urlStatusSeparacao = searchParams.get("status_separacao") ?? "";
+  const urlDecisao = searchParams.get("decisao") ?? "";
+  const urlEmpresa = searchParams.get("empresa_origem_id") ?? "";
+  const urlMarketplace = searchParams.get("marketplace") ?? "";
+  const urlDataInicio = searchParams.get("data_inicio") ?? "";
+  const urlDataFim = searchParams.get("data_fim") ?? "";
 
-  // Build query params for API
+  // ─── Local state for search debounce ───────────────────────────────────────
+  const [searchInput, setSearchInput] = useState(urlBusca);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // ─── URL update helper ─────────────────────────────────────────────────────
+  const updateParams = useCallback(
+    (updates: Record<string, string>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const [key, value] of Object.entries(updates)) {
+        if (value) {
+          params.set(key, value);
+        } else {
+          params.delete(key);
+        }
+      }
+      // Reset page when filters change (unless page itself is being set)
+      if (!("page" in updates)) {
+        params.delete("page");
+      }
+      router.push(`/pedidos?${params.toString()}`);
+    },
+    [searchParams, router],
+  );
+
+  // Sync searchInput when URL changes externally (e.g. back/forward)
+  useEffect(() => {
+    setSearchInput(urlBusca);
+  }, [urlBusca]);
+
+  // Debounced search — 300ms
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed === urlBusca) return;
+    const timer = setTimeout(() => {
+      updateParams({ busca: trimmed, page: "" });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput, urlBusca, updateParams]);
+
+  // ─── Filter state derived from URL ─────────────────────────────────────────
+  const statusFilter = urlStatus ? urlStatus.split(",").filter(Boolean) : [];
+  const statusSeparacaoFilter = urlStatusSeparacao ? urlStatusSeparacao.split(",").filter(Boolean) : [];
+  const decisaoFilter = urlDecisao ? urlDecisao.split(",").filter(Boolean) : [];
+
+  // ─── Active filter count ───────────────────────────────────────────────────
+  const activeFilterCount =
+    (urlBusca ? 1 : 0) +
+    (statusFilter.length > 0 ? 1 : 0) +
+    (statusSeparacaoFilter.length > 0 ? 1 : 0) +
+    (decisaoFilter.length > 0 ? 1 : 0) +
+    (urlEmpresa ? 1 : 0) +
+    (urlMarketplace ? 1 : 0) +
+    (urlDataInicio ? 1 : 0) +
+    (urlDataFim ? 1 : 0);
+
+  const hasFilters = activeFilterCount > 0;
+
+  function clearFilters() {
+    setSearchInput("");
+    const params = new URLSearchParams();
+    if (tab !== "pedidos") params.set("tab", tab);
+    router.push(`/pedidos?${params.toString()}`);
+  }
+
+  // ─── Build query params for API ────────────────────────────────────────────
   const queryParams = useMemo(() => {
     const params: Record<string, string> = {
       page: String(page),
       limit: "50",
     };
     if (tab === "expedidos") params.tab = "expedidos";
+    if (urlBusca) params.busca = urlBusca;
+    if (urlStatus) params.status = urlStatus;
+    if (urlStatusSeparacao) params.status_separacao = urlStatusSeparacao;
+    if (urlDecisao) params.decisao = urlDecisao;
+    if (urlEmpresa) params.empresa_origem_id = urlEmpresa;
+    if (urlMarketplace) params.marketplace = urlMarketplace;
+    if (urlDataInicio) params.data_inicio = urlDataInicio;
+    if (urlDataFim) params.data_fim = urlDataFim;
     return params;
-  }, [tab, page]);
+  }, [tab, page, urlBusca, urlStatus, urlStatusSeparacao, urlDecisao, urlEmpresa, urlMarketplace, urlDataInicio, urlDataFim]);
 
   const { data, isLoading } = useQuery<TrackingResponse>({
     queryKey: ["pedidos-tracking", queryParams],
@@ -325,6 +494,174 @@ function PedidosPageContent() {
         {/* Tabs */}
         <Tabs tabs={tabs} activeTab={tab} onChange={setTab} />
 
+        {/* Search + filter toggle */}
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Buscar pedido, cliente, SKU..."
+              className="h-10 w-full rounded-xl border border-line bg-surface pl-9 pr-3 text-sm text-ink placeholder:text-ink-faint focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+            />
+            {searchInput && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchInput("");
+                  updateParams({ busca: "" });
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-ink-faint hover:text-ink"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setFiltersOpen(!filtersOpen)}
+            className={cn(
+              "relative inline-flex h-10 items-center gap-1.5 rounded-xl border px-3 text-sm font-medium transition-colors",
+              filtersOpen
+                ? "border-zinc-400 bg-zinc-100 text-ink dark:border-zinc-500 dark:bg-zinc-800"
+                : "border-line bg-surface text-ink-faint hover:text-ink hover:bg-zinc-50 dark:hover:bg-zinc-800",
+            )}
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            <span className="hidden sm:inline">Filtros</span>
+            {activeFilterCount > 0 && (
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-900 px-1.5 text-[10px] font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Expandable filter panel */}
+        {filtersOpen && (
+          <div className="space-y-4 rounded-2xl border border-line bg-paper p-4 animate-slide-up">
+            <CheckboxGroup
+              label="Status"
+              options={STATUS_OPTIONS}
+              selected={statusFilter}
+              onChange={(values) => updateParams({ status: values.join(",") })}
+            />
+
+            <CheckboxGroup
+              label="Status Separacao"
+              options={STATUS_SEPARACAO_OPTIONS}
+              selected={statusSeparacaoFilter}
+              onChange={(values) => updateParams({ status_separacao: values.join(",") })}
+            />
+
+            <CheckboxGroup
+              label="Decisao"
+              options={DECISAO_OPTIONS}
+              selected={decisaoFilter}
+              onChange={(values) => updateParams({ decisao: values.join(",") })}
+            />
+
+            <div className="flex flex-wrap gap-3">
+              {/* Marketplace */}
+              <div className="min-w-[140px]">
+                <span className="mb-1.5 block text-xs font-semibold text-ink-faint uppercase tracking-wide">
+                  Marketplace
+                </span>
+                <select
+                  value={urlMarketplace}
+                  onChange={(e) => updateParams({ marketplace: e.target.value })}
+                  className="h-9 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+                >
+                  <option value="">Todos</option>
+                  {MARKETPLACE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Empresa */}
+              <div className="min-w-[140px]">
+                <span className="mb-1.5 block text-xs font-semibold text-ink-faint uppercase tracking-wide">
+                  Empresa
+                </span>
+                <select
+                  value={urlEmpresa}
+                  onChange={(e) => updateParams({ empresa_origem_id: e.target.value })}
+                  className="h-9 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+                >
+                  <option value="">Todas</option>
+                  <option value="4473ca97-6939-4c6b-9b88-79e654eae137">NetAir</option>
+                  <option value="c27d85ce-1b08-4177-a467-e193da0a2777">NetParts</option>
+                </select>
+              </div>
+
+              {/* Date range */}
+              <div className="min-w-[130px]">
+                <span className="mb-1.5 block text-xs font-semibold text-ink-faint uppercase tracking-wide">
+                  Data inicio
+                </span>
+                <input
+                  type="date"
+                  value={urlDataInicio}
+                  onChange={(e) => updateParams({ data_inicio: e.target.value })}
+                  className="h-9 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+                />
+              </div>
+
+              <div className="min-w-[130px]">
+                <span className="mb-1.5 block text-xs font-semibold text-ink-faint uppercase tracking-wide">
+                  Data fim
+                </span>
+                <input
+                  type="date"
+                  value={urlDataFim}
+                  onChange={(e) => updateParams({ data_fim: e.target.value })}
+                  className="h-9 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+                />
+              </div>
+            </div>
+
+            {hasFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-ink-faint transition-colors hover:text-ink hover:bg-surface"
+              >
+                <X className="h-3 w-3" />
+                Limpar filtros
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Active filters summary (visible even when panel is collapsed) */}
+        {hasFilters && !filtersOpen && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-ink-faint">
+              {activeFilterCount} filtro(s) ativo(s)
+            </span>
+            {urlBusca && <FilterChip label="Busca" value={urlBusca} onClear={() => { setSearchInput(""); updateParams({ busca: "" }); }} />}
+            {statusFilter.length > 0 && <FilterChip label="Status" value={statusFilter.join(", ")} onClear={() => updateParams({ status: "" })} />}
+            {statusSeparacaoFilter.length > 0 && <FilterChip label="Sep." value={statusSeparacaoFilter.join(", ")} onClear={() => updateParams({ status_separacao: "" })} />}
+            {decisaoFilter.length > 0 && <FilterChip label="Decisao" value={decisaoFilter.join(", ")} onClear={() => updateParams({ decisao: "" })} />}
+            {urlEmpresa && <FilterChip label="Empresa" value={urlEmpresa.slice(0, 8)} onClear={() => updateParams({ empresa_origem_id: "" })} />}
+            {urlMarketplace && <FilterChip label="Marketplace" value={urlMarketplace} onClear={() => updateParams({ marketplace: "" })} />}
+            {urlDataInicio && <FilterChip label="De" value={urlDataInicio} onClear={() => updateParams({ data_inicio: "" })} />}
+            {urlDataFim && <FilterChip label="Ate" value={urlDataFim} onClear={() => updateParams({ data_fim: "" })} />}
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-xs font-semibold text-ink-faint hover:text-ink"
+            >
+              Limpar
+            </button>
+          </div>
+        )}
+
         {/* List */}
         {isLoading ? (
           <LoadingSpinner message="Carregando pedidos..." />
@@ -383,6 +720,20 @@ function PedidosPageContent() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+// ─── Filter chip ────────────────────────────────────────────────────────────
+
+function FilterChip({ label, value, onClear }: { label: string; value: string; onClear: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2 py-1 text-[11px] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+      <span className="font-semibold">{label}:</span>
+      <span className="max-w-[120px] truncate">{value}</span>
+      <button type="button" onClick={onClear} className="ml-0.5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700">
+        <X className="h-3 w-3" />
+      </button>
+    </span>
   );
 }
 

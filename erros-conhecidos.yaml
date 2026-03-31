@@ -303,3 +303,26 @@ erros:
       - src/app/api/compras/route.ts
       - src/app/api/compras/receber/route.ts
     tags: [compras, release, aguardando_compra, recebido, auto-fix, stuck, receber, checkAndReleasePedidos]
+
+  - id: marcar-item-rejeita-aguardando-compra
+    date: "2026-03-31"
+    source: separacao-marcar-item
+    category: business_logic
+    message: "Erro ao salvar marcacao"
+    cause: >
+      marcar-item so aceitava pedidos com status_separacao em_separacao ou
+      aguardando_separacao. Porem a rota iniciar mantém pedidos com itens OC
+      pendentes em aguardando_compra (blindagem intencional). Ao clicar no
+      checkbox do checklist, o backend rejeitava com 400 porque aguardando_compra
+      nao estava na lista de status permitidos. bipar-checklist nao tinha essa
+      validacao, entao barcode scan funcionava normalmente. No fluxo normal de
+      separacao, o mesmo erro ocorria quando um pedido tinha mix de itens OC e
+      nao-OC: o pedido ficava em aguardando_compra por causa dos itens OC, e os
+      itens nao-OC tambem falhavam ao marcar.
+    fix: >
+      Adicionado aguardando_compra ao ALLOWED_STATUSES em marcar-item/route.ts.
+      Seguro porque iniciar ja aceita esse status e checklist-items ja exibe os
+      itens correspondentes.
+    files:
+      - src/app/api/separacao/marcar-item/route.ts
+    tags: [separacao, marcar-item, aguardando_compra, pick-oc, checkbox, checklist]

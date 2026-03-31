@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ALLOWED_STATUSES = ["em_separacao", "aguardando_separacao"];
+    const ALLOWED_STATUSES = ["em_separacao", "aguardando_separacao", "aguardando_compra"];
     if (!ALLOWED_STATUSES.includes(pedido.status_separacao)) {
       return NextResponse.json(
         {

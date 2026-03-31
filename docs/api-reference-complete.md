@@ -509,6 +509,220 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
+### GET /api/pedidos/tracking
+
+**File:** `src/app/api/pedidos/tracking/route.ts`
+
+**Purpose:** Paginated list of pedidos for the universal tracking page. Returns pedido summary data with combined status, empresa/galpao names, search, and advanced filters.
+
+**Auth:** X-Session-Id (required)
+
+**Query Params:**
+- `page`: page number (default 1)
+- `limit`: items per page (default 50, max 200)
+- `data_inicio`: start date filter (ISO date string, default 30 days ago)
+- `data_fim`: end date filter (ISO date string, default today)
+- `busca`: text search — matches numero, id_pedido_ecommerce, cliente_nome (ilike), and item SKU (subquery on siso_pedido_itens)
+- `status`: comma-separated status filter (e.g. "pendente,concluido")
+- `status_separacao`: comma-separated status_separacao filter
+- `decisao`: comma-separated decisao_final filter
+- `empresa_origem_id`: filter by origin empresa UUID
+- `marketplace`: ilike filter on nome_ecommerce
+- `tab`: "expedidos" for final-state orders (embalado+impresso or cancelado), default shows all other orders
+
+**Response (200):**
+```json
+{
+  "pedidos": [
+    {
+      "id": "uuid",
+      "numero": "string",
+      "id_pedido_ecommerce": "string",
+      "nome_ecommerce": "string",
+      "cliente_nome": "string",
+      "cliente_cpf_cnpj": "string",
+      "data": "ISO date",
+      "status": "pendente | executando | concluido | cancelado | erro",
+      "status_separacao": "string | null",
+      "sugestao": "propria | transferencia | oc",
+      "decisao_final": "string | null",
+      "tipo_resolucao": "string | null",
+      "operador": "string | null",
+      "empresa_origem_nome": "string | null",
+      "filial_origem": "string | null (galpao name)",
+      "marcadores": ["string"],
+      "separacao_tags": ["string"],
+      "etiqueta_status": "string | null",
+      "embalagem_concluida_em": "ISO datetime | null",
+      "criado_em": "ISO datetime",
+      "erro": "string | null"
+    }
+  ],
+  "total": "number",
+  "page": "number",
+  "totalPages": "number"
+}
+```
+
+**Response (401):**
+```json
+{
+  "error": "sessao_invalida"
+}
+```
+
+**Business Logic:**
+- Validates session via `getSessionUser()`
+- Default date filter: last 30 days (overridable with data_inicio/data_fim)
+- Role-based filtering: admin sees all, comprador sees only decisao_final='oc', operador sees only pedidos from empresas in their galpao
+- SKU search: pre-fetches matching pedido_ids from `siso_pedido_itens`, then includes in OR filter
+- Tab "expedidos": filters to (status_separacao=embalado AND etiqueta_status=impresso) OR status=cancelado
+- Default tab: excludes expedidos — NOT cancelado AND NOT (embalado+impresso)
+- Joins siso_empresas → siso_galpoes for empresa/galpao names
+- Pagination via `.range()`, count via separate head query in parallel
+
+**Side Effects:** None (read-only)
+
+**Rate Limiting:** None
+
+---
+
+### GET /api/pedidos/[id]/detalhe
+
+**File:** `src/app/api/pedidos/[id]/detalhe/route.ts`
+
+**Purpose:** Returns all consolidated data for a single pedido: base data, items with stock per galpao, historico (audit trail), and observacoes (comments).
+
+**Auth:** X-Session-Id (required)
+
+**Path Params:**
+- `id`: pedido UUID
+
+**Response (200):**
+```json
+{
+  "id": "uuid",
+  "numero": "string",
+  "id_pedido_ecommerce": "string",
+  "nome_ecommerce": "string",
+  "cliente_nome": "string",
+  "cliente_cpf_cnpj": "string",
+  "data": "ISO date",
+  "status": "string",
+  "status_separacao": "string | null",
+  "sugestao": "string",
+  "decisao_final": "string | null",
+  "tipo_resolucao": "string | null",
+  "operador": "string | null",
+  "empresa_origem_id": "uuid | null",
+  "empresa_origem_nome": "string | null",
+  "filial_origem": "string | null",
+  "forma_envio": "string | null",
+  "forma_frete_id": "string | null",
+  "transportador_id": "string | null",
+  "encaminhado_de": "string | null",
+  "processado_em": "ISO datetime | null",
+  "separacao_operador_id": "uuid | null",
+  "separacao_iniciada_em": "ISO datetime | null",
+  "separacao_concluida_em": "ISO datetime | null",
+  "embalagem_concluida_em": "ISO datetime | null",
+  "etiqueta_status": "string | null",
+  "etiqueta_url": "string | null",
+  "agrupamento_expedicao_id": "string | null",
+  "compra_estoque_lancado_alerta": "boolean | null",
+  "marcadores": ["string"],
+  "separacao_tags": ["string"],
+  "erro": "string | null",
+  "criado_em": "ISO datetime",
+  "itens": [
+    {
+      "id": "uuid",
+      "produto_id": "number",
+      "sku": "string",
+      "descricao": "string",
+      "quantidade": "number",
+      "imagem_url": "string | null",
+      "fornecedor_oc": "string | null",
+      "compra_status": "string | null",
+      "compra_quantidade_solicitada": "number | null",
+      "compra_quantidade_comprada": "number | null",
+      "compra_quantidade_recebida": "number | null",
+      "separacao_marcado": "boolean",
+      "bipado_completo": "boolean",
+      "localizacao": "string | null",
+      "estoques": {
+        "[galpao_name]": {
+          "deposito": {
+            "id": "number",
+            "nome": "string",
+            "saldo": "number",
+            "reservado": "number",
+            "disponivel": "number"
+          },
+          "atende": "boolean",
+          "localizacao": "string | null"
+        }
+      }
+    }
+  ],
+  "historico": [
+    {
+      "id": "uuid",
+      "evento": "string",
+      "usuario_id": "uuid | null",
+      "usuario_nome": "string | null",
+      "detalhes": "object | null",
+      "criado_em": "ISO datetime"
+    }
+  ],
+  "observacoes": [
+    {
+      "id": "uuid",
+      "usuario_id": "uuid | null",
+      "usuario_nome": "string | null",
+      "texto": "string",
+      "criado_em": "ISO datetime"
+    }
+  ]
+}
+```
+
+**Response (401):**
+```json
+{
+  "error": "sessao_invalida"
+}
+```
+
+**Response (403):**
+```json
+{
+  "error": "Acesso negado"
+}
+```
+
+**Response (404):**
+```json
+{
+  "error": "Pedido não encontrado"
+}
+```
+
+**Business Logic:**
+- Validates session via `getSessionUser()`
+- Fetches pedido with empresa/galpao JOIN, returns 404 if not found (PGRST116 code)
+- Role-based access: admin sees all, comprador only sees decisao_final='oc', operador only sees pedidos from their galpao
+- Fetches itens, estoques, historico, observacoes in parallel via Promise.all
+- Stock aggregated from `siso_pedido_item_estoques` by galpao (dynamic, not hardcoded)
+- Items include per-galpao stock with `atende` boolean (disponivel >= quantidade)
+- Historico ordered ascending (oldest first), observacoes ordered ascending
+
+**Side Effects:** None (read-only)
+
+**Rate Limiting:** None
+
+---
+
 ## Separação API
 
 ### GET /api/separacao

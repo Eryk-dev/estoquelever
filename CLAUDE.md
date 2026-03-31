@@ -112,6 +112,9 @@ src/
       page.tsx                     # Separation dashboard — 6 tabs by status
       checklist/page.tsx           # Wave picking checklist view
       embalagem/page.tsx           # Packing view
+    pedidos/
+      page.tsx                     # Universal order tracking — search, filters, Pedidos/Expedidos tabs
+      [id]/page.tsx                # Order detail — itens+estoque, timeline, observacoes, acoes
     compras/
       page.tsx                     # Purchase orders — Comprar/Receber tabs with supplier consolidation
       conferencia/[ordemCompraId]/page.tsx  # Receiving screen for specific PO
@@ -128,7 +131,9 @@ src/
       auth/login/route.ts          # PIN auth (POST)
       pedidos/
         route.ts                   # List orders (GET) — joins normalized stock table
+        tracking/route.ts          # Universal tracking list (GET) — paginated, search, filters, tabs
         aprovar/route.ts           # Order approval (POST) — enqueues execution
+        [id]/detalhe/route.ts      # Order detail consolidated (GET) — itens+estoque, historico, observacoes
         [id]/historico/route.ts    # Order history/audit trail (GET)
         [id]/observacoes/route.ts  # Order comments (GET/POST)
       separacao/

@@ -1,7 +1,8 @@
 "use client";
 
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -17,6 +18,7 @@ import {
   PackageCheck,
   PackageSearch,
   Printer,
+  Send,
   ShoppingCart,
   Tag,
   UserCheck,
@@ -25,7 +27,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { sisoFetch } from "@/lib/auth-context";
+import { useAuth, sisoFetch } from "@/lib/auth-context";
 import {
   getEcommerceAbbr,
   getEcommerceColors,
@@ -450,6 +452,191 @@ function Section({
   );
 }
 
+// ─── Observacoes section ───────────────────────────────────────────────────
+
+function getInitials(nome: string): string {
+  const parts = nome.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return nome.slice(0, 2).toUpperCase();
+}
+
+function ObservacoesSection({
+  pedidoId,
+  observacoes,
+}: {
+  pedidoId: string;
+  observacoes: Observacao[];
+}) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const [texto, setTexto] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const scrollToBottom = useCallback(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [observacoes.length, scrollToBottom]);
+
+  const mutation = useMutation({
+    mutationFn: async (text: string) => {
+      const res = await sisoFetch(`/api/pedidos/${pedidoId}/observacoes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          usuarioId: user!.id,
+          usuarioNome: user!.nome,
+          texto: text,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Erro ao salvar observacao");
+      }
+      return res.json();
+    },
+    onMutate: async (text: string) => {
+      await queryClient.cancelQueries({ queryKey: ["pedido-detalhe", pedidoId] });
+      const previous = queryClient.getQueryData<PedidoDetalhe>(["pedido-detalhe", pedidoId]);
+      if (previous && user) {
+        queryClient.setQueryData<PedidoDetalhe>(["pedido-detalhe", pedidoId], {
+          ...previous,
+          observacoes: [
+            ...previous.observacoes,
+            {
+              id: `temp-${Date.now()}`,
+              usuario_id: user.id,
+              usuario_nome: user.nome,
+              texto: text,
+              criado_em: new Date().toISOString(),
+            },
+          ],
+        });
+      }
+      setTexto("");
+      return { previous };
+    },
+    onError: (err: Error, _text, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["pedido-detalhe", pedidoId], context.previous);
+      }
+      toast.error(err.message);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["pedido-detalhe", pedidoId] });
+    },
+  });
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!texto.trim() || mutation.isPending || !user) return;
+    mutation.mutate(texto.trim());
+  }
+
+  return (
+    <Section title={`Observacoes (${observacoes.length})`}>
+      {/* Observation entries */}
+      {observacoes.length > 0 ? (
+        <div ref={scrollRef} className="max-h-64 space-y-3 overflow-y-auto">
+          {observacoes.map((obs, i) => (
+            <div key={obs.id} className="relative flex gap-3">
+              {/* Thread line */}
+              {i < observacoes.length - 1 && (
+                <div
+                  className="absolute left-[13px] top-7 bottom-0 w-px bg-zinc-200 dark:bg-zinc-700"
+                  aria-hidden="true"
+                />
+              )}
+
+              {/* Avatar */}
+              <div className="relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-100 ring-2 ring-white dark:bg-zinc-800 dark:ring-zinc-900">
+                <span className="font-mono text-[10px] font-bold text-zinc-500 dark:text-zinc-400">
+                  {getInitials(obs.usuario_nome ?? "?")}
+                </span>
+              </div>
+
+              {/* Content */}
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5 pt-0.5">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs font-semibold text-ink">
+                    {obs.usuario_nome ?? "Sistema"}
+                  </span>
+                  <span
+                    className="font-mono text-[10px] text-ink-faint"
+                    title={formatDateTime(obs.criado_em)}
+                  >
+                    {formatRelativeTime(obs.criado_em)}
+                  </span>
+                </div>
+                <p className="whitespace-pre-wrap break-words text-sm leading-snug text-ink-muted">
+                  {obs.texto}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-ink-faint">Nenhuma observacao ainda.</p>
+      )}
+
+      {/* Add form */}
+      {user && (
+        <form onSubmit={handleSubmit} className="mt-3 flex items-end gap-2 border-t border-line pt-3">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-900 dark:bg-zinc-200">
+            <span className="font-mono text-[9px] font-bold text-white dark:text-zinc-900">
+              {getInitials(user.nome)}
+            </span>
+          </div>
+
+          <textarea
+            ref={textareaRef}
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            placeholder="Escrever observacao..."
+            rows={1}
+            disabled={mutation.isPending}
+            className={cn(
+              "min-w-0 flex-1 resize-none rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-ink",
+              "placeholder:text-ink-faint/60",
+              "outline-none focus:border-zinc-400 dark:focus:border-zinc-500",
+              "disabled:opacity-50",
+            )}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit(e);
+              }
+            }}
+          />
+
+          <button
+            type="submit"
+            disabled={!texto.trim() || mutation.isPending}
+            className={cn(
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all",
+              "text-ink-faint hover:text-ink hover:bg-zinc-100 dark:hover:bg-zinc-800",
+              "disabled:opacity-30 disabled:cursor-not-allowed",
+              texto.trim() && !mutation.isPending && "text-ink bg-zinc-100 dark:bg-zinc-800",
+            )}
+            aria-label="Enviar observacao"
+          >
+            {mutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+          </button>
+        </form>
+      )}
+    </Section>
+  );
+}
+
 // ─── Page content ───────────────────────────────────────────────────────────
 
 export default function PedidoDetalhePage() {
@@ -848,7 +1035,8 @@ export default function PedidoDetalhePage() {
           )}
         </Section>
 
-        {/* Placeholder for future sections (observacoes, acoes) */}
+        {/* ── Observacoes section ─────────────────────────────────────── */}
+        <ObservacoesSection pedidoId={pedido.id} observacoes={pedido.observacoes} />
       </div>
     </AppShell>
   );

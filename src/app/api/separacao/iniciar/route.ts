@@ -36,9 +36,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { pedido_ids, operador_id } = body as {
+  const { pedido_ids, operador_id, modo } = body as {
     pedido_ids: string[];
     operador_id: string;
+    modo?: string;
   };
 
   const supabase = createServiceClient();
@@ -86,8 +87,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Update pedidos that are aguardando_separacao or aguardando_compra to em_separacao (skip already em_separacao)
-    const TRANSITION_STATUSES = ["aguardando_separacao", "aguardando_compra"];
+    // 2. Update pedidos to em_separacao (skip already em_separacao)
+    // In pick-oc mode, keep aguardando_compra orders in their current status —
+    // they only advance when concluir-oc confirms all items are picked.
+    const isPickOC = modo === "pick-oc";
+    const TRANSITION_STATUSES = isPickOC
+      ? ["aguardando_separacao"]
+      : ["aguardando_separacao", "aguardando_compra"];
     const toStart = (pedidos ?? [])
       .filter((p) => TRANSITION_STATUSES.includes(p.status_separacao))
       .map((p) => p.id);

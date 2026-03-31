@@ -11,6 +11,7 @@ import {
   LogOut,
   Monitor,
   PackageSearch,
+  Search,
   Settings,
   ShoppingCart,
 } from "lucide-react";
@@ -58,6 +59,15 @@ const MODULES: Module[] = [
     icon: ShoppingCart,
     color: "#f59e0b",
     accentBg: "bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-400",
+  },
+  {
+    id: "pedidos",
+    href: "/pedidos",
+    title: "Pedidos",
+    subtitle: "Rastreamento universal",
+    icon: Search,
+    color: "#8b5cf6",
+    accentBg: "bg-violet-50 text-violet-600 dark:bg-violet-950 dark:text-violet-400",
   },
   {
     id: "painel",
@@ -120,7 +130,7 @@ function getModuleCount(
   moduleId: Module["id"],
   counts: DashboardCounts | null,
 ): number | null {
-  if (moduleId === "painel") return null;
+  if (moduleId === "painel" || moduleId === "pedidos") return null;
   return counts?.[moduleId as keyof DashboardCounts] ?? null;
 }
 

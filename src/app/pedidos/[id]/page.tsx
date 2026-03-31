@@ -6,12 +6,22 @@ import { toast } from "sonner";
 import {
   ArrowLeft,
   ArrowRightLeft,
+  CheckCircle2,
+  Clock,
   Copy,
+  FileCheck,
+  Inbox,
   Loader2,
   MapPin,
   Package,
+  PackageCheck,
+  PackageSearch,
+  Printer,
   ShoppingCart,
   Tag,
+  UserCheck,
+  XCircle,
+  AlertCircle,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -169,7 +179,103 @@ const COMPRA_STATUS_LABELS: Record<string, string> = {
   cancelado: "Cancelado",
 };
 
+// ─── Timeline config ───────────────────────────────────────────────────────
+
+type EventoColorGroup = "green" | "blue" | "purple" | "red" | "zinc";
+
+const EVENTO_COLOR_MAP: Record<string, EventoColorGroup> = {
+  recebido: "green",
+  auto_aprovado: "green",
+  aprovado: "green",
+  nf_autorizada: "green",
+  separacao_concluida: "green",
+  embalagem_concluida: "green",
+  etiqueta_impressa: "green",
+  separacao_iniciada: "blue",
+  item_separado: "blue",
+  embalagem_iniciada: "blue",
+  item_embalado: "blue",
+  aguardando_nf: "purple",
+  aguardando_separacao: "purple",
+  aguardando_compra: "purple",
+  cancelado: "red",
+  erro: "red",
+  etiqueta_falhou: "red",
+};
+
+const EVENTO_DOT_COLORS: Record<EventoColorGroup, string> = {
+  green: "bg-emerald-500",
+  blue: "bg-blue-500",
+  purple: "bg-purple-500",
+  red: "bg-red-500",
+  zinc: "bg-zinc-400",
+};
+
+const EVENTO_ICON_COLORS: Record<EventoColorGroup, string> = {
+  green: "text-emerald-500",
+  blue: "text-blue-500",
+  purple: "text-purple-500",
+  red: "text-red-500",
+  zinc: "text-zinc-400",
+};
+
+const EVENTO_ICONS: Record<string, typeof Inbox> = {
+  recebido: Inbox,
+  auto_aprovado: CheckCircle2,
+  aprovado: UserCheck,
+  nf_autorizada: FileCheck,
+  aguardando_nf: FileCheck,
+  aguardando_separacao: PackageSearch,
+  aguardando_compra: ShoppingCart,
+  separacao_iniciada: PackageSearch,
+  separacao_concluida: PackageCheck,
+  item_separado: PackageCheck,
+  embalagem_iniciada: Package,
+  embalagem_concluida: PackageCheck,
+  item_embalado: PackageCheck,
+  etiqueta_impressa: Printer,
+  etiqueta_falhou: AlertCircle,
+  cancelado: XCircle,
+  erro: AlertCircle,
+};
+
+const EVENTO_LABELS: Record<string, string> = {
+  recebido: "Pedido recebido via webhook",
+  auto_aprovado: "Auto-aprovado",
+  aprovado: "Aprovado manualmente",
+  aguardando_nf: "Aguardando NF",
+  nf_autorizada: "NF autorizada",
+  aguardando_separacao: "Aguardando separacao",
+  aguardando_compra: "Aguardando compra",
+  separacao_iniciada: "Separacao iniciada",
+  item_separado: "Item separado",
+  separacao_concluida: "Separacao concluida",
+  embalagem_iniciada: "Embalagem iniciada",
+  item_embalado: "Item embalado",
+  embalagem_concluida: "Embalagem concluida",
+  etiqueta_impressa: "Etiqueta impressa",
+  etiqueta_falhou: "Falha na etiqueta",
+  cancelado: "Cancelado",
+  erro: "Erro no processamento",
+};
+
+const FINAL_EVENTS = new Set([
+  "etiqueta_impressa",
+  "cancelado",
+  "erro",
+]);
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+function timeBetweenEvents(a: string, b: string): string {
+  const diff = new Date(b).getTime() - new Date(a).getTime();
+  if (diff < 0) return "";
+  if (diff < 60_000) return `${Math.round(diff / 1000)}s`;
+  if (diff < 3600_000) return `${Math.round(diff / 60_000)}min`;
+  const h = Math.floor(diff / 3600_000);
+  const m = Math.round((diff % 3600_000) / 60_000);
+  return `${h}h${m > 0 ? `${m}min` : ""}`;
+}
 
 function formatDate(iso: string): string {
   if (!iso) return "";
@@ -648,7 +754,101 @@ export default function PedidoDetalhePage() {
           </div>
         </Section>
 
-        {/* Placeholder for future sections (timeline, observacoes, acoes) */}
+        {/* ── Timeline section ──────────────────────────────────────── */}
+        <Section title="Timeline">
+          {pedido.historico.length === 0 ? (
+            <p className="text-xs text-ink-faint">Nenhum evento registrado.</p>
+          ) : (
+            <ol className="relative border-l-2 border-zinc-200 dark:border-zinc-700">
+              {pedido.historico.map((evt, i) => {
+                const colorGroup = EVENTO_COLOR_MAP[evt.evento] ?? "zinc";
+                const dotColor = EVENTO_DOT_COLORS[colorGroup];
+                const iconColor = EVENTO_ICON_COLORS[colorGroup];
+                const Icon = EVENTO_ICONS[evt.evento] ?? Inbox;
+                const label = EVENTO_LABELS[evt.evento] ?? evt.evento;
+                const elapsed =
+                  i > 0
+                    ? timeBetweenEvents(pedido.historico[i - 1].criado_em, evt.criado_em)
+                    : null;
+
+                return (
+                  <li key={evt.id} className="mb-4 ml-5 last:mb-0">
+                    {/* Dot on the line */}
+                    <div
+                      className={cn(
+                        "absolute -left-[5px] mt-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-paper",
+                        dotColor,
+                      )}
+                    />
+
+                    <div className="flex items-start gap-2">
+                      <Icon
+                        className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", iconColor)}
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0 flex-1">
+                        {/* Label + elapsed */}
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-xs font-medium text-ink">
+                            {label}
+                          </span>
+                          {elapsed && (
+                            <span className="text-[10px] text-ink-faint">
+                              +{elapsed}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Timestamp + user */}
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-faint">
+                          <span
+                            title={formatDateTime(evt.criado_em)}
+                          >
+                            {formatRelativeTime(evt.criado_em)}
+                          </span>
+                          {evt.usuario_nome && (
+                            <>
+                              <span className="h-2.5 w-px bg-line" aria-hidden="true" />
+                              <span>{evt.usuario_nome}</span>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Details */}
+                        {evt.detalhes && Object.keys(evt.detalhes).length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {Object.entries(evt.detalhes).map(([k, v]) => (
+                              <span
+                                key={k}
+                                className="rounded bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800/50 dark:text-zinc-500"
+                              >
+                                {k}: {String(v)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+
+              {/* Waiting indicator if last event is not final */}
+              {pedido.historico.length > 0 &&
+                !FINAL_EVENTS.has(pedido.historico[pedido.historico.length - 1].evento) && (
+                  <li className="ml-5">
+                    <div className="absolute -left-[5px] h-2.5 w-2.5 rounded-full bg-zinc-300 ring-2 ring-paper dark:bg-zinc-600" />
+                    <div className="flex items-center gap-2 text-xs text-ink-faint">
+                      <Clock className="h-3.5 w-3.5 animate-pulse" aria-hidden="true" />
+                      <span>Aguardando proximo passo...</span>
+                    </div>
+                  </li>
+                )}
+            </ol>
+          )}
+        </Section>
+
+        {/* Placeholder for future sections (observacoes, acoes) */}
       </div>
     </AppShell>
   );

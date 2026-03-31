@@ -73,7 +73,7 @@ export async function GET(
     const [itensResult, estoquesResult, historicoResult, observacoesResult] = await Promise.all([
       supabase
         .from("siso_pedido_itens")
-        .select("id, pedido_id, produto_id, sku, descricao, quantidade_pedida, imagem_url, fornecedor_oc, compra_status, compra_quantidade_solicitada, compra_quantidade_comprada, compra_quantidade_recebida, separacao_marcado, bipado_completo, localizacao")
+        .select("id, pedido_id, produto_id, sku, descricao, quantidade_pedida, imagem_url, fornecedor_oc, compra_status, compra_quantidade_solicitada, compra_quantidade_comprada, compra_quantidade_recebida, separacao_marcado, bipado_completo")
         .eq("pedido_id", pedidoId),
       supabase
         .from("siso_pedido_item_estoques")
@@ -177,7 +177,7 @@ export async function GET(
         compra_quantidade_recebida: item.compra_quantidade_recebida ?? null,
         separacao_marcado: item.separacao_marcado ?? false,
         bipado_completo: item.bipado_completo ?? false,
-        localizacao: item.localizacao ?? null,
+        localizacao: null,
         estoques,
       };
     });

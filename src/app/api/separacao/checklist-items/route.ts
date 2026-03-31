@@ -29,6 +29,8 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const isPickOC = searchParams.get("modo") === "pick-oc";
+
   const supabase = createServiceClient();
 
   try {
@@ -138,13 +140,21 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Shape response (empresa_origem_id = separating empresa for location updates)
+    // In pick-oc mode, show ALL items (including OC items) so the operator can pick them.
+    // In normal mode, hide OC items for aguardando_compra pedidos.
     const visibleItems = (items ?? []).filter((item) => {
-      const pedidoStatus = pedidoStatusMap.get(item.pedido_id);
-      if (pedidoStatus === "aguardando_compra") {
-        return item.compra_status == null;
+      if (item.compra_status === "indisponivel" || item.compra_status === "cancelado") {
+        return false;
       }
 
-      return item.compra_status !== "indisponivel" && item.compra_status !== "cancelado";
+      if (!isPickOC) {
+        const pedidoStatus = pedidoStatusMap.get(item.pedido_id);
+        if (pedidoStatus === "aguardando_compra") {
+          return item.compra_status == null;
+        }
+      }
+
+      return true;
     });
 
     const result = visibleItems.map((item) => {

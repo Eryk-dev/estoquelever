@@ -151,7 +151,7 @@ function ChecklistPage() {
     queryKey,
     queryFn: async () => {
       const res = await sisoFetch(
-        `/api/separacao/checklist-items?pedidos=${pedidoIds.join(",")}`,
+        `/api/separacao/checklist-items?pedidos=${pedidoIds.join(",")}${isPickOC ? "&modo=pick-oc" : ""}`,
       );
       if (!res.ok) return { items: [] };
       return res.json();

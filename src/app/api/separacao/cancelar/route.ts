@@ -49,23 +49,60 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Find pedidos that have pending compra items (should go back to aguardando_compra)
+    // 2. Find pedidos with compra items to decide return status
     const { data: compraRows } = await supabase
       .from("siso_pedido_itens")
-      .select("pedido_id")
+      .select("pedido_id, compra_status")
       .in("pedido_id", pedido_ids)
       .not("compra_status", "is", null)
       .neq("compra_status", "recebido");
 
-    const compraIds = [...new Set((compraRows ?? []).map((r) => r.pedido_id))];
-    const nonCompraIds = pedido_ids.filter((id) => !compraIds.includes(id));
+    // Group compra_status values by pedido_id
+    const pedidoCompraMap = new Map<string, Set<string>>();
+    for (const row of compraRows ?? []) {
+      if (!pedidoCompraMap.has(row.pedido_id)) {
+        pedidoCompraMap.set(row.pedido_id, new Set());
+      }
+      pedidoCompraMap.get(row.pedido_id)!.add(row.compra_status);
+    }
+
+    // Classify: oc_pendente takes priority → validacao_oc; other compra → aguardando_compra; else → aguardando_separacao
+    const ocPendenteIds: string[] = [];
+    const compraIds: string[] = [];
+    const nonCompraIds: string[] = [];
+
+    for (const id of pedido_ids) {
+      const statuses = pedidoCompraMap.get(id);
+      if (statuses?.has("oc_pendente")) {
+        ocPendenteIds.push(id);
+      } else if (statuses && statuses.size > 0) {
+        compraIds.push(id);
+      } else {
+        nonCompraIds.push(id);
+      }
+    }
 
     const resetFields = {
       separacao_operador_id: null,
       separacao_iniciada_em: null,
     };
 
-    // Reset pedidos with pending compra items back to aguardando_compra
+    // Reset pedidos with oc_pendente items back to validacao_oc
+    if (ocPendenteIds.length > 0) {
+      const { error: ocError } = await supabase
+        .from("siso_pedidos")
+        .update({ ...resetFields, status_separacao: "validacao_oc" })
+        .in("id", ocPendenteIds);
+
+      if (ocError) {
+        logger.error("separacao-cancelar", "Failed to reset oc_pendente pedidos", {
+          error: ocError.message,
+        });
+        return NextResponse.json({ error: ocError.message }, { status: 500 });
+      }
+    }
+
+    // Reset pedidos with confirmed compra items back to aguardando_compra
     if (compraIds.length > 0) {
       const { error: compraError } = await supabase
         .from("siso_pedidos")
@@ -100,6 +137,7 @@ export async function POST(request: NextRequest) {
 
     logger.info("separacao-cancelar", "Separação cancelada", {
       pedido_ids,
+      validacao_oc: ocPendenteIds,
       aguardando_compra: compraIds,
       aguardando_separacao: nonCompraIds,
     });

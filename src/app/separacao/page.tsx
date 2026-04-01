@@ -69,6 +69,7 @@ const TAB_CONFIG: {
 const EMPTY_COUNTS: SeparacaoCounts = {
   aguardando_compra: 0,
   aguardando_nf: 0,
+  validacao_oc: 0,
   aguardando_separacao: 0,
   em_separacao: 0,
   separado: 0,

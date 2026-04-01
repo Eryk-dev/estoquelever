@@ -117,6 +117,7 @@ export interface Pedido {
 export type StatusSeparacao =
   | "aguardando_compra"
   | "aguardando_nf"
+  | "validacao_oc"
   | "aguardando_separacao"
   | "em_separacao"
   | "separado"
@@ -154,6 +155,7 @@ export interface SeparacaoFilter {
 export interface SeparacaoCounts {
   aguardando_compra: number;
   aguardando_nf: number;
+  validacao_oc: number;
   aguardando_separacao: number;
   em_separacao: number;
   separado: number;
@@ -227,6 +229,7 @@ export type OrdemCompraStatus =
 
 /** Status of an individual item in the purchase flow */
 export type CompraStatus =
+  | "oc_pendente"
   | "aguardando_compra"
   | "comprado"
   | "recebido"

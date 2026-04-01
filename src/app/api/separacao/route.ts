@@ -67,6 +67,7 @@ export async function GET(request: NextRequest) {
     const emptyCounts: SeparacaoCounts = {
       aguardando_compra: 0,
       aguardando_nf: 0,
+      validacao_oc: 0,
       aguardando_separacao: 0,
       em_separacao: 0,
       separado: 0,
@@ -193,6 +194,7 @@ export async function GET(request: NextRequest) {
     const counts: SeparacaoCounts = {
       aguardando_compra: countResults[0].count ?? 0,
       aguardando_nf: countResults[1].count ?? 0,
+      validacao_oc: 0,
       aguardando_separacao: countResults[2].count ?? 0,
       em_separacao: countResults[3].count ?? 0,
       separado: countResults[4].count ?? 0,

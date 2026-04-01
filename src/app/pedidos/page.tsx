@@ -71,6 +71,7 @@ const STATUS_COLORS: Record<string, string> = {
 const STATUS_SEPARACAO_COLORS: Record<string, string> = {
   aguardando_compra: "bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300",
   aguardando_nf: "bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300",
+  validacao_oc: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300",
   aguardando_separacao: "bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300",
   em_separacao: "bg-cyan-100 text-cyan-700 dark:bg-cyan-950/60 dark:text-cyan-300",
   separado: "bg-teal-100 text-teal-700 dark:bg-teal-950/60 dark:text-teal-300",
@@ -86,6 +87,7 @@ const DECISAO_BADGE_COLORS: Record<string, string> = {
 const STATUS_SEPARACAO_LABELS: Record<string, string> = {
   aguardando_compra: "Ag. Compra",
   aguardando_nf: "Ag. NF",
+  validacao_oc: "Validação OC",
   aguardando_separacao: "Ag. Separacao",
   em_separacao: "Em Separacao",
   separado: "Separado",
@@ -111,6 +113,7 @@ const STATUS_OPTIONS = [
 const STATUS_SEPARACAO_OPTIONS = [
   { value: "aguardando_compra", label: "Ag. Compra" },
   { value: "aguardando_nf", label: "Ag. NF" },
+  { value: "validacao_oc", label: "Validação OC" },
   { value: "aguardando_separacao", label: "Ag. Separacao" },
   { value: "em_separacao", label: "Em Separacao" },
   { value: "separado", label: "Separado" },

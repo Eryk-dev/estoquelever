@@ -867,6 +867,10 @@ export function SeparacaoCard({
 // ─── Compra status badge ─────────────────────────────────────────────────────
 
 const COMPRA_STATUS_MAP: Record<string, { label: string; className: string }> = {
+  oc_pendente: {
+    label: "OC Pendente",
+    className: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400",
+  },
   aguardando_compra: {
     label: "Aguardando",
     className: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400",

@@ -1688,6 +1688,83 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
+### POST /api/separacao/bipar-embalagem-oc
+
+**File:** `src/app/api/separacao/bipar-embalagem-oc/route.ts`
+
+**Purpose:** Process a barcode scan for direct packing of OC (aguardando_compra) orders. Finds the oldest matching pedido among provided IDs, increments item quantities, and auto-resolves the full OC lifecycle when a pedido completes.
+
+**Auth:** Session required (`X-Session-Id` header)
+
+**Request Body:**
+```json
+{
+  "sku": "string",
+  "pedido_ids": "string[]",
+  "quantidade": "number (default 1)"
+}
+```
+
+**Response (200 - Item scanned, pedido not complete):**
+```json
+{
+  "pedido_id": "string",
+  "produto_id": "number",
+  "quantidade_bipada": "number",
+  "bipado_completo": "boolean",
+  "pedido_completo": false
+}
+```
+
+**Response (200 - Pedido complete):**
+```json
+{
+  "pedido_id": "string",
+  "produto_id": "number",
+  "quantidade_bipada": "number",
+  "bipado_completo": true,
+  "pedido_completo": true,
+  "etiqueta_status": "impresso" | "falhou",
+  "etiqueta_erro": "string | null"
+}
+```
+
+**Response (404 - SKU not found):**
+```json
+{
+  "error": "sku_nao_encontrado"
+}
+```
+
+**Business Logic:**
+- Validates session to identify the packing operator
+- Fetches pedidos from `pedido_ids` that are in `aguardando_compra` status, ordered by `data_pedido` ascending (oldest first)
+- Finds the first pedido with a matching item by SKU (case-insensitive via `ilike`), skipping items that are already `bipado_completo` or have `compra_status` in (`indisponivel`, `cancelado`)
+- Increments `quantidade_bipada` atomically using an optimistic lock (`WHERE quantidade_bipada = previous_value`)
+- Sets `bipado_completo = true` when `quantidade_bipada >= quantidade`
+- Checks pedido completion: counts items where `bipado_completo = false`, excluding items with `compra_status` IN (`indisponivel`, `cancelado`)
+- When pedido is complete, performs full OC resolution:
+  - (a) Auto-resolve compra items: sets `compra_status = 'recebido'`, `compra_quantidade_recebida = compra_quantidade_solicitada`
+  - (b) Determines `decisao_final`: compares empresa_origem galpao with OC galpao — same = `propria`, different = `transferencia`
+  - (c) Resolves `separacao_galpao_id` based on decisao
+  - (d) Updates pedido: `status = 'executando'`, `status_separacao = 'embalado'`, appends `'embalagem direta'` tag
+  - (e) Enqueues execution job in `siso_fila_execucao`
+  - (f) Prints label via `imprimirEtiquetaDireta` or `buscarEImprimirEtiqueta` fallback
+  - (g) Registers `embalagem_direta_concluida` history event
+  - (h) Kicks execution worker (fire-and-forget)
+
+**Side Effects:**
+- Updates `siso_pedido_itens.quantidade_bipada`, `bipado_completo`
+- On completion: updates `siso_pedido_itens.compra_status`, `compra_quantidade_recebida` for all OC items
+- On completion: updates `siso_pedidos` status, decisao, tags, embalagem timestamp
+- On completion: inserts `siso_fila_execucao` job
+- On completion: prints shipping label via PrintNode
+- On completion: inserts `siso_pedido_historico` event
+- On completion: triggers execution worker
+- Logs to `siso_logs` and `siso_erros`
+
+---
+
 ### POST /api/separacao/confirmar-item-embalagem
 
 **File:** `src/app/api/separacao/confirmar-item-embalagem/route.ts`

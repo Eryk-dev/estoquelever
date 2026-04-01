@@ -1,201 +1,200 @@
-# PRD: Pipeline Antecipado de NF + Agrupamento
+# PRD: Agrupamento Antecipado com Estoque Mantido na Aprovacao
 
 ## 1. Introducao/Overview
 
-Hoje, pedidos OC (ordem de compra) nao geram nota fiscal nem agrupamento na aprovacao — so inserem marcadores. A NF e o agrupamento so sao criados muito depois, quando os itens sao recebidos e o pedido e liberado. Isso causa atraso na separacao e na obtencao de etiquetas.
+O fluxo atual do SISO tem um comportamento que queremos preservar:
 
-Alem disso, o lancamento de estoque acontece cedo demais (na aprovacao, antes da separacao), o que pode causar inconsistencias se o pedido travar no meio do fluxo.
+- pedidos `propria` e `transferencia` ja baixam estoque no fluxo de aprovacao
 
-Esta mudanca antecipa a geracao de NF e a fase 1 do agrupamento para o momento da aprovacao (especialmente para OC), posterga o lancamento de estoque para o momento correto (quando o item e separado), e deixa a fase 2 da etiqueta/ZPL para depois. Um sistema visual de icones de progresso no estilo do Tiny ERP permite que operadores acompanhem o estado de cada etapa do pipeline.
+Essa decisao continua valida porque evita aprovacao sobre saldo "fantasma". Em outras palavras: o estoque segue sendo comprometido cedo para que novos pedidos nao enxerguem disponibilidade que ja foi consumida por um pedido aprovado.
 
-**Problema:** Pedidos OC chegam na separacao sem NF e sem agrupamento, exigindo que tudo seja criado na hora — gerando latencia e complexidade.
+O problema que continua em aberto nao e o estoque. O problema e o agrupamento:
 
-**Solucao:** Antecipar NF + agrupamento fase 1 na aprovacao, rodar agrupamento somente apos a NF estar persistida no pedido, postergar lancamento de estoque para "separado", e exibir progresso visual por icones.
+- hoje o agrupamento so e criado quando o pedido chega em `separado`
+- isso posterga a criacao da expedicao
+- isso atrasa a obtencao de etiqueta/ZPL
+- isso concentra muito trabalho no momento final da separacao
+
+Portanto, este Ralph deixa de mover o estoque para `separado`. O novo escopo e:
+
+- **manter** o desconto de estoque como esta hoje para `propria` e `transferencia`
+- **estender** a geracao de NF para pedidos `oc` na aprovacao (sem baixa de estoque), para que a NF exista cedo e o agrupamento possa ser criado antes do pick OC
+- **antecipar** a criacao do agrupamento fase 1 assim que a NF estiver persistida, em **todos** os fluxos (propria, transferencia e oc)
+- fazer `separado` virar principalmente o momento de buscar etiqueta/ZPL, com fallback para criar agrupamento apenas quando ele ainda nao existir
+
+**Fluxo alvo:**
+
+- **Aprovacao `propria`/`transferencia`:** marcadores + NF + estoque + tentativa de agrupamento fase 1
+- **Aprovacao `oc`:** marcadores + NF (sem estoque) + tentativa de agrupamento fase 1 + resolucao de itens de compra. Estoque e diferido para o Ciclo 2 (apos compras-release)
+- **Separacao:** picking
+- **Pick OC:** bipar itens → concluir → etiqueta pronta (fast path, agrupamento ja existe)
+- **Separado:** fast path para etiqueta/ZPL quando agrupamento ja existir; fallback cria agrupamento quando necessario
 
 ---
 
 ## 2. Goals
 
-- Pedidos OC geram NF na aprovacao, eliminando a espera posterior
-- Pedidos OC tem agrupamento fase 1 criado + concluido + `expedicao_id` salvo na aprovacao
-- Pedidos OC NAO baixam/cacham ZPL na aprovacao; isso fica para a fase 2
-- Toda a plataforma so roda agrupamento quando a NF estiver persistida no pedido (`nota_fiscal_id` + `chave_acesso_nf`)
-- Lancamento de estoque (`lancarEstoqueNota`) acontece somente quando o item atinge status "separado" (para todas as decisoes)
-- Para transferencia, ao chegar em "separado", o sistema limpa a reserva na origem e faz os movimentos de estoque corretos entre origem e empresa que enviou fisicamente
-- Para propria/transferencia, manter agrupamento na separacao (como hoje)
-- Pedidos existentes em `aguardando_compra` sem NF recebem backfill retroativo
-- Operadores visualizam icones de progresso do pipeline (NF > Agrupamento > Estoque > Etiqueta) nos cards de pedido
-- Nenhuma regressao nos fluxos existentes de propria/transferencia
+- Preservar o desconto de estoque atual em `propria` e `transferencia`
+- Nao criar novo fluxo de estoque em `separado`
+- Estender a geracao de NF para pedidos `oc` na aprovacao (sem baixa de estoque), para que NF + agrupamento existam antes do pick OC
+- Criar agrupamento fase 1 assim que `nota_fiscal_id` e `chave_acesso_nf` estiverem persistidos, em todos os tres fluxos (propria, transferencia e oc)
+- Reaproveitar o mesmo mecanismo de agrupamento a partir de worker, webhook de NF, reconciliacao e rotas manuais de `forcar-pendente`
+- Isolar falhas de agrupamento do job de estoque no worker para evitar retry falso depois de baixa ja persistida
+- Tornar a recuperacao de `pending` reutilizavel fora do fluxo de `separado`
+- Manter a divisao de responsabilidades entre fallback de criacao de agrupamento e fast path de recuperacao de etiqueta
+- Reduzir o tempo para obtencao de etiqueta em `separado`
+- Transformar o pick OC em: bipar itens → concluir → etiqueta pronta (fast path)
+- Evitar duplicidade de agrupamento sob concorrencia
 
 ---
 
 ## 3. User Stories
 
-### US-001: Geracao de NF para pedidos OC na aprovacao
+### US-001: Criar helper compartilhado de agrupamento fase 1
 
-**Descricao:** Como operador, quero que pedidos OC gerem nota fiscal automaticamente na aprovacao, para que a NF ja esteja pronta quando eu for separar.
-
-**Acceptance Criteria:**
-- [ ] `executarMarcadoresOnly` gera NF via `gerarNotaFiscalPedido` apos inserir marcadores
-- [ ] `nota_fiscal_id` e salvo em `siso_pedidos` antes de ir para `aguardando_compra`
-- [ ] Se NF ja existir (idempotencia), nao gera duplicata
-- [ ] Pedido continua indo para `aguardando_compra` normalmente apos NF
-- [ ] Log registra geracao de NF para pedidos OC
-
-### US-002: Criacao de agrupamento + expedicao para pedidos OC na aprovacao
-
-**Descricao:** Como operador, quero que pedidos OC ja tenham agrupamento fase 1 criado e concluido na aprovacao, para que na separacao a expedicao ja exista e a fase 2 so precise buscar/cachear a etiqueta.
+**Descricao:** Como desenvolvedor, quero um helper reutilizavel que crie agrupamento fase 1 para um pedido assim que a NF estiver persistida.
 
 **Acceptance Criteria:**
-- [ ] Apos a NF estar persistida no pedido (`nota_fiscal_id` + `chave_acesso_nf`), o fluxo cria agrupamento via `criarAgrupamento`
-- [ ] Agrupamento e concluido via `concluirAgrupamento`
-- [ ] Detalhes do agrupamento sao obtidos via `obterAgrupamento` para extrair `expedicao_id`
-- [ ] `agrupamento_expedicao_id` e `expedicao_id` sao salvos em `siso_pedidos`
-- [ ] ZPL/etiqueta NAO e buscada neste momento
-- [ ] Se a NF ainda nao estiver persistida, o agrupamento NAO roda e NAO deve deixar o pedido preso em estado `pending`
-- [ ] Se agrupamento falhar, pedido segue sem ele (nao bloqueia) — icone mostra etapa pendente
-- [ ] Fire-and-forget: falha no agrupamento nao impede o fluxo de compras
+- [ ] Criar `criarAgrupamentoFase1(pedidoId)` em modulo compartilhado
+- [ ] O helper reconsulta o pedido e so prossegue quando `nota_fiscal_id` e `chave_acesso_nf` estiverem preenchidos
+- [ ] O helper verifica idempotencia: se ja existir `agrupamento_expedicao_id` valido, retorna sem recriar
+- [ ] O helper reaproveita ou extrai o padrao atomico ja existente do `agrupamento-service` (`pending` + `siso_claim_pedidos_para_agrupamento`), em vez de criar um guard concorrente
+- [ ] Se o claim atomico for endurecido para a fase 1, ele nunca grava `pending` antes de `nota_fiscal_id` + `chave_acesso_nf` estarem persistidos
+- [ ] A semantica da fase 1 fica explicita: criar agrupamento, tentar `concluirAgrupamento` no mesmo estilo nao-fatal ja usado hoje, depois `obterAgrupamento` para descobrir e salvar `expedicao_id`
+- [ ] O helper NAO busca etiqueta/ZPL nem baixa ZPL
+- [ ] A recuperacao de `pending` travado e extraida ou tornada reutilizavel fora de `preCriarAgrupamentosEmLote`, para que a fase 1 tambem consiga destravar retries cedo
+- [ ] Em sucesso, salva `agrupamento_expedicao_id` e `expedicao_id`
+- [ ] Em falha, deixa o pedido apto para retry futuro
+- [ ] Typecheck passes
 
-### US-002B: Fase 2 da etiqueta/ZPL somente depois
+### US-002: Chamar geracao de NF e agrupamento fase 1 em todos os fluxos do worker
 
-**Descricao:** Como sistema, quero que a etiqueta/ZPL seja buscada apenas quando fizer sentido operacional, reutilizando agrupamento/expedicao ja criados antes.
-
-**Acceptance Criteria:**
-- [ ] A fase 2 da etiqueta so roda em `separado`, embalagem, retry manual ou fluxo equivalente
-- [ ] Se `agrupamento_expedicao_id` e `expedicao_id` ja existirem, a fase 2 reaproveita esses dados
-- [ ] Se a etiqueta/ZPL nao estiver pronta, o sistema mantem o pedido sem ZPL cacheado e permite retry posterior
-- [ ] A fase 2 NAO recria agrupamento quando ele ja existe e esta valido
-
-### US-003: Postergar lancamento de estoque para status "separado"
-
-**Descricao:** Como sistema, quero que o lancamento de estoque (`lancarEstoqueNota`) aconteca somente quando o pedido atinge "separado", para todas as decisoes (propria, transferencia, OC).
+**Descricao:** Como desenvolvedor, quero que todos os fluxos do worker — incluindo OC — gerem NF e criem agrupamento fase 1 logo apos a persistencia da NF. OC ganha geracao de NF na aprovacao mas NAO ganha baixa de estoque.
 
 **Acceptance Criteria:**
-- [ ] `executarSaidaPropria` NAO chama `lancarEstoqueNota` na aprovacao
-- [ ] `executarSaidaTransferencia` NAO chama `lancarEstoqueNota` nem faz movimentos fisicos de estoque na aprovacao
-- [ ] Ambos geram NF e salvam `nota_fiscal_id` como hoje
-- [ ] Novo trigger/hook no endpoint de `concluir` separacao (quando pedido vira "separado") chama `lancarEstoqueNota`
-- [ ] Para `propria`, o hook em `separado` lanca o estoque usando a NF ja existente (`nota_fiscal_id` do pedido)
-- [ ] Para `transferencia`, o hook em `separado` executa a sequencia correta: `lancarEstoqueNota` na origem para limpar a reserva da NF, `movimentarEstoque(E)` na origem para compensar a baixa contabil, e `movimentarEstoque(S)` na empresa que enviou fisicamente
-- [ ] Campo `estoque_lancado` continua sendo atualizado para idempotencia
-- [ ] Se lancamento falhar em "separado", pedido e marcado com erro e pode ser retentado
-- [ ] Para transferencia, o lancamento de estoque segue a logica de empresa correta (origem vs destino)
+- [ ] `executarSaidaPropria` chama `criarAgrupamentoFase1` apos `enriquecerDadosNf`
+- [ ] `executarSaidaTransferencia` chama `criarAgrupamentoFase1` apos `enriquecerDadosNf`
+- [ ] A chamada do helper fica failure-isolated do job do worker: erro de agrupamento NAO pode reencolar/reprocessar o job depois de `estoque_lancado` ou `estoque_saida_lancada` ja terem sido persistidos
+- [ ] Se a fase 1 ainda nao puder rodar porque a NF nao ficou persistida por completo, o worker conclui normalmente e deixa o pedido para os entrypoints de segunda chance
+- [ ] O desconto de estoque em `propria` e `transferencia` permanece exatamente como hoje
+- [ ] `executarMarcadoresOnly` ganha geracao de NF (via `gerarNotaFiscalPedido`, idempotente) e `enriquecerDadosNf` apos marcadores, seguido de chamada a `criarAgrupamentoFase1`
+- [ ] `executarMarcadoresOnly` NAO ganha baixa de estoque — estoque de OC continua diferido para o Ciclo 2 (worker apos `compras-release`)
+- [ ] Falha na geracao de NF em `executarMarcadoresOnly` NAO bloqueia a resolucao de itens de compra: se NF falhar, o fluxo OC (aguardando_compra + itens) continua normalmente
+- [ ] Geracao de NF + `enriquecerDadosNf` + `criarAgrupamentoFase1` rodam ANTES de `resolveCompraItemIds`, dentro de um unico try/catch que nao propaga para a resolucao de compra
+- [ ] `enriquecerDadosNf` em `executarMarcadoresOnly` NAO deve disparar transicao de `status_separacao` (o guard condicional `eq("status_separacao", "aguardando_nf")` em `enriquecerDadosNf` protege, pois o pedido nao foi setado para `aguardando_nf` neste ponto)
+- [ ] Quando `executarMarcadoresOnly` detecta `compraDemandas.length === 0` e redireciona para `propria`, o `status_separacao` deve ser `aguardando_separacao` (nao `aguardando_nf`) quando NF ja existe
+- [ ] Se NF for gerada mas `chave_acesso_nf` ainda nao estiver disponivel (NF pendente autorizacao SEFAZ), `executarMarcadoresOnly` prossegue para resolucao de compra e deixa agrupamento para entrypoints de segunda chance (webhook, forcar-pendente)
+- [ ] O worker do Ciclo 2 (apos `compras-release`) detecta NF existente via idempotencia de `gerarNotaFiscalPedido` e pula direto para baixa de estoque
+- [ ] Comentarios/docstrings do worker passam a explicitar que este Ralph muda timing de NF para OC e timing de agrupamento para todos os fluxos, nao timing de estoque
+- [ ] Typecheck passes
 
-### US-004: Manter agrupamento na separacao para propria/transferencia
+### US-003: Dar segunda chance de agrupamento quando a NF persistir fora do timing do worker
 
-**Descricao:** Como sistema, o fluxo de agrupamento para pedidos propria e transferencia continua sendo criado quando o pedido atinge "separado" (comportamento atual).
-
-**Acceptance Criteria:**
-- [ ] `preCriarAgrupamentosEmLote` continua sendo chamado no endpoint `concluir` para propria/transferencia
-- [ ] `preCriarAgrupamentosEmLote` so roda quando a NF estiver persistida no pedido (`nota_fiscal_id` + `chave_acesso_nf`)
-- [ ] Nenhuma mudanca no `agrupamento-service.ts` para esses fluxos
-- [ ] Para OC, o agrupamento ja existe — `preCriarAgrupamentosEmLote` deve ser idempotente (skip se `agrupamento_expedicao_id` ja preenchido)
-
-### US-005: Backfill de pedidos OC existentes sem NF
-
-**Descricao:** Como admin, quero que pedidos ja em `aguardando_compra` sem NF recebam NF + agrupamento retroativamente.
+**Descricao:** Como sistema, quero que pedidos cuja NF so ficou persistida depois tenham uma segunda chance de criar agrupamento.
 
 **Acceptance Criteria:**
-- [ ] Script/endpoint de backfill identifica pedidos com `status_separacao = 'aguardando_compra'` e `nota_fiscal_id IS NULL`
-- [ ] Para cada pedido, gera NF via Tiny API
-- [ ] O backfill espera a NF ficar persistida no pedido (`nota_fiscal_id` + `chave_acesso_nf`) antes de rodar agrupamento fase 1
-- [ ] Apos NF persistida, cria agrupamento + conclui + salva `expedicao_id`
-- [ ] O backfill NAO busca ZPL/etiqueta; isso continua sendo fase 2
-- [ ] Respeita rate limiting por empresa
-- [ ] Log de cada pedido processado com sucesso/falha
-- [ ] Pode ser executado multiplas vezes (idempotente)
+- [ ] `nf-webhook-handler.ts` chama `criarAgrupamentoFase1` apos salvar `nota_fiscal_id` + `chave_acesso_nf`
+- [ ] A chamada so ocorre quando ambos os campos estiverem persistidos
+- [ ] O webhook nao bloqueia resposta por causa do agrupamento
+- [ ] O bloco de reconciliacao de NF em `webhook-processor.ts` tambem chama `criarAgrupamentoFase1`
+- [ ] A reconciliacao deixa de jogar o pedido para `pendente` e preserva a semantica correta de `aguardando_nf` -> `aguardando_separacao`
+- [ ] `src/app/api/separacao/forcar-pendente/route.ts` chama `criarAgrupamentoFase1` apos persistir `chave_acesso_nf`
+- [ ] `src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts` chama `criarAgrupamentoFase1` apos persistir `chave_acesso_nf`
+- [ ] As rotas de `forcar-pendente` preservam sua resposta de admin e nao falham a acao por causa de erro no Tiny ao criar agrupamento
+- [ ] O mesmo mecanismo de idempotencia protege worker, webhook, reconciliacao e `forcar-pendente`
+- [ ] Typecheck passes
 
-### US-006: Icones de progresso do pipeline nos cards de pedido
+### US-004: Preservar a divisao entre criar agrupamento e recuperar etiqueta em `separado`
 
-**Descricao:** Como operador, quero ver icones coloridos no card de cada pedido mostrando quais etapas do pipeline ja foram concluidas, similar ao sistema de "Integracoes" do Tiny ERP.
-
-**Acceptance Criteria:**
-- [ ] 4 icones exibidos em sequencia no card do pedido: **N** (NF), **A** (Agrupamento), **E** (Estoque), **Z** (Etiqueta/ZPL)
-- [ ] Cada icone tem 3 estados visuais:
-  - Cinza/apagado: etapa pendente (nao iniciada)
-  - Colorido/ativo: etapa concluida com sucesso
-  - Vermelho/erro: etapa falhou quando houver sinal explicito de erro
-- [ ] **N** (NF): ativo quando `nota_fiscal_id IS NOT NULL` e `chave_acesso_nf IS NOT NULL`
-- [ ] **A** (Agrupamento): ativo quando `agrupamento_expedicao_id IS NOT NULL` e diferente de `'pending'`
-- [ ] **E** (Estoque): ativo quando `estoque_lancado = true`
-- [ ] **Z** (Etiqueta): ativo quando `etiqueta_zpl IS NOT NULL`
-- [ ] `GET /api/separacao` passa a retornar `status`, `nota_fiscal_id`, `chave_acesso_nf`, `agrupamento_expedicao_id`, `expedicao_id`, `estoque_lancado`, `etiqueta_zpl` e `etiqueta_status`
-- [ ] Estado vermelho so e usado quando houver regra objetiva:
-  - `N`: `status = 'erro'` e NF ainda nao persistida
-  - `A`: `status = 'erro'`, NF persistida e agrupamento ainda ausente
-  - `E`: `status = 'erro'` e `estoque_lancado = false` apos tentativa
-  - `Z`: `etiqueta_status = 'falhou'`
-- [ ] Icones aparecem nos cards de todas as abas de separacao (pendentes, aguardando NF, aguardando OC, em separacao, separados, embalados)
-- [ ] Icones sao compactos e nao ocupam espaco excessivo no card
-- [ ] Tooltip em cada icone explica a etapa (ex: "Nota Fiscal gerada", "Agrupamento pendente")
-
-### US-007: Ajuste do compras-release para novo fluxo
-
-**Descricao:** Como sistema, o `compras-release` deve ser ajustado para o novo fluxo onde NF e agrupamento ja existem.
+**Descricao:** Como desenvolvedor, quero que o fluxo de `separado` preserve a divisao atual entre fallback de criacao de agrupamento e fast path de recuperacao de etiqueta, deixando essa orquestracao explicita e consistente.
 
 **Acceptance Criteria:**
-- [ ] `compras-release` continua resolvendo `decisao_final`, `separacao_galpao_id` e o roteamento de execucao futura
-- [ ] `compras-release` reconhece que NF persistida significa `nota_fiscal_id IS NOT NULL` e `chave_acesso_nf IS NOT NULL`
-- [ ] Pedido vai para `aguardando_separacao` quando a NF ja estiver persistida; se nao estiver, fica em `aguardando_nf` como fallback seguro
-- [ ] Job de `lancar_estoque` NAO e criado no release (estoque so e lancado em "separado")
-- [ ] Pedido liberado mantem `agrupamento_expedicao_id` e `expedicao_id` intactos
-- [ ] Log registra que pedido foi liberado com NF pre-existente
+- [ ] `preCriarAgrupamentosEmLote` continua sendo a primitiva de fallback para pedidos sem `agrupamento_expedicao_id`
+- [ ] `recarregarEtiquetasFaltantes` continua sendo a primitiva de fast path para pedidos com `agrupamento_expedicao_id` valido e `etiqueta_zpl` ausente
+- [ ] `concluir`, `concluir-oc`, `retry-etiqueta` e `compras-embalagem` todos orquestram fallback de criacao e fast path de etiqueta em ordem deliberada, sem duplicar responsabilidades em varios pontos
+- [ ] `concluir-oc` ganha chamada a `recarregarEtiquetasFaltantes` (fire-and-forget) ao lado de `preCriarAgrupamentosEmLote`, para que pedidos pick OC com agrupamento pre-existente tenham ZPL cacheado no momento do concluir
+- [ ] O fallback so tenta criar agrupamento quando a NF estiver persistida
+- [ ] Pedidos antigos com agrupamento ja salvo e sem etiqueta continuam pelo fast path sem recriar agrupamento por padrao
+- [ ] O processamento continua idempotente para pedidos antigos sem agrupamento e para retries
+- [ ] Typecheck passes
+
+### US-005: Explicitar a invalidação de artefatos em re-roteamento
+
+**Descricao:** Como desenvolvedor, quero que o fluxo de `encaminhar` preserve explicitamente a NF e limpe os artefatos de expedição para que o agrupamento antecipado continue seguro sob re-roteamento.
+
+**Acceptance Criteria:**
+- [ ] `src/app/api/separacao/encaminhar/route.ts` continua preservando `nota_fiscal_id` e `chave_acesso_nf` ao reencaminhar
+- [ ] O payload de reset limpa explicitamente `agrupamento_expedicao_id`, `expedicao_id`, `etiqueta_url`, `etiqueta_zpl` e `etiqueta_status`
+- [ ] Comentarios e/ou logs da rota passam a explicitar que o re-roteamento invalida artefatos de expedição, mas nao invalida a NF
+- [ ] O comportamento de estorno de estoque permanece inalterado
+- [ ] Typecheck passes
+
+### US-006: Atualizar documentacao e matriz de validacao
+
+**Descricao:** Como equipe tecnica, queremos documentar claramente que este Ralph mexe em agrupamento, mas nao no estoque.
+
+**Acceptance Criteria:**
+- [ ] Atualizar `docs/architecture-and-flows.md`, `docs/api-reference-complete.md` e `docs/fluxos-siso.md`
+- [ ] Documentar explicitamente que `propria` e `transferencia` continuam baixando estoque na aprovacao
+- [ ] Documentar que o novo comportamento e: agrupamento fase 1 assim que a NF persistir, via helper compartilhado e guardado
+- [ ] Documentar que a integracao do worker e failure-isolated do sucesso de estoque e que os caminhos de NF tardia incluem webhook, reconciliacao e as duas rotas de `forcar-pendente`
+- [ ] Documentar fast path e fallback em `separado` sem colapsar a divisao atual entre criacao de agrupamento e recuperacao de etiqueta
+- [ ] Definir matriz minima executavel de validacao cobrindo: falha do helper apos baixa de estoque, recuperacao de `pending` travado, NF tardia por webhook, NF tardia por `forcar-pendente`, pedido antigo com agrupamento existente mas sem etiqueta, e pedido reencaminhado apos agrupamento antecipado
+- [ ] Typecheck passes
 
 ---
 
 ## 4. Functional Requirements
 
-**Geracao de NF (OC):**
-- FR-1: `executarMarcadoresOnly` deve chamar `gerarNotaFiscalPedido` apos marcadores, antes de enviar para compras
-- FR-2: A geracao de NF e idempotente — se `nota_fiscal_id` ja existe, retorna o existente
-- FR-3: Assumimos que o Tiny aceita gerar NF independente de estoque disponivel
+**Estoque:**
+- FR-1: `executarSaidaPropria` continua baixando estoque na aprovacao
+- FR-2: `executarSaidaTransferencia` continua baixando estoque na aprovacao
+- FR-3: Nao sera criado novo job de estoque em `separado`
+- FR-4: `concluir` e `concluir-oc` nao mudam semantica de estoque neste Ralph
+- FR-4b: `executarMarcadoresOnly` NAO ganha baixa de estoque — estoque de OC continua diferido para o Ciclo 2
 
-**Agrupamento (OC):**
-- FR-4: A fase 1 do agrupamento so pode rodar quando a NF estiver persistida no pedido (`nota_fiscal_id` + `chave_acesso_nf`)
-- FR-5: Apos NF persistida, o fluxo cria agrupamento, conclui, e obtem `expedicao_id`
-- FR-6: `agrupamento_expedicao_id` e `expedicao_id` sao salvos no pedido
-- FR-7: A fase 1 do agrupamento NAO baixa/cacha ZPL
-- FR-8: A fase 2 (etiqueta/ZPL) roda depois, reaproveitando `agrupamento_expedicao_id` + `expedicao_id` quando disponiveis
-- FR-9: Falha no agrupamento nao bloqueia o fluxo — pedido segue para compras sem agrupamento
-- FR-10: Nenhum entrypoint de agrupamento deve marcar `pending` antes da NF atender a condicao de persistencia
-- FR-11: `preCriarAgrupamentosEmLote` deve ser idempotente: skip se agrupamento ja existe
+**NF para OC:**
+- FR-4c: `executarMarcadoresOnly` ganha geracao de NF (via `gerarNotaFiscalPedido`, idempotente) apos marcadores
+- FR-4d: `executarMarcadoresOnly` chama `enriquecerDadosNf` apos geracao de NF para obter `chave_acesso_nf` se ja autorizada
+- FR-4e: Falha de NF em `executarMarcadoresOnly` nao bloqueia a resolucao de itens de compra
+- FR-4e2: Geracao de NF + `enriquecerDadosNf` + `criarAgrupamentoFase1` rodam ANTES de `resolveCompraItemIds`, dentro de try/catch isolado
+- FR-4e3: `enriquecerDadosNf` em `executarMarcadoresOnly` nao dispara transicao de status (guard condicional protege)
+- FR-4e4: Quando OC nao tem faltas reais e redireciona para propria, `status_separacao` deve ser `aguardando_separacao` (nao `aguardando_nf`) quando NF ja existe
+- FR-4f: O worker do Ciclo 2 (apos `compras-release`) detecta NF existente via idempotencia e pula para baixa de estoque
+- FR-4g: A NF gerada na aprovacao de OC cria reserva no Tiny que persiste ate o Ciclo 2 baixar estoque
 
-**Lancamento de Estoque:**
-- FR-12: `executarSaidaPropria` NAO lanca estoque na aprovacao — so gera NF + marcadores
-- FR-13: `executarSaidaTransferencia` NAO lanca estoque nem faz movimentos fisicos na aprovacao — so gera NF + marcadores
-- FR-14: Novo hook no endpoint `concluir` (ou `concluir-oc`) chama a rotina correta de estoque quando pedido vira "separado"
-- FR-15: Para `propria`, o hook chama `lancarEstoqueNota` usando a NF ja existente
-- FR-16: Para `transferencia`, o hook executa `lancarEstoqueNota` na origem, depois `movimentarEstoque(E)` na origem, depois `movimentarEstoque(S)` na empresa que envia fisicamente
-- FR-17: `estoque_lancado` e atualizado apos a sequencia completa em "separado"
-- FR-18: Se lancamento falhar, pedido fica com `estoque_lancado = false` e icone mostra erro
+**Agrupamento fase 1:**
+- FR-5: O agrupamento fase 1 so pode rodar com `nota_fiscal_id` e `chave_acesso_nf` persistidos
+- FR-6: O agrupamento fase 1 deve ser idempotente
+- FR-7: O agrupamento fase 1 deve ser seguro sob concorrencia entre worker, webhook, reconciliacao e `forcar-pendente`
+- FR-8: O agrupamento fase 1 inclui criar agrupamento, tentar concluir, obter detalhes e salvar `agrupamento_expedicao_id` e `expedicao_id`
+- FR-9: O agrupamento fase 1 nao busca etiqueta/ZPL
+- FR-10: Se o agrupamento fase 1 usar o sentinel `pending`, a recuperacao de `pending` travado precisa estar disponivel nos entrypoints de fase 1 e nao apenas no fluxo de `separado`
+- FR-11: Falha de agrupamento no worker nao pode reprocessar o job depois que a baixa de estoque ja foi persistida
 
-**Compras-Release:**
-- FR-19: `checkAndReleasePedidos` continua resolvendo decisao e galpao de separacao
-- FR-20: `checkAndReleasePedidos` nao cria job `lancar_estoque`
-- FR-21: Pedido vai para `aguardando_separacao` quando a NF estiver persistida; caso contrario, fica em `aguardando_nf`
-- FR-22: Campos de agrupamento/expedicao sao preservados no release
+**Agrupamento fase 2 / etiqueta:**
+- FR-12: `preCriarAgrupamentosEmLote` permanece responsavel pelo fallback de criacao quando o agrupamento estiver ausente
+- FR-13: `recarregarEtiquetasFaltantes` permanece responsavel pelo fast path de etiqueta quando o agrupamento ja existir
+- FR-13b: `concluir-oc` ganha chamada a `recarregarEtiquetasFaltantes` (fire-and-forget) para que pick OC com agrupamento pre-existente tenha ZPL cacheado
+- FR-14: Pedidos antigos sem agrupamento continuam cobertos pelo fallback
 
-**Backfill:**
-- FR-23: Script processa pedidos em `aguardando_compra` com `nota_fiscal_id IS NULL`
-- FR-24: O backfill espera a persistencia local da NF antes de rodar agrupamento fase 1
-- FR-25: Respeita rate limiting por empresa (`runWithEmpresa`)
-- FR-26: Idempotente — pode rodar multiplas vezes sem duplicar NFs ou agrupamentos
-
-**Icones de Progresso:**
-- FR-27: Componente `PipelineIcons` renderiza 4 icones (N, A, E, Z) com estados cinza/ativo/erro
-- FR-28: `GET /api/separacao` expoe os campos necessarios para o pipeline visual
-- FR-29: Integrado nos cards de separacao (`separacao-card.tsx`, `pedido-separacao-card.tsx`)
+**Fluxos cobertos:**
+- FR-15: `propria`, `transferencia` e `oc` ganham agrupamento fase 1 no worker de aprovacao (oc ganha tambem geracao de NF)
+- FR-16: pedidos cuja NF persistir depois ganham agrupamento fase 1 por webhook, reconciliacao ou `forcar-pendente`
+- FR-17: o modulo de compras nao muda neste Ralph; o pick OC se beneficia porque NF + agrupamento ja existem quando o operador bipa os itens
 
 ---
 
 ## 5. Non-Goals (Out of Scope)
 
-- Mudar a logica de decisao (propria/transferencia/oc) — so muda o que acontece DEPOIS da decisao
-- Mudar o fluxo de agrupamento para propria/transferencia (continua em "separado")
-- Cachear ZPL/etiqueta antecipadamente — continua so em "separado"
-- Mudar a interface do SISO dashboard (painel de aprovacao) — icones sao so na separacao
-- Criar novo endpoint de API para etiquetas — usa o existente
-- Mudar o webhook de nota fiscal (`nf-webhook-handler.ts`) — NF e gerada ativamente, nao via webhook
+- Mover o desconto de estoque para `separado`
+- Criar `stock-posting-service.ts`
+- Criar novo tipo de job para estoque
+- Adicionar baixa de estoque em `executarMarcadoresOnly` (estoque de OC continua no Ciclo 2)
+- Simplificar `compras-release`
+- Mudar o modulo de compras (comprar/receber/conferencia)
+- Adicionar icones de pipeline na UI
+- Criar novos campos de status de estoque
 
 ---
 
@@ -205,48 +204,95 @@ Esta mudanca antecipa a geracao de NF e a fase 1 do agrupamento para o momento d
 
 | Arquivo | Mudanca |
 |---|---|
-| `src/lib/execution-worker.ts` | `executarMarcadoresOnly`: + NF + trigger da fase 1 do agrupamento apos NF persistida. `executarSaidaPropria`/`executarSaidaTransferencia`: remover lancamento de estoque da aprovacao |
-| `src/lib/compras-release.ts` | Manter resolucao de decisao/galpao. Remover criacao de job `lancar_estoque` |
-| `src/lib/agrupamento-service.ts` | Separar fase 1 (agrupamento/expedicao) da fase 2 (etiqueta/ZPL). Bloquear execucao ate NF persistida |
-| `src/lib/pedido-routing.ts` | Novo helper compartilhado para resolver decisao/empresa de execucao/galpao entre `compras-release` e hook de `separado` |
-| `src/app/api/separacao/concluir/route.ts` | Adicionar `lancarEstoqueNota` quando pedido vira "separado" |
-| `src/app/api/separacao/concluir-oc/route.ts` | Adicionar `lancarEstoqueNota` quando pedido OC vira "separado" |
-| `src/app/api/separacao/route.ts` | Expor campos do pipeline visual (`nota_fiscal_id`, `chave_acesso_nf`, `agrupamento_expedicao_id`, `expedicao_id`, `estoque_lancado`, `etiqueta_zpl`, `etiqueta_status`) |
-| `src/app/api/separacao/encaminhar/route.ts` | Preservar NF antecipada e limpar agrupamento/expedicao/etiqueta quando o roteamento mudar |
-| `src/components/separacao/*.tsx` | Integrar componente `PipelineIcons` |
-| Novo: `src/components/separacao/pipeline-icons.tsx` | Componente de icones de progresso |
-| Novo: script backfill | Script para processar pedidos OC existentes |
+| `src/lib/execution-worker.ts` | Adicionar geracao de NF em `executarMarcadoresOnly` + chamada de agrupamento fase 1 apos NF persistida em `propria`, `transferencia` e `oc` |
+| `src/lib/agrupamento-service.ts` | Preservar a divisao entre fallback de criacao e fast path de etiqueta, endurecendo os gates de NF persistida |
+| `src/lib/nf-webhook-handler.ts` | Chamar agrupamento fase 1 apos persistencia de NF |
+| `src/lib/webhook-processor.ts` | Corrigir reconciliacao e chamar agrupamento fase 1 |
+| `src/app/api/separacao/forcar-pendente/route.ts` | Dar segunda chance de agrupamento quando a NF for autorizada manualmente em lote |
+| `src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts` | Dar segunda chance de agrupamento quando a NF for autorizada manualmente por pedido |
+| `src/app/api/separacao/concluir/route.ts` | Preservar a orquestracao create-fallback + label-fast-path |
+| `src/app/api/separacao/concluir-oc/route.ts` | Adicionar chamada a `recarregarEtiquetasFaltantes` fire-and-forget para completar o fast path do pick OC |
+| `src/app/api/separacao/retry-etiqueta/route.ts` | Preservar a orquestracao create-fallback + label-fast-path |
+| `src/lib/compras-embalagem.ts` | Preservar a orquestracao create-fallback + label-fast-path em embalagem direta |
+| `supabase/migrations/*` | Reaproveitar/ajustar o RPC de claim atomico se o helper de fase 1 precisar endurecer o gate de NF persistida |
+| `src/app/api/separacao/encaminhar/route.ts` | Validar/ajustar limpeza de artefatos de agrupamento apos re-roteamento |
+| `docs/*` | Atualizar documentacao do fluxo corrigido |
 
 ### Dependencias
 
-- Tiny API v3: `gerarNotaFiscal`, `criarAgrupamento`, `concluirAgrupamento`, `obterAgrupamento`, `lancarEstoqueNota`, `movimentarEstoque`
-- Rate limiter por empresa (ja existente)
-- Campos existentes em `siso_pedidos`: `nota_fiscal_id`, `chave_acesso_nf`, `agrupamento_expedicao_id`, `expedicao_id`, `estoque_lancado`, `etiqueta_zpl`, `etiqueta_status`
+- Tiny API v3: `criarAgrupamento`, `concluirAgrupamento`, `obterAgrupamento`, `obterEtiquetasExpedicao`, `gerarNotaFiscal`
+- Mecanismo atual de NF: `gerarNotaFiscalPedido` (idempotente via `nota_fiscal_id`), `enriquecerDadosNf`, webhook de NF e reconciliacao
+- Mecanismo atual de estoque em `propria` e `transferencia` permanece inalterado
+- `gerarNotaFiscalPedido` ja e idempotente: o Ciclo 2 detecta NF existente e pula direto para estoque
+- Guard atual de agrupamento: RPC `siso_claim_pedidos_para_agrupamento` + sentinel `agrupamento_expedicao_id='pending'`
+- Fast path atual de etiqueta: `recarregarEtiquetasFaltantes`
 
 ### Riscos
 
-- **Tiny recusar NF para OC sem estoque**: Assumimos que aceita (resposta 1C). Se nao aceitar, NF fica pendente e icone mostra cinza.
-- **Race condition entre NF e agrupamento**: toda chamada de agrupamento deve ser bloqueada ate `nota_fiscal_id` + `chave_acesso_nf` estarem persistidos no pedido.
-- **Race condition no lancamento de estoque em "separado"**: Usar `estoque_lancado` como guard (idempotencia existente).
-- **Transferencia com NF antecipada**: a sequencia de estoque no `separado` precisa manter a compensacao na origem e a baixa fisica na empresa que enviou, sem simplificar para um unico `lancarEstoqueNota`.
-- **Mudanca de galpao apos NF antecipada**: agrupamento/expedicao/etiqueta podem ficar invalidos e devem ser limpos/recriados quando o roteamento mudar.
-- **Backfill com muitos pedidos**: Processar em batches com rate limiting.
+- **Concorrencia entre worker, webhook, reconciliacao e `forcar-pendente`**: precisa de guard atomico para nao criar agrupamento duplicado
+- **Retry falso no worker apos baixa de estoque**: o helper de agrupamento precisa ser failure-isolated para nao reencolar um job que ja persistiu estoque
+- **`pending` travado antes do separado**: se a fase 1 reutilizar o sentinel atual, a recuperacao precisa existir antes do fluxo de `separado`
+- **NF ainda nao autorizada no momento do worker**: webhook, reconciliacao e `forcar-pendente` precisam cobrir a segunda chance
+- **Pedidos antigos sem agrupamento**: fallback em `separado` continua sendo obrigatorio
+- **Pedidos com agrupamento existente e sem etiqueta**: a fase 2 precisa continuar usando o fast path atual sem recriar agrupamento por padrao
+- **Re-roteamento apos agrupamento antecipado**: precisa continuar limpando artefatos a jusante sem invalidar NF
+- **Reserva de estoque OC no Tiny**: a NF gerada na aprovacao cria reserva que persiste ate o Ciclo 2. Se o pedido ficar semanas em compras, a reserva fica la. Comportamento identico ao que ja acontece com propria/transferencia
+- **Falha de NF em OC**: se `gerarNotaFiscalPedido` falhar para OC, o fluxo de compras continua normalmente e a NF sera gerada no Ciclo 2. Nao e bloqueante
+- **NF orfao em cancelamento de OC**: se um pedido OC for cancelado durante compras, a NF + reserva no Tiny ficam orfaos. O Tiny tolera NFs orfaos (nao causam efeitos colaterais alem de reserva fantasma no saldo). Aceito como divida tecnica neste Ralph — mecanismo de limpeza pode ser planejado como follow-up se o volume de cancelamentos justificar
+- **Side-effect de `enriquecerDadosNf` no OC**: a funcao pode setar `status_separacao = "aguardando_separacao"` via update condicional, mas o guard `eq("status_separacao", "aguardando_nf")` protege porque o pedido OC nao passa por `aguardando_nf` antes da resolucao de compra
 
 ---
 
-## 7. Success Metrics
+## 7. Rollout and Validation
 
-- 100% dos pedidos OC novos chegam em "separado" com NF + agrupamento + expedicao_id ja preenchidos
-- Tempo de obtencao de etiqueta em "separado" para OC reduzido (so 1 chamada de API vs 4+)
-- Zero regressoes nos fluxos de propria/transferencia
-- Operadores conseguem ver o progresso visual de cada pedido pelos icones
-- Backfill processa todos os pedidos OC existentes sem NF
+### Fase 1
+
+- Criar helper compartilhado de agrupamento fase 1
+- Ligar helper no worker de `propria` e `transferencia`
+- Adicionar geracao de NF em `executarMarcadoresOnly` + ligar helper
+
+### Fase 2
+
+- Ligar helper no webhook de NF, na reconciliacao e nas rotas de `forcar-pendente`
+
+### Fase 3
+
+- Preservar e explicitar a orquestracao entre `preCriarAgrupamentosEmLote` e `recarregarEtiquetasFaltantes`
+- Validar comportamento de `encaminhar`
+- Atualizar documentacao final
+
+### Matriz minima de validacao
+
+- `propria`: aprovacao gera NF, baixa estoque como hoje e cria agrupamento fase 1
+- `transferencia`: aprovacao gera NF, baixa estoque como hoje e cria agrupamento fase 1
+- `oc`: aprovacao gera NF (sem estoque), cria agrupamento fase 1. Pick OC encontra etiqueta pronta via fast path
+- `oc` com NF pendente SEFAZ: aprovacao gera NF mas `chave_acesso_nf` nao disponivel; agrupamento criado via segunda chance (webhook ou forcar-pendente)
+- `oc` com falha de NF: fluxo de compras continua normalmente; NF e agrupamento criados no Ciclo 2
+- Ciclo 2 (apos compras-release): worker detecta NF existente e pula para baixa de estoque sem recriar NF
+- falha do helper apos baixa de estoque: o job nao volta ao retry falso nem reaplica estoque
+- NF tardia: webhook/reconciliacao criam agrupamento sem duplicidade
+- NF tardia manual: `forcar-pendente` cria agrupamento sem quebrar a resposta administrativa
+- `pending` travado: fase 1 e/ou separado conseguem recuperar e retentar o pedido
+- pedido com agrupamento existente e sem etiqueta: fast path recupera etiqueta sem recriar agrupamento
+- pedido antigo sem agrupamento: `separado` continua criando agrupamento e etiqueta pelo fallback
+- pedido reencaminhado: NF preservada e agrupamento/etiqueta invalidados corretamente
 
 ---
 
-## 8. Open Questions
+## 8. Success Metrics
 
-- **OQ-1**: Se o Tiny recusar gerar NF para pedido OC sem estoque, qual o fallback exato? (Assumimos que aceita, mas precisa testar)
-- **OQ-2**: O lancamento de estoque em "separado" deve ser sincrono (bloqueia o operador) ou fire-and-forget?
-- **OQ-3**: Os icones de progresso devem aparecer tambem nos cards do SISO dashboard (aba pendentes/concluidos) ou so na separacao?
-- **OQ-4**: Para o backfill, rodar como script CLI, como endpoint de API, ou como cron?
+- Pedidos `propria`, `transferencia` e `oc` passam a chegar em `separado` com agrupamento ja criado na maioria dos casos
+- Pick OC se resume a bipar itens e emitir etiqueta (agrupamento ja existe)
+- Tempo medio para obter etiqueta em `separado` cai porque a maioria dos pedidos entra pelo fast path
+- Zero regressao no momento de baixa de estoque
+- Zero duplicidade de agrupamento para o mesmo pedido
+- Pedidos antigos sem agrupamento continuam sendo resolvidos pelo fallback
+
+---
+
+## 9. Open Questions
+
+- Se o helper de fase 1 exigir endurecer o claim atomico atual, vale generalizar o RPC existente ou criar uma variante dedicada?
+- Vale registrar algum estado adicional de agrupamento para auditoria, ou `agrupamento_expedicao_id` + logs ja bastam?
+- Depois deste Ralph, um retry channel dedicado de agrupamento ainda vale como segundo passo, mesmo que a primeira entrega use failure isolation + segunda chance pelos entrypoints existentes?
+- A reserva de estoque criada pela NF de OC na aprovacao pode causar problemas se o pedido ficar muitas semanas em compras? O comportamento e identico ao de propria/transferencia, mas o tempo pode ser maior para OC

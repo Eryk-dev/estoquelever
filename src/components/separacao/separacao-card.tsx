@@ -17,6 +17,7 @@ export interface CompraStatsData {
   indisponivel: number;
   equivalente_pendente: number;
   cancelamento_pendente: number;
+  oc_pendente: number;
   itens: Array<{
     sku: string;
     descricao: string;
@@ -110,8 +111,9 @@ export function SeparacaoCard({
   const isEmbalado = pedido.status_separacao === "embalado";
   const isSeparado = pedido.status_separacao === "separado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
-  const isAguardandoOC = pedido.status_separacao === "aguardando_compra";
-  const isEngatilhado = isAguardandoOC && pedido.nf_emitida && pedido.agrupamento_criado;
+  const isValidacaoOC = pedido.status_separacao === "validacao_oc";
+  const isAguardandoOC = pedido.status_separacao === "aguardando_compra" || isValidacaoOC;
+  const isEngatilhado = pedido.status_separacao === "aguardando_compra" && pedido.nf_emitida && pedido.agrupamento_criado;
   const canRetryEtiqueta = (isSeparado || isEmbalado) && !pedido.etiqueta_pronta;
   const canEncaminhar =
     onEncaminhar &&
@@ -162,10 +164,17 @@ export function SeparacaoCard({
       ? (pedido.itens_marcados / pedido.total_itens) * 100
       : 0;
   const statusBadge = (() => {
-    if (isAguardandoOC) {
+    if (isValidacaoOC) {
       return {
-        label: "Compra pendente",
+        label: "OC Pendente",
         className: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300",
+      };
+    }
+
+    if (pedido.status_separacao === "aguardando_compra") {
+      return {
+        label: "OC Confirmada",
+        className: "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300",
       };
     }
 
@@ -641,6 +650,12 @@ export function SeparacaoCard({
             <div className="mt-1.5 space-y-2">
               {/* Progress summary */}
               <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                {cs.oc_pendente > 0 && (
+                  <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                    <Clock className="h-3 w-3" />
+                    {cs.oc_pendente} pendente validação
+                  </span>
+                )}
                 {cs.aguardando > 0 && (
                   <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
                     <Clock className="h-3 w-3" />
@@ -700,6 +715,12 @@ export function SeparacaoCard({
                         <div
                           className="h-full bg-amber-400"
                           style={{ width: `${(cs.aguardando / cs.total) * 100}%` }}
+                        />
+                      )}
+                      {cs.oc_pendente > 0 && (
+                        <div
+                          className="h-full bg-amber-300"
+                          style={{ width: `${(cs.oc_pendente / cs.total) * 100}%` }}
                         />
                       )}
                     </div>

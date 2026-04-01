@@ -50,3 +50,18 @@ Started: Wed Apr  1 16:59:27 -03 2026
   - iniciar/route.ts has a BLINDAGEM that blocks pedidos with pending compra items (aguardando_compra, comprado) from transitioning. oc_pendente is NOT in that blocklist, which is correct — validacao_oc pedidos need to start separation to validate items.
   - The DB update uses a guard .eq/.in on status_separacao to prevent race conditions — always update the guard when adding new allowed statuses.
 ---
+
+## 2026-04-01 - US-004
+- Expanded concluir/route.ts items select to include compra_status
+- Added oc_pendente guard: returns 400 if any item still has compra_status = 'oc_pendente'
+- Modified completude check: items with compra_status in ['aguardando_compra', 'comprado'] are excluded from separacao_marcado verification
+- Added aguardando_compra transition branch: when all normal items are marcado but compra items exist, pedido transitions to 'aguardando_compra' (not 'separado'). Does NOT set separacao_concluida_em or reset pick state.
+- Added 'separacao_aguardando_compra' to EventoPedido type in historico-service.ts
+- Response now includes aguardandoCompra array alongside separados and pendentes
+- Files changed: src/app/api/separacao/concluir/route.ts, src/lib/historico-service.ts
+- **Learnings for future iterations:**
+  - concluir/route.ts groups items by pedido and checks completeness — the grouping map type needed expanding to carry compra_status alongside separacao_marcado
+  - EventoPedido in historico-service.ts is a string union — add new event types there before using them with registrarEventos
+  - The aguardando_compra branch deliberately does NOT set separacao_concluida_em or reset any separacao fields — this preserves the pick state so when compra items arrive, the operator doesn't need to re-pick normal items
+  - The oc_pendente guard applies to ALL pedido_ids in the batch — one unresolved pedido blocks the entire request (early return)
+---

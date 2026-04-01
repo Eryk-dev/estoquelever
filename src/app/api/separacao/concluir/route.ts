@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     // Fetch all items for the given pedidos
     const { data: items, error: fetchError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, separacao_marcado")
+      .select("id, pedido_id, separacao_marcado, compra_status")
       .in("pedido_id", pedido_ids);
 
     if (fetchError) {
@@ -54,27 +54,105 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Group items by pedido_id and check completeness
-    const itemsByPedido = new Map<string, boolean[]>();
+    // Group items by pedido_id
+    const itemsByPedido = new Map<
+      string,
+      { separacao_marcado: boolean | null; compra_status: string | null }[]
+    >();
     for (const item of items ?? []) {
       const list = itemsByPedido.get(item.pedido_id) ?? [];
-      list.push(item.separacao_marcado === true);
+      list.push({
+        separacao_marcado: item.separacao_marcado,
+        compra_status: item.compra_status,
+      });
       itemsByPedido.set(item.pedido_id, list);
     }
 
-    const separados: string[] = [];
-    const pendentes: string[] = [];
-
+    // Guard: reject pedidos that still have unresolved oc_pendente items
     for (const pid of pedido_ids) {
-      const marks = itemsByPedido.get(pid);
-      if (marks && marks.length > 0 && marks.every(Boolean)) {
-        separados.push(pid);
-      } else {
-        pendentes.push(pid);
+      const pedidoItems = itemsByPedido.get(pid) ?? [];
+      if (pedidoItems.some((i) => i.compra_status === "oc_pendente")) {
+        return NextResponse.json(
+          {
+            error:
+              "Há itens OC não validados — resolva todos os itens na conferência OC antes de concluir",
+          },
+          { status: 400 },
+        );
       }
     }
 
-    // Update completed pedidos to 'separado'
+    const separados: string[] = [];
+    const aguardandoCompra: string[] = [];
+    const pendentes: string[] = [];
+
+    for (const pid of pedido_ids) {
+      const pedidoItems = itemsByPedido.get(pid);
+      if (!pedidoItems || pedidoItems.length === 0) {
+        pendentes.push(pid);
+        continue;
+      }
+
+      // Items being handled by compras module (not checked for separacao_marcado)
+      const compraItems = pedidoItems.filter(
+        (i) =>
+          i.compra_status === "aguardando_compra" ||
+          i.compra_status === "comprado",
+      );
+      // Normal items that need separacao_marcado check
+      const normalItems = pedidoItems.filter(
+        (i) =>
+          i.compra_status !== "aguardando_compra" &&
+          i.compra_status !== "comprado",
+      );
+
+      const allNormalMarcado =
+        normalItems.length > 0
+          ? normalItems.every((i) => i.separacao_marcado === true)
+          : true;
+
+      if (!allNormalMarcado) {
+        pendentes.push(pid);
+      } else if (compraItems.length > 0) {
+        // All normal items marcado but has compra items → pause for purchases
+        aguardandoCompra.push(pid);
+      } else {
+        // All items marcado, no compra items → fully separated
+        separados.push(pid);
+      }
+    }
+
+    // Update pedidos transitioning to aguardando_compra (partial — waiting for purchases)
+    if (aguardandoCompra.length > 0) {
+      const { error: compraError } = await supabase
+        .from("siso_pedidos")
+        .update({
+          status_separacao: "aguardando_compra",
+          // Do NOT set separacao_concluida_em — this is a partial pause, not completion
+          // Do NOT reset separacao_marcado/bipado_completo — preserve pick state
+        })
+        .in("id", aguardandoCompra)
+        .eq("status_separacao", "em_separacao");
+
+      if (compraError) {
+        logger.logError({
+          error: compraError,
+          source: "separacao-concluir",
+          message: "Failed to update pedidos to aguardando_compra",
+          category: "database",
+          errorCode: compraError.code,
+          requestPath: "/api/separacao/concluir",
+          requestMethod: "POST",
+          metadata: { aguardandoCompra, table: "siso_pedidos" },
+        });
+        return NextResponse.json(
+          { error: compraError.message },
+          { status: 500 },
+        );
+      }
+    }
+
+    // Update fully completed pedidos to 'separado'
     if (separados.length > 0) {
       const { error: updateError } = await supabase
         .from("siso_pedidos")
@@ -105,8 +183,19 @@ export async function POST(request: NextRequest) {
 
     logger.info("separacao-concluir", "Separação concluída", {
       separados,
+      aguardandoCompra,
       pendentes,
     });
+
+    // Record history for pedidos transitioning to aguardando_compra
+    if (aguardandoCompra.length > 0) {
+      registrarEventos(
+        aguardandoCompra.map((pid) => ({
+          pedidoId: pid,
+          evento: "separacao_aguardando_compra" as const,
+        })),
+      ).catch(() => {});
+    }
 
     // Record history for completed pedidos
     if (separados.length > 0) {
@@ -133,7 +222,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({ separados, pendentes });
+    return NextResponse.json({ separados, aguardandoCompra, pendentes });
   } catch (err) {
     logger.logError({
       error: err,

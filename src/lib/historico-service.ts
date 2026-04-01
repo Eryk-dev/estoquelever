@@ -30,6 +30,7 @@ export type EventoPedido =
   | "status_revertido"
   | "encaminhado"
   | "separacao_oc_concluida"
+  | "separacao_aguardando_compra"
   | "embalagem_direta_concluida";
 
 /**

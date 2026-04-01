@@ -64,7 +64,7 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Read src/app/api/separacao/concluir/route.ts fully first. The current flow: fetch items -> group by pedido -> check marks.every(Boolean) -> update to separado. The changes add: (1) compra_status to select, (2) early return on oc_pendente, (3) filter out compra items before completude check, (4) branch to aguardando_compra when compra items exist. The key insight: items with aguardando_compra/comprado are 'not my problem right now' — they are handled by the compras module."
     },
     {

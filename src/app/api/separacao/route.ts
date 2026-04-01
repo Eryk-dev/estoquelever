@@ -7,6 +7,7 @@ import type { SeparacaoCounts, StatusSeparacao } from "@/types";
 const VALID_STATUSES: StatusSeparacao[] = [
   "aguardando_compra",
   "aguardando_nf",
+  "validacao_oc",
   "aguardando_separacao",
   "em_separacao",
   "separado",
@@ -16,6 +17,7 @@ const VALID_STATUSES: StatusSeparacao[] = [
 const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
   "aguardando_compra",
   "aguardando_nf",
+  "validacao_oc",
   "aguardando_separacao",
   "em_separacao",
   "separado",
@@ -194,11 +196,11 @@ export async function GET(request: NextRequest) {
     const counts: SeparacaoCounts = {
       aguardando_compra: countResults[0].count ?? 0,
       aguardando_nf: countResults[1].count ?? 0,
-      validacao_oc: 0,
-      aguardando_separacao: countResults[2].count ?? 0,
-      em_separacao: countResults[3].count ?? 0,
-      separado: countResults[4].count ?? 0,
-      embalado: countResults[5].count ?? 0,
+      validacao_oc: countResults[2].count ?? 0,
+      aguardando_separacao: countResults[3].count ?? 0,
+      em_separacao: countResults[4].count ?? 0,
+      separado: countResults[5].count ?? 0,
+      embalado: countResults[6].count ?? 0,
     };
 
     // 3. Fetch item stats for progress display (separation + packing counts)
@@ -218,6 +220,7 @@ export async function GET(request: NextRequest) {
         indisponivel: number;
         equivalente_pendente: number;
         cancelamento_pendente: number;
+        oc_pendente: number;
         itens: Array<{
           sku: string;
           descricao: string;
@@ -256,6 +259,7 @@ export async function GET(request: NextRequest) {
               indisponivel: 0,
               equivalente_pendente: 0,
               cancelamento_pendente: 0,
+              oc_pendente: 0,
               itens: [],
             };
           }
@@ -267,6 +271,7 @@ export async function GET(request: NextRequest) {
           else if (item.compra_status === "indisponivel") cs.indisponivel++;
           else if (item.compra_status === "equivalente_pendente") cs.equivalente_pendente++;
           else if (item.compra_status === "cancelamento_pendente") cs.cancelamento_pendente++;
+          else if (item.compra_status === "oc_pendente") cs.oc_pendente++;
           cs.itens.push({
             sku: item.sku,
             descricao: item.descricao,

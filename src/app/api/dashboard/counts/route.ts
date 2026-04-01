@@ -63,6 +63,7 @@ export async function GET(request: NextRequest) {
       "aguardando_separacao",
       "em_separacao",
       "separado",
+      "validacao_oc",
     ]);
 
   if (activeGalpaoId) {

@@ -2021,6 +2021,50 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
+### POST /api/separacao/validar-oc-item
+
+**File:** `src/app/api/separacao/validar-oc-item/route.ts`
+
+**Purpose:** Handle OC item validation during the validacao_oc phase. Supports "encontrei" (found physically) and "esgotado" (confirmed missing) actions, with auto-transitions when all OC items are resolved.
+
+**Auth:** Session required (X-Session-Id header)
+
+**Request Body:**
+```json
+{
+  "item_ids": ["uuid", "uuid"],
+  "acao": "encontrei | esgotado"
+}
+```
+
+**Response (200):**
+```json
+{
+  "itens_atualizados": "number",
+  "transicoes": [
+    {
+      "pedido_id": "uuid",
+      "novo_status": "string"
+    }
+  ]
+}
+```
+
+**Business Logic:**
+- **encontrei:** Clears all compra fields (compra_status, fornecedor_oc, compra_quantidade_solicitada, compra_solicitada_em, ordem_compra_id) and marks item as picked (separacao_marcado = true, bipado_completo = true, quantidade_bipada = quantidade_pedida)
+- **esgotado:** Sets compra_status = aguardando_compra, fills fornecedor_oc via getFornecedorBySku, sets compra_quantidade_solicitada and compra_solicitada_em. Auto-creates or finds existing OC (siso_ordens_compra) by fornecedor + galpao and links item.
+- **Auto-transition FR-9:** When all OC items resolved and none have compra_status (all found), sets decisao_final = propria. If pedido in validacao_oc, transitions to aguardando_separacao.
+- **Auto-transition FR-8:** When all OC items resolved and ALL items have compra_status (100% OC pedido), transitions to aguardando_compra, clears separacao_operador_id and separacao_iniciada_em.
+
+**Side Effects:**
+- Updates `siso_pedido_itens` (compra fields + separacao fields)
+- May update `siso_pedidos` (status_separacao, decisao_final)
+- May create `siso_ordens_compra` (for esgotado action)
+- Records `oc_item_encontrado` or `oc_item_confirmado` events in `siso_pedido_historico`
+- Logs errors to `siso_erros`
+
+---
+
 ### POST /api/separacao/reimprimir
 
 **File:** `src/app/api/separacao/reimprimir/route.ts`

@@ -156,6 +156,7 @@ src/
         voltar-etapa/route.ts      # Go back one step (POST)
         tags/route.ts              # Manage separacao tags (GET list, POST add/remove/set)
         produto-esgotado/route.ts  # Mark product out of stock (POST)
+        validar-oc-item/route.ts   # Validate OC item: encontrei/esgotado + auto-transitions (POST)
         reimprimir/route.ts        # Reprint label (POST)
         forcar-pendente/route.ts   # Force orders back to pending — batch (POST)
         [pedidoId]/forcar-pendente/route.ts  # Force single order back to pending (PATCH)

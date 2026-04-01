@@ -31,7 +31,9 @@ export type EventoPedido =
   | "encaminhado"
   | "separacao_oc_concluida"
   | "separacao_aguardando_compra"
-  | "embalagem_direta_concluida";
+  | "embalagem_direta_concluida"
+  | "oc_item_encontrado"
+  | "oc_item_confirmado";
 
 /**
  * Record a single event in the order history.

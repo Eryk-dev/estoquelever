@@ -734,7 +734,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Auth:** X-Session-Id (required, filters by separacao_galpao_id if user has galpaoId)
 
 **Query Params:**
-- `status_separacao`: "aguardando_compra" | "aguardando_nf" | "aguardando_separacao" | "em_separacao" | "separado" | "embalado"
+- `status_separacao`: comma-separated list of statuses — "aguardando_compra" | "aguardando_nf" | "validacao_oc" | "aguardando_separacao" | "em_separacao" | "separado" | "embalado". Multiple values supported (e.g., "aguardando_compra,validacao_oc")
 - `empresa_origem_id`: filter by origin empresa
 - `marketplace`: filter by e-commerce name (ilike)
 - `busca`: search numero, id_pedido_ecommerce, cliente_nome (ilike)
@@ -746,6 +746,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
   "counts": {
     "aguardando_compra": "number",
     "aguardando_nf": "number",
+    "validacao_oc": "number",
     "aguardando_separacao": "number",
     "em_separacao": "number",
     "separado": "number",

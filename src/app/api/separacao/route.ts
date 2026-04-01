@@ -46,15 +46,16 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const statusFilter = searchParams.get(
-    "status_separacao",
-  ) as StatusSeparacao | null;
+  const statusFilterRaw = searchParams.get("status_separacao");
+  const statusFilters: StatusSeparacao[] = statusFilterRaw
+    ? (statusFilterRaw.split(",") as StatusSeparacao[])
+    : [];
   const empresaFilter = searchParams.get("empresa_origem_id");
   const marketplaceFilter = searchParams.get("marketplace");
   const busca = searchParams.get("busca");
   const tagFilter = searchParams.get("tag");
 
-  if (statusFilter && !VALID_STATUSES.includes(statusFilter)) {
+  if (statusFilters.length > 0 && statusFilters.some((s) => !VALID_STATUSES.includes(s))) {
     return NextResponse.json(
       { error: `Status inválido. Use: ${VALID_STATUSES.join(", ")}` },
       { status: 400 },
@@ -156,14 +157,16 @@ export async function GET(request: NextRequest) {
       pedidosQuery = pedidosQuery.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
     }
 
-    if (statusFilter) {
-      pedidosQuery = pedidosQuery.eq("status_separacao", statusFilter);
+    if (statusFilters.length === 1) {
+      pedidosQuery = pedidosQuery.eq("status_separacao", statusFilters[0]);
+    } else if (statusFilters.length > 1) {
+      pedidosQuery = pedidosQuery.in("status_separacao", statusFilters);
     }
     pedidosQuery = applyBuscaFilter(pedidosQuery);
     if (tagFilter) {
       pedidosQuery = pedidosQuery.contains("separacao_tags", [tagFilter]);
     }
-    if (statusFilter === "embalado") {
+    if (statusFilters.includes("embalado")) {
       pedidosQuery = pedidosQuery
         .order("embalagem_concluida_em", { ascending: false, nullsFirst: false })
         .order("data", { ascending: true });

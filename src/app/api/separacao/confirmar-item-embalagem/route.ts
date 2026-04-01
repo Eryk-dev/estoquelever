@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
-import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
+import { buscarEImprimirEtiqueta, imprimirEtiquetaDireta } from "@/lib/etiqueta-service";
 import { registrarEvento } from "@/lib/historico-service";
+import { kickWorker } from "@/lib/execution-worker";
 
 /**
  * POST /api/separacao/confirmar-item-embalagem
@@ -52,10 +53,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate parent pedido is separado (ready for packing)
+    // Validate parent pedido is separado or aguardando_compra (OC direct packing)
     const { data: pedido, error: pedidoError } = await supabase
       .from("siso_pedidos")
-      .select("id, status_separacao")
+      .select("id, status_separacao, empresa_origem_id, etiqueta_zpl, etiqueta_url, separacao_tags, separacao_galpao_id")
       .eq("id", item.pedido_id)
       .single();
 
@@ -66,10 +67,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (pedido.status_separacao !== "separado") {
+    const isOC = pedido.status_separacao === "aguardando_compra";
+
+    if (pedido.status_separacao !== "separado" && !isOC) {
       return NextResponse.json(
         {
-          error: "Pedido deve estar com status 'separado' para embalagem",
+          error: "Pedido deve estar com status 'separado' ou 'aguardando_compra' para embalagem",
           status_atual: pedido.status_separacao,
         },
         { status: 400 },
@@ -126,6 +129,150 @@ export async function POST(request: NextRequest) {
 
     // If all complete, transition pedido to 'embalado'
     if (pedido_completo) {
+      if (isOC) {
+        // ── OC resolution: auto-resolve compra + decisao + enqueue + label ──
+
+        // (a) Auto-resolve compra items
+        const { data: ocItems } = await supabase
+          .from("siso_pedido_itens")
+          .select("id, compra_status, compra_quantidade_solicitada")
+          .eq("pedido_id", pedido.id)
+          .not("compra_status", "is", null)
+          .not("compra_status", "in", "(recebido,cancelado)");
+
+        if (ocItems) {
+          for (const oci of ocItems) {
+            await supabase
+              .from("siso_pedido_itens")
+              .update({
+                compra_status: "recebido",
+                compra_quantidade_recebida: oci.compra_quantidade_solicitada ?? 0,
+              })
+              .eq("id", oci.id);
+          }
+        }
+
+        // (b) Determine decisao_final
+        let decisao: "propria" | "transferencia" = "propria";
+        let separacaoGalpaoId: string | null = null;
+        let empresaExecId = pedido.empresa_origem_id;
+
+        let pedidoGalpaoId: string | null = null;
+        if (pedido.empresa_origem_id) {
+          const { data: empresa } = await supabase
+            .from("siso_empresas")
+            .select("galpao_id")
+            .eq("id", pedido.empresa_origem_id)
+            .single();
+          pedidoGalpaoId = empresa?.galpao_id ?? null;
+        }
+
+        const { data: ocOrders } = await supabase
+          .from("siso_pedido_itens")
+          .select("ordem_compra_id")
+          .eq("pedido_id", pedido.id)
+          .not("ordem_compra_id", "is", null);
+
+        const ocIds = [...new Set((ocOrders ?? []).map((i) => i.ordem_compra_id).filter(Boolean))];
+        let ocGalpaoId: string | null = null;
+
+        if (ocIds.length > 0) {
+          const { data: ocs } = await supabase
+            .from("siso_ordens_compra")
+            .select("galpao_id")
+            .in("id", ocIds)
+            .limit(1);
+          ocGalpaoId = ocs?.[0]?.galpao_id ?? null;
+        }
+
+        if (ocGalpaoId && pedidoGalpaoId && ocGalpaoId !== pedidoGalpaoId) {
+          decisao = "transferencia";
+          separacaoGalpaoId = ocGalpaoId;
+          const { data: empresaOcGalpao } = await supabase
+            .from("siso_empresas")
+            .select("id")
+            .eq("galpao_id", ocGalpaoId)
+            .eq("ativo", true)
+            .order("criado_em", { ascending: true })
+            .limit(1)
+            .single();
+          if (empresaOcGalpao) empresaExecId = empresaOcGalpao.id;
+        } else {
+          separacaoGalpaoId = pedidoGalpaoId;
+        }
+
+        // (c) Update pedido
+        const currentTags: string[] = pedido.separacao_tags ?? [];
+        const newTags = currentTags.includes("embalagem direta")
+          ? currentTags
+          : [...currentTags, "embalagem direta"];
+
+        await supabase
+          .from("siso_pedidos")
+          .update({
+            status: "executando",
+            status_separacao: "embalado",
+            decisao_final: decisao,
+            separacao_galpao_id: separacaoGalpaoId,
+            embalagem_concluida_em: new Date().toISOString(),
+            embalagem_operador_id: session.id,
+            separacao_tags: newTags,
+          })
+          .eq("id", pedido.id);
+
+        // (d) Enqueue execution
+        await supabase.from("siso_fila_execucao").insert({
+          pedido_id: pedido.id,
+          empresa_id: empresaExecId,
+          tipo: "lancar_estoque",
+          status: "pendente",
+          tentativas: 0,
+          decisao,
+        });
+
+        // (e) Print label
+        let etiquetaStatus: "impresso" | "falhou" = "falhou";
+        let etiquetaErro: string | null = null;
+        try {
+          const etiqueta =
+            (pedido.etiqueta_zpl || pedido.etiqueta_url) && pedido.empresa_origem_id && separacaoGalpaoId
+              ? await imprimirEtiquetaDireta({
+                  pedidoId: pedido.id,
+                  numero: String(pedido.id),
+                  empresaOrigemId: pedido.empresa_origem_id,
+                  agrupamentoExpedicaoId: null,
+                  etiquetaZpl: pedido.etiqueta_zpl ?? null,
+                  etiquetaUrl: pedido.etiqueta_url ?? null,
+                  separacaoGalpaoId,
+                  separacaoOperadorId: session.id,
+                })
+              : await buscarEImprimirEtiqueta(pedido.id, session.id);
+          etiquetaStatus = etiqueta.success ? "impresso" : "falhou";
+          etiquetaErro = etiqueta.error ?? null;
+        } catch (err) {
+          etiquetaErro = err instanceof Error ? err.message : String(err);
+        }
+
+        registrarEvento({
+          pedidoId: pedido.id,
+          evento: "embalagem_direta_concluida",
+          usuarioId: session.id,
+          detalhes: { decisao, etiquetaStatus },
+        }).catch(() => {});
+
+        kickWorker().catch(() => {});
+
+        return NextResponse.json({
+          pedido_item_id,
+          quantidade_bipada: newBipada,
+          bipado_completo,
+          pedido_completo,
+          etiqueta_status: etiquetaStatus,
+          etiqueta_erro: etiquetaErro,
+        });
+      }
+
+      // ── Normal (separado) completion ──
       const { error: statusError } = await supabase
         .from("siso_pedidos")
         .update({
@@ -150,7 +297,7 @@ export async function POST(request: NextRequest) {
       pedido_completo,
     });
 
-    // Record event and await label print when packing is complete
+    // Record event and await label print when packing is complete (normal flow)
     if (pedido_completo) {
       registrarEvento({
         pedidoId: item.pedido_id,

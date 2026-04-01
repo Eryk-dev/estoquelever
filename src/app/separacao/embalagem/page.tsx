@@ -553,7 +553,7 @@ function EmbalagemPage() {
                 itemsLoading={itemsInitialLoading}
                 onConfirmItem={handleConfirmItem}
                 onReprint={handleReprint}
-                readOnly={isEmbalagemOC}
+
               />
             </div>
           );
@@ -585,7 +585,7 @@ function EmbalagemPage() {
                     itemsLoading={itemsInitialLoading}
                     onConfirmItem={handleConfirmItem}
                     onReprint={handleReprint}
-                    readOnly={isEmbalagemOC}
+    
                   />
                 ))}
               </div>
@@ -661,7 +661,6 @@ function EmbalagemOrderRow({
   itemsLoading,
   onConfirmItem,
   onReprint,
-  readOnly,
 }: {
   pedido: SeparacaoPedido;
   highlighted: boolean;
@@ -672,7 +671,6 @@ function EmbalagemOrderRow({
   itemsLoading?: boolean;
   onConfirmItem: (item: PedidoItem, delta: number) => void;
   onReprint: (pedidoId: string) => Promise<void>;
-  readOnly?: boolean;
 }) {
   const [reprinting, setReprinting] = useState(false);
   const totalItens = pedido.total_itens || 0;
@@ -793,7 +791,7 @@ function EmbalagemOrderRow({
                 key={item.id}
                 item={item}
                 onConfirm={onConfirmItem}
-                readOnly={isComplete || readOnly}
+                readOnly={isComplete}
               />
             ))}
           </div>

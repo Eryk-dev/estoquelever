@@ -9,6 +9,7 @@ Started: Wed Apr  1 16:59:27 -03 2026
 - SeparacaoCounts initializers exist in 3 places: `api/separacao/route.ts` (2x: emptyCounts + counts), `separacao/page.tsx` (EMPTY_COUNTS)
 - COUNT_STATUSES in `api/separacao/route.ts` maps by array index to countResults — adding a new status requires updating both the array and the index-based counts builder
 - Amber color scheme for "pending validation" states: `bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300`
+- iniciar/route.ts has a BLINDAGEM + DB guard (.eq/.in on status_separacao) — when allowing new statuses, update ALLOWED_STATUSES, toStart filter, AND the DB update guard
 
 ---
 
@@ -37,4 +38,15 @@ Started: Wed Apr  1 16:59:27 -03 2026
   - COUNT_STATUSES uses index-based mapping — inserting a new status shifts ALL subsequent indices in the counts builder. Must update both arrays AND the counts object simultaneously.
   - emptyCounts was already updated in US-001 with validacao_oc: 0 — only needed to wire it to countResults.
   - dashboard/counts/route.ts has separate queries for separacao vs compras badges — validacao_oc goes in separacao only (it's a separation-phase status, not a compras status).
+---
+
+## 2026-04-01 - US-003
+- Added 'validacao_oc' to ALLOWED_STATUSES in iniciar/route.ts
+- Added validacao_oc to toStart filter (|| p.status_separacao === 'validacao_oc')
+- Changed DB update guard from .eq() to .in() for ['aguardando_separacao', 'validacao_oc']
+- Updated error message to mention validacao_oc
+- Files changed: src/app/api/separacao/iniciar/route.ts
+- **Learnings for future iterations:**
+  - iniciar/route.ts has a BLINDAGEM that blocks pedidos with pending compra items (aguardando_compra, comprado) from transitioning. oc_pendente is NOT in that blocklist, which is correct — validacao_oc pedidos need to start separation to validate items.
+  - The DB update uses a guard .eq/.in on status_separacao to prevent race conditions — always update the guard when adding new allowed statuses.
 ---

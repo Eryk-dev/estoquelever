@@ -47,7 +47,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Three targeted line changes in one file. The line numbers are approximate — find the ALLOWED_STATUSES array, the toStart filter, and the .eq('status_separacao', 'aguardando_separacao') guard on the update query. All three must be changed together for validacao_oc pedidos to successfully transition to em_separacao."
     },
     {

@@ -77,7 +77,7 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Read both files first. The cancelar logic queries items with compra_status != null to decide the return status. The key change is adding a priority check: oc_pendente takes precedence (means the pedido hasn't finished validation). For voltar-etapa, STATUS_ORDER is a simple array — insert validacao_oc at the right position."
     },
     {
@@ -101,7 +101,7 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "This is the core new endpoint. Model the OC creation logic after src/app/api/separacao/produto-esgotado/route.ts lines 245-400 (the 'oc' acao block): getFornecedorBySku for supplier, find-or-create siso_ordens_compra by fornecedor + galpao, link items via ordem_compra_id. For the 'encontrei' action, the key insight is that clicking = found + bipado in one step, so set both compra fields to null AND separacao fields to true. Import getFornecedorBySku from '@/lib/sku-fornecedor', registrarEvento from '@/lib/historico-service', getSessionUser from '@/lib/session'."
     },
     {

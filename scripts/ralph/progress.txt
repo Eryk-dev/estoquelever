@@ -10,6 +10,10 @@ Started: Wed Apr  1 16:59:27 -03 2026
 - COUNT_STATUSES in `api/separacao/route.ts` maps by array index to countResults — adding a new status requires updating both the array and the index-based counts builder
 - Amber color scheme for "pending validation" states: `bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300`
 - iniciar/route.ts has a BLINDAGEM + DB guard (.eq/.in on status_separacao) — when allowing new statuses, update ALLOWED_STATUSES, toStart filter, AND the DB update guard
+- cancelar/route.ts classifies pedidos into 3 return statuses by compra_status priority: oc_pendente → validacao_oc, other compra → aguardando_compra, else → aguardando_separacao
+- voltar-etapa/route.ts STATUS_ORDER array determines valid admin move targets — add new statuses in flow order
+- OC creation pattern (find-or-create siso_ordens_compra by fornecedor + galpao): used in produto-esgotado/route.ts and validar-oc-item/route.ts — always match by fornecedor + galpao + status='aguardando_compra'
+- EventoPedido type in historico-service.ts must include new event types before they can be used in registrarEvento calls
 
 ---
 
@@ -64,4 +68,29 @@ Started: Wed Apr  1 16:59:27 -03 2026
   - EventoPedido in historico-service.ts is a string union — add new event types there before using them with registrarEventos
   - The aguardando_compra branch deliberately does NOT set separacao_concluida_em or reset any separacao fields — this preserves the pick state so when compra items arrive, the operator doesn't need to re-pick normal items
   - The oc_pendente guard applies to ALL pedido_ids in the batch — one unresolved pedido blocks the entire request (early return)
+---
+
+## 2026-04-01 - US-005
+- Modified cancelar/route.ts: added 3-way return status logic (oc_pendente → validacao_oc, other compra → aguardando_compra, else → aguardando_separacao). Queries compra_status values per pedido and uses oc_pendente as highest priority.
+- Modified voltar-etapa/route.ts: added 'validacao_oc' to STATUS_ORDER between aguardando_nf and aguardando_separacao.
+- Files changed: src/app/api/separacao/cancelar/route.ts, src/app/api/separacao/voltar-etapa/route.ts
+- **Learnings for future iterations:**
+  - cancelar/route.ts queries compra_status to decide return status — when adding new compra_status values that affect routing, update the classification logic here
+  - voltar-etapa STATUS_ORDER determines valid transition targets AND which pedidos can be moved — inserting validacao_oc enables admin to move pedidos to/from this status
+  - cancelar still resets separacao_marcado for ALL items including OC items — compra_status is NOT reset, so OC items retain their oc_pendente/aguardando_compra state after cancel
+---
+
+## 2026-04-01 - US-006
+- Created POST /api/separacao/validar-oc-item endpoint with encontrei/esgotado actions
+- encontrei: clears compra fields + marks as picked (separacao_marcado=true, bipado_completo=true)
+- esgotado: sets aguardando_compra + auto-creates/links OC (reuses produto-esgotado OC pattern)
+- Auto-transitions: FR-9 (all found → propria + aguardando_separacao), FR-8 (100% OC → aguardando_compra)
+- Added oc_item_encontrado and oc_item_confirmado to EventoPedido type
+- Updated docs/api-reference-complete.md and CLAUDE.md project structure
+- Files changed: src/app/api/separacao/validar-oc-item/route.ts, src/lib/historico-service.ts, docs/api-reference-complete.md, CLAUDE.md
+- **Learnings for future iterations:**
+  - The OC creation pattern (find-or-create by fornecedor + galpao) is reused from produto-esgotado/route.ts — extracted as helper function linkItemToOC
+  - EventoPedido in historico-service.ts must be updated BEFORE using new event types in route handlers
+  - validar-oc-item uses getSessionUser for auth — same pattern as bipar/marcar-item endpoints
+  - FR-8 auto-transition clears separacao_operador_id and separacao_iniciada_em but does NOT set separacao_concluida_em — consistent with concluir aguardando_compra branch
 ---

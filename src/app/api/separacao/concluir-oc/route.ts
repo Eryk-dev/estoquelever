@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
-import { preCriarAgrupamentosEmLote } from "@/lib/agrupamento-service";
+import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/agrupamento-service";
 import { kickWorker } from "@/lib/execution-worker";
 
 const LOG_SOURCE = "separacao-concluir-oc";
@@ -306,8 +306,15 @@ export async function POST(request: NextRequest) {
       });
     });
 
+    // 1. Fallback: create agrupamentos for pedidos that don't have one yet
     preCriarAgrupamentosEmLote(separados).catch((err) => {
       logger.error(LOG_SOURCE, "Falha ao pré-criar agrupamentos", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    // 2. Fast path: re-download ZPL for pedidos with agrupamento but missing ZPL
+    recarregarEtiquetasFaltantes(separados).catch((err) => {
+      logger.error(LOG_SOURCE, "Falha ao recarregar etiquetas faltantes", {
         error: err instanceof Error ? err.message : String(err),
       });
     });

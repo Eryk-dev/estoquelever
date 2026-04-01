@@ -50,19 +50,34 @@ export async function preCriarAgrupamentosEmLote(
 
   const supabase = createServiceClient();
 
+  // Gate: only attempt agrupamento for pedidos with NF persistence complete
+  // (both nota_fiscal_id and chave_acesso_nf must be set).
+  const { data: nfReady } = await supabase
+    .from("siso_pedidos")
+    .select("id")
+    .in("id", pedidoIds)
+    .not("nota_fiscal_id", "is", null)
+    .not("chave_acesso_nf", "is", null);
+
+  const readyIds = (nfReady ?? []).map((p) => p.id);
+  if (readyIds.length === 0) {
+    logger.info(LOG_SOURCE, "Nenhum pedido com NF completa para agrupamento", { pedidoIds });
+    return;
+  }
+
   // Recover any pedidos stuck with 'pending' for >5 minutes (crash recovery)
-  await recuperarPendingTravados(supabase, pedidoIds);
+  await recuperarPendingTravados(supabase, readyIds);
 
   // Atomic claim: sets agrupamento_expedicao_id = 'pending' and returns claimed rows.
   // Concurrent callers will get an empty result for already-claimed pedidos.
   const { data: pedidos, error: claimErr } = await supabase.rpc(
     "siso_claim_pedidos_para_agrupamento",
-    { p_pedido_ids: pedidoIds },
+    { p_pedido_ids: readyIds },
   );
 
   if (claimErr) {
     logger.error(LOG_SOURCE, "Falha ao reivindicar pedidos para agrupamento", {
-      pedidoIds,
+      pedidoIds: readyIds,
       error: claimErr.message,
     });
     return;
@@ -70,7 +85,7 @@ export async function preCriarAgrupamentosEmLote(
 
   if (!pedidos || pedidos.length === 0) {
     logger.info(LOG_SOURCE, "Nenhum pedido precisa de agrupamento (já reivindicados ou sem empresa)", {
-      pedidoIds,
+      pedidoIds: readyIds,
     });
     return;
   }

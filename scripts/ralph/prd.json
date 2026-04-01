@@ -33,7 +33,7 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "The separacao/route.ts file is large. VALID_STATUSES and COUNT_STATUSES are arrays near the top (lines 7-23). emptyCounts is right after. The compraStats calculation is in lines 208-281 — look for the if/else chain that checks compra_status values and add oc_pendente as a new branch. The dashboard counts file has a simpler .in() query for separacao."
     },
     {

@@ -26,3 +26,15 @@ Started: Wed Apr  1 16:59:27 -03 2026
   - The counts builder in api/separacao/route.ts uses index-based mapping from countResults — for US-001 I added validacao_oc: 0 as placeholder; US-002 must wire it into COUNT_STATUSES properly
   - pedidos/[id]/page.tsx has both separacao AND compra status maps — both may need updating
 ---
+
+## 2026-04-01 - US-002
+- Added 'validacao_oc' to VALID_STATUSES and COUNT_STATUSES arrays in api/separacao/route.ts
+- Wired validacao_oc count to countResults[2] (inserted at position 2, shifted subsequent indices)
+- Added oc_pendente counter to compraStats type, init object, and if/else chain
+- Added 'validacao_oc' to dashboard/counts separacao .in() query
+- Files changed: src/app/api/separacao/route.ts, src/app/api/dashboard/counts/route.ts
+- **Learnings for future iterations:**
+  - COUNT_STATUSES uses index-based mapping — inserting a new status shifts ALL subsequent indices in the counts builder. Must update both arrays AND the counts object simultaneously.
+  - emptyCounts was already updated in US-001 with validacao_oc: 0 — only needed to wire it to countResults.
+  - dashboard/counts/route.ts has separate queries for separacao vs compras badges — validacao_oc goes in separacao only (it's a separation-phase status, not a compras status).
+---

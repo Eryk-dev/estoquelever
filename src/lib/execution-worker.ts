@@ -39,6 +39,7 @@ import { getOrdemDeducao } from "./grupo-resolver";
 import { getEmpresaById } from "./empresa-lookup";
 import { logger } from "./logger";
 import { criarAgrupamentoFase1 } from "./agrupamento-service";
+import { getFornecedorBySku } from "./sku-fornecedor";
 
 // ─── Shared: enrich NF data + transition if already authorized ──────────────
 // After NF generation, checks Tiny API for authorization status.
@@ -467,12 +468,12 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
 async function resolveCompraItemIds(
   pedidoId: string,
   empresaOrigemId: string | null | undefined,
-): Promise<Array<{ id: string; quantidadeSolicitada: number }>> {
+): Promise<Array<{ id: string; quantidadeSolicitada: number; sku: string }>> {
   const supabase = createServiceClient();
 
   const { data: items, error: itemsError } = await supabase
     .from("siso_pedido_itens")
-    .select("id, produto_id, quantidade_pedida")
+    .select("id, produto_id, quantidade_pedida, sku")
     .eq("pedido_id", pedidoId);
 
   if (itemsError || !items) {
@@ -494,6 +495,7 @@ async function resolveCompraItemIds(
     return items.map((item) => ({
       id: String(item.id),
       quantidadeSolicitada: Number(item.quantidade_pedida ?? 0),
+      sku: String(item.sku ?? ""),
     }));
   }
 
@@ -516,6 +518,7 @@ async function resolveCompraItemIds(
     return items.map((item) => ({
       id: String(item.id),
       quantidadeSolicitada: Number(item.quantidade_pedida ?? 0),
+      sku: String(item.sku ?? ""),
     }));
   }
 
@@ -529,7 +532,7 @@ async function resolveCompraItemIds(
 
   // Allocate the available stock across repeated products before deciding the
   // missing quantity to buy for each order line.
-  const demandas: Array<{ id: string; quantidadeSolicitada: number }> = [];
+  const demandas: Array<{ id: string; quantidadeSolicitada: number; sku: string }> = [];
 
   for (const item of [...items].sort((a, b) =>
     String(a.id).localeCompare(String(b.id)),
@@ -549,6 +552,7 @@ async function resolveCompraItemIds(
       demandas.push({
         id: String(item.id),
         quantidadeSolicitada: quantidadeFaltante,
+        sku: String(item.sku ?? ""),
       });
     }
   }
@@ -670,16 +674,17 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
 
   await supabase
     .from("siso_pedidos")
-    .update({ status_separacao: "aguardando_compra" })
+    .update({ status_separacao: "validacao_oc" })
     .eq("id", job.pedido_id);
 
   for (const demanda of compraDemandas) {
     await supabase
       .from("siso_pedido_itens")
       .update({
-        compra_status: "aguardando_compra",
+        compra_status: "oc_pendente",
         compra_quantidade_solicitada: demanda.quantidadeSolicitada,
         compra_solicitada_em: now,
+        fornecedor_oc: getFornecedorBySku(demanda.sku).fornecedor,
       })
       .eq("id", demanda.id);
   }

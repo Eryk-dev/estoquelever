@@ -66,6 +66,7 @@ interface ConsolidatedProduct {
   galpao_nome: string | null;
   first_pedido_id: string;
   compra_status: string | null;
+  is_oc: boolean;
 }
 
 const SORT_OPTIONS = [
@@ -115,6 +116,8 @@ function ChecklistPage() {
   const [editingStock, setEditingStock] = useState<string | null>(null); // produto_id being edited
   const [editStockValue, setEditStockValue] = useState("");
   const [savingStock, setSavingStock] = useState(false);
+  const [ocEsgotadoItems, setOcEsgotadoItems] = useState<Set<string>>(new Set());
+  const [ocValidarLoading, setOcValidarLoading] = useState<string | null>(null);
   const locInputRef = useRef<HTMLInputElement>(null);
   const stockInputRef = useRef<HTMLInputElement>(null);
   const scanRef = useRef<HTMLInputElement>(null);
@@ -166,7 +169,8 @@ function ChecklistPage() {
     const map = new Map<string, ConsolidatedProduct>();
 
     for (const item of items) {
-      const key = item.produto_id;
+      const isOc = item.compra_status === "oc_pendente";
+      const key = `${item.produto_id}_${isOc ? "oc" : "normal"}`;
       const existing = map.get(key);
       if (existing) {
         existing.quantidade_total += item.quantidade;
@@ -189,6 +193,7 @@ function ChecklistPage() {
           galpao_nome: item.galpao_nome,
           first_pedido_id: item.pedido_id,
           compra_status: item.compra_status,
+          is_oc: isOc,
         });
       }
     }
@@ -205,9 +210,24 @@ function ChecklistPage() {
     return result;
   }, [items, sort]);
 
-  // Progress
-  const totalProducts = consolidated.length;
-  const marcadoProducts = consolidated.filter((p) => p.all_marcado).length;
+  // Split into OC and normal items
+  const { ocItems, normalItems } = useMemo(() => {
+    const oc: ConsolidatedProduct[] = [];
+    const normal: ConsolidatedProduct[] = [];
+    for (const p of consolidated) {
+      if (p.is_oc) oc.push(p);
+      else normal.push(p);
+    }
+    return { ocItems: oc, normalItems: normal };
+  }, [consolidated]);
+
+  // Progress (OC resolved = encontrei OR esgotado)
+  const totalProducts = normalItems.length + ocItems.length;
+  const normalMarcado = normalItems.filter((p) => p.all_marcado).length;
+  const ocResolved = ocItems.filter(
+    (p) => p.all_marcado || ocEsgotadoItems.has(p.produto_id),
+  ).length;
+  const marcadoProducts = normalMarcado + ocResolved;
   const progressPct =
     totalProducts > 0 ? (marcadoProducts / totalProducts) * 100 : 0;
 
@@ -282,12 +302,14 @@ function ChecklistPage() {
         return;
       }
 
-      // Optimistic: mark matching items in cache
+      // Optimistic: mark matching normal items in cache (skip OC items)
       queryClient.setQueryData<{ items: ChecklistItem[] }>(queryKey, (old) => {
         if (!old) return old;
         return {
           items: old.items.map((item) =>
-            (item.sku === sku || item.gtin === sku) && !item.separacao_marcado
+            (item.sku === sku || item.gtin === sku) &&
+            !item.separacao_marcado &&
+            item.compra_status !== "oc_pendente"
               ? { ...item, separacao_marcado: true, separacao_marcado_em: new Date().toISOString() }
               : item,
           ),
@@ -331,9 +353,10 @@ function ChecklistPage() {
         return;
       }
 
-      const { separados, pendentes } = (await res.json()) as {
+      const { separados, pendentes, aguardandoCompra } = (await res.json()) as {
         separados: string[];
         pendentes: string[];
+        aguardandoCompra?: string[];
       };
 
       if (isPickOC) {
@@ -344,13 +367,19 @@ function ChecklistPage() {
         const parts: string[] = [];
         if (separados.length > 0)
           parts.push(`${separados.length} separado(s)`);
+        if (aguardandoCompra && aguardandoCompra.length > 0)
+          parts.push(`${aguardandoCompra.length} aguardando compra`);
         if (pendentes.length > 0)
           parts.push(`${pendentes.length} pendente(s)`);
         toast.success(parts.join(", "));
       }
 
       queryClient.invalidateQueries({ queryKey: ["separacao"] });
-      router.push("/separacao?tab=separado");
+      if (aguardandoCompra && aguardandoCompra.length > 0 && separados.length === 0) {
+        router.push("/separacao?tab=aguardando_compra");
+      } else {
+        router.push("/separacao?tab=separado");
+      }
     } catch {
       toast.error("Erro de conexao");
     } finally {
@@ -638,6 +667,367 @@ function ChecklistPage() {
     }
   }
 
+  // Handle OC item validation (encontrei / esgotado)
+  async function handleOcValidar(
+    product: ConsolidatedProduct,
+    acao: "encontrei" | "esgotado",
+  ) {
+    setOcValidarLoading(product.produto_id);
+    try {
+      const res = await sisoFetch("/api/separacao/validar-oc-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_ids: product.item_ids, acao }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Erro ao validar item OC");
+        return;
+      }
+
+      const result = await res.json();
+
+      if (acao === "encontrei") {
+        // Optimistic: mark as picked but keep compra_status so item stays in OC section
+        queryClient.setQueryData<{ items: ChecklistItem[] }>(queryKey, (old) => {
+          if (!old) return old;
+          return {
+            items: old.items.map((item) =>
+              product.item_ids.includes(item.id)
+                ? {
+                    ...item,
+                    separacao_marcado: true,
+                    separacao_marcado_em: new Date().toISOString(),
+                  }
+                : item,
+            ),
+          };
+        });
+        toast.success(`Item encontrado: ${product.sku}`);
+      } else {
+        // Esgotado: track locally (keep compra_status = oc_pendente so item stays in OC section)
+        setOcEsgotadoItems((prev) => {
+          const next = new Set(prev);
+          next.add(product.produto_id);
+          return next;
+        });
+        toast.success(`Item esgotado confirmado: ${product.sku}`);
+      }
+
+      // Handle auto-transitions
+      if (result.transicoes?.length > 0) {
+        queryClient.invalidateQueries({ queryKey: ["separacao"] });
+        queryClient.invalidateQueries({ queryKey });
+
+        const transitionedIds = new Set(
+          result.transicoes.map((t: { pedido_id: string }) => t.pedido_id),
+        );
+        const allTransitioned = pedidoIds.every((id) =>
+          transitionedIds.has(id),
+        );
+
+        if (allTransitioned) {
+          toast.success("Todos os itens OC resolvidos");
+          router.push("/separacao");
+          return;
+        }
+
+        for (const t of result.transicoes) {
+          toast.info(
+            `Pedido transitou para ${(t as { novo_status: string }).novo_status.replace(/_/g, " ")}`,
+          );
+        }
+      }
+    } catch {
+      toast.error("Erro de conexao");
+    } finally {
+      setOcValidarLoading(null);
+    }
+  }
+
+  // ─── Product row renderer (shared between OC and normal sections) ───
+
+  const renderProductRow = (product: ConsolidatedProduct) => {
+    const isOc = product.is_oc;
+    const isOcEsgotado = isOc && ocEsgotadoItems.has(product.produto_id);
+    const isOcResolved = isOc && (product.all_marcado || isOcEsgotado);
+    const isLoadingOc = isOc && ocValidarLoading === product.produto_id;
+
+    return (
+      <button
+        key={isOc ? `${product.produto_id}_oc` : product.produto_id}
+        type="button"
+        onClick={() => {
+          if (isOcResolved || isLoadingOc) return;
+          if (isOc) handleOcValidar(product, "encontrei");
+          else handleToggle(product);
+        }}
+        className={cn(
+          "flex w-full min-h-[44px] items-start sm:items-center gap-2.5 sm:gap-3 rounded-xl border px-3 sm:px-4 py-3 text-left transition-all duration-300",
+          isOcEsgotado
+            ? "border-zinc-200 bg-zinc-50/50 opacity-60 dark:border-zinc-700 dark:bg-zinc-900/20"
+            : product.all_marcado
+              ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
+              : "border-line bg-paper hover:bg-surface",
+          !isOc &&
+            highlightedSku === product.produto_id &&
+            "ring-2 ring-blue-400 border-blue-300 bg-blue-50/50 dark:ring-blue-500 dark:border-blue-600 dark:bg-blue-950/20",
+        )}
+      >
+        {/* Checkbox visual */}
+        <div
+          className={cn(
+            "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition-colors mt-0.5 sm:mt-0",
+            isOcEsgotado
+              ? "border-zinc-300 bg-zinc-200 text-zinc-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-400"
+              : product.all_marcado
+                ? "border-emerald-500 bg-emerald-500 text-white"
+                : "border-zinc-300 dark:border-zinc-600",
+          )}
+        >
+          {isOcEsgotado ? (
+            <X className="h-4 w-4" />
+          ) : product.all_marcado ? (
+            <Check className="h-4 w-4" />
+          ) : isLoadingOc ? (
+            <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+          ) : null}
+        </div>
+
+        {/* Product thumbnail */}
+        <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-line bg-surface">
+          {product.imagem_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={product.imagem_url}
+              alt={product.sku}
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <Package className="h-4 w-4 text-ink-faint" aria-hidden="true" />
+            </div>
+          )}
+        </div>
+
+        {/* Content — stacks on mobile, single row on sm+ */}
+        <div className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
+          {/* SKU / Description block */}
+          <div className="min-w-0 sm:flex-1">
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "font-mono text-xs font-semibold",
+                  isOcEsgotado
+                    ? "text-zinc-400 line-through dark:text-zinc-500"
+                    : product.all_marcado
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-ink",
+                )}
+              >
+                {product.sku}
+              </span>
+              {isOcEsgotado ? (
+                <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                  Esgotado
+                </span>
+              ) : product.compra_status ? (
+                <span
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                    product.compra_status === "recebido"
+                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                      : product.compra_status === "comprado"
+                        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                        : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+                  )}
+                >
+                  OC
+                </span>
+              ) : null}
+              {product.gtin && (
+                <span className="text-[10px] text-ink-faint">
+                  <span className="hidden sm:inline">GTIN </span>{product.gtin}
+                </span>
+              )}
+              {/* Qty badge — mobile only */}
+              <span
+                className={cn(
+                  "sm:hidden ml-auto shrink-0 rounded-md px-2 py-0.5 font-mono font-semibold",
+                  product.all_marcado
+                    ? "text-sm bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+                    : product.quantidade_total > 1
+                      ? "text-base bg-amber-100 text-amber-700 ring-2 ring-amber-300 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-600"
+                      : "text-sm bg-zinc-100 text-ink dark:bg-zinc-800",
+                )}
+              >
+                {product.quantidade_total > 1 && !product.all_marcado ? `${product.quantidade_total}x` : product.quantidade_total}
+              </span>
+            </div>
+            <p
+              className={cn(
+                "truncate text-xs sm:text-sm mt-0.5",
+                isOcEsgotado
+                  ? "text-zinc-400/60 line-through dark:text-zinc-500/60"
+                  : product.all_marcado
+                    ? "text-emerald-600/60 line-through dark:text-emerald-400/60"
+                    : "text-ink-faint sm:text-ink",
+              )}
+            >
+              {product.descricao}
+            </p>
+          </div>
+
+          {/* Qty badge — desktop only */}
+          <span
+            className={cn(
+              "hidden sm:inline-flex shrink-0 rounded-md px-2 py-0.5 font-mono font-semibold",
+              product.all_marcado
+                ? "text-sm bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+                : product.quantidade_total > 1
+                  ? "text-base bg-amber-100 text-amber-700 ring-2 ring-amber-300 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-600"
+                  : "text-sm bg-zinc-100 text-ink dark:bg-zinc-800",
+            )}
+          >
+            {product.quantidade_total > 1 && !product.all_marcado ? `${product.quantidade_total}x` : product.quantidade_total}
+          </span>
+
+          {/* Stock + Location + Esgotado — wraps on mobile, inline on sm+ */}
+          <div className="mt-1.5 sm:mt-0 flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0">
+            {/* Stock badge */}
+            {!isOcEsgotado && editingStock === product.produto_id ? (
+              <div
+                className="inline-flex items-center gap-1"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  ref={stockInputRef}
+                  type="number"
+                  min={0}
+                  value={editStockValue}
+                  onChange={(e) => setEditStockValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); saveStock(product); }
+                    if (e.key === "Escape") { e.preventDefault(); setEditingStock(null); }
+                  }}
+                  disabled={savingStock}
+                  className="h-7 w-20 rounded-md border border-amber-300 bg-white px-2 font-mono text-xs text-ink text-center focus:border-amber-500 focus:outline-none dark:border-amber-700 dark:bg-zinc-900"
+                />
+                <button
+                  type="button"
+                  disabled={savingStock}
+                  onClick={() => saveStock(product)}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-amber-500 text-white transition-colors hover:bg-amber-600 disabled:opacity-40"
+                  title="Salvar estoque"
+                >
+                  {savingStock ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                </button>
+              </div>
+            ) : !isOcEsgotado ? (
+              <button
+                type="button"
+                onClick={(e) => startEditStock(product, e)}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-xs font-semibold transition-colors",
+                  product.disponivel >= product.quantidade_total
+                    ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/60"
+                    : product.disponivel > 0
+                      ? "bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/60"
+                      : "bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60",
+                )}
+                title={`Estoque: saldo ${product.saldo}, disponivel ${product.disponivel} — clique para ajustar`}
+              >
+                <Boxes className="h-3 w-3" />
+                {product.disponivel}
+                <Pencil className="h-2.5 w-2.5 opacity-50" />
+              </button>
+            ) : null}
+
+            {/* Location */}
+            {!isOcEsgotado && editingLoc === product.produto_id ? (
+              <div
+                className="inline-flex items-center gap-1"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  ref={locInputRef}
+                  type="text"
+                  value={editLocValue}
+                  onChange={(e) => setEditLocValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); saveLocation(product); }
+                    if (e.key === "Escape") { e.preventDefault(); setEditingLoc(null); }
+                  }}
+                  disabled={savingLoc}
+                  placeholder="Ex: A1-02"
+                  className="h-7 w-24 rounded-md border border-blue-300 bg-white px-2 font-mono text-xs text-ink focus:border-blue-500 focus:outline-none dark:border-blue-700 dark:bg-zinc-900"
+                />
+                <button
+                  type="button"
+                  disabled={savingLoc}
+                  onClick={() => saveLocation(product)}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-500 text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
+                  title="Salvar"
+                >
+                  {savingLoc ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                </button>
+              </div>
+            ) : !isOcEsgotado ? (
+              <button
+                type="button"
+                onClick={(e) => startEditLocation(product, e)}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-xs font-semibold transition-colors",
+                  product.localizacao
+                    ? "bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+                    : "bg-zinc-100 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700",
+                )}
+                title="Editar localizacao"
+              >
+                {product.localizacao ? (
+                  <>
+                    <MapPin className="h-3 w-3" />
+                    {product.localizacao}
+                  </>
+                ) : (
+                  <>
+                    <MapPinOff className="h-3 w-3" />
+                    Sem loc.
+                  </>
+                )}
+                <Pencil className="h-2.5 w-2.5 opacity-50" />
+              </button>
+            ) : null}
+
+            {/* Esgotado button */}
+            {!product.all_marcado && !isOcEsgotado && (
+              <button
+                type="button"
+                disabled={isOc ? isLoadingOc : esgotadoLoading !== null}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (isOc) handleOcValidar(product, "esgotado");
+                  else handleEsgotado(product.sku, e);
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-40 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
+                title={isOc ? `Confirmar ${product.sku} esgotado` : `Marcar ${product.sku} como esgotado`}
+              >
+                {(isOc ? isLoadingOc : esgotadoLoading === product.sku) ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <XCircle className="h-3 w-3" />
+                )}
+                Esgotado
+              </button>
+            )}
+          </div>
+        </div>
+      </button>
+    );
+  };
+
   // ─── Render ──────────────────────────────────────────────────
 
   if (loading) {
@@ -748,255 +1138,33 @@ function ChecklistPage() {
         ) : consolidated.length === 0 ? (
           <EmptyState message="Nenhum item encontrado" />
         ) : (
-          <div className="space-y-1">
-            {consolidated.map((product) => (
-              <button
-                key={product.produto_id}
-                type="button"
-                onClick={() => handleToggle(product)}
-                className={cn(
-                  "flex w-full min-h-[44px] items-start sm:items-center gap-2.5 sm:gap-3 rounded-xl border px-3 sm:px-4 py-3 text-left transition-all duration-300",
-                  product.all_marcado
-                    ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
-                    : "border-line bg-paper hover:bg-surface",
-                  highlightedSku === product.produto_id &&
-                    "ring-2 ring-blue-400 border-blue-300 bg-blue-50/50 dark:ring-blue-500 dark:border-blue-600 dark:bg-blue-950/20",
-                )}
-              >
-                {/* Checkbox visual */}
-                <div
-                  className={cn(
-                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition-colors mt-0.5 sm:mt-0",
-                    product.all_marcado
-                      ? "border-emerald-500 bg-emerald-500 text-white"
-                      : "border-zinc-300 dark:border-zinc-600",
-                  )}
-                >
-                  {product.all_marcado && <Check className="h-4 w-4" />}
-                </div>
-
-                {/* Product thumbnail */}
-                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-line bg-surface">
-                  {product.imagem_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={product.imagem_url}
-                      alt={product.sku}
-                      className="h-full w-full object-cover"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center">
-                      <Package className="h-4 w-4 text-ink-faint" aria-hidden="true" />
-                    </div>
-                  )}
-                </div>
-
-                {/* Content — stacks on mobile, single row on sm+ */}
-                <div className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
-                  {/* SKU / Description block */}
-                  <div className="min-w-0 sm:flex-1">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          "font-mono text-xs font-semibold",
-                          product.all_marcado
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-ink",
-                        )}
-                      >
-                        {product.sku}
-                      </span>
-                      {product.compra_status && (
-                        <span
-                          className={cn(
-                            "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                            product.compra_status === "recebido"
-                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                              : product.compra_status === "comprado"
-                                ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                                : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
-                          )}
-                        >
-                          OC
-                        </span>
-                      )}
-                      {product.gtin && (
-                        <span className="text-[10px] text-ink-faint">
-                          <span className="hidden sm:inline">GTIN </span>{product.gtin}
-                        </span>
-                      )}
-                      {/* Qty badge — mobile only */}
-                      <span
-                        className={cn(
-                          "sm:hidden ml-auto shrink-0 rounded-md px-2 py-0.5 font-mono font-semibold",
-                          product.all_marcado
-                            ? "text-sm bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
-                            : product.quantidade_total > 1
-                              ? "text-base bg-amber-100 text-amber-700 ring-2 ring-amber-300 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-600"
-                              : "text-sm bg-zinc-100 text-ink dark:bg-zinc-800",
-                        )}
-                      >
-                        {product.quantidade_total > 1 && !product.all_marcado ? `${product.quantidade_total}x` : product.quantidade_total}
-                      </span>
-                    </div>
-                    <p
-                      className={cn(
-                        "truncate text-xs sm:text-sm mt-0.5",
-                        product.all_marcado
-                          ? "text-emerald-600/60 line-through dark:text-emerald-400/60"
-                          : "text-ink-faint sm:text-ink",
-                      )}
-                    >
-                      {product.descricao}
-                    </p>
-                  </div>
-
-                  {/* Qty badge — desktop only */}
-                  <span
-                    className={cn(
-                      "hidden sm:inline-flex shrink-0 rounded-md px-2 py-0.5 font-mono font-semibold",
-                      product.all_marcado
-                        ? "text-sm bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
-                        : product.quantidade_total > 1
-                          ? "text-base bg-amber-100 text-amber-700 ring-2 ring-amber-300 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-600"
-                          : "text-sm bg-zinc-100 text-ink dark:bg-zinc-800",
-                    )}
-                  >
-                    {product.quantidade_total > 1 && !product.all_marcado ? `${product.quantidade_total}x` : product.quantidade_total}
+          <>
+            {/* OC Conference Section */}
+            {ocItems.length > 0 && (
+              <div className="rounded-xl border-2 border-amber-300 bg-amber-50/30 p-3 dark:border-amber-700 dark:bg-amber-950/20">
+                <div className="mb-2 flex items-center gap-2 px-1">
+                  <ShoppingCart className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  <h3 className="text-sm font-bold text-amber-800 dark:text-amber-300">
+                    Conferência OC
+                  </h3>
+                  <span className="text-xs text-amber-600/70 dark:text-amber-400/70">
+                    {ocItems.filter((p) => !p.all_marcado && !ocEsgotadoItems.has(p.produto_id)).length} pendente(s)
                   </span>
-
-                  {/* Stock + Location + Esgotado — wraps on mobile, inline on sm+ */}
-                  <div className="mt-1.5 sm:mt-0 flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0">
-                    {/* Stock badge */}
-                    {editingStock === product.produto_id ? (
-                      <div
-                        className="inline-flex items-center gap-1"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          ref={stockInputRef}
-                          type="number"
-                          min={0}
-                          value={editStockValue}
-                          onChange={(e) => setEditStockValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") { e.preventDefault(); saveStock(product); }
-                            if (e.key === "Escape") { e.preventDefault(); setEditingStock(null); }
-                          }}
-                          disabled={savingStock}
-                          className="h-7 w-20 rounded-md border border-amber-300 bg-white px-2 font-mono text-xs text-ink text-center focus:border-amber-500 focus:outline-none dark:border-amber-700 dark:bg-zinc-900"
-                        />
-                        <button
-                          type="button"
-                          disabled={savingStock}
-                          onClick={() => saveStock(product)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-amber-500 text-white transition-colors hover:bg-amber-600 disabled:opacity-40"
-                          title="Salvar estoque"
-                        >
-                          {savingStock ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => startEditStock(product, e)}
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-xs font-semibold transition-colors",
-                          product.disponivel >= product.quantidade_total
-                            ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/60"
-                            : product.disponivel > 0
-                              ? "bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/60"
-                              : "bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60",
-                        )}
-                        title={`Estoque: saldo ${product.saldo}, disponivel ${product.disponivel} — clique para ajustar`}
-                      >
-                        <Boxes className="h-3 w-3" />
-                        {product.disponivel}
-                        <Pencil className="h-2.5 w-2.5 opacity-50" />
-                      </button>
-                    )}
-
-                    {/* Location */}
-                    {editingLoc === product.produto_id ? (
-                      <div
-                        className="inline-flex items-center gap-1"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          ref={locInputRef}
-                          type="text"
-                          value={editLocValue}
-                          onChange={(e) => setEditLocValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") { e.preventDefault(); saveLocation(product); }
-                            if (e.key === "Escape") { e.preventDefault(); setEditingLoc(null); }
-                          }}
-                          disabled={savingLoc}
-                          placeholder="Ex: A1-02"
-                          className="h-7 w-24 rounded-md border border-blue-300 bg-white px-2 font-mono text-xs text-ink focus:border-blue-500 focus:outline-none dark:border-blue-700 dark:bg-zinc-900"
-                        />
-                        <button
-                          type="button"
-                          disabled={savingLoc}
-                          onClick={() => saveLocation(product)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-500 text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
-                          title="Salvar"
-                        >
-                          {savingLoc ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => startEditLocation(product, e)}
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-xs font-semibold transition-colors",
-                          product.localizacao
-                            ? "bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
-                            : "bg-zinc-100 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700",
-                        )}
-                        title="Editar localizacao"
-                      >
-                        {product.localizacao ? (
-                          <>
-                            <MapPin className="h-3 w-3" />
-                            {product.localizacao}
-                          </>
-                        ) : (
-                          <>
-                            <MapPinOff className="h-3 w-3" />
-                            Sem loc.
-                          </>
-                        )}
-                        <Pencil className="h-2.5 w-2.5 opacity-50" />
-                      </button>
-                    )}
-
-                    {/* Esgotado button */}
-                    {!product.all_marcado && (
-                      <button
-                        type="button"
-                        disabled={esgotadoLoading !== null}
-                        onClick={(e) => handleEsgotado(product.sku, e)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-40 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/50"
-                        title={`Marcar ${product.sku} como esgotado`}
-                      >
-                        {esgotadoLoading === product.sku ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <XCircle className="h-3 w-3" />
-                        )}
-                        Esgotado
-                      </button>
-                    )}
-                  </div>
                 </div>
-              </button>
-            ))}
-          </div>
-        )}
+                <div className="space-y-1">
+                  {ocItems.map(renderProductRow)}
+                </div>
+              </div>
+            )}
 
+            {/* Normal items */}
+            {normalItems.length > 0 && (
+              <div className="space-y-1">
+                {normalItems.map(renderProductRow)}
+              </div>
+            )}
+          </>
+        )}
         {/* Action buttons */}
         {!isLoading && consolidated.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">

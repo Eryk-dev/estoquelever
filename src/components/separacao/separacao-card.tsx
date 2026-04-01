@@ -51,6 +51,8 @@ export interface SeparacaoPedido {
   compra_stats: CompraStatsData | null;
   etiqueta_status: string | null;
   etiqueta_pronta: boolean;
+  nf_emitida: boolean;
+  agrupamento_criado: boolean;
   separacao_tags: string[];
   encaminhado_de: string | null;
 }
@@ -279,6 +281,43 @@ export function SeparacaoCard({
                 {statusBadge.label}
               </span>
             )}
+
+            {/* Step indicators: NF → Agrupamento → Etiqueta */}
+            <div className="hidden shrink-0 items-center gap-1 sm:inline-flex" aria-label="Etapas do pedido">
+              <span
+                className={cn(
+                  "flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold leading-none",
+                  pedido.nf_emitida
+                    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400"
+                    : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600",
+                )}
+                title={pedido.nf_emitida ? "NF emitida" : "NF pendente"}
+              >
+                N
+              </span>
+              <span
+                className={cn(
+                  "flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold leading-none",
+                  pedido.agrupamento_criado
+                    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400"
+                    : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600",
+                )}
+                title={pedido.agrupamento_criado ? "Agrupamento criado" : "Agrupamento pendente"}
+              >
+                A
+              </span>
+              <span
+                className={cn(
+                  "flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold leading-none",
+                  pedido.etiqueta_pronta
+                    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400"
+                    : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600",
+                )}
+                title={pedido.etiqueta_pronta ? "Etiqueta pronta" : "Etiqueta pendente"}
+              >
+                E
+              </span>
+            </div>
 
             {/* Retry label fetch when embalado without cached ZPL */}
             {canRetryEtiqueta && (

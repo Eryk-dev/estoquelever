@@ -138,6 +138,7 @@ export async function GET(request: NextRequest) {
         `id, numero, data, id_pedido_ecommerce, cliente_nome,
          nome_ecommerce, forma_envio_descricao, status_separacao, decisao_final, filial_origem, marcadores, separacao_tags,
          empresa_origem_id, separacao_galpao_id, etiqueta_status, etiqueta_zpl, embalagem_concluida_em,
+         nota_fiscal_id, agrupamento_expedicao_id,
          encaminhado_de, siso_empresas(nome)`,
       )
       .not("status_separacao", "is", null);
@@ -309,6 +310,8 @@ export async function GET(request: NextRequest) {
         compra_stats: cs,
         etiqueta_status: p.etiqueta_status ?? null,
         etiqueta_pronta: !!p.etiqueta_zpl,
+        nf_emitida: !!p.nota_fiscal_id,
+        agrupamento_criado: !!p.agrupamento_expedicao_id && p.agrupamento_expedicao_id !== "pending",
         encaminhado_de: p.encaminhado_de ?? null,
       };
     });

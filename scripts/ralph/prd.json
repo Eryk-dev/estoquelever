@@ -1,123 +1,180 @@
 {
-  "project": "SISO - Agrupamento Antecipado com Estoque Mantido na Aprovacao",
-  "branchName": "ralph/agrupamento-antecipado-sem-mover-estoque",
-  "description": "Mantem o desconto de estoque atual em propria e transferencia, estende a geracao de NF para pedidos oc na aprovacao (sem baixa de estoque), e antecipa a criacao do agrupamento fase 1 assim que a NF estiver persistida em todos os fluxos (propria, transferencia e oc). Separado passa a ser prioritariamente fast path de etiqueta/ZPL, com fallback para criar agrupamento apenas quando ele ainda nao existir. PRD completo em tasks/prd-pipeline-antecipado-nf-agrupamento.md",
+  "project": "SISO - Validação de OC na Separação",
+  "branchName": "ralph/validacao-oc-separacao",
+  "description": "Introduz fase de validação física de OC na separação. Após aprovação, o worker marca itens faltantes como oc_pendente e o pedido entra em validacao_oc. O operador confere fisicamente no checklist: clique = encontrou+bipado, esgotado = vai pra compras. Comprador só vê itens confirmados esgotados. PRD completo em tasks/prd-validacao-oc-separacao.md",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Create shared fase-1 agrupamento helper",
-      "description": "As a developer, I want a reusable helper that creates fase-1 agrupamento for a pedido as soon as NF persistence is complete.",
+      "title": "Add types, labels, and colors for validacao_oc + oc_pendente",
+      "description": "As a developer, I want the new status values registered in the type system and all label/color maps so that downstream code can reference them without runtime errors.",
       "acceptanceCriteria": [
-        "Create criarAgrupamentoFase1(pedidoId) in a shared module",
-        "Helper re-fetches the pedido and only proceeds when nota_fiscal_id and chave_acesso_nf are both persisted",
-        "Helper checks idempotency and skips when agrupamento_expedicao_id is already valid",
-        "Helper reuses or extracts the existing atomic claim pattern from agrupamento-service (pending + siso_claim_pedidos_para_agrupamento) instead of introducing a competing guard",
-        "If the atomic claim path is tightened for fase-1, it never writes pending before both NF persistence fields exist",
-        "Helper includes the current fase-1 semantics explicitly: create agrupamento, attempt concluirAgrupamento with the same non-fatal posture already used by agrupamento-service, then obterAgrupamento to discover and save expedicao_id",
-        "Helper does not fetch etiqueta/ZPL or baixar ZPL",
-        "Shared pending recovery is extracted or made callable outside preCriarAgrupamentosEmLote so fase-1 entrypoints can recover stale pending before or during claim",
-        "On success, save agrupamento_expedicao_id and expedicao_id",
-        "On failure, leave the pedido eligible for future retry",
+        "In src/types/index.ts: add 'oc_pendente' to the CompraStatus union type",
+        "In src/types/index.ts: add 'validacao_oc' to the StatusSeparacao union type",
+        "In src/types/index.ts: add 'validacao_oc: number' to the SeparacaoCounts interface",
+        "In src/app/pedidos/page.tsx: add 'validacao_oc' entry to STATUS_SEPARACAO_COLORS (use amber, e.g., 'bg-amber-100 text-amber-800') and STATUS_SEPARACAO_LABELS (label: 'Validação OC'). Also add to the filter options array if one exists.",
+        "In src/app/pedidos/[id]/page.tsx: add 'validacao_oc' entry to STATUS_SEPARACAO_COLORS and STATUS_SEPARACAO_LABELS with same values",
+        "In src/components/separacao/separacao-card.tsx: find the compra status map (COMPRA_STATUS_MAP or similar) and add entry for 'oc_pendente' with amber icon (Clock) and label 'OC Pendente'",
         "Typecheck passes"
       ],
       "priority": 1,
       "passes": true,
-      "notes": "This is the core primitive of the new Ralph. The project is no longer about moving stock timing; it is about making agrupamento happen as soon as NF persistence allows it. The current codebase already uses siso_claim_pedidos_para_agrupamento plus agrupamento_expedicao_id='pending' as the atomic primitive; fase-1 should reuse or extract that pattern, but with the stricter NF-persisted gate required by this PRD and with stale-pending recovery available before separado time."
+      "notes": "This is purely additive — no logic changes. Search for existing STATUS_SEPARACAO_COLORS, STATUS_SEPARACAO_LABELS, and COMPRA_STATUS_MAP patterns in each file to match the existing convention. The amber color scheme (amber-100/amber-800 for light, amber-900/amber-300 for dark) represents 'pending validation'."
     },
     {
       "id": "US-002",
-      "title": "Call NF generation and fase-1 agrupamento from all approval worker flows",
-      "description": "As a developer, I want all approval worker flows — including OC — to generate NF and immediately attempt fase-1 agrupamento after NF persistence. OC gains NF generation but NOT stock deduction at approval time.",
+      "title": "Separacao list API + dashboard counts include validacao_oc",
+      "description": "As a developer, I want the separacao list API and dashboard counts to recognize validacao_oc so that pedidos in this status appear in counts and can be queried.",
       "acceptanceCriteria": [
-        "executarSaidaPropria calls criarAgrupamentoFase1 after enriquecerDadosNf",
-        "executarSaidaTransferencia calls criarAgrupamentoFase1 after enriquecerDadosNf",
-        "Helper invocation is failure-isolated from the worker stock job: agrupamento failure must not throw past the worker path after estoque_lancado or item-level estoque_saida_lancada have already been persisted",
-        "If fase-1 cannot run because NF persistence is still incomplete, the worker still completes successfully and leaves the pedido for second-chance entrypoints",
-        "Stock deduction behavior in propria and transferencia remains unchanged",
-        "executarMarcadoresOnly gains NF generation (via gerarNotaFiscalPedido, idempotent) and enriquecerDadosNf after marcadores, then calls criarAgrupamentoFase1",
-        "executarMarcadoresOnly does NOT gain stock deduction — OC stock remains deferred to the Ciclo 2 worker after compras-release",
-        "NF generation in executarMarcadoresOnly is failure-isolated from the compra item resolution: if NF fails, the OC flow (aguardando_compra + itens) still proceeds normally",
-        "NF generation + enriquecerDadosNf + criarAgrupamentoFase1 run BEFORE resolveCompraItemIds, inside a single try/catch that does not propagate to the compra resolution",
-        "enriquecerDadosNf in executarMarcadoresOnly must NOT trigger a status_separacao transition (the conditional eq aguardando_nf guard in enriquecerDadosNf protects this, since the pedido has not been set to aguardando_nf yet at this point)",
-        "When executarMarcadoresOnly detects compraDemandas.length === 0 and redirects to propria, the status_separacao should be set to aguardando_separacao (not aguardando_nf) when NF already exists",
-        "If NF is generated but chave_acesso_nf is not yet available (NF pending SEFAZ authorization), executarMarcadoresOnly continues to compra item resolution and leaves agrupamento for second-chance entrypoints (webhook, forcar-pendente)",
-        "The Ciclo 2 worker (after compras-release) detects the existing NF via gerarNotaFiscalPedido idempotency and skips directly to stock deduction",
-        "Worker comments/docstrings are updated to make clear that this Ralph changes NF timing for OC and agrupamento timing for all flows, not estoque timing",
+        "In src/app/api/separacao/route.ts: add 'validacao_oc' to the VALID_STATUSES array",
+        "In src/app/api/separacao/route.ts: add 'validacao_oc' to the COUNT_STATUSES array",
+        "In src/app/api/separacao/route.ts: add 'validacao_oc: 0' to the emptyCounts object",
+        "In src/app/api/separacao/route.ts: in the compraStats calculation loop, add an 'oc_pendente' counter — find where compra_status values are counted (aguardando, comprado, recebido, etc.) and add: if compra_status === 'oc_pendente' then increment a new 'oc_pendente' field. Initialize this field to 0 in the compraStats init object.",
+        "In src/app/api/dashboard/counts/route.ts: find the separacao count query (uses .in('status_separacao', [...])) and add 'validacao_oc' to the array so these pedidos appear in the home dashboard separacao badge. Do NOT add to the compras count query.",
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": true,
-      "notes": "The existing stock behavior is intentionally preserved: propria and transferencia deduct stock at approval; OC defers stock to Ciclo 2 after compras-release. The new behavior for OC is NF generation + agrupamento at approval time, which creates a Tiny reservation but does not deduct saldo. The Ciclo 2 worker detects the existing NF via gerarNotaFiscalPedido idempotency and skips to stock deduction. If NF generation fails for OC, the compra flow proceeds normally and NF will be generated in Ciclo 2."
+      "passes": false,
+      "notes": "The separacao/route.ts file is large. VALID_STATUSES and COUNT_STATUSES are arrays near the top (lines 7-23). emptyCounts is right after. The compraStats calculation is in lines 208-281 — look for the if/else chain that checks compra_status values and add oc_pendente as a new branch. The dashboard counts file has a simpler .in() query for separacao."
     },
     {
       "id": "US-003",
-      "title": "Create agrupamento when NF persists later outside worker timing",
-      "description": "As a system, I want pedidos whose NF persistence happens later to get a second chance to create fase-1 agrupamento without waiting for separado.",
+      "title": "iniciar/route.ts accepts validacao_oc pedidos",
+      "description": "As an operator, I want to start separation for pedidos in validacao_oc status so that I can validate OC items physically.",
       "acceptanceCriteria": [
-        "nf-webhook-handler.ts calls criarAgrupamentoFase1 after saving nota_fiscal_id + chave_acesso_nf",
-        "The webhook call only happens when both fields are persisted",
-        "Webhook response is never blocked by agrupamento creation",
-        "webhook-processor.ts NF reconciliation block also calls criarAgrupamentoFase1",
-        "NF reconciliation stops writing pendente and preserves the correct aguardando_nf to aguardando_separacao transition semantics (applies to all decisoes including oc)",
-        "src/app/api/separacao/forcar-pendente/route.ts calls criarAgrupamentoFase1 after persisting chave_acesso_nf",
-        "src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts calls criarAgrupamentoFase1 after persisting chave_acesso_nf",
-        "Manual forcar-pendente routes keep response semantics intact and do not fail the admin action because Tiny agrupamento creation failed",
-        "The same idempotency/atomic guard protects worker, webhook, reconciliation, and forcar-pendente entrypoints",
+        "In src/app/api/separacao/iniciar/route.ts line 74: add 'validacao_oc' to the ALLOWED_STATUSES array",
+        "In src/app/api/separacao/iniciar/route.ts lines 102-108: modify the toStart filter to include validacao_oc — change the condition from p.status_separacao === 'aguardando_separacao' to (p.status_separacao === 'aguardando_separacao' || p.status_separacao === 'validacao_oc')",
+        "In src/app/api/separacao/iniciar/route.ts line 119: change the Supabase update guard from .eq('status_separacao', 'aguardando_separacao') to .in('status_separacao', ['aguardando_separacao', 'validacao_oc']). Without this change, the DB update is silently ignored for validacao_oc pedidos even though the JS filter passes them.",
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": true,
-      "notes": "This story covers cases where the worker could not create agrupamento because NF persistence was not yet complete. For OC, this includes the case where NF was generated at approval but chave_acesso_nf was not yet available. In this codebase, 'late NF' includes webhook, reconciliation of saved webhook logs, and the admin forcar-pendente routes."
+      "passes": false,
+      "notes": "Three targeted line changes in one file. The line numbers are approximate — find the ALLOWED_STATUSES array, the toStart filter, and the .eq('status_separacao', 'aguardando_separacao') guard on the update query. All three must be changed together for validacao_oc pedidos to successfully transition to em_separacao."
     },
     {
       "id": "US-004",
-      "title": "Keep create-vs-label responsibilities explicit at separado time",
-      "description": "As a developer, I want separado-time agrupamento processing to preserve the current split between criar agrupamento and recuperar etiqueta, while making the orchestration clearly favor the label fast path.",
+      "title": "concluir/route.ts OC guard and aguardando_compra branch",
+      "description": "As a system, I want concluir to block if oc_pendente items remain, exclude confirmed OC items from completude check, and transition to aguardando_compra when OC items exist.",
       "acceptanceCriteria": [
-        "preCriarAgrupamentosEmLote remains the fallback primitive for pedidos that still do not have agrupamento_expedicao_id",
-        "recarregarEtiquetasFaltantes remains the fast path primitive for pedidos that already have agrupamento_expedicao_id but are missing etiqueta_zpl",
-        "Concluir, concluir-oc, retry-etiqueta, and compras-embalagem orchestration all call both the create fallback and the label retry in a deliberate order instead of duplicating create-vs-label logic in multiple places",
-        "concluir-oc gains a call to recarregarEtiquetasFaltantes (fire-and-forget) alongside its existing preCriarAgrupamentosEmLote call, so pick OC pedidos with pre-existing agrupamento get their ZPL cached at concluir time",
-        "Fallback only attempts agrupamento creation when NF persistence is complete",
-        "Pedidos antigos with agrupamento already saved and missing etiqueta continue through the fast path without recriar agrupamento by default",
-        "Processing remains idempotent for old pedidos without agrupamento and for retries",
+        "Expand the items select to include compra_status — change .select('id, pedido_id, separacao_marcado') to .select('id, pedido_id, separacao_marcado, compra_status')",
+        "Add guard: before the completude check, if any item has compra_status = 'oc_pendente', return 400 with error 'Há itens OC não validados — resolva todos os itens na conferência OC antes de concluir'",
+        "Modify the completude check: exclude items where compra_status is in ['aguardando_compra', 'comprado'] from the separacao_marcado verification. Only check separacao_marcado on items where compra_status is null.",
+        "Add new transition branch: when all remaining (non-compra) items are marcado AND there are items with compra_status in ['aguardando_compra', 'comprado'], transition to status_separacao = 'aguardando_compra' instead of 'separado'. Do NOT set separacao_concluida_em in this branch (it is not a completed separation, it is a partial pause for purchases).",
+        "In the aguardando_compra branch, do NOT reset separacao_marcado, bipado_completo, or quantidade_bipada on any items — preserve the pick state of normal items.",
+        "The existing 'separado' transition path remains unchanged for pedidos without compra items.",
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "This story preserves the current safety net while making separado primarily about etiqueta/ZPL. The intent is orchestration clarity, not collapsing preCriarAgrupamentosEmLote and recarregarEtiquetasFaltantes into one opaque primitive. concluir-oc today only calls preCriarAgrupamentosEmLote (which will be a no-op when agrupamento exists). It needs recarregarEtiquetasFaltantes to complete the fast path: bipar → concluir → etiqueta pronta."
+      "passes": false,
+      "notes": "Read src/app/api/separacao/concluir/route.ts fully first. The current flow: fetch items -> group by pedido -> check marks.every(Boolean) -> update to separado. The changes add: (1) compra_status to select, (2) early return on oc_pendente, (3) filter out compra items before completude check, (4) branch to aguardando_compra when compra items exist. The key insight: items with aguardando_compra/comprado are 'not my problem right now' — they are handled by the compras module."
     },
     {
       "id": "US-005",
-      "title": "Make reroute invalidation explicit for early agrupamento",
-      "description": "As a developer, I want the encaminhar flow to explicitly preserve NF while clearing downstream shipping artifacts so early agrupamento remains safe under reroute.",
+      "title": "cancelar + voltar-etapa support validacao_oc",
+      "description": "As a system, I want cancelar to return pedidos to the correct status (validacao_oc vs aguardando_compra) and voltar-etapa to support the new status.",
       "acceptanceCriteria": [
-        "src/app/api/separacao/encaminhar/route.ts continues preserving nota_fiscal_id and chave_acesso_nf on reroute",
-        "The reset payload explicitly clears agrupamento_expedicao_id, expedicao_id, etiqueta_url, etiqueta_zpl, and etiqueta_status",
-        "Route comments and/or logging make clear that reroute invalidates downstream shipping artifacts but not NF",
-        "Stock reversal behavior remains unchanged",
+        "In src/app/api/separacao/cancelar/route.ts: modify the return-status logic (around lines 52-58 where it checks compra_status != null). Current logic: if compra items exist -> aguardando_compra, else -> aguardando_separacao. New logic: if any item has compra_status = 'oc_pendente' -> return to 'validacao_oc'; else if items have compra_status = 'aguardando_compra' (without any oc_pendente) -> return to 'aguardando_compra'; else -> return to 'aguardando_separacao'.",
+        "In src/app/api/separacao/voltar-etapa/route.ts: add 'validacao_oc' to the STATUS_ORDER array, positioned between 'aguardando_nf' and 'aguardando_separacao'.",
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": true,
-      "notes": "The route already clears these fields today; this story turns that behavior into an explicit maintained contract under the new earlier agrupamento timing."
+      "passes": false,
+      "notes": "Read both files first. The cancelar logic queries items with compra_status != null to decide the return status. The key change is adding a priority check: oc_pendente takes precedence (means the pedido hasn't finished validation). For voltar-etapa, STATUS_ORDER is a simple array — insert validacao_oc at the right position."
     },
     {
       "id": "US-006",
-      "title": "Update docs and validation matrix for agrupamento-only scope",
-      "description": "As a technical team, we want the documentation to make clear that this Ralph changes agrupamento timing but deliberately keeps stock timing intact.",
+      "title": "New endpoint POST /api/separacao/validar-oc-item",
+      "description": "As a developer, I want a new API endpoint that handles both 'encontrei' and 'esgotado' actions for OC items, including auto-transitions when all OC items are resolved.",
       "acceptanceCriteria": [
-        "Update docs/architecture-and-flows.md, docs/api-reference-complete.md, and docs/fluxos-siso.md",
-        "Document explicitly that propria and transferencia still deduct stock at approval time and that OC now generates NF at approval but defers stock to Ciclo 2",
-        "Document the new behavior: NF generation extends to OC at approval time and fase-1 agrupamento runs as soon as NF persistence is complete through the shared guarded helper across all three decisoes",
-        "Document that worker integration is failure-isolated from stock-posting success, that NF generation failure in OC does not block compra item resolution, and that late-NF paths include webhook, reconciliation, and both forcar-pendente routes",
-        "Document fast path plus fallback at separado without collapsing the current create-vs-label split",
-        "Define a minimum executable validation matrix covering helper failure after stock posting, stale pending recovery, late NF via webhook, late NF via forcar-pendente, old pedido with agrupamento already existing but missing etiqueta, rerouted pedido after early agrupamento, OC approval generating NF + agrupamento, OC with NF but chave_acesso pending (second-chance via webhook), and Ciclo 2 worker detecting existing NF and skipping to stock",
+        "Create route.ts at src/app/api/separacao/validar-oc-item/route.ts",
+        "POST accepts { item_ids: string[], acao: 'encontrei' | 'esgotado' }",
+        "Requires valid session via getSessionUser (X-Session-Id header). Return 401 if no session.",
+        "Validate: item_ids must be non-empty string array, acao must be 'encontrei' or 'esgotado'. Return 400 on invalid input.",
+        "For acao 'encontrei': update each item in item_ids with compra_status = null, fornecedor_oc = null, compra_quantidade_solicitada = null, compra_solicitada_em = null, ordem_compra_id = null, AND separacao_marcado = true, bipado_completo = true, quantidade_bipada = quantidade_pedida (fetch quantidade_pedida first). This marks the item as found AND picked in one step.",
+        "For acao 'esgotado': update each item with compra_status = 'aguardando_compra', compra_quantidade_solicitada = quantidade_pedida, compra_solicitada_em = now(). Use getFornecedorBySku(sku) to fill fornecedor_oc if not already set. Auto-create or find an existing OC (siso_ordens_compra) by fornecedor + galpao — reuse the same pattern as produto-esgotado/route.ts OC creation logic. Link items to the OC via ordem_compra_id.",
+        "After processing items, for each affected pedido: query all items of that pedido and check if any still have compra_status = 'oc_pendente'. If none remain (all resolved):",
+        "  - Auto-transition FR-9: if NO items have compra_status in ['aguardando_compra', 'comprado'] (all found), update pedido decisao_final from 'oc' to 'propria'. If pedido is in 'validacao_oc', transition to 'aguardando_separacao'. If in 'em_separacao', keep as is.",
+        "  - Auto-transition FR-8: if ALL OC items are now 'aguardando_compra' AND pedido has NO items with compra_status = null (100% OC pedido), transition to 'aguardando_compra', clear separacao_operador_id and separacao_iniciada_em, do NOT set separacao_concluida_em.",
+        "Register history events via registrarEvento: 'oc_item_encontrado' for encontrei, 'oc_item_confirmado' for esgotado, with SKU and operador in detalhes.",
+        "Return { itens_atualizados: number, transicoes: [{ pedido_id, novo_status }] }",
+        "Log errors via logger.logError with source 'validar-oc-item' and category 'business_logic'",
+        "Update docs/api-reference-complete.md with full endpoint documentation",
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": true,
-      "notes": "Do not force CLAUDE.md churn just to satisfy the PRD. Update CLAUDE.md only if implementation uncovers genuinely reusable patterns that meet the Ralph instructions."
+      "passes": false,
+      "notes": "This is the core new endpoint. Model the OC creation logic after src/app/api/separacao/produto-esgotado/route.ts lines 245-400 (the 'oc' acao block): getFornecedorBySku for supplier, find-or-create siso_ordens_compra by fornecedor + galpao, link items via ordem_compra_id. For the 'encontrei' action, the key insight is that clicking = found + bipado in one step, so set both compra fields to null AND separacao fields to true. Import getFornecedorBySku from '@/lib/sku-fornecedor', registrarEvento from '@/lib/historico-service', getSessionUser from '@/lib/session'."
+    },
+    {
+      "id": "US-007",
+      "title": "separacao/page.tsx tab architecture for validacao_oc",
+      "description": "As an operator, I want the Aguardando OC tab to show both validacao_oc and aguardando_compra pedidos with their combined count.",
+      "acceptanceCriteria": [
+        "In src/app/separacao/page.tsx: decouple VisibleSeparacaoTab from StatusSeparacao — change it to a string literal union that excludes 'validacao_oc' (since validacao_oc shares the aguardando_compra tab, not its own tab)",
+        "In TAB_CONFIG: the 'aguardando_compra' tab (Aguardando OC) remains as-is — no new tab entry needed",
+        "In EMPTY_COUNTS: add validacao_oc: 0",
+        "In MOVE_TARGETS: add a validacao_oc entry so admin can move pedidos to this status",
+        "Where the tab badge count is computed for the aguardando_compra tab: sum counts.aguardando_compra + counts.validacao_oc for the displayed badge number",
+        "When the Aguardando OC tab is active and fetches pedidos: the list should show BOTH status values. Either make two sequential fetches (?status_separacao=validacao_oc then ?status_separacao=aguardando_compra) and merge results, or add support for a comma-separated status param. The simpler approach: fetch with .in('status_separacao', ['aguardando_compra', 'validacao_oc']) — check how the existing fetch works and extend it.",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Read src/app/separacao/page.tsx first 150 lines to understand TAB_CONFIG, VisibleSeparacaoTab type, EMPTY_COUNTS, and how tabs trigger data fetches. The key challenge: the current architecture is 1:1 between tab ID and status_separacao value. The OC tab breaks this by mapping to TWO statuses. The cleanest approach is to handle this in the fetch logic: when activeTab === 'aguardando_compra', fetch both statuses."
+    },
+    {
+      "id": "US-008",
+      "title": "separacao-card.tsx OC Pendente / OC Confirmada tags",
+      "description": "As an operator, I want to see visual tags on OC pedidos distinguishing 'OC Pendente' (validacao_oc) from 'OC Confirmada' (aguardando_compra).",
+      "acceptanceCriteria": [
+        "In src/components/separacao/separacao-card.tsx: expand the isAguardandoOC check (currently only checks === 'aguardando_compra') to also match 'validacao_oc'",
+        "When status_separacao = 'validacao_oc': show a tag/badge 'OC Pendente' with amber styling (bg-amber-100 text-amber-800 or similar) near the status area",
+        "When status_separacao = 'aguardando_compra': show a tag/badge 'OC Confirmada' with red styling (bg-red-100 text-red-800 or similar) near the status area",
+        "For validacao_oc cards: the 'Separar' button should be available (operator can start separation to validate OC items)",
+        "For aguardando_compra cards: keep existing behavior (compra progress bar, item list)",
+        "The oc_pendente compraStats counter added in US-002 should be displayed in the progress area if > 0, with amber clock icon and label 'Pendente validação'",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Read src/components/separacao/separacao-card.tsx — it is a large component. Find isAguardandoOC (around line 113), the status badge area, and the compra progress section. The validacao_oc card should look similar to aguardando_compra but with amber coloring and the 'OC Pendente' tag instead of the red 'OC Confirmada'. The Separar button availability depends on the tab's action buttons in separacao/page.tsx, not the card itself."
+    },
+    {
+      "id": "US-009",
+      "title": "Checklist page OC conference section",
+      "description": "As an operator, I want the checklist page to show a delimited 'Conferência OC' section at the top with OC items using the same item component, where clicking marks as found+bipado and the esgotado button sends to compras.",
+      "acceptanceCriteria": [
+        "In src/app/separacao/checklist/page.tsx: split the item consolidation into two groups — items with compra_status = 'oc_pendente' go to ocItems, all others go to normalItems. Use produto_id + is_oc as consolidation key to prevent merging OC and normal items of the same SKU.",
+        "Both groups are sorted independently by location (naturalLocCompare)",
+        "When ocItems is non-empty: render a visually delimited section at the top with amber border/background and title 'Conferência OC' (with ShoppingCart or similar icon). Render OC items using the same item row component as normal items.",
+        "Normal items render below in the existing section (no visual change to existing behavior)",
+        "When operator clicks an OC item (same click interaction as normal items): call POST /api/separacao/validar-oc-item with { item_ids: [item.id], acao: 'encontrei' }. On success, optimistically update the item to show green/marked state (compra_status = null, separacao_marcado = true).",
+        "When operator clicks the esgotado button on an OC item (same esgotado button as normal checklist): call POST /api/separacao/validar-oc-item with { item_ids: [item.id], acao: 'esgotado' }. On success, optimistically update the item to show esgotado state (compra_status = 'aguardando_compra', greyed out).",
+        "If the API response includes transicoes (auto-transitions), handle them: if pedido transitions to aguardando_separacao or aguardando_compra, show a toast and invalidate queries.",
+        "OC items marked as found (green) stay in the OC section — they do not move to the normal section",
+        "OC items marked as esgotado (grey) stay in the OC section with esgotado visual",
+        "If ocItems becomes empty after all resolved, the OC section disappears",
+        "The barcode scanner input continues to work only for the normal section items",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "Read src/app/separacao/checklist/page.tsx (large file, ~1000+ lines). The current consolidation is in a useMemo that groups by produto_id. Split this into two useMemos (or one that returns { ocItems, normalItems }). The OC section uses the SAME item row component but wraps it in an amber-bordered container. For the click handler, the existing marcar-item flow won't work for OC items — use the new validar-oc-item endpoint instead. For esgotado, check how the existing esgotado button works (it may call produto-esgotado) and redirect OC items to validar-oc-item instead."
+    },
+    {
+      "id": "US-010",
+      "title": "Worker activation - executarMarcadoresOnly emits oc_pendente + validacao_oc",
+      "description": "As a system, I want the execution worker to mark missing items as oc_pendente (not aguardando_compra) and set pedido status to validacao_oc, activating the new OC validation flow.",
+      "acceptanceCriteria": [
+        "In src/lib/execution-worker.ts function resolveCompraItemIds: expand the .select() from 'id, produto_id, quantidade_pedida' to 'id, produto_id, quantidade_pedida, sku'. Update the return type to include sku: string. In the demandas push (around line 548), include sku: String(item.sku ?? '').",
+        "In src/lib/execution-worker.ts function executarMarcadoresOnly around line 673: change .update({ status_separacao: 'aguardando_compra' }) to .update({ status_separacao: 'validacao_oc' })",
+        "In the item update loop around line 680: change compra_status: 'aguardando_compra' to compra_status: 'oc_pendente'. Add fornecedor_oc: getFornecedorBySku(demanda.sku).fornecedor to the update object. Import getFornecedorBySku from '@/lib/sku-fornecedor' at the top of the file.",
+        "The compraDemandas.length === 0 path (lines 609-666) remains completely unchanged — when no items are missing, the pedido still converts to propria.",
+        "Verify: existing OC pedidos already in aguardando_compra are not affected (they were processed by the old code path).",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "CRITICAL: This is the activation story. All previous stories (US-001 through US-009) MUST be completed and deployed before this one. Without the UI and backend support, pedidos with validacao_oc status would be stuck with no way to resolve them. The changes are small (3 targeted modifications + 1 function signature expansion) but they activate the entire feature. Read src/lib/execution-worker.ts lines 467-695 to understand the full context. The getFornecedorBySku function is already used in producto-esgotado/route.ts — check that import for reference."
     }
   ]
 }

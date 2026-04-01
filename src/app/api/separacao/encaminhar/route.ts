@@ -16,6 +16,15 @@ const LOG_SOURCE = "encaminhar";
  * Reverses any stock execution, resets pedido to pendente with
  * sugestao="transferencia" so the destination galpão sees it.
  *
+ * Reroute contract (early-agrupamento safe):
+ *  - NF fields PRESERVED: nota_fiscal_id, chave_acesso_nf, url_danfe
+ *    → The NF belongs to the pedido regardless of destination galpão.
+ *  - Shipping artifacts CLEARED: agrupamento_expedicao_id, expedicao_id,
+ *    etiqueta_url, etiqueta_zpl, etiqueta_status
+ *    → These are destination-specific and must be recreated after reroute.
+ *  - After reset the pedido is eligible for a new fase-1 agrupamento via
+ *    any second-chance entrypoint (approval worker, webhook, forcar-pendente).
+ *
  * Body: { pedido_ids: string[], galpao_destino_id: string }
  */
 export async function POST(request: NextRequest) {
@@ -136,6 +145,10 @@ async function encaminharPedido(
   await reverseStockExecution(supabase, pedido);
 
   // B3. Reset pedido to pendente
+  // NF fields (nota_fiscal_id, chave_acesso_nf, url_danfe) are intentionally
+  // NOT cleared — the NF belongs to the pedido regardless of destination.
+  // Shipping artifacts are cleared so fase-1 agrupamento can be recreated
+  // for the new destination after re-approval.
   const { error: updateErr } = await supabase
     .from("siso_pedidos")
     .update({
@@ -154,6 +167,7 @@ async function encaminharPedido(
       separacao_iniciada_em: null,
       separacao_concluida_em: null,
       embalagem_concluida_em: null,
+      // Downstream shipping artifacts — destination-specific, must be recreated
       etiqueta_url: null,
       agrupamento_expedicao_id: null,
       expedicao_id: null,
@@ -198,6 +212,8 @@ async function encaminharPedido(
     destino: galpaoDestino.nome,
     decisaoAnterior: pedido.decisao_final,
     operador: session.nome,
+    nfPreservada: !!pedido.nota_fiscal_id,
+    agrupamentoInvalidado: true,
   });
 }
 

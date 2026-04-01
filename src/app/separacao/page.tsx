@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useState, useEffect, useMemo, useRef } from "react";
+import { Suspense, useState, useEffect, useMemo, useRef, useCallback, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle, RotateCcw, Tag, X, Plus, Package } from "lucide-react";
+import { LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle, RotateCcw, Tag, X, Plus, Package, ScanBarcode, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppHeader } from "@/components/app-header";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -186,6 +186,9 @@ function SeparacaoPageContent() {
   // Embalagem direta OC mode
   const [embalagemMode, setEmbalagemMode] = useState(false);
   const [embalagemPedidoIds, setEmbalagemPedidoIds] = useState<string[]>([]);
+  const [bipProgress, setBipProgress] = useState<Record<string, { bipados: number; total: number }>>({});
+  const [embalagemQty, setEmbalagemQty] = useState(1);
+  const embalagemScanRef = useRef<HTMLInputElement>(null);
   // Action loading states
   const [actionLoading, setActionLoading] = useState(false);
   const [revertMenuState, setRevertMenuState] = useState<{
@@ -263,6 +266,42 @@ function SeparacaoPageContent() {
 
   const canFetch = !loading && !!user;
 
+  // Initialize bipProgress when entering embalagem mode
+  useEffect(() => {
+    if (!embalagemMode || embalagemPedidoIds.length === 0) return;
+    // Initialize from pedidos data (if available)
+    setBipProgress((prev) => {
+      const next: Record<string, { bipados: number; total: number }> = { ...prev };
+      for (const id of embalagemPedidoIds) {
+        if (!next[id]) {
+          // Will be populated from pedidos data below or default to 0
+          next[id] = { bipados: 0, total: 0 };
+        }
+      }
+      return next;
+    });
+  }, [embalagemMode, embalagemPedidoIds]);
+
+  // Auto-focus scan input when embalagem mode activates
+  useEffect(() => {
+    if (embalagemMode) {
+      setTimeout(() => embalagemScanRef.current?.focus({ preventScroll: true }), 100);
+    }
+  }, [embalagemMode]);
+
+  // Redirect keyboard input to embalagem scan when mode is active
+  useEffect(() => {
+    if (!embalagemMode) return;
+    const redirect = (e: KeyboardEvent) => {
+      if (document.activeElement === embalagemScanRef.current) return;
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        embalagemScanRef.current?.focus({ preventScroll: true });
+      }
+    };
+    window.addEventListener("keydown", redirect);
+    return () => window.removeEventListener("keydown", redirect);
+  }, [embalagemMode]);
+
   // Build query params — filters apply to all tabs
   const queryParams = useMemo(() => {
     const params = new URLSearchParams({ status_separacao: activeTab });
@@ -326,6 +365,61 @@ function SeparacaoPageContent() {
   // Empresa options from API (stable, not affected by filters)
   const empresaOptions = data?.empresas ?? [];
   const allGalpoes = data?.galpoes ?? [];
+
+  // Sync bipProgress with pedidos data when available
+  useEffect(() => {
+    if (!embalagemMode || pedidos.length === 0) return;
+    setBipProgress((prev) => {
+      const next = { ...prev };
+      for (const p of pedidos) {
+        if (embalagemPedidoIds.includes(p.id)) {
+          next[p.id] = { bipados: p.itens_bipados || 0, total: p.total_itens || 0 };
+        }
+      }
+      return next;
+    });
+  }, [embalagemMode, pedidos, embalagemPedidoIds]);
+
+  // Auto-exit embalagem mode when all pedidos are complete
+  const embalagemCompletados = useMemo(() => {
+    if (!embalagemMode || embalagemPedidoIds.length === 0) return 0;
+    return embalagemPedidoIds.filter((id) => {
+      const prog = bipProgress[id];
+      return prog && prog.total > 0 && prog.bipados >= prog.total;
+    }).length;
+  }, [embalagemMode, embalagemPedidoIds, bipProgress]);
+
+  useEffect(() => {
+    if (!embalagemMode || embalagemPedidoIds.length === 0) return;
+    if (embalagemCompletados >= embalagemPedidoIds.length) {
+      const timer = setTimeout(() => {
+        setEmbalagemMode(false);
+        setEmbalagemPedidoIds([]);
+        setBipProgress({});
+        queryClient.invalidateQueries({ queryKey: ["separacao"] });
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [embalagemCompletados, embalagemPedidoIds.length, embalagemMode, queryClient]);
+
+  // Exit embalagem mode handler
+  const handleExitEmbalagemMode = useCallback(() => {
+    setEmbalagemMode(false);
+    setEmbalagemPedidoIds([]);
+    setBipProgress({});
+    setEmbalagemQty(1);
+    queryClient.invalidateQueries({ queryKey: ["separacao"] });
+  }, [queryClient]);
+
+  // Embalagem scan form submit (Enter key) — actual API call is in US-004
+  const handleEmbalagemScanSubmit = useCallback((e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    // US-004 will add the API integration here
+    // For now, clear the input after submit
+    if (embalagemScanRef.current) {
+      embalagemScanRef.current.value = "";
+    }
+  }, []);
 
   const activeConfig = TAB_CONFIG.find((t) => t.id === activeTab)!;
 
@@ -1333,7 +1427,143 @@ function SeparacaoPageContent() {
         )}
 
         {/* Tab content */}
-        {isFetching ? (
+        {embalagemMode && activeTab === "aguardando_compra" ? (
+          <div className="space-y-4">
+            {/* Scan input bar */}
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/30 px-4 py-3 dark:border-emerald-800 dark:bg-emerald-950/10">
+              <form onSubmit={handleEmbalagemScanSubmit} className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <ScanBarcode className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-600 dark:text-emerald-400" />
+                  <input
+                    ref={embalagemScanRef}
+                    type="text"
+                    placeholder="Bipar produto..."
+                    autoFocus
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="h-10 w-full rounded-xl border border-emerald-200 bg-white pl-10 pr-3 text-sm text-ink placeholder:text-ink-faint focus:border-emerald-400 focus:outline-none dark:border-emerald-700 dark:bg-zinc-900 dark:focus:border-emerald-500"
+                  />
+                </div>
+                <div className="flex items-center gap-1">
+                  <label className="text-xs text-ink-faint" htmlFor="embalagem-qty">
+                    Qtd
+                  </label>
+                  <input
+                    id="embalagem-qty"
+                    type="number"
+                    min={1}
+                    value={embalagemQty}
+                    onChange={(e) =>
+                      setEmbalagemQty(Math.max(1, parseInt(e.target.value) || 1))
+                    }
+                    className="h-10 w-16 rounded-xl border border-line bg-surface px-2 text-center font-mono text-sm text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleExitEmbalagemMode}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-paper text-ink-faint transition-colors hover:bg-surface hover:text-ink"
+                  title="Sair do modo embalagem"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+                <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
+              </form>
+            </div>
+
+            {/* Progress summary */}
+            <div className="flex items-center gap-3 text-xs text-ink-faint">
+              <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                Embalagem direta
+              </span>
+              <span className="h-3 w-px bg-line" />
+              <span>
+                {embalagemCompletados}/{embalagemPedidoIds.length} pedido(s) concluido(s)
+              </span>
+            </div>
+
+            {/* Pedido progress cards */}
+            <div className="space-y-2">
+              {embalagemPedidoIds.map((pedidoId) => {
+                const pedido = pedidos.find((p) => p.id === pedidoId);
+                const prog = bipProgress[pedidoId] ?? { bipados: 0, total: 0 };
+                const isComplete = prog.total > 0 && prog.bipados >= prog.total;
+                const progressPct = prog.total > 0 ? Math.min(100, Math.round((prog.bipados / prog.total) * 100)) : 0;
+
+                return (
+                  <article
+                    key={pedidoId}
+                    className={`overflow-hidden rounded-xl border transition-all duration-300 ${
+                      isComplete
+                        ? "border-emerald-200 bg-emerald-50/30 dark:border-emerald-800 dark:bg-emerald-950/10"
+                        : "border-line bg-paper"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      {/* Status icon */}
+                      <div className="shrink-0">
+                        {isComplete ? (
+                          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                        ) : (
+                          <Package className="h-5 w-5 text-ink-faint" />
+                        )}
+                      </div>
+
+                      {/* Order info */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm font-bold text-ink">
+                            #{pedido?.numero_pedido ?? "---"}
+                          </span>
+                          <span className="h-3 w-px bg-line" aria-hidden="true" />
+                          <span
+                            className="min-w-0 flex-1 truncate text-sm text-zinc-600 dark:text-zinc-300"
+                            title={pedido?.cliente ?? ""}
+                          >
+                            {pedido?.cliente ?? "---"}
+                          </span>
+                        </div>
+                        {isComplete && (
+                          <span className="mt-0.5 inline-block text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                            Embalado
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Progress counter */}
+                      <div className="shrink-0 text-right">
+                        <span
+                          className={`font-mono text-sm font-semibold tabular-nums ${
+                            isComplete
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : prog.bipados > 0
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-ink-faint"
+                          }`}
+                        >
+                          {prog.bipados}/{prog.total}
+                        </span>
+                        <p className="text-[10px] text-ink-faint">itens</p>
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="h-1 w-full bg-zinc-100 dark:bg-zinc-800">
+                      <div
+                        className={`h-full transition-all duration-500 ${
+                          isComplete ? "bg-emerald-500" : "bg-emerald-400"
+                        }`}
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        ) : isFetching ? (
           <LoadingSpinner message="Carregando pedidos..." />
         ) : pedidos.length === 0 ? (
           <EmptyState message={activeConfig.emptyMessage} />

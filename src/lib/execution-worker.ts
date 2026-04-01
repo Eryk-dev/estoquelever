@@ -6,11 +6,22 @@
  *
  * Stock posting flow (per decisao):
  * - ALL: insert marcadores on Tiny order
- * - "propria": marcadores → gerar NF → lançar estoque da NF
+ * - "propria": marcadores → gerar NF → lançar estoque da NF → fase-1 agrupamento
  * - "transferencia": marcadores → gerar NF on origin → lançar estoque NF (clears reservation)
  *     → movimentarEstoque(E) on origin per item (compensates saldo)
- *     → movimentarEstoque(S) on support empresa per item (physical exit)
- * - "oc": marcadores only (no NF, no stock)
+ *     → movimentarEstoque(S) on support empresa per item (physical exit) → fase-1 agrupamento
+ * - "oc": marcadores → gerar NF (sem estoque) → fase-1 agrupamento → resolver itens de compra
+ *     Stock deduction for OC is deferred to Ciclo 2 (worker after compras-release).
+ *
+ * NF timing: propria/transferencia generate NF at approval (existing behavior).
+ * OC now also generates NF at approval time, creating a Tiny reservation without
+ * deducting saldo. The Ciclo 2 worker detects the existing NF via gerarNotaFiscalPedido
+ * idempotency and skips directly to stock deduction.
+ *
+ * Agrupamento timing: fase-1 agrupamento is attempted as soon as NF persistence
+ * is complete (nota_fiscal_id + chave_acesso_nf), across all three decisoes.
+ * Agrupamento failure is always isolated from stock posting — it never causes
+ * the worker job to fail or retry after stock has been persisted.
  */
 
 import { createServiceClient } from "./supabase-server";
@@ -27,6 +38,7 @@ import { runWithEmpresa } from "./tiny-queue";
 import { getOrdemDeducao } from "./grupo-resolver";
 import { getEmpresaById } from "./empresa-lookup";
 import { logger } from "./logger";
+import { criarAgrupamentoFase1 } from "./agrupamento-service";
 
 // ─── Shared: enrich NF data + transition if already authorized ──────────────
 // After NF generation, checks Tiny API for authorization status.
@@ -443,6 +455,11 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
     notaId,
     empresaId: job.empresa_id,
   });
+
+  // Fase-1 agrupamento: attempt as soon as NF is persisted.
+  // Fire-and-forget — criarAgrupamentoFase1 logs errors internally and never throws.
+  // Failure-isolated from stock posting: estoque_lancado is already persisted above.
+  await criarAgrupamentoFase1(job.pedido_id);
 }
 
 // ─── oc: only insert marcadores, no NF or stock ─────────────────────────────
@@ -544,7 +561,7 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
 
   const { data: pedido } = await supabase
     .from("siso_pedidos")
-    .select("marcadores, empresa_origem_id")
+    .select("marcadores, empresa_origem_id, nota_fiscal_id")
     .eq("id", job.pedido_id)
     .single();
 
@@ -553,6 +570,37 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
 
   await inserirMarcadoresTiny(job.empresa_id, token, job.pedido_id, marcadores);
 
+  // ── NF generation + agrupamento for OC ──────────────────────────────────────
+  // OC now generates NF at approval time (creates Tiny reservation without
+  // deducting saldo). Failure-isolated: NF/agrupamento failure does NOT block
+  // compra item resolution below. Stock deduction remains deferred to Ciclo 2.
+  // enriquecerDadosNf won't trigger status_separacao transition because the
+  // pedido is not in aguardando_nf state at this point.
+  let nfGerada = !!(pedido?.nota_fiscal_id);
+  try {
+    const notaId = await gerarNotaFiscalPedido(
+      job.empresa_id,
+      token,
+      job.pedido_id,
+      pedido?.nota_fiscal_id ?? null,
+    );
+    if (notaId) {
+      nfGerada = true;
+      await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, notaId);
+      // Fase-1 agrupamento — fire-and-forget, never throws.
+      // If chave_acesso_nf is not yet available (NF pending SEFAZ authorization),
+      // criarAgrupamentoFase1 will skip and leave for second-chance entrypoints.
+      await criarAgrupamentoFase1(job.pedido_id);
+    }
+  } catch (err) {
+    // NF/agrupamento failure does not block compra item resolution
+    logger.warn("worker", "Falha na geração de NF/agrupamento para OC (prosseguindo com compra)", {
+      pedidoId: job.pedido_id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // ── Resolve compra items ────────────────────────────────────────────────────
   const compraDemandas = await resolveCompraItemIds(
     job.pedido_id,
     pedido?.empresa_origem_id ?? job.empresa_id,
@@ -571,12 +619,17 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
       })
       .eq("pedido_id", job.pedido_id);
 
+    // When NF already exists, skip aguardando_nf → go straight to aguardando_separacao.
+    // The Ciclo 2 worker (propria) will detect the existing NF via gerarNotaFiscalPedido
+    // idempotency and skip directly to stock deduction.
+    const statusSeparacao = nfGerada ? "aguardando_separacao" : "aguardando_nf";
+
     await supabase
       .from("siso_pedidos")
       .update({
         decisao_final: "propria",
         status: "executando",
-        status_separacao: "aguardando_nf",
+        status_separacao: statusSeparacao,
       })
       .eq("id", job.pedido_id);
 
@@ -606,6 +659,8 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
       {
         pedidoId: job.pedido_id,
         empresaOrigemId: pedido?.empresa_origem_id ?? job.empresa_id,
+        nfGerada,
+        statusSeparacao,
       },
     );
     return;
@@ -632,6 +687,7 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
   logger.info("execution-worker", "Pedido OC enviado para modulo de compras", {
     pedidoId: job.pedido_id,
     itensCompra: compraDemandas.length,
+    nfGerada,
     quantidadeSolicitadaTotal: compraDemandas.reduce(
       (sum, demanda) => sum + demanda.quantidadeSolicitada,
       0,
@@ -952,6 +1008,12 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     totalItens: itens.length,
     processed,
   });
+
+  // Fase-1 agrupamento: attempt as soon as NF is persisted.
+  // Fire-and-forget — criarAgrupamentoFase1 logs errors internally and never throws.
+  // Failure-isolated from stock posting: estoque_lancado and estoque_saida_lancada
+  // are already persisted above.
+  await criarAgrupamentoFase1(job.pedido_id);
 }
 
 // ─── Singleton drain loop ────────────────────────────────────────────────────

@@ -9,6 +9,42 @@ Started: Wed Apr  1 10:44:30 -03 2026
 - Tiny API posture: `concluirAgrupamento` is non-fatal (Mercado Envios may return 400). Always attempt it but don't block on failure.
 - On agrupamento failure: clear `agrupamento_expedicao_id` and `expedicao_id` back to null (matching `eq("agrupamento_expedicao_id", "pending")` guard) so the pedido remains eligible for retry.
 - `processarPedido` (existing) does fase-1 + fase-2 (etiqueta). `criarAgrupamentoFase1` does only fase-1 (no etiqueta/ZPL).
+- Separado orchestration: any endpoint that transitions pedidos to `separado` must call BOTH `preCriarAgrupamentosEmLote` (fallback create) and `recarregarEtiquetasFaltantes` (fast path label). Four current callers: concluir, concluir-oc, retry-etiqueta, compras-embalagem.
+- Worker failure isolation: agrupamento calls happen AFTER stock is persisted. Since `criarAgrupamentoFase1` is fire-and-forget, agrupamento failure never causes job retry after `estoque_lancado`/`estoque_saida_lancada` are set.
+- `enriquecerDadosNf` only transitions `aguardando_nf → aguardando_separacao` — safe to call from flows where status isn't `aguardando_nf` yet (e.g., OC before compra resolution).
+- `gerarNotaFiscalPedido` is idempotent: returns existing `nota_fiscal_id` if set, or generates new NF. Ciclo 2 workers naturally detect existing NFs.
+- Encaminhar reroute contract: NF fields are preserved (omission-based — not in update payload), shipping artifacts (agrupamento_expedicao_id, expedicao_id, etiqueta_*) are explicitly cleared. Any new field added to the reset must respect this split.
+---
+
+## 2026-04-01 - US-002
+- Implemented NF generation + enriquecerDadosNf + criarAgrupamentoFase1 in all three worker flows
+- `executarSaidaPropria`: added criarAgrupamentoFase1 at the end (after estoque_lancado persisted)
+- `executarSaidaTransferencia`: added criarAgrupamentoFase1 at the end (after estoque_lancado + estoque_saida_lancada persisted)
+- `executarMarcadoresOnly`: added NF generation block before resolveCompraItemIds, wrapped in try/catch for failure isolation. When redirecting to propria with no compra demands, uses `aguardando_separacao` when NF exists instead of always `aguardando_nf`
+- Updated module docstring to document new NF timing for OC and agrupamento timing for all flows
+- Files changed: `src/lib/execution-worker.ts`
+- **Learnings for future iterations:**
+  - `criarAgrupamentoFase1` is fire-and-forget (never throws) per codebase pattern — safe to call without try/catch after stock is persisted
+  - `enriquecerDadosNf` has internal try/catch and only transitions from `aguardando_nf` → `aguardando_separacao` — safe in OC flow where status isn't `aguardando_nf` yet
+  - `gerarNotaFiscalPedido` returns null when NF exists in Tiny but we don't have the ID (400/409) — distinct from returning the ID when `notaFiscalIdExistente` is truthy
+  - The Ciclo 2 worker path (via compras-release) re-enqueues as propria/transferencia, so `executarSaidaPropria`/`executarSaidaTransferencia` handle idempotent NF detection + stock posting naturally
+  - `executarMarcadoresOnly` select needs `nota_fiscal_id` to pass to `gerarNotaFiscalPedido` for idempotency
+---
+
+## 2026-04-01 - US-003
+- Added criarAgrupamentoFase1 calls to all second-chance NF entrypoints:
+  - `nf-webhook-handler.ts`: after saving nota_fiscal_id + chave_acesso_nf (gated on chaveAcesso presence)
+  - `webhook-processor.ts` NF reconciliation: fixed transition from `pendente` → `aguardando_separacao`, added `nota_fiscal_id` to update, added criarAgrupamentoFase1 call
+  - `forcar-pendente/route.ts` (batch): after each pedido's NF is verified and chave_acesso_nf persisted
+  - `[pedidoId]/forcar-pendente/route.ts` (single): after NF verification and chave_acesso_nf persisted
+- All calls are fire-and-forget (`.catch(() => {})`) — never block response or fail admin action
+- All entrypoints share the same idempotency guard via criarAgrupamentoFase1's internal atomic claim RPC
+- Files changed: `src/lib/nf-webhook-handler.ts`, `src/lib/webhook-processor.ts`, `src/app/api/separacao/forcar-pendente/route.ts`, `src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts`
+- **Learnings for future iterations:**
+  - The NF reconciliation in webhook-processor.ts was incorrectly transitioning to `pendente` instead of `aguardando_separacao` — this was a pre-existing bug fixed as part of this story
+  - The reconciliation was also not saving `nota_fiscal_id` on the pedido — only `url_danfe` and `chave_acesso_nf`
+  - All second-chance entrypoints gate on `chaveAcesso` being truthy before calling criarAgrupamentoFase1, since the helper requires both `nota_fiscal_id` + `chave_acesso_nf`
+  - The `.catch(() => {})` pattern is used instead of bare `await` because these calls run inside request handlers where we want explicit non-blocking semantics (unlike the worker where `await` is fine since criarAgrupamentoFase1 never throws)
 ---
 
 ## 2026-04-01 - US-001
@@ -21,4 +57,59 @@ Started: Wed Apr  1 10:44:30 -03 2026
   - `runWithEmpresa` wraps Tiny API calls for rate limiting per empresa. Always use it for Tiny operations.
   - The RPC returns `nota_fiscal_id` as part of the claimed row, enabling a post-claim race guard.
   - `expedido_externo` is the sentinel value for NFs already shipped externally in Tiny.
+---
+
+## 2026-04-01 - US-004
+- Added `recarregarEtiquetasFaltantes` to concluir-oc alongside existing `preCriarAgrupamentosEmLote` — completes the fast path: bipar → concluir → etiqueta pronta
+- Added NF persistence pre-filter to `preCriarAgrupamentosEmLote`: queries pedidos for both `nota_fiscal_id` + `chave_acesso_nf` before the atomic claim RPC, so pedidos without complete NF are never claimed unnecessarily
+- Verified all four orchestration points (concluir, concluir-oc, retry-etiqueta, compras-embalagem) call both create fallback + label retry in deliberate order
+- Files changed: `src/app/api/separacao/concluir-oc/route.ts`, `src/lib/agrupamento-service.ts`
+- **Learnings for future iterations:**
+  - The four orchestration points that call both `preCriarAgrupamentosEmLote` and `recarregarEtiquetasFaltantes` are: concluir, concluir-oc, retry-etiqueta, compras-embalagem. Any new endpoint that transitions pedidos to separado should call both.
+  - `preCriarAgrupamentosEmLote` now pre-filters for NF completeness before the RPC claim, avoiding unnecessary pending states. This is separate from the `processarPedido` internal `nota_fiscal_id` check.
+  - retry-etiqueta uses `await` (not fire-and-forget) for both calls since it needs the result. All other orchestration points use `.catch()` fire-and-forget pattern.
+---
+
+## 2026-04-01 - US-005
+- Made the encaminhar reroute contract explicit for early-agrupamento safety
+- Added JSDoc block documenting which fields are preserved (NF) vs cleared (shipping artifacts)
+- Added inline comments at the reset payload explaining the intent
+- Added `nfPreservada` and `agrupamentoInvalidado` to the log metadata for observability
+- Files changed: `src/app/api/separacao/encaminhar/route.ts`
+- **Learnings for future iterations:**
+  - The encaminhar route resets to `pendente` — the re-approved pedido will go through the full worker flow again, which includes `criarAgrupamentoFase1` after NF enrichment. No special handling needed for agrupamento recreation.
+  - NF fields (`nota_fiscal_id`, `chave_acesso_nf`, `url_danfe`) are NOT in the update payload and are therefore preserved. This is an omission-based contract — any future field additions to the reset must be careful not to accidentally clear NF.
+  - `url_danfe` is also preserved (not just `nota_fiscal_id` and `chave_acesso_nf`).
+---
+
+## 2026-04-01 - US-006
+- Updated `docs/architecture-and-flows.md`:
+  - Updated webhook pipeline to show NF handler calling `criarAgrupamentoFase1`
+  - Updated auto-approve worker to show agrupamento call
+  - Updated separation status state diagram for OC with NF at approval
+  - Updated status transition matrix with agrupamento info
+  - Replaced agrupamento pre-creation section with Early Agrupamento (Fase 1) + Fallback (Fase 2) sections
+  - Updated fast path vs slow path with early agrupamento context
+  - Updated Pick OC section noting NF + agrupamento exist earlier
+  - Added Encaminhar Reroute Contract section
+  - Added Validation Matrix section with 13 test scenarios
+- Updated `docs/fluxos-siso.md`:
+  - Updated worker flow diagram with NF generation for OC + `criarAgrupamentoFase1` for all decisions
+  - Updated execution worker details table with Agrupamento column
+  - Added OC/failure isolation notes
+  - Updated NF webhook handler diagram with `criarAgrupamentoFase1` call
+  - Replaced pre-creation section with Fase 1 (antecipado) + Fase 2 (fallback) sections
+  - Updated Pick OC flow with `recarregarEtiquetasFaltantes` and NF idempotency
+  - Added section 11: Agrupamento Antecipado contract, entrypoints diagram, reroute contract, validation matrix
+- Updated `docs/api-reference-complete.md`:
+  - Updated `concluir-oc` to include `recarregarEtiquetasFaltantes` fire-and-forget and fast path note
+  - Updated `encaminhar` to explicitly list preserved NF fields + reroute contract for early agrupamento
+  - Updated `worker/processar` with three worker flow details, NF for OC, agrupamento creation, and failure isolation
+  - Added `POST /api/separacao/forcar-pendente` (batch) documentation
+  - Added `PATCH /api/separacao/{pedidoId}/forcar-pendente` (single) documentation
+- Files changed: `docs/architecture-and-flows.md`, `docs/fluxos-siso.md`, `docs/api-reference-complete.md`
+- **Learnings for future iterations:**
+  - The docs have a 3-file split: architecture-and-flows.md (detailed architecture with Mermaid sequence diagrams), fluxos-siso.md (operational flow reference with flowcharts), and api-reference-complete.md (endpoint-by-endpoint API spec). All three must be updated together when flows change.
+  - forcar-pendente endpoints were not previously documented in api-reference-complete.md despite existing in the codebase
+  - The encaminhar reroute contract is omission-based (NF fields preserved by NOT being in the update payload). Document this explicitly since it's a common source of bugs.
 ---

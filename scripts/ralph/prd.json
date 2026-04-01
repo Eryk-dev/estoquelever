@@ -46,7 +46,7 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "The existing stock behavior is intentionally preserved: propria and transferencia deduct stock at approval; OC defers stock to Ciclo 2 after compras-release. The new behavior for OC is NF generation + agrupamento at approval time, which creates a Tiny reservation but does not deduct saldo. The Ciclo 2 worker detects the existing NF via gerarNotaFiscalPedido idempotency and skips to stock deduction. If NF generation fails for OC, the compra flow proceeds normally and NF will be generated in Ciclo 2."
     },
     {
@@ -66,7 +66,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "This story covers cases where the worker could not create agrupamento because NF persistence was not yet complete. For OC, this includes the case where NF was generated at approval but chave_acesso_nf was not yet available. In this codebase, 'late NF' includes webhook, reconciliation of saved webhook logs, and the admin forcar-pendente routes."
     },
     {
@@ -84,7 +84,7 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "This story preserves the current safety net while making separado primarily about etiqueta/ZPL. The intent is orchestration clarity, not collapsing preCriarAgrupamentosEmLote and recarregarEtiquetasFaltantes into one opaque primitive. concluir-oc today only calls preCriarAgrupamentosEmLote (which will be a no-op when agrupamento exists). It needs recarregarEtiquetasFaltantes to complete the fast path: bipar → concluir → etiqueta pronta."
     },
     {
@@ -99,7 +99,7 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "The route already clears these fields today; this story turns that behavior into an explicit maintained contract under the new earlier agrupamento timing."
     },
     {
@@ -116,7 +116,7 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Do not force CLAUDE.md churn just to satisfy the PRD. Update CLAUDE.md only if implementation uncovers genuinely reusable patterns that meet the Ralph instructions."
     }
   ]

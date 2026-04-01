@@ -98,6 +98,10 @@ flowchart TD
     V --> X{"status_separacao == aguardando_nf?"}
     X -->|sim| Y["Transiciona para<br/>aguardando_separacao"]
     X -->|nao| Z["Mantem status atual<br/>NF data salvo mesmo assim"]
+
+    V --> AA{"chave_acesso_nf presente?"}
+    AA -->|sim| AB["criarAgrupamentoFase1<br/>fire-and-forget"]
+    AA -->|nao| AC["Agrupamento deixado para<br/>segunda chance futura"]
 ```
 
 ### Logica de decisao detalhada
@@ -132,11 +136,11 @@ flowchart TD
     H -->|transferencia| J["executarSaidaTransferencia"]
     H -->|oc| K["executarMarcadoresOnly"]
 
-    I --> L["1. Insere marcadores no Tiny<br/>2. Gera/busca NF<br/>3. Lanca saida de estoque<br/>4. estoque_saida_lancada = true"]
+    I --> L["1. Insere marcadores no Tiny<br/>2. Gera/busca NF<br/>3. Lanca saida de estoque<br/>4. estoque_saida_lancada = true<br/>5. criarAgrupamentoFase1"]
 
-    J --> M["1. Insere marcadores<br/>2. Acha empresa com 100% estoque<br/>3. Gera NF na empresa ORIGEM<br/>4. Deduz estoque da empresa SUPORTE<br/>5. empresa_deducao_id = suporte"]
+    J --> M["1. Insere marcadores<br/>2. Acha empresa com 100% estoque<br/>3. Gera NF na empresa ORIGEM<br/>4. Deduz estoque da empresa SUPORTE<br/>5. empresa_deducao_id = suporte<br/>6. criarAgrupamentoFase1"]
 
-    K --> N["1. Insere marcadores<br/>2. Calcula qtd faltante<br/>3. Cria itens de compra<br/>4. status_separacao = aguardando_compra"]
+    K --> N["1. Insere marcadores<br/>2. Gera NF sem baixar estoque<br/>3. criarAgrupamentoFase1<br/>4. Calcula qtd faltante<br/>5. Cria itens de compra<br/>6. status_separacao = aguardando_compra"]
 
     L --> O{"Sucesso?"}
     M --> O
@@ -150,11 +154,15 @@ flowchart TD
 
 ### Detalhes do Execution Worker
 
-| Decisao | O que faz no Tiny | Empresa de deducao |
-|---|---|---|
-| `propria` | Gera NF + lanca saida (tipo S) | Empresa de origem |
-| `transferencia` | Gera NF na origem + deduz estoque no suporte | Empresa do outro galpao |
-| `oc` | Apenas marcadores | Nenhuma (aguarda compra) |
+| Decisao | O que faz no Tiny | Empresa de deducao | Agrupamento |
+|---|---|---|---|
+| `propria` | Gera NF + lanca saida (tipo S) | Empresa de origem | Fase 1 apos estoque |
+| `transferencia` | Gera NF na origem + deduz estoque no suporte | Empresa do outro galpao | Fase 1 apos estoque |
+| `oc` | Marcadores + gera NF (sem estoque) | Nenhuma (aguarda compra) | Fase 1 se NF persistida |
+
+> **OC na aprovacao:** `executarMarcadoresOnly` agora gera NF (via `gerarNotaFiscalPedido`, idempotente) e tenta `criarAgrupamentoFase1` ANTES de resolver itens de compra. Falha de NF nao bloqueia compra. Estoque de OC continua diferido para o Ciclo 2 (apos `compras-release`). O Ciclo 2 detecta NF existente e pula direto para baixa de estoque.
+>
+> **Failure isolation:** `criarAgrupamentoFase1` e fire-and-forget (nunca lanca excecao). Falha de agrupamento nunca causa retry do job apos `estoque_lancado`/`estoque_saida_lancada` ja persistidos.
 
 ### Retry com backoff exponencial
 
@@ -305,9 +313,9 @@ flowchart TD
     O --> P
 
     P --> Q["5. Enfileira job execucao<br/>siso_fila_execucao<br/>tipo=lancar_estoque"]
-    Q --> R["6. Fire-and-forget:<br/>- kickWorker<br/>- preCriarAgrupamentos<br/>- registrarEvento"]
+    Q --> R["6. Fire-and-forget:<br/>- kickWorker<br/>- preCriarAgrupamentos<br/>- recarregarEtiquetasFaltantes<br/>- registrarEvento"]
 
-    R --> S["Execution Worker processa:<br/>1. Lanca estoque no Tiny<br/>2. Gera NF<br/>3. Insere marcadores"]
+    R --> S["Execution Worker processa:<br/>1. Lanca estoque no Tiny<br/>2. Detecta NF existente - idempotente<br/>3. Insere marcadores<br/>4. criarAgrupamentoFase1"]
 
     S --> T["Pedido pronto para<br/>embalagem → expedicao"]
 ```
@@ -465,22 +473,38 @@ flowchart TD
     J -->|nao| L["etiqueta_status = falhou<br/>Retry na proxima conclusao"]
 ```
 
-### Pre-criacao de agrupamentos (async)
+### Agrupamento fase 1 (antecipado)
+
+Agrupamento fase 1 e criado assim que `nota_fiscal_id` + `chave_acesso_nf` estiverem persistidos, via `criarAgrupamentoFase1(pedidoId)`. Isso acontece no worker de aprovacao, webhook de NF, reconciliacao, ou `forcar-pendente` — bem antes do picking.
 
 ```mermaid
 flowchart LR
-    A["Ao iniciar separacao"] --> B["preCriarAgrupamentosEmLote"]
-    B --> C["Agrupa pedidos por:<br/>empresa + forma_envio + frete"]
-    C --> D["Para cada grupo:<br/>1. Cria agrupamento Tiny<br/>2. Conclui<br/>3. Download ZPL<br/>4. Cache no DB"]
-    D --> E["Quando pedido completar<br/>ZPL ja estara cacheado<br/>Fast path"]
+    A["NF persistida<br/>nota_fiscal_id + chave_acesso_nf"] --> B["criarAgrupamentoFase1"]
+    B --> C["1. Claim atomico<br/>2. Cria agrupamento Tiny<br/>3. Tenta concluir<br/>4. Salva expedicao_id"]
+    C --> D["Pedido chega em separado<br/>com agrupamento pronto"]
+    D --> E["Fast path etiqueta<br/>~200ms"]
 ```
+
+### Fallback em separado (fase 2)
+
+Para pedidos sem agrupamento em `separado` (pedidos antigos, falha na fase 1), quatro endpoints orquestram fallback de criacao + fast path de etiqueta:
+
+```mermaid
+flowchart LR
+    A["Pedido em separado<br/>sem agrupamento"] --> B["preCriarAgrupamentosEmLote<br/>fallback: cria agrupamento + ZPL"]
+    A2["Pedido em separado<br/>com agrupamento, sem ZPL"] --> C["recarregarEtiquetasFaltantes<br/>fast path: busca ZPL"]
+    B --> D["ZPL cacheado"]
+    C --> D
+```
+
+Quatro callers: `concluir`, `concluir-oc`, `retry-etiqueta`, `compras-embalagem`.
 
 ### Performance de impressao
 
 | Caminho | Tempo | Quando acontece |
 |---|---|---|
-| **Fast path** | ~200ms | ZPL pre-cacheado (maioria dos casos) |
-| **Slow path** | ~3-5s | Agrupamento nao criado previamente |
+| **Fast path** | ~200ms | ZPL cacheado — maioria dos casos com agrupamento antecipado |
+| **Slow path** | ~3-5s | Agrupamento nao criado previamente (pedidos antigos, falha fase 1) |
 | **Retry** | Proxima conclusao | PrintNode falhou ou ZPL corrompido |
 
 ---
@@ -690,3 +714,75 @@ graph TD
 5. Se CWB cobre 100% = `propria` (auto-aprova)
 6. Se SP cobre 100% = `transferencia` (painel)
 7. Nenhum cobre = `oc` (compra)
+
+---
+
+## 11. Agrupamento Antecipado (Fase 1) — Contrato
+
+### Principios
+
+1. **Estoque inalterado:** `propria` e `transferencia` continuam baixando estoque na aprovacao. OC continua diferindo estoque para o Ciclo 2 (apos `compras-release`)
+2. **NF estendida para OC:** `executarMarcadoresOnly` agora gera NF (sem estoque) na aprovacao, criando reserva no Tiny
+3. **Agrupamento antecipado:** criado assim que `nota_fiscal_id` + `chave_acesso_nf` estiverem persistidos, via helper `criarAgrupamentoFase1`
+4. **Failure isolation:** agrupamento e fire-and-forget; falha nunca causa retry de job apos estoque persistido
+5. **Segunda chance:** se NF nao estiver completa no worker, webhook de NF, reconciliacao e forcar-pendente criam agrupamento depois
+6. **Fallback em separado:** `preCriarAgrupamentosEmLote` + `recarregarEtiquetasFaltantes` continuam como safety net
+
+### Entrypoints de agrupamento fase 1
+
+```mermaid
+flowchart TD
+    NF["NF persistida<br/>nota_fiscal_id + chave_acesso_nf"]
+
+    W1["Worker: executarSaidaPropria<br/>apos estoque"]
+    W2["Worker: executarSaidaTransferencia<br/>apos estoque"]
+    W3["Worker: executarMarcadoresOnly<br/>apos NF, antes de compra"]
+    WH["Webhook NF handler<br/>apos salvar NF"]
+    RC["Reconciliacao NF<br/>em webhook-processor"]
+    FP1["forcar-pendente batch<br/>apos verificar chave_acesso"]
+    FP2["forcar-pendente single<br/>apos verificar chave_acesso"]
+
+    NF --> W1
+    NF --> W2
+    NF --> W3
+    NF --> WH
+    NF --> RC
+    NF --> FP1
+    NF --> FP2
+
+    W1 --> H["criarAgrupamentoFase1"]
+    W2 --> H
+    W3 --> H
+    WH --> H
+    RC --> H
+    FP1 --> H
+    FP2 --> H
+
+    H --> I{"Sucesso?"}
+    I -->|sim| J["agrupamento_expedicao_id + expedicao_id salvos"]
+    I -->|nao| K["Campos limpos, pedido apto para retry"]
+```
+
+### Contrato de re-roteamento (encaminhar)
+
+- **NF preservada:** `nota_fiscal_id`, `chave_acesso_nf`, `url_danfe` mantidos
+- **Artefatos invalidados:** `agrupamento_expedicao_id`, `expedicao_id`, `etiqueta_url`, `etiqueta_zpl`, `etiqueta_status` limpos
+- Worker recria agrupamento na re-aprovacao via `criarAgrupamentoFase1`
+
+### Matriz de validacao
+
+| Cenario | Comportamento esperado |
+|---|---|
+| Aprovacao propria | Marcadores → NF → estoque → agrupamento fase 1. Estoque inalterado |
+| Aprovacao transferencia | Marcadores → NF → estoque → agrupamento fase 1. Estoque inalterado |
+| Aprovacao OC | Marcadores → NF (sem estoque) → agrupamento fase 1 → itens de compra |
+| OC com NF pendente SEFAZ | NF gerada mas chave_acesso indisponivel. Agrupamento por segunda chance |
+| OC com falha de NF | Compra continua normal. NF + agrupamento no Ciclo 2 |
+| Ciclo 2 apos compras-release | Worker detecta NF existente, pula para estoque. Agrupamento provavelmente ja existe |
+| Falha do helper apos estoque | Job nao retenta. Pedido coberto pelo fallback em separado |
+| Pending travado | `recuperarPendingTravados` destrava rows >5 min em todas as entradas |
+| NF tardia por webhook | `nf-webhook-handler` cria agrupamento fire-and-forget |
+| NF tardia por forcar-pendente | Ambas rotas criam agrupamento sem bloquear resposta admin |
+| Pedido com agrupamento sem etiqueta | Fast path: `recarregarEtiquetasFaltantes` busca ZPL |
+| Pedido antigo sem agrupamento | Fallback: `preCriarAgrupamentosEmLote` cria agrupamento + ZPL |
+| Pedido reencaminhado | NF preservada, artefatos de expedição limpos. Worker recria agrupamento |

@@ -176,8 +176,9 @@ sequenceDiagram
         activate Processor
         Processor->>DB: Dedup by unique key
         Processor->>DB: Match NF to pedido
-        Processor->>DB: Update pedido.nota_fiscal_id
+        Processor->>DB: Update pedido.nota_fiscal_id + chave_acesso_nf
         Processor->>DB: Transition aguardando_nf → aguardando_separacao
+        Processor->>Processor: criarAgrupamentoFase1 (fire-and-forget)<br/>if nota_fiscal_id + chave_acesso_nf both persisted
         deactivate Processor
     else atualizacao_pedido / inclusao_pedido
         Webhook->>Webhook: Filter by situacao (aprovado/cancelado)
@@ -227,6 +228,7 @@ sequenceDiagram
                 Worker->>Tiny: Post stock from NF
                 Worker->>DB: Update pedido → concluido
                 Worker->>DB: Mark job → concluido
+                Worker->>Worker: criarAgrupamentoFase1 (fire-and-forget)<br/>after stock persisted
                 deactivate Worker
             else Manual review (transferencia/oc or partial)
                 Processor->>DB: Save suggestion in siso_pedidos
@@ -332,7 +334,7 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> aguardando_nf: After approval<br/>(non-OC flow)
-    [*] --> aguardando_compra: After approval<br/>(OC decision)
+    [*] --> aguardando_compra: After approval<br/>(OC decision — NF generated<br/>at approval, stock deferred)
 
     aguardando_nf --> aguardando_separacao: NF webhook arrived OR<br/>worker auto-transitioned
 
@@ -362,11 +364,11 @@ stateDiagram-v2
 | Current Status | Trigger | Next Status | Handler |
 |---|---|---|---|
 | `pendente` | Operator clicks "Aprovar" | `executando` | `/api/pedidos/aprovar` |
-| `executando` | Worker posts stock + NF | `concluido` | `execution-worker.ts` |
+| `executando` | Worker posts stock + NF + fase-1 agrupamento | `concluido` | `execution-worker.ts` |
 | `executando` | Worker hits max retries | `erro` | `execution-worker.ts` |
 | `pendente` / `executando` | Webhook tipo=cancelado | `cancelado` | `/api/webhook/tiny/route.ts` |
-| `aguardando_nf` | NF webhook arrives | `aguardando_separacao` | `nf-webhook-handler.ts` |
-| `aguardando_nf` | Worker detects NF authorized | `aguardando_separacao` | `execution-worker.ts` |
+| `aguardando_nf` | NF webhook arrives | `aguardando_separacao` | `nf-webhook-handler.ts` (+ fase-1 agrupamento fire-and-forget) |
+| `aguardando_nf` | Worker detects NF authorized | `aguardando_separacao` | `execution-worker.ts` (+ fase-1 agrupamento fire-and-forget) |
 | `aguardando_compra` | All OC items received | `comprado` | `/api/compras/conferir` |
 | `comprado` | Release logic runs | `aguardando_nf` | `compras-release.ts` |
 | `aguardando_compra` | Operator picks OC items | `em_separacao` | `/api/separacao/iniciar` (pick OC mode) |
@@ -735,10 +737,12 @@ sequenceDiagram
     API-->>Op: { separados, pendentes }
 
     activate Worker
-    Note over Worker: Async: post stock,<br/>generate NF, set marcadores
+    Note over Worker: Async: post stock<br/>(NF already generated at approval),<br/>set marcadores
     Worker->>DB: Process execution job
     deactivate Worker
 ```
+
+> **With early agrupamento:** OC orders now have NF generated at approval time (via `executarMarcadoresOnly`). If NF persistence was complete, fase-1 agrupamento was also created. This means pick OC pedidos typically arrive at `concluir-oc` with agrupamento already existing, enabling the etiqueta fast path (~200ms) instead of the slow path (~3-5s).
 
 ### Key Differences from Normal Separation
 
@@ -1186,11 +1190,51 @@ flowchart TD
 
 PrintNode integration for ZPL shipping labels.
 
-### Agrupamento Pre-Creation
+### Early Agrupamento (Fase 1)
 
-**Location:** `src/lib/agrupamento-service.ts`
+**Location:** `src/lib/agrupamento-service.ts` (`criarAgrupamentoFase1`)
 
-Called fire-and-forget when separation completes (wave picking finished, status → `separado`). Creates Tiny agrupamentos and pre-caches ZPL labels to accelerate printing at packing time.
+As soon as NF persistence is complete (`nota_fiscal_id` + `chave_acesso_nf` both persisted), fase-1 agrupamento is created via the shared `criarAgrupamentoFase1(pedidoId)` helper. This happens well before the pedido reaches `separado`, so the agrupamento (and therefore etiqueta) are ready early.
+
+**Entrypoints that call `criarAgrupamentoFase1`:**
+
+| Entrypoint | When | Pattern |
+|---|---|---|
+| `executarSaidaPropria` | After stock persisted | `await` (fire-and-forget — helper never throws) |
+| `executarSaidaTransferencia` | After stock persisted | `await` (fire-and-forget) |
+| `executarMarcadoresOnly` | After NF generated (before compra items) | `await` (fire-and-forget) |
+| `nf-webhook-handler.ts` | After `nota_fiscal_id` + `chave_acesso_nf` saved | `.catch(() => {})` non-blocking |
+| `webhook-processor.ts` (NF reconciliation) | After reconciling saved NF | `.catch(() => {})` non-blocking |
+| `forcar-pendente/route.ts` (batch) | After verifying/persisting `chave_acesso_nf` | `.catch(() => {})` non-blocking |
+| `[pedidoId]/forcar-pendente/route.ts` (single) | After verifying/persisting `chave_acesso_nf` | `.catch(() => {})` non-blocking |
+
+**Helper semantics:**
+
+1. Re-fetches pedido and verifies `nota_fiscal_id` + `chave_acesso_nf` both present
+2. Checks idempotency: skips if `agrupamento_expedicao_id` is already valid
+3. Recovers stale `pending` rows (>5 min) via `recuperarPendingTravados`
+4. Atomic claim via `siso_claim_pedidos_para_agrupamento` RPC (sets `agrupamento_expedicao_id = 'pending'`)
+5. Creates agrupamento in Tiny, attempts `concluirAgrupamento` (non-fatal), then `obterAgrupamento` to get `expedicao_id`
+6. Saves `agrupamento_expedicao_id` and `expedicao_id` on success
+7. Clears both fields on failure (leaves pedido eligible for retry)
+8. Does NOT fetch etiqueta/ZPL — that is fase 2
+
+**Failure isolation:** The helper never throws. Callers do not need try/catch. Agrupamento failure after stock posting never causes job retry.
+
+### Agrupamento Fallback at Separado (Fase 2)
+
+**Location:** `src/lib/agrupamento-service.ts` (`preCriarAgrupamentosEmLote`)
+
+For pedidos that reach `separado` without agrupamento (old orders, failed fase-1, etc.), `preCriarAgrupamentosEmLote` remains the fallback. It only attempts creation when NF persistence is complete. It is called fire-and-forget alongside `recarregarEtiquetasFaltantes` (fast path for label recovery).
+
+**Four orchestration points call both primitives:**
+
+| Endpoint | Fallback (create) | Fast path (label) |
+|---|---|---|
+| `POST /api/separacao/concluir` | `preCriarAgrupamentosEmLote` | `recarregarEtiquetasFaltantes` |
+| `POST /api/separacao/concluir-oc` | `preCriarAgrupamentosEmLote` | `recarregarEtiquetasFaltantes` |
+| `POST /api/separacao/retry-etiqueta` | `preCriarAgrupamentosEmLote` | `recarregarEtiquetasFaltantes` |
+| `compras-embalagem.ts` | `preCriarAgrupamentosEmLote` | `recarregarEtiquetasFaltantes` |
 
 ```mermaid
 sequenceDiagram
@@ -1198,12 +1242,14 @@ sequenceDiagram
     participant Agrup as Agrupamento<br/>Service
     participant DB as Supabase
     participant Tiny as Tiny ERP
-    participant PrintNode as PrintNode
 
-    Sep->>Agrup: preCriarAgrupamentosEmLote<br/>(async, fire-and-forget)
+    Sep->>Agrup: preCriarAgrupamentosEmLote<br/>(fallback — async, fire-and-forget)
+    Sep->>Agrup: recarregarEtiquetasFaltantes<br/>(fast path — async, fire-and-forget)
     Sep-->>Sep: Return immediately
 
     activate Agrup
+    note over Agrup: FALLBACK: pedidos without agrupamento
+    Agrup->>DB: Pre-filter: only pedidos with nota_fiscal_id + chave_acesso_nf
     Agrup->>DB: Atomic claim pedidos<br/>(set agrupamento_expedicao_id = 'pending')
     Agrup->>Agrup: Group by empresa
 
@@ -1211,12 +1257,17 @@ sequenceDiagram
         Agrup->>Tiny: criarAgrupamento per pedido
         Agrup->>Tiny: obterEtiquetasExpedicao<br/>(get ZPL download URL)
         Agrup->>Agrup: baixarZpl<br/>(download + extract labels)
+        Agrup->>DB: Cache ZPL in siso_pedidos.etiqueta_zpl<br/>Set agrupamento_expedicao_id = id
+    end
 
-        Agrup->>DB: Cache ZPL in siso_pedidos.etiqueta_zpl<br/>Set agrupamento_expedicao_id = <id>
+    note over Agrup: FAST PATH: pedidos with agrupamento but missing ZPL
+    Agrup->>DB: Find pedidos with agrupamento_expedicao_id but no etiqueta_zpl
+    loop For each
+        Agrup->>Tiny: obterEtiquetasExpedicao
+        Agrup->>Agrup: baixarZpl
+        Agrup->>DB: Cache ZPL
     end
     deactivate Agrup
-
-    note over Agrup: All subsequent print requests<br/>use cached ZPL (~200ms)<br/>instead of 3-5s API calls
 ```
 
 ### Label Printing Flow
@@ -1266,18 +1317,20 @@ sequenceDiagram
 ### Fast Path vs Slow Path
 
 **Fast Path (Normal case, ~200ms):**
-1. ZPL label pre-cached by agrupamento-service
+1. ZPL label pre-cached — either by early fase-1 agrupamento (at approval/NF time) or by fase-2 fallback at separado
 2. Just call PrintNode with cached ZPL
 3. Minimal latency
 
 **Slow Path (Fallback, ~3-5s):**
-1. ZPL not cached (race condition, manual override, etc)
+1. ZPL not cached (agrupamento not yet created, fase-1 failed, old pedido, etc)
 2. Create agrupamento in Tiny
 3. Fetch label URL
 4. Download ZPL from Tiny
 5. Extract individual labels from ZIP
 6. Call PrintNode
 7. Cache for future reprints
+
+> **With early agrupamento:** Most pedidos arrive at `separado` with agrupamento already created (via fase-1 at approval or second-chance entrypoints). The fast path is the expected case. The slow path remains as safety net for edge cases and old pedidos.
 
 ---
 
@@ -1370,6 +1423,39 @@ Queries `siso_erros` table to display:
 - Recent critical errors
 - Error trends over time
 - Orders in error status
+
+### Encaminhar Reroute Contract
+
+**Location:** `src/app/api/separacao/encaminhar/route.ts`
+
+When a pedido is rerouted to another galpao, the encaminhar flow explicitly separates NF preservation from shipping artifact clearing:
+
+- **Preserved (NF fields):** `nota_fiscal_id`, `chave_acesso_nf`, `url_danfe` — these are omitted from the update payload, keeping them intact. The re-approved pedido will go through the full worker flow again, which detects the existing NF via `gerarNotaFiscalPedido` idempotency
+- **Cleared (shipping artifacts):** `agrupamento_expedicao_id`, `expedicao_id`, `etiqueta_url`, `etiqueta_zpl`, `etiqueta_status` — explicitly set to null. The worker will create a new agrupamento via `criarAgrupamentoFase1` after NF enrichment
+
+This contract is critical for early agrupamento safety: NF remains valid across reroute, but the agrupamento must be recreated for the new galpao's shipping context.
+
+---
+
+## Validation Matrix (Early Agrupamento)
+
+Minimum executable validation matrix for the early agrupamento behavior:
+
+| Scenario | Expected Behavior |
+|---|---|
+| **Propria approval** | Worker: marcadores → NF → stock → `criarAgrupamentoFase1`. Agrupamento created if NF persistence complete. Stock unchanged |
+| **Transferencia approval** | Worker: marcadores → NF → stock → `criarAgrupamentoFase1`. Agrupamento created if NF persistence complete. Stock unchanged |
+| **OC approval** | Worker: marcadores → NF (no stock) → `criarAgrupamentoFase1` → compra item resolution. NF creates Tiny reservation. Stock deferred to Ciclo 2 |
+| **OC with NF pending SEFAZ** | NF generated but `chave_acesso_nf` not yet available. Worker proceeds to compra items. Agrupamento created later via second-chance entrypoint (NF webhook or forcar-pendente) |
+| **OC with NF generation failure** | NF fails, compra flow proceeds normally. NF + agrupamento created in Ciclo 2 when worker re-enqueues |
+| **Ciclo 2 worker (after compras-release)** | Worker detects existing NF via `gerarNotaFiscalPedido` idempotency, skips NF generation, proceeds to stock deduction. Agrupamento likely already exists |
+| **Helper failure after stock posting** | `criarAgrupamentoFase1` is fire-and-forget. Job does NOT retry. Pedido left eligible for fase-2 fallback at separado |
+| **Stale pending recovery** | `recuperarPendingTravados` unsticks rows with `agrupamento_expedicao_id = 'pending'` for >5 min. Available to all fase-1 entrypoints and fase-2 fallback |
+| **Late NF via webhook** | `nf-webhook-handler.ts` calls `criarAgrupamentoFase1` after persisting `nota_fiscal_id` + `chave_acesso_nf`. Non-blocking (`.catch(() => {})`) |
+| **Late NF via forcar-pendente** | Both batch and single forcar-pendente routes call `criarAgrupamentoFase1` after verifying/persisting `chave_acesso_nf`. Non-blocking |
+| **Old pedido with agrupamento but no etiqueta** | `recarregarEtiquetasFaltantes` (fast path) fetches ZPL without recreating agrupamento |
+| **Old pedido without agrupamento** | `preCriarAgrupamentosEmLote` (fallback) creates agrupamento + ZPL at separado time |
+| **Rerouted pedido after early agrupamento** | NF preserved, shipping artifacts (agrupamento, etiqueta) cleared. Worker recreates agrupamento on re-approval |
 
 ---
 

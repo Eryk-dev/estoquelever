@@ -1269,14 +1269,14 @@ This is the **authoritative, comprehensive reference** for every API route in th
   3. **Resolve separacao_galpao_id:** For `propria` uses origin galpao; for `transferencia` uses OC galpao. Finds first active empresa in that galpao for execution
   4. **Update pedido:** `decisao_final`, `status = 'executando'`, `status_separacao = 'separado'`, `separacao_concluida_em = now()`, `separacao_galpao_id`, appends `'pick oc'` to `separacao_tags`
   5. **Enqueue execution:** Inserts job in `siso_fila_execucao` with `tipo = 'lancar_estoque'`, `empresa_id`, `decisao`, `tentativas = 0`, `status = 'pendente'`
-  6. **Fire-and-forget:** `kickWorker()`, `preCriarAgrupamentosEmLote()`, `registrarEventos()` (event: `separacao_oc_concluida`)
+  6. **Fire-and-forget:** `kickWorker()`, `preCriarAgrupamentosEmLote()`, `recarregarEtiquetasFaltantes()`, `registrarEventos()` (event: `separacao_oc_concluida`)
 
 **Side Effects:**
 - Updates `siso_pedido_itens.compra_status`, `compra_quantidade_recebida` for OC items
 - Updates `siso_pedidos.decisao_final`, `status`, `status_separacao`, `separacao_concluida_em`, `separacao_galpao_id`, `separacao_tags`
 - Inserts to `siso_fila_execucao`
 - Inserts to `siso_pedido_historico` (event: `separacao_oc_concluida`)
-- Fire-and-forget: kicks execution worker, pre-creates agrupamentos
+- Fire-and-forget: kicks execution worker, pre-creates agrupamentos (fallback), reloads missing ZPL labels (fast path for pedidos with pre-existing agrupamento from early fase-1)
 - Logs to `siso_logs`, `siso_erros` (on failures)
 
 **Rate Limiting:** None
@@ -1285,6 +1285,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 - This endpoint is the "shortcut" for Pick OC: operator physically picks items while compra flow is still pending, then this endpoint auto-resolves everything
 - The execution worker then handles Tiny API calls (marcadores, stock posting, NF generation) asynchronously
 - Unlike normal `concluir`, this also sets `status = 'executando'` and `decisao_final`, since these pedidos skip the approval flow
+- With early agrupamento: OC pedidos typically arrive here with NF + agrupamento already created at approval time, so `recarregarEtiquetasFaltantes` provides the fast path (~200ms) for ZPL label caching
 
 ---
 
@@ -1483,7 +1484,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Reset Fields on `siso_pedidos`:**
 - `status` → `"pendente"`, `sugestao` → `"transferencia"`, `encaminhado_de` → origin galpão name
 - Clears: `decisao_final`, `operador_id`, `operador_nome`, `tipo_resolucao`, `processado_em`, `estoque_lancado`, `status_separacao`, `separacao_galpao_id`, `separacao_operador_id`, `separacao_iniciada_em`, `separacao_concluida_em`, `embalagem_concluida_em`, `etiqueta_url`, `agrupamento_expedicao_id`, `expedicao_id`, `etiqueta_zpl`, `etiqueta_status`
-- Preserves: `empresa_origem_id`, `filial_origem`, `numero`, `nota_fiscal_id`
+- Preserves (NF fields — omission-based): `empresa_origem_id`, `filial_origem`, `numero`, `nota_fiscal_id`, `chave_acesso_nf`, `url_danfe`
+
+> **Reroute contract for early agrupamento:** NF fields are preserved because the NF remains valid across galpao reroute. Shipping artifacts (agrupamento, etiqueta) are explicitly cleared because they must be recreated for the new galpao's shipping context. The re-approved pedido goes through the full worker flow, which detects the existing NF via `gerarNotaFiscalPedido` idempotency and creates a new agrupamento via `criarAgrupamentoFase1`.
 
 **Reset Fields on `siso_pedido_itens`:**
 - `separacao_marcado` → false, `separacao_marcado_em` → null, `quantidade_bipada` → 0, `bipado_completo` → false, `estoque_saida_lancada` → false, `empresa_deducao_id` → null
@@ -1495,6 +1498,74 @@ This is the **authoritative, comprehensive reference** for every API route in th
 - Updates `siso_pedidos` and `siso_pedido_itens`
 - Inserts "encaminhado" event to `siso_pedido_historico`
 - Logs to `siso_logs`
+
+---
+
+### POST /api/separacao/forcar-pendente
+
+**File:** `src/app/api/separacao/forcar-pendente/route.ts`
+
+**Purpose:** Force one or more orders back to pending separation status. Also verifies NF data via Tiny API and attempts early agrupamento creation when NF is complete.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:**
+```json
+{
+  "pedido_ids": ["string"]
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "atualizados": "number",
+  "pedidos": ["string"]
+}
+```
+
+**Business Logic:**
+- Forces pedidos back to `aguardando_separacao` (or `aguardando_compra` for pick OC)
+- Resets item-level separation markers
+- For each pedido with `nota_fiscal_id`: verifies NF via Tiny API, persists `chave_acesso_nf` if available
+- After persisting `chave_acesso_nf`: calls `criarAgrupamentoFase1` (fire-and-forget, `.catch(() => {})`) — never blocks the admin response
+
+**Side Effects:**
+- Updates `siso_pedidos.status_separacao`, clears separation timestamps
+- Updates `siso_pedido_itens` separation markers
+- May persist `chave_acesso_nf` from Tiny API verification
+- Fire-and-forget: creates fase-1 agrupamento when NF complete
+- Inserts to `siso_pedido_historico`
+- Logs to `siso_logs`
+
+---
+
+### PATCH /api/separacao/{pedidoId}/forcar-pendente
+
+**File:** `src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts`
+
+**Purpose:** Force a single order back to pending. Same logic as batch endpoint but for one pedido.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:** None (pedido ID from URL path)
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "pedido_id": "string"
+}
+```
+
+**Business Logic:**
+- Same as batch forcar-pendente but for a single pedido
+- Verifies NF via Tiny API, persists `chave_acesso_nf` if available
+- Calls `criarAgrupamentoFase1` fire-and-forget after NF verification
+
+**Side Effects:**
+- Same as batch forcar-pendente
 
 ---
 
@@ -3779,11 +3850,16 @@ See `src/app/api/tiny/stock/ajustar/route.ts`
 - Otherwise: processes up to `limit` jobs (capped at 20)
 - Each job: fetches order, enriches stock, calculates suggestion, posts to Tiny, updates DB
 - Handles rate limiting per empresa
+- Three worker flows per decision type:
+  - `propria`: marcadores → NF → stock posting → `criarAgrupamentoFase1` (fire-and-forget after stock persisted)
+  - `transferencia`: marcadores → NF → stock posting → `criarAgrupamentoFase1` (fire-and-forget after stock persisted)
+  - `oc`: marcadores → NF generation (no stock) → `criarAgrupamentoFase1` → compra item resolution. NF failure isolated from compra resolution via try/catch. Stock deferred to Ciclo 2 (after compras-release)
 
 **Side Effects:**
 - Processes jobs from `siso_fila_execucao`
 - Updates `siso_pedidos` stock and status
-- Calls Tiny API
+- Calls Tiny API (marcadores, NF, stock posting, agrupamento creation)
+- Creates fase-1 agrupamento (fire-and-forget) after NF persistence
 - Logs to `siso_logs`
 
 **Rate Limiting:** Per-empresa via rate-limiter.ts
@@ -3792,6 +3868,8 @@ See `src/app/api/tiny/stock/ajustar/route.ts`
 - Can be called from cron job (e.g., every 10 seconds)
 - Can be called directly from `/api/pedidos/aprovar` via `kickWorker()`
 - Can be called manually from monitoring page
+- OC orders now generate NF at approval time (creating Tiny reservation). The Ciclo 2 worker (after compras-release) detects existing NF via `gerarNotaFiscalPedido` idempotency and skips to stock deduction
+- `criarAgrupamentoFase1` is fire-and-forget: agrupamento failure after stock posting never causes job retry
 
 ---
 

@@ -12,6 +12,7 @@ import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
 import { logger } from "./logger";
 import { registrarEvento } from "./historico-service";
+import { criarAgrupamentoFase1 } from "./agrupamento-service";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -154,6 +155,12 @@ export async function handleNfWebhook(
     idNotaFiscalTiny: String(idNotaFiscalTiny),
     empresaId,
   });
+
+  // Step 5a.1 — Attempt fase-1 agrupamento when both NF fields are now persisted
+  // Fire-and-forget: criarAgrupamentoFase1 never throws, and must not block the webhook response
+  if (chaveAcesso) {
+    criarAgrupamentoFase1(pedidoId).catch(() => {});
+  }
 
   // Step 5b — Transition aguardando_nf → aguardando_separacao (only if in correct status)
   const { data: transitioned } = await supabase

@@ -8,6 +8,7 @@ import { getEmpresasDoGrupo, agregarEstoquePorGalpao } from "./grupo-resolver";
 import type { EmpresaGrupo } from "./grupo-resolver";
 import { logger, getCorrelationId } from "./logger";
 import { registrarEvento } from "./historico-service";
+import { criarAgrupamentoFase1 } from "./agrupamento-service";
 import type { NfWebhookPayload } from "./nf-webhook-handler";
 import type { TinyPedidoItem } from "./tiny-api";
 
@@ -496,11 +497,12 @@ export async function processWebhook(
 
           if (!isMatch) continue;
 
-          // Transition aguardando_nf → pendente and save NF data
+          // Transition aguardando_nf → aguardando_separacao and save NF data
           const { data: transitioned } = await supabase
             .from("siso_pedidos")
             .update({
-              status_separacao: "pendente",
+              status_separacao: "aguardando_separacao",
+              nota_fiscal_id: String(idNotaFiscalTiny),
               url_danfe: nfPayload.dados.urlDanfe ?? null,
               chave_acesso_nf: nfPayload.dados.chaveAcesso ?? null,
             })
@@ -514,6 +516,11 @@ export async function processWebhook(
             .from("siso_webhook_logs")
             .update({ status: "processado", processado_em: new Date().toISOString() })
             .eq("id", nfLog.id);
+
+          // Attempt fase-1 agrupamento when both NF fields are persisted
+          if (nfPayload.dados.chaveAcesso) {
+            criarAgrupamentoFase1(pedidoTinyId).catch(() => {});
+          }
 
           logger.info("processor", "Reconciled pending NF webhook", {
             pedidoId: pedidoTinyId,

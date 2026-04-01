@@ -5,6 +5,7 @@ import { logger } from "@/lib/logger";
 import { obterNotaFiscal } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
+import { criarAgrupamentoFase1 } from "@/lib/agrupamento-service";
 
 const NF_AUTORIZADA = [6, 7]; // 6=Autorizada, 7=Emitida Danfe
 
@@ -112,6 +113,11 @@ export async function PATCH(
       admin: session.nome,
       situacao: nf.situacao,
     });
+
+    // Attempt fase-1 agrupamento (fire-and-forget, never fails the admin action)
+    if (nf.chaveAcesso) {
+      criarAgrupamentoFase1(pedidoId).catch(() => {});
+    }
 
     return NextResponse.json({ success: true, pedido_id: pedidoId });
   } catch (err) {

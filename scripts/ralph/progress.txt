@@ -18,6 +18,7 @@ Started: Wed Apr  1 16:59:27 -03 2026
 - api/separacao/route.ts supports comma-separated status_separacao param via statusFilters array — use .in() for multiple, .eq() for single
 - checklist/page.tsx uses renderProductRow shared renderer — OC vs normal behavior is determined by product.is_oc + ocEsgotadoItems Set + ocValidarLoading state
 - Optimistic updates for OC items in checklist: keep compra_status='oc_pendente' in cache, track esgotado in local Set — refetch after auto-transition clears both
+- resolveCompraItemIds has TWO early-return fallback paths — when expanding the return shape, update both map() calls
 
 ---
 
@@ -147,4 +148,18 @@ Started: Wed Apr  1 16:59:27 -03 2026
   - The consolidated useMemo still produces ALL items (oc+normal) — the split happens in a separate useMemo. This preserves the sort logic working across all items.
   - For large JSX section replacements (250+ lines), the Edit tool's exact-match requirement makes it impractical — Python via Bash is more reliable for such cases.
   - handleConcluir now handles aguardandoCompra in the response (added in US-004) — redirects to aguardando_compra tab when all pedidos went to compras.
+---
+
+## 2026-04-01 - US-010
+- Activated the OC validation flow in execution-worker.ts (3 targeted changes + 1 import)
+- resolveCompraItemIds: expanded .select() to include sku, updated return type and demandas push
+- executarMarcadoresOnly: changed status_separacao from 'aguardando_compra' to 'validacao_oc'
+- Item update loop: changed compra_status from 'aguardando_compra' to 'oc_pendente', added fornecedor_oc via getFornecedorBySku(sku)
+- compraDemandas.length === 0 path (propria conversion) left completely unchanged
+- Files changed: src/lib/execution-worker.ts
+- **Learnings for future iterations:**
+  - getFornecedorBySku is a sync function (no await needed) — returns { fornecedor, galpao } directly
+  - The resolveCompraItemIds function has TWO early-return paths (no empresa_origem_id, and estoque query error) that both need the sku field added — easy to miss the second one
+  - The activation story is intentionally last — all UI/backend support (US-001 through US-009) must be in place before worker emits the new statuses, otherwise pedidos get stuck
+  - Existing pedidos already in aguardando_compra are unaffected — they were processed by the old code path before this change
 ---

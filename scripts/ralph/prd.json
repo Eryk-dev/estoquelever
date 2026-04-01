@@ -173,7 +173,7 @@
         "Typecheck passes"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "CRITICAL: This is the activation story. All previous stories (US-001 through US-009) MUST be completed and deployed before this one. Without the UI and backend support, pedidos with validacao_oc status would be stuck with no way to resolve them. The changes are small (3 targeted modifications + 1 function signature expansion) but they activate the entire feature. Read src/lib/execution-worker.ts lines 467-695 to understand the full context. The getFornecedorBySku function is already used in producto-esgotado/route.ts — check that import for reference."
     }
   ]

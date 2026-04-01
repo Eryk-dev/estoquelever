@@ -1,258 +1,123 @@
 {
-  "project": "SISO - Pipeline Antecipado de NF + Agrupamento",
-  "branchName": "ralph/pipeline-antecipado-nf-agrupamento",
-  "description": "Antecipa geracao de NF e agrupamento fase 1 para aprovacao (especialmente OC), posterga lancamento de estoque para 'separado', e adiciona icones de progresso visual. PRD completo em tasks/prd-pipeline-antecipado-nf-agrupamento.md",
+  "project": "SISO - Agrupamento Antecipado com Estoque Mantido na Aprovacao",
+  "branchName": "ralph/agrupamento-antecipado-sem-mover-estoque",
+  "description": "Mantem o desconto de estoque atual em propria e transferencia, estende a geracao de NF para pedidos oc na aprovacao (sem baixa de estoque), e antecipa a criacao do agrupamento fase 1 assim que a NF estiver persistida em todos os fluxos (propria, transferencia e oc). Separado passa a ser prioritariamente fast path de etiqueta/ZPL, com fallback para criar agrupamento apenas quando ele ainda nao existir. PRD completo em tasks/prd-pipeline-antecipado-nf-agrupamento.md",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Create stock-posting-service for propria/OC",
-      "description": "As a developer, I want to create a shared stock-posting service that handles posting stock when a pedido reaches 'separado', starting with propria and OC decisoes.",
+      "title": "Create shared fase-1 agrupamento helper",
+      "description": "As a developer, I want a reusable helper that creates fase-1 agrupamento for a pedido as soon as NF persistence is complete.",
       "acceptanceCriteria": [
-        "Create src/lib/stock-posting-service.ts with exported function lancarEstoqueParaSeparado(pedidoId: string): Promise<void>",
-        "Function fetches pedido from DB: decisao_final, empresa_origem_id, nota_fiscal_id, estoque_lancado",
-        "If estoque_lancado is true, skip (idempotency guard) and return early",
-        "For decisao_final='propria' or 'oc': get token via getValidTokenByEmpresa(empresa_origem_id), call lancarEstoqueNota(token, nota_fiscal_id) via runWithEmpresa, then set estoque_lancado=true",
-        "If nota_fiscal_id is null, log error and return without throwing (fire-and-forget safe)",
-        "For decisao_final='transferencia': log a TODO message and return (transferencia support added in US-002)",
-        "All errors are logged via logger.logError with category 'external_api' and pedidoId — function never throws",
+        "Create criarAgrupamentoFase1(pedidoId) in a shared module",
+        "Helper re-fetches the pedido and only proceeds when nota_fiscal_id and chave_acesso_nf are both persisted",
+        "Helper checks idempotency and skips when agrupamento_expedicao_id is already valid",
+        "Helper reuses or extracts the existing atomic claim pattern from agrupamento-service (pending + siso_claim_pedidos_para_agrupamento) instead of introducing a competing guard",
+        "If the atomic claim path is tightened for fase-1, it never writes pending before both NF persistence fields exist",
+        "Helper includes the current fase-1 semantics explicitly: create agrupamento, attempt concluirAgrupamento with the same non-fatal posture already used by agrupamento-service, then obterAgrupamento to discover and save expedicao_id",
+        "Helper does not fetch etiqueta/ZPL or baixar ZPL",
+        "Shared pending recovery is extracted or made callable outside preCriarAgrupamentosEmLote so fase-1 entrypoints can recover stale pending before or during claim",
+        "On success, save agrupamento_expedicao_id and expedicao_id",
+        "On failure, leave the pedido eligible for future retry",
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": "Reference src/lib/execution-worker.ts lines ~413-421 for the propria stock posting pattern (lancarEstoqueNota + estoque_lancado update). Import lancarEstoqueNota from src/lib/tiny-api.ts, getValidTokenByEmpresa from src/lib/tiny-oauth.ts, runWithEmpresa from src/lib/tiny-queue.ts, createServiceClient from src/lib/supabase-server.ts. The function must be fire-and-forget safe (never throw, always log). Use the same sleep(500) pattern as the execution worker between API calls."
+      "passes": true,
+      "notes": "This is the core primitive of the new Ralph. The project is no longer about moving stock timing; it is about making agrupamento happen as soon as NF persistence allows it. The current codebase already uses siso_claim_pedidos_para_agrupamento plus agrupamento_expedicao_id='pending' as the atomic primitive; fase-1 should reuse or extract that pattern, but with the stricter NF-persisted gate required by this PRD and with stale-pending recovery available before separado time."
     },
     {
       "id": "US-002",
-      "title": "Add transferencia support to stock-posting-service",
-      "description": "As a developer, I want the stock-posting service to handle transferencia pedidos with the correct multi-step stock movement sequence.",
+      "title": "Call NF generation and fase-1 agrupamento from all approval worker flows",
+      "description": "As a developer, I want all approval worker flows — including OC — to generate NF and immediately attempt fase-1 agrupamento after NF persistence. OC gains NF generation but NOT stock deduction at approval time.",
       "acceptanceCriteria": [
-        "In src/lib/stock-posting-service.ts, implement the transferencia branch (replace the TODO from US-001)",
-        "Step 1: lancarEstoqueNota on origin empresa (clears Tiny reservation, drops saldo) — non-fatal, log warning if fails",
-        "Step 2: Get origin empresa deposito_id from siso_tiny_connections",
-        "Step 3: Get items from siso_pedido_itens where estoque_saida_lancada is null or false",
-        "Step 4: Get enriched stock from siso_pedido_item_estoques for the pedido",
-        "Step 5: Resolve empresa that covers 100% of items using getOrdemDeducao (same tier logic as execution-worker.ts)",
-        "Step 6: For each item — compensate origin (movimentarEstoque tipo='E') then deduct support empresa (movimentarEstoque tipo='S'), mark estoque_saida_lancada=true and empresa_deducao_id",
-        "Step 7: Set estoque_lancado=true on pedido after all items processed",
-        "If empresa resolution fails or any item fails, log error but do NOT throw — set estoque_lancado=false so retry is possible",
+        "executarSaidaPropria calls criarAgrupamentoFase1 after enriquecerDadosNf",
+        "executarSaidaTransferencia calls criarAgrupamentoFase1 after enriquecerDadosNf",
+        "Helper invocation is failure-isolated from the worker stock job: agrupamento failure must not throw past the worker path after estoque_lancado or item-level estoque_saida_lancada have already been persisted",
+        "If fase-1 cannot run because NF persistence is still incomplete, the worker still completes successfully and leaves the pedido for second-chance entrypoints",
+        "Stock deduction behavior in propria and transferencia remains unchanged",
+        "executarMarcadoresOnly gains NF generation (via gerarNotaFiscalPedido, idempotent) and enriquecerDadosNf after marcadores, then calls criarAgrupamentoFase1",
+        "executarMarcadoresOnly does NOT gain stock deduction — OC stock remains deferred to the Ciclo 2 worker after compras-release",
+        "NF generation in executarMarcadoresOnly is failure-isolated from the compra item resolution: if NF fails, the OC flow (aguardando_compra + itens) still proceeds normally",
+        "NF generation + enriquecerDadosNf + criarAgrupamentoFase1 run BEFORE resolveCompraItemIds, inside a single try/catch that does not propagate to the compra resolution",
+        "enriquecerDadosNf in executarMarcadoresOnly must NOT trigger a status_separacao transition (the conditional eq aguardando_nf guard in enriquecerDadosNf protects this, since the pedido has not been set to aguardando_nf yet at this point)",
+        "When executarMarcadoresOnly detects compraDemandas.length === 0 and redirects to propria, the status_separacao should be set to aguardando_separacao (not aguardando_nf) when NF already exists",
+        "If NF is generated but chave_acesso_nf is not yet available (NF pending SEFAZ authorization), executarMarcadoresOnly continues to compra item resolution and leaves agrupamento for second-chance entrypoints (webhook, forcar-pendente)",
+        "The Ciclo 2 worker (after compras-release) detects the existing NF via gerarNotaFiscalPedido idempotency and skips directly to stock deduction",
+        "Worker comments/docstrings are updated to make clear that this Ralph changes NF timing for OC and agrupamento timing for all flows, not estoque timing",
         "Typecheck passes"
       ],
       "priority": 2,
       "passes": false,
-      "notes": "Copy the logic from src/lib/execution-worker.ts executarSaidaTransferencia lines ~685-954. Key imports: movimentarEstoque from tiny-api.ts, getOrdemDeducao and getEmpresaById from grupo-resolver.ts, buscarProdutoPorSku from tiny-api.ts. The function needs access to the origin empresa (pedido.empresa_origem_id) and must resolve which support empresa has stock. Use the same produto_id_na_empresa cache from siso_pedido_item_estoques, with SKU search fallback."
+      "notes": "The existing stock behavior is intentionally preserved: propria and transferencia deduct stock at approval; OC defers stock to Ciclo 2 after compras-release. The new behavior for OC is NF generation + agrupamento at approval time, which creates a Tiny reservation but does not deduct saldo. The Ciclo 2 worker detects the existing NF via gerarNotaFiscalPedido idempotency and skips to stock deduction. If NF generation fails for OC, the compra flow proceeds normally and NF will be generated in Ciclo 2."
     },
     {
       "id": "US-003",
-      "title": "Hook stock posting into concluir + concluir-oc",
-      "description": "As a developer, I want the concluir and concluir-oc endpoints to trigger stock posting (fire-and-forget) when pedidos transition to 'separado'.",
+      "title": "Create agrupamento when NF persists later outside worker timing",
+      "description": "As a system, I want pedidos whose NF persistence happens later to get a second chance to create fase-1 agrupamento without waiting for separado.",
       "acceptanceCriteria": [
-        "In src/app/api/separacao/concluir/route.ts: after pedidos are transitioned to 'separado' (the separados[] array), call lancarEstoqueParaSeparado for each pedido ID — fire-and-forget with .catch logging",
-        "In src/app/api/separacao/concluir-oc/route.ts: same pattern — after pedidos become 'separado', call lancarEstoqueParaSeparado for each — fire-and-forget with .catch logging",
-        "Stock posting runs AFTER preCriarAgrupamentosEmLote (which already runs fire-and-forget for separados)",
-        "The estoque_lancado guard in the service prevents double-posting if worker already posted (transition safety)",
-        "Import lancarEstoqueParaSeparado from '@/lib/stock-posting-service'",
+        "nf-webhook-handler.ts calls criarAgrupamentoFase1 after saving nota_fiscal_id + chave_acesso_nf",
+        "The webhook call only happens when both fields are persisted",
+        "Webhook response is never blocked by agrupamento creation",
+        "webhook-processor.ts NF reconciliation block also calls criarAgrupamentoFase1",
+        "NF reconciliation stops writing pendente and preserves the correct aguardando_nf to aguardando_separacao transition semantics (applies to all decisoes including oc)",
+        "src/app/api/separacao/forcar-pendente/route.ts calls criarAgrupamentoFase1 after persisting chave_acesso_nf",
+        "src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts calls criarAgrupamentoFase1 after persisting chave_acesso_nf",
+        "Manual forcar-pendente routes keep response semantics intact and do not fail the admin action because Tiny agrupamento creation failed",
+        "The same idempotency/atomic guard protects worker, webhook, reconciliation, and forcar-pendente entrypoints",
         "Typecheck passes"
       ],
       "priority": 3,
       "passes": false,
-      "notes": "In concluir/route.ts, look for the preCriarAgrupamentosEmLote fire-and-forget call (around line 123). Add the stock posting call right after it, using the same pattern: lancarEstoqueParaSeparado(pedidoId).catch(err => logger.error(...)). In concluir-oc/route.ts, look for the same pattern (around line 309). Both endpoints already have a separados[] array of pedido IDs that just transitioned to 'separado'."
+      "notes": "This story covers cases where the worker could not create agrupamento because NF persistence was not yet complete. For OC, this includes the case where NF was generated at approval but chave_acesso_nf was not yet available. In this codebase, 'late NF' includes webhook, reconciliation of saved webhook logs, and the admin forcar-pendente routes."
     },
     {
       "id": "US-004",
-      "title": "Remove stock posting from execution worker",
-      "description": "As a developer, I want to remove stock posting from executarSaidaPropria and executarSaidaTransferencia since concluir now handles it.",
+      "title": "Keep create-vs-label responsibilities explicit at separado time",
+      "description": "As a developer, I want separado-time agrupamento processing to preserve the current split between criar agrupamento and recuperar etiqueta, while making the orchestration clearly favor the label fast path.",
       "acceptanceCriteria": [
-        "In executarSaidaPropria: remove the lancarEstoqueNota call (line ~414) and the estoque_lancado update (line ~419-421). Keep NF generation, marcadores, enriquecerDadosNf, and the aguardando_nf -> aguardando_separacao transition",
-        "In executarSaidaTransferencia: remove everything from the 'Post stock from NF on origin' section (line ~685) through the stock deduction loop and estoque_lancado update (line ~954). Keep marcadores, NF generation, enriquecerDadosNf, and the aguardando_nf -> aguardando_separacao transition",
-        "Update the function docstrings to reflect the new behavior: 'NF generation only, stock posting deferred to separation'",
-        "Update the comment at line ~365 from 'propria: marcadores -> gerar NF -> lancar estoque' to 'propria: marcadores -> gerar NF (estoque postergado para separado)'",
-        "Update the comment at line ~13 docstring to reflect that stock posting is now deferred for all decisoes",
+        "preCriarAgrupamentosEmLote remains the fallback primitive for pedidos that still do not have agrupamento_expedicao_id",
+        "recarregarEtiquetasFaltantes remains the fast path primitive for pedidos that already have agrupamento_expedicao_id but are missing etiqueta_zpl",
+        "Concluir, concluir-oc, retry-etiqueta, and compras-embalagem orchestration all call both the create fallback and the label retry in a deliberate order instead of duplicating create-vs-label logic in multiple places",
+        "concluir-oc gains a call to recarregarEtiquetasFaltantes (fire-and-forget) alongside its existing preCriarAgrupamentosEmLote call, so pick OC pedidos with pre-existing agrupamento get their ZPL cached at concluir time",
+        "Fallback only attempts agrupamento creation when NF persistence is complete",
+        "Pedidos antigos with agrupamento already saved and missing etiqueta continue through the fast path without recriar agrupamento by default",
+        "Processing remains idempotent for old pedidos without agrupamento and for retries",
         "Typecheck passes"
       ],
       "priority": 4,
       "passes": false,
-      "notes": "This is primarily a deletion story. In executarSaidaPropria (starts ~line 367): keep lines up to and including the NF generation + enriquecerDadosNf + transition, but remove the lancarEstoqueNota block and estoque_lancado update. In executarSaidaTransferencia (starts ~line 648): the function becomes much simpler — just marcadores + NF + enriquecerDadosNf + transition. Remove the entire stock deduction loop (empresa resolution, item loop, movimentarEstoque calls). The concluir endpoints now handle stock posting via stock-posting-service.ts."
+      "notes": "This story preserves the current safety net while making separado primarily about etiqueta/ZPL. The intent is orchestration clarity, not collapsing preCriarAgrupamentosEmLote and recarregarEtiquetasFaltantes into one opaque primitive. concluir-oc today only calls preCriarAgrupamentosEmLote (which will be a no-op when agrupamento exists). It needs recarregarEtiquetasFaltantes to complete the fast path: bipar → concluir → etiqueta pronta."
     },
     {
       "id": "US-005",
-      "title": "Add NF generation to executarMarcadoresOnly",
-      "description": "As a developer, I want executarMarcadoresOnly to generate a nota fiscal for OC pedidos at approval time, so the NF is ready before separation.",
+      "title": "Make reroute invalidation explicit for early agrupamento",
+      "description": "As a developer, I want the encaminhar flow to explicitly preserve NF while clearing downstream shipping artifacts so early agrupamento remains safe under reroute.",
       "acceptanceCriteria": [
-        "In executarMarcadoresOnly (src/lib/execution-worker.ts ~line 542): after inserirMarcadoresTiny, call gerarNotaFiscalPedido to generate NF",
-        "Fetch nota_fiscal_id from pedido select (add to the existing .select query at line ~547)",
-        "Call gerarNotaFiscalPedido(job.empresa_id, token, job.pedido_id, pedido?.nota_fiscal_id ?? null) — idempotent if NF already exists",
-        "After NF generation, call enriquecerDadosNf to populate chave_acesso_nf",
-        "Add sleep(500) between marcadores and NF generation (same pattern as executarSaidaPropria)",
-        "NF generation happens BEFORE the compra demand resolution and aguardando_compra transition",
-        "If NF generation fails, log error but do NOT block the compras flow — pedido still goes to aguardando_compra",
-        "Update function docstring and the comment at line ~448 to reflect: 'oc: marcadores + NF, then compras flow'",
+        "src/app/api/separacao/encaminhar/route.ts continues preserving nota_fiscal_id and chave_acesso_nf on reroute",
+        "The reset payload explicitly clears agrupamento_expedicao_id, expedicao_id, etiqueta_url, etiqueta_zpl, and etiqueta_status",
+        "Route comments and/or logging make clear that reroute invalidates downstream shipping artifacts but not NF",
+        "Stock reversal behavior remains unchanged",
         "Typecheck passes"
       ],
       "priority": 5,
       "passes": false,
-      "notes": "Reference executarSaidaPropria (lines ~386-425) for the NF generation pattern. The key imports are already available in execution-worker.ts: gerarNotaFiscalPedido, enriquecerDadosNf, sleep. The select at line 547 currently fetches 'marcadores, empresa_origem_id' — add 'nota_fiscal_id' to it. The NF generation must happen before the 'if (compraDemandas.length === 0)' check at line 561, so that even OC pedidos that get reclassified to propria already have the NF."
+      "notes": "The route already clears these fields today; this story turns that behavior into an explicit maintained contract under the new earlier agrupamento timing."
     },
     {
       "id": "US-006",
-      "title": "Add agrupamento fase 1 to executarMarcadoresOnly",
-      "description": "As a developer, I want executarMarcadoresOnly to create an agrupamento (fase 1) after NF is persisted, so OC pedidos have expedition ready before separation.",
+      "title": "Update docs and validation matrix for agrupamento-only scope",
+      "description": "As a technical team, we want the documentation to make clear that this Ralph changes agrupamento timing but deliberately keeps stock timing intact.",
       "acceptanceCriteria": [
-        "After NF generation + enriquecerDadosNf in executarMarcadoresOnly, verify NF is persisted by re-fetching the pedido and checking nota_fiscal_id IS NOT NULL and chave_acesso_nf IS NOT NULL",
-        "If NF is persisted: fire-and-forget create agrupamento — criarAgrupamento(token, [nota_fiscal_id], formaFreteId?), concluirAgrupamento, obterAgrupamento to get expedicao_id",
-        "Save agrupamento_expedicao_id and expedicao_id to siso_pedidos",
-        "Do NOT fetch etiqueta/ZPL — fase 2 only",
-        "If NF is NOT persisted (chave_acesso_nf still null after enriquecerDadosNf), skip agrupamento — do NOT set agrupamento_expedicao_id to 'pending'",
-        "Wrap entire agrupamento block in try/catch — log error but never throw, never block compras flow",
-        "Add forma_frete_id and forma_envio_id to the pedido select query for agrupamento creation",
+        "Update docs/architecture-and-flows.md, docs/api-reference-complete.md, and docs/fluxos-siso.md",
+        "Document explicitly that propria and transferencia still deduct stock at approval time and that OC now generates NF at approval but defers stock to Ciclo 2",
+        "Document the new behavior: NF generation extends to OC at approval time and fase-1 agrupamento runs as soon as NF persistence is complete through the shared guarded helper across all three decisoes",
+        "Document that worker integration is failure-isolated from stock-posting success, that NF generation failure in OC does not block compra item resolution, and that late-NF paths include webhook, reconciliation, and both forcar-pendente routes",
+        "Document fast path plus fallback at separado without collapsing the current create-vs-label split",
+        "Define a minimum executable validation matrix covering helper failure after stock posting, stale pending recovery, late NF via webhook, late NF via forcar-pendente, old pedido with agrupamento already existing but missing etiqueta, rerouted pedido after early agrupamento, OC approval generating NF + agrupamento, OC with NF but chave_acesso pending (second-chance via webhook), and Ciclo 2 worker detecting existing NF and skipping to stock",
         "Typecheck passes"
       ],
       "priority": 6,
       "passes": false,
-      "notes": "Reference src/lib/agrupamento-service.ts processarPedido function (lines ~232-349) for the agrupamento creation pattern. Key steps: criarAgrupamento with NF ID array → concluirAgrupamento (non-fatal, Mercado Envios may 400) → obterAgrupamento to find expedicao_id → save agrupamento_expedicao_id + expedicao_id. Import criarAgrupamento, concluirAgrupamento, obterAgrupamento from tiny-api.ts. The formaFreteId comes from pedido.forma_frete_id parsed to int. Critical: do NOT use the 'pending' claim pattern from agrupamento-service.ts — this is inline execution, not batch. If chave_acesso_nf is null after enriquecerDadosNf (which fetches NF details from Tiny), it means the NF wasn't fully processed yet — skip agrupamento silently."
-    },
-    {
-      "id": "US-007",
-      "title": "Gate agrupamento-service on NF persistence + idempotency",
-      "description": "As a developer, I want preCriarAgrupamentosEmLote to check NF persistence before creating agrupamentos and skip pedidos that already have one.",
-      "acceptanceCriteria": [
-        "In the siso_claim_pedidos_para_agrupamento RPC call (or the filter before it): only claim pedidos where nota_fiscal_id IS NOT NULL and chave_acesso_nf IS NOT NULL",
-        "In processarPedido: add early return if pedido already has agrupamento_expedicao_id that is NOT null and NOT 'pending' — log 'Agrupamento ja existe, skip' and return",
-        "The existing check 'if (!pedido.nota_fiscal_id)' at line 238 stays, but add a similar check for chave_acesso_nf",
-        "When a pedido has no chave_acesso_nf, do NOT set agrupamento_expedicao_id to 'pending' — skip silently",
-        "The atomic claim RPC should still work for pedidos that need agrupamento (NF persisted but no agrupamento yet)",
-        "Typecheck passes"
-      ],
-      "priority": 7,
-      "passes": false,
-      "notes": "In src/lib/agrupamento-service.ts, the main gate is in processarPedido (line ~232). The PedidoClaimed interface (line ~29) already has nota_fiscal_id. Add chave_acesso_nf to the interface and the select in the RPC. For idempotency: check if agrupamento_expedicao_id is already set (not null, not 'pending') before proceeding. The RPC siso_claim_pedidos_para_agrupamento sets agrupamento_expedicao_id='pending' — modify its WHERE clause (in supabase migrations) to also require chave_acesso_nf IS NOT NULL. Or add a filter in the TypeScript layer after the RPC returns."
-    },
-    {
-      "id": "US-008",
-      "title": "Simplify compras-release for new flow",
-      "description": "As a developer, I want compras-release to stop creating lancar_estoque jobs and use NF persistence to determine status routing.",
-      "acceptanceCriteria": [
-        "In checkAndReleasePedidos: remove the siso_fila_execucao insert block (lines ~182-197) — no more lancar_estoque job creation",
-        "Remove the kickWorker() call (lines ~200-205) since there is no job to process",
-        "NF persistence check: nota_fiscal_id IS NOT NULL AND chave_acesso_nf IS NOT NULL means NF is persisted",
-        "If NF is persisted: set status_separacao='aguardando_separacao'",
-        "If NF is NOT persisted: set status_separacao='aguardando_nf' as fallback",
-        "Keep the existing decisao resolution logic (mesmoGalpao, empresaExecId, decisao_final, separacao_galpao_id) — these are still needed",
-        "Preserve agrupamento_expedicao_id and expedicao_id fields during release (do NOT clear them)",
-        "Remove the empresaExecId resolution since it was only for the execution job",
-        "Log whether pedido was released with NF pre-existing or pending",
-        "Typecheck passes"
-      ],
-      "priority": 8,
-      "passes": false,
-      "notes": "In src/lib/compras-release.ts, the main changes are: 1) Remove the fila_execucao insert (lines ~182-197). 2) Remove kickWorker (lines ~200-205). 3) The NF check at lines ~145-159 already checks nota_fiscal_id — extend it to also check chave_acesso_nf (fetch it in the select at line ~87). 4) The update at line ~162 should NOT include the agrupamento/expedicao fields in the update object — they stay as-is. Keep decisao_final and separacao_galpao_id resolution since the separation module needs to know where to route the order. The empresaExecId variable at lines ~127-140 was only used for the execution job — it can be removed or kept for logging."
-    },
-    {
-      "id": "US-009",
-      "title": "Encaminhar preserves NF clears agrupamento",
-      "description": "As a developer, I want the encaminhar endpoint to preserve NF fields but clear agrupamento/expedicao/etiqueta when re-routing a pedido to a different galpao.",
-      "acceptanceCriteria": [
-        "In src/app/api/separacao/encaminhar/route.ts: when updating the pedido's separacao_galpao_id, also clear agrupamento_expedicao_id, expedicao_id, etiqueta_url, etiqueta_zpl, and etiqueta_status",
-        "Do NOT clear nota_fiscal_id or chave_acesso_nf — NF is valid regardless of routing",
-        "The clear should only happen when separacao_galpao_id actually changes (compare old vs new)",
-        "Log that agrupamento/etiqueta were cleared due to re-routing",
-        "Typecheck passes"
-      ],
-      "priority": 9,
-      "passes": false,
-      "notes": "In src/app/api/separacao/encaminhar/route.ts, find the UPDATE on siso_pedidos that sets separacao_galpao_id. Add these nullifications to the update object: agrupamento_expedicao_id: null, expedicao_id: null, etiqueta_url: null, etiqueta_zpl: null, etiqueta_status: null. The NF stays because it was generated on the origin empresa which doesn't change with routing. The agrupamento may be invalid because it references NF/expedition data that may not apply after re-routing."
-    },
-    {
-      "id": "US-010",
-      "title": "Expose pipeline fields in GET /api/separacao",
-      "description": "As a developer, I want GET /api/separacao to return the fields needed for pipeline progress icons.",
-      "acceptanceCriteria": [
-        "In src/app/api/separacao/route.ts: add these fields to the pedido select query: nota_fiscal_id, chave_acesso_nf, agrupamento_expedicao_id, expedicao_id, estoque_lancado, etiqueta_zpl, etiqueta_status, status",
-        "These fields are returned in the response payload for each pedido",
-        "No new columns needed — all fields already exist in siso_pedidos",
-        "Verify the response type includes these fields (update types if needed in src/types/index.ts)",
-        "Typecheck passes"
-      ],
-      "priority": 10,
-      "passes": false,
-      "notes": "In src/app/api/separacao/route.ts, find the .select() query on siso_pedidos. Some of these fields may already be selected (status, etiqueta_zpl). Add any missing ones. The frontend will use these fields to compute the icon states. Check src/types/index.ts for the Pedido or PedidoSeparacao type — add the new fields there too if missing."
-    },
-    {
-      "id": "US-011",
-      "title": "Create PipelineIcons component",
-      "description": "As a developer, I want a PipelineIcons component that shows 4 colored status icons (N, A, E, Z) representing the pipeline stages.",
-      "acceptanceCriteria": [
-        "Create src/components/separacao/pipeline-icons.tsx",
-        "Props: { notaFiscalId: number | null, chaveAcessoNf: string | null, agrupamentoExpedicaoId: string | null, estoqueLancado: boolean, etiquetaZpl: string | null, etiquetaStatus: string | null, status: string }",
-        "Render 4 compact icons in a horizontal row: N (NF), A (Agrupamento), E (Estoque), Z (Etiqueta/ZPL)",
-        "Each icon has 3 visual states: gray/dim (pending), colored/active (complete), red (error)",
-        "N icon: active when notaFiscalId AND chaveAcessoNf are both non-null. Red when status='erro' and NF not persisted",
-        "A icon: active when agrupamentoExpedicaoId is non-null and not 'pending'. Red when status='erro', NF persisted, and agrupamento absent",
-        "E icon: active when estoqueLancado is true. Red when status='erro' and estoqueLancado is false",
-        "Z icon: active when etiquetaZpl is non-null. Red when etiquetaStatus='falhou'",
-        "Each icon has a tooltip explaining the state (e.g. 'Nota Fiscal gerada', 'Agrupamento pendente', 'Estoque lancado', 'Etiqueta cacheada')",
-        "Styling: small rounded badges with letter, using zinc palette for gray, distinct colors per icon when active (similar to Tiny ERP integration icons), red-500 for error",
-        "Icons must be compact — max 20-24px each with 2-4px gap",
-        "Typecheck passes"
-      ],
-      "priority": 11,
-      "passes": false,
-      "notes": "Reference the Tiny ERP screenshot in the PRD for visual inspiration — colored letter badges in a row. Use the project's existing patterns: Tailwind classes directly on elements, dark mode support (dark: prefixes), zinc palette for neutral. Colors suggestion: N=emerald when active, A=blue when active, E=amber/orange when active, Z=violet when active. Gray state: bg-zinc-200 text-zinc-400 dark:bg-zinc-700 dark:text-zinc-500. Use title attribute for tooltips (simple, no external lib needed). The component should be a simple function component with no state."
-    },
-    {
-      "id": "US-012",
-      "title": "Integrate PipelineIcons into separacao cards",
-      "description": "As a developer, I want PipelineIcons to appear on pedido cards in all separation tabs.",
-      "acceptanceCriteria": [
-        "Import PipelineIcons in src/components/separacao/pedido-separacao-card.tsx and render it on each card",
-        "Position: in the card header area, near the pedido number or status badge — compact and non-intrusive",
-        "Pass the pipeline fields from the pedido object to PipelineIcons props",
-        "Icons visible on all tabs: pendentes, aguardando NF, aguardando OC, em separacao, separados, embalados, expedidos",
-        "Also integrate in src/components/separacao/separacao-card.tsx if it renders pedido-level info",
-        "Verify the pedido object has the required fields from US-010 (nota_fiscal_id, chave_acesso_nf, etc.)",
-        "Typecheck passes"
-      ],
-      "priority": 12,
-      "passes": false,
-      "notes": "In pedido-separacao-card.tsx, find where the pedido number and status badge are rendered. Add <PipelineIcons /> right after or below those elements. The pedido object should already have the fields from US-010. Map field names from the API response (snake_case) to the component props (camelCase). If separacao-card.tsx is used for the detailed view (checklist, embalagem), also add icons there if pedido-level info is shown."
-    },
-    {
-      "id": "US-013",
-      "title": "Backfill script for existing OC pedidos",
-      "description": "As a developer, I want a script that generates NF + agrupamento for existing OC pedidos that are in aguardando_compra without a nota fiscal.",
-      "acceptanceCriteria": [
-        "Create scripts/backfill-nf-agrupamento-oc.ts (TypeScript, runnable with tsx)",
-        "Query siso_pedidos WHERE status_separacao='aguardando_compra' AND nota_fiscal_id IS NULL",
-        "For each pedido: get empresa_origem_id, fetch token, generate NF via gerarNotaFiscal, call enriquecerDadosNf",
-        "After NF is persisted (re-fetch to verify nota_fiscal_id + chave_acesso_nf): create agrupamento, conclude, save agrupamento_expedicao_id + expedicao_id",
-        "Do NOT fetch ZPL/etiqueta (fase 2 only)",
-        "Respect rate limiting per empresa using runWithEmpresa",
-        "Process pedidos in batches of 5 with 2s delay between batches",
-        "Log each pedido: success (NF + agrupamento IDs) or failure (error message)",
-        "Log summary at end: total processed, successes, failures",
-        "Idempotent: skip pedidos that already have nota_fiscal_id, skip agrupamento if already exists",
-        "Typecheck passes"
-      ],
-      "priority": 13,
-      "passes": false,
-      "notes": "Reference the existing scripts/vincular-nf.ts for patterns on how scripts access Supabase and Tiny API in this project. Use createServiceClient from src/lib/supabase-server.ts for DB, getValidTokenByEmpresa from src/lib/tiny-oauth.ts for tokens. The agrupamento creation follows the same pattern as US-006: criarAgrupamento → concluirAgrupamento → obterAgrupamento → save IDs. Add a shebang and make it runnable with: npx tsx scripts/backfill-nf-agrupamento-oc.ts"
-    },
-    {
-      "id": "US-014",
-      "title": "Update documentation",
-      "description": "As a developer, I want the documentation to reflect the new pipeline flow where NF and agrupamento are created earlier and stock posting is deferred.",
-      "acceptanceCriteria": [
-        "In docs/architecture-and-flows.md: update the 'Order Lifecycle' and 'Separation Flow' sections to reflect that stock posting now happens at 'separado', not at approval",
-        "In docs/architecture-and-flows.md: add a 'Pipeline Stages' section explaining the 4 stages (NF > Agrupamento > Estoque > Etiqueta) and when each runs",
-        "In docs/architecture-and-flows.md: update the OC flow to show NF + agrupamento at approval",
-        "In docs/api-reference-complete.md: update POST /api/separacao/concluir and concluir-oc to document the new stock posting side effect",
-        "In docs/api-reference-complete.md: update GET /api/separacao to document the new pipeline fields in response",
-        "In docs/fluxos-siso.md: update Mermaid diagrams to show the new flow (NF early, stock at separado)",
-        "In CLAUDE.md: update the Architecture section and comment at line ~13 about OC flow",
-        "Typecheck passes"
-      ],
-      "priority": 14,
-      "passes": false,
-      "notes": "Follow the exact format of existing entries in each doc file. Key changes to communicate: 1) All decisoes generate NF at approval. 2) OC also creates agrupamento at approval. 3) Stock posting moved from approval to 'separado' for ALL decisoes. 4) compras-release no longer creates execution jobs. 5) New PipelineIcons component shows progress visually. Reference the PRD at tasks/prd-pipeline-antecipado-nf-agrupamento.md for the complete specification."
+      "notes": "Do not force CLAUDE.md churn just to satisfy the PRD. Update CLAUDE.md only if implementation uncovers genuinely reusable patterns that meet the Ralph instructions."
     }
   ]
 }

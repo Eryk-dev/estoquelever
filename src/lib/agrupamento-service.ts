@@ -186,6 +186,172 @@ export async function recarregarEtiquetasFaltantes(
   await Promise.allSettled(promises);
 }
 
+/**
+ * Fase-1 agrupamento: create agrupamento + discover expedicao_id as soon as
+ * NF persistence is complete. Does NOT fetch etiqueta/ZPL — that is handled
+ * by the fase-2 fast path (recarregarEtiquetasFaltantes).
+ *
+ * Called fire-and-forget from multiple entrypoints:
+ * - Worker (propria, transferencia, oc) after enriquecerDadosNf
+ * - NF webhook handler after chave_acesso_nf persistence
+ * - webhook-processor NF reconciliation
+ * - forcar-pendente routes after manual NF override
+ *
+ * Safe under concurrency: reuses the same atomic claim RPC
+ * (siso_claim_pedidos_para_agrupamento) used by preCriarAgrupamentosEmLote.
+ * Errors are logged but never thrown.
+ */
+export async function criarAgrupamentoFase1(pedidoId: string): Promise<void> {
+  const supabase = createServiceClient();
+
+  // 1. Re-fetch pedido to verify NF persistence gate
+  const { data: pedido, error: fetchErr } = await supabase
+    .from("siso_pedidos")
+    .select("id, numero, empresa_origem_id, nota_fiscal_id, chave_acesso_nf, agrupamento_expedicao_id, forma_envio_id, forma_frete_id, transportador_id")
+    .eq("id", pedidoId)
+    .single();
+
+  if (fetchErr || !pedido) {
+    logger.warn(LOG_SOURCE, "Fase1: pedido não encontrado", { pedidoId });
+    return;
+  }
+
+  // Gate: both NF fields must be persisted
+  if (!pedido.nota_fiscal_id || !pedido.chave_acesso_nf) {
+    logger.info(LOG_SOURCE, "Fase1: NF incompleta, deixando para segunda chance", {
+      pedidoId,
+      hasNotaFiscalId: !!pedido.nota_fiscal_id,
+      hasChaveAcesso: !!pedido.chave_acesso_nf,
+    });
+    return;
+  }
+
+  // Idempotency: skip if already has valid agrupamento (not 'pending')
+  if (pedido.agrupamento_expedicao_id && pedido.agrupamento_expedicao_id !== "pending") {
+    return;
+  }
+
+  // Recover stale pending before claiming (reusable outside preCriarAgrupamentosEmLote)
+  await recuperarPendingTravados(supabase, [pedidoId]);
+
+  // Atomic claim via existing RPC — prevents duplicate agrupamentos
+  const { data: claimed, error: claimErr } = await supabase.rpc(
+    "siso_claim_pedidos_para_agrupamento",
+    { p_pedido_ids: [pedidoId] },
+  );
+
+  if (claimErr || !claimed || (claimed as PedidoClaimed[]).length === 0) {
+    // Already claimed by another caller or no empresa_origem_id
+    return;
+  }
+
+  const p = (claimed as PedidoClaimed[])[0];
+
+  // Double-check NF after claim (guard against race where NF was cleared between pre-check and claim)
+  if (!p.nota_fiscal_id) {
+    await supabase
+      .from("siso_pedidos")
+      .update({ agrupamento_expedicao_id: null })
+      .eq("id", pedidoId)
+      .eq("agrupamento_expedicao_id", "pending");
+    return;
+  }
+
+  try {
+    const { token } = await getValidTokenByEmpresa(p.empresa_origem_id);
+
+    await runWithEmpresa(p.empresa_origem_id, async () => {
+      // Create agrupamento with single NF
+      const formaFreteId = p.forma_frete_id
+        ? parseInt(p.forma_frete_id, 10)
+        : undefined;
+      const safeFormaFrete = isNaN(formaFreteId as number) ? undefined : formaFreteId;
+
+      let agrupamentoId: number;
+      try {
+        const agrupamento = await criarAgrupamento(token, [p.nota_fiscal_id!], safeFormaFrete);
+        agrupamentoId = agrupamento.id;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("já foi expedida")) {
+          logger.warn(LOG_SOURCE, "Fase1: NF já expedida no Tiny", {
+            pedidoId,
+            nfId: String(p.nota_fiscal_id),
+          });
+          await supabase
+            .from("siso_pedidos")
+            .update({ agrupamento_expedicao_id: "expedido_externo" })
+            .eq("id", pedidoId);
+          return;
+        }
+        throw err;
+      }
+
+      logger.info(LOG_SOURCE, "Fase1: agrupamento criado", {
+        pedidoId,
+        agrupamentoId: String(agrupamentoId),
+      });
+
+      // Save agrupamento ID (replacing 'pending')
+      await supabase
+        .from("siso_pedidos")
+        .update({ agrupamento_expedicao_id: String(agrupamentoId) })
+        .eq("id", pedidoId);
+
+      // Conclude agrupamento — non-fatal, same posture as existing service.
+      // Mercado Envios orders auto-request pickup, so concluir may return 400.
+      try {
+        await concluirAgrupamento(token, agrupamentoId);
+      } catch (err) {
+        logger.warn(LOG_SOURCE, "Fase1: não foi possível concluir agrupamento", {
+          pedidoId,
+          agrupamentoId: String(agrupamentoId),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      // Discover expedicao_id via obterAgrupamento
+      const details = await obterAgrupamento(token, agrupamentoId);
+
+      if (!details.expedicoes || details.expedicoes.length === 0) {
+        logger.warn(LOG_SOURCE, "Fase1: agrupamento sem expedições", {
+          pedidoId,
+          agrupamentoId: String(agrupamentoId),
+        });
+        return;
+      }
+
+      // Single pedido per agrupamento → use first expedition
+      const exp = details.expedicoes[0];
+
+      // Save expedicao_id — fase-1 stops here, does NOT fetch etiqueta/ZPL
+      await supabase
+        .from("siso_pedidos")
+        .update({ expedicao_id: String(exp.id) })
+        .eq("id", pedidoId);
+
+      logger.info(LOG_SOURCE, "Fase1: agrupamento completo (sem etiqueta)", {
+        pedidoId,
+        agrupamentoId: String(agrupamentoId),
+        expedicaoId: String(exp.id),
+      });
+    });
+  } catch (err) {
+    // Clear pending so pedido can be retried by future entrypoints
+    await supabase
+      .from("siso_pedidos")
+      .update({ agrupamento_expedicao_id: null, expedicao_id: null })
+      .eq("id", pedidoId)
+      .eq("agrupamento_expedicao_id", "pending");
+
+    logger.error(LOG_SOURCE, "Fase1: falha ao criar agrupamento", {
+      pedidoId,
+      empresaId: p.empresa_origem_id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 // ─── Internal ────────────────────────────────────────────────────────────────
 
 type SupabaseClient = ReturnType<typeof createServiceClient>;
@@ -484,8 +650,10 @@ async function salvarEtiqueta(
  * Recover pedidos stuck with agrupamento_expedicao_id = 'pending' for >5 minutes.
  * This can happen if the process crashes after the atomic claim but before
  * saving the real Tiny agrupamento ID.
+ *
+ * Exported so fase-1 entrypoints can recover stale pending before claiming.
  */
-async function recuperarPendingTravados(
+export async function recuperarPendingTravados(
   supabase: SupabaseClient,
   pedidoIds: string[],
 ): Promise<void> {

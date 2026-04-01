@@ -1,20 +1,24 @@
 # Ralph Progress Log
-Started: Mon Mar 31 14:30:00 -03 2026
+Started: Wed Apr  1 10:44:30 -03 2026
 ---
 
 ## Codebase Patterns
-- Use `createServiceClient()` from `src/lib/supabase-server.ts` for all server-side DB access
-- Use `getValidTokenByEmpresa(empresaId)` for Tiny API tokens — auto-refreshes
-- Use `runWithEmpresa(empresaId, fn)` for rate-limited Tiny API calls
-- Fire-and-forget pattern: `someAsyncFn().catch(err => logger.error(...))` — used in concluir endpoints
-- `sleep(500)` between Tiny API calls to respect rate limits
-- `estoque_lancado` boolean on siso_pedidos is the idempotency guard for stock posting
-- NF is "persisted" when BOTH `nota_fiscal_id` AND `chave_acesso_nf` are non-null
-- `enriquecerDadosNf` fetches NF details from Tiny and saves `chave_acesso_nf` — must run after NF generation
-- Agrupamento `pending` state is used by the atomic claim RPC — inline creation should NOT use it
-- All errors logged via `logger.logError()` with category, pedidoId, empresaId
-- After concluir/separado, always fire-and-forget: `preCriarAgrupamentosEmLote()` and `registrarEvento()`
-- In execution-worker.ts, the 3 decisao handlers are: executarSaidaPropria, executarSaidaTransferencia, executarMarcadoresOnly
-- The transferencia stock flow: lancarEstoqueNota on origin (clear reservation) → movimentarEstoque(E) per item on origin (compensate saldo) → movimentarEstoque(S) per item on support empresa (physical exit)
-- PRD reference: tasks/prd-pipeline-antecipado-nf-agrupamento.md
+- Agrupamento atomic claim: `siso_claim_pedidos_para_agrupamento` RPC sets `agrupamento_expedicao_id='pending'` atomically. Only rows with `agrupamento_expedicao_id IS NULL` are claimed. Always call `recuperarPendingTravados` before claiming to unstick stale pending rows (>5 min).
+- NF persistence gate: `nota_fiscal_id` + `chave_acesso_nf` must both be non-null before creating agrupamento. NF may exist before chave_acesso (SEFAZ authorization is async).
+- Fire-and-forget pattern: agrupamento/etiqueta functions log errors but never throw. Callers don't need try/catch around them.
+- Tiny API posture: `concluirAgrupamento` is non-fatal (Mercado Envios may return 400). Always attempt it but don't block on failure.
+- On agrupamento failure: clear `agrupamento_expedicao_id` and `expedicao_id` back to null (matching `eq("agrupamento_expedicao_id", "pending")` guard) so the pedido remains eligible for retry.
+- `processarPedido` (existing) does fase-1 + fase-2 (etiqueta). `criarAgrupamentoFase1` does only fase-1 (no etiqueta/ZPL).
+---
+
+## 2026-04-01 - US-001
+- Implemented `criarAgrupamentoFase1(pedidoId)` in `src/lib/agrupamento-service.ts`
+- Exported `recuperarPendingTravados` for reuse outside `preCriarAgrupamentosEmLote`
+- Files changed: `src/lib/agrupamento-service.ts`
+- **Learnings for future iterations:**
+  - The existing RPC `siso_claim_pedidos_para_agrupamento` does NOT gate on NF fields — it only checks `agrupamento_expedicao_id IS NULL` and `empresa_origem_id IS NOT NULL`. The NF gate is enforced in the helper's pre-check before calling the RPC.
+  - The `PedidoClaimed` interface is defined privately in agrupamento-service.ts — fase-1 reuses it directly since both functions live in the same module.
+  - `runWithEmpresa` wraps Tiny API calls for rate limiting per empresa. Always use it for Tiny operations.
+  - The RPC returns `nota_fiscal_id` as part of the claimed row, enabling a post-claim race guard.
+  - `expedido_externo` is the sentinel value for NFs already shipped externally in Tiny.
 ---

@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
   if (
     !Array.isArray(itemIds) ||
     itemIds.length === 0 ||
-    !itemIds.every((id) => typeof id === "string")
+    !itemIds.every((id) => typeof id === "string" || typeof id === "number")
   ) {
     return NextResponse.json(
       { error: "item_ids deve ser um array de strings não vazio" },
@@ -38,9 +38,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (acao !== "encontrei" && acao !== "esgotado") {
+  // Normalize to strings (Supabase returns integer PKs as numbers)
+  const normalizedIds = itemIds.map((id) => String(id));
+
+  if (acao !== "encontrei" && acao !== "esgotado" && acao !== "desfazer_encontrei") {
     return NextResponse.json(
-      { error: "acao deve ser 'encontrei' ou 'esgotado'" },
+      { error: "acao deve ser 'encontrei', 'esgotado' ou 'desfazer_encontrei'" },
       { status: 400 },
     );
   }
@@ -52,7 +55,7 @@ export async function POST(request: NextRequest) {
     const { data: items, error: fetchErr } = await supabase
       .from("siso_pedido_itens")
       .select("id, pedido_id, sku, quantidade_pedida, compra_status, fornecedor_oc")
-      .in("id", itemIds as string[]);
+      .in("id", normalizedIds);
 
     if (fetchErr) {
       logger.logError({
@@ -114,6 +117,41 @@ export async function POST(request: NextRequest) {
           detalhes: { sku: item.sku, item_id: item.id },
         });
       }
+    } else if (acao === "desfazer_encontrei") {
+      // Undo "encontrei" — restore item to oc_pendente
+      for (const item of items) {
+        const fornecedorInfo = getFornecedorBySku(item.sku);
+
+        const { error: updErr } = await supabase
+          .from("siso_pedido_itens")
+          .update({
+            compra_status: "oc_pendente",
+            fornecedor_oc: fornecedorInfo.fornecedor,
+            separacao_marcado: false,
+            bipado_completo: false,
+            quantidade_bipada: 0,
+          })
+          .eq("id", item.id);
+
+        if (updErr) {
+          logger.logError({
+            error: updErr,
+            source: "validar-oc-item",
+            message: `Erro ao atualizar item ${item.id} (desfazer_encontrei)`,
+            category: "database",
+          });
+          continue;
+        }
+        itensAtualizados++;
+
+        registrarEvento({
+          pedidoId: item.pedido_id,
+          evento: "oc_item_desfazer_encontrado",
+          usuarioId: user.id,
+          usuarioNome: user.nome,
+          detalhes: { sku: item.sku, item_id: item.id },
+        });
+      }
     } else {
       // acao === "esgotado"
       for (const item of items) {
@@ -170,12 +208,6 @@ export async function POST(request: NextRequest) {
       if (!allItems) continue;
 
       const hasOcPendente = allItems.some((i) => i.compra_status === "oc_pendente");
-      if (hasOcPendente) continue; // Still has unresolved OC items — no transition
-
-      const compraItems = allItems.filter(
-        (i) => i.compra_status === "aguardando_compra" || i.compra_status === "comprado",
-      );
-      const normalItems = allItems.filter((i) => i.compra_status === null);
 
       // Fetch current pedido status
       const { data: pedido } = await supabase
@@ -185,6 +217,24 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (!pedido) continue;
+
+      if (acao === "desfazer_encontrei" && hasOcPendente) {
+        // Revert decisao_final back to "oc" if it was flipped to "propria"
+        if (pedido.decisao_final === "propria") {
+          await supabase
+            .from("siso_pedidos")
+            .update({ decisao_final: "oc" })
+            .eq("id", pedidoId);
+        }
+        continue;
+      }
+
+      if (hasOcPendente) continue; // Still has unresolved OC items — no transition
+
+      const compraItems = allItems.filter(
+        (i) => i.compra_status === "aguardando_compra" || i.compra_status === "comprado",
+      );
+      const normalItems = allItems.filter((i) => i.compra_status === null);
 
       if (compraItems.length === 0) {
         // FR-9: All OC items found → flip decisao to propria
@@ -229,7 +279,7 @@ export async function POST(request: NextRequest) {
 
     logger.info("validar-oc-item", `${acao}: ${itensAtualizados} itens atualizados`, {
       acao,
-      item_ids: itemIds,
+      item_ids: normalizedIds,
       transicoes,
       operador: user.nome,
     });

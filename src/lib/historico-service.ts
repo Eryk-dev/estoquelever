@@ -33,6 +33,7 @@ export type EventoPedido =
   | "separacao_aguardando_compra"
   | "embalagem_direta_concluida"
   | "oc_item_encontrado"
+  | "oc_item_desfazer_encontrado"
   | "oc_item_confirmado";
 
 /**

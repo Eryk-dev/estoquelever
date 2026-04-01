@@ -116,7 +116,6 @@ function ChecklistPage() {
   const [editingStock, setEditingStock] = useState<string | null>(null); // produto_id being edited
   const [editStockValue, setEditStockValue] = useState("");
   const [savingStock, setSavingStock] = useState(false);
-  const [ocEsgotadoItems, setOcEsgotadoItems] = useState<Set<string>>(new Set());
   const [ocValidarLoading, setOcValidarLoading] = useState<string | null>(null);
   const locInputRef = useRef<HTMLInputElement>(null);
   const stockInputRef = useRef<HTMLInputElement>(null);
@@ -172,9 +171,10 @@ function ChecklistPage() {
       const isOc = item.compra_status === "oc_pendente";
       const key = `${item.produto_id}_${isOc ? "oc" : "normal"}`;
       const existing = map.get(key);
+      const itemId = String(item.id);
       if (existing) {
         existing.quantidade_total += item.quantidade;
-        existing.item_ids.push(item.id);
+        existing.item_ids.push(itemId);
         if (!item.separacao_marcado) existing.all_marcado = false;
       } else {
         map.set(key, {
@@ -185,7 +185,7 @@ function ChecklistPage() {
           quantidade_total: item.quantidade,
           localizacao: item.localizacao,
           imagem_url: item.imagem_url,
-          item_ids: [item.id],
+          item_ids: [itemId],
           all_marcado: item.separacao_marcado,
           empresa_origem_id: item.empresa_origem_id,
           saldo: item.saldo,
@@ -221,12 +221,10 @@ function ChecklistPage() {
     return { ocItems: oc, normalItems: normal };
   }, [consolidated]);
 
-  // Progress (OC resolved = encontrei OR esgotado)
+  // Progress (OC items disappear from list when esgotado, so only count encontrei)
   const totalProducts = normalItems.length + ocItems.length;
   const normalMarcado = normalItems.filter((p) => p.all_marcado).length;
-  const ocResolved = ocItems.filter(
-    (p) => p.all_marcado || ocEsgotadoItems.has(p.produto_id),
-  ).length;
+  const ocResolved = ocItems.filter((p) => p.all_marcado).length;
   const marcadoProducts = normalMarcado + ocResolved;
   const progressPct =
     totalProducts > 0 ? (marcadoProducts / totalProducts) * 100 : 0;
@@ -240,7 +238,7 @@ function ChecklistPage() {
       if (!old) return old;
       return {
         items: old.items.map((item) =>
-          product.item_ids.includes(item.id)
+          product.item_ids.includes(String(item.id))
             ? {
                 ...item,
                 separacao_marcado: newMarcado,
@@ -667,10 +665,10 @@ function ChecklistPage() {
     }
   }
 
-  // Handle OC item validation (encontrei / esgotado)
+  // Handle OC item validation (encontrei / esgotado / desfazer_encontrei)
   async function handleOcValidar(
     product: ConsolidatedProduct,
-    acao: "encontrei" | "esgotado",
+    acao: "encontrei" | "esgotado" | "desfazer_encontrei",
   ) {
     setOcValidarLoading(product.produto_id);
     try {
@@ -689,12 +687,12 @@ function ChecklistPage() {
       const result = await res.json();
 
       if (acao === "encontrei") {
-        // Optimistic: mark as picked but keep compra_status so item stays in OC section
+        // Optimistic: mark as picked (green) — stays in OC section
         queryClient.setQueryData<{ items: ChecklistItem[] }>(queryKey, (old) => {
           if (!old) return old;
           return {
             items: old.items.map((item) =>
-              product.item_ids.includes(item.id)
+              product.item_ids.includes(String(item.id))
                 ? {
                     ...item,
                     separacao_marcado: true,
@@ -705,12 +703,31 @@ function ChecklistPage() {
           };
         });
         toast.success(`Item encontrado: ${product.sku}`);
+      } else if (acao === "desfazer_encontrei") {
+        // Optimistic: unmark (back to amber/pending)
+        queryClient.setQueryData<{ items: ChecklistItem[] }>(queryKey, (old) => {
+          if (!old) return old;
+          return {
+            items: old.items.map((item) =>
+              product.item_ids.includes(String(item.id))
+                ? {
+                    ...item,
+                    separacao_marcado: false,
+                    separacao_marcado_em: null,
+                  }
+                : item,
+            ),
+          };
+        });
       } else {
-        // Esgotado: track locally (keep compra_status = oc_pendente so item stays in OC section)
-        setOcEsgotadoItems((prev) => {
-          const next = new Set(prev);
-          next.add(product.produto_id);
-          return next;
+        // Esgotado: remove item from cache — it disappears from OC section
+        queryClient.setQueryData<{ items: ChecklistItem[] }>(queryKey, (old) => {
+          if (!old) return old;
+          return {
+            items: old.items.filter(
+              (item) => !product.item_ids.includes(String(item.id)),
+            ),
+          };
         });
         toast.success(`Item esgotado confirmado: ${product.sku}`);
       }
@@ -750,8 +767,6 @@ function ChecklistPage() {
 
   const renderProductRow = (product: ConsolidatedProduct) => {
     const isOc = product.is_oc;
-    const isOcEsgotado = isOc && ocEsgotadoItems.has(product.produto_id);
-    const isOcResolved = isOc && (product.all_marcado || isOcEsgotado);
     const isLoadingOc = isOc && ocValidarLoading === product.produto_id;
 
     return (
@@ -759,17 +774,19 @@ function ChecklistPage() {
         key={isOc ? `${product.produto_id}_oc` : product.produto_id}
         type="button"
         onClick={() => {
-          if (isOcResolved || isLoadingOc) return;
-          if (isOc) handleOcValidar(product, "encontrei");
-          else handleToggle(product);
+          if (isLoadingOc) return;
+          if (isOc) {
+            // Toggle: green → desfazer, pending → encontrei
+            handleOcValidar(product, product.all_marcado ? "desfazer_encontrei" : "encontrei");
+          } else {
+            handleToggle(product);
+          }
         }}
         className={cn(
           "flex w-full min-h-[44px] items-start sm:items-center gap-2.5 sm:gap-3 rounded-xl border px-3 sm:px-4 py-3 text-left transition-all duration-300",
-          isOcEsgotado
-            ? "border-zinc-200 bg-zinc-50/50 opacity-60 dark:border-zinc-700 dark:bg-zinc-900/20"
-            : product.all_marcado
-              ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
-              : "border-line bg-paper hover:bg-surface",
+          product.all_marcado
+            ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20"
+            : "border-line bg-paper hover:bg-surface",
           !isOc &&
             highlightedSku === product.produto_id &&
             "ring-2 ring-blue-400 border-blue-300 bg-blue-50/50 dark:ring-blue-500 dark:border-blue-600 dark:bg-blue-950/20",
@@ -779,16 +796,12 @@ function ChecklistPage() {
         <div
           className={cn(
             "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition-colors mt-0.5 sm:mt-0",
-            isOcEsgotado
-              ? "border-zinc-300 bg-zinc-200 text-zinc-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-400"
-              : product.all_marcado
-                ? "border-emerald-500 bg-emerald-500 text-white"
-                : "border-zinc-300 dark:border-zinc-600",
+            product.all_marcado
+              ? "border-emerald-500 bg-emerald-500 text-white"
+              : "border-zinc-300 dark:border-zinc-600",
           )}
         >
-          {isOcEsgotado ? (
-            <X className="h-4 w-4" />
-          ) : product.all_marcado ? (
+          {product.all_marcado ? (
             <Check className="h-4 w-4" />
           ) : isLoadingOc ? (
             <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
@@ -820,20 +833,14 @@ function ChecklistPage() {
               <span
                 className={cn(
                   "font-mono text-xs font-semibold",
-                  isOcEsgotado
-                    ? "text-zinc-400 line-through dark:text-zinc-500"
-                    : product.all_marcado
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-ink",
+                  product.all_marcado
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-ink",
                 )}
               >
                 {product.sku}
               </span>
-              {isOcEsgotado ? (
-                <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
-                  Esgotado
-                </span>
-              ) : product.compra_status ? (
+              {product.compra_status ? (
                 <span
                   className={cn(
                     "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
@@ -869,11 +876,9 @@ function ChecklistPage() {
             <p
               className={cn(
                 "truncate text-xs sm:text-sm mt-0.5",
-                isOcEsgotado
-                  ? "text-zinc-400/60 line-through dark:text-zinc-500/60"
-                  : product.all_marcado
-                    ? "text-emerald-600/60 line-through dark:text-emerald-400/60"
-                    : "text-ink-faint sm:text-ink",
+                product.all_marcado
+                  ? "text-emerald-600/60 line-through dark:text-emerald-400/60"
+                  : "text-ink-faint sm:text-ink",
               )}
             >
               {product.descricao}
@@ -897,7 +902,7 @@ function ChecklistPage() {
           {/* Stock + Location + Esgotado — wraps on mobile, inline on sm+ */}
           <div className="mt-1.5 sm:mt-0 flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0">
             {/* Stock badge */}
-            {!isOcEsgotado && editingStock === product.produto_id ? (
+            {editingStock === product.produto_id ? (
               <div
                 className="inline-flex items-center gap-1"
                 onClick={(e) => e.stopPropagation()}
@@ -925,7 +930,7 @@ function ChecklistPage() {
                   {savingStock ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                 </button>
               </div>
-            ) : !isOcEsgotado ? (
+            ) : (
               <button
                 type="button"
                 onClick={(e) => startEditStock(product, e)}
@@ -943,10 +948,10 @@ function ChecklistPage() {
                 {product.disponivel}
                 <Pencil className="h-2.5 w-2.5 opacity-50" />
               </button>
-            ) : null}
+            )}
 
             {/* Location */}
-            {!isOcEsgotado && editingLoc === product.produto_id ? (
+            {editingLoc === product.produto_id ? (
               <div
                 className="inline-flex items-center gap-1"
                 onClick={(e) => e.stopPropagation()}
@@ -974,7 +979,7 @@ function ChecklistPage() {
                   {savingLoc ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                 </button>
               </div>
-            ) : !isOcEsgotado ? (
+            ) : (
               <button
                 type="button"
                 onClick={(e) => startEditLocation(product, e)}
@@ -999,10 +1004,10 @@ function ChecklistPage() {
                 )}
                 <Pencil className="h-2.5 w-2.5 opacity-50" />
               </button>
-            ) : null}
+            )}
 
             {/* Esgotado button */}
-            {!product.all_marcado && !isOcEsgotado && (
+            {!product.all_marcado && (
               <button
                 type="button"
                 disabled={isOc ? isLoadingOc : esgotadoLoading !== null}
@@ -1148,7 +1153,7 @@ function ChecklistPage() {
                     Conferência OC
                   </h3>
                   <span className="text-xs text-amber-600/70 dark:text-amber-400/70">
-                    {ocItems.filter((p) => !p.all_marcado && !ocEsgotadoItems.has(p.produto_id)).length} pendente(s)
+                    {ocItems.filter((p) => !p.all_marcado).length} pendente(s)
                   </span>
                 </div>
                 <div className="space-y-1">

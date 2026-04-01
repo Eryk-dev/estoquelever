@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
 import { registrarEvento } from "@/lib/historico-service";
@@ -10,9 +11,15 @@ import { registrarEvento } from "@/lib/historico-service";
  * Manually confirm item quantities during packing via +/- buttons.
  * Increments quantidade_bipada and checks pedido completion.
  *
+ * Headers: X-Session-Id
  * Body: { pedido_item_id: string, quantidade: number }
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
+  }
+
   const body = await request.json().catch(() => null);
   if (
     !body ||
@@ -124,6 +131,7 @@ export async function POST(request: NextRequest) {
         .update({
           status_separacao: "embalado",
           embalagem_concluida_em: new Date().toISOString(),
+          embalagem_operador_id: session.id,
         })
         .eq("id", item.pedido_id);
 
@@ -149,7 +157,7 @@ export async function POST(request: NextRequest) {
         evento: "embalagem_concluida",
       }).catch(() => {});
 
-      const etiqueta = await buscarEImprimirEtiqueta(item.pedido_id);
+      const etiqueta = await buscarEImprimirEtiqueta(item.pedido_id, session.id);
       return NextResponse.json({
         pedido_item_id,
         quantidade_bipada: newBipada,

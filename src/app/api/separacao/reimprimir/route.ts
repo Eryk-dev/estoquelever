@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
   // No cached ZPL — use full flow (create agrupamento + fetch from Tiny)
   if (!pedido.etiqueta_zpl) {
     logger.info(LOG_SOURCE, "ZPL não cacheado, usando fluxo completo", { pedidoId });
-    await buscarEImprimirEtiqueta(pedidoId);
+    await buscarEImprimirEtiqueta(pedidoId, session.id);
 
     // Check if print succeeded (etiqueta_zpl gets cached on success)
     const { data: check } = await supabase
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
   // Resolve API key + printer in parallel
   const [printNodeApiKey, printer] = await Promise.all([
     getConfig("PRINTNODE_API_KEY"),
-    resolverImpressora(pedido.separacao_operador_id ?? session.id, galpaoId),
+    resolverImpressora(session.id, galpaoId),
   ]);
 
   if (!printNodeApiKey) {

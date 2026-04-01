@@ -1572,7 +1572,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Purpose:** Process a barcode scan during packing. Finds the oldest separado-status order with the scanned SKU and updates quantities atomically.
 
-**Auth:** None
+**Auth:** Session required (`X-Session-Id` header)
 
 **Request Body:**
 ```json
@@ -1604,14 +1604,15 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```
 
 **Business Logic:**
-- Calls RPC `siso_processar_bip_embalagem` to find and update item atomically
+- Validates session to identify the packing operator
+- Calls RPC `siso_processar_bip_embalagem` with operator ID to find and update item atomically
 - RPC finds the oldest separado-status order with matching SKU, increments quantidade_bipada
-- If pedido_completo: calls `buscarEImprimirEtiqueta` or `imprimirEtiquetaDireta` to print label
+- If pedido_completo: calls `imprimirEtiquetaDireta` or `buscarEImprimirEtiqueta` to print label on the **packing operator's** printer
 
 **Side Effects:**
 - RPC atomically updates `siso_pedido_itens.quantidade_bipada`, `bipado_completo`
-- May update `siso_pedidos.status_separacao = "embalado"`, `embalagem_concluida_em`
-- Calls label printing
+- May update `siso_pedidos.status_separacao = "embalado"`, `embalagem_concluida_em`, `embalagem_operador_id`
+- Calls label printing (resolves printer from packing operator, not separation operator)
 - Logs to `siso_logs`
 
 ---
@@ -1622,7 +1623,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Purpose:** Manually confirm item quantities during packing via +/- buttons. Increments quantidade_bipada and checks pedido completion.
 
-**Auth:** None
+**Auth:** Session required (`X-Session-Id` header)
 
 **Request Body:**
 ```json
@@ -1660,16 +1661,17 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```
 
 **Business Logic:**
+- Validates session to identify the packing operator
 - Fetches item and validates parent pedido.status_separacao = "separado"
 - Increments quantidade_bipada by quantidade (can be negative to decrement)
 - Recalculates bipado_completo (newBipada >= quantidade_pedida)
 - Checks if all packable items (non-indisponivel, non-cancelado) have bipado_completo = true
-- If all complete: transitions pedido to "embalado" and calls label printing
+- If all complete: transitions pedido to "embalado" and calls label printing on the **packing operator's** printer
 
 **Side Effects:**
 - Updates `siso_pedido_itens.quantidade_bipada`, `bipado_completo`
-- May update `siso_pedidos.status_separacao = "embalado"`, `embalagem_concluida_em`
-- Calls label printing if pedido complete
+- May update `siso_pedidos.status_separacao = "embalado"`, `embalagem_concluida_em`, `embalagem_operador_id`
+- Calls label printing if pedido complete (resolves printer from packing operator, not separation operator)
 - Logs to `siso_logs`
 
 ---

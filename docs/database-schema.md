@@ -63,6 +63,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `separacao_iniciada_em` | timestamptz | YES | | When wave picking started |
 | `separacao_concluida_em` | timestamptz | YES | | When picking completed |
 | `embalagem_concluida_em` | timestamptz | YES | | When packing completed |
+| `embalagem_operador_id` | uuid | YES | FK | User who packed the order (may differ from separacao_operador_id) |
 | `etiqueta_status` | text | YES | | Shipping label status: `pendente`, `imprimindo`, `impresso`, `falhou` |
 | `etiqueta_url` | text | YES | | Shipping label URL (PrintNode receipt) |
 | `etiqueta_zpl` | text | YES | | Raw ZPL content cached at separation |

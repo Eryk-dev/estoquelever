@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { buscarEImprimirEtiqueta, imprimirEtiquetaDireta } from "@/lib/etiqueta-service";
 import { registrarEvento } from "@/lib/historico-service";
@@ -12,10 +13,16 @@ import type { BipEmbalagemResult } from "@/types";
  * siso_processar_bip_embalagem which finds the oldest separado-status
  * order with the scanned SKU and updates quantities atomically.
  *
+ * Headers: X-Session-Id
  * Body: { sku: string, galpao_id: string, quantidade?: number }
  * Returns: BipEmbalagemResult
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
+  }
+
   const body = await request.json().catch(() => null);
   if (!body?.sku || typeof body.sku !== "string") {
     return NextResponse.json(
@@ -42,6 +49,7 @@ export async function POST(request: NextRequest) {
         p_sku: sku,
         p_galpao_id: galpao_id,
         p_quantidade: quantidade,
+        p_operador_id: session.id,
       },
     );
 
@@ -163,9 +171,9 @@ export async function POST(request: NextRequest) {
             etiquetaZpl: row.etiqueta_zpl ?? null,
             etiquetaUrl: row.etiqueta_url ?? null,
             separacaoGalpaoId: row.etiqueta_galpao_id,
-            separacaoOperadorId: row.etiqueta_operador_id ?? null,
+            separacaoOperadorId: session.id,
           })
-        : await buscarEImprimirEtiqueta(result.pedido_id);
+        : await buscarEImprimirEtiqueta(result.pedido_id, session.id);
 
       return NextResponse.json({
         ...result,

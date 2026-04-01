@@ -55,7 +55,7 @@ export interface EtiquetaPreClaimed {
  *
  * Returns a result so callers can report success/failure to the frontend.
  */
-export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<EtiquetaResult> {
+export async function buscarEImprimirEtiqueta(pedidoId: string, operadorOverrideId?: string): Promise<EtiquetaResult> {
   const t0 = performance.now();
   const supabase = createServiceClient();
 
@@ -121,7 +121,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string): Promise<Etiquet
         ? Promise.resolve(pedido.etiqueta_zpl)
         : resolverZplFallback(supabase, pedido),
       getConfig("PRINTNODE_API_KEY"),
-      resolverImpressora(pedido.separacao_operador_id ?? galpaoId, galpaoId),
+      resolverImpressora(operadorOverrideId ?? pedido.separacao_operador_id ?? galpaoId, galpaoId),
     ]);
     const resolveMs = Math.round(performance.now() - tResolve);
 

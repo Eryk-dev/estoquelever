@@ -714,9 +714,19 @@ function EmbalagemOrderRow({
             {pedido.numero_ec && (
               <>
                 <span className="h-3 w-px bg-line" aria-hidden="true" />
-                <span className="font-mono text-xs text-ink-faint">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded px-1 py-0.5 font-mono text-xs text-ink-faint transition-colors hover:bg-zinc-200/60 active:bg-zinc-300/60 dark:hover:bg-zinc-700/60 dark:active:bg-zinc-600/60"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(pedido.numero_ec!);
+                    toast.success(`EC ${pedido.numero_ec} copiado`);
+                  }}
+                  title="Copiar número EC"
+                >
                   EC {pedido.numero_ec}
-                </span>
+                  <Copy className="h-3 w-3" />
+                </button>
               </>
             )}
             <span className="h-3 w-px bg-line" aria-hidden="true" />

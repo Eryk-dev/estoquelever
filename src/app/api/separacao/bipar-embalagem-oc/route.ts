@@ -169,13 +169,15 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 3. Check pedido completion ──
-    // Count items where bipado_completo = false, excluding indisponivel/cancelado
+    // Count items where bipado_completo = false, excluding indisponivel/cancelado.
+    // NOTE: compra_status is NULL for most items. Using .or() to correctly
+    // include NULL values (SQL: NULL NOT IN (...) returns NULL, excluding the row).
     const { count: pendingCount, error: countErr } = await supabase
       .from("siso_pedido_itens")
       .select("id", { count: "exact", head: true })
       .eq("pedido_id", targetItem.pedido_id)
       .eq("bipado_completo", false)
-      .not("compra_status", "in", "(indisponivel,cancelado)");
+      .or("compra_status.is.null,compra_status.not.in.(indisponivel,cancelado)");
 
     if (countErr) {
       logger.logError({

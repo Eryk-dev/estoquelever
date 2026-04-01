@@ -566,26 +566,6 @@ export function SeparacaoCard({
               </span>
             )}
 
-            {/* Label readiness indicator (aguardando_separacao, em_separacao, separado, embalado) */}
-            {pedido.status_separacao === "aguardando_separacao" && pedido.etiqueta_pronta && (
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
-                <Printer className="h-2.5 w-2.5" />
-                Etiqueta pronta
-              </span>
-            )}
-            {(isEmSeparacao || isSeparado) && (
-              pedido.etiqueta_pronta ? (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
-                  <Printer className="h-2.5 w-2.5" />
-                  Etiqueta pronta
-                </span>
-              ) : (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:bg-amber-950/30 dark:text-amber-400">
-                  <AlertTriangle className="h-2.5 w-2.5" />
-                  Sem etiqueta
-                </span>
-              )
-            )}
             {isEmbalado && pedido.etiqueta_status === "falhou" && (
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 dark:bg-red-950/30 dark:text-red-400">
                 <AlertTriangle className="h-2.5 w-2.5" />

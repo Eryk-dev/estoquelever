@@ -111,6 +111,7 @@ export function SeparacaoCard({
   const isSeparado = pedido.status_separacao === "separado";
   const isEmSeparacao = pedido.status_separacao === "em_separacao";
   const isAguardandoOC = pedido.status_separacao === "aguardando_compra";
+  const isEngatilhado = isAguardandoOC && pedido.nf_emitida && pedido.agrupamento_criado;
   const canRetryEtiqueta = (isSeparado || isEmbalado) && !pedido.etiqueta_pronta;
   const canEncaminhar =
     onEncaminhar &&
@@ -229,9 +230,11 @@ export function SeparacaoCard({
         "rounded-xl border bg-paper shadow-sm transition-colors",
         isEmbalado
           ? "border-emerald-200 dark:border-emerald-800"
-          : isAguardandoOC
-            ? "border-amber-200 dark:border-amber-800"
-            : "border-line",
+          : isEngatilhado
+            ? "border-emerald-300 border-l-4 border-l-emerald-500 dark:border-emerald-700 dark:border-l-emerald-400"
+            : isAguardandoOC
+              ? "border-amber-200 dark:border-amber-800"
+              : "border-line",
         checkbox && checked && "ring-2 ring-zinc-900/10 dark:ring-zinc-100/10",
       )}
       aria-label={`Pedido #${pedido.numero_pedido}`}
@@ -279,6 +282,11 @@ export function SeparacaoCard({
             {statusBadge && (
               <span className={cn("hidden rounded-full px-2 py-1 text-[10px] font-semibold sm:inline-flex", statusBadge.className)}>
                 {statusBadge.label}
+              </span>
+            )}
+            {isEngatilhado && (
+              <span className="hidden rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700 sm:inline-flex dark:bg-emerald-900/40 dark:text-emerald-400">
+                Pronto
               </span>
             )}
 

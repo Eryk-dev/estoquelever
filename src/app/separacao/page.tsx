@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle, RotateCcw, Tag, X, Plus } from "lucide-react";
+import { LogOut, Search, PackageCheck, Play, ShieldAlert, Printer, Undo2, ArrowRight, AlertTriangle, RotateCcw, Tag, X, Plus, Package } from "lucide-react";
 import { toast } from "sonner";
 import { AppHeader } from "@/components/app-header";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
@@ -183,6 +183,9 @@ function SeparacaoPageContent() {
   const [tagInput, setTagInput] = useState("");
   const [tagActionLoading, setTagActionLoading] = useState(false);
   const lastCheckedIdx = useRef<number | null>(null);
+  // Embalagem direta OC mode
+  const [embalagemMode, setEmbalagemMode] = useState(false);
+  const [embalagemPedidoIds, setEmbalagemPedidoIds] = useState<string[]>([]);
   // Action loading states
   const [actionLoading, setActionLoading] = useState(false);
   const [revertMenuState, setRevertMenuState] = useState<{
@@ -1059,7 +1062,15 @@ function SeparacaoPageContent() {
         )}
 
         {/* Action buttons per tab */}
-        {activeTab === "aguardando_compra" && pedidos.length > 0 && (
+        {activeTab === "aguardando_compra" && pedidos.length > 0 && (() => {
+          const engatilhados = (() => {
+            if (selectedIds.size > 0) {
+              return pedidos.filter((p) => selectedIds.has(p.id) && p.nf_emitida && p.agrupamento_criado);
+            }
+            return pedidos.filter((p) => p.nf_emitida && p.agrupamento_criado);
+          })();
+          const engatilhadoCount = engatilhados.length;
+          return (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-ink-faint">
               {selectedIds.size > 0
@@ -1088,9 +1099,23 @@ function SeparacaoPageContent() {
                   ? "Iniciando..."
                   : `Separar ${selectedIds.size > 0 ? selectedIds.size : pedidos.length} pedido(s)`}
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const ids = engatilhados.map((p) => p.id);
+                  setEmbalagemPedidoIds(ids);
+                  setEmbalagemMode(true);
+                }}
+                disabled={engatilhadoCount === 0 || actionLoading}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Package className="h-3.5 w-3.5" />
+                {`Embalar ${engatilhadoCount} pedido(s)`}
+              </button>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {activeTab === "aguardando_separacao" && pedidos.length > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-2">

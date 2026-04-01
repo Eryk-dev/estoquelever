@@ -71,14 +71,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate all have an allowed status (aguardando_separacao, aguardando_compra, or em_separacao for resume)
-    const ALLOWED_STATUSES = ["aguardando_separacao", "aguardando_compra", "em_separacao"];
+    const ALLOWED_STATUSES = ["aguardando_separacao", "aguardando_compra", "em_separacao", "validacao_oc"];
     const invalidPedidos = (pedidos ?? []).filter(
       (p) => !ALLOWED_STATUSES.includes(p.status_separacao),
     );
     if (invalidPedidos.length > 0) {
       return NextResponse.json(
         {
-          error: "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra' ou 'em_separacao'",
+          error: "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra', 'validacao_oc' ou 'em_separacao'",
           pedido_ids: invalidPedidos.map((p) => p.id),
           statuses: invalidPedidos.map((p) => p.status_separacao),
         },
@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
     const toStart = (pedidos ?? [])
       .filter(
         (p) =>
-          p.status_separacao === "aguardando_separacao" &&
+          (p.status_separacao === "aguardando_separacao" || p.status_separacao === "validacao_oc") &&
           !pedidosWithPendingCompra.has(p.id),
       )
       .map((p) => p.id);
@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
           separacao_iniciada_em: new Date().toISOString(),
         })
         .in("id", toStart)
-        .eq("status_separacao", "aguardando_separacao");
+        .in("status_separacao", ["aguardando_separacao", "validacao_oc"]);
 
       if (updateError) {
         logger.error("separacao-iniciar", "Failed to update pedidos", {

@@ -118,7 +118,7 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Read src/app/separacao/page.tsx first 150 lines to understand TAB_CONFIG, VisibleSeparacaoTab type, EMPTY_COUNTS, and how tabs trigger data fetches. The key challenge: the current architecture is 1:1 between tab ID and status_separacao value. The OC tab breaks this by mapping to TWO statuses. The cleanest approach is to handle this in the fetch logic: when activeTab === 'aguardando_compra', fetch both statuses."
     },
     {
@@ -135,7 +135,7 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "Read src/components/separacao/separacao-card.tsx — it is a large component. Find isAguardandoOC (around line 113), the status badge area, and the compra progress section. The validacao_oc card should look similar to aguardando_compra but with amber coloring and the 'OC Pendente' tag instead of the red 'OC Confirmada'. The Separar button availability depends on the tab's action buttons in separacao/page.tsx, not the card itself."
     },
     {
@@ -157,7 +157,7 @@
         "Typecheck passes"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "Read src/app/separacao/checklist/page.tsx (large file, ~1000+ lines). The current consolidation is in a useMemo that groups by produto_id. Split this into two useMemos (or one that returns { ocItems, normalItems }). The OC section uses the SAME item row component but wraps it in an amber-bordered container. For the click handler, the existing marcar-item flow won't work for OC items — use the new validar-oc-item endpoint instead. For esgotado, check how the existing esgotado button works (it may call produto-esgotado) and redirect OC items to validar-oc-item instead."
     },
     {

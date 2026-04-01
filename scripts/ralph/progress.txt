@@ -14,6 +14,10 @@ Started: Wed Apr  1 16:59:27 -03 2026
 - voltar-etapa/route.ts STATUS_ORDER array determines valid admin move targets — add new statuses in flow order
 - OC creation pattern (find-or-create siso_ordens_compra by fornecedor + galpao): used in produto-esgotado/route.ts and validar-oc-item/route.ts — always match by fornecedor + galpao + status='aguardando_compra'
 - EventoPedido type in historico-service.ts must include new event types before they can be used in registrarEvento calls
+- TAB_STATUS_MAP in separacao/page.tsx maps tab ID → status_separacao values fetched — use this for badge counts, API params, and display counts
+- api/separacao/route.ts supports comma-separated status_separacao param via statusFilters array — use .in() for multiple, .eq() for single
+- checklist/page.tsx uses renderProductRow shared renderer — OC vs normal behavior is determined by product.is_oc + ocEsgotadoItems Set + ocValidarLoading state
+- Optimistic updates for OC items in checklist: keep compra_status='oc_pendente' in cache, track esgotado in local Set — refetch after auto-transition clears both
 
 ---
 
@@ -93,4 +97,54 @@ Started: Wed Apr  1 16:59:27 -03 2026
   - EventoPedido in historico-service.ts must be updated BEFORE using new event types in route handlers
   - validar-oc-item uses getSessionUser for auth — same pattern as bipar/marcar-item endpoints
   - FR-8 auto-transition clears separacao_operador_id and separacao_iniciada_em but does NOT set separacao_concluida_em — consistent with concluir aguardando_compra branch
+---
+
+## 2026-04-01 - US-007
+- Decoupled VisibleSeparacaoTab from StatusSeparacao — explicit union excluding validacao_oc
+- Added TAB_STATUS_MAP to map tabs to their fetched statuses (aguardando_compra → [aguardando_compra, validacao_oc])
+- Tab badge counts now sum all statuses in TAB_STATUS_MAP[tab]
+- API route.ts now supports comma-separated status_separacao values (.in() for multiple)
+- Added MOVE_TARGETS for aguardando_compra tab and validacao_oc as target in relevant entries
+- Updated docs/api-reference-complete.md with comma-separated param support
+- Files changed: src/app/separacao/page.tsx, src/app/api/separacao/route.ts, docs/api-reference-complete.md
+- **Learnings for future iterations:**
+  - TAB_STATUS_MAP is the single source of truth for tab→status mapping — use it for badge counts, fetch params, and "Na fila" display
+  - api/separacao/route.ts now supports comma-separated status_separacao — use statusFilters array (not statusFilter string) when extending
+  - MOVE_TARGETS is keyed by VisibleSeparacaoTab (not StatusSeparacao) — validacao_oc appears as a target option, not a key
+  - The "Na fila" count uses TAB_STATUS_MAP[activeTab].reduce() to sum correctly for combined tabs
+---
+
+## 2026-04-01 - US-008
+- Added `oc_pendente` to CompraStatsData interface
+- Expanded isAguardandoOC to include validacao_oc (both show in Aguardando OC tab)
+- Split statusBadge: validacao_oc shows "OC Pendente" (amber), aguardando_compra shows "OC Confirmada" (red)
+- isEngatilhado now only applies to actual aguardando_compra (not validacao_oc)
+- Added oc_pendente counter ("pendente validação") to compra progress summary
+- Added oc_pendente segment (amber-300) to compra progress bar
+- Files changed: src/components/separacao/separacao-card.tsx
+- **Learnings for future iterations:**
+  - isAguardandoOC is used for card borders and compra stats visibility — expanding it automatically shows compra progress for validacao_oc cards too
+  - isEngatilhado (NF + agrupamento ready) must NOT include validacao_oc — those pedidos haven't confirmed their OC items yet
+  - CompraStatsData interface in separacao-card.tsx must match the API response shape from api/separacao/route.ts compraStats builder
+  - Manual browser verification needed for visual changes (OC Pendente amber tag, OC Confirmada red tag, progress bar oc_pendente segment)
+---
+
+## 2026-04-01 - US-009
+- Split checklist item consolidation into OC (compra_status='oc_pendente') and normal groups using composite key (`${produto_id}_${isOc ? 'oc' : 'normal'}`)
+- Added `is_oc: boolean` to ConsolidatedProduct interface
+- Created `renderProductRow` shared renderer with conditional OC logic (click=encontrei, esgotado button=esgotado, grey styling for esgotado items, loading spinner)
+- Amber-bordered "Conferência OC" section at top with ShoppingCart icon and pending counter
+- OC encontrei: optimistic update keeps compra_status='oc_pendente' so item stays in OC section (green)
+- OC esgotado: tracked in local `ocEsgotadoItems` Set (grey, X checkbox, disabled)
+- Auto-transition handling: redirects to /separacao if all pedidos transitioned, toast for partial
+- Barcode scanner optimistic update excludes OC items (compra_status !== 'oc_pendente')
+- Updated handleConcluir to parse aguardandoCompra response + smart redirect
+- Progress bar counts OC resolved items (encontrei OR esgotado) alongside normal marcado items
+- Files changed: src/app/separacao/checklist/page.tsx
+- **Learnings for future iterations:**
+  - renderProductRow is a const arrow function defined inside ChecklistPage — it accesses component state/handlers via closure. Both OC and normal sections call it.
+  - OC items stay in their section during optimistic updates by NOT changing compra_status in the cache — only separacao_marcado (encontrei) or local Set (esgotado) is updated. The refetch after auto-transition naturally moves items.
+  - The consolidated useMemo still produces ALL items (oc+normal) — the split happens in a separate useMemo. This preserves the sort logic working across all items.
+  - For large JSX section replacements (250+ lines), the Edit tool's exact-match requirement makes it impractical — Python via Bash is more reliable for such cases.
+  - handleConcluir now handles aguardandoCompra in the response (added in US-004) — redirects to aguardando_compra tab when all pedidos went to compras.
 ---

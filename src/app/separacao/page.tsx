@@ -17,6 +17,7 @@ import {
   type SeparacaoPedido,
 } from "@/components/separacao/separacao-card";
 import { GalpaoSelector } from "@/components/galpao-selector";
+import { playSuccess, playError, playComplete } from "@/components/separacao/audio-feedback";
 import type { Tab, StatusSeparacao, SeparacaoCounts } from "@/types";
 
 type VisibleSeparacaoTab = StatusSeparacao;
@@ -189,6 +190,7 @@ function SeparacaoPageContent() {
   const [bipProgress, setBipProgress] = useState<Record<string, { bipados: number; total: number }>>({});
   const [embalagemQty, setEmbalagemQty] = useState(1);
   const embalagemScanRef = useRef<HTMLInputElement>(null);
+  const embalagemScanningRef = useRef(false);
   // Action loading states
   const [actionLoading, setActionLoading] = useState(false);
   const [revertMenuState, setRevertMenuState] = useState<{
@@ -392,10 +394,13 @@ function SeparacaoPageContent() {
   useEffect(() => {
     if (!embalagemMode || embalagemPedidoIds.length === 0) return;
     if (embalagemCompletados >= embalagemPedidoIds.length) {
+      toast.success(`Embalagem concluida — ${embalagemCompletados} pedido(s)`);
       const timer = setTimeout(() => {
+        fetch("/api/worker/processar", { method: "POST" }).catch(() => {});
         setEmbalagemMode(false);
         setEmbalagemPedidoIds([]);
         setBipProgress({});
+        setEmbalagemQty(1);
         queryClient.invalidateQueries({ queryKey: ["separacao"] });
       }, 1500);
       return () => clearTimeout(timer);
@@ -404,6 +409,7 @@ function SeparacaoPageContent() {
 
   // Exit embalagem mode handler
   const handleExitEmbalagemMode = useCallback(() => {
+    fetch("/api/worker/processar", { method: "POST" }).catch(() => {});
     setEmbalagemMode(false);
     setEmbalagemPedidoIds([]);
     setBipProgress({});
@@ -411,15 +417,74 @@ function SeparacaoPageContent() {
     queryClient.invalidateQueries({ queryKey: ["separacao"] });
   }, [queryClient]);
 
-  // Embalagem scan form submit (Enter key) — actual API call is in US-004
-  const handleEmbalagemScanSubmit = useCallback((e: FormEvent<HTMLFormElement>) => {
+  // Embalagem scan form submit (Enter key) — calls bipar-embalagem-oc API
+  const handleEmbalagemScanSubmit = useCallback(async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    // US-004 will add the API integration here
-    // For now, clear the input after submit
-    if (embalagemScanRef.current) {
-      embalagemScanRef.current.value = "";
+    if (embalagemScanningRef.current) return;
+
+    const sku = (embalagemScanRef.current?.value ?? "").trim().toUpperCase();
+    if (embalagemScanRef.current) embalagemScanRef.current.value = "";
+    if (!sku) return;
+
+    embalagemScanningRef.current = true;
+    const qty = embalagemQty;
+
+    try {
+      const res = await sisoFetch("/api/separacao/bipar-embalagem-oc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku, pedido_ids: embalagemPedidoIds, quantidade: qty }),
+      });
+
+      if (res.status === 404) {
+        playError();
+        toast.warning("SKU nao encontrado");
+        return;
+      }
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        playError();
+        toast.error(body.error ?? "Erro ao bipar");
+        return;
+      }
+
+      const result = await res.json();
+
+      // Update bipProgress optimistically
+      setBipProgress((prev) => {
+        const current = prev[result.pedido_id] ?? { bipados: 0, total: 0 };
+        return {
+          ...prev,
+          [result.pedido_id]: {
+            ...current,
+            bipados: result.pedido_completo ? current.total : current.bipados + qty,
+          },
+        };
+      });
+
+      if (result.pedido_completo) {
+        playComplete();
+        // Find pedido numero for toast
+        const pedido = pedidos.find((p) => p.id === result.pedido_id);
+        const numero = pedido?.numero_pedido ?? result.pedido_id.slice(0, 8);
+        if (result.etiqueta_status === "falhou") {
+          toast.warning(`Pedido ${numero} embalado — etiqueta pendente`);
+        } else {
+          toast.success(`Pedido ${numero} embalado`);
+        }
+      } else {
+        playSuccess();
+        toast.success(`${sku} — ${result.quantidade_bipada}x bipado`);
+      }
+    } catch {
+      playError();
+      toast.error("Erro de conexao");
+    } finally {
+      embalagemScanningRef.current = false;
+      embalagemScanRef.current?.focus({ preventScroll: true });
     }
-  }, []);
+  }, [embalagemPedidoIds, embalagemQty, pedidos]);
 
   const activeConfig = TAB_CONFIG.find((t) => t.id === activeTab)!;
 

@@ -29,7 +29,8 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const isPickOC = searchParams.get("modo") === "pick-oc";
+  const modo = searchParams.get("modo");
+  const isPickOC = modo === "pick-oc" || modo === "embalagem-oc";
 
   const supabase = createServiceClient();
 

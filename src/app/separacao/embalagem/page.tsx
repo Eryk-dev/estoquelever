@@ -68,6 +68,8 @@ function EmbalagemPage() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
 
+  const isEmbalagemOC = searchParams.get("modo") === "embalagem-oc";
+
   const pedidoIds = useMemo(() => {
     const param = searchParams.get("pedidos");
     return param ? param.split(",").filter(Boolean) : [];
@@ -123,7 +125,8 @@ function EmbalagemPage() {
   const { data, isLoading } = useQuery<{ pedidos: SeparacaoPedido[] }>({
     queryKey: pedidosQueryKey,
     queryFn: async () => {
-      const res = await sisoFetch("/api/separacao?status_separacao=separado");
+      const status = isEmbalagemOC ? "aguardando_compra" : "separado";
+      const res = await sisoFetch(`/api/separacao?status_separacao=${status}`);
       if (!res.ok) return { pedidos: [] };
       const json = await res.json();
       return { pedidos: json.pedidos ?? [] };
@@ -141,8 +144,9 @@ function EmbalagemPage() {
   const { data: itemsData, isLoading: itemsInitialLoading } = useQuery<{ items: PedidoItem[] }>({
     queryKey: itemsQueryKey,
     queryFn: async () => {
+      const modoParam = isEmbalagemOC ? "&modo=embalagem-oc" : "";
       const res = await sisoFetch(
-        `/api/separacao/checklist-items?pedidos=${pedidoIds.join(",")}`,
+        `/api/separacao/checklist-items?pedidos=${pedidoIds.join(",")}${modoParam}`,
       );
       if (!res.ok) return { items: [] };
       return res.json();
@@ -219,14 +223,17 @@ function EmbalagemPage() {
     setScanQty(1);
 
     try {
-      const res = await sisoFetch("/api/separacao/bipar-embalagem", {
+      const endpoint = isEmbalagemOC
+        ? "/api/separacao/bipar-embalagem-oc"
+        : "/api/separacao/bipar-embalagem";
+      const payload = isEmbalagemOC
+        ? { sku, pedido_ids: pedidoIds, quantidade: qty }
+        : { sku, ...(galpaoId && { galpao_id: galpaoId }), quantidade: qty };
+
+      const res = await sisoFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sku,
-          ...(galpaoId && { galpao_id: galpaoId }),
-          quantidade: qty,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (res.status === 404) {
@@ -271,6 +278,8 @@ function EmbalagemPage() {
   }, [
     scanQty,
     galpaoId,
+    isEmbalagemOC,
+    pedidoIds,
     queryClient,
     pedidosQueryKey,
     itemsQueryKey,
@@ -464,7 +473,7 @@ function EmbalagemPage() {
   return (
     <div className="min-h-screen bg-surface">
       <AppHeader
-        title="Embalagem"
+        title={isEmbalagemOC ? "Embalagem Direta OC" : "Embalagem"}
         subtitle={`${pedidoIds.length} pedido(s) — Bipagem e conferencia`}
         accentColor={accent.color}
         rightSlot={(
@@ -544,6 +553,7 @@ function EmbalagemPage() {
                 itemsLoading={itemsInitialLoading}
                 onConfirmItem={handleConfirmItem}
                 onReprint={handleReprint}
+                readOnly={isEmbalagemOC}
               />
             </div>
           );
@@ -575,6 +585,7 @@ function EmbalagemPage() {
                     itemsLoading={itemsInitialLoading}
                     onConfirmItem={handleConfirmItem}
                     onReprint={handleReprint}
+                    readOnly={isEmbalagemOC}
                   />
                 ))}
               </div>
@@ -608,7 +619,7 @@ function EmbalagemPage() {
         {/* Action buttons */}
         <div className="flex items-center gap-3 border-t border-line pt-4">
           <button
-            onClick={() => router.push("/separacao")}
+            onClick={() => router.push(isEmbalagemOC ? "/separacao?tab=aguardando_compra" : "/separacao")}
             disabled={actionLoading}
             className="inline-flex items-center gap-2 rounded-xl border border-line bg-paper px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-surface disabled:opacity-50"
           >
@@ -650,6 +661,7 @@ function EmbalagemOrderRow({
   itemsLoading,
   onConfirmItem,
   onReprint,
+  readOnly,
 }: {
   pedido: SeparacaoPedido;
   highlighted: boolean;
@@ -660,6 +672,7 @@ function EmbalagemOrderRow({
   itemsLoading?: boolean;
   onConfirmItem: (item: PedidoItem, delta: number) => void;
   onReprint: (pedidoId: string) => Promise<void>;
+  readOnly?: boolean;
 }) {
   const [reprinting, setReprinting] = useState(false);
   const totalItens = pedido.total_itens || 0;
@@ -780,7 +793,7 @@ function EmbalagemOrderRow({
                 key={item.id}
                 item={item}
                 onConfirm={onConfirmItem}
-                readOnly={isComplete}
+                readOnly={isComplete || readOnly}
               />
             ))}
           </div>

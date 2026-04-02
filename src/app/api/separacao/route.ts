@@ -113,12 +113,13 @@ export async function GET(request: NextRequest) {
     }
 
     // 1. Counts — parallel HEAD queries per status (affected by all active filters)
+    // aguardando_compra skips separacao_galpao_id — filtered by supplier destination instead (post-filter)
     const countPromises = COUNT_STATUSES.map((status) => {
       let q = supabase
         .from("siso_pedidos")
         .select("*", { count: "exact", head: true })
         .eq("status_separacao", status);
-      if (activeGalpaoId) q = q.eq("separacao_galpao_id", activeGalpaoId);
+      if (activeGalpaoId && status !== "aguardando_compra") q = q.eq("separacao_galpao_id", activeGalpaoId);
       if (empresaFilter) q = q.eq("empresa_origem_id", empresaFilter);
       if (marketplaceFilter) q = q.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
       q = applyBuscaFilter(q);
@@ -148,7 +149,9 @@ export async function GET(request: NextRequest) {
       )
       .not("status_separacao", "is", null);
 
-    if (activeGalpaoId) {
+    // aguardando_compra: skip galpão filter — post-filtered by supplier destination
+    const isAguardandoCompraOnly = statusFilters.length === 1 && statusFilters[0] === "aguardando_compra";
+    if (activeGalpaoId && !isAguardandoCompraOnly) {
       pedidosQuery = pedidosQuery.eq("separacao_galpao_id", activeGalpaoId);
     }
     if (empresaFilter) {

@@ -205,6 +205,7 @@ function SeparacaoPageContent() {
   const [sortFilter, setSortFilter] = useState("data_pedido");
   const [busca, setBusca] = useState("");
   const [tagFilter, setTagFilter] = useState("");
+  const [fornecedorFilter, setFornecedorFilter] = useState("");
   // Tag modal state
   const [tagModalOpen, setTagModalOpen] = useState(false);
   const [tagInput, setTagInput] = useState("");
@@ -347,7 +348,27 @@ function SeparacaoPageContent() {
   const queryError = error instanceof Error ? error.message : "Erro ao carregar separação";
 
   const counts = data?.counts ?? EMPTY_COUNTS;
-  const pedidos = useMemo(() => data?.pedidos ?? [], [data?.pedidos]);
+  const allPedidos = useMemo(() => data?.pedidos ?? [], [data?.pedidos]);
+
+  // Extract unique fornecedor values from aguardando_compra items
+  const fornecedorOptions = useMemo(() => {
+    if (activeTab !== "aguardando_compra") return [];
+    const set = new Set<string>();
+    for (const p of allPedidos) {
+      for (const item of p.compra_stats?.itens ?? []) {
+        if (item.fornecedor_oc) set.add(item.fornecedor_oc);
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [allPedidos, activeTab]);
+
+  // Apply client-side fornecedor filter (only for aguardando_compra tab)
+  const pedidos = useMemo(() => {
+    if (!fornecedorFilter || activeTab !== "aguardando_compra") return allPedidos;
+    return allPedidos.filter((p) =>
+      p.compra_stats?.itens?.some((item) => item.fornecedor_oc === fornecedorFilter),
+    );
+  }, [allPedidos, fornecedorFilter, activeTab]);
 
   // Empresa options from API (stable, not affected by filters)
   const empresaOptions = data?.empresas ?? [];
@@ -707,13 +728,15 @@ function SeparacaoPageContent() {
     empresaFilter.length > 0 ||
     marketplaceFilter.length > 0 ||
     sortFilter !== "data_pedido" ||
-    tagFilter.length > 0;
+    tagFilter.length > 0 ||
+    fornecedorFilter.length > 0;
   const activeFilterCount = [
     busca.trim().length > 0,
     empresaFilter.length > 0,
     marketplaceFilter.length > 0,
     sortFilter !== "data_pedido",
     tagFilter.length > 0,
+    fornecedorFilter.length > 0,
   ].filter(Boolean).length;
   const markedItemsTotal = pedidos.reduce((sum, pedido) => sum + pedido.itens_marcados, 0);
   const itemsTotal = pedidos.reduce((sum, pedido) => sum + pedido.total_itens, 0);
@@ -766,6 +789,7 @@ function SeparacaoPageContent() {
   function handleTabChange(nextTab: VisibleSeparacaoTab) {
     clearSelection();
     closeRevertMenu();
+    if (nextTab !== "aguardando_compra") setFornecedorFilter("");
 
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", nextTab);
@@ -779,6 +803,7 @@ function SeparacaoPageContent() {
     setMarketplaceFilter("");
     setSortFilter("data_pedido");
     setTagFilter("");
+    setFornecedorFilter("");
   }
 
   return (
@@ -938,6 +963,21 @@ function SeparacaoPageContent() {
               </select>
             )}
 
+            {activeTab === "aguardando_compra" && fornecedorOptions.length > 0 && (
+              <select
+                value={fornecedorFilter}
+                onChange={(e) => setFornecedorFilter(e.target.value)}
+                className="h-9 rounded-xl border border-line bg-surface px-3 text-xs text-ink focus:border-zinc-400 focus:outline-none dark:focus:border-zinc-500"
+              >
+                <option value="">Todos fornecedores</option>
+                {fornecedorOptions.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </select>
+            )}
+
             {hasFilters && (
               <button
                 type="button"
@@ -969,6 +1009,7 @@ function SeparacaoPageContent() {
                 />
               )}
               {tagFilter && <ContextChip label="Tag" value={tagFilter} />}
+              {fornecedorFilter && <ContextChip label="Fornecedor" value={fornecedorFilter} />}
             </div>
           )}
         </section>

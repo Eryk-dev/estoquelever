@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
 import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/agrupamento-service";
 
+
 /**
  * POST /api/separacao/concluir
  *
@@ -68,20 +69,6 @@ export async function POST(request: NextRequest) {
       itemsByPedido.set(item.pedido_id, list);
     }
 
-    // Guard: reject pedidos that still have unresolved oc_pendente items
-    for (const pid of pedido_ids) {
-      const pedidoItems = itemsByPedido.get(pid) ?? [];
-      if (pedidoItems.some((i) => i.compra_status === "oc_pendente")) {
-        return NextResponse.json(
-          {
-            error:
-              "Há itens OC não validados — resolva todos os itens na conferência OC antes de concluir",
-          },
-          { status: 400 },
-        );
-      }
-    }
-
     const separados: string[] = [];
     const aguardandoCompra: string[] = [];
     const pendentes: string[] = [];
@@ -93,17 +80,20 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Items being handled by compras module (not checked for separacao_marcado)
+      // Items being handled by compras module or still pending OC validation
+      // (not checked for separacao_marcado — they'll be resolved separately)
       const compraItems = pedidoItems.filter(
         (i) =>
           i.compra_status === "aguardando_compra" ||
-          i.compra_status === "comprado",
+          i.compra_status === "comprado" ||
+          i.compra_status === "oc_pendente",
       );
       // Normal items that need separacao_marcado check
       const normalItems = pedidoItems.filter(
         (i) =>
           i.compra_status !== "aguardando_compra" &&
-          i.compra_status !== "comprado",
+          i.compra_status !== "comprado" &&
+          i.compra_status !== "oc_pendente",
       );
 
       const allNormalMarcado =

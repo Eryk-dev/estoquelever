@@ -127,6 +127,9 @@ export async function POST(request: NextRequest) {
           .update({
             compra_status: "oc_pendente",
             fornecedor_oc: fornecedorInfo.fornecedor,
+            compra_quantidade_solicitada: null,
+            compra_solicitada_em: null,
+            ordem_compra_id: null,
             separacao_marcado: false,
             bipado_completo: false,
             quantidade_bipada: 0,
@@ -315,7 +318,13 @@ async function linkItemToOC(
       .single();
 
     const empresaId = pedido?.empresa_origem_id;
-    if (!empresaId) return;
+    if (!empresaId) {
+      logger.warn("validar-oc-item", "Pedido sem empresa_origem_id — OC não vinculada", {
+        pedidoId: item.pedido_id,
+        itemId: item.id,
+      });
+      return;
+    }
 
     // Resolve galpao_id from empresa
     const { data: empresa } = await supabase

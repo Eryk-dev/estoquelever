@@ -19,7 +19,7 @@ import {
 import { GalpaoSelector } from "@/components/galpao-selector";
 import type { Tab, StatusSeparacao, SeparacaoCounts } from "@/types";
 
-// validacao_oc shares the aguardando_compra tab — no dedicated tab
+// validacao_oc appears in aguardando_separacao tab — pedidos com itens OC pendentes de validação física
 type VisibleSeparacaoTab =
   | "aguardando_compra"
   | "aguardando_nf"
@@ -30,15 +30,15 @@ type VisibleSeparacaoTab =
 
 // Maps tab ID → status_separacao values fetched for that tab
 const TAB_STATUS_MAP: Record<VisibleSeparacaoTab, StatusSeparacao[]> = {
-  aguardando_compra: ["aguardando_compra", "validacao_oc"],
+  aguardando_compra: ["aguardando_compra"],
   aguardando_nf: ["aguardando_nf"],
-  aguardando_separacao: ["aguardando_separacao"],
+  aguardando_separacao: ["aguardando_separacao", "validacao_oc"],
   em_separacao: ["em_separacao"],
   separado: ["separado"],
   embalado: ["embalado"],
 };
 
-// 6 tabs — aguardando_compra shows both aguardando_compra + validacao_oc pedidos
+// 6 tabs — aguardando_separacao includes validacao_oc (OC validated during wave picking)
 const TAB_CONFIG: {
   id: VisibleSeparacaoTab;
   label: string;
@@ -112,7 +112,6 @@ const MOVE_TARGETS: Partial<Record<VisibleSeparacaoTab, {
   aguardando_compra: {
     back: [],
     forward: [
-      { value: "validacao_oc", label: "Validação OC" },
       { value: "aguardando_separacao", label: "Aguardando Separacao" },
       { value: "em_separacao", label: "Em Separacao" },
     ],
@@ -120,7 +119,6 @@ const MOVE_TARGETS: Partial<Record<VisibleSeparacaoTab, {
   aguardando_nf: {
     back: [],
     forward: [
-      { value: "validacao_oc", label: "Validação OC" },
       { value: "aguardando_separacao", label: "Aguardando Separacao" },
       { value: "em_separacao", label: "Em Separacao" },
       { value: "separado", label: "Separado" },
@@ -129,7 +127,7 @@ const MOVE_TARGETS: Partial<Record<VisibleSeparacaoTab, {
   },
   aguardando_separacao: {
     back: [
-      { value: "validacao_oc", label: "Validação OC" },
+      { value: "aguardando_compra", label: "Aguardando OC" },
       { value: "aguardando_nf", label: "Aguardando NF" },
     ],
     forward: [
@@ -140,7 +138,7 @@ const MOVE_TARGETS: Partial<Record<VisibleSeparacaoTab, {
   },
   em_separacao: {
     back: [
-      { value: "validacao_oc", label: "Validação OC" },
+      { value: "aguardando_compra", label: "Aguardando OC" },
       { value: "aguardando_separacao", label: "Aguardando Separacao" },
     ],
     forward: [

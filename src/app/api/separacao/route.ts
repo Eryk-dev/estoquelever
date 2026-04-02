@@ -185,9 +185,32 @@ export async function GET(request: NextRequest) {
       .eq("ativo", true)
       .order("nome");
 
-    // Execute counts + pedidos + empresas + galpoes in parallel
-    const [countResults, { data: pedidos, error: pedidosError }, { data: empresasList }, { data: galpoesList }] =
-      await Promise.all([Promise.all(countPromises), pedidosQuery, empresasPromise, galpoesPromise]);
+    // 1d. For aguardando_compra badge count: fetch pedido IDs + item SKUs
+    // to filter by supplier destination. Runs only when a galpão is active.
+    async function fetchOcItems() {
+      const { data: ocPedidos } = await supabase
+        .from("siso_pedidos")
+        .select("id")
+        .eq("status_separacao", "aguardando_compra");
+      if (!ocPedidos?.length) return [];
+      const { data: items } = await supabase
+        .from("siso_pedido_itens")
+        .select("pedido_id, sku")
+        .not("compra_status", "is", null)
+        .not("compra_status", "in", '("cancelado","indisponivel")')
+        .in("pedido_id", ocPedidos.map((p) => p.id));
+      return items ?? [];
+    }
+
+    // Execute counts + pedidos + empresas + galpoes + ocItems in parallel
+    const [countResults, { data: pedidos, error: pedidosError }, { data: empresasList }, { data: galpoesList }, ocItems] =
+      await Promise.all([
+        Promise.all(countPromises),
+        pedidosQuery,
+        empresasPromise,
+        galpoesPromise,
+        activeGalpaoId ? fetchOcItems() : Promise.resolve([]),
+      ]);
 
     if (pedidosError) {
       logger.error("separacao-list", "Failed to fetch pedidos", {
@@ -200,8 +223,30 @@ export async function GET(request: NextRequest) {
     }
 
     // Build counts
+    // For aguardando_compra with active galpão: compute filtered count from item SKUs
+    let aguardandoCompraCount = countResults[0].count ?? 0;
+    if (activeGalpaoId && ocItems.length > 0) {
+      const activeGalpao = (galpoesList ?? []).find((g) => g.id === activeGalpaoId);
+      const galpaoNome = activeGalpao?.nome ?? null;
+      if (galpaoNome) {
+        const pedidoSkus = new Map<string, string[]>();
+        for (const item of ocItems) {
+          const list = pedidoSkus.get(item.pedido_id) ?? [];
+          list.push(item.sku);
+          pedidoSkus.set(item.pedido_id, list);
+        }
+        let filtered = 0;
+        for (const [, skus] of pedidoSkus) {
+          if (skus.some((sku) => getFornecedorBySku(sku).filialOC === galpaoNome)) {
+            filtered++;
+          }
+        }
+        aguardandoCompraCount = filtered;
+      }
+    }
+
     const counts: SeparacaoCounts = {
-      aguardando_compra: countResults[0].count ?? 0,
+      aguardando_compra: aguardandoCompraCount,
       aguardando_nf: countResults[1].count ?? 0,
       validacao_oc: countResults[2].count ?? 0,
       aguardando_separacao: countResults[3].count ?? 0,
@@ -330,28 +375,18 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // Filter aguardando_compra pedidos: only show orders with OC items
-    // destined for the active galpão (based on supplier → galpão mapping)
+    // Filter aguardando_compra pedidos by supplier destination galpão
     let filteredResult = result;
-    if (activeGalpaoId && statusFilters.includes("aguardando_compra")) {
+    if (activeGalpaoId && isAguardandoCompraOnly) {
       const activeGalpao = (galpoesList ?? []).find((g) => g.id === activeGalpaoId);
       const activeGalpaoNome = activeGalpao?.nome ?? null;
 
       if (activeGalpaoNome) {
         filteredResult = result.filter((p) => {
-          if (p.status_separacao !== "aguardando_compra") return true;
           const cs = p.compra_stats;
           if (!cs || cs.itens.length === 0) return true;
-          // Keep pedido if at least one OC item's supplier delivers to this galpão
-          return cs.itens.some((item) => {
-            const info = getFornecedorBySku(item.sku);
-            return info.filialOC === activeGalpaoNome;
-          });
+          return cs.itens.some((item) => getFornecedorBySku(item.sku).filialOC === activeGalpaoNome);
         });
-        // Adjust count to reflect the filtered list
-        counts.aguardando_compra = filteredResult.filter(
-          (p) => p.status_separacao === "aguardando_compra",
-        ).length;
       }
     }
 

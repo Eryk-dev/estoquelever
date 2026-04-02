@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
+import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import type { SeparacaoCounts, StatusSeparacao } from "@/types";
 
 const VALID_STATUSES: StatusSeparacao[] = [
@@ -326,6 +327,31 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    // Filter aguardando_compra pedidos: only show orders with OC items
+    // destined for the active galpão (based on supplier → galpão mapping)
+    let filteredResult = result;
+    if (activeGalpaoId && statusFilters.includes("aguardando_compra")) {
+      const activeGalpao = (galpoesList ?? []).find((g) => g.id === activeGalpaoId);
+      const activeGalpaoNome = activeGalpao?.nome ?? null;
+
+      if (activeGalpaoNome) {
+        filteredResult = result.filter((p) => {
+          if (p.status_separacao !== "aguardando_compra") return true;
+          const cs = p.compra_stats;
+          if (!cs || cs.itens.length === 0) return true;
+          // Keep pedido if at least one OC item's supplier delivers to this galpão
+          return cs.itens.some((item) => {
+            const info = getFornecedorBySku(item.sku);
+            return info.filialOC === activeGalpaoNome;
+          });
+        });
+        // Adjust count to reflect the filtered list
+        counts.aguardando_compra = filteredResult.filter(
+          (p) => p.status_separacao === "aguardando_compra",
+        ).length;
+      }
+    }
+
     // Build empresas dropdown from pedidos visible to the active separation galpão
     const empresasMap = new Map<string, string>();
     for (const row of empresasList ?? []) {
@@ -344,7 +370,7 @@ export async function GET(request: NextRequest) {
       .map(([id, nome]) => ({ id, nome }))
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
-    return NextResponse.json({ counts, pedidos: result, empresas, galpoes: galpoesList ?? [] });
+    return NextResponse.json({ counts, pedidos: filteredResult, empresas, galpoes: galpoesList ?? [] });
   } catch (err) {
     logger.error("separacao-list", "Unexpected error", {
       error: err instanceof Error ? err.message : String(err),

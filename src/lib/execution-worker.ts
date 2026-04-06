@@ -63,32 +63,19 @@ async function enriquecerDadosNf(
     const NF_AUTORIZADA = [6, 7]; // 6=Autorizada, 7=Emitida Danfe
     const autorizada = NF_AUTORIZADA.includes(Number(nfData.situacao));
 
-    if (autorizada && nfData.chaveAcesso) {
-      // NF already authorized — save data and transition
-      const { data: transitioned } = await supabase
-        .from("siso_pedidos")
-        .update({
-          chave_acesso_nf: nfData.chaveAcesso,
-          status_separacao: "aguardando_separacao",
-        })
-        .eq("id", pedidoId)
-        .eq("status_separacao", "aguardando_nf")
-        .select("id")
-        .maybeSingle();
-
-      if (transitioned) {
-        logger.info("worker", "NF já autorizada — transição aguardando_nf → aguardando_separacao", {
-          pedidoId,
-          notaId,
-          situacao: nfData.situacao,
-        });
-      }
-    } else if (nfData.chaveAcesso) {
-      // Has chaveAcesso but not in authorized situacao — save data only
+    if (nfData.chaveAcesso) {
+      // Save chave_acesso_nf but do NOT transition status.
+      // Transition aguardando_nf → aguardando_separacao happens ONLY via NF webhook.
       await supabase
         .from("siso_pedidos")
         .update({ chave_acesso_nf: nfData.chaveAcesso })
         .eq("id", pedidoId);
+
+      logger.info("worker", "chave_acesso_nf salva (transição via webhook)", {
+        pedidoId,
+        notaId,
+        situacao: nfData.situacao,
+      });
     }
   } catch {
     // Non-critical — webhook or reconciliation will handle later
@@ -433,23 +420,9 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
     .update({ estoque_lancado: true })
     .eq("id", job.pedido_id);
 
-  // Transition aguardando_nf → aguardando_separacao (handles race condition
-  // where NF webhook arrived before approval set status_separacao)
+  // Save chave_acesso_nf if available, but do NOT transition status.
+  // Transition aguardando_nf → aguardando_separacao happens ONLY via NF webhook.
   await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, notaId);
-
-  const { data: transitioned } = await supabase
-    .from("siso_pedidos")
-    .update({ status_separacao: "aguardando_separacao" })
-    .eq("id", job.pedido_id)
-    .eq("status_separacao", "aguardando_nf")
-    .select("id")
-    .maybeSingle();
-
-  if (transitioned) {
-    logger.info("worker", "Transição aguardando_nf → aguardando_separacao (worker)", {
-      pedidoId: job.pedido_id,
-    });
-  }
 
   logger.info("worker", "Estoque lançado via NF (própria)", {
     pedidoId: job.pedido_id,
@@ -623,10 +596,9 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
       })
       .eq("pedido_id", job.pedido_id);
 
-    // When NF already exists, skip aguardando_nf → go straight to aguardando_separacao.
-    // The Ciclo 2 worker (propria) will detect the existing NF via gerarNotaFiscalPedido
-    // idempotency and skip directly to stock deduction.
-    const statusSeparacao = nfGerada ? "aguardando_separacao" : "aguardando_nf";
+    // Always start at aguardando_nf — transition to aguardando_separacao
+    // happens ONLY via NF webhook, even if NF was already generated.
+    const statusSeparacao = "aguardando_nf";
 
     await supabase
       .from("siso_pedidos")
@@ -987,22 +959,9 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
       .update({ estoque_lancado: true })
       .eq("id", job.pedido_id);
 
-    // Transition aguardando_nf → aguardando_separacao
+    // Save chave_acesso_nf if available, but do NOT transition status.
+    // Transition aguardando_nf → aguardando_separacao happens ONLY via NF webhook.
     await enriquecerDadosNf(supabase, job.pedido_id, pedido.empresa_origem_id, notaIdOrigem);
-
-    const { data: transitioned } = await supabase
-      .from("siso_pedidos")
-      .update({ status_separacao: "aguardando_separacao" })
-      .eq("id", job.pedido_id)
-      .eq("status_separacao", "aguardando_nf")
-      .select("id")
-      .maybeSingle();
-
-    if (transitioned) {
-      logger.info("worker", "Transição aguardando_nf → aguardando_separacao (transferência)", {
-        pedidoId: job.pedido_id,
-      });
-    }
   }
 
   logger.info("worker", "Saídas de transferência concluídas", {

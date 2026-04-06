@@ -1,49 +1,23 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GalpaoEstoque } from "@/types";
 
-/**
- * GET /api/pedidos
- *
- * Returns all orders from siso_pedidos + siso_pedido_item_estoques (normalized),
- * mapped to the frontend Pedido interface (camelCase).
- *
- * Stock is returned as a dynamic map keyed by galpão name, supporting any
- * number of galpões without hardcoded CWB/SP references.
- *
- * Query params:
- *   ?status=pendente,executando  (comma-separated filter)
- */
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const statusFilter = searchParams.get("status");
+type StockEntry = {
+  depositoId: number | null;
+  depositoNome: string | null;
+  saldo: number;
+  reservado: number;
+  disponivel: number;
+  localizacao: string | null;
+};
 
-  const supabase = createServiceClient();
-
-  let query = supabase
-    .from("siso_pedidos")
-    .select("*, siso_empresas(nome)")
-    .order("criado_em", { ascending: false })
-    .limit(200);
-
-  if (statusFilter) {
-    const statuses = statusFilter.split(",").map((s) => s.trim());
-    query = query.in("status", statuses);
-  }
-
-  const { data: pedidos, error } = await query;
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  if (!pedidos || pedidos.length === 0) {
-    return NextResponse.json([]);
-  }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
+  if (!pedidos || pedidos.length === 0) return [];
 
   const pedidoIds = pedidos.map((p) => p.id);
 
-  // Fetch items + normalized stock in parallel
   const [itensResult, estoquesResult] = await Promise.all([
     supabase
       .from("siso_pedido_itens")
@@ -58,23 +32,12 @@ export async function GET(request: Request) {
   const itens = itensResult.data ?? [];
   const estoques = estoquesResult.data ?? [];
 
-  // Group items by pedido_id
   const itensByPedido = new Map<string, typeof itens>();
   for (const item of itens) {
     const list = itensByPedido.get(item.pedido_id) ?? [];
     list.push(item);
     itensByPedido.set(item.pedido_id, list);
   }
-
-  // Build stock map: pedido_id → produto_id → galpão_name → aggregated stock
-  type StockEntry = {
-    depositoId: number | null;
-    depositoNome: string | null;
-    saldo: number;
-    reservado: number;
-    disponivel: number;
-    localizacao: string | null;
-  };
 
   const stockMap = new Map<string, Map<number, Map<string, StockEntry>>>();
 
@@ -96,7 +59,6 @@ export async function GET(request: Request) {
 
     const existing = galpaoMap.get(galpaoNome);
     if (existing) {
-      // Aggregate across empresas in the same galpão
       existing.saldo += (est.saldo as number) ?? 0;
       existing.reservado += (est.reservado as number) ?? 0;
       existing.disponivel += (est.disponivel as number) ?? 0;
@@ -115,10 +77,8 @@ export async function GET(request: Request) {
     }
   }
 
-  // Map to frontend shape
-  const result = pedidos.map((p) => {
+  return pedidos.map((p) => {
     const dbItens = itensByPedido.get(p.id) ?? [];
-
     return {
       id: p.id,
       numero: p.numero ?? "",
@@ -138,11 +98,11 @@ export async function GET(request: Request) {
       },
       itens: dbItens.map((item) => {
         const galpaoStock = stockMap.get(p.id)?.get(item.produto_id);
-        const estoques: Record<string, GalpaoEstoque> = {};
+        const estoquesMap: Record<string, GalpaoEstoque> = {};
 
         if (galpaoStock) {
-          for (const [galpaoNome, stock] of galpaoStock) {
-            estoques[galpaoNome] = {
+          for (const [gNome, stock] of galpaoStock) {
+            estoquesMap[gNome] = {
               deposito: {
                 id: stock.depositoId ?? 0,
                 nome: stock.depositoNome ?? "",
@@ -162,7 +122,7 @@ export async function GET(request: Request) {
           sku: item.sku ?? "",
           descricao: item.descricao ?? "",
           quantidadePedida: item.quantidade_pedida ?? 0,
-          estoques,
+          estoques: estoquesMap,
           fornecedorOC: item.fornecedor_oc ?? null,
           imagemUrl: item.imagem_url ?? undefined,
         };
@@ -180,6 +140,65 @@ export async function GET(request: Request) {
       encaminhado_de: p.encaminhado_de ?? null,
     };
   });
+}
 
-  return NextResponse.json(result);
+/**
+ * GET /api/pedidos
+ *
+ * Returns all orders from siso_pedidos + siso_pedido_item_estoques (normalized),
+ * mapped to the frontend Pedido interface (camelCase).
+ *
+ * Stock is returned as a dynamic map keyed by galpão name, supporting any
+ * number of galpões without hardcoded CWB/SP references.
+ *
+ * Query params:
+ *   ?status=pendente,executando  (comma-separated filter)
+ */
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const statusFilter = searchParams.get("status");
+
+  const supabase = createServiceClient();
+
+  if (statusFilter) {
+    const statuses = statusFilter.split(",").map((s) => s.trim());
+    const { data: pedidos, error } = await supabase
+      .from("siso_pedidos")
+      .select("*, siso_empresas(nome)")
+      .in("status", statuses)
+      .order("criado_em", { ascending: false })
+      .limit(200);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json(await buildResponse(supabase, pedidos ?? []));
+  }
+
+  // No status filter: fetch ALL active orders (pendente/executando/erro) +
+  // recent concluido/cancelado. This prevents the limit from hiding pending orders.
+  const activeStatuses = ["pendente", "executando", "erro"];
+  const [activeResult, recentResult] = await Promise.all([
+    supabase
+      .from("siso_pedidos")
+      .select("*, siso_empresas(nome)")
+      .in("status", activeStatuses)
+      .order("criado_em", { ascending: false }),
+    supabase
+      .from("siso_pedidos")
+      .select("*, siso_empresas(nome)")
+      .not("status", "in", `(${activeStatuses.join(",")})`)
+      .order("criado_em", { ascending: false })
+      .limit(150),
+  ]);
+
+  const error = activeResult.error || recentResult.error;
+  const pedidos = [...(activeResult.data ?? []), ...(recentResult.data ?? [])];
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json(await buildResponse(supabase, pedidos));
 }

@@ -270,29 +270,43 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
 // ─── Job execution ──────────────────────────────────────────────────────────
 
 async function executeJob(job: FilaJob): Promise<void> {
-  if (job.tipo !== "lancar_estoque") {
-    throw new Error(`Tipo de job desconhecido: ${job.tipo}`);
-  }
-
-  if (job.decisao === "propria") {
-    await executarSaidaPropria(job);
+  if (job.tipo === "lancar_estoque") {
+    if (job.decisao === "propria") {
+      await executarSaidaPropria(job);
+      return;
+    }
+    if (job.decisao === "transferencia") {
+      await executarSaidaTransferencia(job);
+      return;
+    }
+    if (job.decisao === "oc") {
+      await executarMarcadoresOnly(job);
+      return;
+    }
+    logger.warn("worker", `Decisão desconhecida: ${job.decisao}`, {
+      pedidoId: job.pedido_id,
+      decisao: job.decisao,
+    });
     return;
   }
 
-  if (job.decisao === "transferencia") {
-    await executarSaidaTransferencia(job);
+  if (job.tipo === "lancar_estoque_pos_nf") {
+    if (job.decisao === "propria") {
+      await executarEstoquePosNfPropria(job);
+      return;
+    }
+    if (job.decisao === "transferencia") {
+      await executarEstoquePosNfTransferencia(job);
+      return;
+    }
+    logger.warn("worker", `Decisão não suportada para lancar_estoque_pos_nf: ${job.decisao}`, {
+      pedidoId: job.pedido_id,
+      decisao: job.decisao,
+    });
     return;
   }
 
-  if (job.decisao === "oc") {
-    await executarMarcadoresOnly(job);
-    return;
-  }
-
-  logger.warn("worker", `Decisão desconhecida: ${job.decisao}`, {
-    pedidoId: job.pedido_id,
-    decisao: job.decisao,
-  });
+  throw new Error(`Tipo de job desconhecido: ${job.tipo}`);
 }
 
 // ─── Shared: insert marcadores on Tiny order (idempotent) ────────────────────
@@ -396,44 +410,22 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
   );
 
   if (!notaId) {
-    // NF already existed externally — stock was likely already posted
-    await supabase
-      .from("siso_pedidos")
-      .update({ estoque_lancado: true })
-      .eq("id", job.pedido_id);
     await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, null);
-    logger.warn("worker", "NF externa — marcando estoque como lançado", {
+    logger.warn("worker", "NF externa — aguardando webhook para lançar estoque", {
       pedidoId: job.pedido_id,
     });
     return;
   }
 
-  await sleep(500);
-
-  // 3. Post stock from NF
-  await runWithEmpresa(job.empresa_id, () =>
-    lancarEstoqueNota(token, notaId),
-  );
-
-  await supabase
-    .from("siso_pedidos")
-    .update({ estoque_lancado: true })
-    .eq("id", job.pedido_id);
-
-  // Save chave_acesso_nf if available, but do NOT transition status.
-  // Transition aguardando_nf → aguardando_separacao happens ONLY via NF webhook.
+  // Save chave_acesso_nf if available, but do NOT post stock or transition status.
+  // Stock posting (lancarEstoqueNota) and transition happen ONLY via NF webhook.
   await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, notaId);
 
-  logger.info("worker", "Estoque lançado via NF (própria)", {
+  logger.info("worker", "NF gerada, aguardando webhook para lançar estoque (própria)", {
     pedidoId: job.pedido_id,
     notaId,
     empresaId: job.empresa_id,
   });
-
-  // Fase-1 agrupamento: attempt as soon as NF is persisted.
-  // Fire-and-forget — criarAgrupamentoFase1 logs errors internally and never throws.
-  // Failure-isolated from stock posting: estoque_lancado is already persisted above.
-  await criarAgrupamentoFase1(job.pedido_id);
 }
 
 // ─── oc: only insert marcadores, no NF or stock ─────────────────────────────
@@ -711,11 +703,91 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
   );
   await sleep(500);
 
-  // ── Post stock from NF on origin to clear Tiny reservation ────────────────
-  // The NF belongs to the origin empresa where the marketplace created the order.
-  // lancarEstoqueNota clears the reservation AND drops saldo on origin.
-  // We compensate the saldo drop later with movimentarEstoque(E) per item.
+  // Save chave_acesso_nf if available, but do NOT post stock or transition status.
+  // All stock operations (lancarEstoqueNota + movimentarEstoque compensações + saídas)
+  // happen ONLY after NF authorization via webhook → lancar_estoque_pos_nf job.
   if (notaIdOrigem) {
+    await enriquecerDadosNf(supabase, job.pedido_id, pedido.empresa_origem_id, notaIdOrigem);
+  }
+
+  logger.info("worker", "NF gerada, aguardando webhook para lançar estoque (transferência)", {
+    pedidoId: job.pedido_id,
+    notaIdOrigem,
+    empresaOrigemId: pedido.empresa_origem_id,
+  });
+}
+
+// ─── Post-NF stock posting (triggered by NF webhook via lancar_estoque_pos_nf job) ──
+
+async function executarEstoquePosNfPropria(job: FilaJob): Promise<void> {
+  const supabase = createServiceClient();
+
+  const { data: pedido, error: pedidoErr } = await supabase
+    .from("siso_pedidos")
+    .select("nota_fiscal_id, estoque_lancado")
+    .eq("id", job.pedido_id)
+    .single();
+
+  if (pedidoErr || !pedido) {
+    throw new Error(`Pedido ${job.pedido_id} não encontrado`);
+  }
+
+  if (pedido.estoque_lancado) {
+    logger.info("worker", "Estoque já lançado (retry idempotente)", { pedidoId: job.pedido_id });
+    return;
+  }
+
+  const notaId = pedido.nota_fiscal_id;
+  if (!notaId) {
+    throw new Error(`Pedido ${job.pedido_id} sem nota_fiscal_id — impossível lançar estoque`);
+  }
+
+  const { token } = await getValidTokenByEmpresa(job.empresa_id);
+
+  await runWithEmpresa(job.empresa_id, () =>
+    lancarEstoqueNota(token, notaId),
+  );
+
+  await supabase
+    .from("siso_pedidos")
+    .update({ estoque_lancado: true })
+    .eq("id", job.pedido_id);
+
+  logger.info("worker", "Estoque lançado via NF pós-autorização (própria)", {
+    pedidoId: job.pedido_id,
+    notaId,
+    empresaId: job.empresa_id,
+  });
+}
+
+async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
+  const supabase = createServiceClient();
+
+  const { data: pedido, error: pedidoErr } = await supabase
+    .from("siso_pedidos")
+    .select("numero, nota_fiscal_id, estoque_lancado, empresa_origem_id, marcadores")
+    .eq("id", job.pedido_id)
+    .single();
+
+  if (pedidoErr || !pedido) {
+    throw new Error(`Pedido ${job.pedido_id} não encontrado`);
+  }
+
+  if (pedido.estoque_lancado) {
+    logger.info("worker", "Estoque já lançado (retry idempotente)", { pedidoId: job.pedido_id });
+    return;
+  }
+
+  const empresaOrigem = await getEmpresaById(pedido.empresa_origem_id);
+  if (!empresaOrigem) {
+    throw new Error(`Empresa origem ${pedido.empresa_origem_id} não encontrada`);
+  }
+
+  const notaIdOrigem = pedido.nota_fiscal_id;
+
+  // 1. Post stock from NF on origin to clear Tiny reservation
+  if (notaIdOrigem) {
+    const { token: origemToken } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
     try {
       await runWithEmpresa(pedido.empresa_origem_id, () =>
         lancarEstoqueNota(origemToken, notaIdOrigem),
@@ -726,8 +798,6 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
         empresaOrigemId: pedido.empresa_origem_id,
       });
     } catch (err) {
-      // Non-fatal: if posting fails, reservation stays (existing behavior)
-      // but the rest of the flow should continue
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn("worker", "Falha ao lançar estoque NF na origem (reserva pode persistir)", {
         pedidoId: job.pedido_id,
@@ -738,7 +808,8 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     await sleep(500);
   }
 
-  // Get origin empresa deposit for compensating entries
+  // 2. Get origin empresa deposit for compensating entries
+  const { token: origemToken } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
   const { data: connOrigem } = await supabase
     .from("siso_tiny_connections")
     .select("deposito_id")
@@ -747,9 +818,7 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     .single();
   const depositoIdOrigem = connOrigem?.deposito_id ?? null;
 
-  // ── Stock deduction: find ONE empresa that covers 100% of items ───────────
-
-  // Get items NOT yet deducted
+  // 3. Stock deduction: find ONE empresa that covers 100% of items
   const { data: itens, error: itensErr } = await supabase
     .from("siso_pedido_itens")
     .select("produto_id, sku, descricao, quantidade_pedida, estoque_saida_lancada")
@@ -761,37 +830,25 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
   }
 
   if (!itens?.length) {
-    logger.info("worker", "Todos os itens já tiveram saída lançada", {
-      pedidoId: job.pedido_id,
-    });
+    logger.info("worker", "Todos os itens já tiveram saída lançada", { pedidoId: job.pedido_id });
+    await supabase.from("siso_pedidos").update({ estoque_lancado: true }).eq("id", job.pedido_id);
     return;
   }
 
-  // Get enriched stock data per empresa (captured at webhook time)
   const { data: estoques } = await supabase
     .from("siso_pedido_item_estoques")
     .select("produto_id, empresa_id, disponivel, produto_id_na_empresa")
     .eq("pedido_id", job.pedido_id);
 
-  // Get deduction order (tier-based)
   const empresaSuporte = await getEmpresaById(job.empresa_id);
   if (!empresaSuporte || !empresaSuporte.grupoId) {
     throw new Error(`Empresa suporte ${job.empresa_id} sem grupo — não é possível transferir`);
   }
 
-  const ordemDeducao = await getOrdemDeducao(
-    empresaSuporte.grupoId,
-    job.empresa_id,
-  );
+  const ordemDeducao = await getOrdemDeducao(empresaSuporte.grupoId, job.empresa_id);
+  const empresasDeducao = ordemDeducao.filter((e) => e.galpaoId !== empresaOrigem.galpaoId);
 
-  // Only consider empresas NOT in the origin galpao
-  const empresasDeducao = ordemDeducao.filter(
-    (e) => e.galpaoId !== empresaOrigem.galpaoId,
-  );
-
-  // Find first empresa (by tier) that covers 100% of items
   let empresaEscolhida: typeof empresasDeducao[0] | null = null;
-
   for (const emp of empresasDeducao) {
     const cobreTudo = itens.every((item) => {
       const est = estoques?.find(
@@ -799,7 +856,6 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
       );
       return est && est.disponivel >= (item.quantidade_pedida as number);
     });
-
     if (cobreTudo) {
       empresaEscolhida = emp;
       break;
@@ -827,9 +883,8 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     totalItens: itens.length,
   });
 
-  // Deduct all items from the chosen empresa
+  // 4. Deduct all items from the chosen empresa
   const { token: suporteToken } = await getValidTokenByEmpresa(empresaEscolhida.empresaId);
-
   const { data: conn } = await supabase
     .from("siso_tiny_connections")
     .select("deposito_id")
@@ -846,18 +901,15 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
 
   for (const item of itens) {
     try {
-      // Find product ID in this empresa — prefer cached produto_id_na_empresa, fallback to SKU search
       const cachedEst = estoques?.find(
-        (e) => e.empresa_id === empresaEscolhida.empresaId && e.produto_id === item.produto_id,
+        (e) => e.empresa_id === empresaEscolhida!.empresaId && e.produto_id === item.produto_id,
       );
       let produtoIdNaEmpresa = cachedEst?.produto_id_na_empresa as number | null;
 
       if (!produtoIdNaEmpresa) {
-        // Fallback: search by SKU (backwards compat for old records without produto_id_na_empresa)
         const produto = await runWithEmpresa(empresaEscolhida.empresaId, () =>
           buscarProdutoPorSku(suporteToken, item.sku),
         );
-
         if (!produto) {
           errors++;
           failedSkus.push(item.sku);
@@ -887,7 +939,7 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
               tipo: "E",
               quantidade: item.quantidade_pedida as number,
               deposito: depositoIdOrigem ? { id: depositoIdOrigem } : undefined,
-              observacoes: `Compensação: transferência pedido ${pedido.numero} atendido por ${empresaEscolhida.empresaNome}`,
+              observacoes: `Compensação: transferência pedido ${pedido.numero} atendido por ${empresaEscolhida!.empresaNome}`,
             }),
           );
         } catch (err) {
@@ -902,14 +954,15 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
       }
 
       // Deduct stock from support empresa (physical exit)
-      await runWithEmpresa(empresaEscolhida.empresaId, () => movimentarEstoque(suporteToken, produtoIdNaEmpresa!, {
-        tipo: "S",
-        quantidade: item.quantidade_pedida as number,
-        deposito: depositoId ? { id: depositoId } : undefined,
-        observacoes,
-      }));
+      await runWithEmpresa(empresaEscolhida.empresaId, () =>
+        movimentarEstoque(suporteToken, produtoIdNaEmpresa!, {
+          tipo: "S",
+          quantidade: item.quantidade_pedida as number,
+          deposito: depositoId ? { id: depositoId } : undefined,
+          observacoes,
+        }),
+      );
 
-      // Mark item as deducted
       await supabase
         .from("siso_pedido_itens")
         .update({
@@ -930,7 +983,6 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
 
       await sleep(500);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
       errors++;
       failedSkus.push(item.sku);
       logger.logError({
@@ -952,19 +1004,12 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     );
   }
 
-  // Mark stock as posted (NF was posted on origin)
-  if (notaIdOrigem) {
-    await supabase
-      .from("siso_pedidos")
-      .update({ estoque_lancado: true })
-      .eq("id", job.pedido_id);
+  await supabase
+    .from("siso_pedidos")
+    .update({ estoque_lancado: true })
+    .eq("id", job.pedido_id);
 
-    // Save chave_acesso_nf if available, but do NOT transition status.
-    // Transition aguardando_nf → aguardando_separacao happens ONLY via NF webhook.
-    await enriquecerDadosNf(supabase, job.pedido_id, pedido.empresa_origem_id, notaIdOrigem);
-  }
-
-  logger.info("worker", "Saídas de transferência concluídas", {
+  logger.info("worker", "Estoque lançado pós-NF (transferência)", {
     pedidoId: job.pedido_id,
     notaIdOrigem,
     empresaId: empresaEscolhida.empresaId,
@@ -972,12 +1017,6 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     totalItens: itens.length,
     processed,
   });
-
-  // Fase-1 agrupamento: attempt as soon as NF is persisted.
-  // Fire-and-forget — criarAgrupamentoFase1 logs errors internally and never throws.
-  // Failure-isolated from stock posting: estoque_lancado and estoque_saida_lancada
-  // are already persisted above.
-  await criarAgrupamentoFase1(job.pedido_id);
 }
 
 // ─── Singleton drain loop ────────────────────────────────────────────────────

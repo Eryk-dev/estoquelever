@@ -1,18 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Ban, MoreHorizontal, RefreshCw, X } from "lucide-react";
+import { Ban, MoreHorizontal, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ItemContextMenuProps {
   onIndisponivel: () => void;
-  onTrocarSku: () => void;
   onCancelar: () => void;
 }
 
 export function ItemContextMenu({
   onIndisponivel,
-  onTrocarSku,
   onCancelar,
 }: ItemContextMenuProps) {
   const [open, setOpen] = useState(false);
@@ -57,17 +55,6 @@ export function ItemContextMenu({
           >
             <Ban className="h-3.5 w-3.5 text-red-500" />
             Marcar indisponivel
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              onTrocarSku();
-            }}
-            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs text-ink hover:bg-surface"
-          >
-            <RefreshCw className="h-3.5 w-3.5 text-amber-500" />
-            Trocar SKU
           </button>
           <button
             type="button"

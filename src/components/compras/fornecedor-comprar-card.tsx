@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -8,7 +8,9 @@ import {
   Clock3,
   Loader2,
   Package,
+  Pencil,
   ShoppingCart,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -18,7 +20,6 @@ import { agingBadgeClass, agingColor, formatAging } from "./compras-helpers";
 import { QtyInput } from "./qty-input";
 import { ItemContextMenu } from "./item-context-menu";
 import { IndisponivelDialog } from "./indisponivel-dialog";
-import { EquivalenteDialog } from "./equivalente-dialog";
 import { CancelamentoDialog } from "./cancelamento-dialog";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -55,7 +56,6 @@ interface FornecedorComprarGroup {
 type DialogState =
   | { type: "none" }
   | { type: "indisponivel"; sku: string; itemIds: string[]; fornecedor: string }
-  | { type: "equivalente"; sku: string; itemId: string }
   | { type: "cancelamento"; sku: string; itemIds: string[] };
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -77,6 +77,47 @@ export function FornecedorComprarCard({
   );
   const [submitting, setSubmitting] = useState(false);
   const lastCheckedIdx = useRef<number | null>(null);
+
+  // Inline SKU edit state
+  const [editingSkuKey, setEditingSkuKey] = useState<string | null>(null);
+  const [editSkuValue, setEditSkuValue] = useState("");
+  const [swappingSku, setSwappingSku] = useState(false);
+  const skuInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingSkuKey && skuInputRef.current) {
+      skuInputRef.current.focus();
+      skuInputRef.current.select();
+    }
+  }, [editingSkuKey]);
+
+  async function handleInlineSkuSwap(originalSku: string, itemIds: string[]) {
+    const trimmed = editSkuValue.trim();
+    if (!trimmed || trimmed === originalSku) {
+      setEditingSkuKey(null);
+      return;
+    }
+    setSwappingSku(true);
+    try {
+      const res = await sisoFetch("/api/compras/trocar-sku", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_ids: itemIds, novo_sku: trimmed }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error ?? "Erro ao trocar SKU");
+        return;
+      }
+      toast.success(`SKU trocado: ${originalSku} → ${trimmed}`);
+      setEditingSkuKey(null);
+      invalidate();
+    } catch {
+      toast.error("Erro ao trocar SKU");
+    } finally {
+      setSwappingSku(false);
+    }
+  }
 
   const anySelected = Object.values(selectedSkus).some(Boolean);
 
@@ -248,9 +289,57 @@ export function FornecedorComprarCard({
                       {/* Info */}
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-sm font-semibold text-ink">
-                            {item.sku}
-                          </span>
+                          {editingSkuKey === item.sku ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                ref={skuInputRef}
+                                type="text"
+                                value={editSkuValue}
+                                onChange={(e) => setEditSkuValue(e.target.value.toUpperCase())}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleInlineSkuSwap(item.sku, allItemIds);
+                                  if (e.key === "Escape") setEditingSkuKey(null);
+                                }}
+                                disabled={swappingSku}
+                                className="w-28 rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-xs font-bold text-ink outline-none focus:border-ink/30"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleInlineSkuSwap(item.sku, allItemIds)}
+                                disabled={swappingSku}
+                                className="text-emerald-600 hover:text-emerald-500"
+                                title="Confirmar"
+                              >
+                                {swappingSku ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingSkuKey(null)}
+                                disabled={swappingSku}
+                                className="text-ink-faint hover:text-ink"
+                                title="Cancelar"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <span className="font-mono text-sm font-semibold text-ink">
+                                {item.sku}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingSkuKey(item.sku);
+                                  setEditSkuValue(item.sku);
+                                }}
+                                className="text-ink-faint transition-colors hover:text-ink"
+                                title="Trocar SKU"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                            </>
+                          )}
                           <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
                             {item.quantidade_necessaria} un
                           </span>
@@ -292,13 +381,6 @@ export function FornecedorComprarCard({
                               sku: item.sku,
                               itemIds: allItemIds,
                               fornecedor: f.fornecedor,
-                            })
-                          }
-                          onTrocarSku={() =>
-                            setDialog({
-                              type: "equivalente",
-                              sku: item.sku,
-                              itemId: firstItemId,
                             })
                           }
                           onCancelar={() =>
@@ -344,17 +426,6 @@ export function FornecedorComprarCard({
           itemIds={dialog.itemIds}
           sku={dialog.sku}
           fornecedor={dialog.fornecedor}
-          onClose={() => setDialog({ type: "none" })}
-          onSuccess={() => {
-            setDialog({ type: "none" });
-            invalidate();
-          }}
-        />
-      )}
-      {dialog.type === "equivalente" && (
-        <EquivalenteDialog
-          itemId={dialog.itemId}
-          skuOriginal={dialog.sku}
           onClose={() => setDialog({ type: "none" })}
           onSuccess={() => {
             setDialog({ type: "none" });

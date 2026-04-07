@@ -326,3 +326,61 @@ erros:
     files:
       - src/app/api/separacao/marcar-item/route.ts
     tags: [separacao, marcar-item, aguardando_compra, pick-oc, checkbox, checklist]
+
+  - id: nf-ja-expedida-encaminhar-limpa-etiqueta
+    date: "2026-04-02"
+    source: encaminhar
+    category: business_logic
+    message: "Nota fiscal com id 'X' já foi expedida"
+    cause: >
+      Quando um pedido era encaminhado para outro galpao, o encaminhar limpava
+      agrupamento_expedicao_id, expedicao_id, etiqueta_url e etiqueta_zpl. Na
+      re-aprovacao, o sistema tentava criar novo agrupamento com a mesma NF e
+      o Tiny rejeitava (400: NF ja expedida). A etiqueta ficava bloqueada.
+    fix: >
+      Encaminhar agora preserva os campos de agrupamento/etiqueta (estao vinculados
+      a NF, nao ao galpao). Apenas etiqueta_status e resetado para permitir
+      reimprimir no novo destino. Isso evita o erro no Tiny e permite fast path
+      na embalagem.
+    files:
+      - src/app/api/separacao/encaminhar/route.ts
+    tags: [etiqueta, agrupamento, expedicao, nf-ja-expedida, encaminhar, forward, zpl]
+
+- id: fila-check-constraint-blocks-pos-nf
+  date: 2026-04-07
+  source: nf-webhook / worker
+  category: database
+  message: "Job lancar_estoque_pos_nf enfileirado (mas nunca criado)"
+  cause: >
+    Commit 6b371be deferiu lancamento de estoque de transferencia para pos-NF,
+    criando tipo "lancar_estoque_pos_nf". Porem o CHECK constraint chk_fila_tipo
+    na tabela siso_fila_execucao so aceitava "lancar_estoque". O insert falhava
+    silenciosamente porque nf-webhook-handler nao verificava o resultado.
+    Resultado: 173 pedidos de transferencia sem estoque lancado no Tiny.
+  fix: >
+    1. Migration: ALTER constraint para aceitar ambos os tipos.
+    2. nf-webhook-handler: captura e loga erro do insert.
+    3. Re-enfileirados 134 jobs pendentes (1 cancelado por encaminhamento).
+  files:
+    - supabase/migrations/20260407_fix_fila_tipo_constraint.sql
+    - src/lib/nf-webhook-handler.ts
+  tags: [estoque, transferencia, fila, constraint, pos-nf, lancamento, worker]
+
+- id: encaminhar-galpao-errado
+  date: 2026-04-07
+  source: encaminhar
+  category: business_logic
+  message: "Pedido encaminhado de SP para SP (deveria ser CWB para SP)"
+  cause: >
+    encaminhar/route.ts usava pedido.filial_origem (origem marketplace, fixa)
+    em vez do galpao que estava executando o pedido. Adicionalmente,
+    sugestao era sempre "transferencia", o que fazia o filtro de pendentes
+    esconder o pedido do galpao destino quando destino == filial_origem.
+  fix: >
+    1. Nova funcao resolveGalpaoAtual: resolve via separacao_galpao_id ou fila_execucao.
+    2. encaminhado_de agora usa o galpao real.
+    3. sugestao dinamica: "propria" se destino == filial_origem, "transferencia" caso contrario.
+    4. Correcao manual do pedido 949622631 no banco.
+  files:
+    - src/app/api/separacao/encaminhar/route.ts
+  tags: [encaminhar, galpao, filtro, visibilidade, sugestao, transferencia]

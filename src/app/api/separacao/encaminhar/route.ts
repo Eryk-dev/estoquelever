@@ -137,7 +137,11 @@ async function encaminharPedido(
     );
   }
 
-  if (pedido.separacao_galpao_id === galpaoDestino.id) {
+  // Resolve the actual galpão currently handling this order.
+  // separacao_galpao_id is set when separation starts; fallback to the execution queue.
+  const galpaoAtual = await resolveGalpaoAtual(supabase, pedido, pedidoId);
+
+  if (galpaoAtual.id === galpaoDestino.id) {
     throw new Error("Não é possível encaminhar para o mesmo galpão");
   }
 
@@ -147,14 +151,20 @@ async function encaminharPedido(
   // B3. Reset pedido to pendente
   // NF fields (nota_fiscal_id, chave_acesso_nf, url_danfe) are intentionally
   // NOT cleared — the NF belongs to the pedido regardless of destination.
-  // Shipping artifacts are cleared so fase-1 agrupamento can be recreated
-  // for the new destination after re-approval.
+  // Shipping artifacts (agrupamento, expedicao, etiqueta ZPL/URL) are PRESERVED —
+  // they are tied to the NF, not the galpão. Only etiqueta_status is reset
+  // so the label can be reprinted at the new destination.
+  //
+  // sugestao is set dynamically so the galpão filter shows the order in the
+  // correct destination: "propria" if dest == filial_origem, else "transferencia".
+  const sugestao = galpaoDestino.nome === pedido.filial_origem ? "propria" : "transferencia";
+
   const { error: updateErr } = await supabase
     .from("siso_pedidos")
     .update({
       status: "pendente",
-      sugestao: "transferencia",
-      encaminhado_de: pedido.filial_origem,
+      sugestao,
+      encaminhado_de: galpaoAtual.nome,
       decisao_final: null,
       operador_id: null,
       operador_nome: null,
@@ -167,11 +177,7 @@ async function encaminharPedido(
       separacao_iniciada_em: null,
       separacao_concluida_em: null,
       embalagem_concluida_em: null,
-      // Downstream shipping artifacts — destination-specific, must be recreated
-      etiqueta_url: null,
-      agrupamento_expedicao_id: null,
-      expedicao_id: null,
-      etiqueta_zpl: null,
+      // etiqueta_status reset so label can be reprinted at new galpão
       etiqueta_status: null,
     })
     .eq("id", pedidoId);
@@ -200,21 +206,77 @@ async function encaminharPedido(
     usuarioId: session.id,
     usuarioNome: session.nome,
     detalhes: {
-      origem: pedido.filial_origem,
+      origem: galpaoAtual.nome,
       destino: galpaoDestino.nome,
       decisao_anterior: pedido.decisao_final,
     },
   });
 
-  logger.info(LOG_SOURCE, `Pedido ${pedido.numero} encaminhado de ${pedido.filial_origem} para ${galpaoDestino.nome}`, {
+  logger.info(LOG_SOURCE, `Pedido ${pedido.numero} encaminhado de ${galpaoAtual.nome} para ${galpaoDestino.nome}`, {
     pedidoId,
-    origem: pedido.filial_origem,
+    origem: galpaoAtual.nome,
     destino: galpaoDestino.nome,
     decisaoAnterior: pedido.decisao_final,
     operador: session.nome,
     nfPreservada: !!pedido.nota_fiscal_id,
-    agrupamentoInvalidado: true,
+    sugestao,
   });
+}
+
+// ─── Resolve current galpão ─────────────────────────────────────────────────
+
+async function resolveGalpaoAtual(
+  supabase: ReturnType<typeof createServiceClient>,
+  pedido: { separacao_galpao_id: string | null; filial_origem: string },
+  pedidoId: string,
+): Promise<{ id: string; nome: string }> {
+  // 1. If separacao already started, the galpão is assigned
+  if (pedido.separacao_galpao_id) {
+    const { data } = await supabase
+      .from("siso_galpoes")
+      .select("id, nome")
+      .eq("id", pedido.separacao_galpao_id)
+      .single();
+    if (data) return data;
+  }
+
+  // 2. Fallback: resolve from the most recent execution queue entry
+  const { data: job } = await supabase
+    .from("siso_fila_execucao")
+    .select("empresa_id")
+    .eq("pedido_id", pedidoId)
+    .order("criado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (job) {
+    const { data: empresa } = await supabase
+      .from("siso_empresas")
+      .select("galpao_id")
+      .eq("id", job.empresa_id)
+      .single();
+
+    if (empresa) {
+      const { data: galpao } = await supabase
+        .from("siso_galpoes")
+        .select("id, nome")
+        .eq("id", empresa.galpao_id)
+        .single();
+      if (galpao) return galpao;
+    }
+  }
+
+  // 3. Last resort: use filial_origem as galpão name lookup
+  const { data: galpaoByNome } = await supabase
+    .from("siso_galpoes")
+    .select("id, nome")
+    .eq("nome", pedido.filial_origem)
+    .single();
+
+  if (galpaoByNome) return galpaoByNome;
+
+  // Should never reach here — return a safe fallback
+  return { id: "", nome: pedido.filial_origem };
 }
 
 // ─── Stock reversal ─────────────────────────────────────────────────────────

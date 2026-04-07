@@ -205,13 +205,25 @@ export async function handleNfWebhook(
         if (originalJob) jobEmpresaId = originalJob.empresa_id;
       }
 
-      await supabase.from("siso_fila_execucao").insert({
+      const { error: insertErr } = await supabase.from("siso_fila_execucao").insert({
         pedido_id: pedidoId,
         tipo: "lancar_estoque_pos_nf",
         empresa_id: jobEmpresaId,
         decisao: pedidoData.decisao_final,
         atualizado_em: new Date().toISOString(),
       });
+
+      if (insertErr) {
+        logger.logError({
+          error: new Error(insertErr.message),
+          source: "nf-webhook",
+          message: `Falha ao enfileirar lancar_estoque_pos_nf para pedido ${pedidoId}`,
+          category: "database",
+          pedidoId,
+          metadata: { decisao: pedidoData.decisao_final, empresaId: jobEmpresaId, code: insertErr.code },
+        });
+        return;
+      }
 
       logger.info("nf-webhook", "Job lancar_estoque_pos_nf enfileirado", {
         pedidoId,

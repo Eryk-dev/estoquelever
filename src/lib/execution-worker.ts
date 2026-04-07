@@ -710,11 +710,43 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     await enriquecerDadosNf(supabase, job.pedido_id, pedido.empresa_origem_id, notaIdOrigem);
   }
 
-  logger.info("worker", "NF gerada, aguardando webhook para lançar estoque (transferência)", {
-    pedidoId: job.pedido_id,
-    notaIdOrigem,
-    empresaOrigemId: pedido.empresa_origem_id,
-  });
+  // Check if NF is already authorized (re-approval after encaminhar, or fast SEFAZ).
+  // In this case the NF webhook won't re-trigger (dedup), so we create the
+  // lancar_estoque_pos_nf job directly.
+  const { data: pedidoCheck } = await supabase
+    .from("siso_pedidos")
+    .select("chave_acesso_nf, status_separacao")
+    .eq("id", job.pedido_id)
+    .single();
+
+  if (pedidoCheck?.chave_acesso_nf) {
+    const { error: insertErr } = await supabase.from("siso_fila_execucao").insert({
+      pedido_id: job.pedido_id,
+      tipo: "lancar_estoque_pos_nf",
+      empresa_id: job.empresa_id,
+      decisao: job.decisao,
+      atualizado_em: new Date().toISOString(),
+    });
+
+    if (!insertErr) {
+      logger.info("worker", "NF já autorizada — job lancar_estoque_pos_nf criado direto", {
+        pedidoId: job.pedido_id,
+        empresaId: job.empresa_id,
+      });
+      kickWorker().catch(() => {});
+    } else {
+      logger.warn("worker", "Falha ao criar job lancar_estoque_pos_nf direto", {
+        pedidoId: job.pedido_id,
+        error: insertErr.message,
+      });
+    }
+  } else {
+    logger.info("worker", "NF gerada, aguardando webhook para lançar estoque (transferência)", {
+      pedidoId: job.pedido_id,
+      notaIdOrigem,
+      empresaOrigemId: pedido.empresa_origem_id,
+    });
+  }
 }
 
 // ─── Post-NF stock posting (triggered by NF webhook via lancar_estoque_pos_nf job) ──
@@ -785,13 +817,17 @@ async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
 
   const notaIdOrigem = pedido.nota_fiscal_id;
 
-  // 1. Post stock from NF on origin to clear Tiny reservation
+  // 1. Post stock from NF on origin to clear Tiny reservation.
+  // lancarEstoqueNota is one-time — if this is a re-execution after encaminhar,
+  // it will fail (already posted). We track success to skip the compensating entry.
+  let nfLancadaAgora = false;
   if (notaIdOrigem) {
     const { token: origemToken } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
     try {
       await runWithEmpresa(pedido.empresa_origem_id, () =>
         lancarEstoqueNota(origemToken, notaIdOrigem),
       );
+      nfLancadaAgora = true;
       logger.info("worker", "Estoque da NF lançado na origem (limpa reserva)", {
         pedidoId: job.pedido_id,
         notaId: notaIdOrigem,
@@ -799,7 +835,7 @@ async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.warn("worker", "Falha ao lançar estoque NF na origem (reserva pode persistir)", {
+      logger.info("worker", "lancarEstoqueNota já realizado anteriormente — prosseguindo sem compensação", {
         pedidoId: job.pedido_id,
         notaId: notaIdOrigem,
         error: msg,
@@ -931,7 +967,10 @@ async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
 
       // Compensate saldo on origin: lancarEstoqueNota dropped saldo on origin,
       // but the physical stock didn't leave origin — add it back.
-      if (notaIdOrigem) {
+      // Only compensate if we actually posted the NF this round (nfLancadaAgora).
+      // On re-execution after encaminhar, the NF was already posted and compensated
+      // in a previous round — doing it again would create a phantom +1 on origin.
+      if (notaIdOrigem && nfLancadaAgora) {
         const produtoIdOrigem = item.produto_id as number;
         try {
           await runWithEmpresa(pedido.empresa_origem_id, () =>

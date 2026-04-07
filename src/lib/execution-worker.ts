@@ -797,7 +797,7 @@ async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
 
   const { data: pedido, error: pedidoErr } = await supabase
     .from("siso_pedidos")
-    .select("numero, nota_fiscal_id, estoque_lancado, empresa_origem_id, marcadores")
+    .select("numero, nota_fiscal_id, estoque_lancado, nf_estoque_lancado, empresa_origem_id, marcadores")
     .eq("id", job.pedido_id)
     .single();
 
@@ -817,31 +817,26 @@ async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
 
   const notaIdOrigem = pedido.nota_fiscal_id;
 
-  // 1. Post stock from NF on origin to clear Tiny reservation.
-  // lancarEstoqueNota is one-time — if this is a re-execution after encaminhar,
-  // it will fail (already posted). We track success to skip the compensating entry.
-  let nfLancadaAgora = false;
-  if (notaIdOrigem) {
+  // 1. Post stock from NF + compensating entries on origin (one-time, permanent).
+  // nf_estoque_lancado tracks whether this was already done — encaminhar preserves it.
+  // On re-execution after encaminhar, we skip straight to the exit from support.
+  const precisaLancarNf = !pedido.nf_estoque_lancado;
+
+  if (precisaLancarNf && notaIdOrigem) {
     const { token: origemToken } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
-    try {
-      await runWithEmpresa(pedido.empresa_origem_id, () =>
-        lancarEstoqueNota(origemToken, notaIdOrigem),
-      );
-      nfLancadaAgora = true;
-      logger.info("worker", "Estoque da NF lançado na origem (limpa reserva)", {
-        pedidoId: job.pedido_id,
-        notaId: notaIdOrigem,
-        empresaOrigemId: pedido.empresa_origem_id,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.info("worker", "lancarEstoqueNota já realizado anteriormente — prosseguindo sem compensação", {
-        pedidoId: job.pedido_id,
-        notaId: notaIdOrigem,
-        error: msg,
-      });
-    }
+    await runWithEmpresa(pedido.empresa_origem_id, () =>
+      lancarEstoqueNota(origemToken, notaIdOrigem),
+    );
+    logger.info("worker", "Estoque da NF lançado na origem (limpa reserva)", {
+      pedidoId: job.pedido_id,
+      notaId: notaIdOrigem,
+      empresaOrigemId: pedido.empresa_origem_id,
+    });
     await sleep(500);
+  } else if (!precisaLancarNf) {
+    logger.info("worker", "NF já lançada anteriormente (nf_estoque_lancado=true) — só saída", {
+      pedidoId: job.pedido_id,
+    });
   }
 
   // 2. Get origin empresa deposit for compensating entries
@@ -967,10 +962,10 @@ async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
 
       // Compensate saldo on origin: lancarEstoqueNota dropped saldo on origin,
       // but the physical stock didn't leave origin — add it back.
-      // Only compensate if we actually posted the NF this round (nfLancadaAgora).
-      // On re-execution after encaminhar, the NF was already posted and compensated
-      // in a previous round — doing it again would create a phantom +1 on origin.
-      if (notaIdOrigem && nfLancadaAgora) {
+      // Only compensate on the first round (precisaLancarNf). On re-execution
+      // after encaminhar, the NF was already posted and compensated — doing it
+      // again would create a phantom +1 on origin.
+      if (notaIdOrigem && precisaLancarNf) {
         const produtoIdOrigem = item.produto_id as number;
         try {
           await runWithEmpresa(pedido.empresa_origem_id, () =>
@@ -1045,12 +1040,13 @@ async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
 
   await supabase
     .from("siso_pedidos")
-    .update({ estoque_lancado: true })
+    .update({ estoque_lancado: true, nf_estoque_lancado: true })
     .eq("id", job.pedido_id);
 
   logger.info("worker", "Estoque lançado pós-NF (transferência)", {
     pedidoId: job.pedido_id,
     notaIdOrigem,
+    nfLancadaPrimeiraVez: precisaLancarNf,
     empresaId: empresaEscolhida.empresaId,
     empresaNome: empresaEscolhida.empresaNome,
     totalItens: itens.length,

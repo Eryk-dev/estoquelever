@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -16,11 +17,16 @@ export function ProductImageZoom({ src, alt, className, loading = "lazy" }: Prod
 
   useEffect(() => {
     if (!open) return;
+    // Lock body scroll while open
+    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = "";
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   return (
@@ -31,11 +37,11 @@ export function ProductImageZoom({ src, alt, className, loading = "lazy" }: Prod
         alt={alt}
         className={cn("cursor-zoom-in", className)}
         loading={loading}
-        onClick={() => setOpen(true)}
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
       />
 
-      {/* Fullscreen overlay */}
-      {open && (
+      {/* Portal to body — escapes overflow-hidden parents on mobile */}
+      {open && createPortal(
         <div
           className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
           onClick={() => setOpen(false)}
@@ -54,7 +60,8 @@ export function ProductImageZoom({ src, alt, className, loading = "lazy" }: Prod
             className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
             onClick={(e) => e.stopPropagation()}
           />
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

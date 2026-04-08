@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -11,33 +11,9 @@ interface ProductImageZoomProps {
   loading?: "lazy" | "eager";
 }
 
-/**
- * Clickable product thumbnail that expands into a fullscreen overlay.
- * - Desktop: double-click to expand
- * - Mobile/tablet: single tap to expand
- */
 export function ProductImageZoom({ src, alt, className, loading = "lazy" }: ProductImageZoomProps) {
   const [open, setOpen] = useState(false);
-  const isTouchRef = useRef(false);
 
-  useEffect(() => {
-    // Detect touch device once
-    isTouchRef.current = "ontouchstart" in window || navigator.maxTouchPoints > 0;
-  }, []);
-
-  const handleClick = useCallback(() => {
-    if (isTouchRef.current) {
-      setOpen(true);
-    }
-  }, []);
-
-  const handleDoubleClick = useCallback(() => {
-    if (!isTouchRef.current) {
-      setOpen(true);
-    }
-  }, []);
-
-  // Close on Escape
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -55,8 +31,7 @@ export function ProductImageZoom({ src, alt, className, loading = "lazy" }: Prod
         alt={alt}
         className={cn("cursor-zoom-in", className)}
         loading={loading}
-        onClick={handleClick}
-        onDoubleClick={handleDoubleClick}
+        onClick={() => setOpen(true)}
       />
 
       {/* Fullscreen overlay */}

@@ -25,6 +25,7 @@ import {
   getFilialColors,
 } from "@/lib/domain-helpers";
 import { ObservacoesTimeline } from "./observacoes-timeline";
+import { ProductImageZoom } from "@/components/ui/product-image-zoom";
 import type { Decisao, DepositoEstoque, EstoqueItem, Pedido } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -361,12 +362,10 @@ function ProductRow({ item, decisao, pedido, onStockUpdated }: ProductRowProps) 
       <div className="relative shrink-0">
         <div className="h-12 w-12 overflow-hidden rounded-lg border border-line bg-surface">
           {item.imagemUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <ProductImageZoom
               src={item.imagemUrl}
               alt={item.sku}
               className="h-full w-full object-cover"
-              loading="lazy"
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center">

@@ -21,6 +21,7 @@ import { QtyInput } from "./qty-input";
 import { ItemContextMenu } from "./item-context-menu";
 import { IndisponivelDialog } from "./indisponivel-dialog";
 import { CancelamentoDialog } from "./cancelamento-dialog";
+import { ProductImageZoom } from "@/components/ui/product-image-zoom";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -275,7 +276,7 @@ export function FornecedorComprarCard({
 
                       {/* Image */}
                       {item.imagem_url ? (
-                        <img
+                        <ProductImageZoom
                           src={item.imagem_url}
                           alt={item.sku}
                           className="h-10 w-10 shrink-0 rounded-lg border border-line object-cover"

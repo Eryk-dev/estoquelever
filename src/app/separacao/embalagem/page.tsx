@@ -26,6 +26,7 @@ import { getGalpaoAccent } from "@/lib/domain-helpers";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GalpaoSelector } from "@/components/galpao-selector";
+import { ProductImageZoom } from "@/components/ui/product-image-zoom";
 import type { SeparacaoPedido } from "@/components/separacao/separacao-card";
 
 // --- Types ---
@@ -855,7 +856,7 @@ function EmbalagemItemRow({
     >
       {/* Item image */}
       {item.imagem_url && (
-        <img
+        <ProductImageZoom
           src={item.imagem_url}
           alt={item.sku}
           className="h-12 w-12 shrink-0 rounded-md border border-line object-cover bg-surface"

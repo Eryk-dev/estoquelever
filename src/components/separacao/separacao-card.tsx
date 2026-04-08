@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { sisoFetch } from "@/lib/auth-context";
 import { CheckCircle2, Truck, Calendar, History, Printer, Loader2, ShoppingCart, Package, Clock, AlertTriangle, ChevronDown, MapPin, RotateCcw, Tag, MoreVertical, ArrowRightLeft } from "lucide-react";
 import { getEcommerceAbbr, getEcommerceColors } from "@/lib/domain-helpers";
+import { ProductImageZoom } from "@/components/ui/product-image-zoom";
 import { PedidoTimeline } from "./pedido-timeline";
 import type { Decisao, StatusSeparacao } from "@/types";
 
@@ -750,7 +751,7 @@ export function SeparacaoCard({
                         >
                           <td className="px-2 py-1">
                             {item.imagem_url ? (
-                              <img
+                              <ProductImageZoom
                                 src={item.imagem_url}
                                 alt={item.sku}
                                 className="h-8 w-8 rounded border border-line object-cover bg-surface"
@@ -822,7 +823,7 @@ export function SeparacaoCard({
                         >
                           <td className="px-2 py-1.5">
                             {item.imagem_url ? (
-                              <img
+                              <ProductImageZoom
                                 src={item.imagem_url}
                                 alt={item.sku}
                                 className="h-10 w-10 sm:h-12 sm:w-12 rounded border border-line object-cover bg-surface"

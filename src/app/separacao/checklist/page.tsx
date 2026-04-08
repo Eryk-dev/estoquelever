@@ -28,6 +28,7 @@ import { naturalLocCompare, getGalpaoAccent } from "@/lib/domain-helpers";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GalpaoSelector } from "@/components/galpao-selector";
+import { ProductImageZoom } from "@/components/ui/product-image-zoom";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -811,12 +812,10 @@ function ChecklistPage() {
         {/* Product thumbnail */}
         <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-line bg-surface">
           {product.imagem_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <ProductImageZoom
               src={product.imagem_url}
               alt={product.sku}
               className="h-full w-full object-cover"
-              loading="lazy"
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center">

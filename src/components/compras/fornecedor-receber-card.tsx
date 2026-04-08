@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { sisoFetch } from "@/lib/auth-context";
 import { agingBadgeClass, formatAging } from "./compras-helpers";
+import { ProductImageZoom } from "@/components/ui/product-image-zoom";
 import { QtyInput } from "./qty-input";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -174,7 +175,7 @@ export function FornecedorReceberCard({
                   <div className="flex items-start gap-3">
                     {/* Image */}
                     {item.imagem_url ? (
-                      <img
+                      <ProductImageZoom
                         src={item.imagem_url}
                         alt={item.sku}
                         className="h-10 w-10 shrink-0 rounded-lg border border-line object-cover"

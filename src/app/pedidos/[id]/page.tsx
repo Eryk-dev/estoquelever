@@ -38,6 +38,7 @@ import {
   formatRelativeTime,
 } from "@/lib/domain-helpers";
 import { cn } from "@/lib/utils";
+import { ProductImageZoom } from "@/components/ui/product-image-zoom";
 import type { Decisao } from "@/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -327,12 +328,10 @@ function ItemCard({ item }: { item: DetalheItem }) {
       <div className="relative shrink-0">
         <div className="h-12 w-12 overflow-hidden rounded-lg border border-line bg-surface">
           {item.imagem_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <ProductImageZoom
               src={item.imagem_url}
               alt={item.sku}
               className="h-full w-full object-contain"
-              loading="lazy"
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-zinc-50 dark:bg-zinc-800/50">

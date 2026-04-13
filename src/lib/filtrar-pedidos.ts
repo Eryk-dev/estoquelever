@@ -10,9 +10,8 @@ export function filtrarPendentesGalpao(pedidos: Pedido[], galpaoNome: string | n
   if (!galpaoNome) return pedidos;
   return pedidos.filter((p) => {
     const sugestao = p.sugestao;
-    // Transferencia: quem aprova é o galpão que vai ENVIAR (o outro)
-    if (sugestao === "transferencia") return p.filialOrigem !== galpaoNome;
-    // Propria / OC / outros: quem aprova é o galpão de origem
+    // Transferencia: quem aprova é o galpão de ORIGEM (quem recebeu o pedido)
+    // Propria / OC / outros: também o galpão de origem
     return p.filialOrigem === galpaoNome;
   });
 }
@@ -26,7 +25,7 @@ export function filtrarConcluidosGalpao(pedidos: Pedido[], galpaoNome: string | 
   return pedidos.filter((p) => {
     const decisao: Decisao = p.decisaoFinal ?? p.sugestao;
     if (decisao === "propria") return p.filialOrigem === galpaoNome;
-    if (decisao === "transferencia") return p.filialOrigem !== galpaoNome;
+    if (decisao === "transferencia") return p.filialOrigem === galpaoNome;
     return false;
   });
 }
@@ -75,7 +74,7 @@ export function filtrarPendentes(pedidos: Pedido[], cargos: Cargo | Cargo[]): Pe
       } else {
         filtered = pedidos.filter((p) => {
           const sugestao = p.sugestao;
-          if (sugestao === "transferencia") return p.filialOrigem !== galpao;
+          if (sugestao === "transferencia") return p.filialOrigem === galpao;
           return p.filialOrigem === galpao;
         });
       }
@@ -113,7 +112,7 @@ export function filtrarConcluidos(pedidos: Pedido[], cargos: Cargo | Cargo[]): P
         filtered = pedidos.filter((p) => {
           const decisao: Decisao = p.decisaoFinal ?? p.sugestao;
           if (decisao === "propria") return p.filialOrigem === galpao;
-          if (decisao === "transferencia") return p.filialOrigem !== galpao;
+          if (decisao === "transferencia") return p.filialOrigem === galpao;
           return false;
         });
       }

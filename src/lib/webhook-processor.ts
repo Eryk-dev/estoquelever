@@ -1,5 +1,5 @@
 import { createServiceClient } from "./supabase-server";
-import { getPedido, getEstoque, buscarProdutoPorSku, getProdutoDetalhe, getProdutoKit, obterNotaFiscal } from "./tiny-api";
+import { getPedido, getEstoque, buscarProdutoPorSku, getProdutoDetalhe, getProdutoKit, obterNotaFiscal, criarMarcadoresPedido } from "./tiny-api";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
@@ -353,13 +353,38 @@ export async function processWebhook(
           status_separacao: isAuto ? "aguardando_nf" : null,
           prazo_envio: pedido.dataEnvio ? parseTinyDateTime(pedido.dataEnvio) : null,
           processado_em: null,
-          marcadores: isAuto ? [galpaoOrigemNome] : [],
+          marcadores: isAuto ? [galpaoOrigemNome, "LVR"] : ["LVR"],
           payload_original: pedido,
         },
         { onConflict: "id" },
       );
 
     if (pedidoError) throw pedidoError;
+
+    // 9a-pre. Insert LVR marcador on Tiny immediately (all orders, even pending)
+    runWithEmpresa(empresaOrigemId, () =>
+      criarMarcadoresPedido(origemToken, pedidoTinyId, ["LVR"]),
+    )
+      .then(() => {
+        logger.info("processor", "Marcador LVR inserido no pedido Tiny", {
+          pedidoId: pedidoTinyId,
+          empresaId: empresaOrigemId,
+        });
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("400")) {
+          logger.info("processor", "Marcador LVR já existe no pedido (idempotente)", {
+            pedidoId: pedidoTinyId,
+          });
+        } else {
+          logger.warn("processor", "Falha ao inserir marcador LVR no Tiny", {
+            pedidoId: pedidoTinyId,
+            empresaId: empresaOrigemId,
+            error: msg,
+          });
+        }
+      });
 
     // 9a. Record history events
     registrarEvento({

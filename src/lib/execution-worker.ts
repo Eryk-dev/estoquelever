@@ -317,15 +317,18 @@ async function inserirMarcadoresTiny(
   pedidoId: string,
   marcadores: string[],
 ): Promise<void> {
-  if (marcadores.length === 0) return;
+  // "LVR" é enviado ao Tiny no webhook-processor (fire-and-forget) para todo pedido
+  // assim que recebido. Filtrar aqui evita erro de duplicação no POST batch.
+  const paraEnviar = marcadores.filter((m) => m !== "LVR");
+  if (paraEnviar.length === 0) return;
 
   try {
     await runWithEmpresa(empresaId, () =>
-      criarMarcadoresPedido(token, pedidoId, marcadores),
+      criarMarcadoresPedido(token, pedidoId, paraEnviar),
     );
     logger.info("worker", "Marcadores inseridos no pedido Tiny", {
       pedidoId,
-      marcadores,
+      marcadores: paraEnviar,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

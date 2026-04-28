@@ -124,9 +124,10 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Build markers
+  // Build markers (LVR já foi inserido no Tiny no recebimento via webhook-processor,
+  // mas mantemos no array do DB para refletir o estado completo do pedido)
   const marcadores: string[] =
-    decisao === "oc" ? ["OC", filialOrigem] : [filialExecucao];
+    decisao === "oc" ? ["OC", filialOrigem, "LVR"] : [filialExecucao, "LVR"];
 
   // Update order to "executando"
   const { error: updateError } = await supabase

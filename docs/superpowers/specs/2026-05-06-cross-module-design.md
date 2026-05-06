@@ -25,17 +25,29 @@ O módulo é 100% nativo do SISO: mesmo Next.js, mesmo Supabase, mesmas convenç
 |---|---|
 | Página `/cross` com busca universal e listagem de resultados | Integração com fluxo de separação (MVP2) |
 | Página `/cross/[sku]` com detalhe completo e edição | Qualquer integração com MercadoLivre |
-| Catálogo `siso_produtos_catalogo` populado lazy + seed inicial | IA / geração de descrição |
+| Catálogo `siso_produtos_catalogo` populado lazy + seed inicial do projeto cross | IA / geração de descrição |
 | CRUD de OEMs e veículos com audit por usuário | Job recorrente de sync com Tiny |
-| Refetch lazy do Tiny baseado em TTL (24h) | Catálogo pré-populado de marcas/modelos |
+| Refetch do Tiny apenas sob demanda (botão "Atualizar agora") | Catálogo pré-populado de marcas/modelos |
 | Item "Cross" no menu lateral (ícone Lucide `Search`) | Dashboard de analytics |
+| Aviso quando OEM cadastrado já existe em outro SKU (cruzamento) | Atualização automática (TTL) |
+| Tabela `siso_cross_logs` (telemetria com identificação do usuário) | |
 
-### 1.2 Escopo do MVP2 (fase posterior, desenhada mas não implementada agora)
+### 1.2 Escopo do MVP2 (fase posterior, dividida)
 
-- Botão **"Ver equivalentes"** em `item-separacao-row.tsx`
-- Endpoint `POST /api/separacao/substituir-item`
-- Tabela `siso_pedido_substituicoes` (auditoria)
-- Fluxo: estorno do SKU original no Tiny + baixa do SKU substituto + atualização do `siso_pedido_itens` + evento em `siso_pedido_historico`
+#### 1.2.1 MVP2.1 — UI de substituição na separação
+- Ícone "Ver equivalentes" no card de item da separação (reutilizando padrão visual de `compras/trocar-sku`)
+- Drawer/dialog mostra a lista de equivalentes vinda do Cross + opção de digitar SKU livre (mantendo paridade com o trocar-sku atual)
+- Endpoint `POST /api/separacao/trocar-sku-item` (espelho do `/api/compras/trocar-sku`, adaptado pra separação): atualiza `siso_pedido_itens` (SKU, descrição, imagem, fornecedor) e `siso_pedido_item_estoques`
+- Tabela `siso_pedido_substituicoes` (auditoria: quem, quando, original, substituto, qtd, motivo)
+- Suporta substituição parcial (split em duas linhas: parte substituída + parte ainda original)
+- Operador pode desfazer enquanto o pedido não foi expedido; admin pode desfazer sempre
+
+#### 1.2.2 MVP2.2 — Movimentação de estoque no Tiny (decisão fiscal pendente)
+**Adiado.** Decidir depois entre dois caminhos:
+- **Via NF** (formal): cancelar/emitir NFs para estorno do original e baixa do substituto
+- **Ajuste direto via Tiny `ajustar-estoque`**: simples mas gera divergência fiscal/contábil
+
+Até essa decisão acontecer, MVP2.1 funciona em modo "registra a substituição no SISO sem tocar o Tiny" — o time resolve a parte fiscal/operacional como faz hoje.
 
 ### 1.3 Princípios preservados do estoque-lever
 
@@ -69,7 +81,7 @@ CREATE TABLE siso_produtos_catalogo (
   gtin              text,
   oem               text[] NOT NULL DEFAULT '{}', -- denormalizado (trigger)
   compatibility_v2  jsonb NOT NULL DEFAULT '{}'::jsonb,  -- denormalizado (trigger)
-  sincronizado_em   timestamptz,
+  sincronizado_em   timestamptz,                  -- última vez que veio do Tiny (apenas diagnóstico)
   criado_em         timestamptz NOT NULL DEFAULT now(),
   atualizado_em     timestamptz NOT NULL DEFAULT now()
 );
@@ -139,26 +151,9 @@ CREATE INDEX idx_cross_logs_criado_em ON siso_cross_logs(criado_em DESC);
 
 Útil para identificar SKUs frios e padrões de busca. Não afeta o fluxo do operador. Pode ser cortado se preferir simplicidade — não tem dependentes.
 
-### 2.5 (MVP2) `siso_pedido_substituicoes`
+### 2.5 (MVP2.1) `siso_pedido_substituicoes`
 
-Tabela criada apenas quando o MVP2 entrar. Esquema preliminar:
-
-```sql
-CREATE TABLE siso_pedido_substituicoes (
-  id                       bigserial PRIMARY KEY,
-  pedido_id                uuid NOT NULL REFERENCES siso_pedidos(id),
-  pedido_item_original_id  uuid NOT NULL,
-  pedido_item_novo_id      uuid NOT NULL,
-  sku_original             text NOT NULL,
-  sku_substituto           text NOT NULL,
-  quantidade               int NOT NULL,
-  empresa_estorno_id       uuid NOT NULL REFERENCES siso_empresas(id),
-  empresa_baixa_id         uuid NOT NULL REFERENCES siso_empresas(id),
-  motivo                   text,
-  usuario_id               uuid NOT NULL REFERENCES siso_usuarios(id),
-  criado_em                timestamptz NOT NULL DEFAULT now()
-);
-```
+Definida em detalhe na **Seção 6.5**. Criada apenas quando o MVP2.1 entrar.
 
 ---
 
@@ -256,10 +251,10 @@ Body: `{ marca, modelo, ano_inicio?, ano_fim?, variante? }`. Normaliza strings (
 #### `DELETE /api/cross/produtos/:sku/veiculos/:id`
 Aplica regra de permissão.
 
-### 3.4 Refetch / sync
+### 3.4 Refetch manual
 
 #### `POST /api/cross/produtos/:sku/refetch`
-Força refetch bloqueante do Tiny e devolve detalhe atualizado.
+Único caminho de atualização do cache a partir do Tiny. Executa de forma **bloqueante** e devolve detalhe atualizado. Disparado pelo botão "Atualizar agora" no header do detalhe. Não há TTL automático no MVP1.
 
 ### 3.5 Helpers de UI
 
@@ -273,11 +268,22 @@ Análogo, filtrando por marca.
 
 | Endpoint | Cargos |
 |---|---|
-| `GET /search`, `GET /produtos/:sku`, `GET /sugestoes/*` | Todos logados |
-| `POST/DELETE /oems`, `POST/DELETE /veiculos` | Todos logados (regra de "só remove o que criou" no server) |
+| `GET /search`, `GET /produtos/:sku`, `GET /sugestoes/*` | Todos logados (admin + operadores + comprador) |
+| `POST /oems`, `POST /veiculos` | Todos logados |
+| `DELETE /oems`, `DELETE /veiculos` | Operador remove só o que **ele mesmo** cadastrou; **admin remove qualquer um** |
 | `POST /refetch` | Todos logados |
 
 Sem filtro por galpão na busca: operador CWB enxerga estoque de SP e vice-versa (caso de uso é justamente achar substituto em outro galpão).
+
+### 3.7 Aviso de cruzamento de OEM
+
+No `POST /oems`, depois de inserir, o endpoint executa uma checagem:
+`SELECT sku FROM siso_produto_oems WHERE oem_code = $1 AND produto_sku <> $2 LIMIT 5`.
+Se houver resultado, devolve no response:
+```ts
+{ ok: true, cruzamentos: [{ sku: 'NETPARTS-9999', nome: '...' }, ...] }
+```
+A UI mostra toast com link para os SKUs cruzados. Operador percebe que acabou de criar uma equivalência valiosa.
 
 ---
 
@@ -384,17 +390,18 @@ Quando `GET /produtos/:sku` recebe SKU não cacheado:
 
 Custo da primeira busca: ~1-3s. Subsequentes: instantâneo. Erro do Tiny não bloqueia: retorna o que foi possível com `sincronizado_em=null` e flag `parcial=true`.
 
-### 5.3 TTL refresh (lazy, 24h, fire-and-forget)
+### 5.3 Refresh manual (sem TTL automático)
 
-`GET /produtos/:sku` quando `sincronizado_em < now() - interval '24 hours'`:
+Não há atualização automática no MVP1. Cache do produto é atualizado **apenas** quando:
 
-```
-1. Devolve dados em cache imediatamente
-2. void refetchProdutoFromTinyIfStale(sku) — fire-and-forget
-3. Próxima requisição vê dados frescos
-```
+- O produto não existia em `siso_produtos_catalogo` e alguém busca pela primeira vez (lazy fetch — Seção 5.2)
+- Operador clica no botão "Atualizar agora" no header do detalhe → `POST /api/cross/produtos/:sku/refetch` (bloqueante)
 
-`POST /refetch` força bloqueante.
+Coluna `sincronizado_em` continua existindo para diagnóstico (mostrar "última atualização há Xh") mas não dispara comportamento automático.
+
+**Comportamento quando o Tiny está fora do ar** (lazy ou refetch manual):
+- `GET /produtos/:sku` para SKU **não cacheado** → devolve `503` com mensagem clara `"Tiny indisponível, tente em alguns minutos"`. Não tenta retry agressivo. Sem dados parciais salvos.
+- `POST /refetch` para SKU **já cacheado** → mesma mensagem; cache existente fica intacto.
 
 ### 5.4 Extração de OEM da descrição
 
@@ -444,55 +451,108 @@ FOR EACH ROW EXECUTE FUNCTION siso_trigger_recalc_oems();
 
 ## 6. Integração futura na separação (MVP2 — visão)
 
-**Não implementado no MVP1.** Documentado para garantir que o desenho atual não bloqueia a fase 2.
+**Não implementado no MVP1.** Documentado para garantir que o desenho atual não bloqueia a fase 2. Dividido em dois sub-MVPs:
 
-### 6.1 Onde aparece
+- **MVP2.1** — UI de substituição na separação + atualização do `siso_pedido_itens` (sem tocar Tiny)
+- **MVP2.2** — Movimentação de estoque no Tiny (estorno + baixa) — adiada por dependência fiscal
 
-Em `src/components/separacao/item-separacao-row.tsx`, novo botão "Ver equivalentes" ao lado de cada item ainda não bipado. Click abre drawer/modal que reusa `equivalentes-list.tsx` do detalhe do Cross.
+### 6.1 Padrão reaproveitado
 
-### 6.2 Fluxo do operador
+Existe hoje em `src/app/api/compras/trocar-sku/route.ts` um fluxo que **troca o SKU de um item de pedido** atualizando `siso_pedido_itens` (SKU, descrição, imagem, fornecedor) e re-buscando estoque por empresa do grupo. **Não toca o Tiny.** É o padrão que o MVP2.1 espelha.
 
-1. Operador clica "Ver equivalentes" no item NETAIR-1234 do pedido
-2. Drawer abre mostrando equivalentes com estoque (mesma lógica do `/cross/[sku]`)
-3. Operador clica "Substituir" em NETPARTS-9999
-4. Confirm dialog com resumo da operação
-5. Operador confirma → `POST /api/separacao/substituir-item`
-6. UI atualiza: linha mostra novo SKU + flag "substituído", item marcado como bipado
-7. Separação continua
+A diferença em separação: em vez do operador digitar o SKU substituto a frio, ele recebe a **lista de equivalentes do Cross** (mais o campo de SKU livre, igual ao trocar-sku atual).
 
-### 6.3 Endpoint `POST /api/separacao/substituir-item`
+### 6.2 MVP2.1 — UI e troca no SISO
 
-Body: `{ pedido_item_id: uuid, novo_sku: string, motivo?: string }`
+#### Onde aparece
 
-Lógica:
+Em `src/components/separacao/item-separacao-row.tsx`, novo botão/ícone (visual igual ao "trocar SKU" das telas de compras) em cada item ainda não bipado. Click abre dialog que reusa `equivalentes-list.tsx` do detalhe do Cross.
 
-1. Carrega `siso_pedido_itens.id` original + dados do pedido (`empresa_deducao_id`, `quantidade`)
-2. Resolve **destino do estorno**: a empresa onde foi deduzido originalmente
-3. Resolve **destino da baixa**: empresa do grupo que tem o substituto disponível, seguindo tier order de `grupo-resolver.ts`
-4. Chama Tiny `ajustar-estoque` 2×: `+qty` no original, `−qty` no substituto
-5. Atualiza `siso_pedido_itens`: marca original como `substituido` + `substituido_por_item_id`; insere nova linha do substituto marcada como `bipado`
-6. Registra evento `substituicao_item` em `siso_pedido_historico`
-7. Insere registro em `siso_pedido_substituicoes` (auditoria dedicada)
+#### Fluxo do operador
 
-### 6.4 Edge cases
+1. Operador clica "Ver equivalentes" no item NETAIR-1234
+2. Dialog abre com:
+   - Lista de equivalentes do Cross (mesma lógica de `/cross/[sku]`)
+   - Campo "Outro SKU" (input livre, igual ao trocar-sku atual de compras)
+3. Operador clica em um equivalente OU digita SKU livre
+4. Operador escolhe **motivo** num dropdown (lista padrão: `sem estoque físico`, `item danificado`, `cliente pediu equivalente`, `erro de cadastro`, `outro`)
+5. Operador confirma (sem bipagem do código de barras — clique direto)
+6. `POST /api/separacao/trocar-sku-item` faz a troca no SISO (sem Tiny)
+7. UI atualiza: linha mostra novo SKU; toast confirma; histórico do pedido registra evento
+
+#### Endpoint `POST /api/separacao/trocar-sku-item`
+
+Body: `{ pedido_item_id: uuid, novo_sku: string, quantidade: int, motivo: text }`
+
+- `quantidade` permite split: se for menor que `quantidade_pedida`, executa **substituição parcial** (atualiza qtd do item original e insere nova linha pra parte substituída)
+- Reusa lógica do `trocar-sku` de compras (busca produto nas empresas do grupo, atualiza descrição/imagem/fornecedor/estoque)
+- Insere registro em `siso_pedido_substituicoes`
+- Registra evento em `siso_pedido_historico`
+- Toast no SISO + entrada no histórico do pedido (sem notificação push)
+
+#### Endpoint `POST /api/separacao/trocar-sku-item/desfazer`
+
+Body: `{ substituicao_id }`
+
+- Operador pode desfazer enquanto pedido **não foi expedido** (`status != 'expedido'`)
+- Admin pode desfazer mesmo após expedição
+- Reverte `siso_pedido_itens` para o estado anterior (joga nova linha fora se foi parcial; restaura SKU/descrição/etc se foi total)
+- Atualiza `siso_pedido_substituicoes.desfeita_em`, `desfeita_por`
+
+#### Permissões
+
+| Ação | Cargos |
+|---|---|
+| Substituir | Operador do **galpão do pedido** + admin |
+| Substituir por SKU **fora da lista de equivalentes** | Qualquer um (mantém paridade com `trocar-sku` de compras) |
+| Desfazer (até expedição) | Operador que fez ou admin |
+| Desfazer (após expedição) | Só admin |
+
+### 6.3 MVP2.2 — Estoque Tiny (adiado, decisão fiscal)
+
+A movimentação de estoque no Tiny (estorno do SKU original + baixa do SKU substituto) **não entra no MVP2.1**. Dois caminhos possíveis (decisão pendente):
+
+| Caminho | O que faz | Implicação |
+|---|---|---|
+| **Via NF** | Cancela/emite NFs para refletir formalmente a troca | Fiscalmente limpo, operacionalmente complexo (regras SEFAZ, prazos) |
+| **Ajuste direto** | Chama `/estoque/ajustar` no Tiny: +qty no original, −qty no substituto | Simples mas gera divergência entre NF (referência o SKU original) e estoque (mostra substituto) |
+
+Até essa decisão acontecer, o time resolve a parte de Tiny/fiscal **manualmente** como já faz hoje (não há regressão — hoje também não tem essa automação). MVP2.1 já entrega valor: registra a substituição auditável no SISO.
+
+### 6.4 Edge cases (MVP2.1)
 
 | Caso | Tratamento |
 |---|---|
-| Tiny falha no estorno | Aborta tudo, nada mudou, mensagem ao operador |
-| Tiny falha na baixa após estorno OK | Tenta reverter estorno; se falhar, registra `siso_erros` com `correlation_id`, sinaliza incidente |
-| Pedido tem NF emitida | Bloqueia substituição na UI com mensagem clara (cancelamento manual) |
-| Substituto não existe no Tiny da empresa de destino | Bloqueia, instrução para cadastrar |
-| Substituição parcial (ex: qty 3, só 2 disponível do substituto) | Permitida: 2× substituto + 1× ainda em falta. Original vira `substituido_parcialmente` |
-| Desfazer substituição | Endpoint `/desfazer` em v2.1 (pode ficar fora do MVP2) |
+| Substituto não existe no Tiny de nenhuma empresa do grupo | Bloqueia substituição (mesmo comportamento do trocar-sku atual) |
+| Substituição parcial (qty 3, escolhe 2× do substituto) | Permitida: linha original fica com qty 1, nova linha com qty 2 do substituto |
+| Tentar desfazer após expedição (operador) | 403 com mensagem "só admin pode desfazer após expedição" |
+| Substituir SKU livre não cadastrado em nenhuma empresa | Bloqueia (igual `trocar-sku` atual) |
 
-### 6.5 Permissões
+### 6.5 Tabela `siso_pedido_substituicoes` (MVP2.1)
 
-`admin` e `operador_*` podem substituir apenas em pedidos do próprio galpão. `comprador` não.
+```sql
+CREATE TABLE siso_pedido_substituicoes (
+  id                       bigserial PRIMARY KEY,
+  pedido_id                uuid NOT NULL REFERENCES siso_pedidos(id),
+  pedido_item_original_id  uuid NOT NULL,
+  pedido_item_novo_id      uuid,                              -- pode ser NULL se split parcial
+  sku_original             text NOT NULL,
+  sku_substituto           text NOT NULL,
+  quantidade               int NOT NULL,
+  motivo                   text NOT NULL,
+  fonte                    text NOT NULL CHECK (fonte IN ('equivalente_cross', 'sku_livre')),
+  usuario_id               uuid NOT NULL REFERENCES siso_usuarios(id),
+  criado_em                timestamptz NOT NULL DEFAULT now(),
+  desfeita_em              timestamptz,
+  desfeita_por             uuid REFERENCES siso_usuarios(id)
+);
+```
 
 ### 6.6 Pré-condições já atendidas pelo MVP1
 
 - `GET /api/cross/produtos/:sku` devolve `equivalentes` com `estoque_por_galpao` (Seção 3.1)
 - `siso_produto_oems` populado com qualidade razoável (Seção 5)
+- Padrão `trocar-sku` em `src/app/api/compras/trocar-sku/route.ts` pode ser usado como base
 
 Nenhuma alteração na UI do Cross é necessária para o MVP2.
 
@@ -502,11 +562,12 @@ Nenhuma alteração na UI do Cross é necessária para o MVP2.
 
 | Fase | Conteúdo | Dependências |
 |---|---|---|
-| **1.1 — Catálogo + busca read-only** | Tabelas, triggers, extração de OEM, seed, `GET /search`, `GET /produtos/:sku`, página `/cross`, página `/cross/[sku]` sem edição | `pg_trgm` habilitado |
-| **1.2 — Edição de OEMs** | Endpoints `POST/DELETE /oems`, componente `oem-list-editor.tsx`, regras de permissão | 1.1 |
+| **1.1 — Catálogo + busca read-only** | Tabelas, triggers, extração de OEM, seed do cross, `GET /search`, `GET /produtos/:sku`, página `/cross`, página `/cross/[sku]` sem edição | `pg_trgm` habilitado |
+| **1.2 — Edição de OEMs** | Endpoints `POST/DELETE /oems`, componente `oem-list-editor.tsx`, regras de permissão (admin remove qualquer um), aviso de cruzamento | 1.1 |
 | **1.3 — Edição de veículos** | Endpoints `POST/DELETE /veiculos`, `GET /sugestoes/*`, componente `veiculo-list-editor.tsx` | 1.2 |
-| **1.4 — Refetch e telemetria** | Botão refresh, TTL fire-and-forget, `siso_cross_logs` | 1.1 |
-| **2.0 — Substituição na separação** | `siso_pedido_substituicoes`, `POST /api/separacao/substituir-item`, drawer no `item-separacao-row.tsx` | 1.4 estabilizado |
+| **1.4 — Refresh manual + telemetria** | Botão "Atualizar agora" (sem TTL), tratamento de Tiny offline, `siso_cross_logs` (com `usuario_id`) | 1.1 |
+| **2.1 — Substituição na separação (UI + SISO)** | `siso_pedido_substituicoes`, `POST /api/separacao/trocar-sku-item` (espelho do `compras/trocar-sku`), `POST .../desfazer`, dialog com lista do Cross + SKU livre, motivo via dropdown | 1.4 estabilizado |
+| **2.2 — Estoque Tiny (estorno + baixa)** | Decisão fiscal pendente (NF formal vs ajuste direto). Não planejado ainda. | 2.1 + decisão de negócio |
 
 Cada fase é entregável independente, deployável separadamente.
 
@@ -527,16 +588,49 @@ Cada fase é entregável independente, deployável separadamente.
 
 ## 9. Decisões registradas
 
+### Arquitetura e dados
 | Tema | Decisão | Justificativa |
 |---|---|---|
 | Acoplamento com cross | Independente — código portado para SISO | Usuário quer descontinuar o cross |
 | Fonte de dados de equivalência | OEM (não compatibilidade veicular) | OEM define equivalência funcional; veículos servem só para confirmação visual |
 | Modelo de dados de OEM | Relacional (`siso_produto_oems`) com array desnormalizado para query | Audit por usuário + busca rápida |
-| Modelo de dados de veículos | Relacional (`siso_produto_veiculos`) + JSONB derivado | UX de CRUD + retro-compatibilidade com formato cross |
-| População inicial | Seed único do cross + lazy on-demand | Evita carga pesada e infra de job; cross já tem dados maduros |
-| Sync recorrente | Não implementar no MVP | Lazy + TTL cobre o uso real |
-| Refetch e dados manuais | Refetch nunca remove dados existentes | Preserva trabalho do operador |
+| Modelo de dados de veículos | Relacional (`siso_produto_veiculos`) + JSONB derivado | UX de CRUD + retro-compatibilidade |
 | Catálogo de marcas/modelos | Texto livre + autocomplete dinâmico | Evita projeto paralelo de catálogo |
-| Filtro por galpão na busca | Sem filtro | Caso de uso é justamente cross-galpão |
-| Auditoria de edições no Cross | `logger.info` (sem tabela dedicada) | Suficiente para MVP; promover a tabela se virar requisito |
 | Nome do módulo | "Cross" | Mantém referência ao projeto de origem |
+
+### População e atualização
+| Tema | Decisão | Justificativa |
+|---|---|---|
+| Lançamento | Seed inicial **importando tudo** do projeto Cross atual | Operador já enxerga catálogo cheio no dia 1 |
+| Sync recorrente | **Não implementar** (sem TTL automático) | Reduz complexidade; uso real puxa o que precisa |
+| Refresh do Tiny | **Apenas sob demanda** via botão "Atualizar agora" | Operador controla quando precisa de dado fresco |
+| Tiny offline | Mensagem clara `"Tiny indisponível, tente em alguns minutos"`, sem retry agressivo | Operador entende que é problema externo |
+| Refetch e dados manuais | Refetch nunca **remove** OEM/veículo existente | Preserva trabalho do operador |
+
+### Permissões e auditoria
+| Tema | Decisão | Justificativa |
+|---|---|---|
+| Quem acessa o Cross | Todos logados (admin + operadores + comprador) | Caso de uso é universal |
+| Quem cadastra OEM/veículo | Todos que acessam | Operador na ponta cadastra na hora que descobre |
+| Quem remove OEM/veículo de **outros** | **Só admin** (cada um remove o que cadastrou) | Evita guerra de cadastros, mantém auditoria |
+| Filtro por galpão na busca | Sem filtro | Caso de uso é justamente cross-galpão |
+| Auditoria de buscas | Tabela `siso_cross_logs` **com identificação do usuário** | Permite análise de uso e produtos mais buscados |
+| Aviso de cruzamento de OEM | Mostra toast quando OEM cadastrado já existe em outro SKU | Operador percebe equivalência valiosa criada |
+
+### Substituição na separação (MVP2.1)
+| Tema | Decisão | Justificativa |
+|---|---|---|
+| Quem substitui | Operador do **galpão do pedido** + admin | Quem está no chão resolve; isolamento entre galpões |
+| Substituição parcial | **Permitida** (split em duas linhas) | Realismo: melhor mandar 2 do que 0 |
+| Motivo | **Obrigatório**, dropdown padronizado | Permite estatística depois ('por que tantas substituições') |
+| Notificação | Toast no SISO + entrada no histórico do pedido | Sem spam de notificação push |
+| Bipagem do substituto | **Não bipar**, clique direto na tela | Mesma UX do `trocar-sku` atual em compras |
+| Substituto fora da lista de equivalentes | **Permitido** para qualquer cargo | Mantém paridade com `trocar-sku` atual |
+| Desfazer substituição | Operador desfaz **enquanto pedido não foi expedido**; admin desfaz sempre | Janela de correção sem chamar admin |
+| Reuso de código | MVP2.1 espelha `src/app/api/compras/trocar-sku/route.ts` | Padrão já validado no SISO |
+
+### Estoque Tiny / fiscal (MVP2.2)
+| Tema | Decisão | Justificativa |
+|---|---|---|
+| Estorno + baixa no Tiny | **Adiado** — decisão fiscal pendente entre via NF (formal) ou ajuste direto | Tem implicação fiscal real; o time vê depois |
+| Comportamento até a decisão | Substituição registra no SISO sem tocar Tiny | Sem regressão (hoje também não automatiza); MVP2.1 já entrega valor |

@@ -26,8 +26,13 @@ graph TB
     subgraph SEPARACAO
         SEP[Picking Normal<br/>Bipagem por codigo de barras]
         PICKOC[Pick OC<br/>Atalho para itens fisicamente disponiveis]
+        EMBOC[Embalagem Direta OC<br/>Scan direto sem picking]
         EMB[Embalagem<br/>Conferencia + etiqueta]
         EXP[Expedicao<br/>Despacho final]
+    end
+
+    subgraph RASTREAMENTO
+        TRACK[Pedidos Tracking<br/>/pedidos — Busca universal]
     end
 
     W -->|pedido| WP
@@ -40,7 +45,10 @@ graph TB
     WORKER -->|oc| OC
     OC -->|itens recebidos via conferencia| WORKER
     OC -->|itens fisicamente disponiveis| PICKOC
+    OC -->|embalagem direta OC| EMBOC
     PICKOC -->|auto-resolve compra| WORKER
+    EMBOC -->|auto-resolve + enfileira exec| WORKER
+    EMBOC --> EXP
     NF -->|aguardando_separacao| SEP
     SEP --> EMB
     PICKOC --> EMB
@@ -654,6 +662,7 @@ stateDiagram-v2
     aguardando_compra --> aguardando_nf: Todos itens OC recebidos via conferencia
     aguardando_compra --> aguardando_separacao: OC recebido + NF ja chegou
     aguardando_compra --> em_separacao: Operador inicia pick OC
+    aguardando_compra --> embalado: Embalagem direta OC<br/>bipar-embalagem-oc
     aguardando_nf --> aguardando_separacao: Webhook NF processado
     aguardando_separacao --> em_separacao: Operador inicia picking
     em_separacao --> separado: Picking concluido via /concluir
@@ -672,11 +681,25 @@ stateDiagram-v2
 
 ```mermaid
 stateDiagram-v2
-    [*] --> comprado: OC criada
-    comprado --> recebido: Conferencia completa
-    comprado --> cancelado: Cancelado pelo operador
-    comprado --> indisponivel: Fornecedor nao tem
-    indisponivel --> comprado: Reordenado
+    [*] --> aguardando_compra: Execution worker cria demanda
+    aguardando_compra --> comprado: POST /compras/comprar
+    comprado --> recebido: POST /compras/receber (qty total)
+
+    aguardando_compra --> indisponivel: POST /itens/{id}/indisponivel
+    comprado --> indisponivel: POST /itens/{id}/indisponivel
+
+    aguardando_compra --> equivalente_pendente: POST /itens/{id}/equivalente
+    comprado --> equivalente_pendente: POST /itens/{id}/equivalente
+    equivalente_pendente --> aguardando_compra: POST /itens/{id}/equivalente/confirmar
+
+    aguardando_compra --> cancelamento_pendente: POST /itens/{id}/cancelamento
+    comprado --> cancelamento_pendente: POST /itens/{id}/cancelamento
+    cancelamento_pendente --> cancelado: POST /itens/{id}/cancelamento/confirmar
+
+    comprado --> aguardando_compra: POST /itens/{id}/devolver
+
+    recebido --> [*]: checkAndReleasePedidos
+    cancelado --> [*]: checkAndReleasePedidos
 ```
 
 ### Sistemas Externos Integrados
@@ -786,3 +809,49 @@ flowchart TD
 | Pedido com agrupamento sem etiqueta | Fast path: `recarregarEtiquetasFaltantes` busca ZPL |
 | Pedido antigo sem agrupamento | Fallback: `preCriarAgrupamentosEmLote` cria agrupamento + ZPL |
 | Pedido reencaminhado | NF preservada, artefatos de expedição limpos. Worker recria agrupamento |
+
+---
+
+## 12. Pedidos Tracking — Rastreamento Universal
+
+Modulo de busca e rastreamento de pedidos com filtros por status, decisao, empresa e busca textual (numero, EC, cliente, SKU).
+
+### Paginas e endpoints
+
+| Recurso | Funcao |
+|---|---|
+| `/pedidos` | Lista universal: abas Pedidos/Expedidos, busca, filtros |
+| `/pedidos/[id]` | Detalhe: itens + estoque por galpao, timeline, observacoes, acoes |
+| `GET /api/pedidos/tracking` | Lista paginada com busca textual e filtros |
+| `GET /api/pedidos/[id]/detalhe` | Dados consolidados: pedido + itens + estoques + historico + observacoes |
+| `GET/POST /api/pedidos/[id]/observacoes` | Listar e adicionar observacoes |
+
+### Controle de acesso
+
+| Cargo | Visibilidade |
+|---|---|
+| `admin` | Todos os pedidos |
+| `operador_cwb/sp` | Apenas pedidos do seu galpao |
+| `comprador` | Apenas pedidos com decisao_final = oc |
+
+---
+
+## 13. Embalagem Direta OC (bipar-embalagem-oc)
+
+Atalho para embalar pedidos OC diretamente sem picking. Operador escaneia itens na pagina de embalagem, sistema auto-resolve compra e enfileira execucao.
+
+```mermaid
+flowchart TD
+    A["Aba Aguardando OC<br/>Botao 'Embalar'"] --> B["/separacao/embalagem?modo=embalagem-oc"]
+    B --> C["Scan: POST /api/separacao/bipar-embalagem-oc<br/>{ sku, pedido_ids[], quantidade }"]
+    C --> D["Busca pedido mais antigo<br/>com SKU pendente (oldest-first)"]
+    D --> E["Incrementa quantidade_bipada<br/>(optimistic lock)"]
+    E --> F{"Todos itens do pedido<br/>bipado_completo?"}
+    F -->|nao| C
+    F -->|sim| G["1. Auto-resolve compra: recebido<br/>2. Resolve decisao (propria/transferencia)<br/>3. status → executando, embalado<br/>4. Enfileira lancar_estoque<br/>5. Imprime etiqueta<br/>6. Tag 'embalagem direta'"]
+    G --> H["Pedido pronto para expedicao"]
+```
+
+### Transicao de estado
+
+`aguardando_compra` → `embalado` (pula picking inteiro)

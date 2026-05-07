@@ -10,6 +10,7 @@ import { EstoqueGalpaoTabela } from "@/components/cross/estoque-galpao-tabela";
 import { EquivalentesList } from "@/components/cross/equivalentes-list";
 import { OemListEditor } from "@/components/cross/oem-list-editor";
 import { VeiculoListEditor } from "@/components/cross/veiculo-list-editor";
+import { LinkListEditor } from "@/components/cross/link-list-editor";
 import { sisoFetch } from "@/lib/auth-context";
 import type { DetalheProduto } from "@/lib/cross/types";
 
@@ -102,6 +103,7 @@ export default function CrossDetalhePage() {
           <EstoqueGalpaoTabela estoques={detalhe.estoque_por_galpao} />
 
           <OemListEditor sku={detalhe.sku} oems={detalhe.oems} onChange={carregar} />
+          <LinkListEditor sku={detalhe.sku} onChange={carregar} />
 
           <VeiculoListEditor sku={detalhe.sku} veiculos={detalhe.veiculos} onChange={carregar} />
 

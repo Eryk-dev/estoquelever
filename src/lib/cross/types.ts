@@ -104,6 +104,7 @@ export interface EquivalenteRapido {
   fornecedor: string | null;
   marca: string | null;
   imagem_url: string | null;
+  localizacao: string | null;
   oems: string[];
   oems_compartilhados: string[];
   origem: "oem" | "link" | "oem+link";
@@ -134,11 +135,10 @@ export interface DetalheProduto {
   marca: string | null;
   imagem_url: string | null;
   gtin: string | null;
+  localizacao: string | null;
   sincronizado_em: string | null;
   oems: OemEntry[];
   veiculos: VeiculoEntry[];
-  estoque_por_galpao: Record<string, EstoqueGalpao>;
-  equivalentes: Equivalente[];
 }
 
 export interface Equivalente {

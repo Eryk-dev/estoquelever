@@ -7,12 +7,11 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ProdutoHeader } from "@/components/cross/produto-header";
 import { EstoqueGalpaoTabela } from "@/components/cross/estoque-galpao-tabela";
-import { EquivalentesList } from "@/components/cross/equivalentes-list";
 import { OemListEditor } from "@/components/cross/oem-list-editor";
 import { VeiculoListEditor } from "@/components/cross/veiculo-list-editor";
 import { LinkListEditor } from "@/components/cross/link-list-editor";
 import { sisoFetch } from "@/lib/auth-context";
-import type { DetalheProduto } from "@/lib/cross/types";
+import type { DetalheProduto, EstoqueGalpao } from "@/lib/cross/types";
 
 export default function CrossDetalhePage() {
   const params = useParams<{ sku: string }>();
@@ -23,7 +22,12 @@ export default function CrossDetalhePage() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
-  const carregar = useCallback(async () => {
+  // Estoque carregado em paralelo (chamada Tiny — pode demorar 1-3s)
+  const [estoque, setEstoque] = useState<Record<string, EstoqueGalpao> | null>(null);
+  const [estoqueLoading, setEstoqueLoading] = useState(true);
+  const [estoqueErro, setEstoqueErro] = useState<string | null>(null);
+
+  const carregarDetalhe = useCallback(async () => {
     setLoading(true);
     setErro(null);
     try {
@@ -43,9 +47,35 @@ export default function CrossDetalhePage() {
     }
   }, [sku]);
 
+  const carregarEstoque = useCallback(async () => {
+    setEstoqueLoading(true);
+    setEstoqueErro(null);
+    try {
+      const res = await sisoFetch(
+        `/api/cross/produtos/${encodeURIComponent(sku)}/estoque`,
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as { estoque_por_galpao: Record<string, EstoqueGalpao> };
+      setEstoque(data.estoque_por_galpao ?? {});
+    } catch (err) {
+      setEstoqueErro(err instanceof Error ? err.message : "Erro ao consultar estoque");
+    } finally {
+      setEstoqueLoading(false);
+    }
+  }, [sku]);
+
+  // Recarrega tudo (usado pelo botão "Atualizar agora" e por edits)
+  const recarregarTudo = useCallback(() => {
+    void carregarDetalhe();
+    void carregarEstoque();
+  }, [carregarDetalhe, carregarEstoque]);
+
   useEffect(() => {
     if (searchParams.get("force") === "1") {
-      // chama refetch antes do primeiro carregar
+      // Chama refetch antes do primeiro carregar
       void (async () => {
         try {
           await sisoFetch(
@@ -53,12 +83,13 @@ export default function CrossDetalhePage() {
             { method: "POST" },
           );
         } catch {
-          // não bloqueia carregamento — segue tentando o detalhe
+          // não bloqueia
         }
-        void carregar();
+        recarregarTudo();
       })();
     } else {
-      void carregar();
+      // Carregamento progressivo: detalhe e estoque em paralelo
+      recarregarTudo();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sku]);
@@ -99,15 +130,31 @@ export default function CrossDetalhePage() {
 
       {detalhe && (
         <div className="space-y-3">
-          <ProdutoHeader produto={detalhe} onRefreshed={carregar} />
-          <EstoqueGalpaoTabela estoques={detalhe.estoque_por_galpao} />
+          <ProdutoHeader produto={detalhe} onRefreshed={recarregarTudo} />
 
-          <OemListEditor sku={detalhe.sku} oems={detalhe.oems} onChange={carregar} />
-          <LinkListEditor sku={detalhe.sku} onChange={carregar} />
+          {/* Estoque por galpão — carrega em paralelo (chamada Tiny ao vivo) */}
+          {!estoqueLoading && !estoqueErro && estoque !== null ? (
+            <EstoqueGalpaoTabela estoques={estoque} />
+          ) : (
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold">Estoque por galpão</h3>
+                {estoqueLoading && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
+                )}
+              </div>
+              {estoqueErro ? (
+                <p className="text-xs text-red-600">{estoqueErro}</p>
+              ) : (
+                <p className="text-xs text-zinc-500">Consultando Tiny ao vivo...</p>
+              )}
+            </div>
+          )}
 
-          <VeiculoListEditor sku={detalhe.sku} veiculos={detalhe.veiculos} onChange={carregar} />
+          <OemListEditor sku={detalhe.sku} oems={detalhe.oems} onChange={carregarDetalhe} />
+          <LinkListEditor sku={detalhe.sku} onChange={carregarDetalhe} />
 
-          <EquivalentesList equivalentes={detalhe.equivalentes} />
+          <VeiculoListEditor sku={detalhe.sku} veiculos={detalhe.veiculos} onChange={carregarDetalhe} />
         </div>
       )}
     </AppShell>

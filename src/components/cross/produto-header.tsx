@@ -1,6 +1,6 @@
 "use client";
 
-import { Package, RefreshCw } from "lucide-react";
+import { Package, RefreshCw, MapPin } from "lucide-react";
 import { useState } from "react";
 import { sisoFetch } from "@/lib/auth-context";
 import { toast } from "sonner";
@@ -66,9 +66,16 @@ export function ProdutoHeader({ produto, onRefreshed }: ProdutoHeaderProps) {
         <div className="flex-1 min-w-0">
           <h2 className="text-lg font-semibold truncate">{produto.nome}</h2>
           <div className="text-sm font-mono text-zinc-500 mt-1">{produto.sku}</div>
-          {produto.gtin && (
-            <div className="text-xs text-zinc-400 mt-1">GTIN: {produto.gtin}</div>
-          )}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-zinc-500 mt-1">
+            {produto.fornecedor && <span>{produto.fornecedor}</span>}
+            {produto.localizacao && (
+              <span className="inline-flex items-center gap-0.5">
+                <MapPin className="h-3 w-3" />
+                {produto.localizacao}
+              </span>
+            )}
+            {produto.gtin && <span>GTIN: {produto.gtin}</span>}
+          </div>
           <div className="flex items-center justify-between mt-3">
             <span className="text-xs text-zinc-500">
               Sincronizado {formatDistanceFromNow(produto.sincronizado_em)}

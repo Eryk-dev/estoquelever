@@ -65,7 +65,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     sku,
     sessionUserId: session.id,
     isAdmin,
-    empresaOrigemId,
   });
 
   if (!detalhe) {

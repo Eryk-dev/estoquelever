@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, X, Loader2, Link2 } from "lucide-react";
+import { Plus, X, Loader2, Link2, MapPin } from "lucide-react";
 import { sisoFetch } from "@/lib/auth-context";
 import { toast } from "sonner";
 import type { EquivalenteRapido } from "@/lib/cross/types";
@@ -178,12 +178,21 @@ export function LinkListEditor({ sku, onChange }: LinkListEditorProps) {
             >
               <Link
                 href={`/cross/${encodeURIComponent(link.sku)}`}
-                className="flex-1 min-w-0 flex items-center gap-2"
+                className="flex-1 min-w-0 flex flex-wrap items-center gap-x-2 gap-y-0.5"
               >
                 <span className="font-mono text-sm font-medium">{link.sku}</span>
                 <span className="text-xs text-zinc-600 dark:text-zinc-400 truncate">
                   {link.nome}
                 </span>
+                {link.fornecedor && (
+                  <span className="text-[11px] text-zinc-500">{link.fornecedor}</span>
+                )}
+                {link.localizacao && (
+                  <span className="text-[11px] text-zinc-500 inline-flex items-center gap-0.5">
+                    <MapPin className="h-3 w-3" />
+                    {link.localizacao}
+                  </span>
+                )}
                 {link.origem === "oem+link" && (
                   <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-[10px] font-medium whitespace-nowrap">
                     + OEM

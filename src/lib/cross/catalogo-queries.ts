@@ -395,11 +395,15 @@ async function loadEquivalentes(
   return equivalentes;
 }
 
+/**
+ * Detalhe rápido (só dados do cache + OEMs + veículos do banco). NÃO faz
+ * chamadas Tiny — estoque e equivalentes são endpoints separados que a UI
+ * carrega em paralelo após render inicial.
+ */
 export async function getProdutoDetalheCompleto(opts: {
   sku: string;
   sessionUserId: string;
   isAdmin: boolean;
-  empresaOrigemId: string;
 }): Promise<DetalheProduto | null> {
   const supabase = createServiceClient();
   const { data: produto, error } = await supabase
@@ -410,18 +414,10 @@ export async function getProdutoDetalheCompleto(opts: {
 
   if (error || !produto) return null;
 
-  // Resolve grupo context uma única vez — reutilizado pelo estoque do produto
-  // principal e pelos N equivalentes (evita N+1 em siso_grupo_empresas e
-  // siso_tiny_connections).
-  const grupoCtx = await resolveGrupoContext(opts.empresaOrigemId);
-
-  const [oems, veiculos, estoque_por_galpao] = await Promise.all([
+  const [oems, veiculos] = await Promise.all([
     loadOems(opts.sku, opts.sessionUserId, opts.isAdmin),
     loadVeiculos(opts.sku, opts.sessionUserId, opts.isAdmin),
-    loadEstoquePorGalpao(opts.sku, grupoCtx),
   ]);
-
-  const equivalentes = await loadEquivalentes(opts.sku, produto.oem ?? [], grupoCtx);
 
   return {
     sku: produto.sku,
@@ -431,10 +427,21 @@ export async function getProdutoDetalheCompleto(opts: {
     marca: produto.marca,
     imagem_url: produto.imagem_url,
     gtin: produto.gtin,
+    localizacao: produto.localizacao,
     sincronizado_em: produto.sincronizado_em,
     oems,
     veiculos,
-    estoque_por_galpao,
-    equivalentes,
   };
+}
+
+/**
+ * Carrega APENAS o estoque por galpão para um SKU. Usado pelo endpoint
+ * /estoque que é disparado em paralelo pela UI depois do detalhe inicial.
+ */
+export async function getEstoquePorGalpaoParaSku(
+  sku: string,
+  empresaOrigemId: string,
+): Promise<Record<string, EstoqueGalpao>> {
+  const grupoCtx = await resolveGrupoContext(empresaOrigemId);
+  return loadEstoquePorGalpao(sku, grupoCtx);
 }

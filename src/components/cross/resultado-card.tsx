@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Package, MapPin, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+// Reusa MapPin já importado para os cross-references inline
 import { sisoFetch } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 import type { ResultadoBusca, EquivalenteRapido } from "@/lib/cross/types";
@@ -183,6 +184,12 @@ export function ResultadoCard({ resultado }: ResultadoCardProps) {
                       <div className="text-xs text-zinc-600 dark:text-zinc-400 truncate">
                         {eq.nome}
                       </div>
+                      {eq.localizacao && (
+                        <div className="text-[11px] text-zinc-500 inline-flex items-center gap-0.5 mt-0.5">
+                          <MapPin className="h-3 w-3" />
+                          {eq.localizacao}
+                        </div>
+                      )}
                       <div className="flex flex-wrap items-center gap-1 mt-1">
                         {(eq.origem === "link" || eq.origem === "oem+link") && (
                           <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300 text-[10px] font-medium">

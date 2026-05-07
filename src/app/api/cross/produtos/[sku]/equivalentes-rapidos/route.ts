@@ -81,7 +81,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   // 4. Busca dados de catálogo dos SKUs encontrados
   const { data: produtos } = await supabase
     .from("siso_produtos_catalogo")
-    .select("sku, nome, fornecedor, marca, imagem_url, oem")
+    .select("sku, nome, fornecedor, marca, imagem_url, localizacao, oem")
     .in("sku", todosOsSkus)
     .limit(50);
 
@@ -99,6 +99,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       fornecedor: row.fornecedor,
       marca: row.marca,
       imagem_url: row.imagem_url,
+      localizacao: row.localizacao,
       oems: row.oem ?? [],
       oems_compartilhados: oemsCompartilhados,
       origem,

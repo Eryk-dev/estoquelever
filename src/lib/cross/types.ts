@@ -47,10 +47,29 @@ export interface VeiculoEntry {
   pode_remover: boolean;
 }
 
-export interface EstoqueGalpao {
+/**
+ * Resumo numérico de estoque (saldo/reservado/disponível) usado em vários
+ * pontos do módulo Cross. Extraído para evitar duplicação inline entre
+ * `EstoqueGalpao` e `Equivalente.estoque_por_galpao`.
+ */
+export interface EstoqueResumo {
   saldo: number;
   reservado: number;
   disponivel: number;
+}
+
+/**
+ * Estoque agregado por galpão usado pelo módulo Cross (visão de catálogo /
+ * detalhe de produto). Combina o resumo numérico (`EstoqueResumo`) com
+ * metadados do depósito principal e localização física.
+ *
+ * NOTA: Intencionalmente distinto de `GalpaoEstoque` em `src/types/index.ts`,
+ * que pertence ao fluxo de pedidos (order-flow-scoped) e tem outra forma. Os
+ * nomes invertidos (`EstoqueGalpao` vs `GalpaoEstoque`) são propositais para
+ * manter alinhamento com o spec/plano do Cross — não renomear sem atualizar
+ * a documentação correspondente.
+ */
+export interface EstoqueGalpao extends EstoqueResumo {
   deposito_nome: string | null;
   localizacao: string | null;
 }
@@ -93,7 +112,7 @@ export interface Equivalente {
   nome: string;
   imagem_url: string | null;
   oems_compartilhados: string[];
-  estoque_por_galpao: Record<string, { saldo: number; reservado: number; disponivel: number }>;
+  estoque_por_galpao: Record<string, EstoqueResumo>;
   estoque_total: number;
 }
 

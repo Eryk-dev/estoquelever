@@ -48,3 +48,7 @@ scripts/ralph/.last-branch
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+
+# Cloned reference repo (not part of SISO source)
+cross/

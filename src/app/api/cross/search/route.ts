@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { searchProdutos } from "@/lib/cross/catalogo-queries";
@@ -36,6 +37,24 @@ export async function GET(request: NextRequest) {
       tipo: tipoParam,
       total: resposta.total,
     });
+
+    // Telemetria fire-and-forget — registra a busca para análise posterior
+    void (async () => {
+      try {
+        const sb = createServiceClient();
+        await sb.from("siso_cross_logs").insert({
+          query_tipo: tipoParam,
+          query_texto: query,
+          resultado_count: resposta.total,
+          usuario_id: session.id,
+        });
+      } catch (err) {
+        logger.warn("cross-search", "Falha ao logar busca (não crítico)", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+
     return NextResponse.json(resposta);
   } catch (err) {
     logger.error("cross-search", "Erro na busca", {

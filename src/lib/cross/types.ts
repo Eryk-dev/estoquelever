@@ -11,6 +11,7 @@ export interface ProdutoCatalogo {
   gtin: string | null;
   oem: string[];
   compatibility_v2: { vehicles?: VeiculoJsonb[] };
+  localizacao: string | null;
   sincronizado_em: string | null;
   criado_em: string;
   atualizado_em: string;
@@ -80,9 +81,25 @@ export interface ResultadoBusca {
   fornecedor: string | null;
   marca: string | null;
   imagem_url: string | null;
+  localizacao: string | null;
   oems: string[];
   estoque_total: number;
   match: "sku_exato" | "sku_prefixo" | "oem" | "nome";
+}
+
+/**
+ * Versão "rápida" do equivalente — só dados do cache local, sem estoque por
+ * galpão. Usado pra rendering inline na lista de busca onde velocidade
+ * importa mais que precisão de estoque.
+ */
+export interface EquivalenteRapido {
+  sku: string;
+  nome: string;
+  fornecedor: string | null;
+  marca: string | null;
+  imagem_url: string | null;
+  oems: string[];
+  oems_compartilhados: string[];
 }
 
 export interface RespostaBusca {
@@ -111,6 +128,7 @@ export interface Equivalente {
   sku: string;
   nome: string;
   imagem_url: string | null;
+  localizacao: string | null;
   oems_compartilhados: string[];
   estoque_por_galpao: Record<string, EstoqueResumo>;
   estoque_total: number;

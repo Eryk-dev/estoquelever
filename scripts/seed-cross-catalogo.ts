@@ -44,7 +44,7 @@ async function main() {
     const { data: produtos, error } = await supabase
       .from("products")
       .select(
-        "sku, tiny_id, product_name, complementary_description, supplier, manufacturer, brand, external_image_urls, oem, gtin",
+        "sku, tiny_id, product_name, complementary_description, supplier, manufacturer, brand, external_image_urls, oem, gtin, location",
       )
       .range(offset, offset + PAGE_SIZE - 1);
 
@@ -71,6 +71,7 @@ async function main() {
         marca: p.manufacturer ?? p.brand ?? null,
         imagem_url: primeiraImg,
         gtin: p.gtin ?? null,
+        localizacao: p.location ?? null,
         sincronizado_em: new Date().toISOString(),
       };
     });

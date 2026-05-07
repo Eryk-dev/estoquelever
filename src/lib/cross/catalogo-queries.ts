@@ -44,7 +44,7 @@ export async function searchProdutos(opts: {
   if (opts.tipo === "auto" || opts.tipo === "sku") {
     const { data: porSku } = await supabase
       .from("siso_produtos_catalogo")
-      .select("sku, nome, fornecedor, marca, imagem_url, oem")
+      .select("sku, nome, fornecedor, marca, imagem_url, oem, localizacao")
       .ilike("sku", `${queryRaw}%`)
       .limit(RESULT_LIMIT);
 
@@ -56,6 +56,7 @@ export async function searchProdutos(opts: {
         fornecedor: row.fornecedor,
         marca: row.marca,
         imagem_url: row.imagem_url,
+        localizacao: row.localizacao,
         oems: row.oem ?? [],
         estoque_total: 0,
         match: exato ? "sku_exato" : "sku_prefixo",
@@ -66,7 +67,7 @@ export async function searchProdutos(opts: {
   if (opts.tipo === "auto" || opts.tipo === "oem") {
     const { data: porOem } = await supabase
       .from("siso_produtos_catalogo")
-      .select("sku, nome, fornecedor, marca, imagem_url, oem")
+      .select("sku, nome, fornecedor, marca, imagem_url, oem, localizacao")
       .contains("oem", [queryUpper])
       .limit(RESULT_LIMIT);
 
@@ -78,6 +79,7 @@ export async function searchProdutos(opts: {
         fornecedor: row.fornecedor,
         marca: row.marca,
         imagem_url: row.imagem_url,
+        localizacao: row.localizacao,
         oems: row.oem ?? [],
         estoque_total: 0,
         match: "oem",
@@ -88,7 +90,7 @@ export async function searchProdutos(opts: {
   if (opts.tipo === "auto" || opts.tipo === "nome") {
     const { data: porNome } = await supabase
       .from("siso_produtos_catalogo")
-      .select("sku, nome, fornecedor, marca, imagem_url, oem")
+      .select("sku, nome, fornecedor, marca, imagem_url, oem, localizacao")
       .ilike("nome", `%${queryRaw}%`)
       .limit(RESULT_LIMIT);
 
@@ -100,6 +102,7 @@ export async function searchProdutos(opts: {
         fornecedor: row.fornecedor,
         marca: row.marca,
         imagem_url: row.imagem_url,
+        localizacao: row.localizacao,
         oems: row.oem ?? [],
         estoque_total: 0,
         match: "nome",
@@ -323,7 +326,7 @@ async function loadEquivalentes(
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("siso_produtos_catalogo")
-    .select("sku, nome, imagem_url, oem")
+    .select("sku, nome, imagem_url, oem, localizacao")
     .overlaps("oem", oems)
     .neq("sku", sku)
     .limit(50);
@@ -342,6 +345,7 @@ async function loadEquivalentes(
         sku: row.sku,
         nome: row.nome,
         imagem_url: row.imagem_url,
+        localizacao: row.localizacao,
         oems_compartilhados: oemsCompartilhados,
         estoque_por_galpao: Object.fromEntries(
           Object.entries(estoque).map(([k, v]) => [

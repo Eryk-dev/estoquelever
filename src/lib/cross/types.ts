@@ -107,7 +107,14 @@ export interface EquivalenteRapido {
   localizacao: string | null;
   oems: string[];
   oems_compartilhados: string[];
-  origem: "oem" | "link" | "oem+link";
+  /**
+   * Como esse SKU foi descoberto a partir do SKU base:
+   *   'oem'      — compartilha pelo menos 1 OEM diretamente
+   *   'link'     — link manual direto entre os 2 SKUs
+   *   'oem+link' — ambos (OEM + link direto)
+   *   'cadeia'   — alcançado via transitividade (cluster), sem aresta direta
+   */
+  origem: "oem" | "link" | "oem+link" | "cadeia";
 }
 
 export interface ProdutoLink {

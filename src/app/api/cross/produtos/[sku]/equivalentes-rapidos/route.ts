@@ -9,16 +9,15 @@ interface RouteParams {
 /**
  * GET /api/cross/produtos/:sku/equivalentes-rapidos
  *
- * Versão "rápida" da lista de equivalentes — apenas dados do cache local
- * (`siso_produtos_catalogo` + `siso_produto_links`). Sem chamada Tiny, sem
- * estoque por galpão.
+ * Retorna todos os SKUs equivalentes via fecho transitivo (cluster do
+ * grafo de equivalência: OEM compartilhado + links manuais propagam).
+ * Apenas dados do cache local — sem chamada Tiny.
  *
- * Combina 2 fontes:
- *  - SKUs que compartilham >=1 OEM (descoberta automática)
- *  - SKUs linkados manualmente em siso_produto_links (operador disse que são
- *    equivalentes mesmo sem OEM em comum)
- *
- * Pensado pra rendering inline na tela de busca.
+ * Cada equivalente é classificado por origem:
+ *   - 'oem'      → compartilha OEM direto com o SKU base
+ *   - 'link'     → link manual direto com o SKU base
+ *   - 'oem+link' → ambos (OEM + link direto)
+ *   - 'cadeia'   → alcançado por transitividade (sem aresta direta)
  */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const session = await getSessionUser(request);
@@ -34,65 +33,59 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const supabase = createServiceClient();
 
-  // Busca o produto base (precisamos do array oem)
-  const { data: base } = await supabase
-    .from("siso_produtos_catalogo")
-    .select("sku, oem")
-    .eq("sku", sku)
-    .maybeSingle();
+  // 1. Cluster transitivo via SQL function (retorna SETOF text)
+  const { data: clusterRows } = await supabase.rpc("siso_cross_cluster_skus", {
+    p_sku: sku,
+  });
 
-  if (!base) {
+  const clusterSkus: string[] = Array.isArray(clusterRows)
+    ? (clusterRows as Array<string | { siso_cross_cluster_skus: string }>).map(
+        (r) => (typeof r === "string" ? r : r.siso_cross_cluster_skus),
+      )
+    : [];
+
+  if (clusterSkus.length === 0) {
     return NextResponse.json({ sku, equivalentes: [] });
   }
 
-  const baseOems: string[] = base.oem ?? [];
-
-  // 1. Busca SKUs com OEM compartilhado
-  const skusPorOem = new Set<string>();
-  if (baseOems.length > 0) {
-    const { data } = await supabase
+  // 2. Carrega base + dados de catálogo dos SKUs do cluster (uma query)
+  const [{ data: base }, { data: produtos }] = await Promise.all([
+    supabase
       .from("siso_produtos_catalogo")
-      .select("sku")
-      .overlaps("oem", baseOems)
-      .neq("sku", sku);
-    for (const row of data ?? []) skusPorOem.add(row.sku);
-  }
+      .select("sku, oem")
+      .eq("sku", sku)
+      .maybeSingle(),
+    supabase
+      .from("siso_produtos_catalogo")
+      .select("sku, nome, fornecedor, marca, imagem_url, localizacao, oem")
+      .in("sku", clusterSkus),
+  ]);
 
-  // 2. Busca SKUs linkados manualmente (em ambos os lados do par)
-  const skusPorLink = new Set<string>();
-  const { data: linksA } = await supabase
-    .from("siso_produto_links")
-    .select("sku_b")
-    .eq("sku_a", sku);
-  for (const row of linksA ?? []) skusPorLink.add(row.sku_b);
+  const baseOems: string[] = base?.oem ?? [];
 
-  const { data: linksB } = await supabase
-    .from("siso_produto_links")
-    .select("sku_a")
-    .eq("sku_b", sku);
-  for (const row of linksB ?? []) skusPorLink.add(row.sku_a);
+  // 3. Identifica quais SKUs têm link manual DIRETO com o base
+  const skusComLinkDireto = new Set<string>();
+  const [{ data: linksA }, { data: linksB }] = await Promise.all([
+    supabase.from("siso_produto_links").select("sku_b").eq("sku_a", sku),
+    supabase.from("siso_produto_links").select("sku_a").eq("sku_b", sku),
+  ]);
+  for (const row of linksA ?? []) skusComLinkDireto.add(row.sku_b);
+  for (const row of linksB ?? []) skusComLinkDireto.add(row.sku_a);
 
-  // 3. União dos SKUs candidatos
-  const todosOsSkus = Array.from(new Set([...skusPorOem, ...skusPorLink]));
-  if (todosOsSkus.length === 0) {
-    return NextResponse.json({ sku, equivalentes: [] });
-  }
-
-  // 4. Busca dados de catálogo dos SKUs encontrados
-  const { data: produtos } = await supabase
-    .from("siso_produtos_catalogo")
-    .select("sku, nome, fornecedor, marca, imagem_url, localizacao, oem")
-    .in("sku", todosOsSkus)
-    .limit(50);
-
+  // 4. Classifica cada SKU do cluster por origem
   const lista = (produtos ?? []).map((row) => {
     const oemsCompartilhados = (row.oem ?? []).filter((o: string) =>
       baseOems.includes(o),
     );
-    const temOem = oemsCompartilhados.length > 0;
-    const temLink = skusPorLink.has(row.sku);
-    const origem: "oem" | "link" | "oem+link" =
-      temOem && temLink ? "oem+link" : temLink ? "link" : "oem";
+    const temOemDireto = oemsCompartilhados.length > 0;
+    const temLinkDireto = skusComLinkDireto.has(row.sku);
+
+    let origem: "oem" | "link" | "oem+link" | "cadeia";
+    if (temOemDireto && temLinkDireto) origem = "oem+link";
+    else if (temLinkDireto) origem = "link";
+    else if (temOemDireto) origem = "oem";
+    else origem = "cadeia";
+
     return {
       sku: row.sku,
       nome: row.nome,
@@ -106,10 +99,16 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     };
   });
 
-  // Ordena: links manuais primeiro (mais "intencionais"), depois por OEM
+  // Ordena: links manuais primeiro, depois oem direto, depois cadeia
   lista.sort((a, b) => {
     const score = (origem: string) =>
-      origem === "oem+link" ? 0 : origem === "link" ? 1 : 2;
+      origem === "oem+link"
+        ? 0
+        : origem === "link"
+          ? 1
+          : origem === "oem"
+            ? 2
+            : 3; // cadeia
     return score(a.origem) - score(b.origem);
   });
 

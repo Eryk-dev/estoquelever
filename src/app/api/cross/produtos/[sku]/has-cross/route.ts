@@ -11,12 +11,8 @@ interface RouteParams {
  *
  * Resposta ultra-leve: { has: boolean, count: number }
  *
- * Conta SKUs que compartilham OEM + SKUs linkados manualmente. Pensado pra
- * o trigger do CrossPopoverButton decidir se renderiza ou não — evita
- * mostrar botão para SKUs sem nenhuma alternativa.
- *
- * Custo: 3 queries indexadas (~5-15ms no total). O índice GIN em oem
- * torna o overlap query rápido mesmo em 34k produtos.
+ * Usa fecho transitivo do cluster — conta todos os SKUs equivalentes
+ * incluindo via cadeia (não só vizinhos diretos).
  */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const session = await getSessionUser(request);
@@ -32,37 +28,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const supabase = createServiceClient();
 
-  // Primeiro pega os OEMs do produto (1 query)
-  const { data: produto } = await supabase
-    .from("siso_produtos_catalogo")
-    .select("oem")
-    .eq("sku", sku)
-    .maybeSingle();
-
-  const oems: string[] = produto?.oem ?? [];
-
-  const skusEncontrados = new Set<string>();
-
-  // SKUs que compartilham OEM
-  if (oems.length > 0) {
-    const { data } = await supabase
-      .from("siso_produtos_catalogo")
-      .select("sku")
-      .overlaps("oem", oems)
-      .neq("sku", sku);
-    for (const row of data ?? []) skusEncontrados.add(row.sku);
-  }
-
-  // Links manuais (em ambas direções)
-  const [{ data: linksA }, { data: linksB }] = await Promise.all([
-    supabase.from("siso_produto_links").select("sku_b").eq("sku_a", sku),
-    supabase.from("siso_produto_links").select("sku_a").eq("sku_b", sku),
-  ]);
-  for (const row of linksA ?? []) skusEncontrados.add(row.sku_b);
-  for (const row of linksB ?? []) skusEncontrados.add(row.sku_a);
-
-  return NextResponse.json({
-    has: skusEncontrados.size > 0,
-    count: skusEncontrados.size,
+  const { data } = await supabase.rpc("siso_cross_cluster_skus", {
+    p_sku: sku,
   });
+
+  const count = Array.isArray(data) ? data.length : 0;
+  return NextResponse.json({ has: count > 0, count });
 }

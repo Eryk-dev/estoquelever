@@ -127,31 +127,14 @@ export async function searchProdutos(opts: {
 
   const listaPaginada = lista.slice(0, RESULT_LIMIT);
 
-  // Pré-calcula cross_count por SKU em paralelo: SKUs equivalentes via OEM
-  // compartilhado + links manuais (sem dupla contagem).
+  // Pré-calcula cross_count por SKU em paralelo via SQL function de fecho
+  // transitivo (cluster do grafo OEM + links). Único call por SKU.
   await Promise.all(
     listaPaginada.map(async (r) => {
-      const skusEncontrados = new Set<string>();
-
-      // 1. Por OEM compartilhado
-      if (r.oems.length > 0) {
-        const { data } = await supabase
-          .from("siso_produtos_catalogo")
-          .select("sku")
-          .overlaps("oem", r.oems)
-          .neq("sku", r.sku);
-        for (const row of data ?? []) skusEncontrados.add(row.sku);
-      }
-
-      // 2. Por link manual (em ambas as direções)
-      const [{ data: linksA }, { data: linksB }] = await Promise.all([
-        supabase.from("siso_produto_links").select("sku_b").eq("sku_a", r.sku),
-        supabase.from("siso_produto_links").select("sku_a").eq("sku_b", r.sku),
-      ]);
-      for (const row of linksA ?? []) skusEncontrados.add(row.sku_b);
-      for (const row of linksB ?? []) skusEncontrados.add(row.sku_a);
-
-      r.cross_count = skusEncontrados.size;
+      const { data } = await supabase.rpc("siso_cross_cluster_skus", {
+        p_sku: r.sku,
+      });
+      r.cross_count = Array.isArray(data) ? data.length : 0;
     }),
   );
 

@@ -92,6 +92,11 @@ export interface ResultadoBusca {
  * Versão "rápida" do equivalente — só dados do cache local, sem estoque por
  * galpão. Usado pra rendering inline na lista de busca onde velocidade
  * importa mais que precisão de estoque.
+ *
+ * `origem` distingue como o equivalente foi descoberto:
+ *  - 'oem'       — compartilha pelo menos 1 OEM (descoberta automática)
+ *  - 'link'      — operador linkou os 2 SKUs manualmente (sem precisar de OEM)
+ *  - 'oem+link'  — ambos
  */
 export interface EquivalenteRapido {
   sku: string;
@@ -101,6 +106,17 @@ export interface EquivalenteRapido {
   imagem_url: string | null;
   oems: string[];
   oems_compartilhados: string[];
+  origem: "oem" | "link" | "oem+link";
+}
+
+export interface ProdutoLink {
+  id: number;
+  sku_outro: string;  // o SKU "do outro lado" do link, relativo ao produto sendo visto
+  motivo: string | null;
+  adicionado_por: string | null;
+  adicionado_por_nome: string | null;
+  adicionado_em: string;
+  pode_remover: boolean;
 }
 
 export interface RespostaBusca {

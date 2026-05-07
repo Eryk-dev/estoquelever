@@ -183,23 +183,26 @@ export function ResultadoCard({ resultado }: ResultadoCardProps) {
                       <div className="text-xs text-zinc-600 dark:text-zinc-400 truncate">
                         {eq.nome}
                       </div>
-                      {eq.oems_compartilhados.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {eq.oems_compartilhados.slice(0, 3).map((o) => (
-                            <span
-                              key={o}
-                              className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-[10px] font-mono"
-                            >
-                              {o}
-                            </span>
-                          ))}
-                          {eq.oems_compartilhados.length > 3 && (
-                            <span className="text-[10px] text-zinc-400 self-center">
-                              +{eq.oems_compartilhados.length - 3}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                      <div className="flex flex-wrap items-center gap-1 mt-1">
+                        {(eq.origem === "link" || eq.origem === "oem+link") && (
+                          <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300 text-[10px] font-medium">
+                            Linkado
+                          </span>
+                        )}
+                        {eq.oems_compartilhados.slice(0, 3).map((o) => (
+                          <span
+                            key={o}
+                            className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-[10px] font-mono"
+                          >
+                            {o}
+                          </span>
+                        ))}
+                        {eq.oems_compartilhados.length > 3 && (
+                          <span className="text-[10px] text-zinc-400 self-center">
+                            +{eq.oems_compartilhados.length - 3}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </Link>
                 </li>

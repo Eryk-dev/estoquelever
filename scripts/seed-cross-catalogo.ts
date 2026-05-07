@@ -16,14 +16,15 @@ import { createClient } from "@supabase/supabase-js";
 import * as dotenv from "dotenv";
 import * as path from "path";
 
-// Carrega .env.local explicitamente (ts-node fora do Next.js não carrega automaticamente)
-dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+// Carrega .env (e .env.local se existir) explicitamente — fora do Next.js dotenv não roda automático
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local"), override: true });
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SERVICE_KEY) {
-  console.error("Faltam NEXT_PUBLIC_SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY no .env.local");
+  console.error("Faltam NEXT_PUBLIC_SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY no .env / .env.local");
   process.exit(1);
 }
 
@@ -43,7 +44,7 @@ async function main() {
     const { data: produtos, error } = await supabase
       .from("products")
       .select(
-        "sku, tiny_id, product_name, description, supplier, manufacturer, pictures, oem, gtin",
+        "sku, tiny_id, product_name, complementary_description, supplier, manufacturer, brand, external_image_urls, oem, gtin",
       )
       .range(offset, offset + PAGE_SIZE - 1);
 
@@ -53,18 +54,26 @@ async function main() {
     }
     if (!produtos || produtos.length === 0) break;
 
-    const linhas = produtos.map((p: any) => ({
-      sku: p.sku,
-      tiny_id: p.tiny_id ? Number(p.tiny_id) : null,
-      nome: p.product_name ?? p.sku,
-      descricao: p.description ?? null,
-      fornecedor: p.supplier ?? null,
-      marca: p.manufacturer ?? null,
-      imagem_url:
-        Array.isArray(p.pictures) && p.pictures.length > 0 ? p.pictures[0] : null,
-      gtin: p.gtin ?? null,
-      sincronizado_em: new Date().toISOString(),
-    }));
+    const linhas = produtos.map((p: any) => {
+      // tiny_id é text na origem; converte se for numérico
+      const tinyIdNum = p.tiny_id && /^\d+$/.test(String(p.tiny_id)) ? Number(p.tiny_id) : null;
+      // external_image_urls tem shape { urls: [...], source } — pega a primeira url
+      const primeiraImg =
+        p.external_image_urls?.urls && Array.isArray(p.external_image_urls.urls) && p.external_image_urls.urls.length > 0
+          ? p.external_image_urls.urls[0]
+          : null;
+      return {
+        sku: p.sku,
+        tiny_id: tinyIdNum,
+        nome: p.product_name ?? p.sku,
+        descricao: p.complementary_description ?? null,
+        fornecedor: p.supplier ?? null,
+        marca: p.manufacturer ?? p.brand ?? null,
+        imagem_url: primeiraImg,
+        gtin: p.gtin ?? null,
+        sincronizado_em: new Date().toISOString(),
+      };
+    });
 
     const { error: upErr } = await supabase
       .from("siso_produtos_catalogo")
@@ -136,9 +145,14 @@ async function main() {
   );
 
   // ----- 3. Marcar OEMs manuais via cross.oem_metadata -----
-  const { data: metadata } = await supabase
+  // Tabela pode não existir nesse projeto — degrada graciosamente
+  const { data: metadata, error: metaErr } = await supabase
     .from("oem_metadata")
     .select("sku, oem_code, added_by_email");
+
+  if (metaErr) {
+    console.log(`[seed] oem_metadata indisponível (${metaErr.code ?? metaErr.message}) — pulando passo 3, todos os OEMs ficam como 'extracao_tiny'`);
+  }
 
   let totalManuaisMarcados = 0;
   for (const meta of (metadata ?? []) as any[]) {

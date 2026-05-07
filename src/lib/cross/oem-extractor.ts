@@ -12,10 +12,13 @@ export function extrairOEMs(descricao: string | null | undefined): string[] {
   if (!descricao) return [];
 
   const oemCodes: string[] = [];
-  const cleanedDesc = descricao.replace(/\s+/g, " ").trim();
+  const cleanedDesc = descricao
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   // Estratégia 1: linha "OEM: códigos"
-  const oemMatch = cleanedDesc.match(/OEM[:<\s]+([A-Z0-9][A-Z0-9\s\-.]+)/i);
+  const oemMatch = cleanedDesc.match(/OEM[:\s]+([A-Z0-9][A-Z0-9\s\-.]+)/i);
   if (oemMatch && oemMatch[1]) {
     const codes = oemMatch[1].trim().split(/\s+/).filter((c) => c.length > 0);
     for (const code of codes) {
@@ -27,7 +30,7 @@ export function extrairOEMs(descricao: string | null | undefined): string[] {
   }
 
   // Estratégia 2 (fallback): se não achou nada com estratégia 1, varre tokens
-  if (oemCodes.length === 0 && !oemMatch) {
+  if (!oemMatch) {
     const tokens = cleanedDesc.split(/[\s,;]+/);
     for (const token of tokens) {
       const normalized = normalizeOemCode(token);
@@ -69,4 +72,6 @@ function looksLikeOemCode(code: string): boolean {
  *   - extrairOEMs("Sample: AB12 EFG-789 invalido")   // ['AB12', 'EFG-789'] (estratégia 2)
  *   - extrairOEMs("")                                // []
  *   - extrairOEMs(null)                              // []
+ *   - extrairOEMs("OEM<br>94530230")                 // ['94530230']
+ *   - extrairOEMs("OEM:<br>ABC-123 DEF456")          // ['ABC-123', 'DEF456']
  */

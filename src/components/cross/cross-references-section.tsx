@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Package, MapPin, Loader2 } from "lucide-react";
+import { Package, MapPin, Loader2, Boxes } from "lucide-react";
 import { sisoFetch } from "@/lib/auth-context";
-import type { EquivalenteRapido } from "@/lib/cross/types";
+import type { EquivalenteRapido, EstoqueGalpao } from "@/lib/cross/types";
 
 interface CrossReferencesSectionProps {
   sku: string;
 }
+
+type EstoquesPorSku = Record<string, Record<string, EstoqueGalpao> | "loading" | "error">;
 
 /**
  * Seção "Cross-References" no detalhe do produto.
@@ -22,6 +24,41 @@ export function CrossReferencesSection({ sku }: CrossReferencesSectionProps) {
     null,
   );
   const [carregando, setCarregando] = useState(true);
+  const [estoques, setEstoques] = useState<EstoquesPorSku>({});
+  const [carregandoEstoques, setCarregandoEstoques] = useState(false);
+
+  async function carregarEstoques() {
+    if (!equivalentes || equivalentes.length === 0) return;
+    setCarregandoEstoques(true);
+    // Marca todos como loading
+    setEstoques((prev) => {
+      const next = { ...prev };
+      for (const eq of equivalentes) next[eq.sku] = "loading";
+      return next;
+    });
+
+    // Dispara em paralelo
+    await Promise.all(
+      equivalentes.map(async (eq) => {
+        try {
+          const res = await sisoFetch(
+            `/api/cross/produtos/${encodeURIComponent(eq.sku)}/estoque`,
+          );
+          if (!res.ok) {
+            setEstoques((prev) => ({ ...prev, [eq.sku]: "error" }));
+            return;
+          }
+          const data = (await res.json()) as {
+            estoque_por_galpao: Record<string, EstoqueGalpao>;
+          };
+          setEstoques((prev) => ({ ...prev, [eq.sku]: data.estoque_por_galpao ?? {} }));
+        } catch {
+          setEstoques((prev) => ({ ...prev, [eq.sku]: "error" }));
+        }
+      }),
+    );
+    setCarregandoEstoques(false);
+  }
 
   useEffect(() => {
     let cancelado = false;
@@ -60,7 +97,23 @@ export function CrossReferencesSection({ sku }: CrossReferencesSectionProps) {
             </span>
           )}
         </h3>
-        {carregando && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />}
+        <div className="flex items-center gap-2">
+          {equivalentes && equivalentes.length > 0 && (
+            <button
+              onClick={carregarEstoques}
+              disabled={carregandoEstoques}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-400 dark:hover:bg-emerald-900 disabled:opacity-50"
+            >
+              {carregandoEstoques ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Boxes className="h-3 w-3" />
+              )}
+              {carregandoEstoques ? "Carregando..." : "Ver estoques"}
+            </button>
+          )}
+          {carregando && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />}
+        </div>
       </div>
 
       {!carregando && equivalentes !== null && equivalentes.length === 0 && (
@@ -108,6 +161,35 @@ export function CrossReferencesSection({ sku }: CrossReferencesSectionProps) {
                     <div className="text-[11px] text-zinc-500 inline-flex items-center gap-0.5 mt-0.5">
                       <MapPin className="h-3 w-3" />
                       {eq.localizacao}
+                    </div>
+                  )}
+                  {/* Estoque inline (carrega sob demanda via botão) */}
+                  {estoques[eq.sku] === "loading" && (
+                    <div className="text-[11px] text-zinc-400 mt-1 inline-flex items-center gap-1">
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                      Consultando estoque...
+                    </div>
+                  )}
+                  {estoques[eq.sku] === "error" && (
+                    <div className="text-[11px] text-red-500 mt-1">
+                      Erro ao consultar estoque
+                    </div>
+                  )}
+                  {estoques[eq.sku] && estoques[eq.sku] !== "loading" && estoques[eq.sku] !== "error" && (
+                    <div className="flex flex-wrap gap-2 mt-1 text-[11px]">
+                      {Object.entries(estoques[eq.sku] as Record<string, EstoqueGalpao>).map(
+                        ([galpao, est]) => (
+                          <span key={galpao} className="text-zinc-500">
+                            {galpao}:{" "}
+                            <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                              {est.disponivel}
+                            </span>
+                          </span>
+                        ),
+                      )}
+                      {Object.keys(estoques[eq.sku] as Record<string, EstoqueGalpao>).length === 0 && (
+                        <span className="text-zinc-400">sem estoque cadastrado</span>
+                      )}
                     </div>
                   )}
                   <div className="flex flex-wrap items-center gap-1 mt-1">

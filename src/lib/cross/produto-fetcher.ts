@@ -83,10 +83,8 @@ export async function fetchProdutoFromTiny(
     });
   }
 
-  const descricaoCompleta =
-    (detalhe as { descricao?: string | null } | null)?.descricao ??
-    produto.descricao ??
-    null;
+  // Prefer descricaoComplementar (full, with OEMs); fall back to short product name
+  const descricaoCompleta = detalhe?.descricaoComplementar ?? produto.descricao ?? null;
   const oemsExtraidos = extrairOEMs(descricaoCompleta);
   const fornecedor = getFornecedorBySku(sku).fornecedor ?? null;
 

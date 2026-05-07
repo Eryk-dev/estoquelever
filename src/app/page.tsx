@@ -11,6 +11,7 @@ import {
   LogOut,
   Monitor,
   PackageSearch,
+  Replace,
   Search,
   Settings,
   ShoppingCart,
@@ -68,6 +69,15 @@ const MODULES: Module[] = [
     icon: Search,
     color: "#8b5cf6",
     accentBg: "bg-violet-50 text-violet-600 dark:bg-violet-950 dark:text-violet-400",
+  },
+  {
+    id: "cross",
+    href: "/cross",
+    title: "Cross",
+    subtitle: "Busca e equivalência",
+    icon: Replace,
+    color: "#06b6d4",
+    accentBg: "bg-cyan-50 text-cyan-600 dark:bg-cyan-950 dark:text-cyan-400",
   },
   {
     id: "painel",
@@ -130,7 +140,7 @@ function getModuleCount(
   moduleId: Module["id"],
   counts: DashboardCounts | null,
 ): number | null {
-  if (moduleId === "painel" || moduleId === "pedidos") return null;
+  if (moduleId === "painel" || moduleId === "pedidos" || moduleId === "cross") return null;
   return counts?.[moduleId as keyof DashboardCounts] ?? null;
 }
 

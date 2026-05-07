@@ -13,6 +13,7 @@ import {
   DECISAO_LABELS,
 } from "@/lib/domain-helpers";
 import { ProductImageZoom } from "@/components/ui/product-image-zoom";
+import { CrossPopoverButton } from "@/components/cross/cross-popover-button";
 import type { Decisao, EstoqueItem, Pedido } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,6 +128,7 @@ function ProductRowReadonly({
           >
             {item.sku}
           </span>
+          <CrossPopoverButton sku={item.sku} variant="icon" />
         </div>
         <span
           className="min-w-0 truncate text-sm font-medium text-ink"

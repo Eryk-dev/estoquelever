@@ -118,6 +118,9 @@ src/
     compras/
       page.tsx                     # Purchase orders — Comprar/Receber tabs with supplier consolidation
       conferencia/[ordemCompraId]/page.tsx  # Receiving screen for specific PO
+    cross/
+      page.tsx                     # Cross — busca universal de produtos
+      [sku]/page.tsx               # Cross — detalhe + edição de OEMs e veículos
     inventario/page.tsx            # Inventory — barcode scanning, location tagging, stock updates
     transferencias/page.tsx        # Transfers — inter-galpão stock transfer
     etiquetas/page.tsx             # Address labels — ZPL generation + PrintNode printing
@@ -178,6 +181,16 @@ src/
         itens/[itemId]/equivalente/route.ts   # Propose equivalente SKU (POST)
         itens/[itemId]/equivalente/confirmar/route.ts  # Confirm equivalente + update product mappings (POST)
         itens/[itemId]/trocar-fornecedor/route.ts  # Change supplier (DEPRECATED, use compras-equivalencia) (POST)
+      cross/
+        search/route.ts            # GET busca (SKU/OEM/nome)
+        produtos/[sku]/route.ts    # GET detalhe (com lazy fetch Tiny)
+        produtos/[sku]/refetch/route.ts        # POST atualizar do Tiny
+        produtos/[sku]/oems/route.ts           # POST adicionar OEM (com aviso de cruzamento)
+        produtos/[sku]/oems/[codigo]/route.ts  # DELETE remover OEM (regra de permissão)
+        produtos/[sku]/veiculos/route.ts       # POST adicionar veículo
+        produtos/[sku]/veiculos/[id]/route.ts  # DELETE remover veículo
+        sugestoes/marcas/route.ts              # GET sugestão de marcas
+        sugestoes/modelos/route.ts             # GET sugestão de modelos
       inventario/
         route.ts                   # List + create inventory sessions (GET/POST)
         [id]/route.ts              # Inventory detail + cancel (GET/PATCH)
@@ -253,6 +266,14 @@ src/
       equivalente-dialog.tsx       # Dialog to set/confirm equivalente SKU
       cancelamento-dialog.tsx      # Dialog to propose/confirm cancelamento
       excecoes-banner.tsx          # Banner showing compra exceptions/resolutions
+    cross/
+      search-input.tsx             # Input + pílulas de tipo (auto/sku/oem/nome)
+      resultado-card.tsx           # Card de resultado na lista
+      produto-header.tsx           # Header do detalhe + botão "Atualizar agora"
+      estoque-galpao-tabela.tsx    # Tabela compacta de estoque
+      oem-list-editor.tsx          # Editor inline de OEMs
+      veiculo-list-editor.tsx      # Editor inline de veículos com autocomplete
+      equivalentes-list.tsx        # Lista de SKUs equivalentes
     inventario/
       criar-inventario-form.tsx    # New inventory session form
       inventario-card.tsx          # Inventory session card for lists
@@ -292,6 +313,11 @@ src/
     compras-utils.ts               # Shared utilities for compras module (allowed cargos, field reset)
     inventario-processor.ts        # Consolidate + process/reverse inventory sessions via Tiny
     transferencia-processor.ts     # Process/reverse inter-galpão stock transfers via Tiny
+    # ── Cross (catálogo e equivalência) ──
+    cross/types.ts                 # Tipos compartilhados
+    cross/oem-extractor.ts         # Regex de extração de OEM (porta do projeto cross)
+    cross/produto-fetcher.ts       # Tiny → catálogo (fetch + persistência)
+    cross/catalogo-queries.ts      # Busca, detalhe completo, equivalentes
     # ── Tiny ERP integration ──
     tiny-api.ts                    # Tiny ERP API v3 client
     tiny-oauth.ts                  # OAuth2 token management — getValidTokenByEmpresa()
@@ -327,6 +353,8 @@ src/
     mock-separacao.ts              # Mock separation data
 supabase/
   migrations/                      # Database migrations (YYYYMMDD_description.sql)
+scripts/
+  seed-cross-catalogo.ts           # Seed inicial: importa cross.products → siso_produtos_catalogo
 ```
 
 ## Database Tables (Supabase)
@@ -369,6 +397,15 @@ All tables are prefixed with `siso_`:
 | `siso_logs` | Structured application logs (info/warn/error) |
 | `siso_erros` | **Dedicated error tracking** with stack traces, categories, correlation IDs, resolution tracking. Queryable for diagnostics. |
 | `siso_configuracoes` | Key-value config store |
+
+### Cross Module Tables
+
+| Table | Purpose |
+|---|---|
+| `siso_produtos_catalogo` | Cache de produtos do Tiny (módulo Cross) |
+| `siso_produto_oems` | Códigos OEM por produto (com audit) |
+| `siso_produto_veiculos` | Compatibilidade veicular por produto (com audit) |
+| `siso_cross_logs` | Telemetria de buscas no Cross |
 
 > **Note:** `siso_pedido_itens` still has deprecated `estoque_cwb_*` / `estoque_sp_*` columns. The API reads from `siso_pedido_item_estoques` (normalized). The webhook processor writes to both for backwards compat. Legacy columns will be removed in a future migration.
 
@@ -537,6 +574,7 @@ Failure to update documentation means the next developer or LLM will work with s
 - Tiny OAuth2 connection management per empresa
 - NF webhook reconciliation (aguardando_nf transition)
 - OC auto-resolution in wave picking (concluir-oc endpoint)
+- Módulo Cross: busca universal de produtos (SKU/OEM/nome), edição de OEMs e veículos com audit, equivalência por OEM compartilhado, lazy fetch do Tiny + refresh manual
 
 ### In Progress / Minor
 - Real-time notifications for new pending orders (polling at 30s for now)

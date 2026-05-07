@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { getProdutoDetalheCompleto } from "@/lib/cross/catalogo-queries";
+import { getEmpresaOrigemId } from "@/lib/cross/empresa-origem";
 import {
   fetchAndPersistProduto,
   TinyOfflineError,
@@ -11,33 +12,6 @@ import {
 
 interface RouteParams {
   params: Promise<{ sku: string }>;
-}
-
-async function getEmpresaOrigemId(sessionUserId: string): Promise<string | null> {
-  const supabase = createServiceClient();
-  const { data: user } = await supabase
-    .from("siso_usuarios")
-    .select("galpao_id")
-    .eq("id", sessionUserId)
-    .single();
-  if (!user?.galpao_id) {
-    // fallback: pega primeira empresa ativa
-    const { data: empresa } = await supabase
-      .from("siso_empresas")
-      .select("id")
-      .eq("ativo", true)
-      .limit(1)
-      .single();
-    return empresa?.id ?? null;
-  }
-  const { data: empresa } = await supabase
-    .from("siso_empresas")
-    .select("id")
-    .eq("galpao_id", user.galpao_id)
-    .eq("ativo", true)
-    .limit(1)
-    .single();
-  return empresa?.id ?? null;
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -53,10 +27,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
   const isAdmin = (session.cargos ?? [session.cargo]).includes("admin");
 
-  const empresaOrigemId = await getEmpresaOrigemId(session.id);
+  const empresaOrigemId = await getEmpresaOrigemId(session);
   if (!empresaOrigemId) {
     return NextResponse.json(
-      { error: "Nenhuma empresa Tiny configurada" },
+      { error: "Nenhuma empresa Tiny configurada para o seu galpão" },
       { status: 500 },
     );
   }

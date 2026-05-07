@@ -3,6 +3,8 @@
 -- Spec: docs/superpowers/specs/2026-05-06-cross-module-design.md
 -- =====================================================================
 
+BEGIN;
+
 -- Extensão necessária para busca por nome com similaridade trigram
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
@@ -85,7 +87,10 @@ CREATE INDEX idx_cross_logs_criado_em ON siso_cross_logs(criado_em DESC);
 -- TRIGGER: recomputa array oem em siso_produtos_catalogo
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION siso_recalcular_oems_produto(p_sku text)
-RETURNS void AS $$
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
 BEGIN
   UPDATE siso_produtos_catalogo
   SET oem = COALESCE(
@@ -97,10 +102,13 @@ BEGIN
   atualizado_em = now()
   WHERE sku = p_sku;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 CREATE OR REPLACE FUNCTION siso_trigger_recalc_oems()
-RETURNS trigger AS $$
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
 DECLARE
   v_sku text;
 BEGIN
@@ -108,7 +116,7 @@ BEGIN
   PERFORM siso_recalcular_oems_produto(v_sku);
   RETURN NULL;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 CREATE TRIGGER trg_recalc_oems_after_change
 AFTER INSERT OR DELETE OR UPDATE ON siso_produto_oems
@@ -120,7 +128,10 @@ FOR EACH ROW EXECUTE FUNCTION siso_trigger_recalc_oems();
 --   { "vehicles": [{ "brand", "model", "year_start", "year_end", "variant" }] }
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION siso_recalcular_veiculos_produto(p_sku text)
-RETURNS void AS $$
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
 BEGIN
   UPDATE siso_produtos_catalogo
   SET compatibility_v2 = COALESCE(
@@ -138,10 +149,13 @@ BEGIN
   atualizado_em = now()
   WHERE sku = p_sku;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 CREATE OR REPLACE FUNCTION siso_trigger_recalc_veiculos()
-RETURNS trigger AS $$
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
 DECLARE
   v_sku text;
 BEGIN
@@ -149,8 +163,10 @@ BEGIN
   PERFORM siso_recalcular_veiculos_produto(v_sku);
   RETURN NULL;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 CREATE TRIGGER trg_recalc_veiculos_after_change
 AFTER INSERT OR DELETE OR UPDATE ON siso_produto_veiculos
 FOR EACH ROW EXECUTE FUNCTION siso_trigger_recalc_veiculos();
+
+COMMIT;

@@ -84,6 +84,7 @@ export interface ResultadoBusca {
   localizacao: string | null;
   oems: string[];
   estoque_total: number;
+  cross_count: number;  // qtd de SKUs que compartilham >= 1 OEM (pra esconder botão Cross-Refs quando 0)
   match: "sku_exato" | "sku_prefixo" | "oem" | "nome";
 }
 

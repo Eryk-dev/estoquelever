@@ -25,7 +25,7 @@ export function ResultadoCard({ resultado }: ResultadoCardProps) {
     null,
   );
 
-  const temOems = resultado.oems.length > 0;
+  const temCross = resultado.cross_count > 0;
 
   async function toggle() {
     if (expanded) {
@@ -93,7 +93,7 @@ export function ResultadoCard({ resultado }: ResultadoCardProps) {
                 </span>
               )}
             </div>
-            {temOems && (
+            {resultado.oems.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1.5">
                 {resultado.oems.slice(0, 5).map((o) => (
                   <span
@@ -114,7 +114,7 @@ export function ResultadoCard({ resultado }: ResultadoCardProps) {
         </div>
       </Link>
 
-      {temOems && (
+      {temCross && (
         <button
           type="button"
           onClick={toggle}
@@ -131,8 +131,7 @@ export function ResultadoCard({ resultado }: ResultadoCardProps) {
             ) : (
               <ChevronDown className="h-3.5 w-3.5" />
             )}
-            Cross-References
-            {equivalentes !== null && ` (${equivalentes.length})`}
+            Cross-References ({resultado.cross_count})
           </span>
           {carregando && <Loader2 className="h-3 w-3 animate-spin" />}
         </button>

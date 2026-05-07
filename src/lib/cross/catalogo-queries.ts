@@ -59,6 +59,7 @@ export async function searchProdutos(opts: {
         localizacao: row.localizacao,
         oems: row.oem ?? [],
         estoque_total: 0,
+        cross_count: 0,
         match: exato ? "sku_exato" : "sku_prefixo",
       });
     }
@@ -82,6 +83,7 @@ export async function searchProdutos(opts: {
         localizacao: row.localizacao,
         oems: row.oem ?? [],
         estoque_total: 0,
+        cross_count: 0,
         match: "oem",
       });
     }
@@ -105,6 +107,7 @@ export async function searchProdutos(opts: {
         localizacao: row.localizacao,
         oems: row.oem ?? [],
         estoque_total: 0,
+        cross_count: 0,
         match: "nome",
       });
     }
@@ -122,11 +125,30 @@ export async function searchProdutos(opts: {
     (a, b) => matchOrder[a.match] - matchOrder[b.match],
   );
 
+  const listaPaginada = lista.slice(0, RESULT_LIMIT);
+
+  // Pré-calcula cross_count por SKU em paralelo (apenas pros que têm OEMs).
+  // GIN index em oem torna cada count rápido (~10-30ms cada).
+  await Promise.all(
+    listaPaginada.map(async (r) => {
+      if (r.oems.length === 0) {
+        r.cross_count = 0;
+        return;
+      }
+      const { count } = await supabase
+        .from("siso_produtos_catalogo")
+        .select("sku", { count: "exact", head: true })
+        .overlaps("oem", r.oems)
+        .neq("sku", r.sku);
+      r.cross_count = count ?? 0;
+    }),
+  );
+
   return {
     query: queryRaw,
     tipo_detectado: tipoEfetivo,
     total: lista.length,
-    resultados: lista.slice(0, RESULT_LIMIT),
+    resultados: listaPaginada,
   };
 }
 

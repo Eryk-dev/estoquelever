@@ -48,7 +48,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const { sku: skuRaw } = await params;
   const sku = decodeURIComponent(skuRaw).trim();
+  if (!sku) {
+    return NextResponse.json({ error: "SKU obrigatório" }, { status: 400 });
+  }
   const isAdmin = (session.cargos ?? [session.cargo]).includes("admin");
+
+  const empresaOrigemId = await getEmpresaOrigemId(session.id);
+  if (!empresaOrigemId) {
+    return NextResponse.json(
+      { error: "Nenhuma empresa Tiny configurada" },
+      { status: 500 },
+    );
+  }
 
   const supabase = createServiceClient();
   const { data: existe } = await supabase
@@ -59,13 +70,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   // Lazy fetch se não existe
   if (!existe) {
-    const empresaOrigemId = await getEmpresaOrigemId(session.id);
-    if (!empresaOrigemId) {
-      return NextResponse.json(
-        { error: "Nenhuma empresa Tiny configurada" },
-        { status: 500 },
-      );
-    }
     try {
       await fetchAndPersistProduto(sku, empresaOrigemId);
     } catch (err) {
@@ -81,14 +85,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       });
       return NextResponse.json({ error: "Erro interno" }, { status: 500 });
     }
-  }
-
-  const empresaOrigemId = await getEmpresaOrigemId(session.id);
-  if (!empresaOrigemId) {
-    return NextResponse.json(
-      { error: "Nenhuma empresa Tiny configurada" },
-      { status: 500 },
-    );
   }
 
   const detalhe = await getProdutoDetalheCompleto({

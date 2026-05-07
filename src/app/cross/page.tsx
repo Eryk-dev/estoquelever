@@ -79,8 +79,9 @@ export default function CrossPage() {
               <button
                 onClick={() => {
                   const sku = resposta.query.trim();
-                  // O detalhe já faz lazy fetch quando SKU não está no cache
-                  window.location.href = `/cross/${encodeURIComponent(sku)}`;
+                  // ?force=1 garante que o detalhe faça refetch real no Tiny
+                  // antes de carregar — não depende de cache
+                  window.location.href = `/cross/${encodeURIComponent(sku)}?force=1`;
                 }}
                 className="px-3 py-1.5 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-700"
               >

@@ -926,7 +926,7 @@ Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicula
 |--------|------|----------|---------|-------------|
 | `id` | uuid | NO | (PK) | Row ID |
 | `sku` | text | NO | UNIQUE | SKU do produto (chave de negócio) |
-| `tiny_id` | bigint | NO | UNIQUE | ID do produto no Tiny ERP |
+| `tiny_id` | bigint | YES | UNIQUE | ID do produto no Tiny ERP (nullable — produto pode existir no catálogo antes de ter sido sincronizado) |
 | `nome` | text | NO | | Nome do produto |
 | `descricao` | text | YES | | Descrição completa (fonte para extração de OEMs) |
 | `fornecedor` | text | YES | | Fornecedor (mapeado por prefixo de SKU) |
@@ -934,7 +934,7 @@ Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicula
 | `imagem_url` | text | YES | | URL da imagem principal |
 | `gtin` | text | YES | | GTIN/EAN |
 | `oem` | text[] | NO | `{}` | Lista denormalizada de OEMs (recomputada via trigger a partir de `siso_produto_oems`) |
-| `compatibility_v2` | jsonb | NO | `'[]'` | JSON denormalizado de compatibilidade veicular (recomputado via trigger a partir de `siso_produto_veiculos`) |
+| `compatibility_v2` | jsonb | NO | `'{}'::jsonb` | JSON denormalizado de compatibilidade veicular (recomputado via trigger a partir de `siso_produto_veiculos`) |
 | `sincronizado_em` | timestamptz | YES | | Última sincronização com o Tiny |
 | `criado_em` | timestamptz | NO | now() | Criação do registro |
 | `atualizado_em` | timestamptz | NO | now() | Última atualização |
@@ -944,10 +944,10 @@ Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicula
 **Unique Constraints:** `sku`, `tiny_id`
 
 **Indexes:**
-- `idx_produtos_catalogo_sku` (sku)
-- `idx_produtos_catalogo_oem` GIN em `oem`
+- `idx_produtos_catalogo_oem_gin` GIN em `oem`
 - `idx_produtos_catalogo_nome_trgm` GIN trigram em `nome`
 - `idx_produtos_catalogo_sku_trgm` GIN trigram em `sku`
+- (busca por SKU exato usa o índice UNIQUE da própria coluna `sku`)
 
 **Notes:**
 - `oem` e `compatibility_v2` são derivados — nunca escreva diretamente; insira em `siso_produto_oems` / `siso_produto_veiculos` e deixe os triggers atualizarem
@@ -999,8 +999,8 @@ Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicula
 | `produto_sku` | text | NO | FK | SKU do produto (CASCADE em delete) |
 | `marca` | text | NO | | Marca do veículo |
 | `modelo` | text | NO | | Modelo |
-| `ano_inicio` | integer | YES | | Ano inicial (1900–2100) |
-| `ano_fim` | integer | YES | | Ano final (1900–2100) |
+| `ano_inicio` | integer | YES | | Ano inicial (range 1900–2100 validado na API, não no banco) |
+| `ano_fim` | integer | YES | | Ano final (range 1900–2100 validado na API, não no banco) |
 | `variante` | text | YES | | Variante/motor (ex.: "1.0 8V Flex") |
 | `adicionado_por` | uuid | YES | FK | Usuário que cadastrou |
 | `adicionado_em` | timestamptz | NO | now() | Quando foi cadastrado |
@@ -1014,8 +1014,7 @@ Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicula
 **Unique Constraint:** `(produto_sku, marca, modelo, ano_inicio, ano_fim, variante)`
 
 **Constraints:**
-- `CHECK (ano_inicio IS NULL OR ano_inicio BETWEEN 1900 AND 2100)`
-- `CHECK (ano_fim IS NULL OR ano_fim BETWEEN 1900 AND 2100)`
+- (Não há CHECK no banco para ano_inicio/ano_fim — a validação 1900–2100 é feita apenas na camada de API, em `POST /api/cross/produtos/[sku]/veiculos`)
 
 **Triggers:**
 - `AFTER INSERT/UPDATE/DELETE`: recomputa `siso_produtos_catalogo.compatibility_v2` (jsonb) para o `produto_sku` afetado

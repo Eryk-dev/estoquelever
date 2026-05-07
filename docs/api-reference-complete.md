@@ -4187,8 +4187,9 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 **Response (200):**
 ```json
 {
-  "tipo": "sku" | "oem" | "nome" | "auto",
   "query": "string",
+  "tipo_detectado": "sku" | "oem" | "nome",
+  "total": "number",
   "resultados": [
     {
       "sku": "string",
@@ -4197,10 +4198,10 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
       "marca": "string | null",
       "imagem_url": "string | null",
       "oems": ["string"],
-      "match_em": "sku" | "oem" | "nome"
+      "estoque_total": "number",
+      "match": "sku_exato" | "sku_prefixo" | "oem" | "nome"
     }
-  ],
-  "total": "number"
+  ]
 }
 ```
 
@@ -4236,20 +4237,22 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 ```json
 {
   "sku": "string",
-  "tiny_id": "number",
   "nome": "string",
   "descricao": "string | null",
   "fornecedor": "string | null",
   "marca": "string | null",
   "imagem_url": "string | null",
   "gtin": "string | null",
+  "sincronizado_em": "ISO datetime | null",
   "oems": [
     {
+      "id": "number",
       "codigo": "string",
       "origem": "extracao_tiny" | "manual",
       "adicionado_por": "uuid | null",
       "adicionado_por_nome": "string | null",
-      "adicionado_em": "ISO datetime"
+      "adicionado_em": "ISO datetime",
+      "pode_remover": "boolean"
     }
   ],
   "veiculos": [
@@ -4261,27 +4264,38 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
       "ano_fim": "number | null",
       "variante": "string | null",
       "adicionado_por": "uuid | null",
-      "adicionado_em": "ISO datetime"
+      "adicionado_por_nome": "string | null",
+      "adicionado_em": "ISO datetime",
+      "pode_remover": "boolean"
     }
   ],
-  "estoque": [
-    {
-      "galpao_nome": "string",
-      "empresa_nome": "string",
+  "estoque_por_galpao": {
+    "<galpao_nome>": {
       "saldo": "number",
       "reservado": "number",
-      "disponivel": "number"
+      "disponivel": "number",
+      "deposito_nome": "string | null",
+      "localizacao": "string | null"
     }
-  ],
+  },
   "equivalentes": [
-    { "sku": "string", "nome": "string", "oems_em_comum": ["string"] }
-  ],
-  "sincronizado_em": "ISO datetime"
+    {
+      "sku": "string",
+      "nome": "string",
+      "imagem_url": "string | null",
+      "oems_compartilhados": ["string"],
+      "estoque_por_galpao": {
+        "<galpao_nome>": { "saldo": "number", "reservado": "number", "disponivel": "number" }
+      },
+      "estoque_total": "number"
+    }
+  ]
 }
 ```
 
-**Response (404):** `{ "error": "produto_nao_encontrado" }`
-**Response (503):** `{ "error": "tiny_indisponivel" }` quando o lazy fetch falha
+**Response (404):** `{ "error": "SKU \"<sku>\" não encontrado no Tiny" }` (lazy fetch) ou `{ "error": "Produto não encontrado" }` (já populado mas detalhe vazio)
+**Response (503):** `{ "error": "Tiny indisponível, tente em alguns minutos" }` quando o lazy fetch falha
+**Response (500):** `{ "error": "Nenhuma empresa Tiny configurada para o seu galpão" }` se o usuário não tem galpão/empresa associada
 
 **Business Logic:**
 - Lê `siso_produtos_catalogo` por `sku`
@@ -4289,7 +4303,8 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 - Se Tiny não conhecer o SKU: 404
 - Se Tiny estiver offline: 503
 - Calcula equivalentes consultando outros SKUs com OEM em comum
-- Estoque é lido de `siso_pedido_item_estoques` agregado por galpão (último valor conhecido)
+- Estoque é consultado **ao vivo no Tiny** a cada requisição (não há cache em DB) — agregado por galpão usando o depósito configurado em `siso_tiny_connections`
+- `pode_remover` em OEMs/veículos indica se o usuário corrente pode remover aquela entrada (admin sempre pode; demais cargos só removem o que adicionaram manualmente)
 
 **Side Effects:**
 - Possíveis upserts em `siso_produtos_catalogo`, `siso_produto_oems` (origem `extracao_tiny`)
@@ -4308,16 +4323,21 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 **Request Body:** Empty
 
-**Response (200):** Mesma shape de `GET /api/cross/produtos/[sku]`
+**Response (200):**
+```json
+{ "ok": true, "sku": "string" }
+```
 
-**Response (404):** `{ "error": "produto_nao_encontrado" }`
-**Response (503):** `{ "error": "tiny_indisponivel" }`
+**Response (404):** `{ "error": "SKU \"<sku>\" não encontrado no Tiny" }`
+**Response (503):** `{ "error": "Tiny indisponível, tente em alguns minutos" }`
+**Response (500):** `{ "error": "Nenhuma empresa Tiny configurada para o seu galpão" }`
 
 **Business Logic:**
 - Chama `produto-fetcher.ts` em modo bloqueante
 - Atualiza `siso_produtos_catalogo` (nome, descricao, marca, fornecedor, imagem_url, gtin, sincronizado_em)
 - Re-extrai OEMs da descrição via `oem-extractor.ts`; insere os novos como `origem='extracao_tiny'` (não duplica os manuais)
 - Triggers recomputam `oem text[]` e `compatibility_v2 jsonb` automaticamente
+- Não retorna o detalhe — o cliente deve chamar `GET /api/cross/produtos/[sku]` em seguida
 
 **Side Effects:**
 - Update em `siso_produtos_catalogo`

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -16,6 +16,7 @@ import type { DetalheProduto } from "@/lib/cross/types";
 export default function CrossDetalhePage() {
   const params = useParams<{ sku: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const sku = decodeURIComponent(params.sku);
   const [detalhe, setDetalhe] = useState<DetalheProduto | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,8 +43,24 @@ export default function CrossDetalhePage() {
   }, [sku]);
 
   useEffect(() => {
-    void carregar();
-  }, [carregar]);
+    if (searchParams.get("force") === "1") {
+      // chama refetch antes do primeiro carregar
+      void (async () => {
+        try {
+          await sisoFetch(
+            `/api/cross/produtos/${encodeURIComponent(sku)}/refetch`,
+            { method: "POST" },
+          );
+        } catch {
+          // não bloqueia carregamento — segue tentando o detalhe
+        }
+        void carregar();
+      })();
+    } else {
+      void carregar();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sku]);
 
   // Esc volta para a lista
   useEffect(() => {

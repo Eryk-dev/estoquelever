@@ -50,5 +50,5 @@ scripts/ralph/.last-branch
 next-env.d.ts
 
 
-# Cloned reference repo (not part of SISO source)
-cross/
+# Cloned reference repo (not part of SISO source) — anchored to top-level only
+/cross/

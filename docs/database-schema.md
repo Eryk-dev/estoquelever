@@ -16,10 +16,11 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 6. [Inventory & Transfer Modules](#inventory--transfer-modules)
 7. [Infrastructure Tables](#infrastructure-tables)
 8. [Authentication & Sessions](#authentication--sessions)
-9. [Entity-Relationship Diagram](#entity-relationship-diagram)
-10. [Data Lifecycle Patterns](#data-lifecycle-patterns)
-11. [Important Queries & Access Patterns](#important-queries--access-patterns)
-12. [Migration History Summary](#migration-history-summary)
+9. [Cross (módulo de catálogo e equivalência)](#cross-módulo-de-catálogo-e-equivalência)
+10. [Entity-Relationship Diagram](#entity-relationship-diagram)
+11. [Data Lifecycle Patterns](#data-lifecycle-patterns)
+12. [Important Queries & Access Patterns](#important-queries--access-patterns)
+13. [Migration History Summary](#migration-history-summary)
 
 ---
 
@@ -913,6 +914,147 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 ---
 
+## Cross (módulo de catálogo e equivalência)
+
+Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicular como fontes de verdade em tabelas próprias e denormalização automática via trigger. Permite busca universal por SKU/OEM/nome e descoberta de equivalências entre SKUs que compartilham OEMs.
+
+### siso_produtos_catalogo
+
+**Purpose:** Cache desnormalizado de produtos do Tiny. Mirror local atualizado por lazy fetch ou refresh manual.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Row ID |
+| `sku` | text | NO | UNIQUE | SKU do produto (chave de negócio) |
+| `tiny_id` | bigint | NO | UNIQUE | ID do produto no Tiny ERP |
+| `nome` | text | NO | | Nome do produto |
+| `descricao` | text | YES | | Descrição completa (fonte para extração de OEMs) |
+| `fornecedor` | text | YES | | Fornecedor (mapeado por prefixo de SKU) |
+| `marca` | text | YES | | Marca |
+| `imagem_url` | text | YES | | URL da imagem principal |
+| `gtin` | text | YES | | GTIN/EAN |
+| `oem` | text[] | NO | `{}` | Lista denormalizada de OEMs (recomputada via trigger a partir de `siso_produto_oems`) |
+| `compatibility_v2` | jsonb | NO | `'[]'` | JSON denormalizado de compatibilidade veicular (recomputado via trigger a partir de `siso_produto_veiculos`) |
+| `sincronizado_em` | timestamptz | YES | | Última sincronização com o Tiny |
+| `criado_em` | timestamptz | NO | now() | Criação do registro |
+| `atualizado_em` | timestamptz | NO | now() | Última atualização |
+
+**Primary Key:** `id`
+
+**Unique Constraints:** `sku`, `tiny_id`
+
+**Indexes:**
+- `idx_produtos_catalogo_sku` (sku)
+- `idx_produtos_catalogo_oem` GIN em `oem`
+- `idx_produtos_catalogo_nome_trgm` GIN trigram em `nome`
+- `idx_produtos_catalogo_sku_trgm` GIN trigram em `sku`
+
+**Notes:**
+- `oem` e `compatibility_v2` são derivados — nunca escreva diretamente; insira em `siso_produto_oems` / `siso_produto_veiculos` e deixe os triggers atualizarem
+- Lazy fetch via `produto-fetcher.ts` quando o SKU é consultado pela primeira vez
+- Migração: `supabase/migrations/20260506_create_cross_module.sql`
+
+---
+
+### siso_produto_oems
+
+**Purpose:** Fonte de verdade dos códigos OEM por produto, com origem (extração automática vs manual) e audit trail.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | bigserial | NO | (PK) | Row ID |
+| `produto_sku` | text | NO | FK | SKU do produto (CASCADE em delete) |
+| `oem_code` | text | NO | | Código OEM (uppercase, ex.: `90915-YZZE2`) |
+| `origem` | text | NO | | `extracao_tiny` ou `manual` |
+| `adicionado_por` | uuid | YES | FK | Usuário que cadastrou (NULL para `extracao_tiny`) |
+| `adicionado_em` | timestamptz | NO | now() | Quando foi cadastrado |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `produto_sku` → `siso_produtos_catalogo(sku)` ON DELETE CASCADE
+- `adicionado_por` → `siso_usuarios(id)`
+
+**Unique Constraint:** `(produto_sku, oem_code)`
+
+**Constraints:**
+- `CHECK (origem IN ('extracao_tiny', 'manual'))`
+
+**Triggers:**
+- `AFTER INSERT/UPDATE/DELETE`: recomputa `siso_produtos_catalogo.oem` (text[]) para o `produto_sku` afetado
+
+**Notes:**
+- Extração automática roda no `produto-fetcher.ts` ao buscar/atualizar do Tiny
+- Adições manuais ficam preservadas em refreshes (apenas novos OEMs extraídos são inseridos)
+
+---
+
+### siso_produto_veiculos
+
+**Purpose:** Fonte de verdade da compatibilidade veicular por produto, com audit trail.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | bigserial | NO | (PK) | Row ID |
+| `produto_sku` | text | NO | FK | SKU do produto (CASCADE em delete) |
+| `marca` | text | NO | | Marca do veículo |
+| `modelo` | text | NO | | Modelo |
+| `ano_inicio` | integer | YES | | Ano inicial (1900–2100) |
+| `ano_fim` | integer | YES | | Ano final (1900–2100) |
+| `variante` | text | YES | | Variante/motor (ex.: "1.0 8V Flex") |
+| `adicionado_por` | uuid | YES | FK | Usuário que cadastrou |
+| `adicionado_em` | timestamptz | NO | now() | Quando foi cadastrado |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `produto_sku` → `siso_produtos_catalogo(sku)` ON DELETE CASCADE
+- `adicionado_por` → `siso_usuarios(id)`
+
+**Unique Constraint:** `(produto_sku, marca, modelo, ano_inicio, ano_fim, variante)`
+
+**Constraints:**
+- `CHECK (ano_inicio IS NULL OR ano_inicio BETWEEN 1900 AND 2100)`
+- `CHECK (ano_fim IS NULL OR ano_fim BETWEEN 1900 AND 2100)`
+
+**Triggers:**
+- `AFTER INSERT/UPDATE/DELETE`: recomputa `siso_produtos_catalogo.compatibility_v2` (jsonb) para o `produto_sku` afetado
+
+**Notes:**
+- Autocomplete de marca/modelo é feito por `GET /api/cross/sugestoes/marcas` e `GET /api/cross/sugestoes/modelos`
+
+---
+
+### siso_cross_logs
+
+**Purpose:** Telemetria de buscas no módulo Cross.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | bigserial | NO | (PK) | Row ID |
+| `query_tipo` | text | NO | | Tipo da busca: `sku`, `oem`, `nome`, `auto` |
+| `query_texto` | text | NO | | Texto consultado |
+| `resultado_count` | integer | NO | 0 | Quantidade de resultados retornados |
+| `usuario_id` | uuid | YES | FK | Usuário que executou a busca |
+| `criado_em` | timestamptz | NO | now() | Quando ocorreu a busca |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `usuario_id` → `siso_usuarios(id)`
+
+**Constraints:**
+- `CHECK (query_tipo IN ('sku', 'oem', 'nome', 'auto'))`
+
+**Indexes:**
+- `idx_cross_logs_criado_em` (criado_em DESC)
+
+**Notes:**
+- Inserção é fire-and-forget no endpoint de search — não bloqueia a resposta
+- Útil para identificar buscas frequentes sem resultado (oportunidade de cadastrar OEMs/equivalentes)
+
+---
+
 ## Entity-Relationship Diagram
 
 ```mermaid
@@ -1225,6 +1367,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-03-24 | `worker_heartbeat_cron.sql` | CRON job for worker monitoring |
 | 2026-03-24 | `compras_v2_missing_columns.sql` | Additional purchase columns (compra_quantidade_comprada, comprado_por_nome, prioridade) |
 | 2026-03-26 | `add_encaminhado_de.sql` | Forward tracking: origin galpão name when order manually transferred |
+| 2026-05-06 | `20260506_create_cross_module.sql` | Cross module: siso_produtos_catalogo, siso_produto_oems, siso_produto_veiculos, siso_cross_logs + triggers de denormalização |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging
@@ -1232,6 +1375,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 3. **Phase 3 (Mar 11):** Separation module + purchases
 4. **Phase 4 (Mar 16-19):** Error tracking + exceptions
 5. **Phase 5 (Mar 23-24):** Inventory + transfer modules
+6. **Phase 6 (May 6):** Cross module — catálogo cacheado + equivalência por OEM/veículo
 
 ---
 
@@ -1297,7 +1441,7 @@ This writes to both `siso_logs` and `siso_erros`.
 
 ---
 
-**Schema Last Updated:** 2026-03-31
+**Schema Last Updated:** 2026-05-07
 **Database Version:** PostgreSQL 14+ (Supabase)
 **Supabase Project:** `wrbrbhuhsaaupqsimkqz`
 

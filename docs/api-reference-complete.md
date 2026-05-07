@@ -2,7 +2,7 @@
 
 This is the **authoritative, comprehensive reference** for every API route in the SISO system. Use this before reading route source code or making API changes.
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-05-07
 
 ---
 
@@ -21,8 +21,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 11. [Worker & Background Jobs](#worker--background-jobs)
 12. [Dashboard & Monitoring](#dashboard--monitoring)
 13. [Reconciliation API](#reconciliation-api)
+14. [Cross — Busca de produtos e equivalência](#cross--busca-de-produtos-e-equivalência)
 
-**Total API Routes Documented:** 90+ endpoints across all sections
+**Total API Routes Documented:** 100+ endpoints across all sections
 
 ---
 
@@ -4167,6 +4168,350 @@ See `src/app/api/tiny/stock/ajustar/route.ts`
 
 ---
 
+## Cross — Busca de produtos e equivalência
+
+Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizado de produtos do Tiny em `siso_produtos_catalogo`, com OEMs e compatibilidade veicular como fontes de verdade em tabelas próprias e denormalização via trigger.
+
+### GET /api/cross/search
+
+**File:** `src/app/api/cross/search/route.ts`
+
+**Purpose:** Busca universal de produtos por SKU, código OEM, nome ou modo automático (heurística).
+
+**Auth:** Sessão via `X-Session-Id`
+
+**Query Params:**
+- `q` (required): texto de busca (mínimo 2 caracteres)
+- `tipo` (optional, default `auto`): `auto`, `sku`, `oem`, `nome`
+
+**Response (200):**
+```json
+{
+  "tipo": "sku" | "oem" | "nome" | "auto",
+  "query": "string",
+  "resultados": [
+    {
+      "sku": "string",
+      "nome": "string",
+      "fornecedor": "string | null",
+      "marca": "string | null",
+      "imagem_url": "string | null",
+      "oems": ["string"],
+      "match_em": "sku" | "oem" | "nome"
+    }
+  ],
+  "total": "number"
+}
+```
+
+**Response (400 - Validação):**
+```json
+{ "error": "q deve ter pelo menos 2 caracteres" }
+```
+
+**Business Logic:**
+- Valida `q` (mín 2 chars) e `tipo`
+- Modo `auto`: detecta SKU exato → OEM exato → fallback para busca por nome (trigram)
+- Modo `sku`: busca por SKU exato/prefixo via índice trigram
+- Modo `oem`: busca em `oem text[]` via índice GIN
+- Modo `nome`: busca trigram no campo `nome`
+- Persiste a busca em `siso_cross_logs` (fire-and-forget) para telemetria
+
+**Side Effects:**
+- Insere em `siso_cross_logs` (query_tipo, query_texto, resultado_count, usuario_id)
+
+**Rate Limiting:** None
+
+---
+
+### GET /api/cross/produtos/[sku]
+
+**File:** `src/app/api/cross/produtos/[sku]/route.ts`
+
+**Purpose:** Detalhe completo de um produto: nome, descrição, OEMs, veículos compatíveis, estoque por galpão e SKUs equivalentes.
+
+**Auth:** Sessão via `X-Session-Id`
+
+**Response (200):**
+```json
+{
+  "sku": "string",
+  "tiny_id": "number",
+  "nome": "string",
+  "descricao": "string | null",
+  "fornecedor": "string | null",
+  "marca": "string | null",
+  "imagem_url": "string | null",
+  "gtin": "string | null",
+  "oems": [
+    {
+      "codigo": "string",
+      "origem": "extracao_tiny" | "manual",
+      "adicionado_por": "uuid | null",
+      "adicionado_por_nome": "string | null",
+      "adicionado_em": "ISO datetime"
+    }
+  ],
+  "veiculos": [
+    {
+      "id": "number",
+      "marca": "string",
+      "modelo": "string",
+      "ano_inicio": "number | null",
+      "ano_fim": "number | null",
+      "variante": "string | null",
+      "adicionado_por": "uuid | null",
+      "adicionado_em": "ISO datetime"
+    }
+  ],
+  "estoque": [
+    {
+      "galpao_nome": "string",
+      "empresa_nome": "string",
+      "saldo": "number",
+      "reservado": "number",
+      "disponivel": "number"
+    }
+  ],
+  "equivalentes": [
+    { "sku": "string", "nome": "string", "oems_em_comum": ["string"] }
+  ],
+  "sincronizado_em": "ISO datetime"
+}
+```
+
+**Response (404):** `{ "error": "produto_nao_encontrado" }`
+**Response (503):** `{ "error": "tiny_indisponivel" }` quando o lazy fetch falha
+
+**Business Logic:**
+- Lê `siso_produtos_catalogo` por `sku`
+- Se não existir: faz lazy fetch via `produto-fetcher.ts` → consulta Tiny por SKU, persiste no catálogo
+- Se Tiny não conhecer o SKU: 404
+- Se Tiny estiver offline: 503
+- Calcula equivalentes consultando outros SKUs com OEM em comum
+- Estoque é lido de `siso_pedido_item_estoques` agregado por galpão (último valor conhecido)
+
+**Side Effects:**
+- Possíveis upserts em `siso_produtos_catalogo`, `siso_produto_oems` (origem `extracao_tiny`)
+
+**Rate Limiting:** Per-empresa via Tiny API rate limiter (no lazy fetch)
+
+---
+
+### POST /api/cross/produtos/[sku]/refetch
+
+**File:** `src/app/api/cross/produtos/[sku]/refetch/route.ts`
+
+**Purpose:** Força refresh bloqueante do cache do produto via Tiny.
+
+**Auth:** Sessão via `X-Session-Id`
+
+**Request Body:** Empty
+
+**Response (200):** Mesma shape de `GET /api/cross/produtos/[sku]`
+
+**Response (404):** `{ "error": "produto_nao_encontrado" }`
+**Response (503):** `{ "error": "tiny_indisponivel" }`
+
+**Business Logic:**
+- Chama `produto-fetcher.ts` em modo bloqueante
+- Atualiza `siso_produtos_catalogo` (nome, descricao, marca, fornecedor, imagem_url, gtin, sincronizado_em)
+- Re-extrai OEMs da descrição via `oem-extractor.ts`; insere os novos como `origem='extracao_tiny'` (não duplica os manuais)
+- Triggers recomputam `oem text[]` e `compatibility_v2 jsonb` automaticamente
+
+**Side Effects:**
+- Update em `siso_produtos_catalogo`
+- Insert em `siso_produto_oems` (apenas novos OEMs extraídos)
+
+**Rate Limiting:** Per-empresa via Tiny API rate limiter
+
+---
+
+### POST /api/cross/produtos/[sku]/oems
+
+**File:** `src/app/api/cross/produtos/[sku]/oems/route.ts`
+
+**Purpose:** Adiciona um código OEM manual ao produto. Avisa se o mesmo código já existe em outros SKUs (cruzamento).
+
+**Auth:** Sessão via `X-Session-Id`
+
+**Request Body:**
+```json
+{ "codigo": "string" }
+```
+
+**Validation:**
+- `codigo` regex: `^[A-Z0-9.\-]{4,30}$` (uppercase, dígitos, ponto, hífen; 4–30 chars)
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "codigo": "string",
+  "cruzamentos": [
+    { "sku": "string", "nome": "string" }
+  ]
+}
+```
+
+**Response (400 - Validação):** `{ "error": "codigo_invalido" }`
+**Response (404 - Produto):** `{ "error": "produto_nao_encontrado" }`
+**Response (409 - Duplicado):** `{ "error": "oem_ja_cadastrado" }`
+
+**Business Logic:**
+- Insere em `siso_produto_oems` com `origem='manual'`, `adicionado_por=user.id`
+- Trigger AFTER INSERT recomputa `siso_produtos_catalogo.oem`
+- Após inserir, busca outros SKUs que tenham o mesmo `oem_code` para retornar no campo `cruzamentos` (sugestão de equivalência)
+
+**Side Effects:**
+- Insert em `siso_produto_oems`
+- Trigger atualiza `siso_produtos_catalogo.oem`
+
+---
+
+### DELETE /api/cross/produtos/[sku]/oems/[codigo]
+
+**File:** `src/app/api/cross/produtos/[sku]/oems/[codigo]/route.ts`
+
+**Purpose:** Remove um código OEM do produto.
+
+**Auth:** Sessão via `X-Session-Id`
+
+**Response (200):** `{ "ok": true }`
+
+**Response (403):** `{ "error": "sem_permissao" }`
+**Response (404):** `{ "error": "oem_nao_encontrado" }`
+
+**Business Logic:**
+- **admin:** pode remover qualquer OEM (manual ou extraído)
+- **outros cargos:** só podem remover OEMs com `origem='manual'` que eles mesmos cadastraram (`adicionado_por = user.id`)
+- Trigger AFTER DELETE recomputa `siso_produtos_catalogo.oem`
+
+**Side Effects:**
+- Delete em `siso_produto_oems`
+- Trigger atualiza `siso_produtos_catalogo.oem`
+
+---
+
+### POST /api/cross/produtos/[sku]/veiculos
+
+**File:** `src/app/api/cross/produtos/[sku]/veiculos/route.ts`
+
+**Purpose:** Adiciona uma compatibilidade veicular ao produto.
+
+**Auth:** Sessão via `X-Session-Id`
+
+**Request Body:**
+```json
+{
+  "marca": "string",
+  "modelo": "string",
+  "ano_inicio": "number | null",
+  "ano_fim": "number | null",
+  "variante": "string | null"
+}
+```
+
+**Validation:**
+- `marca` e `modelo` obrigatórios e não vazios
+- `ano_inicio` e `ano_fim` (se presentes) entre 1900 e 2100
+- Se ambos presentes, `ano_inicio <= ano_fim`
+
+**Response (200):**
+```json
+{ "ok": true, "id": "number" }
+```
+
+**Response (400 - Validação):** `{ "error": "..." }`
+**Response (404):** `{ "error": "produto_nao_encontrado" }`
+**Response (409 - Duplicado):** `{ "error": "veiculo_ja_cadastrado" }`
+
+**Business Logic:**
+- Insere em `siso_produto_veiculos` com `adicionado_por=user.id`
+- UNIQUE em `(produto_sku, marca, modelo, ano_inicio, ano_fim, variante)`
+- Trigger AFTER INSERT recomputa `siso_produtos_catalogo.compatibility_v2`
+
+**Side Effects:**
+- Insert em `siso_produto_veiculos`
+- Trigger atualiza `siso_produtos_catalogo.compatibility_v2`
+
+---
+
+### DELETE /api/cross/produtos/[sku]/veiculos/[id]
+
+**File:** `src/app/api/cross/produtos/[sku]/veiculos/[id]/route.ts`
+
+**Purpose:** Remove uma compatibilidade veicular do produto.
+
+**Auth:** Sessão via `X-Session-Id`
+
+**Response (200):** `{ "ok": true }`
+
+**Response (403):** `{ "error": "sem_permissao" }`
+**Response (404):** `{ "error": "veiculo_nao_encontrado" }`
+
+**Business Logic:**
+- **admin:** pode remover qualquer veículo
+- **outros cargos:** só podem remover veículos que eles mesmos cadastraram (`adicionado_por = user.id`)
+- Trigger AFTER DELETE recomputa `siso_produtos_catalogo.compatibility_v2`
+
+**Side Effects:**
+- Delete em `siso_produto_veiculos`
+- Trigger atualiza `siso_produtos_catalogo.compatibility_v2`
+
+---
+
+### GET /api/cross/sugestoes/marcas
+
+**File:** `src/app/api/cross/sugestoes/marcas/route.ts`
+
+**Purpose:** Autocomplete de marcas de veículos cadastradas no catálogo.
+
+**Auth:** Sessão via `X-Session-Id`
+
+**Query Params:**
+- `q`: prefixo (opcional)
+
+**Response (200):**
+```json
+{ "marcas": ["string"] }
+```
+
+**Business Logic:**
+- Lista DISTINCT de `marca` em `siso_produto_veiculos` filtrando por prefixo `q` (ILIKE)
+- Ordenado alfabeticamente; limitado a 20 resultados
+
+**Side Effects:** None
+
+---
+
+### GET /api/cross/sugestoes/modelos
+
+**File:** `src/app/api/cross/sugestoes/modelos/route.ts`
+
+**Purpose:** Autocomplete de modelos para uma marca específica.
+
+**Auth:** Sessão via `X-Session-Id`
+
+**Query Params:**
+- `marca` (required): marca exata
+- `q` (optional): prefixo do modelo
+
+**Response (200):**
+```json
+{ "modelos": ["string"] }
+```
+
+**Response (400):** `{ "error": "marca_obrigatoria" }`
+
+**Business Logic:**
+- Lista DISTINCT de `modelo` em `siso_produto_veiculos` filtrando por `marca` exata e prefixo `q` opcional (ILIKE)
+- Ordenado alfabeticamente; limitado a 20 resultados
+
+**Side Effects:** None
+
+---
+
 ## Common Patterns
 
 ### Error Responses
@@ -4239,8 +4584,12 @@ Most list endpoints return up to 200 rows by default. Larger datasets are pagina
 - `siso_logs` - Application logs
 - `siso_erros` - Error tracking
 - `siso_configuracoes` - Key-value config store
+- `siso_produtos_catalogo` - Cross module: cached product catalog (Tiny mirror)
+- `siso_produto_oems` - Cross module: OEM codes per product (audit trail)
+- `siso_produto_veiculos` - Cross module: vehicle compatibility per product (audit trail)
+- `siso_cross_logs` - Cross module: search telemetry
 
 ---
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-05-07
 **API Version:** v3 (compatible with Tiny ERP API v3, OAuth2)

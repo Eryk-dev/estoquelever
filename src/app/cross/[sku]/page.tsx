@@ -9,6 +9,7 @@ import { ProdutoHeader } from "@/components/cross/produto-header";
 import { EstoqueGalpaoTabela } from "@/components/cross/estoque-galpao-tabela";
 import { EquivalentesList } from "@/components/cross/equivalentes-list";
 import { OemListEditor } from "@/components/cross/oem-list-editor";
+import { VeiculoListEditor } from "@/components/cross/veiculo-list-editor";
 import { sisoFetch } from "@/lib/auth-context";
 import type { DetalheProduto } from "@/lib/cross/types";
 
@@ -85,28 +86,7 @@ export default function CrossDetalhePage() {
 
           <OemListEditor sku={detalhe.sku} oems={detalhe.oems} onChange={carregar} />
 
-          {/* Veículos read-only no MVP1.1 — substituído por VeiculoListEditor em Task 21 */}
-          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
-            <h3 className="text-sm font-semibold mb-2">Compatibilidade veicular</h3>
-            {detalhe.veiculos.length === 0 ? (
-              <p className="text-sm text-zinc-500">Nenhum veículo cadastrado.</p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {detalhe.veiculos.map((v) => (
-                  <span
-                    key={v.id}
-                    className="px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800 text-xs"
-                  >
-                    {v.marca} {v.modelo}
-                    {v.ano_inicio || v.ano_fim
-                      ? ` ${v.ano_inicio ?? "?"}-${v.ano_fim ?? "?"}`
-                      : ""}
-                    {v.variante ? ` ${v.variante}` : ""}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+          <VeiculoListEditor sku={detalhe.sku} veiculos={detalhe.veiculos} onChange={carregar} />
 
           <EquivalentesList equivalentes={detalhe.equivalentes} />
         </div>

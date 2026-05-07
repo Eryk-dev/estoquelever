@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Replace, X, Loader2, Package, MapPin, Boxes, ExternalLink } from "lucide-react";
 import { sisoFetch } from "@/lib/auth-context";
@@ -117,6 +118,10 @@ interface CrossModalProps {
 }
 
 function CrossModal({ sku, onClose }: CrossModalProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+
   const [detalhe, setDetalhe] = useState<DetalheProduto | null>(null);
   const [detalheLoading, setDetalheLoading] = useState(true);
   const [estoquePrincipal, setEstoquePrincipal] = useState<Record<string, EstoqueGalpao> | null>(
@@ -229,9 +234,11 @@ function CrossModal({ sku, onClose }: CrossModalProps) {
     setCarregandoEstoques(false);
   }, [equivalentes]);
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
       onClick={onClose}
     >
       <div
@@ -466,6 +473,7 @@ function CrossModal({ sku, onClose }: CrossModalProps) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -3,6 +3,7 @@ import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { getEstoque } from "@/lib/tiny-api";
 import { runWithEmpresa } from "@/lib/tiny-queue";
+import { logger } from "@/lib/logger";
 import type {
   ResultadoBusca,
   RespostaBusca,
@@ -57,7 +58,7 @@ export async function searchProdutos(opts: {
         imagem_url: row.imagem_url,
         oems: row.oem ?? [],
         estoque_total: 0,
-        match: exato ? "sku_exato" : "nome",
+        match: exato ? "sku_exato" : "sku_prefixo",
       });
     }
   }
@@ -106,11 +107,12 @@ export async function searchProdutos(opts: {
     }
   }
 
-  // Ordenar: sku_exato → oem → nome
+  // Ordenar: sku_exato → sku_prefixo → oem → nome
   const matchOrder: Record<ResultadoBusca["match"], number> = {
     sku_exato: 0,
-    oem: 1,
-    nome: 2,
+    sku_prefixo: 1,
+    oem: 2,
+    nome: 3,
   };
 
   const lista = Array.from(resultados.values()).sort(
@@ -182,12 +184,23 @@ async function loadVeiculos(
 }
 
 /**
- * Busca estoque por galpão para um SKU consultando todas as empresas do grupo.
+ * Contexto do grupo de empresas usado para múltiplas consultas de estoque.
+ * Resolve uma única vez as empresas do grupo + mapa de depósitos para evitar
+ * N+1 quando consultamos estoque de vários SKUs (ex.: equivalentes).
  */
-async function loadEstoquePorGalpao(
-  sku: string,
+interface GrupoContext {
+  empresas: Awaited<ReturnType<typeof getEmpresasDoGrupo>>;
+  depositoMap: Map<string, number | null>;
+}
+
+/**
+ * Resolve uma única vez as empresas do grupo da empresa origem e o mapa
+ * empresa_id → deposito_id. Reutilizável entre várias chamadas a
+ * `loadEstoquePorGalpao` (ex.: produto principal + N equivalentes).
+ */
+async function resolveGrupoContext(
   empresaOrigemId: string,
-): Promise<Record<string, EstoqueGalpao>> {
+): Promise<GrupoContext> {
   const supabase = createServiceClient();
 
   const { data: grupoRel } = await supabase
@@ -197,16 +210,35 @@ async function loadEstoquePorGalpao(
     .single();
 
   const empresas = grupoRel ? await getEmpresasDoGrupo(grupoRel.grupo_id) : [];
-  if (empresas.length === 0) return {};
-
-  const { data: connections } = await supabase
-    .from("siso_tiny_connections")
-    .select("empresa_id, deposito_id")
-    .eq("ativo", true);
 
   const depositoMap = new Map<string, number | null>();
-  for (const c of connections ?? []) depositoMap.set(c.empresa_id, c.deposito_id);
+  if (empresas.length > 0) {
+    const { data: connections } = await supabase
+      .from("siso_tiny_connections")
+      .select("empresa_id, deposito_id")
+      .eq("ativo", true);
 
+    for (const c of connections ?? []) {
+      depositoMap.set(c.empresa_id, c.deposito_id);
+    }
+  }
+
+  return { empresas, depositoMap };
+}
+
+/**
+ * Busca estoque por galpão para um SKU consultando todas as empresas do grupo.
+ * Recebe o `ctx` pré-resolvido (via `resolveGrupoContext`) para evitar N+1
+ * quando chamado em loop (ex.: equivalentes).
+ */
+async function loadEstoquePorGalpao(
+  sku: string,
+  ctx: GrupoContext,
+): Promise<Record<string, EstoqueGalpao>> {
+  const { empresas, depositoMap } = ctx;
+  if (empresas.length === 0) return {};
+
+  const supabase = createServiceClient();
   const { data: catalogo } = await supabase
     .from("siso_produtos_catalogo")
     .select("tiny_id")
@@ -214,7 +246,7 @@ async function loadEstoquePorGalpao(
     .single();
 
   const tinyId = catalogo?.tiny_id;
-  if (!tinyId) return {};
+  if (tinyId == null) return {};
 
   const por = new Map<
     string,
@@ -249,7 +281,16 @@ async function loadEstoquePorGalpao(
           disponivel: saldo - reservado,
         });
       }
-    } catch {
+    } catch (err) {
+      logger.warn(
+        "cross-catalogo",
+        "Falha ao consultar estoque Tiny — empresa pulada",
+        {
+          sku,
+          empresaId: emp.empresaId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
       continue;
     }
   }
@@ -275,7 +316,7 @@ async function loadEstoquePorGalpao(
 async function loadEquivalentes(
   sku: string,
   oems: string[],
-  empresaOrigemId: string,
+  ctx: GrupoContext,
 ): Promise<Equivalente[]> {
   if (oems.length === 0) return [];
 
@@ -292,7 +333,7 @@ async function loadEquivalentes(
       const oemsCompartilhados = (row.oem ?? []).filter((o: string) =>
         oems.includes(o),
       );
-      const estoque = await loadEstoquePorGalpao(row.sku, empresaOrigemId);
+      const estoque = await loadEstoquePorGalpao(row.sku, ctx);
       const total = Object.values(estoque).reduce(
         (s, e) => s + e.disponivel,
         0,
@@ -332,13 +373,18 @@ export async function getProdutoDetalheCompleto(opts: {
 
   if (error || !produto) return null;
 
+  // Resolve grupo context uma única vez — reutilizado pelo estoque do produto
+  // principal e pelos N equivalentes (evita N+1 em siso_grupo_empresas e
+  // siso_tiny_connections).
+  const grupoCtx = await resolveGrupoContext(opts.empresaOrigemId);
+
   const [oems, veiculos, estoque_por_galpao] = await Promise.all([
     loadOems(opts.sku, opts.sessionUserId, opts.isAdmin),
     loadVeiculos(opts.sku, opts.sessionUserId, opts.isAdmin),
-    loadEstoquePorGalpao(opts.sku, opts.empresaOrigemId),
+    loadEstoquePorGalpao(opts.sku, grupoCtx),
   ]);
 
-  const equivalentes = await loadEquivalentes(opts.sku, produto.oem ?? [], opts.empresaOrigemId);
+  const equivalentes = await loadEquivalentes(opts.sku, produto.oem ?? [], grupoCtx);
 
   return {
     sku: produto.sku,

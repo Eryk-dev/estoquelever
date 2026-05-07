@@ -82,7 +82,7 @@ export interface ResultadoBusca {
   imagem_url: string | null;
   oems: string[];
   estoque_total: number;
-  match: "sku_exato" | "oem" | "nome";
+  match: "sku_exato" | "sku_prefixo" | "oem" | "nome";
 }
 
 export interface RespostaBusca {

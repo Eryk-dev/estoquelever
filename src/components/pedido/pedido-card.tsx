@@ -26,6 +26,7 @@ import {
 } from "@/lib/domain-helpers";
 import { ObservacoesTimeline } from "./observacoes-timeline";
 import { ProductImageZoom } from "@/components/ui/product-image-zoom";
+import { CrossPopoverButton } from "@/components/cross/cross-popover-button";
 import type { Decisao, DepositoEstoque, EstoqueItem, Pedido } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -422,6 +423,7 @@ function ProductRow({ item, decisao, pedido, onStockUpdated }: ProductRowProps) 
               >
                 <Pencil className="h-3 w-3" />
               </button>
+              <CrossPopoverButton sku={item.sku} variant="icon" />
             </>
           )}
         </div>

@@ -1,7 +1,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
-import { getEstoque } from "@/lib/tiny-api";
+import { getEstoque, buscarProdutoPorSku } from "@/lib/tiny-api";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { logger } from "@/lib/logger";
 import type {
@@ -274,26 +274,26 @@ async function loadEstoquePorGalpao(
   const { empresas, depositoMap } = ctx;
   if (empresas.length === 0) return {};
 
-  const supabase = createServiceClient();
-  const { data: catalogo } = await supabase
-    .from("siso_produtos_catalogo")
-    .select("tiny_id")
-    .eq("sku", sku)
-    .single();
-
-  const tinyId = catalogo?.tiny_id;
-  if (tinyId == null) return {};
-
   const por = new Map<
     string,
     { galpaoNome: string; saldo: number; reservado: number; disponivel: number }
   >();
 
+  // IMPORTANTE: cada empresa Tiny tem seu próprio produto.id por SKU.
+  // Não dá pra reusar o tiny_id cacheado em siso_produtos_catalogo (que vem
+  // de UMA conta específica). Pra cada empresa, resolve o produto.id por SKU
+  // e depois consulta estoque. Mesmo padrão de compras-equivalencia.ts.
   for (const emp of empresas) {
     try {
       const { token } = await getValidTokenByEmpresa(emp.empresaId);
+
+      const produto = await runWithEmpresa(emp.empresaId, () =>
+        buscarProdutoPorSku(token, sku),
+      );
+      if (!produto) continue;  // SKU não cadastrado nessa empresa
+
       const estoque = await runWithEmpresa(emp.empresaId, () =>
-        getEstoque(token, tinyId),
+        getEstoque(token, produto.id),
       );
       const depositoId = depositoMap.get(emp.empresaId) ?? null;
       const dep =

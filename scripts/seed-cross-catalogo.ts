@@ -44,7 +44,7 @@ async function main() {
     const { data: produtos, error } = await supabase
       .from("products")
       .select(
-        "sku, tiny_id, product_name, complementary_description, supplier, manufacturer, brand, external_image_urls, oem, gtin, location",
+        "sku, tiny_id, product_name, complementary_description, supplier, manufacturer, brand, external_image_urls, url_imgs, oem, gtin, location",
       )
       .range(offset, offset + PAGE_SIZE - 1);
 
@@ -57,11 +57,21 @@ async function main() {
     const linhas = produtos.map((p: any) => {
       // tiny_id é text na origem; converte se for numérico
       const tinyIdNum = p.tiny_id && /^\d+$/.test(String(p.tiny_id)) ? Number(p.tiny_id) : null;
-      // external_image_urls tem shape { urls: [...], source } — pega a primeira url
+      // Imagens no cross têm múltiplos formatos históricos. Tenta vários:
+      //   1. external_image_urls.urls[0] — { urls: [...], source }
+      //   2. external_image_urls[0].url — [{ url: "...", source: "manual" }]
+      //   3. external_image_urls[0][0] — [[ "url1", "url2" ]] (array dentro)
+      //   4. url_imgs[0][0] — mesmo formato no url_imgs legado
+      //   5. url_imgs[0].url_1 — [{ url_1, url_2, ... }] objeto numerado
+      const ext = p.external_image_urls;
+      const ui = p.url_imgs;
       const primeiraImg =
-        p.external_image_urls?.urls && Array.isArray(p.external_image_urls.urls) && p.external_image_urls.urls.length > 0
-          ? p.external_image_urls.urls[0]
-          : null;
+        (ext?.urls && Array.isArray(ext.urls) && ext.urls.length > 0 && typeof ext.urls[0] === "string" ? ext.urls[0] : null) ??
+        (Array.isArray(ext) && ext.length > 0 && typeof ext[0]?.url === "string" ? ext[0].url : null) ??
+        (Array.isArray(ext) && Array.isArray(ext[0]) && ext[0].length > 0 && typeof ext[0][0] === "string" ? ext[0][0] : null) ??
+        (Array.isArray(ui) && Array.isArray(ui[0]) && ui[0].length > 0 && typeof ui[0][0] === "string" ? ui[0][0] : null) ??
+        (Array.isArray(ui) && ui[0]?.url_1 && typeof ui[0].url_1 === "string" ? ui[0].url_1 : null) ??
+        null;
       return {
         sku: p.sku,
         tiny_id: tinyIdNum,

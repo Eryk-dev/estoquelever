@@ -8,6 +8,7 @@ import { AppShell } from "@/components/app-shell";
 import { ProdutoHeader } from "@/components/cross/produto-header";
 import { EstoqueGalpaoTabela } from "@/components/cross/estoque-galpao-tabela";
 import { EquivalentesList } from "@/components/cross/equivalentes-list";
+import { OemListEditor } from "@/components/cross/oem-list-editor";
 import { sisoFetch } from "@/lib/auth-context";
 import type { DetalheProduto } from "@/lib/cross/types";
 
@@ -82,24 +83,7 @@ export default function CrossDetalhePage() {
           <ProdutoHeader produto={detalhe} onRefreshed={carregar} />
           <EstoqueGalpaoTabela estoques={detalhe.estoque_por_galpao} />
 
-          {/* OEMs read-only no MVP1.1 — substituído por OemListEditor em Task 17 */}
-          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
-            <h3 className="text-sm font-semibold mb-2">Códigos OEM</h3>
-            {detalhe.oems.length === 0 ? (
-              <p className="text-sm text-zinc-500">Nenhum OEM cadastrado.</p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {detalhe.oems.map((o) => (
-                  <span
-                    key={o.id}
-                    className="px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800 text-xs font-mono"
-                  >
-                    {o.codigo}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+          <OemListEditor sku={detalhe.sku} oems={detalhe.oems} onChange={carregar} />
 
           {/* Veículos read-only no MVP1.1 — substituído por VeiculoListEditor em Task 21 */}
           <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">

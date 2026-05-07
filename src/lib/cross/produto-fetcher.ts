@@ -113,6 +113,8 @@ export async function persistProdutoNoCatalogo(
 ): Promise<void> {
   const supabase = createServiceClient();
 
+  const agora = new Date().toISOString();
+
   const { error: upsertErr } = await supabase
     .from("siso_produtos_catalogo")
     .upsert(
@@ -124,8 +126,8 @@ export async function persistProdutoNoCatalogo(
         fornecedor: produto.fornecedor,
         imagem_url: produto.imagem_url,
         gtin: produto.gtin,
-        sincronizado_em: new Date().toISOString(),
-        atualizado_em: new Date().toISOString(),
+        sincronizado_em: agora,
+        atualizado_em: agora,
       },
       { onConflict: "sku" },
     );

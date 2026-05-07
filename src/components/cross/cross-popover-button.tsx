@@ -19,6 +19,40 @@ interface CrossPopoverButtonProps {
   className?: string;
 }
 
+/**
+ * Cache módulo-level pra evitar re-checagem de has-cross para o mesmo SKU
+ * dentro da mesma sessão (ex: mesma SKU em vários cards).
+ */
+const hasCrossCache = new Map<string, boolean>();
+const inFlightRequests = new Map<string, Promise<boolean>>();
+
+async function checkHasCross(sku: string): Promise<boolean> {
+  const cached = hasCrossCache.get(sku);
+  if (cached !== undefined) return cached;
+
+  const inFlight = inFlightRequests.get(sku);
+  if (inFlight) return inFlight;
+
+  const promise = (async () => {
+    try {
+      const res = await sisoFetch(
+        `/api/cross/produtos/${encodeURIComponent(sku)}/has-cross`,
+      );
+      if (!res.ok) return false;
+      const data = (await res.json()) as { has: boolean };
+      hasCrossCache.set(sku, data.has);
+      return data.has;
+    } catch {
+      return false;
+    } finally {
+      inFlightRequests.delete(sku);
+    }
+  })();
+
+  inFlightRequests.set(sku, promise);
+  return promise;
+}
+
 type EstoquesPorSku = Record<string, Record<string, EstoqueGalpao> | "loading" | "error">;
 
 /**
@@ -32,6 +66,23 @@ export function CrossPopoverButton({
   className,
 }: CrossPopoverButtonProps) {
   const [aberto, setAberto] = useState(false);
+  const [hasCross, setHasCross] = useState<boolean | null>(
+    hasCrossCache.get(sku) ?? null,
+  );
+
+  useEffect(() => {
+    if (hasCross !== null) return;  // cache hit
+    let cancelado = false;
+    void checkHasCross(sku).then((has) => {
+      if (!cancelado) setHasCross(has);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [sku, hasCross]);
+
+  // Não renderiza nada enquanto check ou se SKU não tem cross
+  if (hasCross !== true) return null;
 
   return (
     <>

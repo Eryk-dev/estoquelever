@@ -2,6 +2,7 @@
 
 import { Check, Circle, MapPin, MapPinOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CrossPopoverButton } from "@/components/cross/cross-popover-button";
 
 export interface SeparacaoItem {
   produto_id: number;
@@ -91,6 +92,9 @@ export function ItemSeparacaoRow({ item }: ItemSeparacaoRowProps) {
       >
         {item.quantidade_bipada}/{item.quantidade_pedida}
       </span>
+
+      {/* Cross — abre modal com alternativas + estoques */}
+      <CrossPopoverButton sku={item.sku} variant="icon" />
     </div>
   );
 }

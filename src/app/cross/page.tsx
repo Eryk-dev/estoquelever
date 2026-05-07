@@ -8,6 +8,8 @@ import { sisoFetch } from "@/lib/auth-context";
 import { Loader2 } from "lucide-react";
 import type { RespostaBusca, TipoBusca } from "@/lib/cross/types";
 
+const SKU_LIKE_REGEX = /^[A-Z0-9.\-]{4,30}$/i;
+
 export default function CrossPage() {
   const [query, setQuery] = useState("");
   const [tipo, setTipo] = useState<TipoBusca>("auto");
@@ -71,8 +73,20 @@ export default function CrossPage() {
         )}
 
         {!loading && !erro && resposta && resposta.total === 0 && (
-          <div className="text-center py-12 text-zinc-500">
-            Nenhum resultado para &quot;{resposta.query}&quot;
+          <div className="text-center py-12 text-zinc-500 space-y-3">
+            <p>Nenhum resultado para &quot;{resposta.query}&quot;</p>
+            {SKU_LIKE_REGEX.test(resposta.query.trim()) && (
+              <button
+                onClick={() => {
+                  const sku = resposta.query.trim();
+                  // O detalhe já faz lazy fetch quando SKU não está no cache
+                  window.location.href = `/cross/${encodeURIComponent(sku)}`;
+                }}
+                className="px-3 py-1.5 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-700"
+              >
+                Forçar consulta no Tiny
+              </button>
+            )}
           </div>
         )}
 

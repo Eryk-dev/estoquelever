@@ -376,6 +376,10 @@ wms/  (subset of src/)
     reservas.ts                    # Reservas atômicas com TTL + cleanup cron-friendly
     inventario.ts                  # Sessões cycle_count/completo: criar/iniciar/pegar-loc (anti-colisão)/contar/computar-divergencias/aprovar/aplicar
     inventario-recovery.ts         # Detecta sessões e locks órfãos pra cron de cleanup
+    devolucoes.ts                  # Classificação A/B/C/D (íntegro/avariado/garantia/troca_sku) com recálculo de custo médio
+    troca-sku.ts                   # Troca SKU na separação: 2 movs (L+R) com mesma origem_id + validação Cross opcional
+    cobertura.ts                   # Service de cobertura por giro (lê siso_cobertura_estoque)
+    dashboard-geral.ts             # Agrega contadores cross-módulo pra dashboard principal
   src/hooks/
     use-inventario-realtime.ts     # Subscreve channel inventario:{id} (Supabase Realtime); retorna contagens+locs ao vivo
   src/app/wms/
@@ -396,6 +400,10 @@ wms/  (subset of src/)
     inventario/[id]/contar/page.tsx          # Tela handheld do operador (mobile-first, scan incremental)
     inventario/[id]/divergencias/page.tsx    # Dashboard de divergências (aprovar/recontar/rejeitar)
     inventario/metricas/page.tsx   # Acuracidade por operador (30d) e por localização
+    devolucoes/page.tsx + [id]/page.tsx  # Lista pendentes + tela de classificação A/B/C/D
+    troca-sku/page.tsx             # Substituir SKU na separação (2 QuadruplaPickers)
+    cobertura/page.tsx             # Tabela de cobertura por giro com filtros e cores
+    dashboard/page.tsx             # Dashboard geral (4 cards, refresh 30s)
   src/app/api/wms/
     produtos/route.ts              # GET (list/search), POST (create)
     produtos/[id]/route.ts         # GET, PATCH
@@ -433,6 +441,10 @@ wms/  (subset of src/)
     inventario/[id]/localizacoes/[locId]/bloquear/route.ts # POST (anti-colisão), DELETE (libera lock)
     inventario/metricas/route.ts                           # GET — RPCs operador+localização
     inventario/cleanup/route.ts                            # GET (worker secret) — libera locks órfãos
+    devolucoes/route.ts + [id]/classificar/route.ts        # GET fila pendente + POST classificação
+    troca-sku/route.ts                                     # POST troca atômica (L+R)
+    cobertura/route.ts + cobertura/refresh/route.ts        # GET (filtros) + GET refresh worker secret
+    dashboard-geral/route.ts                               # GET — agrega 7 contadores
   src/components/wms/
     wms-shell.tsx                  # Navegação superior do módulo WMS (10 atalhos)
     saldo-perspectiva-tabs.tsx     # Tabs entre as 4 perspectivas de saldo
@@ -510,6 +522,14 @@ Multi-operador com anti-colisão por localização. Realtime via Supabase Realti
 | `siso_inventario_localizacoes` | Localizações da sessão (ligada a area_id). bloqueada_por uuid pra anti-colisão; status pendente\|em_contagem\|contada\|divergente\|recontagem\|aprovada. |
 | `siso_inventario_contagens` | Cada bipe individual (rodada smallint pra duplo blind). Indexada por quádrupla. |
 | `siso_inventario_divergencias` | Saldo sistema vs contagem final por quádrupla. delta + delta_pct GENERATED. Status: pendente\|recontagem_solicitada\|aprovada\|rejeitada\|aplicada. mov_aplicada_id liga ao ledger ao aplicar. |
+
+### WMS Tables (Plano 5 — Exceções+Dashboards)
+
+| Table | Purpose |
+|---|---|
+| `siso_devolucoes_pendentes` | Fila de NFs de entrada esperando classificação física. UNIQUE parcial em nota_fiscal_id e chave_acesso_nf (dedup webhook re-entregue). Status: aguardando_classificacao→classificada→aplicada\|cancelada. |
+
+**Materialized view `siso_cobertura_estoque`**: agrega disponivel + giro 30d + lead time fornecedor preferencial → `status_cobertura` (ok\|atencao\|critico\|lead_time_risco\|sem_giro). Refresh via `wms_refresh_cobertura()`.
 
 **RPC `wms_inventario_pegar_localizacao(...)`**: UPDATE atômico WHERE bloqueada_por IS NULL. EXCEPTION se já bloqueada (HTTP 409 no endpoint).
 
@@ -713,6 +733,7 @@ Failure to update documentation means the next developer or LLM will work with s
 - **WMS Plano 2 (Movimentações operacionais) — implementado, validado em staging.** 5 fluxos (receber, transferir inter-galpão, replenishment intra-galpão, ajuste manual com motivo, lançamento retroativo + reconciliação) + sugestão automática de putaway + recálculo de custo médio em entradas com custo. Validação E2E: receber 50 + ajustar -10 = saldo 40, 0 divergências. Plano: `docs/superpowers/plans/2026-05-15-wms-2-movimentacoes.md`.
 - **WMS Plano 3 (Roteamento) — implementado, validado em staging.** Schema fornecedores + matriz de empréstimos N×N (com limites por par+produto) + algoritmo de roteamento puro com geo-priority (home=0, mesma_cidade=1, mesmo_estado=2, outro=3) + reservas atômicas com TTL 48h + cleanup cron-friendly + shadow logging no webhook (legado vs novo, sem mudar comportamento). 9 testes de roteamento + 3 de reservas. Plano: `docs/superpowers/plans/2026-05-22-wms-3-roteamento.md`.
 - **WMS Plano 4 (Inventário robusto) — implementado, validado em staging.** Schema multi-operador com anti-colisão (RPC `wms_inventario_pegar_localizacao` atômico) + Supabase Realtime (`inventario:{id}` channel) + workflow de divergências com tolerância 2% + R$1000 (defaults C1-C3) + 5 telas (lista, supervisor, operador handheld mobile-first, divergências, métricas) + recovery cron de locks órfãos + curva ABC automática via materialized view (giro 30d). Plano: `docs/superpowers/plans/2026-05-29-wms-4-inventario.md`.
+- **WMS Plano 5 (Exceções + dashboards) — implementado, validado em staging. Encerra Fase 0.** Devoluções classificadas A/B/C/D com recálculo de custo médio + transferência pra QUARENTENA + RMA. Troca SKU na separação (2 movs com mesma origem_id) com validação Cross opcional. Webhook NF detecta devolução (best-effort). Materialized view `siso_cobertura_estoque` com status crítico/atenção/lead_time_risco/ok/sem_giro. Dashboard geral (4 cards, refresh 30s). Shell e home reorganizados em 4 grupos. Plano: `docs/superpowers/plans/2026-06-05-wms-5-excecoes-dashboards.md`. Checklist Fase 0: `docs/superpowers/plans/wms-fase0-checklist.md`. **Próximo: Plano 6 (cutover big bang).**
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)

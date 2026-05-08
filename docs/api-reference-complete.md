@@ -4880,6 +4880,51 @@ Cron-friendly. Auth: `x-worker-secret`. Detecta sessões inativas há 4h+ (alert
 
 ---
 
+## WMS — Exceções e dashboards (Plano 5)
+
+### GET /api/wms/devolucoes
+Lista devoluções aguardando classificação física. **Response:** `{ rows: [...] }`.
+
+### POST /api/wms/devolucoes/[id]/classificar
+**Body:** `{ classificacao: 'integro'|'avariado'|'garantia'|'troca_sku', produto_id, qty, galpao_id, localizacao_id, empresa_dona_destino_id?, observacoes? }`.
+
+**Side effects por modo:**
+- `integro`: E `nf_devolucao_cliente` + recalcula custo médio (média ponderada)
+- `avariado`: E `nf_devolucao_avariada` + transferência interna pra QUARENTENA
+- `garantia`: E `nf_devolucao_cliente` + S `nf_devolucao_fornecedor` (RMA)
+- `troca_sku`: E `nf_devolucao_cliente` (a troca real é via `/api/wms/troca-sku`)
+
+### POST /api/wms/troca-sku
+Troca SKU na separação. **Body:** `{ pedido_id, quadrupla_original, quadrupla_substituto, qty, ttl_horas?, motivo?, validar_equivalencia_cross? }`.
+
+**Side effects:** 2 movs com mesma `origem_id=pedido_id`:
+- L em quadrupla_original (`origem_tipo='troca_sku_out'`)
+- R em quadrupla_substituto (`origem_tipo='troca_sku_in'`, `expira_em`)
+
+Validação Cross (`siso_produto_links`) é best-effort: warn se equivalência não cadastrada, não bloqueia em v1.
+
+### GET /api/wms/cobertura
+Lista linhas da matview de cobertura. **Query:** `status` (critico|atencao|ok|sem_giro|lead_time_risco), `galpao_id`. Limit 500, ordenado por dias_cobertura asc.
+
+### GET /api/wms/cobertura/refresh
+Cron-friendly diário 03h. **Auth:** `x-worker-secret`. Chama RPC `wms_refresh_cobertura()`.
+
+### GET /api/wms/dashboard-geral
+Agrega contadores cross-módulo numa resposta única (refetch 30s no client).
+
+**Response:**
+```json
+{
+  "cobertura": { "critico": 5, "atencao": 12, "ok": 200, "sem_giro": 8, "lead_time_risco": 3 },
+  "inventario": { "sessoesAtivas": 1, "divergenciasPend": 0, "locksAntigos": 0 },
+  "reservas": { "expiraEm6h": 2 },
+  "retroativosOrfaos": 0,
+  "emprestimos": { "paresComSaldo": 1 }
+}
+```
+
+---
+
 ## Common Patterns
 
 ### Error Responses

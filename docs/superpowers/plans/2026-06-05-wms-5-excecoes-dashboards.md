@@ -122,6 +122,15 @@ CREATE UNIQUE INDEX uq_cobertura
 CREATE INDEX idx_cobertura_status
   ON siso_cobertura_estoque(status_cobertura, dias_cobertura);
 
+-- 3. Decisão F2: criar localização QUARENTENA em cada galpão ativo (idempotente)
+INSERT INTO siso_localizacoes (galpao_id, codigo, descricao, tipo)
+SELECT id, 'QUARENTENA', 'Localização para itens avariados, garantia ou aguardando RMA', 'quarentena'
+FROM siso_galpoes g
+WHERE NOT EXISTS (
+  SELECT 1 FROM siso_localizacoes l
+  WHERE l.galpao_id = g.id AND l.codigo = 'QUARENTENA'
+);
+
 COMMIT;
 ```
 

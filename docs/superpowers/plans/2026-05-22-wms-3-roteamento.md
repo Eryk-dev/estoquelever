@@ -191,10 +191,12 @@ git commit -m "feat(wms): schema fornecedores + empréstimos + RPC reservar atom
 
 ---
 
-### Task 2: Service de fornecedores
+### Task 2: Service de fornecedores + auto-cadastro a partir de prefixos SKU
 
 **Files:**
 - Create: `src/lib/wms/fornecedores.ts`
+
+**Decisão B1:** auto-criar fornecedores a partir de `src/lib/sku-fornecedor.ts` (mapeamento existente de prefixo SKU → supplier name). Operador edita lead times e detalhes depois.
 
 - [ ] **Step 1: Service**
 
@@ -275,7 +277,64 @@ export async function getFornecedorPreferencial(produtoId: string): Promise<{ fo
   if (!data) return null;
   return { fornecedor: data.fornecedor as Fornecedor, pf: data as any as ProdutoFornecedor };
 }
+
+/**
+ * Auto-cria fornecedores no siso_fornecedores a partir do mapeamento
+ * existente em src/lib/sku-fornecedor.ts (prefixo SKU → supplier name).
+ * Idempotente: ignora se já existe.
+ */
+export async function autoCriarFornecedoresDosPrefixosSku(): Promise<{ criados: number; existentes: number }> {
+  const sb = createServiceClient();
+  // Mapeamento canônico — colocar em ./mapeamento-fornecedores-padrao.ts
+  // pra reuso, mas inline aqui pra não criar dependência circular.
+  const PADRAO: Array<{ nome: string; prefixos: string[] }> = [
+    { nome: "Diversos", prefixos: ["19"] },
+    { nome: "Tiger", prefixos: ["EW", "TG"] },
+    { nome: "LDRU", prefixos: ["LD"] },
+    { nome: "LEFS", prefixos: ["L0"] },
+    { nome: "ACA", prefixos: [] }, // 6-digit numeric, sem prefixo simples
+    { nome: "GAUSS", prefixos: ["GB", "GE", "GS", "GI"] },
+    { nome: "MRMK", prefixos: ["MK", "M0", "B0"] },
+    { nome: "Delphi", prefixos: ["CAK", "CS"] },
+    { nome: "Kintop", prefixos: ["KT"] },
+    {
+      nome: "Multiqualita",
+      prefixos: ["MQ", "APX", "WDC", "AT", "FD", "FI", "GM", "HO", "HY", "KI", "MAN", "MB", "NI", "PG", "RN", "SC", "TO", "UN", "VO", "VW", "AG", "BI", "BA"],
+    },
+  ];
+  let criados = 0, existentes = 0;
+  for (const f of PADRAO) {
+    const prefixoPrincipal = f.prefixos[0] ?? null;
+    const { data: jaExiste } = await sb.from("siso_fornecedores")
+      .select("id").eq("nome", f.nome).maybeSingle();
+    if (jaExiste) { existentes++; continue; }
+    const { error } = await sb.from("siso_fornecedores").insert({
+      nome: f.nome,
+      prefixo_sku: prefixoPrincipal,
+      observacoes: f.prefixos.length > 1 ? `prefixos adicionais: ${f.prefixos.slice(1).join(", ")}` : null,
+    });
+    if (!error) criados++;
+  }
+  return { criados, existentes };
+}
 ```
+
+- [ ] **Step 1.5: Endpoint de auto-cadastro (admin)**
+
+```typescript
+// src/app/api/wms/fornecedores/auto-cadastro/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { autoCriarFornecedoresDosPrefixosSku } from "@/lib/wms/fornecedores";
+import { getSessionUser } from "@/lib/session";
+
+export async function POST(req: NextRequest) {
+  const user = await getSessionUser(req);
+  if (!user || user.cargo !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
+  return NextResponse.json(await autoCriarFornecedoresDosPrefixosSku());
+}
+```
+
+Tela `/wms/fornecedores` ganha botão "auto-cadastrar do mapeamento de prefixos". Operador clica 1x na primeira vez.
 
 - [ ] **Step 2: Commit**
 
@@ -789,15 +848,16 @@ export default function EmprestimosPage() {
         </div>
         <div className="space-y-1">
           {regras?.rows.map(r => (
-            <div key={r.id} className="text-sm p-2 rounded border border-zinc-200 dark:border-zinc-800">
-              {empresaNome(r.empresa_credora_id)} → {empresaNome(r.empresa_devedora_id)}
-            </div>
+            <RegraComLimite key={r.id} regra={r} empresaNome={empresaNome} />
           ))}
         </div>
       </section>
 
       <section>
         <h2 className="text-lg font-medium mb-2">Saldos devedores</h2>
+        <p className="text-xs text-zinc-500 mb-2">
+          Saldo líquido entre credora ↔ devedora por produto. Limite por par+produto editável em cada regra acima (clique "limites").
+        </p>
         <table className="w-full text-sm">
           <thead><tr className="text-left text-zinc-500"><th>credora</th><th>devedora</th><th>produto</th><th className="text-right">saldo</th></tr></thead>
           <tbody>
@@ -817,11 +877,58 @@ export default function EmprestimosPage() {
 }
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Componente RegraComLimite (decisão E1)**
+
+```tsx
+// adicionar no mesmo arquivo src/app/wms/emprestimos/page.tsx
+function RegraComLimite({ regra, empresaNome }: { regra: any; empresaNome: (id: string) => string }) {
+  const queryClient = useQueryClient();
+  const [editando, setEditando] = useState(false);
+  const [limite, setLimite] = useState(regra.limite_max_por_produto ?? "");
+
+  const atualizar = useMutation({
+    mutationFn: async () => sisoFetch(`/api/wms/emprestimo-regras/${regra.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limite_max_por_produto: limite === "" ? null : Number(limite) }),
+    }).then(r => r.json()),
+    onSuccess: () => {
+      toast.success("limite atualizado");
+      setEditando(false);
+      queryClient.invalidateQueries({ queryKey: ["wms-regras"] });
+    },
+  });
+
+  return (
+    <div className="text-sm p-2 rounded border border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
+      <span className="flex-1">{empresaNome(regra.empresa_credora_id)} → {empresaNome(regra.empresa_devedora_id)}</span>
+      {editando ? (
+        <>
+          <input type="number" value={limite} onChange={e => setLimite(e.target.value)}
+            placeholder="qty máx por produto"
+            className="w-32 px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent text-xs" />
+          <button onClick={() => atualizar.mutate()} className="text-xs px-2 py-1 rounded bg-zinc-900 text-white">salvar</button>
+          <button onClick={() => setEditando(false)} className="text-xs px-2 py-1 rounded">cancelar</button>
+        </>
+      ) : (
+        <>
+          <span className="text-xs text-zinc-500">
+            limite: {regra.limite_max_por_produto ? `${regra.limite_max_por_produto}/produto` : "sem limite"}
+          </span>
+          <button onClick={() => setEditando(true)} className="text-xs px-2 py-1 rounded border">limites</button>
+        </>
+      )}
+    </div>
+  );
+}
+```
+
+Validação no algoritmo de roteamento (decisão E1, scope reduzido pra v1): apenas armazena valor; checagem efetiva no roteamento fica pra v1.x. Em v1, valor serve como documentação operacional + futura referência.
+
+- [ ] **Step 4: Commit**
 
 ```bash
 git add src/app/api/wms/emprestimo-regras/ src/app/api/wms/emprestimos/ src/app/wms/emprestimos/
-git commit -m "feat(wms): APIs e tela de matriz de empréstimos com saldos devedores"
+git commit -m "feat(wms): APIs e tela de matriz de empréstimos com limite por par"
 ```
 
 ---

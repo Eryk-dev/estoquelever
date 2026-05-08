@@ -925,7 +925,16 @@ import Link from "next/link";
 
 export default function InventarioListaPage() {
   const queryClient = useQueryClient();
-  const [novo, setNovo] = useState<any>({ tipo: "cycle_count", galpao_id: "", modo_contagem: "blind", tolerancia_pct: 2, areas: [] });
+  // Defaults travados conforme decisões C1-C3 (wms-decisoes.md):
+  // tolerancia_pct=2, modo_contagem="blind", exige_aprovacao_acima_valor=1000
+  const [novo, setNovo] = useState<any>({
+    tipo: "cycle_count",
+    galpao_id: "",
+    modo_contagem: "blind",
+    tolerancia_pct: 2,
+    exige_aprovacao_acima_valor: 1000,
+    areas: [],
+  });
 
   const { data: sessoes } = useQuery({ queryKey: ["wms-inv-sessoes"], queryFn: async () => (await sisoFetch("/api/wms/inventario")).json() });
   const { data: galpoes } = useQuery({ queryKey: ["galpoes"], queryFn: async () => (await sisoFetch("/api/admin/galpoes")).json() });

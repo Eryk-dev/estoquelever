@@ -568,6 +568,53 @@ export async function processWebhook(
       sugestao,
     });
 
+    // Shadow log: compara decisão legada com algoritmo WMS novo (Plano 3).
+    // Best-effort, NÃO afeta comportamento. Pula silenciosamente se mapeamento
+    // siso_produto_empresas não existir pra os produtos do pedido.
+    try {
+      const produtoIdsTiny = itensProcessados.map((i) => i.produto_id);
+      const { data: mapeamentos } = await supabase
+        .from("siso_produto_empresas")
+        .select("produto_id, tiny_produto_id")
+        .eq("empresa_id", empresaOrigemId)
+        .in("tiny_produto_id", produtoIdsTiny);
+      const tinyToProduto = new Map<number, string>();
+      for (const m of (mapeamentos ?? []) as Array<{
+        produto_id: string;
+        tiny_produto_id: number;
+      }>) {
+        tinyToProduto.set(Number(m.tiny_produto_id), m.produto_id);
+      }
+      const itensWms = itensProcessados
+        .map((i) => ({
+          produto_id: tinyToProduto.get(i.produto_id),
+          qty: i.quantidade_pedida,
+        }))
+        .filter((i): i is { produto_id: string; qty: number } => !!i.produto_id);
+
+      if (itensWms.length === itensProcessados.length && itensWms.length > 0) {
+        const { rotearPedidoDoBanco } = await import("./wms/roteamento");
+        const novaDecisao = await rotearPedidoDoBanco(empresaOrigemId, itensWms);
+        logger.info("wms.shadow", "comparativo legado vs WMS", {
+          pedidoId: pedidoTinyId,
+          legado: sugestao,
+          novo: novaDecisao.decisao,
+          match:
+            (sugestao === "propria" && novaDecisao.decisao === "propria") ||
+            (sugestao === "transferencia" &&
+              novaDecisao.decisao === "emprestimo") ||
+            (sugestao === "oc" && novaDecisao.decisao === "oc"),
+          motivo_novo:
+            novaDecisao.decisao === "oc" ? novaDecisao.motivo : undefined,
+        });
+      }
+    } catch (e) {
+      logger.warn("wms.shadow", "falha em roteamento novo (shadow, não-crítico)", {
+        pedidoId: pedidoTinyId,
+        e: serializeError(e),
+      });
+    }
+
     return { ok: true, pedidoId: pedidoTinyId, status, sugestao };
   } catch (err) {
     const msg = serializeError(err);

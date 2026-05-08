@@ -7,6 +7,7 @@
 - 2026-05-07 v1 — design inicial
 - 2026-05-07 v2 — revisão técnica de logística aplicada: localização como 4ª dimensão, TTL em reservas, cycle count com lock por localização, troca SKU como movimentação formal, roteamento por galpão único (split = OC), dashboard de cobertura por giro
 - 2026-05-07 v3 — módulo robusto de inventário: sessões coletivas, áreas com múltiplos operadores em paralelo, blind count, re-contagem, workflow de aprovação por tolerância, atualização em tempo real via Supabase Realtime, métricas de acuracidade
+- 2026-05-07 v4 — auditoria fresh-eyes aplicada: cargo `supervisor_logistica`, putaway com sugestão automática, lançamento retroativo (cross-docking implícito), cadastro de fornecedores com lead time, sincronização do catálogo via Tiny (NCM/CEST/origem/imagem), dashboard geral de eventos críticos, recovery de sessão de inventário órfã, pontos pendentes formalizados (separação parcial, avaria fora de devolução, RMA outbound)
 
 ---
 
@@ -37,6 +38,12 @@ A migração é em **5 fases**, começando com módulo standalone que não toca 
 15. **Marketplace sync deferido pra v2.** Tiny saldo vai divergir; aceita.
 16. **Migração com isolamento total na Fase 0** (módulo standalone). Sem impacto no fluxo crítico atual até que toda funcionalidade isolada seja validada.
 17. **Snapshot inicial via Tiny pra Fase 0.** Inventário físico real só depois do sistema estar funcionando estável (não cimentar a divergência atual antes de saber se o sistema novo funciona).
+18. **Putaway com sugestão automática.** Ao receber estoque, sistema sugere localização baseado em (a) última localização onde o SKU foi guardado, (b) localização de picking se vazia, ou (c) overstock mais próximo. Operador pode aceitar ou trocar. Validação alerta se escolher localização tipo `expedicao` ou `quarentena` pra putaway.
+19. **Lançamento retroativo (cross-docking implícito).** Se operador na separação tenta bipar SKU com saldo zero ou insuficiente, sistema permite registrar entrada de emergência (`origem_tipo='lancamento_retroativo'`) e seguir com a saída. Posteriormente, recebimento formal lança a NF de entrada e reconcilia. Evita engessar operação quando mercadoria chegou mas ainda não foi formalmente recebida.
+20. **Catálogo sincronizado com Tiny.** A cada operação que envolve um produto (webhook de pedido, refetch manual), sistema atualiza dados do catálogo local (descrição, NCM, CEST, origem fiscal, imagem). Cache sempre fresco, sem chamadas redundantes em runtime.
+21. **Dashboard geral de eventos críticos.** Tela única que centraliza alertas: cobertura crítica, reservas expiradas, sessões de inventário ativas, divergências pendentes, locks > N min, lançamentos retroativos não reconciliados, empréstimos crescendo unilateralmente.
+22. **Salvamento contínuo + recovery em sessões de inventário.** Toda contagem é INSERT atômico no DB (já vem dos princípios 3 e 8); estado da sessão persiste a cada UPDATE. Cron detecta sessões órfãs (`em_andamento` > 24h sem contagens nas últimas 4h) e alerta supervisor pra retomar ou abortar.
+23. **Cargo `supervisor_logistica`.** Nova role específica pra ações sensíveis de WMS (programar inventário completo, aprovar divergências grandes, editar matriz de empréstimos). Em v1, qualquer cargo pode executar qualquer ação; em v1.x ou v2 aplicar restrições por cargo.
 
 ## 3. Schema completo
 
@@ -50,7 +57,12 @@ CREATE TABLE siso_produtos (
   gtin text,
   imagem_url text,
   unidade text NOT NULL DEFAULT 'UN',
+  -- Fiscal
   ncm text,
+  cest text,                                   -- Código Especificador da Subst. Tributária
+  origem_fiscal smallint CHECK (origem_fiscal BETWEEN 0 AND 8),  -- 0=nacional, 1-8=estrangeiro/etc
+  -- Sync com Tiny
+  sincronizado_em timestamptz,                 -- última atualização vinda do Tiny
   ativo boolean NOT NULL DEFAULT true,
   criado_em timestamptz NOT NULL DEFAULT now(),
   atualizado_em timestamptz NOT NULL DEFAULT now()
@@ -59,7 +71,10 @@ CREATE TABLE siso_produtos (
 CREATE INDEX idx_produtos_sku ON siso_produtos(sku);
 CREATE INDEX idx_produtos_gtin ON siso_produtos(gtin) WHERE gtin IS NOT NULL;
 CREATE INDEX idx_produtos_ativo ON siso_produtos(ativo) WHERE ativo = true;
+CREATE INDEX idx_produtos_sincronizado ON siso_produtos(sincronizado_em);
 ```
+
+**Sincronização com Tiny:** ao processar webhook de pedido ou ao operador clicar "atualizar produto", o serviço de sync (`produto-fetcher.ts` já existente no módulo Cross) busca dados do Tiny e faz UPDATE no catálogo. Mantém cache sempre fresco; sem chamada Tiny em runtime de hot paths.
 
 ### 3.2 Mapeamento SKU ↔ Tiny por empresa
 
@@ -164,6 +179,7 @@ CREATE TABLE siso_movimentacoes (
   -- Origem de negócio
   origem_tipo text NOT NULL CHECK (origem_tipo IN (
     'compra_manual',
+    'lancamento_retroativo',          -- entrada de emergência (cross-docking implícito); aguarda reconciliação com compra_manual posterior
     'nf_venda',
     'nf_devolucao_cliente',
     'nf_devolucao_avariada',
@@ -261,7 +277,58 @@ CREATE INDEX idx_regra_devedora ON siso_emprestimo_regras(empresa_devedora_id) W
 CREATE INDEX idx_regra_credora ON siso_emprestimo_regras(empresa_credora_id) WHERE ativo;
 ```
 
-### 3.8 Locks de localização (cycle count e contagens)
+### 3.8 Fornecedores e lead time
+
+Cadastro de fornecedores e relacionamento N:N com produtos, com lead time pra alimentar dashboard de cobertura e sugestões de OC.
+
+```sql
+CREATE TABLE siso_fornecedores (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome text NOT NULL,
+  cnpj text UNIQUE,
+  prefixo_sku text,                           -- ex: "19", "EW", "TG" (mapeamento existente em sku-fornecedor.ts)
+  ativo boolean NOT NULL DEFAULT true,
+  observacoes text,
+  criado_em timestamptz NOT NULL DEFAULT now(),
+  atualizado_em timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_fornecedor_prefixo ON siso_fornecedores(prefixo_sku) WHERE ativo;
+CREATE INDEX idx_fornecedor_cnpj ON siso_fornecedores(cnpj) WHERE cnpj IS NOT NULL;
+
+CREATE TABLE siso_produto_fornecedores (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  produto_id uuid NOT NULL REFERENCES siso_produtos(id) ON DELETE CASCADE,
+  fornecedor_id uuid NOT NULL REFERENCES siso_fornecedores(id) ON DELETE CASCADE,
+
+  -- Lead time
+  lead_time_dias_min int NOT NULL DEFAULT 7 CHECK (lead_time_dias_min >= 0),
+  lead_time_dias_medio int NOT NULL DEFAULT 14 CHECK (lead_time_dias_medio >= 0),
+  lead_time_dias_max int NOT NULL DEFAULT 30 CHECK (lead_time_dias_max >= 0),
+  ultima_compra_em date,
+
+  -- Comercial
+  custo_unitario numeric(12,4),
+  qty_minima_pedido numeric NOT NULL DEFAULT 1,
+  multiplo_compra numeric NOT NULL DEFAULT 1,  -- ex: vende em caixa de 6 → multiplo=6
+  preferencial boolean NOT NULL DEFAULT false, -- se true, é o fornecedor padrão
+
+  ativo boolean NOT NULL DEFAULT true,
+  criado_em timestamptz NOT NULL DEFAULT now(),
+  atualizado_em timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(produto_id, fornecedor_id),
+  CHECK (lead_time_dias_min <= lead_time_dias_medio),
+  CHECK (lead_time_dias_medio <= lead_time_dias_max)
+);
+
+CREATE INDEX idx_pf_produto ON siso_produto_fornecedores(produto_id) WHERE ativo;
+CREATE INDEX idx_pf_fornecedor ON siso_produto_fornecedores(fornecedor_id) WHERE ativo;
+CREATE INDEX idx_pf_preferencial ON siso_produto_fornecedores(produto_id) WHERE preferencial AND ativo;
+```
+
+**Uso:** dashboard de cobertura (§8) cruza `dias_cobertura` com `lead_time_dias_medio` do fornecedor preferencial pra alertar quando reposição vai chegar tarde demais. Sugestão de OC usa `qty_minima_pedido` e `multiplo_compra` pra arredondar a quantidade sugerida.
+
+### 3.9 Locks de localização (cycle count e contagens)
 
 ```sql
 CREATE TABLE siso_localizacao_locks (
@@ -289,7 +356,7 @@ CREATE INDEX idx_loc_lock_ativos
 
 **Semântica:** enquanto um lock está ativo (`finalizado_em IS NULL`), o roteamento ignora as linhas de `siso_estoque` daquela localização. Reservas pra essa localização falham com `LocalizacaoBloqueadaError`. Outras localizações operam normal.
 
-### 3.9 Sessões de inventário
+### 3.10 Sessões de inventário
 
 Sessão master que orquestra cycle count ou inventário completo. Suporta múltiplos operadores em paralelo, blind count, tolerância configurável e workflow de aprovação.
 
@@ -341,7 +408,7 @@ CREATE INDEX idx_inv_sessoes_galpao ON siso_inventario_sessoes(galpao_id, criado
 CREATE INDEX idx_inv_sessoes_ativas ON siso_inventario_sessoes(galpao_id) WHERE status = 'em_andamento';
 ```
 
-### 3.10 Áreas (divisão de operadores em paralelo)
+### 3.11 Áreas (divisão de operadores em paralelo)
 
 Pra inventário completo: divide o galpão em N áreas, atribui operadores. Pra cycle count: tipicamente 1 área única.
 
@@ -363,7 +430,7 @@ CREATE INDEX idx_inv_areas_sessao ON siso_inventario_areas(sessao_id, status);
 CREATE INDEX idx_inv_areas_operador ON siso_inventario_areas(operador_id) WHERE status = 'em_andamento';
 ```
 
-### 3.11 Localizações da sessão
+### 3.12 Localizações da sessão
 
 Mapeia quais localizações pertencem a quais áreas, e o status de cada uma. Inclui anti-colisão (`bloqueada_por`).
 
@@ -397,7 +464,7 @@ CREATE INDEX idx_inv_loc_bloqueada
   WHERE bloqueada_em IS NOT NULL;
 ```
 
-### 3.12 Contagens individuais
+### 3.13 Contagens individuais
 
 Cada bipe/registro feito por um operador. Suporta múltiplas contagens da mesma quádrupla (blind count com 2 operadores, ou re-contagem em rodadas posteriores).
 
@@ -423,7 +490,7 @@ CREATE INDEX idx_inv_cont_quadrupla
   ON siso_inventario_contagens(sessao_id, localizacao_id, produto_id, empresa_dona_id, rodada);
 ```
 
-### 3.13 Divergências e workflow de aprovação
+### 3.14 Divergências e workflow de aprovação
 
 Computadas automaticamente após contagem (ou após múltiplas rodadas se duplo_blind). Geram mov no ledger quando aplicadas.
 
@@ -466,14 +533,16 @@ CREATE INDEX idx_inv_div_status ON siso_inventario_divergencias(status, sessao_i
 CREATE INDEX idx_inv_div_aprovacao ON siso_inventario_divergencias(sessao_id) WHERE status = 'pendente';
 ```
 
-### 3.14 Diagrama ER
+### 3.15 Diagrama ER
 
 ```
 siso_produtos ──┬── siso_produto_empresas ── siso_empresas ──┬── siso_galpoes ── siso_localizacoes
                 │                                              │                       │
-                ├── siso_estoque ─────────────────────────────┼───────────────────────┤
+                ├── siso_produto_fornecedores ── siso_fornecedores                     │
+                │                                                                      │
+                ├── siso_estoque ─────────────────────────────┼──────────────────────┤
                 │                                              │                       │
-                ├── siso_movimentacoes ───────────────────────┼───────────────────────┤
+                ├── siso_movimentacoes ───────────────────────┼──────────────────────┤
                 │                                              │                       │
                 └── (consultas derivadas: saldo devedor,       │                       │
                      dias de cobertura, acuracidade, etc)      │                       │
@@ -496,7 +565,8 @@ siso_inventario_sessoes ─┬── siso_inventario_areas (operador_id) ──�
 | origem_tipo | Tipo | Disparado por | Observações |
 |---|---|---|---|
 | `inventario_inicial` | E | Job de migração | Snapshot fundacional na Fase 0 (puxa do Tiny) |
-| `compra_manual` | E | Operador | Tela "Receber estoque", escolhe localização de putaway |
+| `compra_manual` | E | Operador | Tela "Receber estoque", escolhe localização de putaway (com sugestão automática) |
+| `lancamento_retroativo` | E | Operador na separação/etc | Mercadoria já chegou mas não foi formalmente recebida; sistema aceita pra não engessar; reconciliada com `compra_manual` posterior |
 | `nf_venda` | S | Webhook NF venda | Vendedora = dona |
 | `emprestimo` | S | Webhook NF venda | Vendedora ≠ dona; preenche `emprestimo_devedora_id` |
 | `nf_devolucao_cliente` | E | Operador classifica | Volta pra dona original (quita empréstimo se aplicável) |
@@ -1016,6 +1086,61 @@ Se a mov original era 'emprestimo': empréstimo é desfeito automaticamente
   (a query agregada de saldo devedor — §11.2 — ignora movs com estorno_de preenchido).
 ```
 
+### 5.11 Lançamento retroativo (entrada de emergência / cross-docking implícito)
+
+**Cenário:** mercadoria chegou fisicamente ao galpão mas o operador de recebimento ainda não fez o lançamento formal. Operador da separação (ou outro fluxo) tenta bipar SKU pra atender pedido. Saldo no SISO está zero ou insuficiente. Sem este fluxo, separação fica engessada esperando recebimento — operador frustrado, pedido atrasa.
+
+**Fluxo:**
+
+```
+Operador na separação bipa SKU. Sistema verifica saldo na quádrupla de origem.
+
+Se saldo insuficiente:
+  UI alerta: "Saldo registrado: 0 (ou X). Você está com a mercadoria em mãos?"
+  [Sim, lançar entrada de emergência]  [Não, sem estoque]
+
+Se operador confirma "Sim":
+  UI pergunta:
+    - Qty a lançar (default = qty necessária pra atender o pedido)
+    - Localização (default = localização default do galpão; ou onde estava sendo bipado)
+    - Empresa dona (default = empresa do pedido sendo separado)
+    - Fornecedor (opcional, ajuda na reconciliação posterior)
+    - Observação (campo livre)
+
+  Em transação atômica:
+    INSERT mov tipo='E' origem='lancamento_retroativo'
+      observacoes = 'emergência: separação pedido N; aguarda reconciliação com NF de entrada'
+      origem_detalhes = { pedido_id, fornecedor_id?, motivo }
+    UPDATE siso_estoque: saldo += qty
+    -- Em seguida o fluxo normal de saída segue (reserva e/ou venda)
+
+Sistema marca o lançamento como pendente de reconciliação (query, não coluna).
+```
+
+**Reconciliação posterior:**
+
+Quando recebimento formal lança a NF de entrada (`compra_manual`), sistema procura `lancamento_retroativo` pendente compatível (mesmo SKU, mesma empresa, janela temporal de N dias, qty <= qty da NF) e oferece:
+
+```
+Sistema detecta match: "Há 12 unidades lançadas como retroativo nos últimos 7 dias.
+                       Reconciliar com esta entrada?"
+
+Operador confirma:
+  Em transação atômica:
+    INSERT mov tipo='S' origem='estorno' qty=qty_retroativa
+      estorno_de = id_da_mov_retroativa
+      observacoes = 'reconciliado com NF X'
+    A entrada formal (compra_manual) já foi inserida normalmente; net efeito = qty da NF.
+    UPDATE siso_estoque: já refletido pelas duas movs.
+```
+
+**Dashboard:** lançamentos retroativos não-reconciliados aparecem em "Pendências de reconciliação" (§8.4 dashboard geral). Operador pode reconciliar manualmente ou marcar como "definitivo" (mercadoria chegou sem NF, ajuste contábil é o que vale).
+
+**Política operacional:**
+- Lançamento retroativo é **exceção, não regra**. Limite diário por operador (alerta acima de N/dia).
+- Auditoria: relatório semanal de lançamentos retroativos por operador (frequência alta = sintoma de processo de recebimento ineficiente).
+- Reconciliação obrigatória em até 7 dias; após isso, alerta vira crítico.
+
 ## 6. Algoritmo de roteamento
 
 **Princípio:** todos os itens do pedido têm que caber num único galpão (próprio ou via empréstimo). Sem split shipment. Se cobertura exige >1 galpão → vai pra OC.
@@ -1329,6 +1454,39 @@ CREATE INDEX idx_cobertura_status
 - **Replenishment sugerido**: localização de picking com cobertura < 7 dias, mas overstock no mesmo galpão tem saldo. Sugere transferência intra-galpão.
 - **Localizações em cycle count**: lista locks ativos > 1h (possivelmente esquecidos).
 - **Empréstimos crescendo unilateralmente**: saldo devedor entre par credora↔devedora cresceu > 20% no último mês — alerta pra acerto.
+- **Cobertura cruzada com lead time**: SKU com `dias_cobertura < lead_time_medio` do fornecedor preferencial — risco real de ruptura (não basta < 14 dias se fornecedor demora 21 dias).
+- **Lançamentos retroativos pendentes**: entradas de emergência aguardando reconciliação > 3 dias.
+
+### 8.4 Dashboard geral de eventos críticos
+
+Tela única que centraliza todos os alertas operacionais do WMS, agrupados por severidade. Substitui ter que abrir N telas pra ver o estado global.
+
+**Layout (cartões por categoria):**
+
+```
+┌─ COBERTURA ──────────────────────┐  ┌─ INVENTÁRIO ─────────────────┐
+│ 🔴 Crítico (< lead time):  12    │  │ Sessões ativas:           2  │
+│ 🟡 Atenção (< 14 dias):    34    │  │ Divergências pendentes:  18  │
+│ ⚫ Sem giro 30d:           87    │  │ Locks > 1h:               1  │
+└──────────────────────────────────┘  │ Sessões órfãs > 24h:      0  │
+                                       └──────────────────────────────┘
+┌─ RESERVAS ───────────────────────┐  ┌─ EMPRÉSTIMOS ────────────────┐
+│ Expiradas (libera em < 6h):  3   │  │ Pares com saldo > R$ 50k: 2  │
+│ Expiradas pendentes:          5  │  │ Crescimento > 20% / mês:  1  │
+│ Lançamentos retroativos       │  │                              │
+│ não reconciliados:            7  │  └──────────────────────────────┘
+└──────────────────────────────────┘
+
+┌─ REPLENISHMENT SUGERIDO ─────────────────────────────────────────────┐
+│ 23 localizações de picking com overstock disponível pra repor        │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+**Cada cartão** tem link pra tela específica de tratamento (drill-down). Refresh a cada 30s ou via Supabase Realtime se a tela suportar.
+
+**Permissão de visualização:** todos os cargos veem; ações ficam restritas conforme role (cargo `supervisor_logistica` em v1.x+).
+
+**Notificações push (mobile/desktop):** v2 — em v1, alertas só aparecem ao abrir a tela. Email/Slack opt-in fica pra próxima iteração.
 
 ## 9. Integração Tiny
 
@@ -1380,8 +1538,10 @@ V1 não trata. V2 vai precisar de estratégia:
 
 **O que muda:**
 - Cria tabelas novas:
-  - `siso_produtos`
+  - `siso_produtos` (com cest, origem_fiscal, sincronizado_em)
   - `siso_produto_empresas`
+  - `siso_fornecedores`
+  - `siso_produto_fornecedores` (com lead_time)
   - `siso_localizacoes`
   - `siso_estoque`
   - `siso_movimentacoes`
@@ -1394,21 +1554,26 @@ V1 não trata. V2 vai precisar de estratégia:
   - `siso_inventario_contagens`
   - `siso_inventario_divergencias`
 - Adiciona colunas em `siso_galpoes` (cidade, estado, país).
+- Adiciona cargo `supervisor_logistica` em `siso_usuarios.cargo` (sem restrições aplicadas em v1; roles entram em v1.x+).
 - Materialized view `siso_cobertura_estoque` + cron diário.
-- Cron jobs: TTL de reservas (1h), reconciliação ledger↔estoque (1h), refresh cobertura (diário 03h), cleanup de bloqueios de inventário órfãos (10min).
+- Cron jobs: TTL de reservas (1h), reconciliação ledger↔estoque (1h), refresh cobertura (diário 03h), cleanup de bloqueios de inventário órfãos (10min), detecção de sessões de inventário órfãs (4h), alerta de lançamentos retroativos não reconciliados (diário).
+- Sync com Tiny: serviço (`produto-fetcher.ts` reutilizado do módulo Cross) atualiza catálogo a cada webhook de pedido.
 - Telas novas no SISO (rota `/wms/*`):
   - **Cadastros:**
-    - Catálogo de produtos (CRUD)
+    - Catálogo de produtos (CRUD; sync automático com Tiny)
     - Mapeamento produto ↔ empresa Tiny
+    - Fornecedores (CRUD com prefixo SKU, CNPJ)
+    - Produto ↔ Fornecedor (CRUD com lead time min/médio/max, qty mínima, múltiplo, custo, preferencial)
     - Configuração de galpões (cidade, estado)
     - Configuração de localizações por galpão (CRUD com tipo)
     - Matriz de empréstimos
   - **Operação:**
-    - Receber estoque (entrada manual, escolha de localização)
+    - Receber estoque (entrada manual com sugestão automática de localização)
     - Transferir entre galpões (inter-galpão)
     - Replenishment (intra-galpão, entre localizações)
     - Ajuste manual
     - Troca de SKU (se separação habilitar antes da Fase 3)
+    - Lançamento retroativo (modal acionado da separação quando saldo zero, com fluxo de reconciliação)
   - **Inventário (módulo robusto):**
     - Programar sessão de cycle count (escolher localizações, atribuir operadores, configurar tolerância e modo blind)
     - Programar sessão de inventário completo (dividir galpão em áreas, atribuir operadores)
@@ -1422,7 +1587,8 @@ V1 não trata. V2 vai precisar de estratégia:
     - Saldos (4 perspectivas: por dono, por galpão, por localização, por produto)
     - Ledger (filtros por origem, produto, período, etc)
     - Dashboard de empréstimos pendentes (saldos credora ↔ devedora)
-    - Dashboard de avisos (cobertura por giro, replenishment sugerido, reservas expiradas, sessões de inventário ativas, locks > N min)
+    - Dashboard geral de eventos críticos (cartões agrupados: cobertura, inventário, reservas, empréstimos, replenishment, lançamentos retroativos pendentes)
+    - Reconciliação de lançamentos retroativos (lista de pendentes, ação de match com NF de entrada)
 - Snapshot inicial: bulk-load de saldo atual do Tiny pra `siso_estoque` (uma vez, marca como `inventario_inicial`). Localização default = `DEFAULT-PICKING` por galpão.
 
 **O que NÃO muda:**
@@ -1581,6 +1747,9 @@ Saldo líquido = empréstimos diretos − empréstimos reversos − estornos. Qu
 | Operadores tentam pegar mesma localização simultaneamente | Race em `bloqueada_por` | UPDATE atômico; perdedor recebe alerta na UI e tenta próxima |
 | Contagem duplo_blind diverge entre operadores | Erro humano ou má identificação de SKU | Sistema dispara 3ª contagem por supervisor; divergência fica `pendente` até resolução |
 | Sessão completa iniciada com pedidos em andamento | Admin não esperou separação concluir | Sistema avisa antes de iniciar; pedidos já reservados ficam aguardando finalização da sessão |
+| Sessão de inventário órfã (servidor caiu durante) | Crash de servidor ou rede | Cada contagem é INSERT atômico (nada perdido). Cron 4h detecta sessão `em_andamento` sem contagens nas últimas 4h; alerta supervisor pode "retomar" (reabrir) ou "encerrar" (libera locks, cancela sessão); auditoria registra a ação |
+| Lançamento retroativo não reconciliado > 7 dias | Operador esqueceu de lançar NF, ou NF nunca chegou | Alerta no dashboard geral; após 14 dias, vira crítico (admin precisa marcar como "definitivo" ou "ajuste manual" pra investigação contábil) |
+| Lead time do fornecedor desatualizado | `ultima_compra_em` > 6 meses | Alerta pra revisar cadastro; tempos antigos não refletem realidade atual do fornecedor |
 
 ## 13. Escopo v1 vs v2+
 
@@ -1589,7 +1758,11 @@ Saldo líquido = empréstimos diretos − empréstimos reversos − estornos. Qu
 - Telas listadas na Fase 0
 - Webhooks, ledger com 4 dimensões, reservas com TTL, devoluções classificadas, transferências (inter e intra-galpão), ajustes, troca SKU, estorno
 - Módulo robusto de inventário: cycle count rotativo + inventário completo multi-operador com realtime, blind count, duplo blind, re-contagem, workflow de aprovação por tolerância, métricas de acuracidade
-- Dashboard de cobertura por giro
+- Cadastro de fornecedores com lead time
+- Lançamento retroativo (entrada de emergência) com fluxo de reconciliação
+- Dashboard geral de eventos críticos
+- Sync de catálogo via Tiny (NCM, CEST, origem fiscal, imagem)
+- Cargo `supervisor_logistica` (sem restrições aplicadas; roles entram em v1.x+)
 
 **v2 (escopo posterior):**
 - Marketplace sync (push de saldo SISO → Tiny → ML/Shopee)
@@ -1603,7 +1776,9 @@ Saldo líquido = empréstimos diretos − empréstimos reversos − estornos. Qu
 - ABC analysis automatizada (sugestão de slotting)
 - FIFO/FEFO no roteamento
 
-## 14. Open questions (a confirmar no plan/implementação)
+## 14. Open questions e pontos pendentes
+
+### 14.1 Open questions (a confirmar no plan/implementação)
 
 1. **Volume mensal de devoluções** — se for muito alto (>50/mês), tela de classificação precisa de batch ops e search robusto.
 2. **Custo médio em empréstimos** — quando vendedora vende usando estoque da credora, o custo da NF da vendedora deveria ser igual ao custo médio do estoque da credora. Mas isso é só pra contabilidade interna; NF tem o preço de venda. Confirmar com contador antes da Fase 3.
@@ -1611,6 +1786,20 @@ Saldo líquido = empréstimos diretos − empréstimos reversos − estornos. Qu
 4. **Auto-quitação de empréstimo na devolução** — quando devolução íntegra de venda-com-empréstimo volta, debita 1 da dívida. E se a dívida já foi negativa por empréstimo reverso? Tratar como crédito da credora (saldo líquido fica mais negativo, ela passa a dever pra outra parte).
 5. **Política de geo-priority** — galpão home > cidade > estado é regra fixa. Mas e se home tem cobertura magra e galpão remoto tem fartura? Aceitar viés geográfico em v1; tunável em v2 com peso configurável.
 6. **Limite máximo por produto em empréstimo** — campo `limite_max_por_produto` em `siso_emprestimo_regras` está modelado mas não há tela pra configurar nem checagem no roteamento. Habilitar em v1 ou v2?
+
+### 14.2 Pontos pendentes (decisão posterior ao build inicial)
+
+Funcionalidades reconhecidas como necessárias mas adiadas pra evitar inflar Fase 0. Implementadas em v1.x (após estabilização) ou v2:
+
+1. **Separação parcial** — operador no picking encontra menos do que o sistema dizia ter. Hoje o fluxo não está formalizado: vai precisar UI específica pra registrar qty real encontrada, ajuste automático na quádrupla, re-roteamento (outra localização? outro galpão? empréstimo? cancela item?), e notificação ao cliente. **Importante:** vai aparecer cedo em produção (estoque mentiroso pré-saneamento). Workaround temporário: ajuste manual + cancelamento de item via fluxo existente.
+
+2. **Avaria detectada fora de devolução** — operador no cycle count, replenishment ou separação encontra item quebrado. Hoje cai em `ajuste_manual` com motivo livre. Falta: taxonomia de motivos (caixa amassada / produto quebrado / lacre rompido / vencido), foto obrigatória (mobile), workflow de quarentena, limite de auto-baixa por valor (acima de R$ X exige aprovação).
+
+3. **RMA outbound (devolução pra fornecedor)** — `nf_devolucao_fornecedor` existe como `origem_tipo` mas o workflow é só "operador clica". Falta: status da RMA (aguardando autorização, autorizada, enviada, recebida crédito), SLA do fornecedor, saldo financeiro a receber (crédito de mercadoria devolvida), reconciliação contra próxima compra. Em v1, registra mov manualmente; gestão de processo fica pra v1.x ou v2.
+
+4. **Permissões granulares por cargo** — cargo `supervisor_logistica` está cadastrado em v1 mas sem restrições aplicadas. Em v1 qualquer cargo pode programar inventário, aprovar divergência, editar matriz de empréstimos. Aplicar restrições em v1.x quando o WMS estiver consolidado.
+
+5. **Notificações push** — dashboard de eventos críticos só atualiza ao abrir a tela. Email/Slack/push notification opt-in fica pra v2.
 
 ## 15. Glossário
 
@@ -1638,8 +1827,13 @@ Saldo líquido = empréstimos diretos − empréstimos reversos − estornos. Qu
 | **Acuracidade** | % de localizações sem divergência na contagem; medida por localização, operador e global. |
 | **Replenishment** | Reposição interna ao galpão (overstock → picking) via transferência intra-galpão. |
 | **Cobertura (em dias)** | Saldo disponível dividido pelo giro diário médio dos últimos 30 dias. |
+| **Lead time** | Tempo entre OC e recebimento da mercadoria do fornecedor. Cadastrado em `siso_produto_fornecedores` (min/médio/max). |
+| **Lançamento retroativo** | Entrada de emergência registrada quando mercadoria já chegou ao galpão mas a NF de entrada ainda não foi formalmente lançada. Reconciliada posteriormente com a `compra_manual`. |
+| **Cross-docking implícito** | Padrão emergente do lançamento retroativo: mercadoria é recebida e expedida sem passar formalmente pelo estoque (a passagem é registrada no ledger, mas não há "armazenagem" intermediária). |
+| **Putaway** | Decisão de onde guardar mercadoria recebida. Sistema sugere automaticamente; operador pode aceitar ou trocar. |
+| **`supervisor_logistica`** | Cargo proposto pra ações sensíveis de WMS. Em v1 cadastrado mas sem restrições aplicadas; em v1.x+ aplicar policies. |
 | **Split shipment** | Envio dividido em múltiplas remessas/galpões. **Não suportado em v1** — pedido que exigiria split vai pra OC. |
 
 ---
 
-**Fim do design.** Revisão técnica de logística aplicada (v2) + módulo robusto de inventário multi-operador realtime (v3). Próximo passo: invocar a skill `writing-plans` pra gerar plano de implementação task-by-task.
+**Fim do design.** Revisão técnica de logística (v2) + módulo robusto de inventário multi-operador realtime (v3) + auditoria fresh-eyes incorporada (v4). Próximo passo: invocar a skill `writing-plans` pra gerar plano de implementação task-by-task.

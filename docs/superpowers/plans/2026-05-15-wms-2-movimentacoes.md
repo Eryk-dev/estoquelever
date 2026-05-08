@@ -10,7 +10,7 @@
 
 **Spec de referência:** [docs/superpowers/specs/2026-05-07-wms-design.md](../specs/2026-05-07-wms-design.md) — §5.1, 5.5, 5.6, 5.11 + princípios 18-19.
 
-**Pré-requisito:** Plano 1 (Foundation) concluído e em produção.
+**Pré-requisito:** Plano 1 (Foundation) concluído **em staging**. Toda a Fase 0 roda no ambiente de staging configurado no Setup do Plano 1 (Supabase branch `wms-fase0` + preview Vercel). Migrations e código deste plano operam **somente em staging**; produção não é tocada.
 
 ---
 

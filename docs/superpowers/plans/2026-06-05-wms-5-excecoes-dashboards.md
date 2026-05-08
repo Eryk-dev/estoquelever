@@ -10,7 +10,7 @@
 
 **Spec de referência:** [docs/superpowers/specs/2026-05-07-wms-design.md](../specs/2026-05-07-wms-design.md) — §5.4, 5.8, 8.
 
-**Pré-requisitos:** Planos 1-4 concluídos.
+**Pré-requisitos:** Planos 1-4 concluídos **em staging**. Migrations e código deste plano operam **somente em staging**; produção não é tocada. Webhook NF de devolução em staging é simulado via curl manual (em prod o webhook continua indo só pra prod).
 
 ---
 

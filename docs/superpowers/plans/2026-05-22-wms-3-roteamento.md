@@ -10,7 +10,7 @@
 
 **Spec de referência:** [docs/superpowers/specs/2026-05-07-wms-design.md](../specs/2026-05-07-wms-design.md) — §3.7, 3.8, 6, 7 + princípios 6, 7, 8, 9.
 
-**Pré-requisitos:** Planos 1 e 2 concluídos.
+**Pré-requisitos:** Planos 1 e 2 concluídos **em staging** (Supabase branch `wms-fase0` + preview Vercel). Migrations e código deste plano operam **somente em staging**; produção não é tocada. O webhook do Tiny continua apontando pra prod, então o "shadow logging" da Task 11 só dispara quando webhook real chega na prod — em staging, dispara via testes manuais.
 
 ---
 

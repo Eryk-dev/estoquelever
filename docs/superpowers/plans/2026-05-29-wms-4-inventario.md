@@ -10,7 +10,7 @@
 
 **Spec de referência:** [docs/superpowers/specs/2026-05-07-wms-design.md](../specs/2026-05-07-wms-design.md) — §3.10-3.14, 5.7, princípios 12-13.
 
-**Pré-requisitos:** Planos 1-3 concluídos (Plano 3 já cria `siso_localizacao_locks`).
+**Pré-requisitos:** Planos 1-3 concluídos **em staging** (Plano 3 já cria `siso_localizacao_locks`). Migrations e código deste plano operam **somente em staging**; produção não é tocada. Realtime via Supabase Realtime funciona normal em staging (cada branch tem sua própria publication).
 
 ---
 

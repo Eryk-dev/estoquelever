@@ -12,6 +12,248 @@
 
 **Pré-requisitos:** ambiente dev rodando (`npm run dev`), Supabase project `wrbrbhuhsaaupqsimkqz` com `SUPABASE_SERVICE_ROLE_KEY` em `.env.local`.
 
+**Isolamento total de produção:** toda a Fase 0 roda em **staging environment** isolado (Supabase branch `wms-fase0` + preview Vercel). Banco de produção **não é tocado**. Setup do staging é pré-requisito antes da Task 1 (ver seção abaixo).
+
+---
+
+## Setup do staging environment (PRÉ-REQUISITO antes da Task 1)
+
+Antes de qualquer linha de código, monta o ambiente de staging isolado. Tudo daqui em diante (migrations, código, validação) roda nesse ambiente. Produção fica intocada até decisão consciente de promover (Fase 1+).
+
+### Setup 0.1: Confirmação e criação da branch Supabase
+
+**Files:** N/A (operação de infraestrutura)
+
+- [ ] **Step 1: Pedir confirmação explícita ao user**
+
+Antes de criar qualquer branch, perguntar: "Vou criar a Supabase branch `wms-fase0` a partir de prod (`wrbrbhuhsaaupqsimkqz`). Branch é descartável, não afeta prod, mas requer aprovação. Pode prosseguir?"
+
+Aguardar "sim" ou equivalente.
+
+- [ ] **Step 2: Criar branch via MCP Supabase**
+
+Run via tool `mcp__supabase__create_branch`:
+
+```json
+{
+  "project_id": "wrbrbhuhsaaupqsimkqz",
+  "name": "wms-fase0",
+  "confirm_cost_id": "<obter via mcp__supabase__get_cost first>"
+}
+```
+
+A branch é criada como cópia do schema + dados de prod. Cobrança Supabase é validada via `confirm_cost` antes da criação.
+
+- [ ] **Step 3: Confirmar branch ativa**
+
+Run: `mcp__supabase__list_branches`
+
+Expected: branch `wms-fase0` aparece com status `running`. Anotar:
+- `branch_id`
+- URL de conexão (`postgresql://...`)
+- Anon key e service role key (separados da prod)
+
+- [ ] **Step 4: Documentar credenciais**
+
+Criar `.env.staging` (não comitado, em `.gitignore`):
+
+```
+NEXT_PUBLIC_SUPABASE_URL=<URL da branch wms-fase0>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key da branch>
+SUPABASE_SERVICE_ROLE_KEY=<service role da branch>
+WORKER_SECRET=<gerar novo, diferente da prod>
+NEXT_PUBLIC_WMS_STAGING=true
+```
+
+Adicionar `.env.staging` ao `.gitignore` se ainda não estiver.
+
+- [ ] **Step 5: Commit do `.gitignore`**
+
+```bash
+git add .gitignore
+git commit -m "chore(wms): protege .env.staging contra commit acidental"
+```
+
+---
+
+### Setup 0.2: Configurar Vercel preview deployment
+
+**Files:** Configuração na dashboard Vercel + variável env
+
+- [ ] **Step 1: Identificar branch git atual**
+
+Já estamos no branch `claude/compassionate-elgamal-aeedf6` (worktree). Preview Vercel deve gerar URL automaticamente pra esse branch.
+
+```bash
+git branch --show-current
+```
+
+Expected: `claude/compassionate-elgamal-aeedf6` (ou nome do branch atual).
+
+- [ ] **Step 2: Configurar env vars no Vercel pra esse branch**
+
+Na dashboard Vercel do projeto SISO:
+
+1. Settings → Environment Variables
+2. Para cada uma destas vars, adicionar valor com **escopo "Preview"** filtrado pelo branch atual:
+   - `NEXT_PUBLIC_SUPABASE_URL` ← URL da Supabase branch wms-fase0
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` ← anon key da branch
+   - `SUPABASE_SERVICE_ROLE_KEY` ← service role da branch
+   - `WORKER_SECRET` ← novo secret só pra staging
+   - `NEXT_PUBLIC_WMS_STAGING` ← `true` (usado em Task 12 pra mostrar badge)
+
+**Importante:** escopo "Production" e "Development" **não** devem ser tocados. Só "Preview" do branch específico.
+
+- [ ] **Step 3: Trigger deploy preview**
+
+Push pequeno commit pra forçar build:
+
+```bash
+git commit --allow-empty -m "chore(wms): trigger preview deploy pra staging"
+git push
+```
+
+Aguardar Vercel build completar. Anotar URL preview retornada (algo como `https://siso-git-claude-compassionate-elgamal-vercel.app`).
+
+- [ ] **Step 4: Smoke test da URL preview**
+
+Abrir URL no browser. Esperado: tela de login do SISO carregando normalmente. Login com usuário de prod **não funciona** ainda (banco staging não tem usuários copiados — vai resolver no Setup 0.3).
+
+---
+
+### Setup 0.3: Popular usuários e dados base no staging
+
+**Files:** Script de seed
+
+- [ ] **Step 1: Copiar usuários de prod pra staging**
+
+Via `mcp__supabase__execute_sql` no project **prod**, exportar usuários:
+
+```sql
+-- Em prod (read-only):
+SELECT id, nome, pin, cargo, ativo FROM siso_usuarios WHERE ativo = true;
+```
+
+Copiar resultado e via `mcp__supabase__execute_sql` no **staging branch** (path: branch_id):
+
+```sql
+INSERT INTO siso_usuarios (id, nome, pin, cargo, ativo)
+VALUES (...);  -- valores copiados de prod
+```
+
+- [ ] **Step 2: Validar acesso no staging**
+
+Login na URL preview com qualquer usuário de prod. Expected: login funciona, redireciona pra home.
+
+- [ ] **Step 3: Confirmar isolamento**
+
+Validar:
+- Criar registro qualquer no staging (ex: novo galpão fake "STAGING-TEST")
+- Confirmar via `mcp__supabase__execute_sql` em prod (`wrbrbhuhsaaupqsimkqz` direto, **não** branch_id) que esse galpão **não existe** lá
+- Resultado: branches são realmente isoladas. Pode trabalhar com confiança.
+
+---
+
+### Setup 0.4: Badge visual "STAGING" no header
+
+**Files:**
+- Modify: `src/components/app-header.tsx` (ou equivalente; localizar componente do header)
+
+- [ ] **Step 1: Adicionar badge condicional**
+
+No header do app, antes do menu de usuário:
+
+```tsx
+{process.env.NEXT_PUBLIC_WMS_STAGING === "true" && (
+  <span className="px-2 py-0.5 rounded bg-yellow-500 text-black text-xs font-bold uppercase tracking-wider">
+    STAGING — não usar pra produção
+  </span>
+)}
+```
+
+- [ ] **Step 2: Build local pra verificar**
+
+```bash
+npm run build
+```
+
+Expected: build sem erros.
+
+- [ ] **Step 3: Push e validar no preview**
+
+```bash
+git add src/components/app-header.tsx
+git commit -m "feat(wms): badge STAGING no header quando NEXT_PUBLIC_WMS_STAGING=true"
+git push
+```
+
+Após deploy, abrir preview URL → header mostra badge amarelo "STAGING". Abrir prod → badge **não** aparece.
+
+---
+
+### Setup 0.5: Política operacional do staging
+
+**Files:**
+- Create: `docs/superpowers/plans/wms-staging-policy.md`
+
+- [ ] **Step 1: Documentar política**
+
+```markdown
+# Staging WMS — Política operacional
+
+## URL
+<colar URL preview Vercel aqui>
+
+## O que é
+Ambiente isolado pra construção e validação da Fase 0 do WMS. Banco
+separado (Supabase branch `wms-fase0`), sem nenhuma conexão com prod.
+
+## Regras
+- ❌ **Não usar pra trabalho de produção** (separação real, vendas reais)
+- ❌ **Webhook do Tiny não aponta pra staging** (configurado só em prod)
+- ✅ Usar pra **testar todas as funcionalidades novas do WMS**
+- ✅ Pode quebrar à vontade — banco é descartável
+- ✅ Cada operador faz login com seu próprio PIN (cópia de prod)
+
+## Identificação visual
+Badge amarelo "STAGING" no topo do header. Se não tiver, não é staging.
+
+## Reset
+Se o banco virar uma bagunça, peça reset:
+- `mcp__supabase__reset_branch` zera dados + reaplica migrations
+- Branch volta ao estado original (sem dados de prod) em ~30s
+
+## Promoção pra prod
+Não acontece automaticamente. Após Fase 0 validada, decisão explícita do
+user dispara processo manual de migração (Fase 1+).
+
+## Branch lifetime
+Supabase free tier: 7 dias. Renovável manualmente. Pro tier: permanente.
+Configurar lembrete a cada 6 dias se em free.
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add docs/superpowers/plans/wms-staging-policy.md
+git commit -m "docs(wms): política operacional do staging"
+```
+
+---
+
+### Critério de saída do Setup
+
+Antes de iniciar Task 1, confirmar:
+
+- ✅ Supabase branch `wms-fase0` ativa e isolada de prod
+- ✅ URL preview Vercel funciona, login com usuário de prod ok
+- ✅ Badge "STAGING" visível no header da preview
+- ✅ Validado por teste explícito: registro criado em staging não aparece em prod
+- ✅ `.env.staging` no `.gitignore`
+- ✅ Política operacional documentada e compartilhada com o time
+
+**Tudo daqui em diante (Tasks 1-19) modifica APENAS o staging.** Migrations rodam via `mcp__supabase__apply_migration` no branch_id da `wms-fase0`, nunca direto no project prod.
+
 ---
 
 ## File Structure
@@ -294,7 +536,7 @@ COMMIT;
 
 - [ ] **Step 2: Apply migration via Supabase MCP**
 
-Run via MCP tool: `mcp__supabase__apply_migration` (project `wrbrbhuhsaaupqsimkqz`, name `wms_foundation`).
+Run via MCP tool: `mcp__supabase__apply_migration` com **branch_id** da Supabase branch `wms-fase0` (NUNCA project_id da prod). Pegue o branch_id via `mcp__supabase__list_branches` se ainda não anotou. Name: `wms_foundation`.
 
 Verifique: `mcp__supabase__list_tables` retorna `siso_produtos`, `siso_movimentacoes`, etc.
 

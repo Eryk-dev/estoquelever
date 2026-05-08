@@ -75,6 +75,42 @@ export async function POST(request: NextRequest) {
       });
     });
 
+    // WMS Plano 5: detecta NF de devolução e enfileira pra classificação
+    // física pelo operador. Best-effort, não afeta o fluxo principal.
+    // Tiny payload básico não carrega tipo_operacao — quando carrega, a
+    // condição abaixo dispara. Caso contrário fica no-op (graceful).
+    const dadosNf = nfPayload.dados as Record<string, unknown>;
+    const tipoOperacao = dadosNf.tipoOperacao ?? dadosNf.tipo_operacao;
+    const tipoNota = dadosNf.tipo_nota;
+    const isDevolucao =
+      tipoNota === "devolucao" || tipoOperacao === "E";
+    if (isDevolucao) {
+      void (async () => {
+        try {
+          const { registrarDevolucaoPendente } = await import(
+            "@/lib/wms/devolucoes"
+          );
+          await registrarDevolucaoPendente({
+            nota_fiscal_id: nfPayload.dados.idNotaFiscalTiny,
+            chave_acesso_nf: nfPayload.dados.chaveAcesso ?? undefined,
+            pedido_origem_id: (dadosNf.numero_pedido ?? dadosNf.numero) as
+              | string
+              | undefined,
+            empresa_id: empresa.empresaId,
+            payload_webhook: nfPayload,
+          });
+          logger.info("webhook.tiny", "WMS devolução enfileirada", {
+            idNotaFiscalTiny: nfPayload.dados.idNotaFiscalTiny,
+            empresaId: empresa.empresaId,
+          });
+        } catch (e) {
+          logger.warn("webhook.tiny", "falha ao enfileirar devolução WMS", {
+            e: e instanceof Error ? e.message : String(e),
+          });
+        }
+      })();
+    }
+
     return NextResponse.json({ status: "queued", tipo: "nota_fiscal" });
   }
 

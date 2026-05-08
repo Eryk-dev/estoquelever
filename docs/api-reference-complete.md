@@ -4648,6 +4648,124 @@ Detecta divergências entre `siso_movimentacoes` (autoritativo) e `siso_estoque`
 
 ---
 
+## WMS — Movimentações operacionais (Plano 2)
+
+Todas as operações orquestram chamadas a `wms_inserir_movimentacao` (RPC com lock pessimista do Plano 1). `usuario_id` é injetado pelo route handler a partir da sessão.
+
+### POST /api/wms/receber
+
+Registra entrada de estoque por compra/recebimento manual.
+
+**Auth:** Session.
+
+**Request body:**
+```json
+{
+  "empresa_dona_id": "uuid",
+  "galpao_id": "uuid",
+  "nf_referencia": "string?",
+  "itens": [
+    { "produto_id": "uuid", "qty": 50, "custo_unitario": 10.5, "localizacao_id": "uuid" }
+  ]
+}
+```
+
+**Side effects:** 1 mov `compra_manual` (E) por item. Se `custo_unitario` informado, recalcula `custo_medio` (média ponderada) na linha de `siso_estoque`.
+
+**Response 200:** `{ ok: true }`.
+
+### GET /api/wms/receber
+
+Sugere localização de putaway. Heurística: SKU já com saldo no galpão → essa localização (prefere picking); senão tipo='recebimento'; fallback DEFAULT-PICKING.
+
+**Query params:** `produto_id`, `empresa_id`, `galpao_id` (todos obrigatórios).
+
+**Response 200:** `{ localizacao_id, codigo?, razao }`.
+
+### POST /api/wms/transferir-galpao
+
+Transferência inter-galpão. Galpões devem ser diferentes (caso contrário use `replenishment`).
+
+**Request body:**
+```json
+{
+  "empresa_id": "uuid",
+  "galpao_origem_id": "uuid",
+  "localizacao_origem_id": "uuid",
+  "galpao_destino_id": "uuid",
+  "localizacao_destino_id": "uuid",
+  "itens": [{ "produto_id": "uuid", "qty": 10 }],
+  "observacoes": "string?"
+}
+```
+
+**Side effects:** Por item, 2 movs (S na origem + E no destino) com mesmo `origem_id` (uuid), `origem_tipo='transferencia_galpao'`.
+
+**Response 200:** `{ origem_id }`.
+
+**Erros:** 400 se origem == destino.
+
+### POST /api/wms/replenishment
+
+Movimenta entre localizações **dentro do mesmo galpão+empresa**.
+
+**Request body:** mesma estrutura mas com `galpao_id` único e `localizacao_origem_id`/`localizacao_destino_id`.
+
+**Side effects:** 2 movs (S+E) com `origem_tipo='transferencia_localizacao'` e mesmo `origem_id`.
+
+**Erros:** 400 se origem_loc == destino_loc.
+
+### POST /api/wms/ajuste
+
+Ajuste manual de estoque (avaria, perda, encontro, erro de contagem).
+
+**Request body:**
+```json
+{
+  "quadrupla": { "produto_id", "empresa_dona_id", "galpao_id", "localizacao_id" },
+  "qty": 5,
+  "direcao": "entrada | saida",
+  "motivo": "avaria caixa amassada"
+}
+```
+
+**Validação:** `motivo.trim().length >= 3`. Mov gravada com `origem_tipo='ajuste_manual'`, motivo em `origem_detalhes` + `observacoes`.
+
+### POST /api/wms/lancamento-retroativo
+
+Entrada emergencial sem NF formal (chega depois). Vai pra fila de pendências de reconciliação.
+
+**Request body:**
+```json
+{
+  "quadrupla": { ... },
+  "qty": 10,
+  "fornecedor_id": "uuid?",
+  "pedido_id": "uuid?",
+  "motivo": "compra urgente sem nota"
+}
+```
+
+**Validação:** `motivo.length >= 3`. `origem_tipo='lancamento_retroativo'`. `pedido_id` (se passado) vai pra `origem_id`.
+
+### GET /api/wms/lancamento-retroativo
+
+Lista retroativos pendentes (sem mov de estorno apontando pra eles via `estorno_de`).
+
+**Response 200:** `{ rows: [{ id, criado_em, quantidade, observacoes, produto, empresa, galpao, localizacao }] }`.
+
+### POST /api/wms/lancamento-retroativo/[id]/reconciliar
+
+Reconcilia retroativo com mov real (NF formal que chegou depois). Insere mov de estorno (S) apontando pro retroativo via `estorno_de`.
+
+**Request body:** `{ "compra_mov_id": "uuid" }` (anotada em `observacoes`).
+
+**Side effects:** 1 mov `origem_tipo='estorno'`, `tipo='S'`, `qty=retro.quantidade`, `estorno_de=retro.id`.
+
+**Response 200:** `{ ok: true }`. **Erros:** 400 se mov não é retroativo.
+
+---
+
 ## Common Patterns
 
 ### Error Responses

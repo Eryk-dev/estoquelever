@@ -368,12 +368,19 @@ wms/  (subset of src/)
     sync-tiny.ts                   # Sincroniza siso_produtos com Tiny (descricao, ncm, gtin, imagem)
     snapshot-inicial.ts            # Bulk-load idempotente do Tiny pra popular siso_estoque (Fase 0)
     reconciliacao.ts               # Detecta + corrige divergências entre ledger e siso_estoque
+    putaway.ts                     # Heurística de sugestão de localização (SKU presente > recebimento > default)
+    movimentacoes.ts               # Helpers operacionais: receber, transferir, replenishment, ajuste, retroativo, custo médio
   src/app/wms/
     layout.tsx + page.tsx          # Shell + home com 4 cards (catálogo/localizações/estoque/ledger)
     produtos/page.tsx              # Catálogo de produtos (search + sync com Tiny)
     localizacoes/page.tsx          # Configurar localizações por galpão
     estoque/page.tsx               # Saldos em 4 perspectivas
     ledger/page.tsx                # Histórico imutável de movimentações
+    receber/page.tsx               # Recebimento de estoque com sugestão de putaway
+    transferir/page.tsx            # Transferência inter-galpão (origem→destino)
+    replenishment/page.tsx         # Replenishment intra-galpão (mover entre localizações no mesmo galpão)
+    ajuste/page.tsx                # Ajuste manual com motivo (entrada ou saída)
+    retroativos/page.tsx           # Pendências de reconciliação de lançamentos retroativos
   src/app/api/wms/
     produtos/route.ts              # GET (list/search), POST (create)
     produtos/[id]/route.ts         # GET, PATCH
@@ -384,9 +391,16 @@ wms/  (subset of src/)
     ledger/route.ts                # GET com filtros (produto/empresa/galpao/origem_tipo/desde/ate)
     snapshot-inicial/route.ts      # POST (admin only, idempotente, ?dryRun=true)
     reconciliacao/route.ts         # GET (worker-secret, cron-friendly, ?fix=true)
+    receber/route.ts               # POST receber estoque + GET sugestão de putaway
+    transferir-galpao/route.ts     # POST transferência inter-galpão (par S+E com origem_id)
+    replenishment/route.ts         # POST replenishment intra-galpão
+    ajuste/route.ts                # POST ajuste manual com motivo
+    lancamento-retroativo/route.ts # POST registrar emergência + GET pendentes
+    lancamento-retroativo/[id]/reconciliar/route.ts  # POST reconcilia com mov real (insere estorno)
   src/components/wms/
-    wms-shell.tsx                  # Navegação superior do módulo WMS
+    wms-shell.tsx                  # Navegação superior do módulo WMS (10 atalhos)
     saldo-perspectiva-tabs.tsx     # Tabs entre as 4 perspectivas de saldo
+    quadrupla-picker.tsx           # Seletor reutilizável de empresa+localização (filtro tipo opcional)
 ```
 
 ## Database Tables (Supabase)
@@ -628,6 +642,7 @@ Failure to update documentation means the next developer or LLM will work with s
 - Real-time notifications for new pending orders (polling at 30s for now)
 - PWA service worker registration (basic structure in place)
 - **WMS Fase 0 (Foundation) — implementado, validado em staging** (projeto Supabase `ehbxpbeijofxtsbezwxd`). Schema 4D + ledger imutável + RPC com lock + 4 telas de visualização (catálogo, localizações, saldos por 4 perspectivas, ledger). Dependente de promoção pra prod (Fase 1+ ainda pendente). Spec: `docs/superpowers/specs/2026-05-07-wms-design.md`. Plano executado: `docs/superpowers/plans/2026-05-08-wms-1-foundation.md`.
+- **WMS Plano 2 (Movimentações operacionais) — implementado, validado em staging.** 5 fluxos (receber, transferir inter-galpão, replenishment intra-galpão, ajuste manual com motivo, lançamento retroativo + reconciliação) + sugestão automática de putaway + recálculo de custo médio em entradas com custo. Validação E2E: receber 50 + ajustar -10 = saldo 40, 0 divergências. Plano: `docs/superpowers/plans/2026-05-15-wms-2-movimentacoes.md`.
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)

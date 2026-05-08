@@ -1,7 +1,10 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { sisoFetch } from "@/lib/auth-context";
 import Link from "next/link";
+import { wmsApi } from "@/lib/wms/api-client";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface DevRow {
   id: string;
@@ -11,44 +14,49 @@ interface DevRow {
 }
 
 export default function DevolucoesPage() {
-  const { data } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["wms-devolucoes"],
-    queryFn: async () =>
-      (await sisoFetch("/api/wms/devolucoes")).json() as Promise<{
-        rows: DevRow[];
-      }>,
+    queryFn: () => wmsApi<{ rows: DevRow[] }>("/api/wms/devolucoes"),
   });
+
+  const rows = data?.rows ?? [];
 
   return (
     <div className="space-y-3">
-      <h1 className="text-lg font-medium">Devoluções pendentes</h1>
-      <p className="text-sm text-zinc-500">
+      <p className="text-sm text-ink-muted">
         Aguardando chegada física e classificação pelo operador.
       </p>
-      <div className="space-y-2">
-        {data?.rows.map((d) => (
-          <Link
-            key={d.id}
-            href={`/wms/devolucoes/${d.id}`}
-            className="block p-3 rounded border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="font-mono text-xs">
-                  NF {d.nota_fiscal_id ?? "—"}
-                </span>
-                <span className="ml-2 text-sm">{d.empresa?.nome}</span>
+      {isLoading ? (
+        <LoadingSpinner />
+      ) : isError ? (
+        <ErrorBanner message={(error as Error).message} onRetry={() => refetch()} />
+      ) : rows.length === 0 ? (
+        <EmptyState message="Nenhuma devolução pendente." />
+      ) : (
+        <div className="space-y-2">
+          {rows.map((d) => (
+            <Link
+              key={d.id}
+              href={`/wms/devolucoes/${d.id}`}
+              className="block rounded-xl border border-line bg-paper p-3 transition-colors hover:bg-surface"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="font-mono text-xs text-ink">
+                    NF {d.nota_fiscal_id ?? "—"}
+                  </span>
+                  <span className="ml-2 truncate text-sm text-ink-muted">
+                    {d.empresa?.nome}
+                  </span>
+                </div>
+                <div className="text-xs text-ink-faint">
+                  {new Date(d.criado_em).toLocaleString("pt-BR")}
+                </div>
               </div>
-              <div className="text-xs text-zinc-500">
-                {new Date(d.criado_em).toLocaleString("pt-BR")}
-              </div>
-            </div>
-          </Link>
-        ))}
-        {data && data.rows.length === 0 && (
-          <div className="text-zinc-500 text-sm">nenhuma devolução pendente</div>
-        )}
-      </div>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

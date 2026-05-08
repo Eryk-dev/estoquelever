@@ -1,6 +1,9 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { sisoFetch } from "@/lib/auth-context";
+import { wmsApi } from "@/lib/wms/api-client";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface OperadorRow {
   operador_id: string;
@@ -17,83 +20,98 @@ interface LocalizacaoRow {
   erro_medio_pct: number | null;
 }
 
+interface Metricas {
+  porOperador: OperadorRow[];
+  porLocalizacao: LocalizacaoRow[];
+}
+
 export default function MetricasPage() {
-  const { data } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["wms-inv-metricas"],
-    queryFn: async () =>
-      (await sisoFetch("/api/wms/inventario/metricas")).json() as Promise<{
-        porOperador: OperadorRow[];
-        porLocalizacao: LocalizacaoRow[];
-      }>,
+    queryFn: () => wmsApi<Metricas>("/api/wms/inventario/metricas"),
   });
 
-  return (
-    <div className="space-y-4 max-w-4xl">
-      <h2 className="text-lg font-medium">Acuracidade por operador (30d)</h2>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-zinc-500">
-            <th>operador</th>
-            <th className="text-right">contagens</th>
-            <th className="text-right">erro médio %</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data?.porOperador?.map((r) => (
-            <tr
-              key={r.operador_id}
-              className="border-t border-zinc-200 dark:border-zinc-800"
-            >
-              <td>{r.nome}</td>
-              <td className="text-right tabular-nums">{r.contagens}</td>
-              <td className="text-right tabular-nums">
-                {r.erro_medio_pct?.toFixed(2) ?? "—"}
-              </td>
-            </tr>
-          ))}
-          {data && data.porOperador.length === 0 && (
-            <tr>
-              <td colSpan={3} className="text-zinc-500 py-2">
-                sem contagens nos últimos 30 dias
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+  if (isLoading) return <LoadingSpinner />;
+  if (isError) {
+    return (
+      <ErrorBanner message={(error as Error).message} onRetry={() => refetch()} />
+    );
+  }
 
-      <h2 className="text-lg font-medium">Acuracidade por localização</h2>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-zinc-500">
-            <th>código</th>
-            <th className="text-right">total</th>
-            <th className="text-right">s/ divergência</th>
-            <th className="text-right">erro médio %</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data?.porLocalizacao?.map((r) => (
-            <tr
-              key={r.localizacao_id}
-              className="border-t border-zinc-200 dark:border-zinc-800"
-            >
-              <td className="font-mono">{r.codigo}</td>
-              <td className="text-right tabular-nums">{r.total}</td>
-              <td className="text-right tabular-nums">{r.sem_div}</td>
-              <td className="text-right tabular-nums">
-                {r.erro_medio_pct?.toFixed(2) ?? "—"}
-              </td>
-            </tr>
-          ))}
-          {data && data.porLocalizacao.length === 0 && (
-            <tr>
-              <td colSpan={4} className="text-zinc-500 py-2">
-                sem dados ainda
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+  const operadores = data?.porOperador ?? [];
+  const localizacoes = data?.porLocalizacao ?? [];
+
+  return (
+    <div className="space-y-6">
+      <section className="space-y-2">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
+          Acuracidade por operador (30d)
+        </h2>
+        {operadores.length === 0 ? (
+          <EmptyState message="Sem contagens nos últimos 30 dias." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-line bg-paper">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-ink-faint">
+                  <th className="p-2">operador</th>
+                  <th className="text-right">contagens</th>
+                  <th className="p-2 text-right">erro médio %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {operadores.map((r) => (
+                  <tr key={r.operador_id} className="border-t border-line">
+                    <td className="p-2 text-ink">{r.nome}</td>
+                    <td className="text-right tabular-nums text-ink">
+                      {r.contagens}
+                    </td>
+                    <td className="p-2 text-right tabular-nums text-ink-muted">
+                      {r.erro_medio_pct?.toFixed(2) ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
+          Acuracidade por localização
+        </h2>
+        {localizacoes.length === 0 ? (
+          <EmptyState message="Sem dados de localização ainda." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-line bg-paper">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-ink-faint">
+                  <th className="p-2">código</th>
+                  <th className="text-right">total</th>
+                  <th className="text-right">s/ divergência</th>
+                  <th className="p-2 text-right">erro médio %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {localizacoes.map((r) => (
+                  <tr key={r.localizacao_id} className="border-t border-line">
+                    <td className="p-2 font-mono text-ink">{r.codigo}</td>
+                    <td className="text-right tabular-nums text-ink">{r.total}</td>
+                    <td className="text-right tabular-nums text-ink-muted">
+                      {r.sem_div}
+                    </td>
+                    <td className="p-2 text-right tabular-nums text-ink-muted">
+                      {r.erro_medio_pct?.toFixed(2) ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

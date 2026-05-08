@@ -1,9 +1,12 @@
 "use client";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { sisoFetch } from "@/lib/auth-context";
 import { toast } from "sonner";
 import Link from "next/link";
+import { wmsApi } from "@/lib/wms/api-client";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface SessaoRow {
   id: string;
@@ -31,6 +34,15 @@ interface NovoSessao {
   areas: { nome: string; localizacao_ids: string[] }[];
 }
 
+const STATUS_BADGE: Record<string, string> = {
+  em_andamento: "badge badge-info",
+  aplicada: "badge badge-success",
+  cancelada: "badge badge-danger",
+  revisao: "badge badge-warning",
+  aprovada: "badge badge-success",
+  planejada: "badge badge-oc",
+};
+
 export default function InventarioListaPage() {
   const queryClient = useQueryClient();
   const [novo, setNovo] = useState<NovoSessao>({
@@ -42,49 +54,38 @@ export default function InventarioListaPage() {
     areas: [],
   });
 
-  const { data: sessoes } = useQuery({
+  const sessoesQuery = useQuery({
     queryKey: ["wms-inv-sessoes"],
-    queryFn: async () =>
-      (await sisoFetch("/api/wms/inventario")).json() as Promise<{
-        rows: SessaoRow[];
-      }>,
+    queryFn: () => wmsApi<{ rows: SessaoRow[] }>("/api/wms/inventario"),
   });
+
   const { data: galpoes } = useQuery({
     queryKey: ["galpoes"],
-    queryFn: async () =>
-      (await sisoFetch("/api/admin/galpoes")).json() as Promise<{
-        galpoes?: GalpaoRow[];
-      }>,
+    queryFn: () => wmsApi<{ galpoes?: GalpaoRow[] }>("/api/admin/galpoes"),
   });
+
   const { data: locs } = useQuery({
     queryKey: ["wms-locs", novo.galpao_id],
-    queryFn: async () =>
-      novo.galpao_id
-        ? ((
-            await sisoFetch(`/api/wms/localizacoes?galpao_id=${novo.galpao_id}`)
-          ).json() as Promise<{ rows: LocRow[] }>)
-        : { rows: [] as LocRow[] },
+    queryFn: () =>
+      wmsApi<{ rows: LocRow[] }>(
+        `/api/wms/localizacoes?galpao_id=${novo.galpao_id}`,
+      ),
     enabled: !!novo.galpao_id,
   });
 
   const criar = useMutation({
-    mutationFn: async () =>
-      sisoFetch("/api/wms/inventario", {
+    mutationFn: () =>
+      wmsApi<{ id: string }>("/api/wms/inventario", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(novo),
-      }).then(async (r) => {
-        if (!r.ok) {
-          const e = (await r.json()) as { error?: string };
-          throw new Error(e.error ?? "erro");
-        }
-        return r.json();
       }),
     onSuccess: () => {
-      toast.success("sessão criada");
+      toast.success("Sessão criada");
+      setNovo((p) => ({ ...p, areas: [] }));
       queryClient.invalidateQueries({ queryKey: ["wms-inv-sessoes"] });
     },
-    onError: (e) => toast.error(String(e)),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   function adicionarArea(localizacao_ids: string[]) {
@@ -97,14 +98,16 @@ export default function InventarioListaPage() {
     }));
   }
 
-  return (
-    <div className="space-y-4 max-w-4xl">
-      <h1 className="text-lg font-medium">Sessões de inventário</h1>
+  const rows = sessoesQuery.data?.rows ?? [];
 
-      <details className="rounded border border-zinc-200 dark:border-zinc-800">
-        <summary className="p-3 cursor-pointer">Criar nova sessão</summary>
-        <div className="p-3 space-y-3">
-          <div className="flex gap-2 flex-wrap">
+  return (
+    <div className="space-y-4">
+      <details className="rounded-xl border border-line bg-paper">
+        <summary className="cursor-pointer p-3 text-sm font-medium text-ink">
+          Criar nova sessão
+        </summary>
+        <div className="space-y-3 border-t border-line p-3">
+          <div className="flex flex-wrap gap-2">
             <select
               value={novo.tipo}
               onChange={(e) =>
@@ -113,7 +116,7 @@ export default function InventarioListaPage() {
                   tipo: e.target.value as "cycle_count" | "completo",
                 })
               }
-              className="px-2 py-1 rounded border bg-transparent"
+              className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
             >
               <option value="cycle_count">cycle count</option>
               <option value="completo">inventário completo</option>
@@ -123,7 +126,7 @@ export default function InventarioListaPage() {
               onChange={(e) =>
                 setNovo({ ...novo, galpao_id: e.target.value, areas: [] })
               }
-              className="px-2 py-1 rounded border bg-transparent"
+              className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
             >
               <option value="">— galpão —</option>
               {galpoes?.galpoes?.map((g) => (
@@ -137,11 +140,10 @@ export default function InventarioListaPage() {
               onChange={(e) =>
                 setNovo({
                   ...novo,
-                  modo_contagem: e.target
-                    .value as NovoSessao["modo_contagem"],
+                  modo_contagem: e.target.value as NovoSessao["modo_contagem"],
                 })
               }
-              className="px-2 py-1 rounded border bg-transparent"
+              className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
             >
               <option value="aberto">aberto</option>
               <option value="blind">blind</option>
@@ -154,7 +156,7 @@ export default function InventarioListaPage() {
               onChange={(e) =>
                 setNovo({ ...novo, tolerancia_pct: Number(e.target.value) })
               }
-              className="w-20 px-2 py-1 rounded border bg-transparent"
+              className="w-24 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
               placeholder="tol %"
             />
           </div>
@@ -162,62 +164,65 @@ export default function InventarioListaPage() {
           {novo.galpao_id && (
             <div>
               <button
+                type="button"
                 onClick={() =>
                   adicionarArea((locs?.rows ?? []).map((l) => l.id))
                 }
-                className="px-3 py-1 rounded border text-sm"
+                className="btn-ghost text-sm"
               >
                 adicionar todas localizações como Área 1
               </button>
-              <div className="mt-2 text-sm">
+              <div className="mt-2 text-sm text-ink-muted">
                 {novo.areas.length} área(s) configurada(s)
               </div>
             </div>
           )}
 
           <button
+            type="button"
             onClick={() => criar.mutate()}
-            disabled={!novo.galpao_id || novo.areas.length === 0}
-            className="px-3 py-1 rounded bg-zinc-900 text-white"
+            disabled={!novo.galpao_id || novo.areas.length === 0 || criar.isPending}
+            className="btn-primary"
           >
             criar sessão
           </button>
         </div>
       </details>
 
-      <div className="space-y-2">
-        {sessoes?.rows?.map((s) => (
-          <Link
-            key={s.id}
-            href={`/wms/inventario/${s.id}`}
-            className="block p-3 rounded border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="font-mono text-xs text-zinc-500">
-                  {s.id.slice(0, 8)}
-                </span>
-                <span className="ml-2">
-                  {s.tipo} · {s.galpao?.nome}
-                </span>
-              </div>
-              <div className="text-sm">
-                <span
-                  className={`px-2 py-0.5 rounded text-xs ${
-                    s.status === "em_andamento"
-                      ? "bg-blue-100 text-blue-900"
-                      : s.status === "aplicada"
-                        ? "bg-green-100 text-green-900"
-                        : "bg-zinc-100"
-                  }`}
-                >
+      {sessoesQuery.isLoading ? (
+        <LoadingSpinner />
+      ) : sessoesQuery.isError ? (
+        <ErrorBanner
+          message={(sessoesQuery.error as Error).message}
+          onRetry={() => sessoesQuery.refetch()}
+        />
+      ) : rows.length === 0 ? (
+        <EmptyState message="Nenhuma sessão de inventário criada ainda." />
+      ) : (
+        <div className="space-y-2">
+          {rows.map((s) => (
+            <Link
+              key={s.id}
+              href={`/wms/inventario/${s.id}`}
+              className="block rounded-xl border border-line bg-paper p-3 transition-colors hover:bg-surface"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="font-mono text-xs text-ink-faint">
+                    {s.id.slice(0, 8)}
+                  </span>
+                  <span className="ml-2 text-sm text-ink">
+                    {s.tipo} · {s.galpao?.nome}
+                  </span>
+                </div>
+                <span className={STATUS_BADGE[s.status] ?? "badge badge-oc"}>
                   {s.status}
                 </span>
               </div>
-            </div>
-          </Link>
-        ))}
-      </div>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

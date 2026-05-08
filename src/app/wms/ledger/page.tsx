@@ -1,7 +1,10 @@
 "use client";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { sisoFetch } from "@/lib/auth-context";
+import { wmsApi } from "@/lib/wms/api-client";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface LedgerRow {
   id: string;
@@ -17,38 +20,41 @@ interface LedgerRow {
   localizacao?: { codigo: string };
 }
 
+const ORIGENS = [
+  "compra_manual",
+  "nf_venda",
+  "emprestimo",
+  "reserva_pedido",
+  "liberacao_reserva",
+  "ajuste_manual",
+  "inventario",
+  "inventario_inicial",
+];
+
 export default function LedgerPage() {
   const [filtros, setFiltros] = useState({ origem_tipo: "", limit: 100 });
-  const { data } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["wms-ledger", filtros],
-    queryFn: async () => {
+    queryFn: () => {
       const sp = new URLSearchParams();
       if (filtros.origem_tipo) sp.set("origem_tipo", filtros.origem_tipo);
       sp.set("limit", String(filtros.limit));
-      const r = await sisoFetch(`/api/wms/ledger?${sp}`);
-      return r.json() as Promise<{ rows: LedgerRow[] }>;
+      return wmsApi<{ rows: LedgerRow[] }>(`/api/wms/ledger?${sp}`);
     },
   });
 
+  const rows = data?.rows ?? [];
+
   return (
     <div className="space-y-3">
-      <div className="flex gap-2 items-center text-sm">
+      <div className="flex items-center gap-2 text-sm">
         <select
           value={filtros.origem_tipo}
           onChange={(e) => setFiltros({ ...filtros, origem_tipo: e.target.value })}
-          className="px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent"
+          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
         >
           <option value="">todas origens</option>
-          {[
-            "compra_manual",
-            "nf_venda",
-            "emprestimo",
-            "reserva_pedido",
-            "liberacao_reserva",
-            "ajuste_manual",
-            "inventario",
-            "inventario_inicial",
-          ].map((o) => (
+          {ORIGENS.map((o) => (
             <option key={o} value={o}>
               {o}
             </option>
@@ -56,40 +62,50 @@ export default function LedgerPage() {
         </select>
       </div>
 
-      <table className="w-full text-xs font-mono">
-        <thead>
-          <tr className="text-left text-zinc-500">
-            <th className="p-1">data</th>
-            <th>tipo</th>
-            <th>origem</th>
-            <th>SKU</th>
-            <th>dona</th>
-            <th>galpão</th>
-            <th>loc</th>
-            <th className="text-right">qty</th>
-            <th className="text-right">saldo→</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data?.rows.map((r) => (
-            <tr key={r.id} className="border-t border-zinc-200 dark:border-zinc-800">
-              <td className="p-1 whitespace-nowrap">
-                {new Date(r.criado_em).toLocaleString("pt-BR")}
-              </td>
-              <td className="font-bold">{r.tipo}</td>
-              <td>{r.origem_tipo}</td>
-              <td>{r.produto?.sku}</td>
-              <td>{r.empresa?.nome}</td>
-              <td>{r.galpao?.nome}</td>
-              <td>{r.localizacao?.codigo}</td>
-              <td className="text-right">{r.quantidade}</td>
-              <td className="text-right">
-                {r.saldo_anterior} → {r.saldo_posterior}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {isLoading ? (
+        <LoadingSpinner />
+      ) : isError ? (
+        <ErrorBanner message={(error as Error).message} onRetry={() => refetch()} />
+      ) : rows.length === 0 ? (
+        <EmptyState message="Nenhuma movimentação encontrada." />
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-line bg-paper">
+          <table className="w-full text-xs font-mono">
+            <thead>
+              <tr className="text-left text-ink-faint">
+                <th className="p-2">data</th>
+                <th>tipo</th>
+                <th>origem</th>
+                <th>SKU</th>
+                <th>dona</th>
+                <th>galpão</th>
+                <th>loc</th>
+                <th className="text-right">qty</th>
+                <th className="p-2 text-right">saldo→</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-line">
+                  <td className="whitespace-nowrap p-2 text-ink-muted">
+                    {new Date(r.criado_em).toLocaleString("pt-BR")}
+                  </td>
+                  <td className="font-bold text-ink">{r.tipo}</td>
+                  <td className="text-ink-muted">{r.origem_tipo}</td>
+                  <td className="text-ink">{r.produto?.sku}</td>
+                  <td className="text-ink-muted">{r.empresa?.nome}</td>
+                  <td className="text-ink-muted">{r.galpao?.nome}</td>
+                  <td className="text-ink-muted">{r.localizacao?.codigo}</td>
+                  <td className="text-right tabular-nums text-ink">{r.quantidade}</td>
+                  <td className="p-2 text-right tabular-nums text-ink-muted">
+                    {r.saldo_anterior} → {r.saldo_posterior}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

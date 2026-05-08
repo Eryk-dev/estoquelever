@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/session";
+import { requireWarehouseAccess } from "@/lib/wms/auth";
 import { sincronizarProduto } from "@/lib/wms/sync-tiny";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   try {
     await sincronizarProduto(id);

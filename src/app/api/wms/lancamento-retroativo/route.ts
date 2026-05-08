@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/session";
+import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
 import {
   lancarRetroativo,
   listarRetroativosPendentes,
 } from "@/lib/wms/movimentacoes";
 
 export async function POST(req: NextRequest) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
   const body = await req.json();
   if (!body.motivo || body.motivo.length < 3) {
     return NextResponse.json({ error: "motivo obrigatório" }, { status: 400 });
   }
   try {
-    await lancarRetroativo({ ...body, usuario_id: user.id });
+    await lancarRetroativo({ ...body, usuario_id: auth.user.id });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
@@ -21,8 +22,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
   try {
     const rows = await listarRetroativosPendentes();
     return NextResponse.json({ rows });

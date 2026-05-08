@@ -1,20 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { registrarContagem } from "@/lib/wms/inventario";
-import { getSessionUser } from "@/lib/session";
+import { requireWarehouseAccess } from "@/lib/wms/auth";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   const body = await req.json();
   try {
     await registrarContagem({
       ...body,
       sessao_id: id,
-      contada_por: user.id,
+      contada_por: auth.user.id,
     });
     return NextResponse.json({ ok: true });
   } catch (e) {

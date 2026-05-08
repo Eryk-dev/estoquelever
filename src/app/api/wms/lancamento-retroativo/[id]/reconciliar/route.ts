@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/session";
+import { requireWarehouseAccess } from "@/lib/wms/auth";
 import { reconciliarRetroativo } from "@/lib/wms/movimentacoes";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   const body = await req.json();
   if (!body.compra_mov_id) {
@@ -17,7 +18,7 @@ export async function POST(
     await reconciliarRetroativo({
       retroativo_mov_id: id,
       compra_mov_id: body.compra_mov_id,
-      usuario_id: user.id,
+      usuario_id: auth.user.id,
     });
     return NextResponse.json({ ok: true });
   } catch (e) {

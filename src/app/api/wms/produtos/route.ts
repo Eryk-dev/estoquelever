@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listarProdutos, criarProduto } from "@/lib/wms/produtos";
-import { getSessionUser } from "@/lib/session";
+import { requireAuth, requireAdmin } from "@/lib/wms/auth";
 
 export async function GET(req: NextRequest) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+
   const sp = req.nextUrl.searchParams;
   try {
     const ativoParam = sp.get("ativo");
@@ -21,8 +22,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
+
   const body = await req.json();
   if (!body.sku || !body.descricao) {
     return NextResponse.json({ error: "sku e descricao obrigatórios" }, { status: 400 });

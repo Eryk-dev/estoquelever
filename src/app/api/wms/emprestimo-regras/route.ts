@@ -1,18 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listarRegras, criarRegra } from "@/lib/wms/emprestimos";
-import { getSessionUser } from "@/lib/session";
+import { requireAuth, requireAdmin } from "@/lib/wms/auth";
 
 export async function GET(req: NextRequest) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
   return NextResponse.json({ rows: await listarRegras() });
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
+
   const body = await req.json();
   try {
     return NextResponse.json(await criarRegra(body), { status: 201 });

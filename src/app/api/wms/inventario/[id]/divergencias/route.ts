@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
-import { getSessionUser } from "@/lib/session";
+import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   const sb = createServiceClient();
   const sp = req.nextUrl.searchParams;
@@ -29,9 +29,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const { id } = await params;
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
+  const { id: _sessaoId } = await params;
+  void _sessaoId;
   const body = await req.json();
   if (!body.divergencia_id || !body.acao) {
     return NextResponse.json(
@@ -56,7 +58,7 @@ export async function PATCH(
     .from("siso_inventario_divergencias")
     .update({
       status: novoStatus,
-      resolucao_por: user.id,
+      resolucao_por: auth.user.id,
       resolucao_em: new Date().toISOString(),
       observacoes_resolucao: body.observacoes,
     })

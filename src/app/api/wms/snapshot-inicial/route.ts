@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/session";
+import { requireAdmin } from "@/lib/wms/auth";
 import { executarSnapshotInicial } from "@/lib/wms/snapshot-inicial";
 
 export async function POST(req: NextRequest) {
-  const user = await getSessionUser(req);
-  if (!user || user.cargo !== "admin") {
-    return NextResponse.json({ error: "admin only" }, { status: 403 });
-  }
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
+
   const sp = req.nextUrl.searchParams;
   const dryRun = sp.get("dryRun") === "true";
   try {

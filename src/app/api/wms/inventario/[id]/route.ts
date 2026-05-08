@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
-import { getSessionUser } from "@/lib/session";
+import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   const sb = createServiceClient();
   const [sessao, areas, locs, contagens, divergencias] = await Promise.all([
@@ -43,19 +43,55 @@ export async function GET(
   });
 }
 
+// Allowlist explícito de campos que o cliente pode editar.
+// Sem isso, body-spread direto permitia user pular workflow
+// inteiro com PATCH { status: 'aplicada' }.
+interface PatchSessaoBody {
+  modo_contagem?: "aberto" | "blind" | "duplo_blind";
+  tolerancia_pct?: number;
+  exige_aprovacao_acima_valor?: number;
+  observacoes?: string;
+}
+
+function pickPatchFields(body: unknown): PatchSessaoBody {
+  if (!body || typeof body !== "object") return {};
+  const b = body as Record<string, unknown>;
+  const out: PatchSessaoBody = {};
+  if (
+    b.modo_contagem === "aberto" ||
+    b.modo_contagem === "blind" ||
+    b.modo_contagem === "duplo_blind"
+  ) {
+    out.modo_contagem = b.modo_contagem;
+  }
+  if (typeof b.tolerancia_pct === "number") out.tolerancia_pct = b.tolerancia_pct;
+  if (typeof b.exige_aprovacao_acima_valor === "number") {
+    out.exige_aprovacao_acima_valor = b.exige_aprovacao_acima_valor;
+  }
+  if (typeof b.observacoes === "string") out.observacoes = b.observacoes;
+  return out;
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   const body = await req.json();
+  const allowed = pickPatchFields(body);
+  if (Object.keys(allowed).length === 0) {
+    return NextResponse.json(
+      { error: "nenhum campo válido pra atualizar" },
+      { status: 400 },
+    );
+  }
   const sb = createServiceClient();
   const { error } = await sb
     .from("siso_inventario_sessoes")
-    .update(body)
+    .update(allowed)
     .eq("id", id);
   if (error) return NextResponse.json({ error: String(error) }, { status: 500 });
   return NextResponse.json({ ok: true });
@@ -65,9 +101,9 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   const sb = createServiceClient();
   const { data: locs } = await sb

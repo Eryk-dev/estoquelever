@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/session";
+import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
 import { receberEstoque } from "@/lib/wms/movimentacoes";
 import { sugerirLocalizacaoPutaway } from "@/lib/wms/putaway";
 import { createServiceClient } from "@/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
   const body = await req.json();
   if (!body.empresa_dona_id || !body.galpao_id || !Array.isArray(body.itens)) {
     return NextResponse.json({ error: "campos obrigatórios faltando" }, { status: 400 });
   }
   try {
-    await receberEstoque({ ...body, usuario_id: user.id });
+    await receberEstoque({ ...body, usuario_id: auth.user.id });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
@@ -20,8 +21,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
   const sp = req.nextUrl.searchParams;
   const produto_id = sp.get("produto_id");
   const empresa_id = sp.get("empresa_id");

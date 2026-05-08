@@ -1,18 +1,60 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
-import { getSessionUser } from "@/lib/session";
+import { requireAdmin } from "@/lib/wms/auth";
+
+interface PatchProdutoFornecedorBody {
+  preferencial?: boolean;
+  lead_time_min?: number;
+  lead_time_medio?: number;
+  lead_time_max?: number;
+  custo_unitario?: number | null;
+  qty_minima_pedido?: number | null;
+  multiplo_compra?: number | null;
+  ativo?: boolean;
+}
+
+function pickPatchFields(body: unknown): PatchProdutoFornecedorBody {
+  if (!body || typeof body !== "object") return {};
+  const b = body as Record<string, unknown>;
+  const out: PatchProdutoFornecedorBody = {};
+  if (typeof b.preferencial === "boolean") out.preferencial = b.preferencial;
+  if (typeof b.lead_time_min === "number") out.lead_time_min = b.lead_time_min;
+  if (typeof b.lead_time_medio === "number") {
+    out.lead_time_medio = b.lead_time_medio;
+  }
+  if (typeof b.lead_time_max === "number") out.lead_time_max = b.lead_time_max;
+  if (b.custo_unitario === null || typeof b.custo_unitario === "number") {
+    out.custo_unitario = b.custo_unitario as number | null;
+  }
+  if (b.qty_minima_pedido === null || typeof b.qty_minima_pedido === "number") {
+    out.qty_minima_pedido = b.qty_minima_pedido as number | null;
+  }
+  if (b.multiplo_compra === null || typeof b.multiplo_compra === "number") {
+    out.multiplo_compra = b.multiplo_compra as number | null;
+  }
+  if (typeof b.ativo === "boolean") out.ativo = b.ativo;
+  return out;
+}
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   const body = await req.json();
+  const allowed = pickPatchFields(body);
+  if (Object.keys(allowed).length === 0) {
+    return NextResponse.json(
+      { error: "nenhum campo válido pra atualizar" },
+      { status: 400 },
+    );
+  }
   const sb = createServiceClient();
-  if (body.preferencial === true) {
+  // Se marcou preferencial=true, despromove os outros do mesmo produto
+  if (allowed.preferencial === true) {
     const { data: pf } = await sb
       .from("siso_produto_fornecedores")
       .select("produto_id")
@@ -27,7 +69,7 @@ export async function PATCH(
   }
   const { data, error } = await sb
     .from("siso_produto_fornecedores")
-    .update({ ...body, atualizado_em: new Date().toISOString() })
+    .update({ ...allowed, atualizado_em: new Date().toISOString() })
     .eq("id", id)
     .select()
     .single();
@@ -39,9 +81,9 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   const sb = createServiceClient();
   await sb.from("siso_produto_fornecedores").update({ ativo: false }).eq("id", id);

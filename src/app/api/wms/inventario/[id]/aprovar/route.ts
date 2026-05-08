@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { aprovarSessao, computarDivergencias } from "@/lib/wms/inventario";
-import { getSessionUser } from "@/lib/session";
+import { requireWarehouseAccess } from "@/lib/wms/auth";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   try {
     await computarDivergencias(id);
-    await aprovarSessao(id, user.id);
+    await aprovarSessao(id, auth.user.id);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 400 });

@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { autoCriarFornecedoresDosPrefixosSku } from "@/lib/wms/fornecedores";
-import { getSessionUser } from "@/lib/session";
+import { requireAdmin } from "@/lib/wms/auth";
 
 export async function POST(req: NextRequest) {
-  const user = await getSessionUser(req);
-  if (!user || user.cargo !== "admin") {
-    return NextResponse.json({ error: "admin only" }, { status: 403 });
-  }
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
   return NextResponse.json(await autoCriarFornecedoresDosPrefixosSku());
 }

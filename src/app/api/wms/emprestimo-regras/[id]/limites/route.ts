@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
-import { getSessionUser } from "@/lib/session";
+import { requireAuth, requireAdmin } from "@/lib/wms/auth";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   const sb = createServiceClient();
   const { data } = await sb
@@ -17,8 +17,9 @@ export async function GET(
     .eq("id", id)
     .single();
   return NextResponse.json({
-    limites: (data as { limites_por_produto?: Record<string, number> } | null)
-      ?.limites_por_produto ?? {},
+    limites:
+      (data as { limites_por_produto?: Record<string, number> } | null)
+        ?.limites_por_produto ?? {},
   });
 }
 
@@ -26,9 +27,9 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
+
   const { id } = await params;
   const body = await req.json();
   if (!body.produto_id || body.qty === undefined) {

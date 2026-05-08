@@ -333,27 +333,56 @@ export interface RegistrarContagemInput {
   empresa_dona_id: string;
   qty_contada: number;
   contada_por: string;
+  /**
+   * - "incremental" (default): cada bipe soma +qty na contagem atual do operador na quádrupla.
+   *   Persiste a cada bipe → seguro contra perda se aba fechar.
+   * - "absoluto": substitui qualquer contagem prévia do operador por qty_contada.
+   *   Use ao corrigir manualmente.
+   */
+  modo?: "incremental" | "absoluto";
 }
 
 export async function registrarContagem(input: RegistrarContagemInput): Promise<void> {
   const sb = createServiceClient();
-  // Determina rodada: maior rodada existente + 1 se já houver duplo_blind necessitando, ou 1
+  const modo = input.modo ?? "incremental";
+
+  const filtro = {
+    sessao_id: input.sessao_id,
+    localizacao_id: input.localizacao_id,
+    produto_id: input.produto_id,
+    empresa_dona_id: input.empresa_dona_id,
+  };
+
+  // Determina rodada: outros operadores na mesma quádrupla geram nova rodada (duplo_blind);
+  // mesmo operador re-conta na rodada existente dele.
   const { data: existentes } = await sb.from("siso_inventario_contagens")
-    .select("rodada, contada_por")
-    .match({
-      sessao_id: input.sessao_id,
-      localizacao_id: input.localizacao_id,
-      produto_id: input.produto_id,
-      empresa_dona_id: input.empresa_dona_id,
-    });
+    .select("id, qty_contada, rodada, contada_por").match(filtro);
 
-  const rodada = (existentes && existentes.length > 0)
-    ? Math.max(...existentes.map(e => e.rodada)) + (existentes.some(e => e.contada_por === input.contada_por) ? 0 : 1)
-    : 1;
+  const minhaContagem = existentes?.find(e => e.contada_por === input.contada_por);
+  const rodada = minhaContagem
+    ? minhaContagem.rodada
+    : ((existentes && existentes.length > 0) ? Math.max(...existentes.map(e => e.rodada)) + 1 : 1);
 
-  // Insere contagem (suporta múltiplas — mesmo operador pode corrigir; outros geram nova rodada)
+  if (modo === "incremental" && minhaContagem) {
+    // Soma +qty na contagem existente do operador
+    const { error } = await sb.from("siso_inventario_contagens")
+      .update({ qty_contada: Number(minhaContagem.qty_contada) + input.qty_contada })
+      .eq("id", minhaContagem.id);
+    if (error) throw error;
+    return;
+  }
+
+  // Modo absoluto OU primeira contagem do operador: insere nova
+  if (modo === "absoluto" && minhaContagem) {
+    const { error } = await sb.from("siso_inventario_contagens")
+      .update({ qty_contada: input.qty_contada })
+      .eq("id", minhaContagem.id);
+    if (error) throw error;
+    return;
+  }
+
   const { error } = await sb.from("siso_inventario_contagens")
-    .insert({ ...input, rodada });
+    .insert({ ...filtro, qty_contada: input.qty_contada, contada_por: input.contada_por, rodada });
   if (error) throw error;
 }
 ```
@@ -1150,10 +1179,22 @@ export default function ContarPage({ params }: { params: Promise<{ id: string }>
     onError: (e) => toast.error(String(e)),
   });
 
+  // Cada bipe submete IMEDIATAMENTE ao DB; nada fica só em memória.
+  // Estado local só pra mostrar contagens recentes na tela.
   async function handleScan(value: string) {
     const r = await (await sisoFetch(`/api/wms/produtos?q=${encodeURIComponent(value)}&limit=1`)).json();
     const p = r.rows?.[0];
     if (!p) return toast.error("SKU não encontrado");
+    const empresaId = data.localizacoes?.find((l: any) => l.localizacao_id === locId)?.localizacao?.empresa_id ?? sessao.empresa_dona_id;
+    // Submete +1 ao DB (cada bipe é atômico)
+    const resp = await sisoFetch(`/api/wms/inventario/${id}/contagens`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ localizacao_id: locId, produto_id: p.id, empresa_dona_id: empresaId, qty_contada: 1, modo: "incremental" }),
+    });
+    if (!resp.ok) {
+      toast.error("falha ao registrar bipe");
+      return;
+    }
     setContagens(prev => {
       const existing = prev.find(c => c.produto_id === p.id);
       if (existing) return prev.map(c => c.produto_id === p.id ? { ...c, qty: c.qty + 1 } : c);
@@ -1161,16 +1202,9 @@ export default function ContarPage({ params }: { params: Promise<{ id: string }>
     });
   }
 
+  // Cada bipe já foi submetido em handleScan; finalizar só libera o lock.
   const finalizar = useMutation({
     mutationFn: async () => {
-      const empresaId = data.localizacoes?.find((l: any) => l.localizacao_id === locId)?.localizacao?.empresa_id ?? sessao.empresa_dona_id;
-      // Submete contagens
-      for (const c of contagens) {
-        await sisoFetch(`/api/wms/inventario/${id}/contagens`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ localizacao_id: locId, produto_id: c.produto_id, empresa_dona_id: empresaId, qty_contada: c.qty }),
-        });
-      }
       await sisoFetch(`/api/wms/inventario/${id}/localizacoes/${locId}/bloquear`, { method: "DELETE" });
     },
     onSuccess: () => { setLocId(""); setContagens([]); toast.success("localização concluída"); queryClient.invalidateQueries({ queryKey: ["wms-inv", id] }); },

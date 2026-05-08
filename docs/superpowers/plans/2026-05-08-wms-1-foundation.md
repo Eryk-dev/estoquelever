@@ -810,87 +810,157 @@ interface InserirMovInput {
 }
 
 /**
- * Insere uma movimentação no ledger E atualiza siso_estoque, atomicamente.
+ * Insere uma movimentação no ledger E atualiza siso_estoque, atomicamente,
+ * com lock pessimista via RPC (SELECT FOR UPDATE no Postgres).
  *
- * - Faz SELECT FOR UPDATE na linha de siso_estoque (criando se não existe)
- * - Calcula saldo_posterior/reservado_posterior, valida coerência
- * - INSERT em siso_movimentacoes
- * - UPDATE em siso_estoque
+ * Toda escrita no ledger DEVE passar por aqui — garante chain verificável
+ * e protege contra race conditions entre operações concorrentes.
  *
- * Toda escrita no ledger DEVE passar por aqui — garante chain verificável.
+ * Internamente delega pra RPC `wms_inserir_movimentacao` (criada na Task 4.5).
  */
 export async function inserirMovimentacao(input: InserirMovInput): Promise<Movimentacao> {
   const sb = createServiceClient();
   const { quadrupla, tipo, qty } = input;
 
-  // Lê linha atual com lock (via RPC se necessário; aqui usamos approach simplificado por enquanto)
-  const { data: estoqueAtual, error: errSel } = await sb
+  // Validação client-side (early fail; RPC valida de novo no DB)
+  // Lê estado atual sem lock só pra validar; é re-checado dentro da RPC com FOR UPDATE
+  const { data: estoqueAtual } = await sb
     .from("siso_estoque")
-    .select("id, saldo, reservado, custo_medio")
+    .select("saldo, reservado")
     .match(quadrupla)
     .maybeSingle();
-  if (errSel) throw errSel;
-
-  const saldoAnterior = Number(estoqueAtual?.saldo ?? 0);
-  const reservadoAnterior = Number(estoqueAtual?.reservado ?? 0);
-
-  validarCoerencia({ tipo, qty, saldoAnterior, reservadoAnterior });
-
-  const { saldo_posterior, reservado_posterior } = calcularPosteriores({
-    tipo, qty, saldoAnterior, reservadoAnterior,
+  validarCoerencia({
+    tipo, qty,
+    saldoAnterior: Number(estoqueAtual?.saldo ?? 0),
+    reservadoAnterior: Number(estoqueAtual?.reservado ?? 0),
   });
 
-  // Insere mov
-  const { data: mov, error: errMov } = await sb
-    .from("siso_movimentacoes")
-    .insert({
-      ...quadrupla,
-      tipo, quantidade: qty,
-      saldo_anterior: saldoAnterior, saldo_posterior,
-      reservado_anterior: reservadoAnterior, reservado_posterior,
-      origem_tipo: input.origem_tipo,
-      origem_id: input.origem_id,
-      origem_detalhes: input.origem_detalhes ?? {},
-      emprestimo_devedora_id: input.emprestimo_devedora_id,
-      expira_em: input.expira_em,
-      nota_fiscal_id: input.nota_fiscal_id,
-      custo_unitario: input.custo_unitario,
-      usuario_id: input.usuario_id,
-      observacoes: input.observacoes,
-      estorno_de: input.estorno_de,
-    })
-    .select()
-    .single();
-  if (errMov) {
-    logger.error("wms.ledger", "falha ao inserir mov", { errMov, input });
-    throw errMov;
+  const { data: mov, error } = await sb.rpc("wms_inserir_movimentacao", {
+    p_produto: quadrupla.produto_id,
+    p_dona: quadrupla.empresa_dona_id,
+    p_galpao: quadrupla.galpao_id,
+    p_localizacao: quadrupla.localizacao_id,
+    p_tipo: tipo,
+    p_qty: qty,
+    p_origem_tipo: input.origem_tipo,
+    p_origem_id: input.origem_id ?? null,
+    p_origem_detalhes: input.origem_detalhes ?? {},
+    p_emprestimo_devedora: input.emprestimo_devedora_id ?? null,
+    p_expira_em: input.expira_em ?? null,
+    p_nota_fiscal_id: input.nota_fiscal_id ?? null,
+    p_custo_unitario: input.custo_unitario ?? null,
+    p_usuario: input.usuario_id ?? null,
+    p_observacoes: input.observacoes ?? null,
+    p_estorno_de: input.estorno_de ?? null,
+  });
+  if (error) {
+    logger.error("wms.ledger", "falha ao inserir mov", { error, input });
+    throw error;
   }
-
-  // Upsert em siso_estoque
-  if (estoqueAtual) {
-    const { error: errUpd } = await sb
-      .from("siso_estoque")
-      .update({
-        saldo: saldo_posterior,
-        reservado: reservado_posterior,
-        atualizado_em: new Date().toISOString(),
-      })
-      .eq("id", estoqueAtual.id);
-    if (errUpd) throw errUpd;
-  } else {
-    const { error: errIns } = await sb
-      .from("siso_estoque")
-      .insert({
-        ...quadrupla,
-        saldo: saldo_posterior,
-        reservado: reservado_posterior,
-      });
-    if (errIns) throw errIns;
-  }
-
   return mov as Movimentacao;
 }
 ```
+
+- [ ] **Step 4.5: RPC com lock pessimista (CRÍTICO — adiciona à mesma migration)**
+
+Adiciona em `supabase/migrations/20260508_wms_foundation.sql` antes do `COMMIT`:
+
+```sql
+-- RPC: insere mov no ledger atomicamente com lock pessimista.
+-- Toda escrita no ledger passa por aqui (garante chain verificável + sem race).
+CREATE OR REPLACE FUNCTION wms_inserir_movimentacao(
+  p_produto uuid, p_dona uuid, p_galpao uuid, p_localizacao uuid,
+  p_tipo char(1), p_qty numeric,
+  p_origem_tipo text, p_origem_id text, p_origem_detalhes jsonb,
+  p_emprestimo_devedora uuid, p_expira_em timestamptz,
+  p_nota_fiscal_id bigint, p_custo_unitario numeric,
+  p_usuario uuid, p_observacoes text, p_estorno_de uuid
+) RETURNS siso_movimentacoes LANGUAGE plpgsql AS $$
+DECLARE
+  v_saldo numeric := 0;
+  v_reservado numeric := 0;
+  v_saldo_posterior numeric;
+  v_reservado_posterior numeric;
+  v_mov siso_movimentacoes;
+  v_estoque_id uuid;
+BEGIN
+  -- Lock pessimista. Se a linha não existe (1ª mov), upsert depois.
+  SELECT id, saldo, reservado INTO v_estoque_id, v_saldo, v_reservado
+  FROM siso_estoque
+  WHERE produto_id = p_produto AND empresa_dona_id = p_dona
+    AND galpao_id = p_galpao AND localizacao_id = p_localizacao
+  FOR UPDATE;
+
+  -- Calcula posteriores baseado no tipo
+  IF p_tipo = 'E' THEN
+    v_saldo_posterior := v_saldo + p_qty;
+    v_reservado_posterior := v_reservado;
+  ELSIF p_tipo = 'S' THEN
+    v_saldo_posterior := v_saldo - p_qty;
+    v_reservado_posterior := v_reservado;
+  ELSIF p_tipo = 'R' THEN
+    v_saldo_posterior := v_saldo;
+    v_reservado_posterior := v_reservado + p_qty;
+  ELSIF p_tipo = 'L' THEN
+    v_saldo_posterior := v_saldo;
+    v_reservado_posterior := v_reservado - p_qty;
+  ELSE
+    RAISE EXCEPTION 'tipo inválido: %', p_tipo;
+  END IF;
+
+  -- Validações (db-side; CHECKs da tabela vão re-validar)
+  IF v_saldo_posterior < 0 THEN
+    RAISE EXCEPTION 'saldo insuficiente: anterior=% qty=% tipo=%', v_saldo, p_qty, p_tipo;
+  END IF;
+  IF v_reservado_posterior < 0 THEN
+    RAISE EXCEPTION 'reservado iria negativo: anterior=% qty=%', v_reservado, p_qty;
+  END IF;
+  IF v_reservado_posterior > v_saldo_posterior THEN
+    RAISE EXCEPTION 'reservado (%) excederia saldo (%)', v_reservado_posterior, v_saldo_posterior;
+  END IF;
+
+  -- Insere mov
+  INSERT INTO siso_movimentacoes (
+    produto_id, empresa_dona_id, galpao_id, localizacao_id,
+    tipo, quantidade,
+    saldo_anterior, saldo_posterior,
+    reservado_anterior, reservado_posterior,
+    origem_tipo, origem_id, origem_detalhes,
+    emprestimo_devedora_id, expira_em,
+    nota_fiscal_id, custo_unitario,
+    usuario_id, observacoes, estorno_de
+  ) VALUES (
+    p_produto, p_dona, p_galpao, p_localizacao,
+    p_tipo, p_qty,
+    v_saldo, v_saldo_posterior,
+    v_reservado, v_reservado_posterior,
+    p_origem_tipo, p_origem_id, p_origem_detalhes,
+    p_emprestimo_devedora, p_expira_em,
+    p_nota_fiscal_id, p_custo_unitario,
+    p_usuario, p_observacoes, p_estorno_de
+  ) RETURNING * INTO v_mov;
+
+  -- Upsert em siso_estoque
+  IF v_estoque_id IS NOT NULL THEN
+    UPDATE siso_estoque
+    SET saldo = v_saldo_posterior, reservado = v_reservado_posterior, atualizado_em = now()
+    WHERE id = v_estoque_id;
+  ELSE
+    INSERT INTO siso_estoque (
+      produto_id, empresa_dona_id, galpao_id, localizacao_id,
+      saldo, reservado
+    ) VALUES (
+      p_produto, p_dona, p_galpao, p_localizacao,
+      v_saldo_posterior, v_reservado_posterior
+    );
+  END IF;
+
+  RETURN v_mov;
+END;
+$$;
+```
+
+A RPC garante atomicidade + lock + validação no DB. Helper TypeScript vira thin wrapper.
 
 - [ ] **Step 4: Run tests, expect pass**
 
@@ -1095,6 +1165,7 @@ O catálogo Cross usa `siso_produtos_catalogo` (legado); WMS usa `siso_produtos`
 // src/lib/wms/sync-tiny.ts
 import { createServiceClient } from "@/lib/supabase-server";
 import { fetchProdutoFromTiny } from "@/lib/cross/produto-fetcher";
+import { runWithEmpresa } from "@/lib/tiny-queue";
 import { logger } from "@/lib/logger";
 
 interface CamposSync {
@@ -1132,7 +1203,9 @@ export async function sincronizarProduto(produtoId: string): Promise<void> {
     return;
   }
 
-  const tinyRaw = await fetchProdutoFromTiny(produto.sku, mapeamento.empresa_id);
+  const tinyRaw = await runWithEmpresa(mapeamento.empresa_id, () =>
+    fetchProdutoFromTiny(produto.sku, mapeamento.empresa_id)
+  );
   if (!tinyRaw) return;
 
   // fetchProdutoFromTiny retorna shape do catálogo Cross; mapeamos pros campos do siso_produtos
@@ -1532,7 +1605,7 @@ git commit -m "feat(wms): API de leitura do ledger com filtros"
 
 - [ ] **Step 1: Verificar tiny-api existente**
 
-Já exporta `getEstoque(token, idProduto)` — retorna lista de depósitos com saldo. Vamos resolver o token via `getValidTokenByEmpresa(empresaId)` (de `tiny-oauth.ts`).
+Já exporta `getEstoque(token, idProduto)` — retorna lista de depósitos com saldo. Token via `getValidTokenByEmpresa(empresaId)` (de `tiny-oauth.ts`). **Importante:** projeto já tem rate limiter em `tiny-queue.ts` (`runWithEmpresa`) — toda chamada Tiny pesada DEVE passar por ele pra respeitar quota.
 
 - [ ] **Step 2: Service de snapshot**
 
@@ -1542,6 +1615,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao } from "./ledger";
 import { getEstoque } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
+import { runWithEmpresa } from "@/lib/tiny-queue";
 import { logger } from "@/lib/logger";
 
 /**
@@ -1601,7 +1675,8 @@ export async function executarSnapshotInicial(opts: { dryRun?: boolean } = {}): 
       }
 
       // Busca estoque no Tiny — retorna { depositos: [{ saldo, ... }] }
-      const estoque = await getEstoque(token, par.tiny_produto_id);
+      // Passa por rate limiter pra respeitar quota Tiny por empresa
+      const estoque = await runWithEmpresa(par.empresa_id, () => getEstoque(token!, par.tiny_produto_id));
       const totalSaldo = (estoque?.depositos ?? []).reduce(
         (sum: number, d: any) => sum + Number(d.saldo ?? 0), 0
       );

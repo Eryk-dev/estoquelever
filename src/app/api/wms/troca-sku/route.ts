@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { trocarSku } from "@/lib/wms/troca-sku";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function POST(req: NextRequest) {
   const auth = await requireWarehouseAccess(req);
@@ -22,6 +23,13 @@ export async function POST(req: NextRequest) {
     await trocarSku({ ...body, usuario_id: auth.user.id });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return wmsErrorResponse({
+      source: "wms.troca-sku",
+      error: e,
+      status: 400,
+      requestPath: "/api/wms/troca-sku",
+      requestMethod: "POST",
+      metadata: { pedido_id: body.pedido_id },
+    });
   }
 }

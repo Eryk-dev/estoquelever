@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { atualizarLocalizacao, desativarLocalizacao } from "@/lib/wms/localizacoes";
 import { requireAdmin } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import type { Localizacao, TipoLocalizacao } from "@/lib/wms/types";
 
 const TIPOS_VALIDOS: TipoLocalizacao[] = [
@@ -48,7 +49,13 @@ export async function PATCH(
   try {
     return NextResponse.json(await atualizarLocalizacao(id, allowed));
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return wmsErrorResponse({
+      source: "wms.localizacoes.patch",
+      error: e,
+      requestPath: `/api/wms/localizacoes/${id}`,
+      requestMethod: "PATCH",
+      metadata: { localizacao_id: id },
+    });
   }
 }
 
@@ -64,6 +71,13 @@ export async function DELETE(
     await desativarLocalizacao(id);
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return wmsErrorResponse({
+      source: "wms.localizacoes.delete",
+      error: e,
+      status: 400,
+      requestPath: `/api/wms/localizacoes/${id}`,
+      requestMethod: "DELETE",
+      metadata: { localizacao_id: id },
+    });
   }
 }

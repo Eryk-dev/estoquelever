@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { requireAdmin } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 interface PatchRegraBody {
   limite_max_por_produto?: number | null;
@@ -45,7 +46,15 @@ export async function PATCH(
     .eq("id", id)
     .select()
     .single();
-  if (error) return NextResponse.json({ error: String(error) }, { status: 500 });
+  if (error) {
+    return wmsErrorResponse({
+      source: "wms.emprestimo-regras.patch",
+      error,
+      requestPath: `/api/wms/emprestimo-regras/${id}`,
+      requestMethod: "PATCH",
+      metadata: { regra_id: id },
+    });
+  }
   return NextResponse.json(data);
 }
 

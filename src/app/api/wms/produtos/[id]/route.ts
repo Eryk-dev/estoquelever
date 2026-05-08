@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProduto, atualizarProduto } from "@/lib/wms/produtos";
 import { requireAuth, requireAdmin } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import type { Produto } from "@/lib/wms/types";
 
 export async function GET(
@@ -59,6 +60,12 @@ export async function PATCH(
     const p = await atualizarProduto(id, allowed);
     return NextResponse.json(p);
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return wmsErrorResponse({
+      source: "wms.produtos.patch",
+      error: e,
+      requestPath: `/api/wms/produtos/${id}`,
+      requestMethod: "PATCH",
+      metadata: { produto_id: id },
+    });
   }
 }

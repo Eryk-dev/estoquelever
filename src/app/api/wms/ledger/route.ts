@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
-import { getSessionUser } from "@/lib/session";
+import { requireAuth } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function GET(req: NextRequest) {
-  const user = await getSessionUser(req);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+
   const sp = req.nextUrl.searchParams;
   const sb = createServiceClient();
 
@@ -39,6 +41,13 @@ export async function GET(req: NextRequest) {
   if (ate) q = q.lte("criado_em", ate);
 
   const { data, error } = await q;
-  if (error) return NextResponse.json({ error: String(error) }, { status: 500 });
+  if (error) {
+    return wmsErrorResponse({
+      source: "wms.ledger",
+      error,
+      requestPath: "/api/wms/ledger",
+      requestMethod: "GET",
+    });
+  }
   return NextResponse.json({ rows: data ?? [] });
 }

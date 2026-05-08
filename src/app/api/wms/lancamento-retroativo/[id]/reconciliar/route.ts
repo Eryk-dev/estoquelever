@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { reconciliarRetroativo } from "@/lib/wms/movimentacoes";
 
 export async function POST(
@@ -22,6 +23,13 @@ export async function POST(
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return wmsErrorResponse({
+      source: "wms.lancamento-retroativo.reconciliar",
+      error: e,
+      status: 400,
+      requestPath: `/api/wms/lancamento-retroativo/${id}/reconciliar`,
+      requestMethod: "POST",
+      metadata: { retroativo_mov_id: id, compra_mov_id: body.compra_mov_id },
+    });
   }
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { sincronizarProduto } from "@/lib/wms/sync-tiny";
 
 export async function POST(
@@ -14,6 +15,13 @@ export async function POST(
     await sincronizarProduto(id);
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return wmsErrorResponse({
+      source: "wms.produtos.sync",
+      error: e,
+      category: "external_api",
+      requestPath: `/api/wms/produtos/${id}/sync`,
+      requestMethod: "POST",
+      metadata: { produto_id: id },
+    });
   }
 }

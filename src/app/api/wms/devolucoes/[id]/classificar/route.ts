@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { classificarDevolucao } from "@/lib/wms/devolucoes";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function POST(
   req: NextRequest,
@@ -19,6 +20,13 @@ export async function POST(
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return wmsErrorResponse({
+      source: "wms.devolucoes.classificar",
+      error: e,
+      status: 400,
+      requestPath: `/api/wms/devolucoes/${id}/classificar`,
+      requestMethod: "POST",
+      metadata: { devolucao_id: id, classificacao: body.classificacao },
+    });
   }
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { replenishmentIntraGalpao } from "@/lib/wms/movimentacoes";
 
 export async function POST(req: NextRequest) {
@@ -11,6 +12,12 @@ export async function POST(req: NextRequest) {
     const r = await replenishmentIntraGalpao({ ...body, usuario_id: auth.user.id });
     return NextResponse.json(r);
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return wmsErrorResponse({
+      source: "wms.replenishment",
+      error: e,
+      status: 400,
+      requestPath: "/api/wms/replenishment",
+      requestMethod: "POST",
+    });
   }
 }

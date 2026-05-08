@@ -1,7 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { wmsApi } from "@/lib/wms/api-client";
 
+// Cliente anônimo só pra subscribe ao Realtime channel.
+// IMPORTANTE: a leitura inicial NÃO usa esse client — vai pelo
+// endpoint /api/wms/inventario/[id] que é auth-gated. O channel só
+// recebe eventos operacionais (contagens novas + atualizações de
+// status de localização) que são informação de baixa sensibilidade.
 const sb = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -24,6 +30,11 @@ export interface LocSessao {
   bloqueada_por: string | null;
 }
 
+interface SessaoSnapshot {
+  contagens?: Contagem[];
+  localizacoes?: LocSessao[];
+}
+
 export function useInventarioRealtime(sessaoId: string | null) {
   const [contagens, setContagens] = useState<Contagem[]>([]);
   const [locs, setLocs] = useState<LocSessao[]>([]);
@@ -32,22 +43,21 @@ export function useInventarioRealtime(sessaoId: string | null) {
     if (!sessaoId) return;
     let cancelled = false;
 
+    // 1. Snapshot inicial via API auth-gated (passa pelo session header).
     (async () => {
-      const [c, l] = await Promise.all([
-        sb
-          .from("siso_inventario_contagens")
-          .select("*")
-          .eq("sessao_id", sessaoId),
-        sb
-          .from("siso_inventario_localizacoes")
-          .select("*")
-          .eq("sessao_id", sessaoId),
-      ]);
-      if (cancelled) return;
-      setContagens((c.data ?? []) as Contagem[]);
-      setLocs((l.data ?? []) as LocSessao[]);
+      try {
+        const snap = await wmsApi<SessaoSnapshot>(
+          `/api/wms/inventario/${sessaoId}`,
+        );
+        if (cancelled) return;
+        setContagens((snap.contagens ?? []) as Contagem[]);
+        setLocs((snap.localizacoes ?? []) as LocSessao[]);
+      } catch {
+        // Falha de auth/rede: estado fica vazio, UI mostra empty state.
+      }
     })();
 
+    // 2. Realtime: aplica eventos incrementalmente sobre o snapshot.
     const channel = sb
       .channel(`inventario:${sessaoId}`)
       .on(

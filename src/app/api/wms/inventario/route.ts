@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { criarSessaoInventario } from "@/lib/wms/inventario";
 import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -21,7 +22,14 @@ export async function GET(req: NextRequest) {
   if (status) q = q.eq("status", status);
   if (galpaoId) q = q.eq("galpao_id", galpaoId);
   const { data, error } = await q;
-  if (error) return NextResponse.json({ error: String(error) }, { status: 500 });
+  if (error) {
+    return wmsErrorResponse({
+      source: "wms.inventario",
+      error,
+      requestPath: "/api/wms/inventario",
+      requestMethod: "GET",
+    });
+  }
   return NextResponse.json({ rows: data ?? [] });
 }
 
@@ -40,6 +48,13 @@ export async function POST(req: NextRequest) {
     const id = await criarSessaoInventario({ ...body, criada_por: auth.user.id });
     return NextResponse.json({ id }, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return wmsErrorResponse({
+      source: "wms.inventario.criar",
+      error: e,
+      status: 400,
+      requestPath: "/api/wms/inventario",
+      requestMethod: "POST",
+      metadata: { tipo: body.tipo, galpao_id: body.galpao_id },
+    });
   }
 }

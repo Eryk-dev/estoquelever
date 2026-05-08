@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { requireAdmin } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 interface PatchProdutoFornecedorBody {
   preferencial?: boolean;
@@ -73,7 +74,15 @@ export async function PATCH(
     .eq("id", id)
     .select()
     .single();
-  if (error) return NextResponse.json({ error: String(error) }, { status: 500 });
+  if (error) {
+    return wmsErrorResponse({
+      source: "wms.produto-fornecedores.patch",
+      error,
+      requestPath: `/api/wms/produto-fornecedores/${id}`,
+      requestMethod: "PATCH",
+      metadata: { id },
+    });
+  }
   return NextResponse.json(data);
 }
 

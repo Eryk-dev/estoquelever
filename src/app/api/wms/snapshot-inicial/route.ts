@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { executarSnapshotInicial } from "@/lib/wms/snapshot-inicial";
 
 export async function POST(req: NextRequest) {
@@ -12,6 +13,12 @@ export async function POST(req: NextRequest) {
     const result = await executarSnapshotInicial({ dryRun });
     return NextResponse.json(result);
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return wmsErrorResponse({
+      source: "wms.snapshot-inicial",
+      error: e,
+      requestPath: "/api/wms/snapshot-inicial",
+      requestMethod: "POST",
+      metadata: { dryRun },
+    });
   }
 }

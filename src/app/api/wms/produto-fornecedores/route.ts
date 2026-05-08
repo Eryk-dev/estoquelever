@@ -4,6 +4,7 @@ import {
   vincularProdutoFornecedor,
 } from "@/lib/wms/fornecedores";
 import { requireAuth, requireAdmin } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -26,6 +27,15 @@ export async function POST(req: NextRequest) {
       status: 201,
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return wmsErrorResponse({
+      source: "wms.produto-fornecedores.criar",
+      error: e,
+      requestPath: "/api/wms/produto-fornecedores",
+      requestMethod: "POST",
+      metadata: {
+        produto_id: body.produto_id,
+        fornecedor_id: body.fornecedor_id,
+      },
+    });
   }
 }

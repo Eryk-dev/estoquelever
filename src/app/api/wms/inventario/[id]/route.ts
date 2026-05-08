@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function GET(
   req: NextRequest,
@@ -93,7 +94,15 @@ export async function PATCH(
     .from("siso_inventario_sessoes")
     .update(allowed)
     .eq("id", id);
-  if (error) return NextResponse.json({ error: String(error) }, { status: 500 });
+  if (error) {
+    return wmsErrorResponse({
+      source: "wms.inventario.patch",
+      error,
+      requestPath: `/api/wms/inventario/${id}`,
+      requestMethod: "PATCH",
+      metadata: { sessao_id: id },
+    });
+  }
   return NextResponse.json({ ok: true });
 }
 

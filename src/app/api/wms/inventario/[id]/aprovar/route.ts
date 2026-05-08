@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { aprovarSessao, computarDivergencias } from "@/lib/wms/inventario";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function POST(
   req: NextRequest,
@@ -15,6 +16,13 @@ export async function POST(
     await aprovarSessao(id, auth.user.id);
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return wmsErrorResponse({
+      source: "wms.inventario.aprovar",
+      error: e,
+      status: 400,
+      requestPath: `/api/wms/inventario/${id}/aprovar`,
+      requestMethod: "POST",
+      metadata: { sessao_id: id },
+    });
   }
 }

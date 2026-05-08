@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import {
   lancarRetroativo,
   listarRetroativosPendentes,
@@ -17,7 +18,12 @@ export async function POST(req: NextRequest) {
     await lancarRetroativo({ ...body, usuario_id: auth.user.id });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return wmsErrorResponse({
+      source: "wms.lancamento-retroativo",
+      error: e,
+      requestPath: "/api/wms/lancamento-retroativo",
+      requestMethod: "POST",
+    });
   }
 }
 
@@ -28,6 +34,11 @@ export async function GET(req: NextRequest) {
     const rows = await listarRetroativosPendentes();
     return NextResponse.json({ rows });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return wmsErrorResponse({
+      source: "wms.lancamento-retroativo",
+      error: e,
+      requestPath: "/api/wms/lancamento-retroativo",
+      requestMethod: "GET",
+    });
   }
 }

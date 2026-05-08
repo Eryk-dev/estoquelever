@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function GET(
   req: NextRequest,
@@ -21,7 +22,15 @@ export async function GET(
   const status = sp.get("status");
   if (status) q = q.eq("status", status);
   const { data, error } = await q;
-  if (error) return NextResponse.json({ error: String(error) }, { status: 500 });
+  if (error) {
+    return wmsErrorResponse({
+      source: "wms.inventario.divergencias",
+      error,
+      requestPath: `/api/wms/inventario/${id}/divergencias`,
+      requestMethod: "GET",
+      metadata: { sessao_id: id },
+    });
+  }
   return NextResponse.json({ rows: data ?? [] });
 }
 

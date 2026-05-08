@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { requireAuth, requireAdmin } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function GET(
   req: NextRequest,
@@ -53,6 +54,14 @@ export async function PATCH(
     .from("siso_emprestimo_regras")
     .update({ limites_por_produto: limites })
     .eq("id", id);
-  if (error) return NextResponse.json({ error: String(error) }, { status: 500 });
+  if (error) {
+    return wmsErrorResponse({
+      source: "wms.emprestimo-regras.limites",
+      error,
+      requestPath: `/api/wms/emprestimo-regras/${id}/limites`,
+      requestMethod: "PATCH",
+      metadata: { regra_id: id, produto_id: body.produto_id },
+    });
+  }
   return NextResponse.json({ ok: true, limites });
 }

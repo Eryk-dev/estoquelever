@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listarLocalizacoes, criarLocalizacao } from "@/lib/wms/localizacoes";
 import { requireAuth, requireAdmin } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -22,6 +23,12 @@ export async function POST(req: NextRequest) {
     const loc = await criarLocalizacao(body);
     return NextResponse.json(loc, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return wmsErrorResponse({
+      source: "wms.localizacoes.criar",
+      error: e,
+      requestPath: "/api/wms/localizacoes",
+      requestMethod: "POST",
+      metadata: { galpao_id: body.galpao_id, codigo: body.codigo },
+    });
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listarProdutos, criarProduto } from "@/lib/wms/produtos";
 import { requireAuth, requireAdmin } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -17,7 +18,12 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json(result);
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return wmsErrorResponse({
+      source: "wms.produtos",
+      error: e,
+      requestPath: "/api/wms/produtos",
+      requestMethod: "GET",
+    });
   }
 }
 
@@ -33,6 +39,12 @@ export async function POST(req: NextRequest) {
     const produto = await criarProduto(body);
     return NextResponse.json(produto, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return wmsErrorResponse({
+      source: "wms.produtos.criar",
+      error: e,
+      requestPath: "/api/wms/produtos",
+      requestMethod: "POST",
+      metadata: { sku: body.sku },
+    });
   }
 }

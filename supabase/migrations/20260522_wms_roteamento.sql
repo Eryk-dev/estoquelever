@@ -90,7 +90,7 @@ BEGIN
   v_mov := wms_inserir_movimentacao(
     p_produto, p_dona, p_galpao, p_localizacao,
     'R', p_qty,
-    'reserva_pedido', p_pedido, NULL,
+    'reserva_pedido', p_pedido, '{}'::jsonb,
     NULL,
     now() + (p_ttl_horas || ' hours')::interval,
     NULL, NULL,

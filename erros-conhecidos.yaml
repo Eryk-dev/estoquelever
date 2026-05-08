@@ -384,3 +384,23 @@ erros:
   files:
     - src/app/api/separacao/encaminhar/route.ts
   tags: [encaminhar, galpao, filtro, visibilidade, sugestao, transferencia]
+
+- id: wms-reservar-atomico-origem-detalhes-null
+  date: 2026-05-08
+  source: wms.reservas
+  category: database
+  message: "RPC wms_reservar_atomico violava NOT NULL em siso_movimentacoes.origem_detalhes"
+  cause: >
+    A RPC wms_reservar_atomico (Plano 3) chamava wms_inserir_movimentacao
+    passando NULL no parametro p_origem_detalhes. A coluna origem_detalhes
+    na tabela siso_movimentacoes (Plano 1) tem NOT NULL DEFAULT '{}'::jsonb,
+    mas o INSERT explicito passa o valor (NULL) que sobreescreve o DEFAULT
+    e dispara a violacao da constraint.
+  fix: >
+    Atualizar wms_reservar_atomico para passar '{}'::jsonb em vez de NULL
+    no terceiro argumento de wms_inserir_movimentacao. Migration original
+    20260522_wms_roteamento.sql ajustada + CREATE OR REPLACE aplicado em
+    staging.
+  files:
+    - supabase/migrations/20260522_wms_roteamento.sql
+  tags: [wms, reservas, rpc, jsonb, not-null, plano3]

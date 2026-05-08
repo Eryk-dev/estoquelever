@@ -4828,6 +4828,58 @@ Cron-friendly. **Auth:** `x-worker-secret`. Insere mov L pra reservas com `expir
 
 ---
 
+## WMS — Inventário (Plano 4)
+
+### GET /api/wms/inventario
+Lista sessões. Query: `status`, `galpao_id`.
+
+### POST /api/wms/inventario
+Cria sessão. Body: `{ tipo, galpao_id, modo_contagem?, tolerancia_pct?, exige_aprovacao_acima_valor?, areas: [{ nome, operador_id?, localizacao_ids[] }] }`. Defaults: blind, 2%, R$1000.
+
+### GET /api/wms/inventario/[id]
+Detalhe consolidado: `{ sessao, areas, localizacoes, contagens, divergencias }` (5 queries paralelas).
+
+### PATCH /api/wms/inventario/[id]
+Update genérico de campos da sessão.
+
+### DELETE /api/wms/inventario/[id]
+Cancela (status=cancelada) e libera todos os locks da sessão.
+
+### POST /api/wms/inventario/[id]/iniciar
+Cria locks em `siso_localizacao_locks` (motivo='cycle_count') e muda status pra `em_andamento`. **400** se sessão não está em 'planejada'.
+
+### POST /api/wms/inventario/[id]/aprovar
+Computa divergências + aprova sessão. **400** se há divergências `pendente`.
+
+### POST /api/wms/inventario/[id]/aplicar
+Gera movs `origem_tipo='inventario'` no ledger pra cada divergência aprovada (E ou S conforme delta). Marca divergências como `aplicada` e libera locks. **Response:** `{ movsGeradas }`.
+
+### POST /api/wms/inventario/[id]/contagens
+Registra contagem. Body: `{ localizacao_id, produto_id, empresa_dona_id, qty_contada, modo? }`.
+- `modo='incremental'` (default): soma na contagem do operador (cada bipe = +qty).
+- `modo='absoluto'`: substitui contagem prévia.
+Mesma quádrupla por outro operador gera nova rodada (suporta duplo blind).
+
+### POST /api/wms/inventario/[id]/localizacoes/[locId]/bloquear
+Pega localização atomicamente (RPC). **409** se já bloqueada por outro operador.
+
+### DELETE /api/wms/inventario/[id]/localizacoes/[locId]/bloquear
+Libera lock. Status='contada'.
+
+### GET /api/wms/inventario/[id]/divergencias
+Lista divergências da sessão. Query: `status`.
+
+### PATCH /api/wms/inventario/[id]/divergencias
+Body: `{ divergencia_id, acao: 'aprovar'|'rejeitar'|'recontar', observacoes? }`. 'recontar' devolve a localização pra fila com status='recontagem'.
+
+### GET /api/wms/inventario/metricas
+RPCs: acuracidade por operador (30d) + por localização (5000 últimas).
+
+### GET /api/wms/inventario/cleanup
+Cron-friendly. Auth: `x-worker-secret`. Detecta sessões inativas há 4h+ (alerta) e libera locks com 30min+ sem contagem nova (mov de status='pendente').
+
+---
+
 ## Common Patterns
 
 ### Error Responses

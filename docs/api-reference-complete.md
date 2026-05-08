@@ -4532,6 +4532,122 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ---
 
+## WMS — Foundation (Plano 1)
+
+Schema 4D: cada posição de estoque é única por **(produto_id, empresa_dona_id, galpao_id, localizacao_id)**. Toda escrita no ledger passa pela RPC `wms_inserir_movimentacao` (lock pessimista no Postgres).
+
+### GET /api/wms/produtos
+
+Lista produtos do catálogo unificado.
+
+**Auth:** Session.
+
+**Query params:**
+- `q` (opcional) — busca em sku, descricao, gtin
+- `ativo` — `true|false`
+- `limit` (default 50), `offset` (default 0)
+
+**Response 200:**
+```json
+{ "rows": [{"id":"...","sku":"...","descricao":"...","gtin":null,"ncm":null,"sincronizado_em":null,"ativo":true,...}], "total": 123 }
+```
+
+### POST /api/wms/produtos
+
+Cria produto no catálogo.
+
+**Auth:** Session.
+
+**Request body:** `{ sku, descricao, gtin?, unidade?, ncm? }`
+
+**Response 201:** Produto criado.
+
+**Erros:** 400 se `sku` ou `descricao` ausente.
+
+### GET /api/wms/produtos/[id]
+
+Detalhe do produto.
+
+**Response:** Produto ou 404.
+
+### PATCH /api/wms/produtos/[id]
+
+Atualiza campos do produto. Body é `Partial<Produto>`.
+
+### POST /api/wms/produtos/[id]/sync
+
+Força sincronização com Tiny via mapeamento ativo. Atualiza descricao, gtin, ncm, unidade, origem_fiscal, imagem_url + carimba `sincronizado_em`.
+
+**Side Effects:** UPDATE em `siso_produtos`. Chama Tiny API (rate-limited via `runWithEmpresa`).
+
+**Response 200:** `{ ok: true }` ou 500 com erro.
+
+### GET /api/wms/localizacoes
+
+Lista localizações ativas, opcionalmente filtradas por galpão.
+
+**Query params:** `galpao_id` (opcional).
+
+**Response 200:** `{ rows: Localizacao[] }`.
+
+### POST /api/wms/localizacoes
+
+Cria localização.
+
+**Request body:** `{ galpao_id, codigo, descricao?, tipo? }` (tipo default `picking`).
+
+**Response 201:** Localizacao.
+
+### PATCH /api/wms/localizacoes/[id]
+
+Atualiza campos da localização.
+
+### DELETE /api/wms/localizacoes/[id]
+
+Desativa logicamente. Falha com 400 se houver saldo>0.
+
+### GET /api/wms/estoque
+
+Saldos agregados por perspectiva.
+
+**Query params:**
+- `view` — `dono|galpao|localizacao|produto` (default `produto`)
+- `produto_id`, `empresa_id`, `galpao_id` — filtros opcionais
+
+**Response 200:** `{ rows: [{ chave, nome, saldo, reservado, disponivel, itens: [...] }] }` ordenado por saldo desc.
+
+### GET /api/wms/ledger
+
+Lista movimentações (mais recentes primeiro).
+
+**Query params:** `produto_id`, `empresa_id`, `galpao_id`, `localizacao_id`, `origem_tipo`, `desde`, `ate`, `limit` (default 100).
+
+**Response 200:** `{ rows: Movimentacao[] }` com joins (produto, empresa, galpao, localizacao).
+
+### POST /api/wms/snapshot-inicial
+
+Bulk-load idempotente do Tiny pra popular `siso_estoque` (Fase 0).
+
+**Auth:** Admin only.
+
+**Query params:** `dryRun=true` para apenas contar.
+
+**Response 200:** `{ total, criados, pulados, erros }`.
+
+**Side Effects:** Chama Tiny `/estoque/{id}` por cada (produto, empresa) com mapeamento ativo, cria mov `inventario_inicial` na DEFAULT-PICKING. Idempotente (pula se já existe mov inventario_inicial pra a quádrupla).
+
+### GET /api/wms/reconciliacao
+
+Detecta divergências entre `siso_movimentacoes` (autoritativo) e `siso_estoque` (cache). Cron-friendly.
+
+**Auth:** Header `x-worker-secret` = `WORKER_SECRET`.
+
+**Query params:** `fix=true` corrige automaticamente via `wms_rebuild_linha_estoque`.
+
+**Response 200:** `{ divergencias: [...], corrigidas: number }`.
+
+---
+
 ## Common Patterns
 
 ### Error Responses

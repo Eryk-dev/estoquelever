@@ -355,6 +355,38 @@ supabase/
   migrations/                      # Database migrations (YYYYMMDD_description.sql)
 scripts/
   seed-cross-catalogo.ts           # Seed inicial: importa cross.products → siso_produtos_catalogo
+  wms-seed-test.ts                 # Seed pra validar pipeline WMS end-to-end (1 produto + 1 mov)
+
+wms/  (subset of src/)
+  src/lib/wms/
+    types.ts                       # Produto, Localizacao, EstoqueLinha, Movimentacao, Quadrupla, PerspectivaEstoque
+    ledger.ts                      # inserirMovimentacao() + helpers (calcularPosteriores, validarCoerencia)
+    ledger.test.ts                 # Unit tests da lógica do ledger
+    produtos.ts                    # CRUD do catálogo unificado
+    localizacoes.ts                # CRUD de localizações por galpão
+    estoque.ts                     # Queries de saldos com 4 perspectivas (dono/galpao/localizacao/produto)
+    sync-tiny.ts                   # Sincroniza siso_produtos com Tiny (descricao, ncm, gtin, imagem)
+    snapshot-inicial.ts            # Bulk-load idempotente do Tiny pra popular siso_estoque (Fase 0)
+    reconciliacao.ts               # Detecta + corrige divergências entre ledger e siso_estoque
+  src/app/wms/
+    layout.tsx + page.tsx          # Shell + home com 4 cards (catálogo/localizações/estoque/ledger)
+    produtos/page.tsx              # Catálogo de produtos (search + sync com Tiny)
+    localizacoes/page.tsx          # Configurar localizações por galpão
+    estoque/page.tsx               # Saldos em 4 perspectivas
+    ledger/page.tsx                # Histórico imutável de movimentações
+  src/app/api/wms/
+    produtos/route.ts              # GET (list/search), POST (create)
+    produtos/[id]/route.ts         # GET, PATCH
+    produtos/[id]/sync/route.ts    # POST — força sync com Tiny
+    localizacoes/route.ts          # GET (por galpão), POST
+    localizacoes/[id]/route.ts     # PATCH, DELETE (com proteção saldo>0)
+    estoque/route.ts               # GET ?view=dono|galpao|localizacao|produto
+    ledger/route.ts                # GET com filtros (produto/empresa/galpao/origem_tipo/desde/ate)
+    snapshot-inicial/route.ts      # POST (admin only, idempotente, ?dryRun=true)
+    reconciliacao/route.ts         # GET (worker-secret, cron-friendly, ?fix=true)
+  src/components/wms/
+    wms-shell.tsx                  # Navegação superior do módulo WMS
+    saldo-perspectiva-tabs.tsx     # Tabs entre as 4 perspectivas de saldo
 ```
 
 ## Database Tables (Supabase)
@@ -382,10 +414,26 @@ All tables are prefixed with `siso_`:
 
 | Table | Purpose |
 |---|---|
-| `siso_galpoes` | Physical locations (id, nome unique, descricao, ativo, printnode config) |
+| `siso_galpoes` | Physical locations (id, nome unique, descricao, ativo, printnode config). WMS adds: cidade, estado, pais |
 | `siso_empresas` | Tiny ERP accounts (id, nome, cnpj unique, galpao_id FK, ativo) |
 | `siso_grupos` | Business affinity groups (id, nome unique) |
 | `siso_grupo_empresas` | N:1 empresa→grupo with tier (empresa_id unique) |
+
+### WMS Tables (Plano 1 — Foundation)
+
+Schema 4D: cada posição de estoque é única por **(produto, dona, galpão, localização)**.
+
+| Table | Purpose |
+|---|---|
+| `siso_produtos` | **Catálogo unificado.** id, sku unique, descricao, gtin, imagem_url, unidade, ncm, cest, origem_fiscal, sincronizado_em, ativo |
+| `siso_produto_empresas` | Mapeamento N:N produto↔empresa com tiny_produto_id (PK composto produto_id+empresa_id, UNIQUE empresa_id+tiny_produto_id) |
+| `siso_localizacoes` | Localizações dentro do galpão (id, galpao_id FK, codigo, tipo: picking/overstock/recebimento/expedicao/quarentena, ativo). UNIQUE(galpao_id, codigo) |
+| `siso_estoque` | **Cache materializado** da posição atual. saldo, reservado, disponivel (GENERATED saldo-reservado), custo_medio. UNIQUE(produto, dona, galpão, localização). CHECK reservado<=saldo |
+| `siso_movimentacoes` | **Ledger imutável.** Tipo (E/S/R/L) + saldo_anterior/posterior + reservado_anterior/posterior + origem_tipo (compra_manual, nf_venda, emprestimo, reserva_pedido, …) + observacoes + estorno_de. CHECKs garantem coerência aritmética. |
+
+**RPC `wms_inserir_movimentacao(...)`**: única forma de escrever no ledger. Lock pessimista via `SELECT FOR UPDATE`, valida saldo/reservado, insere mov, atualiza cache atomicamente.
+
+**RPC `wms_detectar_divergencias_estoque()` / `wms_rebuild_linha_estoque(p_id)`**: reconciliação ledger↔cache. Endpoint `/api/wms/reconciliacao` (worker-secret) é cron-friendly.
 
 ### Infrastructure Tables
 
@@ -579,6 +627,7 @@ Failure to update documentation means the next developer or LLM will work with s
 ### In Progress / Minor
 - Real-time notifications for new pending orders (polling at 30s for now)
 - PWA service worker registration (basic structure in place)
+- **WMS Fase 0 (Foundation) — implementado, validado em staging** (projeto Supabase `ehbxpbeijofxtsbezwxd`). Schema 4D + ledger imutável + RPC com lock + 4 telas de visualização (catálogo, localizações, saldos por 4 perspectivas, ledger). Dependente de promoção pra prod (Fase 1+ ainda pendente). Spec: `docs/superpowers/specs/2026-05-07-wms-design.md`. Plano executado: `docs/superpowers/plans/2026-05-08-wms-1-foundation.md`.
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)

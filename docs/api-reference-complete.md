@@ -4766,6 +4766,68 @@ Reconcilia retroativo com mov real (NF formal que chegou depois). Insere mov de 
 
 ---
 
+## WMS — Roteamento (Plano 3)
+
+Motor de decisão própria/empréstimo/OC. Algoritmo puro testável (`rotearPedido`) + wrapper de produção (`rotearPedidoDoBanco`) que filtra locks de localização e aplica limites por par credora↔devedora antes de consultar saldo.
+
+### GET /api/wms/fornecedores
+Lista fornecedores ativos. **Response:** `{ rows: Fornecedor[] }`.
+
+### POST /api/wms/fornecedores
+Cria fornecedor. **Body:** `{ nome, cnpj?, prefixo_sku?, observacoes? }`. **400** se sem nome.
+
+### PATCH /api/wms/fornecedores/[id]
+Atualiza campos.
+
+### DELETE /api/wms/fornecedores/[id]
+Soft delete (ativo=false).
+
+### POST /api/wms/fornecedores/auto-cadastro
+**Admin only.** Insere os 11 fornecedores canônicos do mapeamento sku-fornecedor.ts. Idempotente (skip se nome já existe). **Response:** `{ criados, existentes }`.
+
+### GET /api/wms/produto-fornecedores?produto_id=
+Lista vínculos produto↔fornecedor (preferencial primeiro).
+
+### POST /api/wms/produto-fornecedores
+Cria vínculo. **Body:** `{ produto_id, fornecedor_id, lead_time_dias_*?, custo_unitario?, qty_minima_pedido?, multiplo_compra?, preferencial? }`. Se `preferencial=true`, despreferencia outros do mesmo produto automaticamente.
+
+### PATCH/DELETE /api/wms/produto-fornecedores/[id]
+Atualiza/desativa.
+
+### GET /api/wms/emprestimo-regras
+Lista regras ativas da matriz N×N.
+
+### POST /api/wms/emprestimo-regras
+Cria regra. **Body:** `{ empresa_credora_id, empresa_devedora_id, limite_max_por_produto?, observacoes? }`. **400** se credora == devedora.
+
+### PATCH/DELETE /api/wms/emprestimo-regras/[id]
+Atualiza/desativa.
+
+### GET /api/wms/emprestimo-regras/[id]/limites
+**Response:** `{ limites: Record<produto_id, qty> }`.
+
+### PATCH /api/wms/emprestimo-regras/[id]/limites
+Adiciona/altera/remove uma entrada do jsonb. **Body:** `{ produto_id, qty }` (qty=null remove).
+
+### GET /api/wms/emprestimos/saldos
+Saldo devedor líquido por par credora↔devedora por produto (RPC `wms_saldos_devedores`).
+
+### POST /api/wms/rotear
+Testa o algoritmo (debug + integração futura).
+
+**Body:** `{ empresa_vendedora_id, itens: [{ produto_id, qty }] }`.
+
+**Response 200:** `RotaResult`:
+- `{ decisao: 'propria' | 'emprestimo', galpao_id, rotas: [{ produto_id, qty, empresa_dona_id, galpao_id, localizacao_id, tipo }] }`
+- ou `{ decisao: 'oc', motivo: 'sem_cobertura' | 'split_galpoes' }`
+
+### GET /api/wms/reservas/cleanup
+Cron-friendly. **Auth:** `x-worker-secret`. Insere mov L pra reservas com `expira_em < now()` que ainda não foram liberadas. Marca `siso_pedidos.status_alerta='reserva_expirada'`.
+
+**Response 200:** `{ total, liberadas, erros }`.
+
+---
+
 ## Common Patterns
 
 ### Error Responses

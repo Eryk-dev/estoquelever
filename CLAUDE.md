@@ -370,6 +370,10 @@ wms/  (subset of src/)
     reconciliacao.ts               # Detecta + corrige divergências entre ledger e siso_estoque
     putaway.ts                     # Heurística de sugestão de localização (SKU presente > recebimento > default)
     movimentacoes.ts               # Helpers operacionais: receber, transferir, replenishment, ajuste, retroativo, custo médio
+    fornecedores.ts                # CRUD fornecedores + relação produto↔fornecedor + auto-cadastro do mapeamento sku-fornecedor.ts
+    emprestimos.ts                 # Regras N×N + saldos devedores via RPC
+    roteamento.ts                  # Algoritmo de roteamento PURO (geo-priority) + wrapper rotearPedidoDoBanco
+    reservas.ts                    # Reservas atômicas com TTL + cleanup cron-friendly
   src/app/wms/
     layout.tsx + page.tsx          # Shell + home com 4 cards (catálogo/localizações/estoque/ledger)
     produtos/page.tsx              # Catálogo de produtos (search + sync com Tiny)
@@ -381,6 +385,8 @@ wms/  (subset of src/)
     replenishment/page.tsx         # Replenishment intra-galpão (mover entre localizações no mesmo galpão)
     ajuste/page.tsx                # Ajuste manual com motivo (entrada ou saída)
     retroativos/page.tsx           # Pendências de reconciliação de lançamentos retroativos
+    fornecedores/page.tsx          # CRUD fornecedores + botão auto-cadastrar mapeamento
+    emprestimos/page.tsx           # Matriz N×N de empréstimos + saldos devedores + limites globais
   src/app/api/wms/
     produtos/route.ts              # GET (list/search), POST (create)
     produtos/[id]/route.ts         # GET, PATCH
@@ -397,6 +403,17 @@ wms/  (subset of src/)
     ajuste/route.ts                # POST ajuste manual com motivo
     lancamento-retroativo/route.ts # POST registrar emergência + GET pendentes
     lancamento-retroativo/[id]/reconciliar/route.ts  # POST reconcilia com mov real (insere estorno)
+    fornecedores/route.ts          # GET (list), POST (create)
+    fornecedores/[id]/route.ts     # PATCH, DELETE (soft)
+    fornecedores/auto-cadastro/route.ts  # POST (admin only) — semeia mapeamento canônico
+    produto-fornecedores/route.ts  # GET (?produto_id=), POST (vincular)
+    produto-fornecedores/[id]/route.ts   # PATCH, DELETE (soft)
+    emprestimo-regras/route.ts     # GET, POST (CHECK credora ≠ devedora)
+    emprestimo-regras/[id]/route.ts          # PATCH, DELETE (soft)
+    emprestimo-regras/[id]/limites/route.ts  # GET, PATCH limites_por_produto (jsonb)
+    emprestimos/saldos/route.ts    # GET — saldo devedor líquido por par+produto
+    rotear/route.ts                # POST — testa algoritmo (debug + integração)
+    reservas/cleanup/route.ts      # GET (worker secret) — libera reservas com expira_em < now()
   src/components/wms/
     wms-shell.tsx                  # Navegação superior do módulo WMS (10 atalhos)
     saldo-perspectiva-tabs.tsx     # Tabs entre as 4 perspectivas de saldo
@@ -448,6 +465,19 @@ Schema 4D: cada posição de estoque é única por **(produto, dona, galpão, lo
 **RPC `wms_inserir_movimentacao(...)`**: única forma de escrever no ledger. Lock pessimista via `SELECT FOR UPDATE`, valida saldo/reservado, insere mov, atualiza cache atomicamente.
 
 **RPC `wms_detectar_divergencias_estoque()` / `wms_rebuild_linha_estoque(p_id)`**: reconciliação ledger↔cache. Endpoint `/api/wms/reconciliacao` (worker-secret) é cron-friendly.
+
+### WMS Tables (Plano 3 — Roteamento)
+
+| Table | Purpose |
+|---|---|
+| `siso_fornecedores` | Fornecedores únicos (nome unique, prefixo_sku, cnpj). 11 cadastrados via auto-cadastro do mapeamento canônico. |
+| `siso_produto_fornecedores` | Relação produto↔fornecedor com lead_time min/medio/max + custo_unitario + qty_minima_pedido + multiplo_compra + flag preferencial. UNIQUE(produto, fornecedor). |
+| `siso_emprestimo_regras` | Matriz N×N direcional credora→devedora (UNIQUE par + CHECK credora ≠ devedora). Tem `limites_por_produto jsonb` pra limite por SKU + `limite_max_por_produto numeric` global. |
+| `siso_localizacao_locks` | Locks operacionais de localização (cycle_count, contagem_completa, manutencao). UNIQUE parcial WHERE finalizado_em IS NULL. |
+
+**RPC `wms_reservar_atomico(...)`**: wrapper sobre `wms_inserir_movimentacao` com tipo='R', expira_em=now()+ttl_horas. Retorna mov_id.
+
+**RPC `wms_saldos_devedores()`**: saldo líquido bidirecional credora↔devedora por produto, considerando movs origem_tipo='emprestimo' não-estornadas. Filtrada (devido > 0).
 
 ### Infrastructure Tables
 
@@ -643,6 +673,7 @@ Failure to update documentation means the next developer or LLM will work with s
 - PWA service worker registration (basic structure in place)
 - **WMS Fase 0 (Foundation) — implementado, validado em staging** (projeto Supabase `ehbxpbeijofxtsbezwxd`). Schema 4D + ledger imutável + RPC com lock + 4 telas de visualização (catálogo, localizações, saldos por 4 perspectivas, ledger). Dependente de promoção pra prod (Fase 1+ ainda pendente). Spec: `docs/superpowers/specs/2026-05-07-wms-design.md`. Plano executado: `docs/superpowers/plans/2026-05-08-wms-1-foundation.md`.
 - **WMS Plano 2 (Movimentações operacionais) — implementado, validado em staging.** 5 fluxos (receber, transferir inter-galpão, replenishment intra-galpão, ajuste manual com motivo, lançamento retroativo + reconciliação) + sugestão automática de putaway + recálculo de custo médio em entradas com custo. Validação E2E: receber 50 + ajustar -10 = saldo 40, 0 divergências. Plano: `docs/superpowers/plans/2026-05-15-wms-2-movimentacoes.md`.
+- **WMS Plano 3 (Roteamento) — implementado, validado em staging.** Schema fornecedores + matriz de empréstimos N×N (com limites por par+produto) + algoritmo de roteamento puro com geo-priority (home=0, mesma_cidade=1, mesmo_estado=2, outro=3) + reservas atômicas com TTL 48h + cleanup cron-friendly + shadow logging no webhook (legado vs novo, sem mudar comportamento). 9 testes de roteamento + 3 de reservas. Plano: `docs/superpowers/plans/2026-05-22-wms-3-roteamento.md`.
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)

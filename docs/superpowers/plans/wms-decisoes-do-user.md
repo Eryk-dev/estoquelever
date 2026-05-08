@@ -100,6 +100,18 @@ Respostas dadas via Claude forms na revisão pré-implementação. Esse doc é r
 
 ---
 
+## I) Cutover pra produção (decidido em 2026-05-08, sessão pós-auditoria)
+
+| Item | Decisão |
+|---|---|
+| Estilo de transição | **Big bang num fim de semana** — vira a chave de uma vez |
+| Dual-write paralelo | **Não** — substituído pelo big bang |
+| Por galpão | **Não** — ambos galpões cortam juntos |
+
+**Implicação:** existe um **Plano 6** (`2026-06-12-wms-6-go-live.md`) com runbook completo do cutover (pré-flight, hora-zero, smoke tests, monitoramento, rollback). A "Fase 1 (dual-write)" mencionada nos planos 1-5 deixa de existir como originalmente prevista; o Plano 6 ocupa esse lugar.
+
+---
+
 ## Consolidado: pontos a aplicar nos planos
 
 ### Plano 1 (Foundation)

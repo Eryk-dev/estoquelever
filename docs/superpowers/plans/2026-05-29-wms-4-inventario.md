@@ -246,10 +246,12 @@ export async function criarSessaoInventario(input: CriarSessaoInput): Promise<st
       tipo: input.tipo,
       galpao_id: input.galpao_id,
       empresa_dona_id: input.empresa_dona_id,
-      modo_contagem: input.modo_contagem ?? "aberto",
-      tolerancia_pct: input.tolerancia_pct ?? 0,
+      // Fallbacks alinhados com decisão C (wms-decisoes-do-user.md): blind / 2% / R$1000.
+      // Se input vier undefined, esses valores casam com o DEFAULT da coluna; sem divergência.
+      modo_contagem: input.modo_contagem ?? "blind",
+      tolerancia_pct: input.tolerancia_pct ?? 2.0,
       tolerancia_qty_min: input.tolerancia_qty_min ?? 0,
-      exige_aprovacao_acima_valor: input.exige_aprovacao_acima_valor,
+      exige_aprovacao_acima_valor: input.exige_aprovacao_acima_valor ?? 1000,
       programada_para: input.programada_para,
       observacoes: input.observacoes,
       criada_por: input.criada_por,

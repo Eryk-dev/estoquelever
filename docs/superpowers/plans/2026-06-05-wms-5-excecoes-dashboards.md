@@ -70,7 +70,17 @@ CREATE TABLE siso_devolucoes_pendentes (
 );
 
 CREATE INDEX idx_dev_pend_status ON siso_devolucoes_pendentes(status);
-CREATE INDEX idx_dev_pend_nf ON siso_devolucoes_pendentes(nota_fiscal_id) WHERE nota_fiscal_id IS NOT NULL;
+
+-- Dedup: webhook de NF de devolução pode ser re-entregue pelo Tiny. Sem UNIQUE aqui,
+-- toda re-entrega cria uma pendência duplicada (a dedup global de siso_webhook_logs
+-- protege o upstream, mas não substitui constraint na tabela de domínio).
+-- Indices parciais permitem múltiplos NULLs (devolução manual sem NF identificada).
+CREATE UNIQUE INDEX uq_dev_pend_nota_fiscal
+  ON siso_devolucoes_pendentes(nota_fiscal_id)
+  WHERE nota_fiscal_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_dev_pend_chave_acesso
+  ON siso_devolucoes_pendentes(chave_acesso_nf)
+  WHERE chave_acesso_nf IS NOT NULL;
 
 -- 2. Materialized view de cobertura
 CREATE MATERIALIZED VIEW siso_cobertura_estoque AS
@@ -1244,11 +1254,11 @@ git commit -m "docs(wms): finaliza documentação da Fase 0 + checklist de saíd
 
 ### Critério de "Fim da Fase 0"
 
-Após este plano, Fase 0 está **completa em staging**. Decisão do user: **Fase 1 (dual-write em prod) só começa após time treinado e aprovado nas telas**.
+Após este plano, Fase 0 está **completa em staging**. Decisão do user (decisão I): **cutover em produção é big bang num fim de semana** (não há mais "Fase 1 dual-write" como originalmente cogitado nos planos 1-4 — substituído pelo Plano 6).
 
 Ações pra encerrar Fase 0:
 - ☐ Você treina cada operador pessoalmente nas telas WMS staging
 - ☐ Operadores aprovam (sem bloqueios reportados)
-- ☐ Você confirma "go" pra Fase 1
+- ☐ Você confirma "go" pra cutover
 
-**Após este plano:** Fase 0 do WMS está completa. **Plano 6+ (Fases 1-4)** virá depois que time aprovar.
+**Após este plano:** Fase 0 do WMS está completa em staging. O **Plano 6** (`2026-06-12-wms-6-go-live.md`) contém o runbook completo do cutover big bang pra produção: pré-flight, hora-zero, snapshot Tiny, smoke tests, monitoramento intensivo e rollback playbook.

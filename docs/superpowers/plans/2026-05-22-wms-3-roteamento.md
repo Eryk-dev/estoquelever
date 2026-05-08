@@ -113,51 +113,30 @@ CREATE TABLE siso_emprestimo_regras (
 CREATE INDEX idx_regra_devedora ON siso_emprestimo_regras(empresa_devedora_id) WHERE ativo;
 CREATE INDEX idx_regra_credora ON siso_emprestimo_regras(empresa_credora_id) WHERE ativo;
 
--- 4. Função RPC pra reservar com lock pessimista (atomica)
+-- 4. Função RPC pra reservar atomicamente — wrapper fino sobre wms_inserir_movimentacao
+-- (helper canônico criado no Plano 1, Task 4.5). Toda escrita no ledger DEVE passar pelo
+-- helper canônico; duplicar a lógica de lock + INSERT + UPDATE de saldo aqui criaria duas
+-- fontes de verdade e qualquer invariante futura precisaria ser replicada nos dois lugares.
 CREATE OR REPLACE FUNCTION wms_reservar_atomico(
   p_produto uuid, p_dona uuid, p_galpao uuid, p_localizacao uuid,
   p_qty numeric, p_pedido text, p_ttl_horas int DEFAULT 48,
   p_usuario uuid DEFAULT NULL
 ) RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE
-  v_id uuid;
-  v_saldo numeric;
-  v_reservado numeric;
+  v_mov siso_movimentacoes;
 BEGIN
-  -- Lock pessimista
-  SELECT saldo, reservado INTO v_saldo, v_reservado
-  FROM siso_estoque
-  WHERE produto_id = p_produto AND empresa_dona_id = p_dona
-    AND galpao_id = p_galpao AND localizacao_id = p_localizacao
-  FOR UPDATE;
-
-  IF v_saldo IS NULL THEN RAISE EXCEPTION 'estoque inexistente'; END IF;
-  IF v_saldo - v_reservado < p_qty THEN
-    RAISE EXCEPTION 'saldo insuficiente: disponível=% qty=%', v_saldo - v_reservado, p_qty;
-  END IF;
-
-  -- Insere mov R
-  INSERT INTO siso_movimentacoes (
-    produto_id, empresa_dona_id, galpao_id, localizacao_id,
-    tipo, quantidade,
-    saldo_anterior, saldo_posterior,
-    reservado_anterior, reservado_posterior,
-    origem_tipo, origem_id, expira_em, usuario_id
-  ) VALUES (
+  -- Delega no helper canônico. Ele faz lock pessimista, valida saldo/reservado,
+  -- insere a mov no ledger e faz upsert em siso_estoque numa transação só.
+  v_mov := wms_inserir_movimentacao(
     p_produto, p_dona, p_galpao, p_localizacao,
     'R', p_qty,
-    v_saldo, v_saldo,
-    v_reservado, v_reservado + p_qty,
-    'reserva_pedido', p_pedido,
-    now() + (p_ttl_horas || ' hours')::interval, p_usuario
-  ) RETURNING id INTO v_id;
-
-  UPDATE siso_estoque
-  SET reservado = reservado + p_qty, atualizado_em = now()
-  WHERE produto_id = p_produto AND empresa_dona_id = p_dona
-    AND galpao_id = p_galpao AND localizacao_id = p_localizacao;
-
-  RETURN v_id;
+    'reserva_pedido', p_pedido, NULL,                            -- origem
+    NULL,                                                         -- emprestimo_devedora
+    now() + (p_ttl_horas || ' hours')::interval,                  -- expira_em
+    NULL, NULL,                                                   -- nota_fiscal_id, custo_unitario
+    p_usuario, NULL, NULL                                         -- usuario, observacoes, estorno_de
+  );
+  RETURN v_mov.id;
 END;
 $$;
 
@@ -1606,6 +1585,12 @@ export async function GET(req: NextRequest) {
 Documentar no CLAUDE.md: chamar `GET /api/wms/reservas/cleanup` com header `x-worker-secret` a cada hora. Sugestão: criar pg_cron job:
 
 ```sql
+-- Habilita extensões necessárias. Em Supabase managed elas costumam vir habilitadas,
+-- mas em branch/projeto novo é mandatório declarar antes de chamar cron.schedule/net.http_get.
+-- Idempotente: rodar múltiplas vezes não causa erro.
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
 SELECT cron.schedule(
   'wms-cleanup-reservas-expiradas',
   '0 * * * *',  -- a cada hora
@@ -1615,6 +1600,8 @@ SELECT cron.schedule(
      ); $$
 );
 ```
+
+> **Nota:** os planos 4 e 5 reutilizam `pg_cron`/`pg_net` — não precisam re-habilitar (idempotente, mas redundante). Considere o `CREATE EXTENSION` deste passo como o ponto canônico de habilitação para todo o WMS.
 
 (Ajustar URL pra produção real.)
 

@@ -15,6 +15,7 @@ import {
   Search,
   Settings,
   ShoppingCart,
+  Warehouse,
 } from "lucide-react";
 import Link from "next/link";
 import { AppHeader } from "@/components/app-header";
@@ -88,6 +89,15 @@ const MODULES: Module[] = [
     color: "#ef4444",
     accentBg: "bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400",
   },
+  {
+    id: "wms",
+    href: "/wms",
+    title: "WMS",
+    subtitle: "Operações de estoque",
+    icon: Warehouse,
+    color: "#0ea5e9",
+    accentBg: "bg-sky-50 text-sky-600 dark:bg-sky-950 dark:text-sky-400",
+  },
 ];
 
 interface DashboardCounts {
@@ -140,7 +150,7 @@ function getModuleCount(
   moduleId: Module["id"],
   counts: DashboardCounts | null,
 ): number | null {
-  if (moduleId === "painel" || moduleId === "pedidos" || moduleId === "cross") return null;
+  if (moduleId === "painel" || moduleId === "pedidos" || moduleId === "cross" || moduleId === "wms") return null;
   return counts?.[moduleId as keyof DashboardCounts] ?? null;
 }
 

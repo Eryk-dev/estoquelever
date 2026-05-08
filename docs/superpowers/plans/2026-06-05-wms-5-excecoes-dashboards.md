@@ -248,15 +248,29 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
   };
 
   switch (input.classificacao) {
-    case "integro":
+    case "integro": {
+      // Resolve custo da venda original pra recalcular custo médio (decisão do user)
+      let custoUnitarioOriginal: number | undefined = undefined;
+      if (dev.pedido_origem_mov_id) {
+        const { data: movOriginal } = await sb.from("siso_movimentacoes")
+          .select("custo_unitario").eq("id", dev.pedido_origem_mov_id).single();
+        if (movOriginal?.custo_unitario) custoUnitarioOriginal = Number(movOriginal.custo_unitario);
+      }
       await inserirMovimentacao({
         quadrupla, tipo: "E", qty: input.qty,
         origem_tipo: "nf_devolucao_cliente",
         nota_fiscal_id: dev.nota_fiscal_id ?? undefined,
+        custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
         observacoes: input.observacoes,
       });
+      // Recalcula custo médio (média ponderada com saldo anterior)
+      if (custoUnitarioOriginal !== undefined) {
+        const { recalcularCustoMedio } = await import("./movimentacoes");
+        await recalcularCustoMedio(quadrupla, input.qty, custoUnitarioOriginal);
+      }
       break;
+    }
     case "avariado":
       // Par atômico: entra fiscalmente + sai pra quarentena (origem ajuste_manual com motivo='avaria')
       await inserirMovimentacao({
@@ -1197,13 +1211,35 @@ git commit -m "docs(wms): finaliza documentação da Fase 0 + checklist de saíd
 
 ## Critério de saída do Plano 5
 
-✅ Devoluções entram em fila quando webhook NF chega.
-✅ Operador consegue classificar (íntegro/avariado/garantia/troca SKU) com fluxo correto pra cada caso.
-✅ Troca SKU gera 4 movs auditáveis com mesma `origem_id`.
-✅ Validação Cross alerta (não bloqueia em v1) se SKU substituto não está registrado como equivalente.
-✅ Dashboard de cobertura mostra status correto (critico < 7d, atenção < 14d, lead_time_risco < lead, sem_giro = 0 saídas, ok).
-✅ Dashboard geral agrega todos os indicadores em uma tela com refresh 30s.
-✅ Materialized view de cobertura tem refresh diário via cron.
-✅ Documentação atualizada e checklist Fase 0 publicado.
+### Critérios técnicos
+- ✅ Devoluções entram em fila quando webhook NF chega.
+- ✅ Operador classifica em 4 modos (íntegro/avariado/garantia/troca SKU).
+- ✅ Devolução íntegra recalcula custo médio (média ponderada).
+- ✅ Devolução avariada vai pra QUARENTENA (criada no Plano 1).
+- ✅ Troca SKU gera 4 movs auditáveis com mesma `origem_id`.
+- ✅ Validação Cross alerta (não bloqueia em v1) se SKU substituto não é equivalente registrado.
+- ✅ Dashboard de cobertura mostra status correto (crítico/atenção/lead_time_risco/ok/sem_giro).
+- ✅ Dashboard geral agrega indicadores em uma tela com refresh 30s.
+- ✅ Materialized view de cobertura tem refresh diário via cron.
+- ✅ Documentação atualizada e checklist Fase 0 publicado.
 
-**Após este plano:** Fase 0 do WMS está completa. Próximo passo: **Plano 6 (não incluído neste pacote)** será Fase 1 (dual-write) → Fase 2 (shadow comparison) → Fase 3 (switch parcial) → Fase 4 (switch completo). Esses planos virão depois que Fase 0 estiver validada em produção.
+### Cenários funcionais de aceitação
+
+1. **Devolução íntegra:** simular webhook NF devolução, abrir `/wms/devolucoes`, ver pendência. Classificar como íntegro com qty=2. Confirmar mov `nf_devolucao_cliente` no ledger e custo médio recalculado.
+2. **Devolução avariada:** classificar como avariado. Ver par E + S no ledger; saldo final na localização QUARENTENA aumenta, na original não muda.
+3. **Devolução garantia:** classificar como garantia. Ver par E + S; saldo agregado fica zero (entra e sai pra fornecedor RMA).
+4. **Troca SKU:** durante separação simulada, trocar SKU-X por SKU-Y. Ledger mostra 4 movs (`troca_sku_out`, `troca_sku_in`, `nf_venda` Y, `liberacao_reserva` Y) com mesma `origem_id`.
+5. **Cobertura crítica:** SKU com giro 5/dia e saldo 20 → cobertura 4 dias → status `critico`. Aparece no dashboard `/wms/cobertura?status=critico`.
+6. **Cross-cobertura com lead time:** SKU com cobertura 10d, fornecedor preferencial com lead 14d → status `lead_time_risco`. Aparece destacado.
+7. **Dashboard geral:** abrir `/wms/dashboard`. Ver cards agregados: cobertura (#crítico/#atenção/#sem giro), inventário (#sessões ativas), reservas (#expirando), empréstimos (#pares com saldo). Refresh automático 30s.
+
+### Critério de "Fim da Fase 0"
+
+Após este plano, Fase 0 está **completa em staging**. Decisão do user: **Fase 1 (dual-write em prod) só começa após time treinado e aprovado nas telas**.
+
+Ações pra encerrar Fase 0:
+- ☐ Você treina cada operador pessoalmente nas telas WMS staging
+- ☐ Operadores aprovam (sem bloqueios reportados)
+- ☐ Você confirma "go" pra Fase 1
+
+**Após este plano:** Fase 0 do WMS está completa. **Plano 6+ (Fases 1-4)** virá depois que time aprovar.

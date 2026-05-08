@@ -12,6 +12,12 @@
 
 **Pré-requisitos:** Planos 1 e 2 concluídos **em staging** (Supabase branch `wms-fase0` + preview Vercel). Migrations e código deste plano operam **somente em staging**; produção não é tocada. O webhook do Tiny continua apontando pra prod, então o "shadow logging" da Task 11 só dispara quando webhook real chega na prod — em staging, dispara via testes manuais.
 
+**Decisões aplicadas (do user, ver `wms-decisoes-do-user.md`):**
+- Fornecedores são **auto-criados a partir de `sku-fornecedor.ts`** (Task 5.5 abaixo)
+- Lead times preenchidos manualmente conforme cadastra
+- Tela simples de **limite máximo por produto** em empréstimos faz parte de v1 (Task 6.5 abaixo)
+- Custo unitário em mov `origem_tipo='emprestimo'` reflete o **custo médio da linha de estoque da credora** (não da vendedora). Documentado em código.
+
 ---
 
 ## File Structure
@@ -474,6 +480,85 @@ git commit -m "feat(wms): tela de cadastro de fornecedores"
 
 ---
 
+### Task 5.5: Auto-seed de fornecedores a partir de `sku-fornecedor.ts`
+
+**Files:**
+- Create: `scripts/wms-seed-fornecedores.ts`
+
+- [ ] **Step 1: Inspecionar mapeamento existente**
+
+```bash
+cat src/lib/sku-fornecedor.ts
+```
+
+Identifique a estrutura (mapeamento prefixo → fornecedor + galpão default). Esse arquivo já existe e o user confirmou ser fonte de verdade pra fornecedores em v1.
+
+- [ ] **Step 2: Script de seed**
+
+```typescript
+// scripts/wms-seed-fornecedores.ts
+import "dotenv/config";
+import { createServiceClient } from "../src/lib/supabase-server";
+// Importa mapeamento existente; nome real conforme sku-fornecedor.ts
+import { MAPEAMENTO_PREFIXOS } from "../src/lib/sku-fornecedor";
+
+async function main() {
+  const sb = createServiceClient();
+
+  // Extrai fornecedores únicos do mapeamento
+  const fornecedoresUnicos = new Map<string, { nome: string; prefixos: string[] }>();
+  for (const [prefixo, info] of Object.entries(MAPEAMENTO_PREFIXOS as any)) {
+    const nome = (info as any).fornecedor;
+    if (!fornecedoresUnicos.has(nome)) fornecedoresUnicos.set(nome, { nome, prefixos: [] });
+    fornecedoresUnicos.get(nome)!.prefixos.push(prefixo);
+  }
+
+  for (const [nome, info] of fornecedoresUnicos) {
+    // Cria 1 fornecedor por nome; usa primeiro prefixo como prefixo_sku padrão
+    const { data, error } = await sb.from("siso_fornecedores")
+      .upsert({ nome, prefixo_sku: info.prefixos[0] }, { onConflict: "nome" })
+      .select("id, prefixo_sku").single();
+    if (error) {
+      console.error(`falha ${nome}:`, error.message);
+      continue;
+    }
+    console.log(`✓ ${nome} (prefixo: ${data.prefixo_sku}, prefixos extras: ${info.prefixos.slice(1).join(", ") || "—"})`);
+  }
+  console.log(`\nTotal: ${fornecedoresUnicos.size} fornecedores cadastrados.`);
+  console.log("Lead times: preencha manualmente em /wms/fornecedores depois.");
+}
+
+main().catch(console.error);
+```
+
+- [ ] **Step 3: Adicionar UNIQUE em `nome` no fornecedores**
+
+Como o seed usa `upsert` com `onConflict: "nome"`, a tabela precisa ter UNIQUE. Adicionar à migration original (`20260522_wms_roteamento.sql`):
+
+```sql
+ALTER TABLE siso_fornecedores
+  ADD CONSTRAINT siso_fornecedores_nome_unique UNIQUE (nome);
+```
+
+(Já está? Verifica antes de duplicar.)
+
+- [ ] **Step 4: Executar seed**
+
+```bash
+npx tsx scripts/wms-seed-fornecedores.ts
+```
+
+Expected: ~14 fornecedores criados (Diversos, Tiger, LDRU, LEFS, ACA, GAUSS, MRMK, Delphi, Kintop, Multiqualita, etc).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/wms-seed-fornecedores.ts supabase/migrations/20260522_wms_roteamento.sql
+git commit -m "feat(wms): auto-seed de fornecedores baseado em sku-fornecedor.ts"
+```
+
+---
+
 ### Task 5: Service de empréstimos
 
 **Files:**
@@ -737,6 +822,103 @@ export default function EmprestimosPage() {
 ```bash
 git add src/app/api/wms/emprestimo-regras/ src/app/api/wms/emprestimos/ src/app/wms/emprestimos/
 git commit -m "feat(wms): APIs e tela de matriz de empréstimos com saldos devedores"
+```
+
+---
+
+### Task 6.5: Tela de limite máximo por produto em empréstimo
+
+**Files:**
+- Create: `src/app/api/wms/emprestimo-regras/[id]/limites/route.ts`
+- Modify: `src/app/wms/emprestimos/page.tsx`
+
+- [ ] **Step 1: API de limite por par+produto**
+
+`limite_max_por_produto` na tabela `siso_emprestimo_regras` é um valor único por par (não por produto). Pra "limite por produto" precisamos de tabela auxiliar OU campo jsonb. Decisão: campo jsonb simples no v1.
+
+Migration extra (adicionar à `20260522_wms_roteamento.sql`):
+
+```sql
+ALTER TABLE siso_emprestimo_regras
+  ADD COLUMN IF NOT EXISTS limites_por_produto jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+-- Estrutura: { "<produto_id>": <numero qty máxima>, ... }
+-- Validação: aplicada no algoritmo de roteamento (Task 7)
+```
+
+API:
+
+```typescript
+// src/app/api/wms/emprestimo-regras/[id]/limites/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
+
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!await getSessionUser(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const sb = createServiceClient();
+  const { data } = await sb.from("siso_emprestimo_regras").select("limites_por_produto").eq("id", id).single();
+  return NextResponse.json({ limites: data?.limites_por_produto ?? {} });
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!await getSessionUser(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { id } = await params;
+  const body = await req.json();
+  if (!body.produto_id || body.qty === undefined) {
+    return NextResponse.json({ error: "produto_id e qty obrigatórios" }, { status: 400 });
+  }
+  const sb = createServiceClient();
+  const { data: regra } = await sb.from("siso_emprestimo_regras").select("limites_por_produto").eq("id", id).single();
+  const limites = (regra?.limites_por_produto ?? {}) as Record<string, number>;
+  if (body.qty === null) delete limites[body.produto_id];
+  else limites[body.produto_id] = Number(body.qty);
+  const { error } = await sb.from("siso_emprestimo_regras").update({ limites_por_produto: limites }).eq("id", id);
+  if (error) return NextResponse.json({ error: String(error) }, { status: 500 });
+  return NextResponse.json({ ok: true, limites });
+}
+```
+
+- [ ] **Step 2: UI extensão na tela de empréstimos**
+
+Em `src/app/wms/emprestimos/page.tsx`, adicionar seção expandable por regra mostrando limites por produto + botão "configurar limites". Inputs simples: SKU + qty.
+
+```tsx
+// Adicionar após o map de regras
+{regras?.rows.map(r => (
+  <details key={r.id} className="rounded border border-zinc-200 dark:border-zinc-800">
+    <summary className="p-2 cursor-pointer text-sm">
+      {empresaNome(r.empresa_credora_id)} → {empresaNome(r.empresa_devedora_id)}
+    </summary>
+    <LimitesEditor regraId={r.id} />
+  </details>
+))}
+```
+
+`LimitesEditor` é componente novo: lê limites via `GET /api/wms/emprestimo-regras/[id]/limites`, lista em tabela; tem input pra adicionar SKU + qty (chama PATCH). Implementação trivial seguindo padrão das telas anteriores.
+
+- [ ] **Step 3: Aplicar limite no algoritmo de roteamento (Task 7)**
+
+Em `roteamento.ts` Task 7, na busca de empréstimo, verificar `limites_por_produto[produto_id]` e abater do disponível. Se `qty > limite`, ignora aquela credora pra esse produto.
+
+```typescript
+// Na função buscarLinha, ao buscar empréstimo:
+// Antes de retornar, verifica limite_por_produto da regra
+const { data: regra } = await sb.from("siso_emprestimo_regras")
+  .select("limites_por_produto")
+  .eq("empresa_credora_id", q.empresa_dona_id)
+  .eq("empresa_devedora_id", empresaVendedoraId)
+  .single();
+const limite = (regra?.limites_por_produto as Record<string, number>)?.[q.produto_id];
+if (limite !== undefined && q.qty > limite) return null;
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/app/api/wms/emprestimo-regras/[id]/limites/ src/app/wms/emprestimos/page.tsx supabase/migrations/20260522_wms_roteamento.sql src/lib/wms/roteamento.ts
+git commit -m "feat(wms): tela e validação de limite máximo por produto em empréstimos"
 ```
 
 ---
@@ -1417,11 +1599,24 @@ git commit -m "docs(wms): documenta roteamento, empréstimos e reservas"
 
 ## Critério de saída do Plano 3
 
-✅ Algoritmo de roteamento passa em todos os tests (geo-priority, próprio/empréstimo/OC, split detection).
-✅ Reservas atômicas funcionam com lock pessimista (nenhum oversell em teste de concorrência).
-✅ TTL cleanup libera reservas expiradas e não toca em ativas.
-✅ Webhook escreve shadow log com decisão nova vs legada.
-✅ Telas de fornecedores e empréstimos funcionam.
-✅ Documentação atualizada.
+### Critérios técnicos
+- ✅ Algoritmo passa em todos os tests (geo-priority, próprio/empréstimo/OC, split detection).
+- ✅ Reservas atômicas funcionam com lock pessimista (nenhum oversell em teste de concorrência).
+- ✅ TTL cleanup libera reservas expiradas e não toca em ativas.
+- ✅ Webhook escreve shadow log com decisão nova vs legada.
+- ✅ Telas de fornecedores e empréstimos funcionam.
+- ✅ Auto-seed criou ~14 fornecedores baseado em prefixos SKU.
+- ✅ Documentação atualizada.
 
-**Próximo:** Plano 4 (inventário robusto multi-operador).
+### Cenários funcionais de aceitação
+
+1. **Fornecedor + lead time:** abrir `/wms/fornecedores`, ver lista pré-populada. Vincular um fornecedor a 1 produto com `lead_time_dias_medio=21`. Confirmar vínculo aparece.
+2. **Matriz de empréstimo:** criar regra NetAir → NetParts em `/wms/emprestimos`. Definir `limite_max_por_produto = 50` pra um SKU. Ver na lista expandida.
+3. **Roteamento próprio (auto-aprovação):** disparar `POST /api/wms/rotear` com SKU que tem saldo na vendedora. Resposta `decisao: 'propria'` com galpão home priorizado.
+4. **Roteamento com empréstimo:** disparar com SKU sem saldo na vendedora mas com saldo na credora. Resposta `decisao: 'emprestimo'`. Na rota, `empresa_dona_id` ≠ vendedora.
+5. **Roteamento OC (split):** pedido com 2 SKUs onde nenhum galpão único cobre ambos. Resposta `decisao: 'oc'` com motivo `split_galpoes`.
+6. **Reserva + TTL:** criar reserva manualmente, esperar 48h+1min (ou ajustar `expira_em` direto no DB pra simular), rodar cron de cleanup, confirmar que mov de liberação foi gerada e `reservado` da linha caiu.
+
+**SLA:** sem prazo fixo.
+
+**Próximo:** Plano 4 — só após seu OK explícito.

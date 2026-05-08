@@ -58,10 +58,12 @@ CREATE TABLE siso_inventario_sessoes (
   tipo text NOT NULL CHECK (tipo IN ('cycle_count','completo')),
   galpao_id uuid NOT NULL REFERENCES siso_galpoes(id),
   empresa_dona_id uuid REFERENCES siso_empresas(id),
-  modo_contagem text NOT NULL DEFAULT 'aberto' CHECK (modo_contagem IN ('aberto','blind','duplo_blind')),
-  tolerancia_pct numeric NOT NULL DEFAULT 0 CHECK (tolerancia_pct >= 0),
+  -- Defaults definidos pelo user na revisão pré-implementação:
+  -- modo blind (anti-fraude), tolerância 2%, aprovação acima de R$ 1.000
+  modo_contagem text NOT NULL DEFAULT 'blind' CHECK (modo_contagem IN ('aberto','blind','duplo_blind')),
+  tolerancia_pct numeric NOT NULL DEFAULT 2.0 CHECK (tolerancia_pct >= 0),
   tolerancia_qty_min numeric NOT NULL DEFAULT 0 CHECK (tolerancia_qty_min >= 0),
-  exige_aprovacao_acima_valor numeric,
+  exige_aprovacao_acima_valor numeric DEFAULT 1000,
   status text NOT NULL DEFAULT 'planejada' CHECK (status IN (
     'planejada','em_andamento','revisao','aprovada','aplicada','cancelada'
   )),
@@ -1457,6 +1459,83 @@ git commit -m "feat(wms): métricas de acuracidade por operador e localização"
 
 ---
 
+### Task 10.5: Curva ABC automática (giro 30d)
+
+**Files:**
+- Create: migration `20260529_wms_curva_abc.sql`
+
+User decidiu: classificar produtos em A/B/C automaticamente baseado em giro 30d. Top 20% = A (alto giro), próximos 30% = B, resto = C. Materialized view com refresh diário.
+
+- [ ] **Step 1: Migration**
+
+```sql
+CREATE MATERIALIZED VIEW siso_curva_abc AS
+WITH giro AS (
+  SELECT produto_id,
+         SUM(quantidade) AS qty_30d,
+         COUNT(*) AS movs_30d
+  FROM siso_movimentacoes
+  WHERE tipo = 'S'
+    AND origem_tipo IN ('nf_venda','emprestimo')
+    AND criado_em >= now() - interval '30 days'
+    AND estorno_de IS NULL
+  GROUP BY produto_id
+),
+ranked AS (
+  SELECT produto_id, qty_30d, movs_30d,
+         PERCENT_RANK() OVER (ORDER BY qty_30d DESC) AS rank_pct
+  FROM giro
+)
+SELECT
+  produto_id, qty_30d, movs_30d, rank_pct,
+  CASE
+    WHEN rank_pct <= 0.20 THEN 'A'
+    WHEN rank_pct <= 0.50 THEN 'B'
+    ELSE 'C'
+  END AS curva
+FROM ranked;
+
+CREATE UNIQUE INDEX uq_curva_abc ON siso_curva_abc(produto_id);
+CREATE INDEX idx_curva_abc_categoria ON siso_curva_abc(curva);
+
+CREATE OR REPLACE FUNCTION wms_refresh_curva_abc()
+RETURNS void LANGUAGE sql AS $$
+  REFRESH MATERIALIZED VIEW siso_curva_abc;
+$$;
+```
+
+- [ ] **Step 2: Apply migration**
+
+Via `mcp__supabase__apply_migration` no branch_id `wms-fase0`.
+
+- [ ] **Step 3: Cron job de refresh diário 03h30**
+
+Adicionar pg_cron junto com os outros (cobertura). Documentar no CLAUDE.md.
+
+- [ ] **Step 4: Exibir curva na UI de programação de cycle count**
+
+Na tela `/wms/inventario` (Task 6), filtro adicional "filtrar localizações com produtos curva A" pra ajudar a montar sessões focadas em alto giro.
+
+```tsx
+// Na criação de sessão, opção:
+<select onChange={...}>
+  <option>Selecionar manualmente</option>
+  <option value="A">Só localizações com produtos curva A</option>
+  <option value="ABC-A20-B30-C50">Mix proporcional ABC</option>
+</select>
+```
+
+A query de seleção busca de `siso_curva_abc` joinado com `siso_estoque`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add supabase/migrations/20260529_wms_curva_abc.sql src/app/wms/inventario/page.tsx
+git commit -m "feat(wms): curva ABC automática via giro 30d + filtro em criação de sessão"
+```
+
+---
+
 ### Task 11: Recovery de sessões órfãs
 
 **Files:**
@@ -1569,13 +1648,28 @@ git commit -m "docs(wms): documenta módulo de inventário"
 
 ## Critério de saída do Plano 4
 
-✅ Sessão de cycle count com 1 operador funciona end-to-end (criar → iniciar → contar → aprovar → aplicar).
-✅ Sessão completa com 2+ operadores em paralelo: cada um conta sua área, supervisor vê progresso realtime.
-✅ Anti-colisão impede 2 operadores na mesma localização.
-✅ Modo blind oculta saldo esperado na UI do operador.
-✅ Divergências fora de tolerância exigem aprovação manual.
-✅ Recovery libera locks órfãos.
-✅ Métricas mostram acuracidade por operador e localização.
-✅ Documentação atualizada.
+### Critérios técnicos
+- ✅ Sessão de cycle count com 1 operador funciona end-to-end (criar → iniciar → contar → aprovar → aplicar).
+- ✅ Sessão completa com 4-6 operadores em paralelo: cada um conta sua área, supervisor vê progresso realtime.
+- ✅ Anti-colisão impede 2 operadores na mesma localização.
+- ✅ Modo blind oculta saldo esperado na UI do operador (default em sessões novas).
+- ✅ Divergências > 2% ou > R$ 1.000 exigem aprovação manual (defaults aplicados).
+- ✅ Cada bipe persiste imediatamente no DB (sem perda se aba fecha).
+- ✅ Recovery libera locks órfãos.
+- ✅ Métricas mostram acuracidade por operador e localização.
+- ✅ Curva ABC populada via giro 30d.
+- ✅ Documentação atualizada.
 
-**Próximo:** Plano 5 (exceções: devoluções, troca SKU, dashboards).
+### Cenários funcionais de aceitação
+
+1. **Cycle count solo:** criar sessão pra 1 localização (5 SKUs), iniciar (lock criado), contar 5 SKUs com scanner Code 128. Ver contagens aparecerem em tempo real no painel admin. Aprovar e aplicar — gera mov `inventario` no ledger.
+2. **Inventário completo multi-operador:** criar sessão pra galpão inteiro com 4 áreas (4 operadores). Cada operador abre `/wms/inventario/[id]/contar` em sua máquina. Conta em paralelo. Painel admin mostra progresso global (X% concluído) atualizando em tempo real.
+3. **Anti-colisão:** operador A pega localização "L1". Operador B tenta pegar a mesma — recebe erro "já está sendo contada". Pega outra, sem problema.
+4. **Modo blind:** durante contagem, operador NÃO vê saldo esperado. Só após sessão fechar, divergências aparecem.
+5. **Divergência fora de tolerância:** contagem 100, sistema espera 110 (diferença 10%). Vai pra `pendente`. Admin pode aprovar, rejeitar ou solicitar re-contagem (rodada 2).
+6. **Recovery de lock órfão:** abre contagem, fecha aba sem finalizar. Após 30min cron libera o lock; outro operador pode pegar a mesma localização.
+7. **Filtro curva A:** ao criar sessão de cycle count, filtrar "só localizações com produtos curva A". Ver lista reduzida pra ~20% das localizações.
+
+**SLA:** sem prazo fixo.
+
+**Próximo:** Plano 5 — só após seu OK explícito.

@@ -528,7 +528,15 @@ INSERT INTO siso_localizacoes (galpao_id, codigo, descricao, tipo)
 SELECT id, 'DEFAULT-PICKING', 'Localização padrão (criada automaticamente)', 'picking'
 FROM siso_galpoes
 WHERE NOT EXISTS (
-  SELECT 1 FROM siso_localizacoes l WHERE l.galpao_id = siso_galpoes.id
+  SELECT 1 FROM siso_localizacoes l WHERE l.galpao_id = siso_galpoes.id AND l.codigo = 'DEFAULT-PICKING'
+);
+
+-- 9. Localização QUARENTENA pra cada galpão (decisão do user: criar em todos)
+INSERT INTO siso_localizacoes (galpao_id, codigo, descricao, tipo)
+SELECT id, 'QUARENTENA', 'Mercadoria avariada/garantia aguardando descarte ou RMA', 'quarentena'
+FROM siso_galpoes
+WHERE NOT EXISTS (
+  SELECT 1 FROM siso_localizacoes l WHERE l.galpao_id = siso_galpoes.id AND l.codigo = 'QUARENTENA'
 );
 
 COMMIT;
@@ -2438,13 +2446,24 @@ git commit -m "docs(wms): atualiza CLAUDE.md e api-reference com schema e endpoi
 
 ## Critério de saída do Plano 1
 
-✅ `npm run build` compila sem erros.
-✅ `npm test` passa (8+ testes).
-✅ Todas as 5 tabelas novas existem em produção (Supabase).
-✅ Telas `/wms`, `/wms/produtos`, `/wms/localizacoes`, `/wms/estoque`, `/wms/ledger` carregam.
-✅ Seed test cria 100 unidades visíveis em todas as telas.
-✅ Snapshot inicial pode ser disparado em dry-run sem erro.
-✅ Endpoint de reconciliação retorna `{divergencias: []}` no estado limpo.
-✅ Documentação atualizada (CLAUDE.md + api-reference).
+### Critérios técnicos
+- ✅ `npm run build` compila sem erros.
+- ✅ `npm test` passa (8+ testes).
+- ✅ Tabelas novas existem **em staging** (não em prod).
+- ✅ Telas `/wms`, `/wms/produtos`, `/wms/localizacoes`, `/wms/estoque`, `/wms/ledger` carregam.
+- ✅ Seed test cria 100 unidades visíveis em todas as telas.
+- ✅ Snapshot inicial pode ser disparado em dry-run sem erro.
+- ✅ Endpoint de reconciliação retorna `{divergencias: []}` no estado limpo.
+- ✅ Documentação atualizada (CLAUDE.md + api-reference).
 
-**Próximo:** Plano 2 (movimentações operacionais).
+### Cenários funcionais de aceitação (você executa antes de aprovar)
+
+1. **Login e navegação:** logar com PIN, ver badge "STAGING" no header, navegar pelas 4 telas WMS sem erros.
+2. **Catálogo + sync Tiny:** buscar 1 SKU real, clicar "Sincronizar com Tiny", ver descrição/NCM/imagem atualizados.
+3. **Localizações pré-criadas:** abrir `/wms/localizacoes`, ver `DEFAULT-PICKING` e `QUARENTENA` em cada galpão.
+4. **Saldos pós-snapshot:** após snapshot rodar no fim de semana, conferir total geral em `/wms/estoque?view=galpao` bate com a expectativa do galpão.
+5. **Chain do ledger:** abrir `/wms/ledger`, filtrar `inventario_inicial`, verificar `saldo_posterior` da linha N = `saldo_anterior` da linha N+1 da mesma quádrupla.
+
+**SLA:** sem prazo fixo. Sinaliza quando estiver ok pra Plano 2.
+
+**Próximo:** Plano 2 (movimentações operacionais) — só após seu OK explícito.

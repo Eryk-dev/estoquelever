@@ -260,7 +260,11 @@ export async function receberEstoque(input: ReceberInput) {
   }
 }
 
-async function recalcularCustoMedio(
+/**
+ * Recalcula custo médio (média ponderada) ao adicionar uma entrada com custo conhecido.
+ * Exportado pra uso em outros fluxos (ex: devolução íntegra recalcula custo no Plano 5).
+ */
+export async function recalcularCustoMedio(
   q: Quadrupla,
   qtyEntrada: number,
   custoNovo: number,
@@ -1321,11 +1325,22 @@ git commit -m "docs(wms): documenta movimentações operacionais"
 
 ## Critério de saída do Plano 2
 
-✅ Operador consegue receber, transferir, fazer replenishment, ajustar manualmente.
-✅ Lançamento retroativo + reconciliação funcionam.
-✅ Sugestão automática de putaway responde em <500ms.
-✅ Custo médio é recalculado em entradas com `custo_unitario`.
-✅ Reconciliação ledger↔estoque (Plano 1) continua retornando vazio após N operações.
-✅ Documentação atualizada.
+### Critérios técnicos
+- ✅ Operador consegue receber, transferir, fazer replenishment, ajustar manualmente.
+- ✅ Lançamento retroativo + reconciliação funcionam.
+- ✅ Sugestão automática de putaway responde em <500ms.
+- ✅ Custo médio é recalculado em entradas com `custo_unitario`.
+- ✅ Reconciliação ledger↔estoque (Plano 1) continua retornando vazio após N operações.
+- ✅ Documentação atualizada.
 
-**Próximo:** Plano 3 (roteamento + empréstimos + reservas).
+### Cenários funcionais de aceitação
+
+1. **Receber estoque com sugestão:** receber 50 unid de SKU novo num galpão. Ver sugestão de localização e razão ("recebimento do galpão" se SKU é novo). Aceitar e confirmar saldo aparece no `/wms/estoque`.
+2. **Transferência inter-galpão:** mover 10 unid de CWB pra SP. Ledger mostra par S+E com mesmo `origem_id`. Saldos das duas linhas atualizados em ambos.
+3. **Replenishment intra-galpão:** mover 5 unid de overstock pra picking no mesmo galpão. Ledger mostra `transferencia_localizacao`. Saldo total inalterado, distribuição muda.
+4. **Ajuste manual com motivo:** ajuste de saída -3 unid com motivo "avaria caixa amassada". Vai pro ledger como `ajuste_manual` com observação. Saldo cai.
+5. **Lançamento retroativo:** lançar entrada emergencial de 10 unid sem NF. Aparece em `/wms/retroativos` como pendente. Reconciliar manualmente com mov posterior — fica como `aplicada`/estornada.
+
+**SLA:** sem prazo fixo.
+
+**Próximo:** Plano 3 — só após seu OK explícito.

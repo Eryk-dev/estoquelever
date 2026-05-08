@@ -1,8 +1,8 @@
 "use client";
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { sisoFetch } from "@/lib/auth-context";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { wmsApi } from "@/lib/wms/api-client";
 import { QuadruplaPicker } from "@/components/wms/quadrupla-picker";
 
 interface ProdutoMin {
@@ -11,6 +11,7 @@ interface ProdutoMin {
 }
 
 export default function AjustePage() {
+  const queryClient = useQueryClient();
   const [q, setQ] = useState<{
     empresa_id?: string;
     galpao_id?: string;
@@ -23,20 +24,24 @@ export default function AjustePage() {
   const [motivo, setMotivo] = useState("");
 
   async function buscar(s: string) {
-    const r = (await (
-      await sisoFetch(`/api/wms/produtos?q=${encodeURIComponent(s)}&limit=1`)
-    ).json()) as { rows?: ProdutoMin[] };
-    if (r.rows?.[0]) {
-      setProduto(r.rows[0].id);
-      setSku(r.rows[0].sku);
-    } else {
-      toast.error("SKU não encontrado");
+    try {
+      const r = await wmsApi<{ rows?: ProdutoMin[] }>(
+        `/api/wms/produtos?q=${encodeURIComponent(s)}&limit=1`,
+      );
+      if (r.rows?.[0]) {
+        setProduto(r.rows[0].id);
+        setSku(r.rows[0].sku);
+      } else {
+        toast.error("SKU não encontrado");
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
     }
   }
 
   const submit = useMutation({
-    mutationFn: async () =>
-      sisoFetch("/api/wms/ajuste", {
+    mutationFn: () =>
+      wmsApi<{ ok: true }>("/api/wms/ajuste", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -45,37 +50,46 @@ export default function AjustePage() {
           direcao,
           motivo,
         }),
-      }).then(async (r) => {
-        if (!r.ok) {
-          const e = (await r.json()) as { error?: string };
-          throw new Error(e.error ?? "erro");
-        }
-        return r.json();
       }),
     onSuccess: () => {
-      toast.success("ajuste registrado");
+      toast.success("Ajuste registrado");
       setQty(1);
       setMotivo("");
+      setProduto(undefined);
+      setSku("");
+      queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
+      queryClient.invalidateQueries({ queryKey: ["wms-ledger"] });
     },
-    onError: (e) => toast.error(String(e)),
+    onError: (e: Error) => toast.error(e.message),
   });
 
+  const motivoTooShort = motivo.length > 0 && motivo.length < 3;
+
   return (
-    <div className="space-y-3 max-w-2xl">
-      <h1 className="text-lg font-medium">Ajuste manual de estoque</h1>
+    <div className="space-y-4">
       <QuadruplaPicker value={q} onChange={setQ} />
-      <div className="flex gap-2 flex-wrap">
+
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper p-3">
         <input
           value={sku}
           onChange={(e) => setSku(e.target.value)}
-          onBlur={(e) => e.target.value && buscar(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              const v = (e.target as HTMLInputElement).value.trim();
+              if (v) buscar(v);
+            }
+          }}
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v) buscar(v);
+          }}
           placeholder="SKU/GTIN"
-          className="px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent font-mono"
+          className="rounded-lg border border-line bg-paper px-3 py-1.5 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
         />
         <select
           value={direcao}
           onChange={(e) => setDirecao(e.target.value as "entrada" | "saida")}
-          className="px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent"
+          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
         >
           <option value="entrada">+ entrada</option>
           <option value="saida">− saída</option>
@@ -85,24 +99,38 @@ export default function AjustePage() {
           min={1}
           value={qty}
           onChange={(e) => setQty(Number(e.target.value))}
-          className="w-24 px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent"
+          className="w-24 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm tabular-nums text-ink focus:border-ink focus:outline-none"
         />
       </div>
-      <textarea
-        value={motivo}
-        onChange={(e) => setMotivo(e.target.value)}
-        placeholder="motivo (avaria, perda, encontro, erro de contagem...)"
-        className="w-full px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent"
-        rows={3}
-      />
+
+      <div className="space-y-1">
+        <textarea
+          value={motivo}
+          onChange={(e) => setMotivo(e.target.value)}
+          placeholder="motivo (avaria, perda, encontro, erro de contagem...)"
+          className="w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+          rows={3}
+        />
+        <p className="text-xs text-ink-faint">
+          Motivo obrigatório (mínimo 3 caracteres).
+        </p>
+        {motivoTooShort && (
+          <p className="text-xs text-warning">Muito curto, escreva mais detalhes.</p>
+        )}
+      </div>
+
       <button
+        type="button"
         onClick={() => submit.mutate()}
         disabled={
-          !produto_id || !q.localizacao_id || motivo.length < 3 || submit.isPending
+          !produto_id ||
+          !q.localizacao_id ||
+          motivo.length < 3 ||
+          submit.isPending
         }
-        className="px-4 py-2 rounded bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+        className="btn-primary"
       >
-        registrar ajuste
+        {submit.isPending ? "Salvando..." : "Registrar ajuste"}
       </button>
     </div>
   );

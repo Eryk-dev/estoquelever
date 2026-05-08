@@ -1,9 +1,9 @@
 "use client";
 import { use, useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { sisoFetch } from "@/lib/auth-context";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { wmsApi } from "@/lib/wms/api-client";
 import { QuadruplaPicker } from "@/components/wms/quadrupla-picker";
 
 type Classificacao = "integro" | "avariado" | "garantia" | "troca_sku";
@@ -26,6 +26,7 @@ export default function ClassificarPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [classificacao, setClassificacao] =
     useState<Classificacao>("integro");
   const [produto_id, setProduto] = useState<string>();
@@ -40,28 +41,29 @@ export default function ClassificarPage({
 
   const { data: devs } = useQuery({
     queryKey: ["wms-devolucoes"],
-    queryFn: async () =>
-      (await sisoFetch("/api/wms/devolucoes")).json() as Promise<{
-        rows: DevRow[];
-      }>,
+    queryFn: () => wmsApi<{ rows: DevRow[] }>("/api/wms/devolucoes"),
   });
   const dev = devs?.rows?.find((x) => x.id === id);
 
   async function buscar(s: string) {
-    const r = (await (
-      await sisoFetch(`/api/wms/produtos?q=${encodeURIComponent(s)}&limit=1`)
-    ).json()) as { rows?: ProdutoMin[] };
-    if (r.rows?.[0]) {
-      setProduto(r.rows[0].id);
-      setSku(r.rows[0].sku);
-    } else {
-      toast.error("SKU não encontrado");
+    try {
+      const r = await wmsApi<{ rows?: ProdutoMin[] }>(
+        `/api/wms/produtos?q=${encodeURIComponent(s)}&limit=1`,
+      );
+      if (r.rows?.[0]) {
+        setProduto(r.rows[0].id);
+        setSku(r.rows[0].sku);
+      } else {
+        toast.error("SKU não encontrado");
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
     }
   }
 
   const submit = useMutation({
-    mutationFn: async () =>
-      sisoFetch(`/api/wms/devolucoes/${id}/classificar`, {
+    mutationFn: () =>
+      wmsApi<{ ok: true }>(`/api/wms/devolucoes/${id}/classificar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -73,56 +75,65 @@ export default function ClassificarPage({
           empresa_dona_destino_id: q.empresa_id,
           observacoes,
         }),
-      }).then(async (r) => {
-        if (!r.ok) {
-          const e = (await r.json()) as { error?: string };
-          throw new Error(e.error ?? "erro");
-        }
-        return r.json();
       }),
     onSuccess: () => {
-      toast.success("classificada");
+      toast.success("Devolução classificada");
+      queryClient.invalidateQueries({ queryKey: ["wms-devolucoes"] });
+      queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
       router.push("/wms/devolucoes");
     },
-    onError: (e) => toast.error(String(e)),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   return (
-    <div className="space-y-3 max-w-xl">
-      <h1 className="text-lg font-medium">Classificar devolução</h1>
+    <div className="space-y-4">
       {dev && (
-        <div className="text-sm text-zinc-500">
-          NF {dev.nota_fiscal_id ?? "—"} · {dev.empresa?.nome}
+        <div className="rounded-xl border border-line bg-paper p-3 text-sm text-ink-muted">
+          NF{" "}
+          <span className="font-mono text-ink">{dev.nota_fiscal_id ?? "—"}</span>{" "}
+          · {dev.empresa?.nome}
         </div>
       )}
 
-      <select
-        value={classificacao}
-        onChange={(e) => setClassificacao(e.target.value as Classificacao)}
-        className="px-3 py-2 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent w-full"
-      >
-        <option value="integro">A — Íntegro (volta ao estoque)</option>
-        <option value="avariado">B — Avariado (vai pra quarentena)</option>
-        <option value="garantia">C — Garantia (RMA fornecedor)</option>
-        <option value="troca_sku">D — Troca SKU pelo cliente</option>
-      </select>
+      <div className="space-y-1">
+        <label className="text-xs text-ink-faint">Classificação</label>
+        <select
+          value={classificacao}
+          onChange={(e) => setClassificacao(e.target.value as Classificacao)}
+          className="w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
+        >
+          <option value="integro">A — Íntegro (volta ao estoque)</option>
+          <option value="avariado">B — Avariado (vai pra quarentena)</option>
+          <option value="garantia">C — Garantia (RMA fornecedor)</option>
+          <option value="troca_sku">D — Troca SKU pelo cliente</option>
+        </select>
+      </div>
 
       <QuadruplaPicker value={q} onChange={setQ} />
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <input
           value={sku}
           onChange={(e) => setSku(e.target.value)}
-          onBlur={(e) => e.target.value && buscar(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              const v = (e.target as HTMLInputElement).value.trim();
+              if (v) buscar(v);
+            }
+          }}
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v) buscar(v);
+          }}
           placeholder="SKU"
-          className="flex-1 px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent font-mono"
+          className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
         />
         <input
           type="number"
           min={1}
           value={qty}
           onChange={(e) => setQty(Number(e.target.value))}
-          className="w-24 px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent"
+          className="w-24 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm tabular-nums text-ink focus:border-ink focus:outline-none"
         />
       </div>
 
@@ -130,17 +141,27 @@ export default function ClassificarPage({
         value={observacoes}
         onChange={(e) => setObservacoes(e.target.value)}
         placeholder="observações"
-        className="w-full px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent"
+        className="w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
         rows={3}
       />
 
-      <button
-        onClick={() => submit.mutate()}
-        disabled={!produto_id || !q.localizacao_id || submit.isPending}
-        className="px-4 py-2 rounded bg-zinc-900 text-white"
-      >
-        classificar
-      </button>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => router.push("/wms/devolucoes")}
+          className="btn-ghost"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          onClick={() => submit.mutate()}
+          disabled={!produto_id || !q.localizacao_id || submit.isPending}
+          className="btn-primary"
+        >
+          {submit.isPending ? "Salvando..." : "Classificar"}
+        </button>
+      </div>
     </div>
   );
 }

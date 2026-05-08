@@ -23,7 +23,7 @@ export function ScanContagem({
           target.value = "";
         }
       }}
-      className="w-full px-3 py-3 text-lg rounded border-2 border-zinc-400 bg-transparent font-mono"
+      className="w-full rounded-xl border-2 border-line bg-paper px-3 py-3 font-mono text-lg text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
     />
   );
 }

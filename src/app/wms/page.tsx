@@ -17,14 +17,12 @@ import {
   Replace,
   TrendingUp,
   LayoutDashboard,
+  type LucideIcon,
 } from "lucide-react";
-import type { ComponentType, SVGProps } from "react";
-
-type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
 interface CardData {
   href: string;
-  icon: IconType;
+  icon: LucideIcon;
   title: string;
   desc: string;
 }
@@ -164,21 +162,28 @@ export default function WmsHome() {
     <div className="space-y-6">
       {groups.map((g) => (
         <section key={g.titulo} className="space-y-2">
-          <h2 className="text-sm font-medium text-zinc-500 uppercase tracking-wide">
+          <h2 className="px-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
             {g.titulo}
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {g.cards.map((c) => (
-              <Link
-                key={c.href}
-                href={c.href}
-                className="block p-4 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900"
-              >
-                <c.icon className="w-5 h-5 mb-2" />
-                <div className="font-medium">{c.title}</div>
-                <div className="text-sm text-zinc-500">{c.desc}</div>
-              </Link>
-            ))}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {g.cards.map((c) => {
+              const Icon = c.icon;
+              return (
+                <Link
+                  key={c.href}
+                  href={c.href}
+                  className="group flex items-start gap-3 rounded-xl border border-line bg-paper p-4 transition-colors hover:border-ink/15 hover:bg-surface"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-ink-muted transition-colors group-hover:bg-ink group-hover:text-paper">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-medium text-ink">{c.title}</div>
+                    <div className="text-xs text-ink-muted">{c.desc}</div>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         </section>
       ))}

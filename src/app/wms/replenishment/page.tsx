@@ -1,9 +1,9 @@
 "use client";
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { sisoFetch } from "@/lib/auth-context";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowDown, Plus, Trash2 } from "lucide-react";
+import { wmsApi } from "@/lib/wms/api-client";
 
 interface Item {
   produto_id?: string;
@@ -35,6 +35,7 @@ interface LocRow {
 }
 
 export default function ReplenishmentPage() {
+  const queryClient = useQueryClient();
   const [empresa_id, setEmpresa] = useState<string | undefined>();
   const [galpao_id, setGalpao] = useState<string | undefined>();
   const [origem_loc, setOrigem] = useState<string | undefined>();
@@ -43,18 +44,13 @@ export default function ReplenishmentPage() {
 
   const { data: galpoesResp } = useQuery({
     queryKey: ["galpoes"],
-    queryFn: async () =>
-      (await sisoFetch("/api/admin/galpoes")).json() as Promise<{ galpoes?: GalpaoRow[] }>,
+    queryFn: () => wmsApi<{ galpoes?: GalpaoRow[] }>("/api/admin/galpoes"),
   });
 
   const { data: locs } = useQuery({
     queryKey: ["wms-locs", galpao_id],
-    queryFn: async () =>
-      galpao_id
-        ? ((await sisoFetch(`/api/wms/localizacoes?galpao_id=${galpao_id}`)).json() as Promise<{
-            rows: LocRow[];
-          }>)
-        : { rows: [] as LocRow[] },
+    queryFn: () =>
+      wmsApi<{ rows: LocRow[] }>(`/api/wms/localizacoes?galpao_id=${galpao_id}`),
     enabled: !!galpao_id,
   });
 
@@ -63,23 +59,28 @@ export default function ReplenishmentPage() {
   );
 
   async function resolverSku(s: string, idx: number) {
-    const json = (await (
-      await sisoFetch(`/api/wms/produtos?q=${encodeURIComponent(s)}&limit=1`)
-    ).json()) as { rows?: ProdutoMin[] };
-    if (!json.rows?.[0]) {
-      toast.error("SKU não encontrado");
-      return;
+    try {
+      const json = await wmsApi<{ rows?: ProdutoMin[] }>(
+        `/api/wms/produtos?q=${encodeURIComponent(s)}&limit=1`,
+      );
+      if (!json.rows?.[0]) {
+        toast.error("SKU não encontrado");
+        return;
+      }
+      const p = json.rows[0];
+      setItens((prev) =>
+        prev.map((x, i) =>
+          i === idx ? { ...x, produto_id: p.id, sku: p.sku } : x,
+        ),
+      );
+    } catch (e) {
+      toast.error((e as Error).message);
     }
-    setItens((p) =>
-      p.map((x, i) =>
-        i === idx ? { ...x, produto_id: json.rows![0].id, sku: json.rows![0].sku } : x,
-      ),
-    );
   }
 
   const submit = useMutation({
-    mutationFn: async () =>
-      sisoFetch("/api/wms/replenishment", {
+    mutationFn: () =>
+      wmsApi<{ ok: true }>("/api/wms/replenishment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -89,24 +90,19 @@ export default function ReplenishmentPage() {
           localizacao_destino_id: destino_loc,
           itens: itens.map((i) => ({ produto_id: i.produto_id, qty: i.qty })),
         }),
-      }).then(async (r) => {
-        if (!r.ok) {
-          const e = (await r.json()) as { error?: string };
-          throw new Error(e.error ?? "erro");
-        }
-        return r.json();
       }),
     onSuccess: () => {
-      toast.success("replenishment ok");
+      toast.success("Replenishment registrado");
       setItens([]);
+      queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
+      queryClient.invalidateQueries({ queryKey: ["wms-ledger"] });
     },
-    onError: (e) => toast.error(String(e)),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   return (
-    <div className="space-y-4 max-w-3xl">
-      <h1 className="text-lg font-medium">Replenishment intra-galpão</h1>
-      <div className="flex gap-2 flex-wrap">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper p-3">
         <select
           value={empresa_id ?? ""}
           onChange={(e) => {
@@ -116,7 +112,7 @@ export default function ReplenishmentPage() {
             setOrigem(undefined);
             setDestino(undefined);
           }}
-          className="px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent text-sm"
+          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
         >
           <option value="">— empresa —</option>
           {empresas.map((e) => (
@@ -128,20 +124,22 @@ export default function ReplenishmentPage() {
         <select
           value={origem_loc ?? ""}
           onChange={(e) => setOrigem(e.target.value || undefined)}
-          className="px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent text-sm"
+          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
         >
           <option value="">— origem —</option>
-          {locs?.rows?.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.codigo} ({l.tipo})
-            </option>
-          ))}
+          {locs?.rows
+            ?.filter((l) => l.id !== destino_loc)
+            .map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.codigo} ({l.tipo})
+              </option>
+            ))}
         </select>
-        <ArrowDown className="w-4 h-4 self-center" />
+        <ArrowDown className="h-4 w-4 self-center text-ink-faint" />
         <select
           value={destino_loc ?? ""}
           onChange={(e) => setDestino(e.target.value || undefined)}
-          className="px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent text-sm"
+          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
         >
           <option value="">— destino —</option>
           {locs?.rows
@@ -158,15 +156,22 @@ export default function ReplenishmentPage() {
         {itens.map((it, idx) => (
           <div
             key={idx}
-            className="flex gap-2 items-center p-2 rounded border border-zinc-200 dark:border-zinc-800"
+            className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper p-2.5"
           >
             <input
               placeholder="SKU"
               defaultValue={it.sku ?? ""}
-              onBlur={(e) =>
-                e.target.value && !it.produto_id && resolverSku(e.target.value, idx)
-              }
-              className="px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent font-mono text-sm flex-1"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const v = (e.target as HTMLInputElement).value.trim();
+                  if (v && !it.produto_id) resolverSku(v, idx);
+                }
+              }}
+              onBlur={(e) => {
+                const v = e.target.value.trim();
+                if (v && !it.produto_id) resolverSku(v, idx);
+              }}
+              className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
             />
             <input
               type="number"
@@ -174,35 +179,45 @@ export default function ReplenishmentPage() {
               value={it.qty}
               onChange={(e) =>
                 setItens((p) =>
-                  p.map((x, i) => (i === idx ? { ...x, qty: Number(e.target.value) } : x)),
+                  p.map((x, i) =>
+                    i === idx ? { ...x, qty: Number(e.target.value) } : x,
+                  ),
                 )
               }
-              className="w-20 px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent text-sm"
+              className="w-20 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm tabular-nums text-ink focus:border-ink focus:outline-none"
             />
             <button
+              type="button"
               onClick={() => setItens((p) => p.filter((_, i) => i !== idx))}
-              className="p-1"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-danger"
+              title="Remover"
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="h-4 w-4" />
             </button>
           </div>
         ))}
         <button
+          type="button"
           onClick={() => setItens((p) => [...p, { qty: 1 }])}
-          className="flex items-center gap-1 text-sm px-3 py-1 rounded border border-dashed border-zinc-400"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-line px-3 py-2 text-sm text-ink-muted transition-colors hover:border-ink hover:text-ink"
         >
-          <Plus className="w-4 h-4" /> adicionar
+          <Plus className="h-4 w-4" /> adicionar
         </button>
       </div>
 
       <button
+        type="button"
         onClick={() => submit.mutate()}
         disabled={
-          !empresa_id || !origem_loc || !destino_loc || itens.length === 0 || submit.isPending
+          !empresa_id ||
+          !origem_loc ||
+          !destino_loc ||
+          itens.length === 0 ||
+          submit.isPending
         }
-        className="px-4 py-2 rounded bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+        className="btn-primary"
       >
-        {submit.isPending ? "salvando..." : "registrar"}
+        {submit.isPending ? "Salvando..." : "Registrar replenishment"}
       </button>
     </div>
   );

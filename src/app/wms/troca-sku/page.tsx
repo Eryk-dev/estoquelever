@@ -1,10 +1,10 @@
 "use client";
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { sisoFetch } from "@/lib/auth-context";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { QuadruplaPicker } from "@/components/wms/quadrupla-picker";
 import { ArrowDown } from "lucide-react";
+import { wmsApi } from "@/lib/wms/api-client";
+import { QuadruplaPicker } from "@/components/wms/quadrupla-picker";
 
 interface Quadrupla {
   produto_id?: string;
@@ -19,23 +19,28 @@ interface ProdutoMin {
 }
 
 export default function TrocaSkuPage() {
+  const queryClient = useQueryClient();
   const [pedidoId, setPedidoId] = useState("");
   const [original, setOriginal] = useState<Quadrupla>({});
   const [substituto, setSubstituto] = useState<Quadrupla>({});
   const [qty, setQty] = useState(1);
   const [motivo, setMotivo] = useState("");
 
-  async function buscarSku(sku: string, set: (id: string) => void) {
-    const r = (await (
-      await sisoFetch(`/api/wms/produtos?q=${encodeURIComponent(sku)}&limit=1`)
-    ).json()) as { rows?: ProdutoMin[] };
-    if (r.rows?.[0]) set(r.rows[0].id);
-    else toast.error("SKU não encontrado");
+  async function buscarSku(sku: string, setQ: (id: string) => void) {
+    try {
+      const r = await wmsApi<{ rows?: ProdutoMin[] }>(
+        `/api/wms/produtos?q=${encodeURIComponent(sku)}&limit=1`,
+      );
+      if (r.rows?.[0]) setQ(r.rows[0].id);
+      else toast.error("SKU não encontrado");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
   }
 
   const submit = useMutation({
-    mutationFn: async () =>
-      sisoFetch("/api/wms/troca-sku", {
+    mutationFn: () =>
+      wmsApi<{ ok: true }>("/api/wms/troca-sku", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -55,89 +60,130 @@ export default function TrocaSkuPage() {
             localizacao_id: substituto.localizacao_id,
           },
         }),
-      }).then(async (r) => {
-        if (!r.ok) {
-          const e = (await r.json()) as { error?: string };
-          throw new Error(e.error ?? "erro");
-        }
-        return r.json();
       }),
-    onSuccess: () => toast.success("troca registrada"),
-    onError: (e) => toast.error(String(e)),
+    onSuccess: () => {
+      toast.success("Troca registrada");
+      queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
+      queryClient.invalidateQueries({ queryKey: ["wms-ledger"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   return (
-    <div className="space-y-3 max-w-2xl">
-      <h1 className="text-lg font-medium">Troca de SKU na separação</h1>
+    <div className="space-y-4">
       <input
         value={pedidoId}
         onChange={(e) => setPedidoId(e.target.value)}
         placeholder="ID do pedido"
-        className="w-full px-2 py-1 rounded border bg-transparent"
+        className="w-full rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
       />
 
-      <div>
-        <h3 className="text-sm font-medium">SKU original (estorna reserva)</h3>
+      <section className="space-y-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
+          SKU original (estorna reserva)
+        </h3>
         <input
           placeholder="SKU original"
-          onBlur={(e) =>
-            e.target.value &&
-            buscarSku(e.target.value, (id) =>
-              setOriginal((prev) => ({ ...prev, produto_id: id })),
-            )
-          }
-          className="w-40 px-2 py-1 rounded border bg-transparent font-mono mb-2"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              const v = (e.target as HTMLInputElement).value.trim();
+              if (v)
+                buscarSku(v, (id) =>
+                  setOriginal((prev) => ({ ...prev, produto_id: id })),
+                );
+            }
+          }}
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v)
+              buscarSku(v, (id) =>
+                setOriginal((prev) => ({ ...prev, produto_id: id })),
+              );
+          }}
+          className="w-48 rounded-lg border border-line bg-paper px-3 py-1.5 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
         />
         <QuadruplaPicker
           value={original}
-          onChange={(v) => setOriginal((prev) => ({ ...prev, ...v }))}
+          onChange={(v) =>
+            setOriginal((prev) => ({
+              ...prev,
+              empresa_id: v.empresa_id,
+              galpao_id: v.galpao_id,
+              localizacao_id: v.localizacao_id,
+            }))
+          }
         />
+      </section>
+
+      <div className="flex justify-center">
+        <ArrowDown className="h-4 w-4 text-ink-faint" />
       </div>
 
-      <ArrowDown className="w-4 h-4 mx-auto" />
-
-      <div>
-        <h3 className="text-sm font-medium">SKU substituto (cria reserva)</h3>
+      <section className="space-y-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
+          SKU substituto (cria reserva)
+        </h3>
         <input
           placeholder="SKU substituto"
-          onBlur={(e) =>
-            e.target.value &&
-            buscarSku(e.target.value, (id) =>
-              setSubstituto((prev) => ({ ...prev, produto_id: id })),
-            )
-          }
-          className="w-40 px-2 py-1 rounded border bg-transparent font-mono mb-2"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              const v = (e.target as HTMLInputElement).value.trim();
+              if (v)
+                buscarSku(v, (id) =>
+                  setSubstituto((prev) => ({ ...prev, produto_id: id })),
+                );
+            }
+          }}
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v)
+              buscarSku(v, (id) =>
+                setSubstituto((prev) => ({ ...prev, produto_id: id })),
+              );
+          }}
+          className="w-48 rounded-lg border border-line bg-paper px-3 py-1.5 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
         />
         <QuadruplaPicker
           value={substituto}
-          onChange={(v) => setSubstituto((prev) => ({ ...prev, ...v }))}
+          onChange={(v) =>
+            setSubstituto((prev) => ({
+              ...prev,
+              empresa_id: v.empresa_id,
+              galpao_id: v.galpao_id,
+              localizacao_id: v.localizacao_id,
+            }))
+          }
         />
-      </div>
+      </section>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <input
           type="number"
           min={1}
           value={qty}
           onChange={(e) => setQty(Number(e.target.value))}
-          className="w-24 px-2 py-1 rounded border bg-transparent"
+          className="w-24 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm tabular-nums text-ink focus:border-ink focus:outline-none"
         />
         <input
           value={motivo}
           onChange={(e) => setMotivo(e.target.value)}
           placeholder="motivo"
-          className="flex-1 px-2 py-1 rounded border bg-transparent"
+          className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
         />
       </div>
 
       <button
+        type="button"
         onClick={() => submit.mutate()}
         disabled={
-          !pedidoId || !original.produto_id || !substituto.produto_id
+          !pedidoId ||
+          !original.produto_id ||
+          !substituto.produto_id ||
+          submit.isPending
         }
-        className="px-4 py-2 rounded bg-zinc-900 text-white"
+        className="btn-primary"
       >
-        trocar
+        {submit.isPending ? "Salvando..." : "Trocar"}
       </button>
     </div>
   );

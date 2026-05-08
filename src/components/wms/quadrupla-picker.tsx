@@ -1,6 +1,6 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { sisoFetch } from "@/lib/auth-context";
+import { wmsApi } from "@/lib/wms/api-client";
 
 interface QuadruplaValue {
   empresa_id?: string;
@@ -41,25 +41,20 @@ export function QuadruplaPicker({
 }: Props) {
   const { data: galpoesResp } = useQuery({
     queryKey: ["galpoes"],
-    queryFn: async () =>
-      (await sisoFetch("/api/admin/galpoes")).json() as Promise<{ galpoes?: GalpaoRow[] }>,
+    queryFn: () => wmsApi<{ galpoes?: GalpaoRow[] }>("/api/admin/galpoes"),
   });
 
   const galpoes = galpoesResp?.galpoes ?? [];
-  const empresasAtivas: EmpresaRow[] = galpoes.flatMap(
-    (g) => (g.empresas ?? []).map((e) => ({ ...e, galpao_id: g.id })),
+  const empresasAtivas: EmpresaRow[] = galpoes.flatMap((g) =>
+    (g.empresas ?? []).map((e) => ({ ...e, galpao_id: g.id })),
   );
   const empresaSel = empresasAtivas.find((e) => e.id === value.empresa_id);
   const galpaoId = empresaSel?.galpao_id;
 
   const { data: locs } = useQuery({
     queryKey: ["wms-locs", galpaoId],
-    queryFn: async () =>
-      galpaoId
-        ? ((await sisoFetch(`/api/wms/localizacoes?galpao_id=${galpaoId}`)).json() as Promise<{
-            rows: LocRow[];
-          }>)
-        : { rows: [] as LocRow[] },
+    queryFn: () =>
+      wmsApi<{ rows: LocRow[] }>(`/api/wms/localizacoes?galpao_id=${galpaoId}`),
     enabled: !!galpaoId && showLocalizacao,
   });
 
@@ -68,7 +63,7 @@ export function QuadruplaPicker({
     : (locs?.rows ?? []);
 
   return (
-    <div className="flex flex-col sm:flex-row gap-2">
+    <div className="flex flex-col gap-2 sm:flex-row">
       <select
         value={value.empresa_id ?? ""}
         onChange={(e) =>
@@ -78,7 +73,7 @@ export function QuadruplaPicker({
             localizacao_id: undefined,
           })
         }
-        className="px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent text-sm"
+        className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
       >
         <option value="">— empresa —</option>
         {empresasAtivas.map((e) => (
@@ -98,7 +93,7 @@ export function QuadruplaPicker({
               localizacao_id: e.target.value || undefined,
             })
           }
-          className="px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-transparent text-sm"
+          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
         >
           <option value="">— localização —</option>
           {locsFiltradas.map((l) => (

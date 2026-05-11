@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
       `
         *,
         produto:siso_produtos(sku, descricao),
-        empresa:siso_empresas(nome),
+        empresa:siso_empresas!empresa_dona_id(nome),
         galpao:siso_galpoes(nome),
         localizacao:siso_localizacoes(codigo, tipo)
       `,

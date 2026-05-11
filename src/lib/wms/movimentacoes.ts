@@ -257,7 +257,7 @@ export async function listarRetroativosPendentes(): Promise<RetroativoPendente[]
       `
         id, criado_em, quantidade, observacoes, origem_detalhes,
         produto:siso_produtos(sku, descricao),
-        empresa:siso_empresas(nome),
+        empresa:siso_empresas!empresa_dona_id(nome),
         galpao:siso_galpoes(nome),
         localizacao:siso_localizacoes(codigo)
       `,

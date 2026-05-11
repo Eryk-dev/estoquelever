@@ -203,22 +203,72 @@ export function useAuth() {
 }
 
 /**
+ * Detect a 401 in any sisoFetch response and force a clean logout +
+ * redirect to /login. Without this, an expired/revoked session leaves
+ * the client in a zombie state: localStorage still has the user object
+ * (so useAuth renders them as logged in) but every API call returns
+ * 401 ({error: "unauthorized"}), and the UI shows error rows everywhere.
+ *
+ * Module-level flag prevents the redirect from firing multiple times
+ * when several queries fail in parallel.
+ */
+let unauthorizedRedirectInFlight = false;
+
+function urlPath(url: string | URL | Request): string {
+  if (typeof url === "string") return url;
+  if (url instanceof URL) return url.pathname;
+  return url.url;
+}
+
+function isAuthEndpoint(url: string | URL | Request): boolean {
+  return urlPath(url).includes("/api/auth/login");
+}
+
+function handleUnauthorized(): void {
+  if (unauthorizedRedirectInFlight) return;
+  if (typeof window === "undefined") return;
+  if (window.location.pathname.startsWith("/login")) return;
+
+  unauthorizedRedirectInFlight = true;
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(GALPAO_KEY);
+  } catch {
+    // localStorage unavailable (private mode quota, etc) — proceed to redirect anyway
+  }
+  window.location.replace("/login?reason=session-expired");
+}
+
+/**
  * Fetch wrapper that automatically adds X-Session-Id and X-Galpao-Id headers.
  * Falls back to regular fetch if no sessionId is stored.
+ *
+ * On 401 from any endpoint other than /api/auth/login, clears the stored
+ * session and redirects to /login (see handleUnauthorized).
  */
-export function sisoFetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
+export async function sisoFetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
   const stored = getStoredUser();
   const sessionId = stored?.sessionId;
-  if (!sessionId) return fetch(url, init);
 
-  const headers = new Headers(init?.headers);
-  headers.set("X-Session-Id", sessionId);
+  let response: Response;
+  if (!sessionId) {
+    response = await fetch(url, init);
+  } else {
+    const headers = new Headers(init?.headers);
+    headers.set("X-Session-Id", sessionId);
 
-  // Send active galpão ID if stored
-  const galpaoId = getStoredGalpaoId();
-  if (galpaoId) {
-    headers.set("X-Galpao-Id", galpaoId);
+    // Send active galpão ID if stored
+    const galpaoId = getStoredGalpaoId();
+    if (galpaoId) {
+      headers.set("X-Galpao-Id", galpaoId);
+    }
+
+    response = await fetch(url, { ...init, headers });
   }
 
-  return fetch(url, { ...init, headers });
+  if (response.status === 401 && !isAuthEndpoint(url)) {
+    handleUnauthorized();
+  }
+
+  return response;
 }

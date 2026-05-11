@@ -22,6 +22,32 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: wms-ledger-empresa-fk-ambiguity
+    date: "2026-05-11"
+    source: wms.ledger
+    category: database
+    message: "Could not embed because more than one relationship was found for 'siso_movimentacoes' and 'siso_empresas'"
+    cause: >
+      Plano 3 (roteamento) adicionou a coluna emprestimo_devedora_id em siso_movimentacoes
+      referenciando siso_empresas, criando ambiguidade — siso_movimentacoes passou a ter
+      DUAS FKs pra siso_empresas (empresa_dona_id + emprestimo_devedora_id). As queries
+      PostgREST que faziam embed implícito (empresa:siso_empresas(nome)) começaram a
+      retornar 400 porque o PostgREST não sabe qual FK usar. Movimentações continuavam
+      sendo gravadas no DB normalmente, mas a tela /wms/ledger ficava vazia e
+      listarRetroativosPendentes() falhava.
+    fix: >
+      Qualificar explicitamente a coluna FK na sintaxe embedded do PostgREST:
+      siso_empresas!empresa_dona_id(nome). Aplicado em /api/wms/ledger e em
+      listarRetroativosPendentes (lib/wms/movimentacoes.ts).
+    files:
+      - src/app/api/wms/ledger/route.ts
+      - src/lib/wms/movimentacoes.ts
+    tags: [wms, ledger, postgrest, embed, fk-ambiguity, siso_movimentacoes, siso_empresas, emprestimo_devedora_id, plano-3]
+    notes: >
+      Quando adicionar uma nova coluna FK pra siso_empresas em outras tabelas WMS,
+      conferir todos os .select() que fazem embed dessa tabela e qualificar a FK.
+      Verificado em 2026-05-11: apenas siso_movimentacoes tem múltiplas FKs pra siso_empresas.
+
   - id: embalagem-hidden-items-block-completion
     date: "2026-03-18"
     source: confirmar-item-embalagem
@@ -404,3 +430,28 @@ erros:
   files:
     - supabase/migrations/20260522_wms_roteamento.sql
   tags: [wms, reservas, rpc, jsonb, not-null, plano3]
+
+- id: sisofetch-zombie-session-unauthorized
+  date: 2026-05-11
+  source: auth-context.sisoFetch
+  category: auth
+  message: "Tela mostra 'Erro: unauthorized' em todas as APIs apesar do usuario aparecer logado"
+  cause: >
+    Sessao do servidor (siso_sessoes.expira_em, TTL 12h) expirou enquanto a aba
+    permanecia aberta, mas o localStorage continuou guardando siso_user com o
+    sessionId morto. useAuth le o localStorage e renderiza o usuario como logado;
+    sisoFetch envia X-Session-Id expirado; servidor retorna 401 {error:"unauthorized"};
+    AppShell/WmsShell so redirecionam pro /login se user for null, e user nao era
+    null. Resultado: UI "zumbi" em que cada query do TanStack renderiza linha de
+    erro mas o usuario parece logado.
+  fix: >
+    sisoFetch agora detecta status 401 em qualquer endpoint diferente de
+    /api/auth/login e dispara handleUnauthorized(): limpa siso_user + siso_active_galpao
+    do localStorage e faz window.location.replace('/login?reason=session-expired').
+    Flag module-level unauthorizedRedirectInFlight evita multiplos redirects quando
+    varias queries falham em paralelo. Pagina /login le ?reason=session-expired e
+    mostra toast.error('Sua sessao expirou. Faca login novamente.').
+  files:
+    - src/lib/auth-context.tsx
+    - src/app/login/page.tsx
+  tags: [auth, sessao, sisoFetch, localStorage, 401, ux, wms]

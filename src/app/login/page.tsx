@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Loader2, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
@@ -10,7 +10,6 @@ import { cn } from "@/lib/utils";
 export default function LoginPage() {
   const { user, loading: authLoading, login } = useAuth();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [nome, setNome] = useState("");
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
@@ -26,10 +25,11 @@ export default function LoginPage() {
 
   // Show a one-shot toast when we got here because the session expired
   useEffect(() => {
-    if (searchParams?.get("reason") === "session-expired") {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("reason") === "session-expired") {
       toast.error("Sua sessão expirou. Faça login novamente.");
     }
-  }, [searchParams]);
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

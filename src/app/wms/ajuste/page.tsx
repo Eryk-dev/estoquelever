@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
 import { QuadruplaPicker } from "@/components/wms/quadrupla-picker";
+import { Icon, PageHeader, Field } from "@/components/wms/ui/wms-ui";
 
 interface ProdutoMin {
   id: string;
@@ -64,13 +65,27 @@ export default function AjustePage() {
   });
 
   const motivoTooShort = motivo.length > 0 && motivo.length < 3;
+  const valid =
+    !!produto_id &&
+    !!q.localizacao_id &&
+    motivo.length >= 3 &&
+    qty > 0;
 
   return (
-    <div className="space-y-4">
-      <QuadruplaPicker value={q} onChange={setQ} />
+    <>
+      <PageHeader
+        title="Ajuste manual"
+        subtitle="Entrada ou saída pontual com motivo registrado no ledger"
+      />
 
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper p-3">
+      <h3 className="wms-sec-h">Localização do ajuste</h3>
+      <div style={{ marginBottom: 16 }}>
+        <QuadruplaPicker value={q} onChange={setQ} />
+      </div>
+
+      <Field label="Produto" required>
         <input
+          className="wms-input wms-mono"
           value={sku}
           onChange={(e) => setSku(e.target.value)}
           onKeyDown={(e) => {
@@ -83,55 +98,72 @@ export default function AjustePage() {
             const v = e.target.value.trim();
             if (v) buscar(v);
           }}
-          placeholder="SKU/GTIN"
-          className="rounded-lg border border-line bg-paper px-3 py-1.5 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+          placeholder="SKU ou GTIN — Enter para resolver"
         />
-        <select
-          value={direcao}
-          onChange={(e) => setDirecao(e.target.value as "entrada" | "saida")}
-          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
-        >
-          <option value="entrada">+ entrada</option>
-          <option value="saida">− saída</option>
-        </select>
-        <input
-          type="number"
-          min={1}
-          value={qty}
-          onChange={(e) => setQty(Number(e.target.value))}
-          className="w-24 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm tabular-nums text-ink focus:border-ink focus:outline-none"
-        />
+      </Field>
+
+      <div className="wms-row-2">
+        <Field label="Direção" required>
+          <div className="wms-seg wms-seg-full">
+            <button
+              type="button"
+              className={`wms-seg-btn ${direcao === "entrada" ? "is-active" : ""}`}
+              onClick={() => setDirecao("entrada")}
+            >
+              + Entrada
+            </button>
+            <button
+              type="button"
+              className={`wms-seg-btn ${direcao === "saida" ? "is-active" : ""}`}
+              onClick={() => setDirecao("saida")}
+            >
+              − Saída
+            </button>
+          </div>
+        </Field>
+        <Field label="Quantidade" required>
+          <input
+            className="wms-input wms-mono wms-tar"
+            type="number"
+            min={1}
+            value={qty}
+            onChange={(e) => setQty(Number(e.target.value))}
+          />
+        </Field>
       </div>
 
-      <div className="space-y-1">
+      <Field
+        label="Motivo"
+        required
+        hint={motivoTooShort ? "muito curto" : "mín. 3 caracteres"}
+      >
         <textarea
+          className="wms-textarea"
           value={motivo}
           onChange={(e) => setMotivo(e.target.value)}
-          placeholder="motivo (avaria, perda, encontro, erro de contagem...)"
-          className="w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+          placeholder="avaria, perda, encontro, erro de contagem…"
           rows={3}
         />
-        <p className="text-xs text-ink-faint">
-          Motivo obrigatório (mínimo 3 caracteres).
-        </p>
-        {motivoTooShort && (
-          <p className="text-xs text-warning">Muito curto, escreva mais detalhes.</p>
-        )}
-      </div>
+      </Field>
 
-      <button
-        type="button"
-        onClick={() => submit.mutate()}
-        disabled={
-          !produto_id ||
-          !q.localizacao_id ||
-          motivo.length < 3 ||
-          submit.isPending
-        }
-        className="btn-primary"
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          paddingTop: 16,
+          borderTop: "1px solid var(--wms-c-border)",
+        }}
       >
-        {submit.isPending ? "Salvando..." : "Registrar ajuste"}
-      </button>
-    </div>
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary"
+          disabled={!valid || submit.isPending}
+          onClick={() => submit.mutate()}
+        >
+          <Icon name="sliders" size={11} />
+          {submit.isPending ? "Salvando…" : "Registrar ajuste"}
+        </button>
+      </div>
+    </>
   );
 }

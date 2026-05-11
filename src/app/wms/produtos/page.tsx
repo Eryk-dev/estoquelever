@@ -2,18 +2,23 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Search, RefreshCw } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorBanner } from "@/components/ui/error-banner";
+import {
+  Icon,
+  PageHeader,
+  fmtRelative,
+} from "@/components/wms/ui/wms-ui";
+import { ProdutoDrawer } from "@/components/wms/produto-drawer";
 import type { Produto } from "@/lib/wms/types";
 
 export default function ProdutosPage() {
   const [q, setQ] = useState("");
+  const [drawerId, setDrawerId] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const router = useRouter();
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-produtos", q],
     queryFn: () =>
       wmsApi<{ rows: Produto[]; total: number }>(
@@ -34,55 +39,129 @@ export default function ProdutosPage() {
   const rows = data?.rows ?? [];
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2 focus-within:border-ink">
-        <Search className="h-4 w-4 text-ink-faint" />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="SKU, descrição ou GTIN"
-          className="flex-1 bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none"
-        />
+    <>
+      <PageHeader
+        title="Catálogo de produtos"
+        subtitle={`siso_produtos · sincronizado com Tiny${
+          data?.total != null ? ` · ${data.total} registros` : ""
+        }`}
+      />
+
+      <div className="wms-toolbar">
+        <div className="wms-search-wrap">
+          <Icon name="search" size={13} />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="SKU, descrição ou GTIN…"
+          />
+          {q && (
+            <button className="wms-search-clear" onClick={() => setQ("")}>
+              <Icon name="x" size={11} />
+            </button>
+          )}
+        </div>
       </div>
-      {isLoading ? (
-        <LoadingSpinner />
-      ) : isError ? (
-        <ErrorBanner message={(error as Error).message} onRetry={() => refetch()} />
-      ) : rows.length === 0 ? (
-        <EmptyState message={q ? "Nenhum produto encontrado." : "Nenhum produto cadastrado."} />
-      ) : (
-        <div className="space-y-1">
-          {rows.map((p) => (
-            <div
-              key={p.id}
-              className="flex items-center justify-between gap-3 rounded-xl border border-line bg-paper p-3"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="font-mono text-sm text-ink">{p.sku}</div>
-                <div className="truncate text-sm text-ink-muted">{p.descricao}</div>
-                <div className="text-xs text-ink-faint">
-                  {p.gtin && <>GTIN: {p.gtin} · </>}
-                  {p.ncm && <>NCM: {p.ncm} · </>}
-                  {p.sincronizado_em
-                    ? `sync: ${new Date(p.sincronizado_em).toLocaleString("pt-BR")}`
-                    : "nunca sincronizado"}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => sync.mutate(p.id)}
-                disabled={sync.isPending}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-ink disabled:opacity-50"
-                title="Sincronizar com Tiny"
-              >
-                <RefreshCw
-                  className={`h-4 w-4 ${sync.isPending ? "animate-spin" : ""}`}
-                />
-              </button>
-            </div>
-          ))}
+
+      {isLoading && (
+        <div className="wms-loading-pane">Carregando catálogo…</div>
+      )}
+      {isError && (
+        <div className="wms-empty-block">
+          <h3>Erro</h3>
+          <p>{(error as Error).message}</p>
         </div>
       )}
-    </div>
+      {!isLoading && rows.length === 0 && (
+        <div className="wms-empty-block">
+          <h3>
+            {q ? "Nenhum produto encontrado" : "Nenhum produto cadastrado"}
+          </h3>
+          <p>
+            {q
+              ? `Tente outra busca por SKU, descrição ou GTIN.`
+              : "Sincronize com o Tiny para popular o catálogo."}
+          </p>
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="wms-tbl">
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Descrição</th>
+                <th>GTIN</th>
+                <th>NCM</th>
+                <th>Sincronizado</th>
+                <th style={{ width: 80 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((p) => (
+                <tr key={p.id} className="wms-tr-clickable">
+                  <td className="wms-mono">
+                    <a
+                      className="wms-link-row"
+                      onClick={() => setDrawerId(p.id)}
+                    >
+                      {p.sku}
+                    </a>
+                  </td>
+                  <td className="wms-td-desc">
+                    <a
+                      className="wms-link-row"
+                      onClick={() => setDrawerId(p.id)}
+                    >
+                      {p.descricao}
+                    </a>
+                  </td>
+                  <td className="wms-mono wms-td-mute">{p.gtin ?? "—"}</td>
+                  <td className="wms-mono wms-td-mute">{p.ncm ?? "—"}</td>
+                  <td className="wms-td-mute" style={{ fontSize: 12 }}>
+                    {p.sincronizado_em
+                      ? fmtRelative(p.sincronizado_em)
+                      : "nunca"}
+                  </td>
+                  <td className="wms-td-actions">
+                    <button
+                      type="button"
+                      className="wms-btn-icon"
+                      title="Sincronizar com Tiny"
+                      disabled={sync.isPending}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        sync.mutate(p.id);
+                      }}
+                    >
+                      <Icon name="rotate" size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      className="wms-btn-icon"
+                      title="Abrir detalhe"
+                      onClick={() => setDrawerId(p.id)}
+                    >
+                      <Icon name="chevron-r" size={11} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {drawerId && (
+        <ProdutoDrawer
+          produtoId={drawerId}
+          onClose={() => {
+            setDrawerId(null);
+            router.refresh();
+          }}
+        />
+      )}
+    </>
   );
 }

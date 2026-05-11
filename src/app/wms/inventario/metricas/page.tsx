@@ -1,9 +1,7 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { wmsApi } from "@/lib/wms/api-client";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorBanner } from "@/components/ui/error-banner";
+import { PageHeader, fmtNum } from "@/components/wms/ui/wms-ui";
 
 interface OperadorRow {
   operador_id: string;
@@ -26,48 +24,58 @@ interface Metricas {
 }
 
 export default function MetricasPage() {
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-inv-metricas"],
     queryFn: () => wmsApi<Metricas>("/api/wms/inventario/metricas"),
   });
-
-  if (isLoading) return <LoadingSpinner />;
-  if (isError) {
-    return (
-      <ErrorBanner message={(error as Error).message} onRetry={() => refetch()} />
-    );
-  }
 
   const operadores = data?.porOperador ?? [];
   const localizacoes = data?.porLocalizacao ?? [];
 
   return (
-    <div className="space-y-6">
-      <section className="space-y-2">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
-          Acuracidade por operador (30d)
-        </h2>
+    <>
+      <PageHeader
+        title="Métricas de inventário"
+        subtitle="Acuracidade por operador e localização nos últimos 30 dias"
+      />
+
+      {isLoading && (
+        <div className="wms-loading-pane">Carregando métricas…</div>
+      )}
+      {isError && (
+        <div className="wms-empty-block">
+          <h3>Erro</h3>
+          <p>{(error as Error).message}</p>
+        </div>
+      )}
+
+      <section style={{ marginBottom: 28 }}>
+        <h3 className="wms-sec-h">Acuracidade por operador (30d)</h3>
         {operadores.length === 0 ? (
-          <EmptyState message="Sem contagens nos últimos 30 dias." />
+          <div className="wms-empty-block">
+            <h3>Sem contagens nos últimos 30 dias</h3>
+          </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-line bg-paper">
-            <table className="w-full text-sm">
+          <div className="wms-tbl">
+            <table>
               <thead>
-                <tr className="text-left text-ink-faint">
-                  <th className="p-2">operador</th>
-                  <th className="text-right">contagens</th>
-                  <th className="p-2 text-right">erro médio %</th>
+                <tr>
+                  <th>Operador</th>
+                  <th className="wms-tar">Contagens</th>
+                  <th className="wms-tar">Erro médio</th>
                 </tr>
               </thead>
               <tbody>
                 {operadores.map((r) => (
-                  <tr key={r.operador_id} className="border-t border-line">
-                    <td className="p-2 text-ink">{r.nome}</td>
-                    <td className="text-right tabular-nums text-ink">
-                      {r.contagens}
+                  <tr key={r.operador_id}>
+                    <td>{r.nome}</td>
+                    <td className="wms-tar wms-mono">
+                      {fmtNum(r.contagens)}
                     </td>
-                    <td className="p-2 text-right tabular-nums text-ink-muted">
-                      {r.erro_medio_pct?.toFixed(2) ?? "—"}
+                    <td className="wms-tar wms-mono wms-td-mute">
+                      {r.erro_medio_pct != null
+                        ? `${r.erro_medio_pct.toFixed(2)}%`
+                        : "—"}
                     </td>
                   </tr>
                 ))}
@@ -77,33 +85,35 @@ export default function MetricasPage() {
         )}
       </section>
 
-      <section className="space-y-2">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
-          Acuracidade por localização
-        </h2>
+      <section>
+        <h3 className="wms-sec-h">Acuracidade por localização</h3>
         {localizacoes.length === 0 ? (
-          <EmptyState message="Sem dados de localização ainda." />
+          <div className="wms-empty-block">
+            <h3>Sem dados de localização ainda</h3>
+          </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-line bg-paper">
-            <table className="w-full text-sm">
+          <div className="wms-tbl">
+            <table>
               <thead>
-                <tr className="text-left text-ink-faint">
-                  <th className="p-2">código</th>
-                  <th className="text-right">total</th>
-                  <th className="text-right">s/ divergência</th>
-                  <th className="p-2 text-right">erro médio %</th>
+                <tr>
+                  <th>Código</th>
+                  <th className="wms-tar">Total</th>
+                  <th className="wms-tar">Sem divergência</th>
+                  <th className="wms-tar">Erro médio</th>
                 </tr>
               </thead>
               <tbody>
                 {localizacoes.map((r) => (
-                  <tr key={r.localizacao_id} className="border-t border-line">
-                    <td className="p-2 font-mono text-ink">{r.codigo}</td>
-                    <td className="text-right tabular-nums text-ink">{r.total}</td>
-                    <td className="text-right tabular-nums text-ink-muted">
-                      {r.sem_div}
+                  <tr key={r.localizacao_id}>
+                    <td className="wms-mono">{r.codigo}</td>
+                    <td className="wms-tar wms-mono">{fmtNum(r.total)}</td>
+                    <td className="wms-tar wms-mono wms-td-mute">
+                      {fmtNum(r.sem_div)}
                     </td>
-                    <td className="p-2 text-right tabular-nums text-ink-muted">
-                      {r.erro_medio_pct?.toFixed(2) ?? "—"}
+                    <td className="wms-tar wms-mono wms-td-mute">
+                      {r.erro_medio_pct != null
+                        ? `${r.erro_medio_pct.toFixed(2)}%`
+                        : "—"}
                     </td>
                   </tr>
                 ))}
@@ -112,6 +122,6 @@ export default function MetricasPage() {
           </div>
         )}
       </section>
-    </div>
+    </>
   );
 }

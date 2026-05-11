@@ -5,11 +5,21 @@ import { toast } from "sonner";
 import Link from "next/link";
 import { wmsApi } from "@/lib/wms/api-client";
 import { useInventarioRealtime } from "@/hooks/use-inventario-realtime";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { ErrorBanner } from "@/components/ui/error-banner";
+import {
+  Icon,
+  PageHeader,
+  StatusBadge,
+  Kpi,
+} from "@/components/wms/ui/wms-ui";
 
 interface SessaoData {
-  sessao?: { status: string; tipo: string; modo_contagem: string } | null;
+  sessao?: {
+    status: string;
+    tipo: string;
+    modo_contagem: string;
+    nome?: string;
+    criado_em?: string;
+  } | null;
   areas?: Array<{ id: string; nome: string; operador?: { nome?: string } }>;
 }
 
@@ -22,7 +32,7 @@ export default function InventarioDetailPage({
   const queryClient = useQueryClient();
   const { contagens, locs } = useInventarioRealtime(id);
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-inv", id],
     queryFn: () => wmsApi<SessaoData>(`/api/wms/inventario/${id}`),
   });
@@ -73,117 +83,162 @@ export default function InventarioDetailPage({
     return total > 0 ? concluidas / total : 0;
   }, [locs]);
 
-  const totalContado = useMemo(
-    () => contagens.reduce((s, c) => s + Number(c.qty_contada), 0),
-    [contagens],
+  const divergentes = useMemo(
+    () => locs.filter((l) => l.status === "divergente").length,
+    [locs],
   );
 
-  if (isLoading) return <LoadingSpinner />;
+  if (isLoading) {
+    return <div className="wms-loading-pane">Carregando sessão…</div>;
+  }
   if (isError) {
     return (
-      <ErrorBanner message={(error as Error).message} onRetry={() => refetch()} />
+      <div className="wms-empty-block">
+        <h3>Erro ao carregar</h3>
+        <p>{(error as Error).message}</p>
+      </div>
     );
   }
 
-  const status = data?.sessao?.status;
+  const sessao = data?.sessao;
+  const status = sessao?.status;
   const anyMutationPending =
     iniciar.isPending || aprovar.isPending || aplicar.isPending;
+  const totalLocs = locs.length;
+  const concluidas = Math.round(progresso * totalLocs);
+  const pendentes = totalLocs - concluidas;
+  const acuracidade =
+    concluidas > 0
+      ? Math.round((1 - divergentes / Math.max(concluidas, 1)) * 100)
+      : 0;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="font-mono text-xs text-ink-faint">{id.slice(0, 8)}</span>
-        <span className="text-sm text-ink-muted">
-          status: <strong className="text-ink">{status ?? "—"}</strong>
-        </span>
-      </div>
+    <>
+      <PageHeader
+        title={sessao?.nome ?? `Sessão ${id.slice(0, 8)}`}
+        subtitle={
+          sessao
+            ? `${sessao.tipo === "cycle_count" ? "Cycle count" : "Completo"} · modo ${sessao.modo_contagem}`
+            : undefined
+        }
+      >
+        <StatusBadge status={status ?? "planejada"} size="lg" />
+      </PageHeader>
 
-      <div className="grid grid-cols-3 gap-2 text-sm">
-        <Stat label="progresso" value={`${(progresso * 100).toFixed(1)}%`} />
-        <Stat label="contagens registradas" value={contagens.length} />
-        <Stat
-          label="total qty contada"
-          value={totalContado.toLocaleString("pt-BR")}
+      <div className="wms-kpis">
+        <Kpi label="Pendentes" value={pendentes} />
+        <Kpi label="Concluídas" value={concluidas} />
+        <Kpi
+          label="Divergentes"
+          value={divergentes}
+          danger={divergentes > 0}
         />
+        <Kpi label="Acuracidade" value={`${acuracidade}%`} />
+        <Kpi label="Contagens registradas" value={contagens.length} />
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          flexWrap: "wrap",
+          marginTop: 16,
+          marginBottom: 16,
+        }}
+      >
         {status === "planejada" && (
           <button
             type="button"
-            onClick={() => iniciar.mutate()}
+            className="wms-btn wms-btn-primary"
             disabled={anyMutationPending}
-            className="btn-primary"
+            onClick={() => iniciar.mutate()}
           >
-            iniciar
+            <Icon name="check" size={11} />
+            Iniciar sessão
           </button>
         )}
         {status === "em_andamento" && (
-          <button
-            type="button"
-            onClick={() => aprovar.mutate()}
-            disabled={anyMutationPending}
-            className="btn-primary"
-          >
-            finalizar/aprovar
-          </button>
+          <>
+            <Link
+              href={`/wms/inventario/${id}/contar`}
+              className="wms-btn wms-btn-ghost"
+            >
+              <Icon name="clipboard" size={11} />
+              Abrir handheld
+            </Link>
+            <Link
+              href={`/wms/inventario/${id}/divergencias`}
+              className="wms-btn wms-btn-ghost"
+            >
+              <Icon name="alert" size={11} />
+              Ver divergências
+            </Link>
+            <button
+              type="button"
+              className="wms-btn wms-btn-primary"
+              disabled={anyMutationPending}
+              onClick={() => aprovar.mutate()}
+            >
+              <Icon name="check" size={11} />
+              Finalizar & aprovar
+            </button>
+          </>
         )}
         {status === "aprovada" && (
           <button
             type="button"
-            onClick={() => aplicar.mutate()}
+            className="wms-btn wms-btn-primary"
             disabled={anyMutationPending}
-            className="btn-primary"
+            onClick={() => aplicar.mutate()}
           >
-            aplicar no estoque
+            <Icon name="check" size={11} />
+            Aplicar no estoque
           </button>
         )}
-        <Link
-          href={`/wms/inventario/${id}/contar`}
-          className="btn-ghost"
-        >
-          tela do operador
-        </Link>
-        <Link
-          href={`/wms/inventario/${id}/divergencias`}
-          className="btn-ghost"
-        >
-          divergências
-        </Link>
+        {status === "aplicada" && (
+          <Link
+            href={`/wms/inventario/${id}/divergencias`}
+            className="wms-btn wms-btn-ghost"
+          >
+            Ver relatório
+          </Link>
+        )}
       </div>
 
-      <details className="rounded-xl border border-line bg-paper">
-        <summary className="cursor-pointer p-3 text-sm font-medium text-ink">
-          Áreas
-        </summary>
-        <div className="space-y-2 border-t border-line p-3">
+      <div className="wms-card">
+        <div className="wms-card-h">
+          <h3>Áreas</h3>
+          <span className="wms-td-mute" style={{ fontSize: 12 }}>
+            {(data?.areas ?? []).length} configurada(s)
+          </span>
+        </div>
+        <div className="wms-card-body">
           {(data?.areas ?? []).length === 0 ? (
-            <p className="text-sm text-ink-faint">Nenhuma área configurada.</p>
+            <div className="wms-exp-empty">Nenhuma área configurada.</div>
           ) : (
-            data?.areas?.map((a) => (
-              <div key={a.id} className="border-l-2 border-line pl-3">
-                <div className="font-medium text-ink">
-                  {a.nome}{" "}
+            (data?.areas ?? []).map((a) => (
+              <div
+                key={a.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "8px 0",
+                  borderBottom: "1px solid var(--wms-c-border)",
+                  fontSize: 13,
+                }}
+              >
+                <div>
+                  <strong>{a.nome}</strong>
                   {a.operador?.nome && (
-                    <span className="text-sm text-ink-muted">
-                      — {a.operador.nome}
-                    </span>
+                    <span className="wms-td-mute"> — {a.operador.nome}</span>
                   )}
                 </div>
               </div>
             ))
           )}
         </div>
-      </details>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-xl border border-line bg-paper p-3">
-      <div className="text-xs text-ink-faint">{label}</div>
-      <div className="text-2xl tabular-nums text-ink">{value}</div>
-    </div>
+      </div>
+    </>
   );
 }

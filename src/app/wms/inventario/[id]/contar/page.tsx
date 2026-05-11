@@ -2,10 +2,9 @@
 import { use, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Eye, EyeOff } from "lucide-react";
 import { wmsApi } from "@/lib/wms/api-client";
 import { ScanContagem } from "@/components/wms/scan-contagem";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Icon, PageHeader, fmtNum } from "@/components/wms/ui/wms-ui";
 
 interface LocSessao {
   id: string;
@@ -51,6 +50,9 @@ export default function ContarPage({
   const blind =
     sessao?.modo_contagem === "blind" ||
     sessao?.modo_contagem === "duplo_blind";
+  const locAtual = (data?.localizacoes ?? []).find(
+    (l) => l.localizacao_id === locId,
+  );
 
   const pegarLoc = useMutation({
     mutationFn: (newLocId: string) =>
@@ -123,71 +125,150 @@ export default function ContarPage({
     onError: (e: Error) => toast.error(e.message),
   });
 
-  if (isLoading) return <LoadingSpinner />;
+  if (isLoading)
+    return <div className="wms-loading-pane">Carregando sessão…</div>;
 
   return (
-    <div className="mx-auto max-w-md space-y-3">
+    <>
+      <PageHeader
+        title="Contagem"
+        subtitle={`Sessão ${id.slice(0, 8)} · modo ${sessao?.modo_contagem ?? "—"}`}
+      />
+
       {blind && (
-        <div className="flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/5 px-3 py-2 text-sm text-warning">
-          <EyeOff className="h-4 w-4 shrink-0" />
-          <span>Modo blind: você não vê o saldo esperado.</span>
+        <div className="wms-hint-card" style={{ marginBottom: 14 }}>
+          <Icon name="alert" />
+          <span>
+            <strong>Modo blind.</strong> Você não vê o saldo esperado durante a
+            contagem.
+          </span>
         </div>
       )}
 
       {!locId ? (
-        <div className="space-y-2">
-          <p className="text-sm text-ink-muted">
-            Escolha uma localização pendente:
-          </p>
+        <>
+          <h3 className="wms-sec-h">Localizações pendentes</h3>
           {localizacoes.length === 0 ? (
-            <p className="text-sm text-ink-faint">
-              Nenhuma localização disponível pra contagem.
-            </p>
+            <div className="wms-empty-block">
+              <h3>Nenhuma localização disponível</h3>
+              <p>
+                Todas as localizações da sessão já foram contadas ou estão
+                bloqueadas por outro operador.
+              </p>
+            </div>
           ) : (
-            localizacoes.map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                onClick={() => pegarLoc.mutate(l.localizacao_id)}
-                disabled={pegarLoc.isPending}
-                className="block w-full rounded-xl border border-line bg-paper p-3 text-left transition-colors hover:bg-surface disabled:opacity-50"
-              >
-                <div className="font-mono text-ink">{l.localizacao?.codigo}</div>
-                <div className="text-xs text-ink-faint">
-                  {l.localizacao?.tipo}
-                </div>
-              </button>
-            ))
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: 8,
+              }}
+            >
+              {localizacoes.map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  className="wms-card"
+                  style={{ textAlign: "left", cursor: "pointer" }}
+                  disabled={pegarLoc.isPending}
+                  onClick={() => pegarLoc.mutate(l.localizacao_id)}
+                >
+                  <div className="wms-card-body">
+                    <div className="wms-mono" style={{ fontSize: 14, fontWeight: 600 }}>
+                      {l.localizacao?.codigo}
+                    </div>
+                    <div className="wms-td-mute" style={{ fontSize: 12 }}>
+                      {l.localizacao?.tipo}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
           )}
-        </div>
+        </>
       ) : (
         <>
-          <div className="flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2 font-mono text-sm text-ink">
-            <Eye className="h-4 w-4 text-ink-faint" />
-            localização: {locId.slice(0, 8)}
-          </div>
-          <ScanContagem onScan={handleScan} />
-          <div className="space-y-1">
-            {contagensLocal.map((c) => (
-              <div
-                key={c.produto_id}
-                className="flex items-center justify-between rounded-xl border border-line bg-paper p-2.5"
-              >
-                <span className="font-mono text-ink">{c.sku}</span>
-                <span className="text-lg tabular-nums text-ink">{c.qty}</span>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => finalizar.mutate()}
-            disabled={contagensLocal.length === 0 || finalizar.isPending}
-            className="btn-primary w-full justify-center py-3"
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "10px 14px",
+              background: "var(--wms-c-faint)",
+              border: "1px solid var(--wms-c-border)",
+              borderRadius: "var(--wms-r-3)",
+              marginBottom: 12,
+            }}
           >
-            {finalizar.isPending ? "Finalizando..." : "Finalizar localização"}
-          </button>
+            <div>
+              <div className="wms-td-mute" style={{ fontSize: 11 }}>
+                Contando
+              </div>
+              <div className="wms-mono" style={{ fontSize: 16, fontWeight: 600 }}>
+                {locAtual?.localizacao?.codigo ?? locId.slice(0, 8)}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="wms-btn wms-btn-ghost wms-btn-sm"
+              onClick={() => {
+                setLocId("");
+                setContagensLocal([]);
+              }}
+            >
+              Trocar localização
+            </button>
+          </div>
+
+          <ScanContagem onScan={handleScan} />
+
+          <h3 className="wms-sec-h" style={{ marginTop: 16 }}>
+            Contagens nesta localização
+          </h3>
+          {contagensLocal.length === 0 ? (
+            <div className="wms-exp-empty">Nenhum bipe ainda.</div>
+          ) : (
+            <div className="wms-tbl">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th className="wms-tar">Quantidade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contagensLocal.map((c) => (
+                    <tr key={c.produto_id}>
+                      <td className="wms-mono">{c.sku}</td>
+                      <td className="wms-tar wms-mono">{fmtNum(c.qty)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              marginTop: 16,
+              paddingTop: 16,
+              borderTop: "1px solid var(--wms-c-border)",
+            }}
+          >
+            <button
+              type="button"
+              className="wms-btn wms-btn-primary"
+              disabled={contagensLocal.length === 0 || finalizar.isPending}
+              onClick={() => finalizar.mutate()}
+            >
+              <Icon name="check" size={11} />
+              {finalizar.isPending ? "Finalizando…" : "Finalizar localização"}
+            </button>
+          </div>
         </>
       )}
-    </div>
+    </>
   );
 }

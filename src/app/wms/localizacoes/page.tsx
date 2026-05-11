@@ -3,9 +3,12 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorBanner } from "@/components/ui/error-banner";
+import {
+  Icon,
+  PageHeader,
+  LocTipoBadge,
+  Field,
+} from "@/components/wms/ui/wms-ui";
 import type { Localizacao, TipoLocalizacao } from "@/lib/wms/types";
 
 const TIPOS: TipoLocalizacao[] = [
@@ -24,6 +27,7 @@ interface GalpaoRow {
 export default function LocalizacoesPage() {
   const queryClient = useQueryClient();
   const [galpaoId, setGalpaoId] = useState<string>("");
+  const [showForm, setShowForm] = useState(false);
   const [novo, setNovo] = useState({
     codigo: "",
     descricao: "",
@@ -54,91 +58,173 @@ export default function LocalizacoesPage() {
     onSuccess: () => {
       toast.success("Localização criada");
       setNovo({ codigo: "", descricao: "", tipo: "picking" });
+      setShowForm(false);
       queryClient.invalidateQueries({ queryKey: ["wms-locs", galpaoId] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
   const rows = locsQuery.data?.rows ?? [];
+  const galpoesList = galpoes?.galpoes ?? [];
 
   return (
-    <div className="space-y-4">
-      <select
-        value={galpaoId}
-        onChange={(e) => setGalpaoId(e.target.value)}
-        className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
+    <>
+      <PageHeader
+        title="Localizações"
+        subtitle="Endereçamento físico por galpão"
       >
-        <option value="">— escolha o galpão —</option>
-        {galpoes?.galpoes?.map((g) => (
-          <option key={g.id} value={g.id}>
-            {g.nome}
-          </option>
-        ))}
-      </select>
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary"
+          disabled={!galpaoId}
+          onClick={() => setShowForm((s) => !s)}
+        >
+          <Icon name="plus" size={12} />
+          Nova localização
+        </button>
+      </PageHeader>
+
+      {galpoesList.length > 0 && (
+        <div className="wms-seg" style={{ marginBottom: 16 }}>
+          {galpoesList.map((g) => (
+            <button
+              key={g.id}
+              className={`wms-seg-btn ${galpaoId === g.id ? "is-active" : ""}`}
+              onClick={() => setGalpaoId(g.id)}
+            >
+              {g.nome}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!galpaoId && (
+        <div className="wms-empty-block">
+          <h3>Escolha um galpão</h3>
+          <p>Selecione um galpão acima para ver e gerenciar suas localizações.</p>
+        </div>
+      )}
+
+      {galpaoId && showForm && (
+        <div
+          style={{
+            background: "var(--wms-c-panel)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-3)",
+            padding: 16,
+            marginBottom: 16,
+          }}
+        >
+          <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
+            Nova localização
+          </h3>
+          <div className="wms-row-3">
+            <Field label="Código" required>
+              <input
+                className="wms-input wms-mono"
+                value={novo.codigo}
+                onChange={(e) => setNovo({ ...novo, codigo: e.target.value })}
+                placeholder="A-12-03"
+              />
+            </Field>
+            <Field label="Descrição" hint="opcional">
+              <input
+                className="wms-input"
+                value={novo.descricao}
+                onChange={(e) =>
+                  setNovo({ ...novo, descricao: e.target.value })
+                }
+                placeholder="Rua A, Coluna 12, Nível 03"
+              />
+            </Field>
+            <Field label="Tipo" required>
+              <select
+                className="wms-select"
+                value={novo.tipo}
+                onChange={(e) =>
+                  setNovo({ ...novo, tipo: e.target.value as TipoLocalizacao })
+                }
+              >
+                {TIPOS.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 8,
+              paddingTop: 12,
+              borderTop: "1px solid var(--wms-c-border)",
+            }}
+          >
+            <button
+              type="button"
+              className="wms-btn wms-btn-ghost"
+              onClick={() => setShowForm(false)}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="wms-btn wms-btn-primary"
+              disabled={!novo.codigo || criar.isPending}
+              onClick={() => criar.mutate()}
+            >
+              <Icon name="check" size={11} />
+              {criar.isPending ? "Criando…" : "Criar"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {galpaoId && (
         <>
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper p-3">
-            <input
-              value={novo.codigo}
-              onChange={(e) => setNovo({ ...novo, codigo: e.target.value })}
-              placeholder="código (ex: A-12-03)"
-              className="rounded-lg border border-line bg-paper px-3 py-1.5 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
-            />
-            <input
-              value={novo.descricao}
-              onChange={(e) => setNovo({ ...novo, descricao: e.target.value })}
-              placeholder="descrição (opcional)"
-              className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
-            />
-            <select
-              value={novo.tipo}
-              onChange={(e) =>
-                setNovo({ ...novo, tipo: e.target.value as TipoLocalizacao })
-              }
-              className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
-            >
-              {TIPOS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => criar.mutate()}
-              disabled={!novo.codigo || criar.isPending}
-              className="btn-primary"
-            >
-              criar
-            </button>
-          </div>
-
-          {locsQuery.isLoading ? (
-            <LoadingSpinner />
-          ) : locsQuery.isError ? (
-            <ErrorBanner
-              message={(locsQuery.error as Error).message}
-              onRetry={() => locsQuery.refetch()}
-            />
-          ) : rows.length === 0 ? (
-            <EmptyState message="Nenhuma localização criada nesse galpão." />
-          ) : (
-            <div className="space-y-1">
-              {rows.map((l) => (
-                <div
-                  key={l.id}
-                  className="flex items-center gap-3 rounded-xl border border-line bg-paper p-2.5"
-                >
-                  <span className="font-mono text-sm text-ink">{l.codigo}</span>
-                  <span className="badge badge-info">{l.tipo}</span>
-                  <span className="flex-1 text-sm text-ink-muted">{l.descricao}</span>
-                </div>
-              ))}
+          {locsQuery.isLoading && (
+            <div className="wms-loading-pane">Carregando localizações…</div>
+          )}
+          {locsQuery.isError && (
+            <div className="wms-empty-block">
+              <h3>Erro</h3>
+              <p>{(locsQuery.error as Error).message}</p>
+            </div>
+          )}
+          {!locsQuery.isLoading && rows.length === 0 && (
+            <div className="wms-empty-block">
+              <h3>Nenhuma localização nesse galpão</h3>
+              <p>Crie a primeira para começar a endereçar estoque.</p>
+            </div>
+          )}
+          {rows.length > 0 && (
+            <div className="wms-tbl">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th>Descrição</th>
+                    <th>Tipo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((l) => (
+                    <tr key={l.id}>
+                      <td className="wms-mono">{l.codigo}</td>
+                      <td className="wms-td-mute">{l.descricao ?? "—"}</td>
+                      <td>
+                        <LocTipoBadge tipo={l.tipo} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </>
       )}
-    </div>
+    </>
   );
 }

@@ -1,192 +1,483 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 import {
-  ArrowDown,
-  ArrowRightLeft,
-  BarChart3,
-  ClipboardList,
-  Clock,
-  LayoutDashboard,
-  MapPin,
-  Network,
-  Package,
-  PackagePlus,
-  Replace,
-  ScrollText,
-  Settings2,
-  TrendingUp,
-  Truck,
-  Undo2,
-  type LucideIcon,
-} from "lucide-react";
-import { AppShell } from "@/components/app-shell";
-import { GalpaoSelector } from "@/components/galpao-selector";
-import { cn } from "@/lib/utils";
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/lib/auth-context";
+import { wmsApi } from "@/lib/wms/api-client";
+import { Icon, type IconName } from "@/components/wms/ui/wms-ui";
+import {
+  AjusteModal,
+  ReceberModal,
+  TransferModal,
+} from "@/components/wms/ui/modals";
+import type { Produto } from "@/lib/wms/types";
 
-interface NavGroup {
-  titulo: string;
-  itens: NavItem[];
+// ──────────────────────────────────────────────────────────────────
+// Modal Context — qualquer página pode disparar abertura de modal.
+
+type ModalKind = "receber" | "ajuste" | "transferir" | null;
+
+interface ModalContextValue {
+  open: (kind: Exclude<ModalKind, null>, seed?: { produto?: Produto }) => void;
+  openCommandK: () => void;
 }
+
+const ModalContext = createContext<ModalContextValue | null>(null);
+
+export function useWmsModals() {
+  const ctx = useContext(ModalContext);
+  if (!ctx)
+    throw new Error("useWmsModals deve ser usado dentro do WmsShell");
+  return ctx;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Navegação
 
 interface NavItem {
   href: string;
-  icon: LucideIcon;
+  icon: IconName;
   label: string;
+  badge?: number;
+}
+interface NavSection {
+  id: string;
+  label: string;
+  itens: NavItem[];
 }
 
-const NAV_GROUPS: NavGroup[] = [
+const NAV_SECTIONS: NavSection[] = [
   {
-    titulo: "Visibilidade",
+    id: "principal",
+    label: "Visibilidade",
     itens: [
-      { href: "/wms/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-      { href: "/wms/estoque", icon: BarChart3, label: "Saldos" },
-      { href: "/wms/ledger", icon: ScrollText, label: "Ledger" },
-      { href: "/wms/cobertura", icon: TrendingUp, label: "Cobertura" },
+      { href: "/wms/estoque", icon: "box", label: "Estoque" },
+      { href: "/wms/cobertura", icon: "gauge", label: "Cobertura" },
+      { href: "/wms/ledger", icon: "list", label: "Movimentações" },
     ],
   },
   {
-    titulo: "Operação",
+    id: "operacoes",
+    label: "Operações",
     itens: [
-      { href: "/wms/receber", icon: PackagePlus, label: "Receber" },
-      { href: "/wms/transferir", icon: ArrowRightLeft, label: "Transferir" },
-      { href: "/wms/replenishment", icon: ArrowDown, label: "Replenishment" },
-      { href: "/wms/ajuste", icon: Settings2, label: "Ajuste" },
-      { href: "/wms/devolucoes", icon: Undo2, label: "Devoluções" },
-      { href: "/wms/troca-sku", icon: Replace, label: "Troca SKU" },
-      { href: "/wms/retroativos", icon: Clock, label: "Retroativos" },
+      { href: "/wms/transferir", icon: "arrows", label: "Transferências" },
+      { href: "/wms/replenishment", icon: "shuffle", label: "Replenishment" },
+      { href: "/wms/devolucoes", icon: "rotate", label: "Devoluções" },
+      { href: "/wms/retroativos", icon: "history", label: "Retroativos" },
+      { href: "/wms/troca-sku", icon: "edit", label: "Troca SKU" },
+      { href: "/wms/ajuste", icon: "sliders", label: "Ajuste" },
+      { href: "/wms/receber", icon: "plus", label: "Receber" },
     ],
   },
   {
-    titulo: "Inventário",
+    id: "inventario",
+    label: "Inventário",
     itens: [
-      { href: "/wms/inventario", icon: ClipboardList, label: "Sessões" },
-      { href: "/wms/inventario/metricas", icon: BarChart3, label: "Métricas" },
+      { href: "/wms/inventario", icon: "clipboard", label: "Sessões" },
+      { href: "/wms/inventario/metricas", icon: "gauge", label: "Métricas" },
     ],
   },
   {
-    titulo: "Cadastros",
+    id: "cadastros",
+    label: "Cadastros",
     itens: [
-      { href: "/wms/produtos", icon: Package, label: "Catálogo" },
-      { href: "/wms/localizacoes", icon: MapPin, label: "Localizações" },
-      { href: "/wms/fornecedores", icon: Truck, label: "Fornecedores" },
-      { href: "/wms/emprestimos", icon: Network, label: "Empréstimos" },
+      { href: "/wms/produtos", icon: "tag", label: "Produtos" },
+      { href: "/wms/localizacoes", icon: "pin", label: "Localizações" },
+      { href: "/wms/fornecedores", icon: "truck", label: "Fornecedores" },
+      { href: "/wms/emprestimos", icon: "handshake", label: "Empréstimos" },
     ],
   },
 ];
 
-interface PageMeta {
-  title: string;
-  subtitle?: string;
-}
-
-function resolveMeta(pathname: string): PageMeta {
-  const exact: Record<string, PageMeta> = {
-    "/wms": { title: "WMS", subtitle: "Operações de estoque" },
-    "/wms/dashboard": { title: "Dashboard", subtitle: "Eventos críticos agregados" },
-    "/wms/estoque": { title: "Saldos", subtitle: "4 perspectivas: dono, galpão, localização, produto" },
-    "/wms/ledger": { title: "Ledger", subtitle: "Histórico imutável de movimentações" },
-    "/wms/cobertura": { title: "Cobertura", subtitle: "Dias de cobertura por giro 30d" },
-    "/wms/receber": { title: "Receber", subtitle: "Recebimento com sugestão automática de putaway" },
-    "/wms/transferir": { title: "Transferir", subtitle: "Inter-galpão (origem → destino)" },
-    "/wms/replenishment": { title: "Replenishment", subtitle: "Intra-galpão (overstock → picking)" },
-    "/wms/ajuste": { title: "Ajuste manual", subtitle: "Entrada ou saída com motivo" },
-    "/wms/devolucoes": { title: "Devoluções", subtitle: "Fila pendente de classificação" },
-    "/wms/troca-sku": { title: "Troca de SKU", subtitle: "Substituir SKU físico por catálogo" },
-    "/wms/retroativos": { title: "Retroativos", subtitle: "Lançamentos pendentes de reconciliação" },
-    "/wms/produtos": { title: "Catálogo", subtitle: "Produtos sincronizados com Tiny" },
-    "/wms/localizacoes": { title: "Localizações", subtitle: "Endereços por galpão" },
-    "/wms/fornecedores": { title: "Fornecedores", subtitle: "Cadastro + lead times + auto-cadastro" },
-    "/wms/emprestimos": { title: "Empréstimos", subtitle: "Matriz N×N + saldos devedores" },
-    "/wms/inventario": { title: "Inventário", subtitle: "Sessões de cycle count e completo" },
-    "/wms/inventario/metricas": { title: "Métricas de inventário", subtitle: "Acuracidade por operador e localização" },
-  };
-  if (exact[pathname]) return exact[pathname];
-  // Dynamic patterns
-  if (/^\/wms\/devolucoes\/[^/]+$/.test(pathname)) {
-    return { title: "Classificar devolução", subtitle: "Definir destino A/B/C/D" };
-  }
-  if (/^\/wms\/inventario\/[^/]+\/contar$/.test(pathname)) {
-    return { title: "Contagem", subtitle: "Modo handheld" };
-  }
-  if (/^\/wms\/inventario\/[^/]+\/divergencias$/.test(pathname)) {
-    return { title: "Divergências", subtitle: "Aprovar, recontar ou rejeitar" };
-  }
-  if (/^\/wms\/inventario\/[^/]+$/.test(pathname)) {
-    return { title: "Sessão de inventário", subtitle: "Painel do supervisor" };
-  }
-  return { title: "WMS", subtitle: "Operações de estoque" };
-}
+const ALL_NAV: NavItem[] = NAV_SECTIONS.flatMap((s) => s.itens);
 
 function isActive(pathname: string, href: string): boolean {
-  if (href === pathname) return true;
-  // /wms/inventario should be active for /wms/inventario/[id]/* but not /wms/inventario/metricas
+  if (pathname === href) return true;
   if (href === "/wms/inventario") {
-    return pathname.startsWith("/wms/inventario/") && !pathname.startsWith("/wms/inventario/metricas");
+    return (
+      pathname.startsWith("/wms/inventario/") &&
+      !pathname.startsWith("/wms/inventario/metricas")
+    );
   }
   return pathname.startsWith(`${href}/`);
 }
 
-export function WmsShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname() ?? "/wms";
-  const meta = resolveMeta(pathname);
+// ──────────────────────────────────────────────────────────────────
+// Sidebar
 
+function Sidebar({
+  pathname,
+  onCmdK,
+  userInitials,
+  userName,
+  userRole,
+}: {
+  pathname: string;
+  onCmdK: () => void;
+  userInitials: string;
+  userName: string;
+  userRole: string;
+}) {
   return (
-    <AppShell
-      title={meta.title}
-      subtitle={meta.subtitle}
-      headerRight={<GalpaoSelector />}
-      mainClassName="space-y-5"
-    >
-      <WmsSubNav pathname={pathname} />
-      <div>{children}</div>
-    </AppShell>
+    <aside className="wms-sb">
+      <div className="wms-sb-hd">
+        <Link href="/wms" className="wms-sb-logo">
+          <div className="wms-sb-logo-mark">N</div>
+          <div>
+            <div className="wms-sb-logo-name">NetAir WMS</div>
+            <div className="wms-sb-logo-org">SISO</div>
+          </div>
+        </Link>
+        <button className="wms-sb-cmd" onClick={onCmdK}>
+          <Icon name="search" size={12} />
+          <span>Buscar</span>
+          <kbd>⌘K</kbd>
+        </button>
+      </div>
+      <nav className="wms-sb-nav">
+        {NAV_SECTIONS.map((sec) => (
+          <div key={sec.id} className="wms-sb-sect">
+            <div className="wms-sb-sect-lbl">{sec.label}</div>
+            {sec.itens.map((n) => {
+              const active = isActive(pathname, n.href);
+              return (
+                <Link
+                  key={n.href}
+                  href={n.href}
+                  className={`wms-sb-item ${active ? "is-active" : ""}`}
+                >
+                  <Icon name={n.icon} />
+                  <span>{n.label}</span>
+                  {n.badge ? <em className="wms-sb-badge">{n.badge}</em> : null}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+      <div className="wms-sb-ft">
+        <div className="wms-sb-user">
+          <div className="wms-sb-avatar">{userInitials}</div>
+          <div>
+            <div className="wms-sb-user-name">{userName}</div>
+            <div className="wms-sb-user-role">{userRole}</div>
+          </div>
+        </div>
+      </div>
+    </aside>
   );
 }
 
-function WmsSubNav({ pathname }: { pathname: string }) {
+// ──────────────────────────────────────────────────────────────────
+// CommandK
+
+interface ProdutoLite {
+  id: string;
+  sku: string;
+  descricao: string;
+}
+
+function CommandK({
+  open,
+  onClose,
+  router,
+  onAction,
+}: {
+  open: boolean;
+  onClose: () => void;
+  router: ReturnType<typeof useRouter>;
+  onAction: (kind: Exclude<ModalKind, null>) => void;
+}) {
+  if (!open) return null;
   return (
-    <nav
-      aria-label="Navegação WMS"
-      className="-mx-3 sm:-mx-4 overflow-x-auto"
-    >
-      <div className="flex items-stretch gap-3 sm:gap-4 px-3 sm:px-4 pb-1">
-        {NAV_GROUPS.map((grupo, idx) => (
-          <div
-            key={grupo.titulo}
-            className={cn(
-              "flex flex-col gap-1 shrink-0",
-              idx > 0 && "border-l border-line pl-3 sm:pl-4",
-            )}
-          >
-            <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-faint">
-              {grupo.titulo}
-            </span>
-            <div className="flex items-center gap-1">
-              {grupo.itens.map((item) => {
-                const Icon = item.icon;
-                const active = isActive(pathname, item.href);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
-                      active
-                        ? "bg-ink text-paper"
-                        : "text-ink-muted hover:bg-surface hover:text-ink",
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {item.label}
-                  </Link>
-                );
-              })}
+    <CommandKInner onClose={onClose} router={router} onAction={onAction} />
+  );
+}
+
+function CommandKInner({
+  onClose,
+  router,
+  onAction,
+}: {
+  onClose: () => void;
+  router: ReturnType<typeof useRouter>;
+  onAction: (kind: Exclude<ModalKind, null>) => void;
+}) {
+  const [q, setQ] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const id = setTimeout(() => inputRef.current?.focus(), 30);
+    return () => clearTimeout(id);
+  }, []);
+
+  const ql = q.trim().toLowerCase();
+  const navResults = ALL_NAV.filter(
+    (n) => !ql || n.label.toLowerCase().includes(ql),
+  );
+
+  const produtosQuery = useQuery({
+    queryKey: ["wms-cmdk-produtos", ql],
+    queryFn: () =>
+      wmsApi<{ rows: ProdutoLite[] }>(
+        `/api/wms/produtos?q=${encodeURIComponent(ql)}&limit=6`,
+      ),
+    enabled: ql.length >= 2,
+    staleTime: 30 * 1000,
+  });
+  const prodResults = produtosQuery.data?.rows ?? [];
+
+  const actions = [
+    {
+      id: "a1",
+      label: "Receber mercadoria",
+      hint: "Nova entrada",
+      go: () => {
+        onAction("receber");
+        onClose();
+      },
+    },
+    {
+      id: "a2",
+      label: "Nova transferência",
+      hint: "Entre galpões",
+      go: () => {
+        onAction("transferir");
+        onClose();
+      },
+    },
+    {
+      id: "a3",
+      label: "Ajuste manual",
+      hint: "Entrada ou saída",
+      go: () => {
+        onAction("ajuste");
+        onClose();
+      },
+    },
+    {
+      id: "a4",
+      label: "Iniciar inventário",
+      hint: "Cycle count",
+      go: () => {
+        router.push("/wms/inventario");
+        onClose();
+      },
+    },
+  ].filter((a) => !ql || a.label.toLowerCase().includes(ql));
+
+  return (
+    <div className="wms-ck-overlay" onClick={onClose}>
+      <div className="wms-ck" onClick={(e) => e.stopPropagation()}>
+        <div className="wms-ck-input-row">
+          <Icon name="search" size={16} />
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Buscar produto, SKU, ação ou navegar…"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") onClose();
+            }}
+          />
+          <kbd>esc</kbd>
+        </div>
+        <div className="wms-ck-body">
+          {prodResults.length > 0 && (
+            <div className="wms-ck-group">
+              <div className="wms-ck-group-h">Produtos</div>
+              {prodResults.map((p) => (
+                <button
+                  key={p.id}
+                  className="wms-ck-item"
+                  onClick={() => {
+                    router.push(`/wms/estoque?produto=${p.id}`);
+                    onClose();
+                  }}
+                >
+                  <span className="wms-ck-item-mono">{p.sku}</span>
+                  <span className="wms-ck-item-desc">{p.descricao}</span>
+                </button>
+              ))}
             </div>
-          </div>
-        ))}
+          )}
+          {actions.length > 0 && (
+            <div className="wms-ck-group">
+              <div className="wms-ck-group-h">Ações rápidas</div>
+              {actions.map((a) => (
+                <button key={a.id} className="wms-ck-item" onClick={a.go}>
+                  <Icon name="sparkle" size={12} />
+                  <span className="wms-ck-item-desc">{a.label}</span>
+                  <span className="wms-ck-item-meta">{a.hint}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {navResults.length > 0 && (
+            <div className="wms-ck-group">
+              <div className="wms-ck-group-h">Navegar</div>
+              {navResults.map((n) => (
+                <button
+                  key={n.href}
+                  className="wms-ck-item"
+                  onClick={() => {
+                    router.push(n.href);
+                    onClose();
+                  }}
+                >
+                  <Icon name={n.icon} size={12} />
+                  <span className="wms-ck-item-desc">{n.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {prodResults.length === 0 &&
+            actions.length === 0 &&
+            navResults.length === 0 && (
+              <div className="wms-ck-empty">
+                Nenhum resultado para &ldquo;{q}&rdquo;
+              </div>
+            )}
+        </div>
+        <div className="wms-ck-ft">
+          <span>
+            <kbd>↑↓</kbd> navegar
+          </span>
+          <span>
+            <kbd>↵</kbd> abrir
+          </span>
+          <span>
+            <kbd>esc</kbd> fechar
+          </span>
+        </div>
       </div>
-    </nav>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// WmsShell
+
+export function WmsShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname() ?? "/wms";
+  const router = useRouter();
+  const { user, loading } = useAuth();
+
+  const [ckOpen, setCkOpen] = useState(false);
+  const [modal, setModal] = useState<{
+    kind: Exclude<ModalKind, null>;
+    seed?: { produto?: Produto };
+  } | null>(null);
+
+  const openModal = useCallback(
+    (kind: Exclude<ModalKind, null>, seed?: { produto?: Produto }) => {
+      setModal({ kind, seed });
+    },
+    [],
+  );
+
+  const ctxValue = useMemo<ModalContextValue>(
+    () => ({
+      open: openModal,
+      openCommandK: () => setCkOpen(true),
+    }),
+    [openModal],
+  );
+
+  // ⌘K
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCkOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Auth gate
+  useEffect(() => {
+    if (!loading && !user) router.replace("/login");
+  }, [loading, user, router]);
+
+  if (loading) {
+    return (
+      <div className="wms-root">
+        <div
+          style={{
+            display: "grid",
+            placeItems: "center",
+            height: "100vh",
+            background: "var(--wms-c-bg)",
+          }}
+        >
+          <Loader2 className="h-6 w-6 animate-spin text-ink-faint" />
+        </div>
+      </div>
+    );
+  }
+  if (!user) return null;
+
+  const initials = (user.nome || "?")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0])
+    .join("")
+    .toUpperCase();
+  const role = (user.cargos ?? [user.cargo])
+    .map((c) => c.replace("_", " "))
+    .join(", ");
+
+  return (
+    <ModalContext.Provider value={ctxValue}>
+      <div className="wms-root">
+        <div className="wms-app">
+          <Sidebar
+            pathname={pathname}
+            onCmdK={() => setCkOpen(true)}
+            userInitials={initials}
+            userName={user.nome}
+            userRole={role}
+          />
+          <div className="wms-main">
+            <div className="wms-view">{children}</div>
+          </div>
+
+          <CommandK
+            open={ckOpen}
+            onClose={() => setCkOpen(false)}
+            router={router}
+            onAction={openModal}
+          />
+
+          {modal?.kind === "receber" && (
+            <ReceberModal
+              seed={modal.seed}
+              onClose={() => setModal(null)}
+            />
+          )}
+          {modal?.kind === "ajuste" && (
+            <AjusteModal seed={modal.seed} onClose={() => setModal(null)} />
+          )}
+          {modal?.kind === "transferir" && (
+            <TransferModal seed={modal.seed} onClose={() => setModal(null)} />
+          )}
+        </div>
+      </div>
+    </ModalContext.Provider>
   );
 }

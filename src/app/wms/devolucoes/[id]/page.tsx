@@ -5,6 +5,13 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
 import { QuadruplaPicker } from "@/components/wms/quadrupla-picker";
+import {
+  Icon,
+  PageHeader,
+  Field,
+  StatusBadge,
+  fmtDateTime,
+} from "@/components/wms/ui/wms-ui";
 
 type Classificacao = "integro" | "avariado" | "garantia" | "troca_sku";
 
@@ -12,12 +19,51 @@ interface DevRow {
   id: string;
   nota_fiscal_id: number | null;
   empresa?: { nome?: string } | null;
+  criado_em?: string;
+  status?: string;
 }
 
 interface ProdutoMin {
   id: string;
   sku: string;
 }
+
+const CLASS_OPTS: Array<{
+  id: Classificacao;
+  letra: "A" | "B" | "C" | "D";
+  label: string;
+  desc: string;
+  tone: "ok" | "warn" | "info";
+}> = [
+  {
+    id: "integro",
+    letra: "A",
+    label: "Íntegro",
+    desc: "Volta ao estoque normal",
+    tone: "ok",
+  },
+  {
+    id: "avariado",
+    letra: "B",
+    label: "Avariado",
+    desc: "Vai para QUARENTENA",
+    tone: "warn",
+  },
+  {
+    id: "garantia",
+    letra: "C",
+    label: "Garantia",
+    desc: "Vai para QUARENTENA + flag RMA",
+    tone: "warn",
+  },
+  {
+    id: "troca_sku",
+    letra: "D",
+    label: "Troca SKU",
+    desc: "Substitui pelo SKU correto",
+    tone: "info",
+  },
+];
 
 export default function ClassificarPage({
   params,
@@ -85,83 +131,170 @@ export default function ClassificarPage({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const valid = !!produto_id && qty > 0 && !!q.localizacao_id;
+
   return (
-    <div className="space-y-4">
+    <>
+      <PageHeader
+        title="Classificar devolução"
+        subtitle="Defina A/B/C/D para aplicar ao ledger"
+      >
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost"
+          onClick={() => router.push("/wms/devolucoes")}
+        >
+          <Icon name="x" size={11} />
+          Cancelar
+        </button>
+      </PageHeader>
+
       {dev && (
-        <div className="rounded-xl border border-line bg-paper p-3 text-sm text-ink-muted">
-          NF{" "}
-          <span className="font-mono text-ink">{dev.nota_fiscal_id ?? "—"}</span>{" "}
-          · {dev.empresa?.nome}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "12px 16px",
+            background: "var(--wms-c-panel)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-3)",
+            marginBottom: 16,
+          }}
+        >
+          <div>
+            <div className="wms-td-mute wms-mono" style={{ fontSize: 12 }}>
+              NF {dev.nota_fiscal_id ?? "—"}
+            </div>
+            <h3
+              style={{ margin: "4px 0 0", fontSize: 17, fontWeight: 600 }}
+            >
+              {dev.empresa?.nome ?? "—"}
+            </h3>
+            {dev.criado_em && (
+              <div className="wms-td-mute" style={{ fontSize: 12 }}>
+                Recebida em {fmtDateTime(dev.criado_em)}
+              </div>
+            )}
+          </div>
+          <StatusBadge status={dev.status ?? "aguardando_classificacao"} />
         </div>
       )}
 
-      <div className="space-y-1">
-        <label className="text-xs text-ink-faint">Classificação</label>
-        <select
-          value={classificacao}
-          onChange={(e) => setClassificacao(e.target.value as Classificacao)}
-          className="w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus:border-ink focus:outline-none"
-        >
-          <option value="integro">A — Íntegro (volta ao estoque)</option>
-          <option value="avariado">B — Avariado (vai pra quarentena)</option>
-          <option value="garantia">C — Garantia (RMA fornecedor)</option>
-          <option value="troca_sku">D — Troca SKU pelo cliente</option>
-        </select>
+      <h3 className="wms-sec-h">Classificação</h3>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 8,
+          marginBottom: 18,
+        }}
+      >
+        {CLASS_OPTS.map((o) => {
+          const active = classificacao === o.id;
+          return (
+            <button
+              key={o.id}
+              type="button"
+              className="wms-card"
+              style={{
+                textAlign: "left",
+                cursor: "pointer",
+                borderColor: active
+                  ? "var(--wms-c-fg)"
+                  : "var(--wms-c-border-2)",
+                borderWidth: active ? 1.5 : 1,
+                background: active
+                  ? "var(--wms-c-faint)"
+                  : "var(--wms-c-panel)",
+              }}
+              onClick={() => setClassificacao(o.id)}
+            >
+              <div className="wms-card-body">
+                <div style={{ fontWeight: 600, fontSize: 13 }}>
+                  {o.letra} — {o.label}
+                </div>
+                <div className="wms-td-mute" style={{ fontSize: 12 }}>
+                  {o.desc}
+                </div>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
-      <QuadruplaPicker value={q} onChange={setQ} />
+      <h3 className="wms-sec-h">Destino do estoque</h3>
+      <div style={{ marginBottom: 16 }}>
+        <QuadruplaPicker value={q} onChange={setQ} />
+      </div>
 
-      <div className="flex flex-wrap gap-2">
-        <input
-          value={sku}
-          onChange={(e) => setSku(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              const v = (e.target as HTMLInputElement).value.trim();
+      <Field label="Produto" required>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            className="wms-input wms-mono"
+            value={sku}
+            onChange={(e) => setSku(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const v = (e.target as HTMLInputElement).value.trim();
+                if (v) buscar(v);
+              }
+            }}
+            onBlur={(e) => {
+              const v = e.target.value.trim();
               if (v) buscar(v);
-            }
-          }}
-          onBlur={(e) => {
-            const v = e.target.value.trim();
-            if (v) buscar(v);
-          }}
-          placeholder="SKU"
-          className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
-        />
-        <input
-          type="number"
-          min={1}
-          value={qty}
-          onChange={(e) => setQty(Number(e.target.value))}
-          className="w-24 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm tabular-nums text-ink focus:border-ink focus:outline-none"
-        />
-      </div>
+            }}
+            placeholder="SKU"
+            style={{ flex: 1 }}
+          />
+          <input
+            className="wms-input wms-mono wms-tar"
+            type="number"
+            min={1}
+            value={qty}
+            onChange={(e) => setQty(Number(e.target.value))}
+            style={{ width: 100 }}
+          />
+        </div>
+      </Field>
 
-      <textarea
-        value={observacoes}
-        onChange={(e) => setObservacoes(e.target.value)}
-        placeholder="observações"
-        className="w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
-        rows={3}
-      />
+      <Field label="Observações">
+        <textarea
+          className="wms-textarea"
+          value={observacoes}
+          onChange={(e) => setObservacoes(e.target.value)}
+          placeholder="Estado físico, número de série, motivo declarado…"
+          rows={3}
+        />
+      </Field>
 
-      <div className="flex gap-2">
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          gap: 8,
+          marginTop: 16,
+          paddingTop: 16,
+          borderTop: "1px solid var(--wms-c-border)",
+        }}
+      >
         <button
           type="button"
+          className="wms-btn wms-btn-ghost"
           onClick={() => router.push("/wms/devolucoes")}
-          className="btn-ghost"
         >
           Cancelar
         </button>
         <button
           type="button"
+          className="wms-btn wms-btn-primary"
+          disabled={!valid || submit.isPending}
           onClick={() => submit.mutate()}
-          disabled={!produto_id || !q.localizacao_id || submit.isPending}
-          className="btn-primary"
         >
-          {submit.isPending ? "Salvando..." : "Classificar"}
+          <Icon name="check" size={11} />
+          {submit.isPending ? "Aplicando…" : "Aplicar classificação ao ledger"}
         </button>
       </div>
-    </div>
+    </>
   );
 }

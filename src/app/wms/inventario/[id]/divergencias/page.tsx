@@ -3,9 +3,13 @@ import { use } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorBanner } from "@/components/ui/error-banner";
+import {
+  Icon,
+  PageHeader,
+  StatusBadge,
+  fmtBRL,
+  fmtNum,
+} from "@/components/wms/ui/wms-ui";
 
 interface DivergenciaRow {
   id: string;
@@ -27,7 +31,7 @@ export default function DivergenciasPage({
   const { id } = use(params);
   const queryClient = useQueryClient();
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-inv-div", id],
     queryFn: () =>
       wmsApi<{ rows: DivergenciaRow[] }>(
@@ -56,115 +60,173 @@ export default function DivergenciasPage({
   });
 
   const rows = data?.rows ?? [];
+  const pendentes = rows.filter((r) => r.status === "pendente").length;
+  const aprovadas = rows.filter((r) => r.status === "aprovada").length;
+  const rejeitadas = rows.filter((r) => r.status === "rejeitada").length;
+  const valorTotal = rows.reduce(
+    (s, r) => s + Math.abs(Number(r.valor_financeiro ?? 0)),
+    0,
+  );
 
   return (
-    <div className="space-y-3">
-      {isLoading ? (
-        <LoadingSpinner />
-      ) : isError ? (
-        <ErrorBanner message={(error as Error).message} onRetry={() => refetch()} />
-      ) : rows.length === 0 ? (
-        <EmptyState message="Sem divergências para essa sessão." />
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-line bg-paper">
-          <table className="w-full text-sm">
+    <>
+      <PageHeader
+        title="Divergências"
+        subtitle={`Sessão ${id.slice(0, 8)} · ${rows.length} divergência(s)`}
+      />
+
+      {rows.length > 0 && (
+        <div className="wms-kpis" style={{ marginBottom: 16 }}>
+          <div className="wms-kpi">
+            <div className="wms-kpi-lbl">Pendentes</div>
+            <div className="wms-kpi-val">{pendentes}</div>
+          </div>
+          <div className="wms-kpi">
+            <div className="wms-kpi-lbl">Aprovadas</div>
+            <div className="wms-kpi-val">{aprovadas}</div>
+          </div>
+          <div className="wms-kpi">
+            <div className="wms-kpi-lbl">Rejeitadas</div>
+            <div className="wms-kpi-val">{rejeitadas}</div>
+          </div>
+          <div className="wms-kpi">
+            <div className="wms-kpi-lbl">Valor financeiro</div>
+            <div className="wms-kpi-val">{fmtBRL(valorTotal)}</div>
+          </div>
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="wms-loading-pane">Carregando divergências…</div>
+      )}
+      {isError && (
+        <div className="wms-empty-block">
+          <h3>Erro</h3>
+          <p>{(error as Error).message}</p>
+        </div>
+      )}
+      {!isLoading && !isError && rows.length === 0 && (
+        <div className="wms-empty-block">
+          <h3>Sem divergências</h3>
+          <p>Todas as contagens bateram com o saldo do sistema.</p>
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="wms-tbl">
+          <table>
             <thead>
-              <tr className="text-left text-xs text-ink-faint">
-                <th className="p-2">SKU</th>
-                <th>localização</th>
-                <th className="text-right">esperado</th>
-                <th className="text-right">contado</th>
-                <th className="text-right">delta</th>
-                <th className="text-right">%</th>
-                <th>R$</th>
-                <th>status</th>
-                <th className="p-2">ações</th>
+              <tr>
+                <th>SKU</th>
+                <th>Produto</th>
+                <th>Localização</th>
+                <th className="wms-tar">Esperado</th>
+                <th className="wms-tar">Contado</th>
+                <th className="wms-tar">Delta</th>
+                <th className="wms-tar">%</th>
+                <th className="wms-tar">R$</th>
+                <th>Status</th>
+                <th className="wms-tar">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((d) => (
-                <tr key={d.id} className="border-t border-line">
-                  <td className="p-2 font-mono text-xs text-ink">
-                    {d.produto?.sku}
-                  </td>
-                  <td className="text-ink-muted">{d.localizacao?.codigo}</td>
-                  <td className="text-right tabular-nums text-ink">
-                    {d.saldo_sistema}
-                  </td>
-                  <td className="text-right tabular-nums text-ink">
-                    {d.qty_contada_final}
-                  </td>
-                  <td
-                    className={`text-right tabular-nums ${
-                      d.delta > 0
-                        ? "text-success"
-                        : d.delta < 0
-                          ? "text-danger"
-                          : "text-ink-muted"
-                    }`}
-                  >
-                    {d.delta}
-                  </td>
-                  <td className="text-right tabular-nums text-ink-muted">
-                    {d.delta_pct ?? "—"}%
-                  </td>
-                  <td className="text-right tabular-nums text-ink-muted">
-                    {d.valor_financeiro?.toFixed(2) ?? "—"}
-                  </td>
-                  <td>
-                    <span className="badge badge-oc">{d.status}</span>
-                  </td>
-                  <td className="space-x-1 p-2">
-                    {d.status === "pendente" && (
-                      <>
-                        <button
-                          type="button"
-                          disabled={resolver.isPending}
-                          onClick={() =>
-                            resolver.mutate({
-                              divergencia_id: d.id,
-                              acao: "aprovar",
-                            })
-                          }
-                          className="badge badge-success cursor-pointer disabled:opacity-50"
+              {rows.map((d) => {
+                const deltaCls =
+                  d.delta > 0
+                    ? "wms-td-ok"
+                    : d.delta < 0
+                      ? "wms-td-danger"
+                      : "wms-td-mute";
+                return (
+                  <tr key={d.id}>
+                    <td className="wms-mono">{d.produto?.sku ?? "—"}</td>
+                    <td className="wms-td-desc wms-td-mute">
+                      {d.produto?.descricao ?? "—"}
+                    </td>
+                    <td className="wms-mono wms-td-mute">
+                      {d.localizacao?.codigo ?? "—"}
+                    </td>
+                    <td className="wms-tar wms-mono">
+                      {fmtNum(d.saldo_sistema)}
+                    </td>
+                    <td className="wms-tar wms-mono">
+                      {fmtNum(d.qty_contada_final)}
+                    </td>
+                    <td className={`wms-tar wms-mono ${deltaCls}`}>
+                      {d.delta > 0 ? `+${d.delta}` : d.delta}
+                    </td>
+                    <td className="wms-tar wms-mono wms-td-mute">
+                      {d.delta_pct != null ? `${d.delta_pct}%` : "—"}
+                    </td>
+                    <td className="wms-tar wms-mono wms-td-mute">
+                      {d.valor_financeiro != null
+                        ? fmtBRL(Number(d.valor_financeiro))
+                        : "—"}
+                    </td>
+                    <td>
+                      <StatusBadge status={d.status} />
+                    </td>
+                    <td className="wms-td-actions">
+                      {d.status === "pendente" && (
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 4,
+                            justifyContent: "flex-end",
+                          }}
                         >
-                          aprovar
-                        </button>
-                        <button
-                          type="button"
-                          disabled={resolver.isPending}
-                          onClick={() =>
-                            resolver.mutate({
-                              divergencia_id: d.id,
-                              acao: "recontar",
-                            })
-                          }
-                          className="badge badge-warning cursor-pointer disabled:opacity-50"
-                        >
-                          recontar
-                        </button>
-                        <button
-                          type="button"
-                          disabled={resolver.isPending}
-                          onClick={() =>
-                            resolver.mutate({
-                              divergencia_id: d.id,
-                              acao: "rejeitar",
-                            })
-                          }
-                          className="badge badge-danger cursor-pointer disabled:opacity-50"
-                        >
-                          rejeitar
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                          <button
+                            type="button"
+                            className="wms-btn wms-btn-sm wms-btn-ghost"
+                            disabled={resolver.isPending}
+                            title="Aprovar"
+                            onClick={() =>
+                              resolver.mutate({
+                                divergencia_id: d.id,
+                                acao: "aprovar",
+                              })
+                            }
+                          >
+                            <Icon name="check" size={11} />
+                          </button>
+                          <button
+                            type="button"
+                            className="wms-btn wms-btn-sm wms-btn-ghost"
+                            disabled={resolver.isPending}
+                            title="Recontar"
+                            onClick={() =>
+                              resolver.mutate({
+                                divergencia_id: d.id,
+                                acao: "recontar",
+                              })
+                            }
+                          >
+                            <Icon name="rotate" size={11} />
+                          </button>
+                          <button
+                            type="button"
+                            className="wms-btn wms-btn-sm wms-btn-ghost"
+                            disabled={resolver.isPending}
+                            title="Rejeitar"
+                            onClick={() =>
+                              resolver.mutate({
+                                divergencia_id: d.id,
+                                acao: "rejeitar",
+                              })
+                            }
+                          >
+                            <Icon name="x" size={11} />
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
-    </div>
+    </>
   );
 }

@@ -4,15 +4,27 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Link from "next/link";
 import { wmsApi } from "@/lib/wms/api-client";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorBanner } from "@/components/ui/error-banner";
+import {
+  Icon,
+  PageHeader,
+  StatusBadge,
+  Field,
+} from "@/components/wms/ui/wms-ui";
 
 interface SessaoRow {
   id: string;
   tipo: string;
   status: string;
+  modo_contagem?: string;
   galpao?: { nome?: string };
+  criado_em?: string;
+  progresso?: {
+    total: number;
+    contadas: number;
+    divergentes: number;
+    pendentes: number;
+  };
+  nome?: string;
 }
 
 interface GalpaoRow {
@@ -34,17 +46,9 @@ interface NovoSessao {
   areas: { nome: string; localizacao_ids: string[] }[];
 }
 
-const STATUS_BADGE: Record<string, string> = {
-  em_andamento: "badge badge-info",
-  aplicada: "badge badge-success",
-  cancelada: "badge badge-danger",
-  revisao: "badge badge-warning",
-  aprovada: "badge badge-success",
-  planejada: "badge badge-oc",
-};
-
 export default function InventarioListaPage() {
   const queryClient = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
   const [novo, setNovo] = useState<NovoSessao>({
     tipo: "cycle_count",
     galpao_id: "",
@@ -83,6 +87,7 @@ export default function InventarioListaPage() {
     onSuccess: () => {
       toast.success("Sessão criada");
       setNovo((p) => ({ ...p, areas: [] }));
+      setShowForm(false);
       queryClient.invalidateQueries({ queryKey: ["wms-inv-sessoes"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -101,128 +106,286 @@ export default function InventarioListaPage() {
   const rows = sessoesQuery.data?.rows ?? [];
 
   return (
-    <div className="space-y-4">
-      <details className="rounded-xl border border-line bg-paper">
-        <summary className="cursor-pointer p-3 text-sm font-medium text-ink">
-          Criar nova sessão
-        </summary>
-        <div className="space-y-3 border-t border-line p-3">
-          <div className="flex flex-wrap gap-2">
-            <select
-              value={novo.tipo}
-              onChange={(e) =>
-                setNovo({
-                  ...novo,
-                  tipo: e.target.value as "cycle_count" | "completo",
-                })
-              }
-              className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
+    <>
+      <PageHeader
+        title="Inventários"
+        subtitle="Multi-operador, anti-colisão, com tolerâncias e workflow de divergências"
+      >
+        <Link href="/wms/inventario/metricas" className="wms-btn wms-btn-ghost">
+          <Icon name="gauge" size={12} />
+          Métricas
+        </Link>
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary"
+          onClick={() => setShowForm((s) => !s)}
+        >
+          <Icon name="plus" size={12} />
+          Nova sessão
+        </button>
+      </PageHeader>
+
+      {showForm && (
+        <div
+          style={{
+            background: "var(--wms-c-panel)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-3)",
+            padding: 18,
+            marginBottom: 20,
+          }}
+        >
+          <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
+            Nova sessão
+          </h3>
+          <div className="wms-row-3">
+            <Field label="Tipo" required>
+              <select
+                className="wms-select"
+                value={novo.tipo}
+                onChange={(e) =>
+                  setNovo({
+                    ...novo,
+                    tipo: e.target.value as "cycle_count" | "completo",
+                  })
+                }
+              >
+                <option value="cycle_count">Cycle count</option>
+                <option value="completo">Inventário completo</option>
+              </select>
+            </Field>
+            <Field label="Galpão" required>
+              <select
+                className="wms-select"
+                value={novo.galpao_id}
+                onChange={(e) =>
+                  setNovo({ ...novo, galpao_id: e.target.value, areas: [] })
+                }
+              >
+                <option value="">— selecione —</option>
+                {galpoes?.galpoes?.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.nome}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Modo de contagem" required>
+              <select
+                className="wms-select"
+                value={novo.modo_contagem}
+                onChange={(e) =>
+                  setNovo({
+                    ...novo,
+                    modo_contagem: e.target.value as NovoSessao["modo_contagem"],
+                  })
+                }
+              >
+                <option value="aberto">Aberto</option>
+                <option value="blind">Blind</option>
+                <option value="duplo_blind">Duplo blind</option>
+              </select>
+            </Field>
+          </div>
+
+          <div className="wms-row-2">
+            <Field
+              label="Tolerância"
+              hint="%"
             >
-              <option value="cycle_count">cycle count</option>
-              <option value="completo">inventário completo</option>
-            </select>
-            <select
-              value={novo.galpao_id}
-              onChange={(e) =>
-                setNovo({ ...novo, galpao_id: e.target.value, areas: [] })
-              }
-              className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
-            >
-              <option value="">— galpão —</option>
-              {galpoes?.galpoes?.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.nome}
-                </option>
-              ))}
-            </select>
-            <select
-              value={novo.modo_contagem}
-              onChange={(e) =>
-                setNovo({
-                  ...novo,
-                  modo_contagem: e.target.value as NovoSessao["modo_contagem"],
-                })
-              }
-              className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
-            >
-              <option value="aberto">aberto</option>
-              <option value="blind">blind</option>
-              <option value="duplo_blind">duplo blind</option>
-            </select>
-            <input
-              type="number"
-              step="0.5"
-              value={novo.tolerancia_pct}
-              onChange={(e) =>
-                setNovo({ ...novo, tolerancia_pct: Number(e.target.value) })
-              }
-              className="w-24 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
-              placeholder="tol %"
-            />
+              <input
+                className="wms-input wms-mono wms-tar"
+                type="number"
+                step="0.5"
+                value={novo.tolerancia_pct}
+                onChange={(e) =>
+                  setNovo({ ...novo, tolerancia_pct: Number(e.target.value) })
+                }
+              />
+            </Field>
+            <Field label="Exige aprovação acima de" hint="R$">
+              <input
+                className="wms-input wms-mono wms-tar"
+                type="number"
+                value={novo.exige_aprovacao_acima_valor}
+                onChange={(e) =>
+                  setNovo({
+                    ...novo,
+                    exige_aprovacao_acima_valor: Number(e.target.value),
+                  })
+                }
+              />
+            </Field>
           </div>
 
           {novo.galpao_id && (
-            <div>
+            <div style={{ marginTop: 12 }}>
               <button
                 type="button"
+                className="wms-btn wms-btn-ghost wms-btn-sm"
                 onClick={() =>
                   adicionarArea((locs?.rows ?? []).map((l) => l.id))
                 }
-                className="btn-ghost text-sm"
               >
-                adicionar todas localizações como Área 1
+                <Icon name="plus" size={11} />
+                Adicionar todas localizações como nova área
               </button>
-              <div className="mt-2 text-sm text-ink-muted">
+              <div
+                className="wms-td-mute"
+                style={{ fontSize: 12, marginTop: 6 }}
+              >
                 {novo.areas.length} área(s) configurada(s)
               </div>
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={() => criar.mutate()}
-            disabled={!novo.galpao_id || novo.areas.length === 0 || criar.isPending}
-            className="btn-primary"
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 8,
+              marginTop: 14,
+              paddingTop: 14,
+              borderTop: "1px solid var(--wms-c-border)",
+            }}
           >
-            criar sessão
-          </button>
-        </div>
-      </details>
-
-      {sessoesQuery.isLoading ? (
-        <LoadingSpinner />
-      ) : sessoesQuery.isError ? (
-        <ErrorBanner
-          message={(sessoesQuery.error as Error).message}
-          onRetry={() => sessoesQuery.refetch()}
-        />
-      ) : rows.length === 0 ? (
-        <EmptyState message="Nenhuma sessão de inventário criada ainda." />
-      ) : (
-        <div className="space-y-2">
-          {rows.map((s) => (
-            <Link
-              key={s.id}
-              href={`/wms/inventario/${s.id}`}
-              className="block rounded-xl border border-line bg-paper p-3 transition-colors hover:bg-surface"
+            <button
+              type="button"
+              className="wms-btn wms-btn-ghost"
+              onClick={() => setShowForm(false)}
             >
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <span className="font-mono text-xs text-ink-faint">
-                    {s.id.slice(0, 8)}
-                  </span>
-                  <span className="ml-2 text-sm text-ink">
-                    {s.tipo} · {s.galpao?.nome}
-                  </span>
-                </div>
-                <span className={STATUS_BADGE[s.status] ?? "badge badge-oc"}>
-                  {s.status}
-                </span>
-              </div>
-            </Link>
-          ))}
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="wms-btn wms-btn-primary"
+              disabled={
+                !novo.galpao_id || novo.areas.length === 0 || criar.isPending
+              }
+              onClick={() => criar.mutate()}
+            >
+              <Icon name="check" size={11} />
+              {criar.isPending ? "Criando…" : "Criar sessão"}
+            </button>
+          </div>
         </div>
       )}
-    </div>
+
+      {sessoesQuery.isLoading && (
+        <div className="wms-loading-pane">Carregando sessões…</div>
+      )}
+      {sessoesQuery.isError && (
+        <div className="wms-empty-block">
+          <h3>Erro</h3>
+          <p>{(sessoesQuery.error as Error).message}</p>
+        </div>
+      )}
+      {!sessoesQuery.isLoading && rows.length === 0 && (
+        <div className="wms-empty-block">
+          <h3>Nenhuma sessão criada</h3>
+          <p>Inicie um cycle count ou inventário completo para começar.</p>
+          <button
+            type="button"
+            className="wms-btn wms-btn-primary"
+            onClick={() => setShowForm(true)}
+          >
+            <Icon name="plus" size={11} />
+            Nova sessão
+          </button>
+        </div>
+      )}
+      {rows.length > 0 && (
+        <div className="wms-tbl">
+          <table>
+            <thead>
+              <tr>
+                <th>Sessão</th>
+                <th>Tipo</th>
+                <th>Modo</th>
+                <th>Galpão</th>
+                <th className="wms-tar">Progresso</th>
+                <th>Status</th>
+                <th style={{ width: 32 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((s) => {
+                const total = s.progresso?.total ?? 0;
+                const contadas = s.progresso?.contadas ?? 0;
+                const pct = total > 0 ? (contadas / total) * 100 : 0;
+                return (
+                  <tr key={s.id} className="wms-tr-clickable">
+                    <td>
+                      <Link
+                        href={`/wms/inventario/${s.id}`}
+                        className="wms-link-row"
+                      >
+                        {s.nome ?? (
+                          <span className="wms-mono">{s.id.slice(0, 8)}</span>
+                        )}
+                      </Link>
+                    </td>
+                    <td className="wms-td-mute">
+                      {s.tipo === "cycle_count" ? "Cycle count" : "Completo"}
+                    </td>
+                    <td className="wms-td-mute">{s.modo_contagem ?? "—"}</td>
+                    <td className="wms-td-mute">{s.galpao?.nome ?? "—"}</td>
+                    <td className="wms-tar">
+                      {total > 0 ? (
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                            justifyContent: "flex-end",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: 80,
+                              height: 5,
+                              background: "var(--wms-c-panel-2)",
+                              borderRadius: 3,
+                              overflow: "hidden",
+                            }}
+                          >
+                            <div
+                              style={{
+                                height: "100%",
+                                width: `${pct}%`,
+                                background: "var(--wms-c-fg)",
+                              }}
+                            />
+                          </div>
+                          <span
+                            className="wms-mono wms-td-mute"
+                            style={{ fontSize: 11.5 }}
+                          >
+                            {contadas}/{total}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="wms-td-mute">—</span>
+                      )}
+                    </td>
+                    <td>
+                      <StatusBadge status={s.status} />
+                    </td>
+                    <td className="wms-td-actions">
+                      <Link
+                        href={`/wms/inventario/${s.id}`}
+                        className="wms-btn-icon"
+                      >
+                        <Icon name="chevron-r" size={11} />
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }

@@ -3,9 +3,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorBanner } from "@/components/ui/error-banner";
+import { Icon, PageHeader, fmtNum } from "@/components/wms/ui/wms-ui";
 import type { EmprestimoRegra, SaldoDevedor } from "@/lib/wms/emprestimos";
 
 interface EmpresaRow {
@@ -20,13 +18,13 @@ interface GalpaoRow {
 
 export default function EmprestimosPage() {
   const queryClient = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
   const [credora, setCredora] = useState<string>("");
   const [devedora, setDevedora] = useState<string>("");
 
   const { data: galpoes } = useQuery({
     queryKey: ["galpoes"],
-    queryFn: () =>
-      wmsApi<{ galpoes?: GalpaoRow[] }>("/api/admin/galpoes"),
+    queryFn: () => wmsApi<{ galpoes?: GalpaoRow[] }>("/api/admin/galpoes"),
   });
   const empresas: EmpresaRow[] = (galpoes?.galpoes ?? []).flatMap(
     (g) => g.empresas ?? [],
@@ -34,12 +32,14 @@ export default function EmprestimosPage() {
 
   const regrasQuery = useQuery({
     queryKey: ["wms-regras"],
-    queryFn: () => wmsApi<{ rows: EmprestimoRegra[] }>("/api/wms/emprestimo-regras"),
+    queryFn: () =>
+      wmsApi<{ rows: EmprestimoRegra[] }>("/api/wms/emprestimo-regras"),
   });
 
   const saldosQuery = useQuery({
     queryKey: ["wms-saldos-devedores"],
-    queryFn: () => wmsApi<{ rows: SaldoDevedor[] }>("/api/wms/emprestimos/saldos"),
+    queryFn: () =>
+      wmsApi<{ rows: SaldoDevedor[] }>("/api/wms/emprestimos/saldos"),
   });
 
   const criar = useMutation({
@@ -56,112 +56,198 @@ export default function EmprestimosPage() {
       toast.success("Regra criada");
       setCredora("");
       setDevedora("");
+      setShowForm(false);
       queryClient.invalidateQueries({ queryKey: ["wms-regras"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const empresaNome = (id: string) => empresas.find((e) => e.id === id)?.nome ?? id;
+  const empresaNome = (id: string) =>
+    empresas.find((e) => e.id === id)?.nome ?? id;
 
   const regras = regrasQuery.data?.rows ?? [];
   const saldos = saldosQuery.data?.rows ?? [];
 
   return (
-    <div className="space-y-6">
-      <section className="space-y-3">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
-          Matriz de empréstimos
-        </h2>
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper p-3 text-sm">
-          <select
-            value={credora}
-            onChange={(e) => setCredora(e.target.value)}
-            className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
-          >
-            <option value="">— credora —</option>
-            {empresas.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.nome}
-              </option>
-            ))}
-          </select>
-          <span className="text-ink-faint">→ empresta para →</span>
-          <select
-            value={devedora}
-            onChange={(e) => setDevedora(e.target.value)}
-            className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
-          >
-            <option value="">— devedora —</option>
-            {empresas.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.nome}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => criar.mutate()}
-            disabled={!credora || !devedora || credora === devedora || criar.isPending}
-            className="btn-primary"
-          >
-            criar
-          </button>
-        </div>
+    <>
+      <PageHeader
+        title="Empréstimos entre empresas"
+        subtitle="Matriz N×N · saldos devedores em peças · limites por par e por produto"
+      >
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary"
+          onClick={() => setShowForm((s) => !s)}
+        >
+          <Icon name="plus" size={12} />
+          Nova regra
+        </button>
+      </PageHeader>
 
-        {regrasQuery.isLoading ? (
-          <LoadingSpinner />
-        ) : regrasQuery.isError ? (
-          <ErrorBanner
-            message={(regrasQuery.error as Error).message}
-            onRetry={() => regrasQuery.refetch()}
-          />
-        ) : regras.length === 0 ? (
-          <EmptyState message="Nenhuma regra de empréstimo cadastrada." />
-        ) : (
-          <div className="space-y-1">
-            {regras.map((r) => (
-              <RegraComLimite key={r.id} regra={r} empresaNome={empresaNome} />
-            ))}
+      {showForm && (
+        <div
+          style={{
+            background: "var(--wms-c-panel)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-3)",
+            padding: 16,
+            marginBottom: 16,
+          }}
+        >
+          <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
+            Nova regra credora → devedora
+          </h3>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <select
+              className="wms-select"
+              value={credora}
+              onChange={(e) => setCredora(e.target.value)}
+              style={{ flex: 1, minWidth: 200 }}
+            >
+              <option value="">— credora —</option>
+              {empresas.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.nome}
+                </option>
+              ))}
+            </select>
+            <Icon name="arrow-right" size={14} />
+            <select
+              className="wms-select"
+              value={devedora}
+              onChange={(e) => setDevedora(e.target.value)}
+              style={{ flex: 1, minWidth: 200 }}
+            >
+              <option value="">— devedora —</option>
+              {empresas.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.nome}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="wms-btn wms-btn-primary"
+              disabled={
+                !credora || !devedora || credora === devedora || criar.isPending
+              }
+              onClick={() => criar.mutate()}
+            >
+              <Icon name="check" size={11} />
+              {criar.isPending ? "Criando…" : "Criar regra"}
+            </button>
+            <button
+              type="button"
+              className="wms-btn wms-btn-ghost"
+              onClick={() => setShowForm(false)}
+            >
+              Cancelar
+            </button>
+          </div>
+          {credora && devedora && credora === devedora && (
+            <div
+              className="wms-hint-card wms-hint-danger"
+              style={{ marginTop: 10 }}
+            >
+              <Icon name="alert" />
+              <span>Credora e devedora não podem ser a mesma empresa.</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <section style={{ marginBottom: 24 }}>
+        <h3 className="wms-sec-h">Regras de empréstimo</h3>
+        {regrasQuery.isLoading && (
+          <div className="wms-loading-pane">Carregando regras…</div>
+        )}
+        {regrasQuery.isError && (
+          <div className="wms-empty-block">
+            <h3>Erro</h3>
+            <p>{(regrasQuery.error as Error).message}</p>
+          </div>
+        )}
+        {!regrasQuery.isLoading && regras.length === 0 && (
+          <div className="wms-empty-block">
+            <h3>Nenhuma regra cadastrada</h3>
+            <p>
+              Crie a primeira regra para permitir empréstimos entre empresas.
+            </p>
+          </div>
+        )}
+        {regras.length > 0 && (
+          <div className="wms-tbl">
+            <table>
+              <thead>
+                <tr>
+                  <th>Credora</th>
+                  <th></th>
+                  <th>Devedora</th>
+                  <th className="wms-tar">Limite global</th>
+                  <th className="wms-tar">Limites por SKU</th>
+                  <th className="wms-tar">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {regras.map((r) => (
+                  <RegraRow key={r.id} regra={r} empresaNome={empresaNome} />
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
 
-      <section className="space-y-3">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
-          Saldos devedores
-        </h2>
-        <p className="text-xs text-ink-muted">
-          Saldo líquido entre credora ↔ devedora por produto. Limites por par+produto
-          editáveis em cada regra acima.
+      <section>
+        <h3 className="wms-sec-h">Saldos devedores</h3>
+        <p className="wms-td-mute" style={{ fontSize: 12, marginBottom: 8 }}>
+          Saldo líquido bidirecional credora ↔ devedora por produto, calculado
+          via{" "}
+          <span className="wms-mono">wms_saldos_devedores()</span>.
         </p>
-        {saldosQuery.isLoading ? (
-          <LoadingSpinner />
-        ) : saldosQuery.isError ? (
-          <ErrorBanner
-            message={(saldosQuery.error as Error).message}
-            onRetry={() => saldosQuery.refetch()}
-          />
-        ) : saldos.length === 0 ? (
-          <EmptyState message="Sem saldos devedores no momento." />
-        ) : (
-          <div className="overflow-x-auto rounded-xl border border-line bg-paper">
-            <table className="w-full text-sm">
+        {saldosQuery.isLoading && (
+          <div className="wms-loading-pane">Carregando saldos…</div>
+        )}
+        {saldosQuery.isError && (
+          <div className="wms-empty-block">
+            <h3>Erro</h3>
+            <p>{(saldosQuery.error as Error).message}</p>
+          </div>
+        )}
+        {!saldosQuery.isLoading && saldos.length === 0 && (
+          <div className="wms-empty-block">
+            <h3>Sem saldos devedores</h3>
+            <p>Nenhum empréstimo pendente entre empresas no momento.</p>
+          </div>
+        )}
+        {saldos.length > 0 && (
+          <div className="wms-tbl">
+            <table>
               <thead>
-                <tr className="text-left text-ink-faint">
-                  <th className="p-2">credora</th>
-                  <th>devedora</th>
-                  <th>produto</th>
-                  <th className="p-2 text-right">saldo</th>
+                <tr>
+                  <th>Credora</th>
+                  <th>Devedora</th>
+                  <th>Produto</th>
+                  <th className="wms-tar">Saldo líquido</th>
                 </tr>
               </thead>
               <tbody>
                 {saldos.map((s, i) => (
-                  <tr key={i} className="border-t border-line">
-                    <td className="p-2 text-ink-muted">{empresaNome(s.credora)}</td>
-                    <td className="text-ink-muted">{empresaNome(s.devedora)}</td>
-                    <td className="font-mono text-xs text-ink">{s.produto_id}</td>
-                    <td className="p-2 text-right tabular-nums text-ink">
-                      {Number(s.saldo_liquido).toLocaleString("pt-BR")}
+                  <tr key={i}>
+                    <td className="wms-td-mute">{empresaNome(s.credora)}</td>
+                    <td className="wms-td-mute">{empresaNome(s.devedora)}</td>
+                    <td className="wms-mono" style={{ fontSize: 12 }}>
+                      {s.produto_id}
+                    </td>
+                    <td className="wms-tar wms-mono">
+                      {fmtNum(Number(s.saldo_liquido))}
                     </td>
                   </tr>
                 ))}
@@ -170,11 +256,11 @@ export default function EmprestimosPage() {
           </div>
         )}
       </section>
-    </div>
+    </>
   );
 }
 
-function RegraComLimite({
+function RegraRow({
   regra,
   empresaNome,
 }: {
@@ -205,52 +291,61 @@ function RegraComLimite({
   });
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper p-2.5 text-sm">
-      <span className="flex-1 text-ink">
-        {empresaNome(regra.empresa_credora_id)} → {empresaNome(regra.empresa_devedora_id)}
-      </span>
-      {editando ? (
-        <>
+    <tr>
+      <td>{empresaNome(regra.empresa_credora_id)}</td>
+      <td className="wms-td-mute">
+        <Icon name="arrow-right" size={11} />
+      </td>
+      <td>{empresaNome(regra.empresa_devedora_id)}</td>
+      <td className="wms-tar wms-mono">
+        {editando ? (
           <input
+            className="wms-input wms-mono wms-tar"
             type="number"
             value={limite}
             onChange={(e) => setLimite(e.target.value)}
-            placeholder="qty máx por produto"
-            className="w-36 rounded-lg border border-line bg-paper px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+            placeholder="sem limite"
+            style={{ width: 120, marginLeft: "auto" }}
           />
+        ) : regra.limite_max_por_produto != null ? (
+          fmtNum(regra.limite_max_por_produto)
+        ) : (
+          <span className="wms-td-mute">sem limite</span>
+        )}
+      </td>
+      <td className="wms-tar wms-mono wms-td-mute">
+        {Object.keys(regra.limites_por_produto ?? {}).length}
+      </td>
+      <td className="wms-td-actions">
+        {editando ? (
+          <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              className="wms-btn wms-btn-sm wms-btn-primary"
+              disabled={atualizar.isPending}
+              onClick={() => atualizar.mutate()}
+            >
+              Salvar
+            </button>
+            <button
+              type="button"
+              className="wms-btn wms-btn-sm wms-btn-ghost"
+              onClick={() => setEditando(false)}
+            >
+              Cancelar
+            </button>
+          </div>
+        ) : (
           <button
             type="button"
-            onClick={() => atualizar.mutate()}
-            disabled={atualizar.isPending}
-            className="btn-primary text-xs"
-          >
-            salvar
-          </button>
-          <button
-            type="button"
-            onClick={() => setEditando(false)}
-            className="btn-ghost text-xs"
-          >
-            cancelar
-          </button>
-        </>
-      ) : (
-        <>
-          <span className="text-xs text-ink-muted">
-            limite global: {regra.limite_max_por_produto ?? "sem limite"}
-          </span>
-          <span className="text-xs text-ink-faint">
-            limites por SKU: {Object.keys(regra.limites_por_produto ?? {}).length}
-          </span>
-          <button
-            type="button"
+            className="wms-btn-icon"
+            title="Editar limite global"
             onClick={() => setEditando(true)}
-            className="btn-ghost text-xs"
           >
-            editar global
+            <Icon name="edit" size={11} />
           </button>
-        </>
-      )}
-    </div>
+        )}
+      </td>
+    </tr>
   );
 }

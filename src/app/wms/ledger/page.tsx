@@ -1,60 +1,106 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { wmsApi } from "@/lib/wms/api-client";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorBanner } from "@/components/ui/error-banner";
+import { Icon, PageHeader } from "@/components/wms/ui/wms-ui";
+import { LedgerRow } from "@/components/wms/produto-drawer";
+import type { Movimentacao } from "@/lib/wms/types";
 
-interface LedgerRow {
-  id: string;
-  criado_em: string;
-  tipo: string;
-  origem_tipo: string;
-  quantidade: number;
-  saldo_anterior: number;
-  saldo_posterior: number;
-  produto?: { sku: string };
+interface LedgerRowData extends Movimentacao {
+  produto?: { sku: string; descricao: string };
   empresa?: { nome: string };
   galpao?: { nome: string };
-  localizacao?: { codigo: string };
+  localizacao?: { codigo: string; tipo: string };
 }
 
-const ORIGENS = [
-  "compra_manual",
-  "nf_venda",
-  "emprestimo",
-  "reserva_pedido",
-  "liberacao_reserva",
-  "ajuste_manual",
-  "inventario",
-  "inventario_inicial",
+const TIPO_OPTS: Array<[string, string]> = [
+  ["all", "Todos"],
+  ["E", "Entradas"],
+  ["S", "Saídas"],
+  ["R", "Reservas"],
+  ["L", "Liberações"],
 ];
 
 export default function LedgerPage() {
-  const [filtros, setFiltros] = useState({ origem_tipo: "", limit: 100 });
-  const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["wms-ledger", filtros],
+  const [tipo, setTipo] = useState<string>("all");
+  const [origem, setOrigem] = useState<string>("all");
+  const [q, setQ] = useState("");
+
+  const ledgerQuery = useQuery({
+    queryKey: ["wms-ledger", "global", origem],
     queryFn: () => {
-      const sp = new URLSearchParams();
-      if (filtros.origem_tipo) sp.set("origem_tipo", filtros.origem_tipo);
-      sp.set("limit", String(filtros.limit));
-      return wmsApi<{ rows: LedgerRow[] }>(`/api/wms/ledger?${sp}`);
+      const sp = new URLSearchParams({ limit: "300" });
+      if (origem !== "all") sp.set("origem_tipo", origem);
+      return wmsApi<{ rows: LedgerRowData[] }>(`/api/wms/ledger?${sp}`);
     },
   });
+  const all = ledgerQuery.data?.rows ?? [];
 
-  const rows = data?.rows ?? [];
+  const filtered = useMemo(() => {
+    let r = all;
+    if (tipo !== "all") r = r.filter((m) => m.tipo === tipo);
+    if (q) {
+      const ql = q.toLowerCase();
+      r = r.filter((m) => {
+        const sku = m.produto?.sku?.toLowerCase() ?? "";
+        const desc = m.produto?.descricao?.toLowerCase() ?? "";
+        const obs = (m.observacoes ?? "").toLowerCase();
+        return sku.includes(ql) || desc.includes(ql) || obs.includes(ql);
+      });
+    }
+    return r;
+  }, [all, tipo, q]);
+
+  const origens = useMemo(
+    () => Array.from(new Set(all.map((m) => m.origem_tipo))).sort(),
+    [all],
+  );
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 text-sm">
+    <>
+      <PageHeader
+        title="Movimentações"
+        subtitle={`Ledger imutável · ${filtered.length} de ${all.length} registros`}
+      >
+        <button className="wms-btn wms-btn-ghost" disabled>
+          <Icon name="download" size={12} />
+          Exportar
+        </button>
+      </PageHeader>
+
+      <div className="wms-toolbar">
+        <div className="wms-search-wrap">
+          <Icon name="search" size={13} />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Buscar SKU, produto ou observação…"
+          />
+          {q && (
+            <button className="wms-search-clear" onClick={() => setQ("")}>
+              <Icon name="x" size={11} />
+            </button>
+          )}
+        </div>
+        <div className="wms-seg">
+          {TIPO_OPTS.map(([id, l]) => (
+            <button
+              key={id}
+              className={`wms-seg-btn ${tipo === id ? "is-active" : ""}`}
+              onClick={() => setTipo(id)}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
         <select
-          value={filtros.origem_tipo}
-          onChange={(e) => setFiltros({ ...filtros, origem_tipo: e.target.value })}
-          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
+          className="wms-select"
+          value={origem}
+          onChange={(e) => setOrigem(e.target.value)}
+          style={{ width: 220 }}
         >
-          <option value="">todas origens</option>
-          {ORIGENS.map((o) => (
+          <option value="all">Todas origens</option>
+          {origens.map((o) => (
             <option key={o} value={o}>
               {o}
             </option>
@@ -62,50 +108,24 @@ export default function LedgerPage() {
         </select>
       </div>
 
-      {isLoading ? (
-        <LoadingSpinner />
-      ) : isError ? (
-        <ErrorBanner message={(error as Error).message} onRetry={() => refetch()} />
-      ) : rows.length === 0 ? (
-        <EmptyState message="Nenhuma movimentação encontrada." />
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-line bg-paper">
-          <table className="w-full text-xs font-mono">
-            <thead>
-              <tr className="text-left text-ink-faint">
-                <th className="p-2">data</th>
-                <th>tipo</th>
-                <th>origem</th>
-                <th>SKU</th>
-                <th>dona</th>
-                <th>galpão</th>
-                <th>loc</th>
-                <th className="text-right">qty</th>
-                <th className="p-2 text-right">saldo→</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-t border-line">
-                  <td className="whitespace-nowrap p-2 text-ink-muted">
-                    {new Date(r.criado_em).toLocaleString("pt-BR")}
-                  </td>
-                  <td className="font-bold text-ink">{r.tipo}</td>
-                  <td className="text-ink-muted">{r.origem_tipo}</td>
-                  <td className="text-ink">{r.produto?.sku}</td>
-                  <td className="text-ink-muted">{r.empresa?.nome}</td>
-                  <td className="text-ink-muted">{r.galpao?.nome}</td>
-                  <td className="text-ink-muted">{r.localizacao?.codigo}</td>
-                  <td className="text-right tabular-nums text-ink">{r.quantidade}</td>
-                  <td className="p-2 text-right tabular-nums text-ink-muted">
-                    {r.saldo_anterior} → {r.saldo_posterior}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+      <div className="wms-ledger-list">
+        {ledgerQuery.isLoading && (
+          <div className="wms-loading-pane">Carregando…</div>
+        )}
+        {ledgerQuery.isError && (
+          <div className="wms-td-empty wms-td-danger" style={{ padding: 32 }}>
+            Erro: {(ledgerQuery.error as Error).message}
+          </div>
+        )}
+        {!ledgerQuery.isLoading && filtered.length === 0 && (
+          <div className="wms-td-empty" style={{ padding: 32 }}>
+            Nenhuma movimentação.
+          </div>
+        )}
+        {filtered.map((m) => (
+          <LedgerRow key={m.id} m={m} />
+        ))}
+      </div>
+    </>
   );
 }

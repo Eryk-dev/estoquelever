@@ -1,28 +1,11 @@
 "use client";
 import Link from "next/link";
-import {
-  Package,
-  MapPin,
-  BarChart3,
-  ScrollText,
-  PackagePlus,
-  ArrowRightLeft,
-  ArrowDown,
-  Settings2,
-  Clock,
-  Truck,
-  Network,
-  ClipboardList,
-  Undo2,
-  Replace,
-  TrendingUp,
-  LayoutDashboard,
-  type LucideIcon,
-} from "lucide-react";
+import { Icon, PageHeader, type IconName } from "@/components/wms/ui/wms-ui";
+import { useWmsModals } from "@/components/wms/wms-shell";
 
 interface CardData {
   href: string;
-  icon: LucideIcon;
+  icon: IconName;
   title: string;
   desc: string;
 }
@@ -32,80 +15,74 @@ interface Group {
   cards: CardData[];
 }
 
-const groups: Group[] = [
+const GROUPS: Group[] = [
   {
     titulo: "Visibilidade",
     cards: [
       {
-        href: "/wms/dashboard",
-        icon: LayoutDashboard,
-        title: "Dashboard geral",
-        desc: "Eventos críticos agregados, refresh 30s",
-      },
-      {
         href: "/wms/estoque",
-        icon: BarChart3,
-        title: "Saldos",
-        desc: "4 perspectivas: dono, galpão, localização, produto",
-      },
-      {
-        href: "/wms/ledger",
-        icon: ScrollText,
-        title: "Ledger",
-        desc: "Histórico imutável de movimentações",
+        icon: "box",
+        title: "Estoque",
+        desc: "Saldos atuais com expand inline e drilldown",
       },
       {
         href: "/wms/cobertura",
-        icon: TrendingUp,
+        icon: "gauge",
         title: "Cobertura",
-        desc: "Dias de cobertura por giro 30d + lead time",
+        desc: "Dias por giro 30d × lead time",
+      },
+      {
+        href: "/wms/ledger",
+        icon: "list",
+        title: "Movimentações",
+        desc: "Ledger imutável com filtros",
+      },
+      {
+        href: "/wms/dashboard",
+        icon: "sparkle",
+        title: "Dashboard geral",
+        desc: "Eventos críticos agregados",
       },
     ],
   },
   {
-    titulo: "Operação",
+    titulo: "Operações",
     cards: [
       {
-        href: "/wms/receber",
-        icon: PackagePlus,
-        title: "Receber",
-        desc: "Recebimento com sugestão de putaway",
-      },
-      {
         href: "/wms/transferir",
-        icon: ArrowRightLeft,
-        title: "Transferir",
-        desc: "Inter-galpão (origem → destino)",
+        icon: "arrows",
+        title: "Transferências",
+        desc: "Inter-galpão (par S+E com origem_id)",
       },
       {
         href: "/wms/replenishment",
-        icon: ArrowDown,
+        icon: "shuffle",
         title: "Replenishment",
         desc: "Intra-galpão (overstock → picking)",
       },
       {
-        href: "/wms/ajuste",
-        icon: Settings2,
-        title: "Ajuste manual",
-        desc: "Entrada ou saída com motivo",
-      },
-      {
         href: "/wms/devolucoes",
-        icon: Undo2,
+        icon: "rotate",
         title: "Devoluções",
-        desc: "Fila + classificação A/B/C/D",
-      },
-      {
-        href: "/wms/troca-sku",
-        icon: Replace,
-        title: "Troca SKU",
-        desc: "Substituir SKU na separação",
+        desc: "Classificação A/B/C/D",
       },
       {
         href: "/wms/retroativos",
-        icon: Clock,
+        icon: "history",
         title: "Retroativos",
-        desc: "Lançamentos pendentes de reconciliação",
+        desc: "Pendências de reconciliação",
+      },
+      {
+        href: "/wms/troca-sku",
+        icon: "edit",
+        title: "Troca SKU",
+        desc: "Substituição na separação",
+      },
+      {
+        href: "/wms/ajuste",
+        icon: "sliders",
+        title: "Ajuste manual",
+        desc: "Entrada ou saída com motivo",
       },
     ],
   },
@@ -114,15 +91,15 @@ const groups: Group[] = [
     cards: [
       {
         href: "/wms/inventario",
-        icon: ClipboardList,
+        icon: "clipboard",
         title: "Sessões",
-        desc: "Cycle count e inventário completo",
+        desc: "Cycle count e completo",
       },
       {
         href: "/wms/inventario/metricas",
-        icon: BarChart3,
+        icon: "gauge",
         title: "Métricas",
-        desc: "Acuracidade por operador e localização",
+        desc: "Acuracidade por operador / localização",
       },
     ],
   },
@@ -131,25 +108,25 @@ const groups: Group[] = [
     cards: [
       {
         href: "/wms/produtos",
-        icon: Package,
-        title: "Catálogo",
-        desc: "Produtos + sync com Tiny",
+        icon: "tag",
+        title: "Produtos",
+        desc: "Catálogo + sync com Tiny",
       },
       {
         href: "/wms/localizacoes",
-        icon: MapPin,
+        icon: "pin",
         title: "Localizações",
-        desc: "Por galpão (picking, recebimento, quarentena)",
+        desc: "Endereços por galpão",
       },
       {
         href: "/wms/fornecedores",
-        icon: Truck,
+        icon: "truck",
         title: "Fornecedores",
-        desc: "CRUD + lead times + auto-cadastro",
+        desc: "CRUD + lead times",
       },
       {
         href: "/wms/emprestimos",
-        icon: Network,
+        icon: "handshake",
         title: "Empréstimos",
         desc: "Matriz N×N + saldos devedores",
       },
@@ -158,35 +135,48 @@ const groups: Group[] = [
 ];
 
 export default function WmsHome() {
+  const modals = useWmsModals();
+
   return (
-    <div className="space-y-6">
-      {groups.map((g) => (
-        <section key={g.titulo} className="space-y-2">
-          <h2 className="px-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-faint">
-            {g.titulo}
-          </h2>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {g.cards.map((c) => {
-              const Icon = c.icon;
-              return (
-                <Link
-                  key={c.href}
-                  href={c.href}
-                  className="group flex items-start gap-3 rounded-xl border border-line bg-paper p-4 transition-colors hover:border-ink/15 hover:bg-surface"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-ink-muted transition-colors group-hover:bg-ink group-hover:text-paper">
-                    <Icon className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="font-medium text-ink">{c.title}</div>
-                    <div className="text-xs text-ink-muted">{c.desc}</div>
-                  </div>
-                </Link>
-              );
-            })}
+    <>
+      <PageHeader
+        title="WMS"
+        subtitle="Operações de estoque · 4D (produto × dona × galpão × localização)"
+      >
+        <button
+          className="wms-btn wms-btn-ghost"
+          onClick={() => modals.open("ajuste")}
+        >
+          <Icon name="sliders" size={12} />
+          Ajustar
+        </button>
+        <button
+          className="wms-btn wms-btn-primary"
+          onClick={() => modals.open("receber")}
+        >
+          <Icon name="plus" size={12} />
+          Receber mercadoria
+        </button>
+      </PageHeader>
+
+      {GROUPS.map((g) => (
+        <section key={g.titulo} style={{ marginBottom: 24 }}>
+          <h2 className="wms-sec-h">{g.titulo}</h2>
+          <div className="wms-home-grid">
+            {g.cards.map((c) => (
+              <Link key={c.href} href={c.href} className="wms-home-card">
+                <div className="wms-home-card-icon">
+                  <Icon name={c.icon} />
+                </div>
+                <div>
+                  <div className="wms-home-card-title">{c.title}</div>
+                  <div className="wms-home-card-desc">{c.desc}</div>
+                </div>
+              </Link>
+            ))}
           </div>
         </section>
       ))}
-    </div>
+    </>
   );
 }

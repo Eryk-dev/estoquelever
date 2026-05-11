@@ -2,8 +2,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowDown, Plus, Trash2 } from "lucide-react";
 import { wmsApi } from "@/lib/wms/api-client";
+import { Icon, PageHeader, Field } from "@/components/wms/ui/wms-ui";
 
 interface Item {
   produto_id?: string;
@@ -100,67 +100,125 @@ export default function ReplenishmentPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const valid =
+    !!empresa_id &&
+    !!origem_loc &&
+    !!destino_loc &&
+    origem_loc !== destino_loc &&
+    itens.length > 0 &&
+    itens.every((i) => i.produto_id && i.qty > 0);
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper p-3">
-        <select
-          value={empresa_id ?? ""}
-          onChange={(e) => {
-            const sel = empresas.find((x) => x.id === e.target.value);
-            setEmpresa(sel?.id);
-            setGalpao(sel?.galpao_id);
-            setOrigem(undefined);
-            setDestino(undefined);
-          }}
-          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
-        >
-          <option value="">— empresa —</option>
-          {empresas.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.nome}
-            </option>
-          ))}
-        </select>
-        <select
-          value={origem_loc ?? ""}
-          onChange={(e) => setOrigem(e.target.value || undefined)}
-          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
-        >
-          <option value="">— origem —</option>
-          {locs?.rows
-            ?.filter((l) => l.id !== destino_loc)
-            .map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.codigo} ({l.tipo})
-              </option>
-            ))}
-        </select>
-        <ArrowDown className="h-4 w-4 self-center text-ink-faint" />
-        <select
-          value={destino_loc ?? ""}
-          onChange={(e) => setDestino(e.target.value || undefined)}
-          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
-        >
-          <option value="">— destino —</option>
-          {locs?.rows
-            ?.filter((l) => l.id !== origem_loc)
-            .map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.codigo} ({l.tipo})
-              </option>
-            ))}
-        </select>
+    <>
+      <PageHeader
+        title="Replenishment intra-galpão"
+        subtitle="Mover entre localizações no mesmo galpão (overstock → picking)"
+      />
+
+      <div className="wms-trans-grid">
+        <div className="wms-trans-side">
+          <div className="wms-trans-side-h">
+            <span className="wms-trans-pill">Empresa & origem</span>
+          </div>
+          <Field label="Empresa" required>
+            <select
+              className="wms-select"
+              value={empresa_id ?? ""}
+              onChange={(e) => {
+                const sel = empresas.find((x) => x.id === e.target.value);
+                setEmpresa(sel?.id);
+                setGalpao(sel?.galpao_id);
+                setOrigem(undefined);
+                setDestino(undefined);
+              }}
+            >
+              <option value="">— selecione —</option>
+              {empresas.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.nome}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Localização de origem" required>
+            <select
+              className="wms-select"
+              value={origem_loc ?? ""}
+              disabled={!galpao_id}
+              onChange={(e) => setOrigem(e.target.value || undefined)}
+            >
+              <option value="">— selecione —</option>
+              {locs?.rows
+                ?.filter((l) => l.id !== destino_loc)
+                .map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.codigo} ({l.tipo})
+                  </option>
+                ))}
+            </select>
+          </Field>
+        </div>
+
+        <div className="wms-trans-arrow">
+          <Icon name="arrow-right" size={20} />
+          <span className="wms-td-mute" style={{ fontSize: 11 }}>
+            mesmo galpão
+          </span>
+        </div>
+
+        <div className="wms-trans-side">
+          <div className="wms-trans-side-h">
+            <span className="wms-trans-pill wms-trans-pill-dest">Destino</span>
+          </div>
+          <Field label="Localização de destino" required>
+            <select
+              className="wms-select"
+              value={destino_loc ?? ""}
+              disabled={!galpao_id}
+              onChange={(e) => setDestino(e.target.value || undefined)}
+            >
+              <option value="">— selecione —</option>
+              {locs?.rows
+                ?.filter((l) => l.id !== origem_loc)
+                .map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.codigo} ({l.tipo})
+                  </option>
+                ))}
+            </select>
+          </Field>
+        </div>
       </div>
 
-      <div className="space-y-1">
+      <h3 className="wms-sec-h" style={{ marginTop: 20 }}>
+        Itens
+      </h3>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+          marginBottom: 16,
+        }}
+      >
         {itens.map((it, idx) => (
           <div
             key={idx}
-            className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper p-2.5"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: "var(--wms-c-panel)",
+              border: "1px solid var(--wms-c-border)",
+              borderRadius: "var(--wms-r-2)",
+              padding: 10,
+            }}
           >
             <input
+              className="wms-input wms-mono"
               placeholder="SKU"
               defaultValue={it.sku ?? ""}
+              style={{ flex: 1, minWidth: 0 }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   const v = (e.target as HTMLInputElement).value.trim();
@@ -171,12 +229,13 @@ export default function ReplenishmentPage() {
                 const v = e.target.value.trim();
                 if (v && !it.produto_id) resolverSku(v, idx);
               }}
-              className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
             />
             <input
+              className="wms-input wms-mono wms-tar"
               type="number"
               min={1}
               value={it.qty}
+              style={{ width: 80 }}
               onChange={(e) =>
                 setItens((p) =>
                   p.map((x, i) =>
@@ -184,41 +243,39 @@ export default function ReplenishmentPage() {
                   ),
                 )
               }
-              className="w-20 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm tabular-nums text-ink focus:border-ink focus:outline-none"
             />
             <button
               type="button"
-              onClick={() => setItens((p) => p.filter((_, i) => i !== idx))}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-surface hover:text-danger"
+              className="wms-btn-icon"
               title="Remover"
+              onClick={() => setItens((p) => p.filter((_, i) => i !== idx))}
             >
-              <Trash2 className="h-4 w-4" />
+              <Icon name="trash" size={12} />
             </button>
           </div>
         ))}
         <button
           type="button"
+          className="wms-btn wms-btn-ghost"
+          style={{ borderStyle: "dashed", alignSelf: "flex-start" }}
           onClick={() => setItens((p) => [...p, { qty: 1 }])}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-line px-3 py-2 text-sm text-ink-muted transition-colors hover:border-ink hover:text-ink"
         >
-          <Plus className="h-4 w-4" /> adicionar
+          <Icon name="plus" size={11} />
+          Adicionar item
         </button>
       </div>
 
-      <button
-        type="button"
-        onClick={() => submit.mutate()}
-        disabled={
-          !empresa_id ||
-          !origem_loc ||
-          !destino_loc ||
-          itens.length === 0 ||
-          submit.isPending
-        }
-        className="btn-primary"
-      >
-        {submit.isPending ? "Salvando..." : "Registrar replenishment"}
-      </button>
-    </div>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary"
+          disabled={!valid || submit.isPending}
+          onClick={() => submit.mutate()}
+        >
+          <Icon name="shuffle" size={11} />
+          {submit.isPending ? "Salvando…" : "Registrar replenishment"}
+        </button>
+      </div>
+    </>
   );
 }

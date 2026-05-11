@@ -63,8 +63,15 @@ export function QuadruplaPicker({
     : (locs?.rows ?? []);
 
   return (
-    <div className="flex flex-col gap-2 sm:flex-row">
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: showLocalizacao ? "1fr 1fr" : "1fr",
+        gap: 8,
+      }}
+    >
       <select
+        className="wms-select"
         value={value.empresa_id ?? ""}
         onChange={(e) =>
           onChange({
@@ -73,7 +80,6 @@ export function QuadruplaPicker({
             localizacao_id: undefined,
           })
         }
-        className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
       >
         <option value="">— empresa —</option>
         {empresasAtivas.map((e) => (
@@ -83,9 +89,11 @@ export function QuadruplaPicker({
         ))}
       </select>
 
-      {showLocalizacao && galpaoId && (
+      {showLocalizacao && (
         <select
+          className="wms-select"
           value={value.localizacao_id ?? ""}
+          disabled={!galpaoId}
           onChange={(e) =>
             onChange({
               ...value,
@@ -93,7 +101,6 @@ export function QuadruplaPicker({
               localizacao_id: e.target.value || undefined,
             })
           }
-          className="rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink focus:border-ink focus:outline-none"
         >
           <option value="">— localização —</option>
           {locsFiltradas.map((l) => (

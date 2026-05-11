@@ -2,21 +2,19 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorBanner } from "@/components/ui/error-banner";
+import { Icon, PageHeader, Field } from "@/components/wms/ui/wms-ui";
 import type { Fornecedor } from "@/lib/wms/fornecedores";
 
 export default function FornecedoresPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isAdmin = (user?.cargos ?? [user?.cargo]).includes("admin");
+  const [showForm, setShowForm] = useState(false);
   const [novo, setNovo] = useState({ nome: "", cnpj: "", prefixo_sku: "" });
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-fornecedores"],
     queryFn: () => wmsApi<{ rows: Fornecedor[] }>("/api/wms/fornecedores"),
   });
@@ -35,6 +33,7 @@ export default function FornecedoresPage() {
     onSuccess: () => {
       toast.success("Fornecedor criado");
       setNovo({ nome: "", cnpj: "", prefixo_sku: "" });
+      setShowForm(false);
       queryClient.invalidateQueries({ queryKey: ["wms-fornecedores"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -56,72 +55,148 @@ export default function FornecedoresPage() {
   const rows = data?.rows ?? [];
 
   return (
-    <div className="space-y-3">
-      {isAdmin && (
-        <div className="flex justify-end">
+    <>
+      <PageHeader
+        title="Fornecedores"
+        subtitle={`${rows.length} fornecedor(es) cadastrado(s)`}
+      >
+        {isAdmin && (
           <button
             type="button"
-            onClick={() => autoCadastro.mutate()}
+            className="wms-btn wms-btn-ghost"
             disabled={autoCadastro.isPending}
-            className="btn-ghost text-xs"
-            title="Auto-cadastrar do mapeamento de prefixos SKU"
+            onClick={() => autoCadastro.mutate()}
+            title="Auto-cadastrar do mapeamento canônico de prefixos SKU"
           >
-            <Sparkles className="h-3 w-3" /> auto-cadastrar do mapeamento
+            <Icon name="sparkle" size={12} />
+            Auto-cadastrar mapeamento canônico
           </button>
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper p-3">
-        <input
-          placeholder="Nome"
-          value={novo.nome}
-          onChange={(e) => setNovo({ ...novo, nome: e.target.value })}
-          className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
-        />
-        <input
-          placeholder="CNPJ"
-          value={novo.cnpj}
-          onChange={(e) => setNovo({ ...novo, cnpj: e.target.value })}
-          className="w-40 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
-        />
-        <input
-          placeholder="Prefixo SKU"
-          value={novo.prefixo_sku}
-          onChange={(e) => setNovo({ ...novo, prefixo_sku: e.target.value })}
-          className="w-32 rounded-lg border border-line bg-paper px-3 py-1.5 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
-        />
+        )}
         <button
           type="button"
-          onClick={() => criar.mutate()}
-          disabled={!novo.nome || criar.isPending}
-          className="btn-primary"
+          className="wms-btn wms-btn-primary"
+          onClick={() => setShowForm((s) => !s)}
         >
-          <Plus className="h-4 w-4" /> criar
+          <Icon name="plus" size={12} />
+          Novo fornecedor
         </button>
-      </div>
+      </PageHeader>
 
-      {isLoading ? (
-        <LoadingSpinner />
-      ) : isError ? (
-        <ErrorBanner message={(error as Error).message} onRetry={() => refetch()} />
-      ) : rows.length === 0 ? (
-        <EmptyState message="Nenhum fornecedor cadastrado." />
-      ) : (
-        <div className="space-y-1">
-          {rows.map((f) => (
-            <div
-              key={f.id}
-              className="flex items-center gap-3 rounded-xl border border-line bg-paper p-2.5"
+      {showForm && (
+        <div
+          style={{
+            background: "var(--wms-c-panel)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-3)",
+            padding: 16,
+            marginBottom: 16,
+          }}
+        >
+          <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
+            Novo fornecedor
+          </h3>
+          <div className="wms-row-3">
+            <Field label="Nome" required>
+              <input
+                className="wms-input"
+                value={novo.nome}
+                onChange={(e) => setNovo({ ...novo, nome: e.target.value })}
+                placeholder="ex.: Tiger"
+              />
+            </Field>
+            <Field label="CNPJ">
+              <input
+                className="wms-input wms-mono"
+                value={novo.cnpj}
+                onChange={(e) => setNovo({ ...novo, cnpj: e.target.value })}
+                placeholder="00.000.000/0000-00"
+              />
+            </Field>
+            <Field label="Prefixo SKU">
+              <input
+                className="wms-input wms-mono"
+                value={novo.prefixo_sku}
+                onChange={(e) =>
+                  setNovo({ ...novo, prefixo_sku: e.target.value })
+                }
+                placeholder="TGR"
+              />
+            </Field>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 8,
+              paddingTop: 12,
+              borderTop: "1px solid var(--wms-c-border)",
+            }}
+          >
+            <button
+              type="button"
+              className="wms-btn wms-btn-ghost"
+              onClick={() => setShowForm(false)}
             >
-              <span className="flex-1 font-medium text-ink">{f.nome}</span>
-              <span className="text-sm text-ink-muted">{f.cnpj}</span>
-              {f.prefixo_sku && (
-                <span className="badge badge-oc font-mono">{f.prefixo_sku}</span>
-              )}
-            </div>
-          ))}
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="wms-btn wms-btn-primary"
+              disabled={!novo.nome || criar.isPending}
+              onClick={() => criar.mutate()}
+            >
+              <Icon name="check" size={11} />
+              {criar.isPending ? "Criando…" : "Criar fornecedor"}
+            </button>
+          </div>
         </div>
       )}
-    </div>
+
+      {isLoading && (
+        <div className="wms-loading-pane">Carregando fornecedores…</div>
+      )}
+      {isError && (
+        <div className="wms-empty-block">
+          <h3>Erro</h3>
+          <p>{(error as Error).message}</p>
+        </div>
+      )}
+      {!isLoading && rows.length === 0 && (
+        <div className="wms-empty-block">
+          <h3>Nenhum fornecedor cadastrado</h3>
+          {isAdmin && (
+            <p>
+              Use o botão{" "}
+              <strong>Auto-cadastrar mapeamento canônico</strong> para semear os
+              fornecedores do mapeamento de prefixos SKU.
+            </p>
+          )}
+        </div>
+      )}
+      {rows.length > 0 && (
+        <div className="wms-tbl">
+          <table>
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Prefixo SKU</th>
+                <th>CNPJ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((f) => (
+                <tr key={f.id}>
+                  <td>
+                    <strong>{f.nome}</strong>
+                  </td>
+                  <td className="wms-mono">{f.prefixo_sku ?? "—"}</td>
+                  <td className="wms-mono wms-td-mute">{f.cnpj ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }

@@ -112,7 +112,9 @@ export function ProdutoDrawer({
         ) / saldo
       : 0;
 
-  function openAction(kind: "receber" | "ajuste" | "transferir") {
+  function openAction(
+    kind: "receber" | "ajuste" | "transferir" | "realocar",
+  ) {
     if (!produto) return;
     modals.open(kind, { produto });
   }
@@ -167,6 +169,13 @@ export function ProdutoDrawer({
                   >
                     <Icon name="arrow-right" size={11} />
                     Transferir
+                  </button>
+                  <button
+                    className="wms-btn wms-btn-sm wms-btn-ghost"
+                    onClick={() => openAction("realocar")}
+                  >
+                    <Icon name="shuffle" size={11} />
+                    Realocar
                   </button>
                   <button
                     className="wms-btn-icon wms-btn-icon-lg"

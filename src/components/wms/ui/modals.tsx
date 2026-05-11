@@ -1144,9 +1144,342 @@ export function TransferModal({
       {sameGalpao && galOrig && galDest && (
         <div className="wms-hint-card wms-hint-danger">
           <Icon name="alert" size={12} />
-          <div>Origem e destino estão no mesmo galpão. Use replenishment.</div>
+          <div>Origem e destino estão no mesmo galpão. Use Realocar.</div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Realocar intra-galpão (antigo "Replenishment")
+
+interface RealocarSeed {
+  produto?: Produto;
+  empresa_id?: string;
+  galpao_id?: string;
+  localizacao_origem_id?: string;
+  localizacao_destino_id?: string;
+  qty?: number;
+  motivo?: string;
+}
+
+interface EstoqueLocLinha {
+  saldo: number;
+  reservado: number;
+  disponivel: number;
+  localizacao: { id: string; codigo: string; tipo: string };
+  empresa: { id: string };
+  galpao: { id: string };
+}
+
+interface EstoqueProdutoView {
+  itens: EstoqueLocLinha[];
+}
+
+export function RealocarModal({
+  seed,
+  onClose,
+}: {
+  seed?: RealocarSeed;
+  onClose: () => void;
+}) {
+  const { data: galpoes } = useGalpoes();
+  const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
+  const defaultGalpao = galpoesList.find((g) => g.empresas.length > 0);
+
+  const [pid, setPid] = useState<Produto | null>(seed?.produto ?? null);
+  const [qty, setQty] = useState(seed?.qty ? String(seed.qty) : "");
+  const [empresaIdUser, setEmpresaIdUser] = useState<string | null>(
+    seed?.empresa_id ?? null,
+  );
+  const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(
+    seed?.galpao_id ?? null,
+  );
+  const [origem, setOrigem] = useState<string>(seed?.localizacao_origem_id ?? "");
+  const [destino, setDestino] = useState<string>(
+    seed?.localizacao_destino_id ?? "",
+  );
+  const [obs, setObs] = useState(seed?.motivo ?? "");
+  const qc = useQueryClient();
+
+  const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
+  const galpao = galpoesList.find((g) => g.id === galpaoId);
+  const empresasGalpao = galpao?.empresas ?? [];
+  const empresaId = empresaIdUser ?? empresasGalpao[0]?.id ?? "";
+
+  // Trocar produto/empresa/galpão limpa origem/destino (a menos que seed force).
+  useEffect(() => {
+    if (!seed?.localizacao_origem_id) setOrigem("");
+    if (!seed?.localizacao_destino_id) setDestino("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pid?.id, empresaId, galpaoId]);
+
+  // Estoque do produto: lista de localizações com saldo (origem) e qualquer loc do galpão (destino).
+  const estoqueQuery = useQuery({
+    queryKey: ["wms-realocar-estoque", pid?.id],
+    queryFn: () =>
+      wmsApi<{ rows: EstoqueProdutoView[] }>(
+        `/api/wms/estoque?view=produto&produto_id=${pid?.id}`,
+      ),
+    enabled: !!pid?.id,
+    staleTime: 30 * 1000,
+  });
+
+  const linhasProduto = useMemo(() => {
+    const rows = estoqueQuery.data?.rows ?? [];
+    const agg = rows[0];
+    if (!agg) return [] as EstoqueLocLinha[];
+    return agg.itens.filter(
+      (l) =>
+        (!empresaId || l.empresa.id === empresaId) &&
+        (!galpaoId || l.galpao.id === galpaoId),
+    );
+  }, [estoqueQuery.data, empresaId, galpaoId]);
+
+  const origensDisp = linhasProduto.filter(
+    (l) => Number(l.disponivel) > 0,
+  );
+  const linhaOrig = origensDisp.find((l) => l.localizacao.id === origem);
+  const disp = linhaOrig ? Number(linhaOrig.disponivel) : 0;
+  const saldoOrigemAtual = linhaOrig ? Number(linhaOrig.saldo) : 0;
+
+  const linhaDest = linhasProduto.find((l) => l.localizacao.id === destino);
+  const saldoDestAtual = linhaDest ? Number(linhaDest.saldo) : 0;
+
+  const qn = Number(qty);
+  const sameLoc = !!origem && !!destino && origem === destino;
+  const valid =
+    !!pid &&
+    !!empresaId &&
+    !!galpaoId &&
+    !!origem &&
+    !!destino &&
+    !sameLoc &&
+    qn > 0 &&
+    qn <= disp;
+
+  const mut = useMutation({
+    mutationFn: async () => {
+      const r = await sisoFetch("/api/wms/replenishment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          empresa_id: empresaId,
+          galpao_id: galpaoId,
+          localizacao_origem_id: origem,
+          localizacao_destino_id: destino,
+          itens: [{ produto_id: pid!.id, qty: qn }],
+          observacoes: obs || undefined,
+        }),
+      });
+      if (!r.ok) {
+        const body = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+    },
+    onSuccess: () => {
+      toast.success(`Realocado: ${fmtNum(qn)} un. de ${pid!.sku}`);
+      qc.invalidateQueries({ queryKey: ["wms-estoque"] });
+      qc.invalidateQueries({ queryKey: ["wms-ledger"] });
+      qc.invalidateQueries({ queryKey: ["wms-produtos"] });
+      qc.invalidateQueries({ queryKey: ["wms-realocar-estoque"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-estoque"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-ledger"] });
+      qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
+      onClose();
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  return (
+    <Modal
+      title="Realocar intra-galpão"
+      subtitle="Mover entre localizações no mesmo galpão. Gera par S+E com mesma origem_id."
+      width={720}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="wms-btn wms-btn-ghost" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            className="wms-btn wms-btn-primary"
+            disabled={!valid || mut.isPending}
+            onClick={() => mut.mutate()}
+          >
+            <Icon name="shuffle" size={11} />
+            {mut.isPending ? "Enviando…" : "Executar realocação"}
+          </button>
+        </>
+      }
+    >
+      <Field label="Produto" required>
+        <ProdutoCombo
+          value={pid}
+          onChange={setPid}
+          autoFocus={!seed?.produto}
+        />
+      </Field>
+
+      <div className="wms-row-2">
+        <Field label="Empresa">
+          <select
+            className="wms-select"
+            value={empresaId}
+            onChange={(e) => setEmpresaIdUser(e.target.value)}
+          >
+            {empresasGalpao.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.nome}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Galpão" hint="Realocar é sempre no mesmo galpão">
+          <select
+            className="wms-select"
+            value={galpaoId}
+            onChange={(e) => {
+              setGalpaoIdUser(e.target.value);
+              setEmpresaIdUser(null);
+            }}
+          >
+            {galpoesList.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.nome}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div className="wms-trans-grid">
+        <div className="wms-trans-side">
+          <div className="wms-trans-side-h">
+            <span className="wms-trans-pill">Origem</span>
+          </div>
+          <Field
+            label="Localização"
+            hint={
+              linhaOrig
+                ? `${fmtNum(disp)} disp.`
+                : pid
+                  ? "sem saldo neste galpão"
+                  : ""
+            }
+          >
+            <select
+              className="wms-select"
+              value={origem}
+              onChange={(e) => setOrigem(e.target.value)}
+              disabled={!pid}
+            >
+              <option value="">— selecionar —</option>
+              {origensDisp.map((l) => (
+                <option key={l.localizacao.id} value={l.localizacao.id}>
+                  {l.localizacao.codigo} ({l.localizacao.tipo}) —{" "}
+                  {fmtNum(Number(l.disponivel))} disp.
+                </option>
+              ))}
+            </select>
+          </Field>
+          {linhaOrig && (
+            <div className="wms-repl-preview">
+              <div className="wms-repl-preview-row">
+                <span className="wms-td-mute">Saldo atual</span>
+                <span className="wms-mono">{fmtNum(saldoOrigemAtual)}</span>
+              </div>
+              <div className="wms-repl-preview-row">
+                <span className="wms-td-mute">Após realocar</span>
+                <span className="wms-mono wms-td-strong">
+                  {fmtNum(saldoOrigemAtual - (qn || 0))}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="wms-trans-arrow">
+          <Icon name="arrow-right" size={18} />
+          <div className="wms-trans-arrow-qty">
+            <input
+              className="wms-input"
+              type="number"
+              min="1"
+              max={disp || undefined}
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              placeholder="qty"
+            />
+          </div>
+        </div>
+
+        <div className="wms-trans-side">
+          <div className="wms-trans-side-h">
+            <span className="wms-trans-pill wms-trans-pill-dest">Destino</span>
+          </div>
+          <Field
+            label="Localização"
+            hint={linhaDest ? linhaDest.localizacao.tipo : ""}
+          >
+            <LocalizacaoCombo
+              galpaoId={galpaoId || null}
+              value={destino}
+              onChange={setDestino}
+              placeholder="Bipar ou digitar código…"
+            />
+          </Field>
+          {destino && (
+            <div className="wms-repl-preview">
+              <div className="wms-repl-preview-row">
+                <span className="wms-td-mute">Saldo atual</span>
+                <span className="wms-mono">{fmtNum(saldoDestAtual)}</span>
+              </div>
+              <div className="wms-repl-preview-row">
+                <span className="wms-td-mute">Após realocar</span>
+                <span className="wms-mono wms-td-strong">
+                  {fmtNum(saldoDestAtual + (qn || 0))}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {seed?.motivo && (
+        <div className="wms-hint-card">
+          <Icon name="sparkle" size={12} />
+          <div>
+            <strong>Sugestão automática</strong>
+            <div className="wms-td-mute">{seed.motivo}</div>
+          </div>
+        </div>
+      )}
+
+      {sameLoc && (
+        <div className="wms-hint-card wms-hint-danger">
+          <Icon name="alert" size={12} />
+          <div>Origem e destino são iguais.</div>
+        </div>
+      )}
+      {qn > disp && qty && linhaOrig && (
+        <div className="wms-hint-card wms-hint-danger">
+          <Icon name="alert" size={12} />
+          <div>
+            Quantidade maior que o disponível na origem ({fmtNum(disp)}).
+          </div>
+        </div>
+      )}
+
+      <Field label="Observação">
+        <textarea
+          className="wms-textarea"
+          value={obs}
+          onChange={(e) => setObs(e.target.value)}
+          placeholder="Motivo / contexto (gravado no ledger)…"
+        />
+      </Field>
     </Modal>
   );
 }

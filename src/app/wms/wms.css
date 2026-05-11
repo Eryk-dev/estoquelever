@@ -1121,6 +1121,50 @@
   margin: 12px 0 8px;
 }
 
+/* Lista de sugestões de realocar (intra-galpão) */
+.wms-repl-list {
+  display: flex; flex-direction: column;
+  gap: 1px;
+  background: var(--wms-c-border);
+  margin: -12px -14px;
+}
+.wms-repl-row {
+  display: grid;
+  grid-template-columns: 1.6fr 1.2fr auto 1.4fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--wms-c-panel);
+  font-size: 13px;
+}
+.wms-repl-prod .wms-mono { font-size: 12px; font-weight: 500; }
+.wms-repl-flow {
+  display: flex; gap: 6px; align-items: center;
+  color: var(--wms-c-fg-2);
+  font-family: var(--wms-font-mono); font-size: 12px;
+}
+.wms-repl-flow > svg { color: var(--wms-c-mute); }
+.wms-repl-qty {
+  font-weight: 600;
+  font-family: var(--wms-font-mono);
+}
+.wms-repl-motivo { font-size: 12px; color: var(--wms-c-mute); }
+.wms-repl-actions { display: flex; gap: 6px; }
+
+/* Preview de saldo nos lados do modal de Realocar */
+.wms-repl-preview {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-2);
+  font-size: 12px;
+}
+.wms-repl-preview-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 2px 0;
+}
+
 /* Toast (sonner já cobre, mas mantemos custom para o WMS) */
 .wms-toast {
   position: fixed; bottom: 24px; left: 50%;

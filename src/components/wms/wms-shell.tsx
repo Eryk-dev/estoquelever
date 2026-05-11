@@ -20,6 +20,7 @@ import { Icon, type IconName } from "@/components/wms/ui/wms-ui";
 import {
   AjusteModal,
   ReceberModal,
+  RealocarModal,
   TransferModal,
 } from "@/components/wms/ui/modals";
 import type { Produto } from "@/lib/wms/types";
@@ -27,10 +28,22 @@ import type { Produto } from "@/lib/wms/types";
 // ──────────────────────────────────────────────────────────────────
 // Modal Context — qualquer página pode disparar abertura de modal.
 
-type ModalKind = "receber" | "ajuste" | "transferir" | null;
+type ModalKind = "receber" | "ajuste" | "transferir" | "realocar" | null;
+
+interface RealocarSeedExt {
+  produto?: Produto;
+  empresa_id?: string;
+  galpao_id?: string;
+  localizacao_origem_id?: string;
+  localizacao_destino_id?: string;
+  qty?: number;
+  motivo?: string;
+}
+
+type ModalSeed = { produto?: Produto } & Partial<RealocarSeedExt>;
 
 interface ModalContextValue {
-  open: (kind: Exclude<ModalKind, null>, seed?: { produto?: Produto }) => void;
+  open: (kind: Exclude<ModalKind, null>, seed?: ModalSeed) => void;
   openCommandK: () => void;
 }
 
@@ -73,7 +86,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Operações",
     itens: [
       { href: "/wms/transferir", icon: "arrows", label: "Transferências" },
-      { href: "/wms/replenishment", icon: "shuffle", label: "Replenishment" },
+      { href: "/wms/replenishment", icon: "shuffle", label: "Realocar" },
       { href: "/wms/devolucoes", icon: "rotate", label: "Devoluções" },
       { href: "/wms/troca-sku", icon: "edit", label: "Troca SKU" },
       { href: "/wms/receber", icon: "plus", label: "Receber" },
@@ -258,6 +271,15 @@ function CommandKInner({
     },
     {
       id: "a3",
+      label: "Realocar",
+      hint: "Mover entre localizações",
+      go: () => {
+        onAction("realocar");
+        onClose();
+      },
+    },
+    {
+      id: "a4",
       label: "Ajuste manual",
       hint: "Entrada ou saída",
       go: () => {
@@ -266,7 +288,7 @@ function CommandKInner({
       },
     },
     {
-      id: "a4",
+      id: "a5",
       label: "Iniciar inventário",
       hint: "Cycle count",
       go: () => {
@@ -376,11 +398,11 @@ export function WmsShell({ children }: { children: ReactNode }) {
   const [ckOpen, setCkOpen] = useState(false);
   const [modal, setModal] = useState<{
     kind: Exclude<ModalKind, null>;
-    seed?: { produto?: Produto };
+    seed?: ModalSeed;
   } | null>(null);
 
   const openModal = useCallback(
-    (kind: Exclude<ModalKind, null>, seed?: { produto?: Produto }) => {
+    (kind: Exclude<ModalKind, null>, seed?: ModalSeed) => {
       setModal({ kind, seed });
     },
     [],
@@ -473,6 +495,9 @@ export function WmsShell({ children }: { children: ReactNode }) {
           )}
           {modal?.kind === "transferir" && (
             <TransferModal seed={modal.seed} onClose={() => setModal(null)} />
+          )}
+          {modal?.kind === "realocar" && (
+            <RealocarModal seed={modal.seed} onClose={() => setModal(null)} />
           )}
         </div>
       </div>

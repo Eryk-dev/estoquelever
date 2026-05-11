@@ -57,7 +57,7 @@ const GROUPS: Group[] = [
       {
         href: "/wms/replenishment",
         icon: "shuffle",
-        title: "Replenishment",
+        title: "Realocar",
         desc: "Intra-galpão (overstock → picking)",
       },
       {

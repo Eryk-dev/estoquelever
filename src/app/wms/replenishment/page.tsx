@@ -1,295 +1,178 @@
 "use client";
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { wmsApi } from "@/lib/wms/api-client";
-import { Icon, PageHeader, Field } from "@/components/wms/ui/wms-ui";
+import { useWmsModals } from "@/components/wms/wms-shell";
+import {
+  Card,
+  Icon,
+  PageHeader,
+  StatusBadge,
+  fmtDateTime,
+  fmtNum,
+} from "@/components/wms/ui/wms-ui";
 
-interface Item {
-  produto_id?: string;
-  sku?: string;
+interface MovHistorico {
+  id: string;
+  tipo: "S" | "E" | "R" | "L";
+  quantidade: number;
+  origem_id: string | null;
+  criado_em: string;
+  produto?: { sku: string; descricao: string };
+  empresa?: { nome: string };
+  galpao?: { nome: string };
+  localizacao?: { codigo: string };
+}
+
+interface ParRealocacao {
+  origem_id: string;
+  criado_em: string;
   qty: number;
+  produto: { sku: string; descricao: string };
+  galpao: string;
+  empresa: string;
+  locOrigem: string;
+  locDestino: string;
 }
 
-interface ProdutoMin {
-  id: string;
-  sku: string;
-}
-
-interface EmpresaRow {
-  id: string;
-  nome: string;
-  galpao_id: string;
-}
-
-interface GalpaoRow {
-  id: string;
-  nome: string;
-  empresas?: EmpresaRow[];
-}
-
-interface LocRow {
-  id: string;
-  codigo: string;
-  tipo: string;
-}
-
-export default function ReplenishmentPage() {
-  const queryClient = useQueryClient();
-  const [empresa_id, setEmpresa] = useState<string | undefined>();
-  const [galpao_id, setGalpao] = useState<string | undefined>();
-  const [origem_loc, setOrigem] = useState<string | undefined>();
-  const [destino_loc, setDestino] = useState<string | undefined>();
-  const [itens, setItens] = useState<Item[]>([]);
-
-  const { data: galpoesResp } = useQuery({
-    queryKey: ["galpoes"],
-    queryFn: async () => {
-      const raw = await wmsApi<
-        Array<{
-          id: string;
-          nome: string;
-          siso_empresas?: Array<{ id: string; nome: string; ativo?: boolean }>;
-        }>
-      >("/api/admin/galpoes");
-      return raw.map<GalpaoRow>((g) => ({
-        id: g.id,
-        nome: g.nome,
-        empresas: (g.siso_empresas ?? [])
-          .filter((e) => e.ativo !== false)
-          .map((e) => ({ id: e.id, nome: e.nome, galpao_id: g.id })),
-      }));
-    },
-  });
-
-  const { data: locs } = useQuery({
-    queryKey: ["wms-locs", galpao_id],
-    queryFn: () =>
-      wmsApi<{ rows: LocRow[] }>(`/api/wms/localizacoes?galpao_id=${galpao_id}`),
-    enabled: !!galpao_id,
-  });
-
-  const empresas: EmpresaRow[] = (galpoesResp ?? []).flatMap((g) =>
-    (g.empresas ?? []).map((e) => ({ ...e, galpao_id: g.id })),
-  );
-
-  async function resolverSku(s: string, idx: number) {
-    try {
-      const json = await wmsApi<{ rows?: ProdutoMin[] }>(
-        `/api/wms/produtos?q=${encodeURIComponent(s)}&limit=1`,
-      );
-      if (!json.rows?.[0]) {
-        toast.error("SKU não encontrado");
-        return;
-      }
-      const p = json.rows[0];
-      setItens((prev) =>
-        prev.map((x, i) =>
-          i === idx ? { ...x, produto_id: p.id, sku: p.sku } : x,
-        ),
-      );
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
+function agruparPares(movs: MovHistorico[]): ParRealocacao[] {
+  const groups = new Map<string, { s?: MovHistorico; e?: MovHistorico }>();
+  for (const m of movs) {
+    if (!m.origem_id) continue;
+    const g = groups.get(m.origem_id) ?? {};
+    if (m.tipo === "S") g.s = m;
+    else if (m.tipo === "E") g.e = m;
+    groups.set(m.origem_id, g);
   }
+  const pares: ParRealocacao[] = [];
+  for (const [origem_id, g] of groups) {
+    if (!g.s || !g.e) continue;
+    pares.push({
+      origem_id,
+      criado_em: g.s.criado_em,
+      qty: Number(g.s.quantidade),
+      produto: {
+        sku: g.s.produto?.sku ?? "—",
+        descricao: g.s.produto?.descricao ?? "",
+      },
+      galpao: g.s.galpao?.nome ?? "—",
+      empresa: g.s.empresa?.nome ?? "—",
+      locOrigem: g.s.localizacao?.codigo ?? "—",
+      locDestino: g.e.localizacao?.codigo ?? "—",
+    });
+  }
+  return pares.sort(
+    (a, b) =>
+      new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime(),
+  );
+}
 
-  const submit = useMutation({
-    mutationFn: () =>
-      wmsApi<{ ok: true }>("/api/wms/replenishment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          empresa_id,
-          galpao_id,
-          localizacao_origem_id: origem_loc,
-          localizacao_destino_id: destino_loc,
-          itens: itens.map((i) => ({ produto_id: i.produto_id, qty: i.qty })),
-        }),
-      }),
-    onSuccess: () => {
-      toast.success("Replenishment registrado");
-      setItens([]);
-      queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
-      queryClient.invalidateQueries({ queryKey: ["wms-ledger"] });
-    },
-    onError: (e: Error) => toast.error(e.message),
+export default function RealocarPage() {
+  const modals = useWmsModals();
+
+  const histQuery = useQuery({
+    queryKey: [
+      "wms-ledger",
+      { origem_tipo: "transferencia_localizacao", limit: 50 },
+    ],
+    queryFn: () =>
+      wmsApi<{ rows: MovHistorico[] }>(
+        `/api/wms/ledger?origem_tipo=transferencia_localizacao&limit=50`,
+      ),
+    staleTime: 30 * 1000,
   });
 
-  const valid =
-    !!empresa_id &&
-    !!origem_loc &&
-    !!destino_loc &&
-    origem_loc !== destino_loc &&
-    itens.length > 0 &&
-    itens.every((i) => i.produto_id && i.qty > 0);
+  const pares = useMemo(
+    () => agruparPares(histQuery.data?.rows ?? []),
+    [histQuery.data],
+  );
 
   return (
     <>
       <PageHeader
-        title="Replenishment intra-galpão"
+        title="Realocar intra-galpão"
         subtitle="Mover entre localizações no mesmo galpão (overstock → picking)"
-      />
+      >
+        <button
+          className="wms-btn wms-btn-primary"
+          onClick={() => modals.open("realocar")}
+        >
+          <Icon name="plus" size={12} />
+          Nova realocação
+        </button>
+      </PageHeader>
 
-      <div className="wms-trans-grid">
-        <div className="wms-trans-side">
-          <div className="wms-trans-side-h">
-            <span className="wms-trans-pill">Empresa & origem</span>
-          </div>
-          <Field label="Empresa" required>
-            <select
-              className="wms-select"
-              value={empresa_id ?? ""}
-              onChange={(e) => {
-                const sel = empresas.find((x) => x.id === e.target.value);
-                setEmpresa(sel?.id);
-                setGalpao(sel?.galpao_id);
-                setOrigem(undefined);
-                setDestino(undefined);
-              }}
-            >
-              <option value="">— selecione —</option>
-              {empresas.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.nome}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Localização de origem" required>
-            <select
-              className="wms-select"
-              value={origem_loc ?? ""}
-              disabled={!galpao_id}
-              onChange={(e) => setOrigem(e.target.value || undefined)}
-            >
-              <option value="">— selecione —</option>
-              {locs?.rows
-                ?.filter((l) => l.id !== destino_loc)
-                .map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.codigo} ({l.tipo})
-                  </option>
-                ))}
-            </select>
-          </Field>
+      <Card title="Sugestões automáticas">
+        <div className="wms-exp-empty" style={{ padding: 24, textAlign: "center" }}>
+          Nenhuma sugestão automática no momento. Quando a heurística de
+          picking/overstock estiver populada, sugestões aparecem aqui prontas
+          pra executar.
         </div>
-
-        <div className="wms-trans-arrow">
-          <Icon name="arrow-right" size={20} />
-          <span className="wms-td-mute" style={{ fontSize: 11 }}>
-            mesmo galpão
-          </span>
-        </div>
-
-        <div className="wms-trans-side">
-          <div className="wms-trans-side-h">
-            <span className="wms-trans-pill wms-trans-pill-dest">Destino</span>
-          </div>
-          <Field label="Localização de destino" required>
-            <select
-              className="wms-select"
-              value={destino_loc ?? ""}
-              disabled={!galpao_id}
-              onChange={(e) => setDestino(e.target.value || undefined)}
-            >
-              <option value="">— selecione —</option>
-              {locs?.rows
-                ?.filter((l) => l.id !== origem_loc)
-                .map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.codigo} ({l.tipo})
-                  </option>
-                ))}
-            </select>
-          </Field>
-        </div>
-      </div>
+      </Card>
 
       <h3 className="wms-sec-h" style={{ marginTop: 20 }}>
-        Itens
+        Histórico recente
       </h3>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-          marginBottom: 16,
-        }}
-      >
-        {itens.map((it, idx) => (
-          <div
-            key={idx}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: "var(--wms-c-panel)",
-              border: "1px solid var(--wms-c-border)",
-              borderRadius: "var(--wms-r-2)",
-              padding: 10,
-            }}
-          >
-            <input
-              className="wms-input wms-mono"
-              placeholder="SKU"
-              defaultValue={it.sku ?? ""}
-              style={{ flex: 1, minWidth: 0 }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  const v = (e.target as HTMLInputElement).value.trim();
-                  if (v && !it.produto_id) resolverSku(v, idx);
-                }
-              }}
-              onBlur={(e) => {
-                const v = e.target.value.trim();
-                if (v && !it.produto_id) resolverSku(v, idx);
-              }}
-            />
-            <input
-              className="wms-input wms-mono wms-tar"
-              type="number"
-              min={1}
-              value={it.qty}
-              style={{ width: 80 }}
-              onChange={(e) =>
-                setItens((p) =>
-                  p.map((x, i) =>
-                    i === idx ? { ...x, qty: Number(e.target.value) } : x,
-                  ),
-                )
-              }
-            />
-            <button
-              type="button"
-              className="wms-btn-icon"
-              title="Remover"
-              onClick={() => setItens((p) => p.filter((_, i) => i !== idx))}
-            >
-              <Icon name="trash" size={12} />
-            </button>
-          </div>
-        ))}
-        <button
-          type="button"
-          className="wms-btn wms-btn-ghost"
-          style={{ borderStyle: "dashed", alignSelf: "flex-start" }}
-          onClick={() => setItens((p) => [...p, { qty: 1 }])}
-        >
-          <Icon name="plus" size={11} />
-          Adicionar item
-        </button>
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          className="wms-btn wms-btn-primary"
-          disabled={!valid || submit.isPending}
-          onClick={() => submit.mutate()}
-        >
-          <Icon name="shuffle" size={11} />
-          {submit.isPending ? "Salvando…" : "Registrar replenishment"}
-        </button>
+      <div className="wms-tbl">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Produto</th>
+              <th>Galpão</th>
+              <th>Origem</th>
+              <th></th>
+              <th>Destino</th>
+              <th className="wms-tar">Qty</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {histQuery.isLoading && (
+              <tr>
+                <td colSpan={8} className="wms-td-empty">
+                  Carregando histórico…
+                </td>
+              </tr>
+            )}
+            {!histQuery.isLoading && pares.length === 0 && (
+              <tr>
+                <td colSpan={8} className="wms-td-empty">
+                  Sem realocações registradas.
+                </td>
+              </tr>
+            )}
+            {pares.map((p) => (
+              <tr key={p.origem_id}>
+                <td className="wms-td-mute">{fmtDateTime(p.criado_em)}</td>
+                <td>
+                  <span className="wms-mono">{p.produto.sku}</span>{" "}
+                  <span className="wms-td-mute">{p.produto.descricao}</span>
+                </td>
+                <td>
+                  <span className="wms-chip-emp">
+                    {p.empresa.slice(0, 3).toUpperCase()}
+                  </span>{" "}
+                  {p.galpao}
+                </td>
+                <td>
+                  <span className="wms-mono">{p.locOrigem}</span>
+                </td>
+                <td>
+                  <Icon name="arrow-right" size={12} />
+                </td>
+                <td>
+                  <span className="wms-mono">{p.locDestino}</span>
+                </td>
+                <td className="wms-tar wms-mono">{fmtNum(p.qty)}</td>
+                <td>
+                  <StatusBadge status="aplicada" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </>
   );

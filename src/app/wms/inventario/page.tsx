@@ -223,6 +223,7 @@ export default function InventarioListaPage() {
               <button
                 type="button"
                 className="wms-btn wms-btn-ghost wms-btn-sm"
+                disabled={novo.areas.length > 0}
                 onClick={() =>
                   adicionarArea((locs?.rows ?? []).map((l) => l.id))
                 }
@@ -230,11 +231,24 @@ export default function InventarioListaPage() {
                 <Icon name="plus" size={11} />
                 Adicionar todas localizações como nova área
               </button>
+              {novo.areas.length > 0 && (
+                <button
+                  type="button"
+                  className="wms-btn wms-btn-ghost wms-btn-sm"
+                  style={{ marginLeft: 8 }}
+                  onClick={() => setNovo((p) => ({ ...p, areas: [] }))}
+                >
+                  <Icon name="x" size={11} />
+                  Limpar áreas
+                </button>
+              )}
               <div
                 className="wms-td-mute"
                 style={{ fontSize: 12, marginTop: 6 }}
               >
                 {novo.areas.length} área(s) configurada(s)
+                {novo.areas.length > 0 &&
+                  " · cada localização só pode estar em uma área"}
               </div>
             </div>
           )}

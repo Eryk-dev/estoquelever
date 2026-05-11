@@ -938,6 +938,12 @@ export function AjusteModal({
 // ──────────────────────────────────────────────────────────────────
 // Transferência inter-galpão
 
+interface TransferItem {
+  produto: Produto | null;
+  qty: string;
+  locOrigem: string;
+}
+
 export function TransferModal({
   seed,
   onClose,
@@ -952,14 +958,13 @@ export function TransferModal({
     (g) => g.id !== defaultPrimary?.id && g.empresas.length > 0,
   );
 
-  const [pid, setPid] = useState<Produto | null>(seed?.produto ?? null);
-  const [qty, setQty] = useState("");
   const [empresaIdUser, setEmpresaIdUser] = useState<string | null>(null);
   const [galOrigUser, setGalOrigUser] = useState<string | null>(null);
-  const [locOrig, setLocOrig] = useState("");
   const [galDestUser, setGalDestUser] = useState<string | null>(null);
-  const [locDest, setLocDest] = useState("");
   const [obs, setObs] = useState("");
+  const [itens, setItens] = useState<TransferItem[]>(() => [
+    { produto: seed?.produto ?? null, qty: "", locOrigem: "" },
+  ]);
   const qc = useQueryClient();
 
   const galOrig = galOrigUser ?? defaultPrimary?.id ?? "";
@@ -971,18 +976,34 @@ export function TransferModal({
   );
   const empresaId = empresaIdUser ?? empresasOrig[0]?.id ?? "";
 
+  function updateItem(idx: number, patch: Partial<TransferItem>) {
+    setItens((prev) =>
+      prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)),
+    );
+  }
+  function addItem() {
+    setItens((prev) => [...prev, { produto: null, qty: "", locOrigem: "" }]);
+  }
+  function removeItem(idx: number) {
+    setItens((prev) =>
+      prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev,
+    );
+  }
+
   const mut = useMutation({
     mutationFn: async () => {
-      const r = await sisoFetch("/api/wms/transferir-galpao", {
+      const r = await sisoFetch("/api/wms/transferencias", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          empresa_id: empresaId,
+          empresa_dona_id: empresaId,
           galpao_origem_id: galOrig,
-          localizacao_origem_id: locOrig,
           galpao_destino_id: galDest,
-          localizacao_destino_id: locDest,
-          itens: [{ produto_id: pid!.id, qty: Number(qty) }],
+          itens: itens.map((it) => ({
+            produto_id: it.produto!.id,
+            qty: Number(it.qty),
+            localizacao_origem_id: it.locOrigem,
+          })),
           observacoes: obs || undefined,
         }),
       });
@@ -993,7 +1014,7 @@ export function TransferModal({
     },
     onSuccess: () => {
       toast.success(
-        `Transferência registrada: ${fmtNum(Number(qty))} un. de ${pid!.sku}`,
+        `Transferência criada com ${itens.length} ite${itens.length > 1 ? "ns" : "m"} — destino precisa receber`,
       );
       qc.invalidateQueries({ queryKey: ["wms-estoque"] });
       qc.invalidateQueries({ queryKey: ["wms-ledger"] });
@@ -1001,27 +1022,29 @@ export function TransferModal({
       qc.invalidateQueries({ queryKey: ["wms-cobertura-all"] });
       qc.invalidateQueries({ queryKey: ["wms-cobertura"] });
       qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
+      qc.invalidateQueries({ queryKey: ["wms-transferencias"] });
       onClose();
     },
     onError: (err: Error) => toast.error(err.message),
   });
 
   const sameGalpao = galOrig === galDest;
+  const itensValidos = itens.every(
+    (it) => !!it.produto && !!it.locOrigem && Number(it.qty) > 0,
+  );
   const valid =
-    !!pid &&
     !!empresaId &&
     !!galOrig &&
     !!galDest &&
     !sameGalpao &&
-    !!locOrig &&
-    !!locDest &&
-    Number(qty) > 0;
+    itens.length > 0 &&
+    itensValidos;
 
   return (
     <Modal
       title="Transferência inter-galpão"
-      subtitle="Gera par S+E com mesma origem_id"
-      width={680}
+      subtitle="Origem envia; destino confirma a localização ao receber"
+      width={840}
       onClose={onClose}
       footer={
         <>
@@ -1034,14 +1057,47 @@ export function TransferModal({
             onClick={() => mut.mutate()}
           >
             <Icon name="arrow-right" size={11} />
-            {mut.isPending ? "Enviando…" : "Confirmar transferência"}
+            {mut.isPending
+              ? "Enviando…"
+              : `Enviar ${itens.length} ite${itens.length > 1 ? "ns" : "m"}`}
           </button>
         </>
       }
     >
-      <Field label="Produto" required>
-        <ProdutoCombo value={pid} onChange={setPid} autoFocus={!seed?.produto} />
-      </Field>
+      <div className="wms-row-2">
+        <Field label="Galpão origem">
+          <select
+            className="wms-select"
+            value={galOrig}
+            onChange={(e) => {
+              setGalOrigUser(e.target.value);
+              setEmpresaIdUser(null);
+              setItens((prev) =>
+                prev.map((it) => ({ ...it, locOrigem: "" })),
+              );
+            }}
+          >
+            {galpoesList.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.nome}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Galpão destino">
+          <select
+            className="wms-select"
+            value={galDest}
+            onChange={(e) => setGalDestUser(e.target.value)}
+          >
+            {galpoesList.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.nome}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
 
       <Field label="Empresa (dona)">
         <select
@@ -1057,80 +1113,91 @@ export function TransferModal({
         </select>
       </Field>
 
-      <div className="wms-trans-grid">
-        <div className="wms-trans-side">
-          <div className="wms-trans-side-h">
-            <span className="wms-trans-pill">Origem</span>
-          </div>
-          <Field label="Galpão">
-            <select
-              className="wms-select"
-              value={galOrig}
-              onChange={(e) => {
-                setGalOrigUser(e.target.value);
-                setEmpresaIdUser(null);
-                setLocOrig("");
-              }}
-            >
-              {galpoesList.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.nome}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Localização">
-            <LocalizacaoCombo
-              galpaoId={galOrig || null}
-              value={locOrig}
-              onChange={setLocOrig}
-            />
-          </Field>
+      {sameGalpao && galOrig && galDest && (
+        <div className="wms-hint-card wms-hint-danger">
+          <Icon name="alert" size={12} />
+          <div>Origem e destino estão no mesmo galpão. Use Realocar.</div>
         </div>
+      )}
 
-        <div className="wms-trans-arrow">
-          <Icon name="arrow-right" size={18} />
-          <div className="wms-trans-arrow-qty">
-            <input
-              className="wms-input"
-              type="number"
-              min="1"
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              placeholder="qty"
-            />
-          </div>
-        </div>
-
-        <div className="wms-trans-side">
-          <div className="wms-trans-side-h">
-            <span className="wms-trans-pill wms-trans-pill-dest">Destino</span>
-          </div>
-          <Field label="Galpão">
-            <select
-              className="wms-select"
-              value={galDest}
-              onChange={(e) => {
-                setGalDestUser(e.target.value);
-                setLocDest("");
-              }}
-            >
-              {galpoesList.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.nome}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Localização">
-            <LocalizacaoCombo
-              galpaoId={galDest || null}
-              value={locDest}
-              onChange={setLocDest}
-            />
-          </Field>
-        </div>
+      <div
+        className="wms-td-mute"
+        style={{ fontSize: 11, marginTop: 14, marginBottom: 6 }}
+      >
+        <Icon name="alert" size={10} /> Operador do galpão destino vai escolher
+        a localização final ao receber.
       </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          marginTop: 4,
+        }}
+      >
+        {itens.map((it, idx) => (
+          <div
+            key={idx}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 90px 1fr 32px",
+              gap: 8,
+              alignItems: "end",
+              padding: 10,
+              background: "var(--wms-c-faint)",
+              border: "1px solid var(--wms-c-border)",
+              borderRadius: "var(--wms-r-3)",
+            }}
+          >
+            <Field label={idx === 0 ? "Produto" : undefined} required>
+              <ProdutoCombo
+                value={it.produto}
+                onChange={(p) => updateItem(idx, { produto: p })}
+              />
+            </Field>
+            <Field label={idx === 0 ? "Qty" : undefined} required>
+              <input
+                className="wms-input wms-mono wms-tar"
+                type="number"
+                min="1"
+                value={it.qty}
+                onChange={(e) => updateItem(idx, { qty: e.target.value })}
+                placeholder="0"
+              />
+            </Field>
+            <Field
+              label={idx === 0 ? "Localização origem" : undefined}
+              required
+            >
+              <LocalizacaoCombo
+                galpaoId={galOrig || null}
+                value={it.locOrigem}
+                onChange={(v) => updateItem(idx, { locOrigem: v })}
+              />
+            </Field>
+            <button
+              type="button"
+              className="wms-btn-icon"
+              onClick={() => removeItem(idx)}
+              disabled={itens.length === 1}
+              title="Remover item"
+              style={{ marginBottom: 4 }}
+            >
+              <Icon name="x" size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        className="wms-btn wms-btn-ghost wms-btn-sm"
+        onClick={addItem}
+        style={{ marginTop: 8 }}
+      >
+        <Icon name="plus" size={11} /> Adicionar item
+      </button>
 
       <Field label="Observação">
         <textarea
@@ -1140,13 +1207,6 @@ export function TransferModal({
           placeholder="Ex: rebalanceamento, transferência operacional…"
         />
       </Field>
-
-      {sameGalpao && galOrig && galDest && (
-        <div className="wms-hint-card wms-hint-danger">
-          <Icon name="alert" size={12} />
-          <div>Origem e destino estão no mesmo galpão. Use Realocar.</div>
-        </div>
-      )}
     </Modal>
   );
 }

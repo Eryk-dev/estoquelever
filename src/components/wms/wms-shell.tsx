@@ -88,7 +88,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/wms/transferir", icon: "arrows", label: "Transferências" },
       { href: "/wms/replenishment", icon: "shuffle", label: "Realocar" },
       { href: "/wms/devolucoes", icon: "rotate", label: "Devoluções" },
-      { href: "/wms/troca-sku", icon: "edit", label: "Troca SKU" },
       { href: "/wms/receber", icon: "plus", label: "Receber" },
     ],
   },

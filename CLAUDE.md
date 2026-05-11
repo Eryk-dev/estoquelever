@@ -377,7 +377,6 @@ wms/  (subset of src/)
     inventario.ts                  # Sessões cycle_count/completo: criar/iniciar/pegar-loc (anti-colisão)/contar/computar-divergencias/aprovar/aplicar
     inventario-recovery.ts         # Detecta sessões e locks órfãos pra cron de cleanup
     devolucoes.ts                  # Classificação A/B/C/D (íntegro/avariado/garantia/troca_sku) com recálculo de custo médio
-    troca-sku.ts                   # Troca SKU na separação: 2 movs (L+R) com mesma origem_id + validação Cross opcional
     cobertura.ts                   # Service de cobertura por giro (lê siso_cobertura_estoque)
     dashboard-geral.ts             # Agrega contadores cross-módulo pra dashboard principal
   src/hooks/
@@ -401,7 +400,6 @@ wms/  (subset of src/)
     inventario/[id]/divergencias/page.tsx    # Dashboard de divergências (aprovar/recontar/rejeitar)
     inventario/metricas/page.tsx   # Acuracidade por operador (30d) e por localização
     devolucoes/page.tsx + [id]/page.tsx  # Lista pendentes + tela de classificação A/B/C/D
-    troca-sku/page.tsx             # Substituir SKU na separação (2 QuadruplaPickers)
     cobertura/page.tsx             # Tabela de cobertura por giro com filtros e cores
     dashboard/page.tsx             # Dashboard geral (4 cards, refresh 30s)
   src/app/api/wms/
@@ -442,7 +440,6 @@ wms/  (subset of src/)
     inventario/metricas/route.ts                           # GET — RPCs operador+localização
     inventario/cleanup/route.ts                            # GET (worker secret) — libera locks órfãos
     devolucoes/route.ts + [id]/classificar/route.ts        # GET fila pendente + POST classificação
-    troca-sku/route.ts                                     # POST troca atômica (L+R)
     cobertura/route.ts + cobertura/refresh/route.ts        # GET (filtros) + GET refresh worker secret
     dashboard-geral/route.ts                               # GET — agrega 7 contadores
   src/components/wms/

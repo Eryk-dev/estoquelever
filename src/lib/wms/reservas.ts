@@ -38,7 +38,7 @@ export async function reservarAtomico(input: ReservarInput): Promise<string> {
 
 export async function liberarReserva(input: {
   pedido_id: string;
-  motivo: "nf_emitida" | "cancelamento" | "expirado" | "troca_sku";
+  motivo: "nf_emitida" | "cancelamento" | "expirado";
   usuario_id?: string;
 }): Promise<number> {
   const sb = createServiceClient();

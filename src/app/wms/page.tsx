@@ -66,12 +66,6 @@ const GROUPS: Group[] = [
         title: "Devoluções",
         desc: "Classificação A/B/C/D",
       },
-      {
-        href: "/wms/troca-sku",
-        icon: "edit",
-        title: "Troca SKU",
-        desc: "Substituição na separação",
-      },
     ],
   },
   {

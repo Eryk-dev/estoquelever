@@ -4892,16 +4892,7 @@ Lista devoluções aguardando classificação física. **Response:** `{ rows: [.
 - `integro`: E `nf_devolucao_cliente` + recalcula custo médio (média ponderada)
 - `avariado`: E `nf_devolucao_avariada` + transferência interna pra QUARENTENA
 - `garantia`: E `nf_devolucao_cliente` + S `nf_devolucao_fornecedor` (RMA)
-- `troca_sku`: E `nf_devolucao_cliente` (a troca real é via `/api/wms/troca-sku`)
-
-### POST /api/wms/troca-sku
-Troca SKU na separação. **Body:** `{ pedido_id, quadrupla_original, quadrupla_substituto, qty, ttl_horas?, motivo?, validar_equivalencia_cross? }`.
-
-**Side effects:** 2 movs com mesma `origem_id=pedido_id`:
-- L em quadrupla_original (`origem_tipo='troca_sku_out'`)
-- R em quadrupla_substituto (`origem_tipo='troca_sku_in'`, `expira_em`)
-
-Validação Cross (`siso_produto_links`) é best-effort: warn se equivalência não cadastrada, não bloqueia em v1.
+- `troca_sku`: E `nf_devolucao_cliente` (a troca real é feita no SISO por enquanto)
 
 ### GET /api/wms/cobertura
 Lista linhas da matview de cobertura. **Query:** `status` (critico|atencao|ok|sem_giro|lead_time_risco), `galpao_id`. Limit 500, ordenado por dias_cobertura asc.

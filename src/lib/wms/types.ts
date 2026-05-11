@@ -22,8 +22,6 @@ export type OrigemTipo =
   | "emprestimo"
   | "reserva_pedido"
   | "liberacao_reserva"
-  | "troca_sku_in"
-  | "troca_sku_out"
   | "ajuste_manual"
   | "inventario"
   | "inventario_inicial"

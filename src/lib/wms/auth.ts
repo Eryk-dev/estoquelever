@@ -57,7 +57,7 @@ export async function requireAdmin(req: Request): Promise<AuthResult> {
  * do WMS.
  *
  * Use em endpoints que mutam siso_estoque/siso_movimentacoes (ajuste,
- * transferir-galpao, replenishment, lancamento-retroativo, troca-sku,
+ * transferir-galpao, replenishment, lancamento-retroativo,
  * inventario, devoluções, etc).
  */
 export async function requireWarehouseAccess(

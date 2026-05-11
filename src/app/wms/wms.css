@@ -840,10 +840,28 @@
   to   { opacity: 1; }
 }
 
+/* Cap content width inside the product-detail page so ultrawide screens
+   don't stretch the KPI strip, tabs, and overview grid edge-to-edge.
+   The header strip keeps its background full-width; only its inner
+   children are centered. */
 .wms-pd-hd {
   padding: 20px 24px 0;
   background: var(--wms-c-panel);
   border-bottom: 1px solid var(--wms-c-border);
+}
+.wms-pd-hd-top,
+.wms-pd-summary,
+.wms-pd-tabs {
+  max-width: 1440px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+.wms-pd-body {
+  max-width: 1488px; /* 1440 + 24px*2 padding = 1440px de conteúdo útil */
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
 }
 .wms-pd-hd-top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .wms-pd-hd-info { flex: 1; min-width: 0; }

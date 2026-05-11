@@ -65,7 +65,7 @@ export default function InventarioListaPage() {
 
   const { data: galpoes } = useQuery({
     queryKey: ["galpoes"],
-    queryFn: () => wmsApi<{ galpoes?: GalpaoRow[] }>("/api/admin/galpoes"),
+    queryFn: () => wmsApi<GalpaoRow[]>("/api/admin/galpoes"),
   });
 
   const { data: locs } = useQuery({
@@ -163,7 +163,7 @@ export default function InventarioListaPage() {
                 }
               >
                 <option value="">— selecione —</option>
-                {galpoes?.galpoes?.map((g) => (
+                {galpoes?.map((g) => (
                   <option key={g.id} value={g.id}>
                     {g.nome}
                   </option>

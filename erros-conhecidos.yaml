@@ -22,6 +22,38 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: wms-galpoes-dropdown-vazio-shape-mismatch
+    date: "2026-05-11"
+    source: wms.galpoes-fetch
+    category: business_logic
+    message: "Dropdowns de galpão/empresa vazios em /wms/inventario, /wms/localizacoes, /wms/replenishment, /wms/emprestimos e QuadruplaPicker — bloqueia criar inventário, escolher localização etc."
+    cause: >
+      Bug duplo de shape entre /api/admin/galpoes (servidor) e consumidores WMS (cliente).
+      (1) API retorna array de galpões direto (NextResponse.json(result)) mas 5 componentes
+      WMS tipavam como wmsApi<{ galpoes?: GalpaoRow[] }> e acessavam data?.galpoes — sempre
+      undefined. (2) Mesmo se acessasse o array, os componentes que precisam de empresas
+      esperavam g.empresas mas a API retorna g.siso_empresas (mantido pra compat com
+      /configuracoes que usa siso_empresas direto). Só src/components/wms/ui/modals.tsx
+      consumia corretamente porque tinha mapeamento explícito siso_empresas → empresas.
+    fix: >
+      Todos os 5 consumidores agora tipam wmsApi<GalpaoRow[]> (array direto). Os 3 que
+      precisam de empresas (replenishment, emprestimos, quadrupla-picker) fazem mapeamento
+      inline na queryFn (siso_empresas → empresas, filtrando empresas inativas) — mesma
+      transformação que useGalpoes() em modals.tsx já fazia. inventario e localizacoes só
+      precisam de id/nome do galpão, então não fazem mapeamento.
+    files:
+      - src/app/wms/inventario/page.tsx
+      - src/app/wms/localizacoes/page.tsx
+      - src/app/wms/replenishment/page.tsx
+      - src/app/wms/emprestimos/page.tsx
+      - src/components/wms/quadrupla-picker.tsx
+    tags: [wms, galpoes, empresas, dropdown, shape-mismatch, postgrest, siso_empresas, inventario, replenishment, emprestimos, quadrupla-picker]
+    notes: >
+      Refactor futuro: extrair useGalpoes() de modals.tsx pra um arquivo de hooks
+      compartilhado (ex: src/lib/wms/hooks.ts) e usar nos 5 consumidores. Eliminaria
+      duplicação do mapeamento siso_empresas → empresas. Não feito agora pra manter
+      escopo do fix mínimo.
+
   - id: wms-estoque-drawer-not-opens-from-cmdk
     date: "2026-05-11"
     source: wms.estoque.page

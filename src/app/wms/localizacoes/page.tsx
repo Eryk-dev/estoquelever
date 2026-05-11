@@ -36,7 +36,7 @@ export default function LocalizacoesPage() {
 
   const { data: galpoes } = useQuery({
     queryKey: ["galpoes"],
-    queryFn: () => wmsApi<{ galpoes?: GalpaoRow[] }>("/api/admin/galpoes"),
+    queryFn: () => wmsApi<GalpaoRow[]>("/api/admin/galpoes"),
   });
 
   const locsQuery = useQuery({
@@ -65,7 +65,7 @@ export default function LocalizacoesPage() {
   });
 
   const rows = locsQuery.data?.rows ?? [];
-  const galpoesList = galpoes?.galpoes ?? [];
+  const galpoesList = galpoes ?? [];
 
   return (
     <>

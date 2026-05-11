@@ -44,7 +44,22 @@ export default function ReplenishmentPage() {
 
   const { data: galpoesResp } = useQuery({
     queryKey: ["galpoes"],
-    queryFn: () => wmsApi<{ galpoes?: GalpaoRow[] }>("/api/admin/galpoes"),
+    queryFn: async () => {
+      const raw = await wmsApi<
+        Array<{
+          id: string;
+          nome: string;
+          siso_empresas?: Array<{ id: string; nome: string; ativo?: boolean }>;
+        }>
+      >("/api/admin/galpoes");
+      return raw.map<GalpaoRow>((g) => ({
+        id: g.id,
+        nome: g.nome,
+        empresas: (g.siso_empresas ?? [])
+          .filter((e) => e.ativo !== false)
+          .map((e) => ({ id: e.id, nome: e.nome, galpao_id: g.id })),
+      }));
+    },
   });
 
   const { data: locs } = useQuery({
@@ -54,7 +69,7 @@ export default function ReplenishmentPage() {
     enabled: !!galpao_id,
   });
 
-  const empresas: EmpresaRow[] = (galpoesResp?.galpoes ?? []).flatMap((g) =>
+  const empresas: EmpresaRow[] = (galpoesResp ?? []).flatMap((g) =>
     (g.empresas ?? []).map((e) => ({ ...e, galpao_id: g.id })),
   );
 

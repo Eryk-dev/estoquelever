@@ -41,10 +41,25 @@ export function QuadruplaPicker({
 }: Props) {
   const { data: galpoesResp } = useQuery({
     queryKey: ["galpoes"],
-    queryFn: () => wmsApi<{ galpoes?: GalpaoRow[] }>("/api/admin/galpoes"),
+    queryFn: async () => {
+      const raw = await wmsApi<
+        Array<{
+          id: string;
+          nome: string;
+          siso_empresas?: Array<{ id: string; nome: string; ativo?: boolean }>;
+        }>
+      >("/api/admin/galpoes");
+      return raw.map<GalpaoRow>((g) => ({
+        id: g.id,
+        nome: g.nome,
+        empresas: (g.siso_empresas ?? [])
+          .filter((e) => e.ativo !== false)
+          .map((e) => ({ id: e.id, nome: e.nome, galpao_id: g.id })),
+      }));
+    },
   });
 
-  const galpoes = galpoesResp?.galpoes ?? [];
+  const galpoes = galpoesResp ?? [];
   const empresasAtivas: EmpresaRow[] = galpoes.flatMap((g) =>
     (g.empresas ?? []).map((e) => ({ ...e, galpao_id: g.id })),
   );

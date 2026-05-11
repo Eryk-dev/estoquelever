@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { receberEstoque } from "@/lib/wms/movimentacoes";
-import { sugerirLocalizacaoPutaway } from "@/lib/wms/putaway";
+import {
+  sugerirLocalizacaoPutaway,
+  listarLocaisExistentesProduto,
+} from "@/lib/wms/putaway";
 import { createServiceClient } from "@/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
@@ -66,12 +69,19 @@ export async function GET(req: NextRequest) {
   }
   try {
     const sb = createServiceClient();
-    const sugestao = await sugerirLocalizacaoPutaway(sb as never, {
-      produto_id,
-      empresa_id,
-      galpao_id,
-    });
-    return NextResponse.json(sugestao);
+    const [sugestao, locaisExistentes] = await Promise.all([
+      sugerirLocalizacaoPutaway(sb as never, {
+        produto_id,
+        empresa_id,
+        galpao_id,
+      }),
+      listarLocaisExistentesProduto(sb as never, {
+        produto_id,
+        empresa_id,
+        galpao_id,
+      }),
+    ]);
+    return NextResponse.json({ ...sugestao, locaisExistentes });
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.receber.putaway",

@@ -474,7 +474,7 @@ export function ReceberModal({
   const empresasGalpao = galpao?.empresas ?? [];
   const empresaId = empresaIdUser ?? empresasGalpao[0]?.id ?? "";
 
-  // Sugestão de putaway
+  // Sugestão de putaway + localizações onde o SKU já tem saldo
   const sugQuery = useQuery({
     queryKey: ["wms-putaway", pid?.id, empresaId, galpaoId],
     queryFn: () =>
@@ -482,6 +482,12 @@ export function ReceberModal({
         localizacao_id: string;
         codigo?: string;
         razao: string;
+        locaisExistentes: Array<{
+          localizacao_id: string;
+          codigo: string;
+          tipo: string;
+          saldo: number;
+        }>;
       } | null>(
         `/api/wms/receber?produto_id=${pid?.id}&empresa_id=${empresaId}&galpao_id=${galpaoId}`,
       ),
@@ -490,6 +496,7 @@ export function ReceberModal({
   });
 
   const locId = locIdUser ?? sugQuery.data?.localizacao_id ?? "";
+  const locaisExistentes = sugQuery.data?.locaisExistentes ?? [];
 
   const mut = useMutation({
     mutationFn: async () => {
@@ -668,20 +675,80 @@ export function ReceberModal({
         </Field>
       </div>
 
-      {sugQuery.data?.localizacao_id && locId === sugQuery.data.localizacao_id && (
-        <div className="wms-hint-card">
-          <Icon name="sparkle" size={12} />
-          <div>
-            <div>
-              <strong>Sugestão de putaway:</strong>{" "}
-              <span className="wms-mono">
-                {sugQuery.data.codigo ?? sugQuery.data.localizacao_id}
-              </span>
-            </div>
-            <div className="wms-td-mute">{sugQuery.data.razao}</div>
+      {locaisExistentes.length > 0 && (
+        <div
+          style={{
+            background: "var(--wms-c-faint)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-3)",
+            padding: "10px 12px",
+            marginTop: 8,
+          }}
+        >
+          <div
+            className="wms-td-mute"
+            style={{ fontSize: 11, marginBottom: 6, fontWeight: 600 }}
+          >
+            <Icon name="box" size={11} /> Este SKU já tem saldo em{" "}
+            {locaisExistentes.length} localização
+            {locaisExistentes.length > 1 ? "ões" : ""} desse galpão
           </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {locaisExistentes.map((l) => {
+              const isSelected = l.localizacao_id === locId;
+              const isSuggested =
+                l.localizacao_id === sugQuery.data?.localizacao_id;
+              return (
+                <button
+                  key={l.localizacao_id}
+                  type="button"
+                  onClick={() => setLocIdUser(l.localizacao_id)}
+                  className={`wms-btn wms-btn-sm ${
+                    isSelected ? "wms-btn-primary" : "wms-btn-ghost"
+                  }`}
+                  style={{ fontSize: 11.5 }}
+                  title={`${fmtNum(l.saldo)} un. em ${l.codigo}`}
+                >
+                  <span className="wms-mono">{l.codigo}</span>
+                  <span
+                    className="wms-td-mute"
+                    style={{ marginLeft: 6, fontSize: 10.5 }}
+                  >
+                    {fmtNum(l.saldo)} un · {l.tipo}
+                  </span>
+                  {isSuggested && (
+                    <Icon name="sparkle" size={10} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {sugQuery.data?.razao && (
+            <div
+              className="wms-td-mute"
+              style={{ fontSize: 11, marginTop: 6 }}
+            >
+              <Icon name="sparkle" size={10} /> {sugQuery.data.razao}
+            </div>
+          )}
         </div>
       )}
+      {locaisExistentes.length === 0 &&
+        sugQuery.data?.localizacao_id &&
+        locId === sugQuery.data.localizacao_id && (
+          <div className="wms-hint-card">
+            <Icon name="sparkle" size={12} />
+            <div>
+              <div>
+                <strong>Sugestão de putaway:</strong>{" "}
+                <span className="wms-mono">
+                  {sugQuery.data.codigo ?? sugQuery.data.localizacao_id}
+                </span>
+              </div>
+              <div className="wms-td-mute">{sugQuery.data.razao}</div>
+            </div>
+          </div>
+        )}
 
       <Field label="Observação">
         <textarea

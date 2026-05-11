@@ -213,6 +213,21 @@ interface ModalProdutoSeed {
   produto?: Produto;
 }
 
+type ReceberOrigem =
+  | "compra_manual"
+  | "nf_compra"
+  | "devolucao"
+  | "transferencia"
+  | "retroativo";
+
+const RECEBER_ORIGEM_OPTS: { id: ReceberOrigem; label: string }[] = [
+  { id: "compra_manual", label: "Compra manual" },
+  { id: "nf_compra", label: "NF de compra" },
+  { id: "devolucao", label: "Devolução" },
+  { id: "transferencia", label: "Transferência" },
+  { id: "retroativo", label: "Retroativo" },
+];
+
 export function ReceberModal({
   seed,
   onClose,
@@ -227,6 +242,7 @@ export function ReceberModal({
   const [pid, setPid] = useState<Produto | null>(seed?.produto ?? null);
   const [qty, setQty] = useState("");
   const [custo, setCusto] = useState("");
+  const [origem, setOrigem] = useState<ReceberOrigem>("compra_manual");
   const [empresaIdUser, setEmpresaIdUser] = useState<string | null>(null);
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
   const [locIdUser, setLocIdUser] = useState<string | null>(null);
@@ -243,7 +259,11 @@ export function ReceberModal({
   const sugQuery = useQuery({
     queryKey: ["wms-putaway", pid?.id, empresaId, galpaoId],
     queryFn: () =>
-      wmsApi<{ localizacao_id: string; motivo: string } | null>(
+      wmsApi<{
+        localizacao_id: string;
+        codigo?: string;
+        razao: string;
+      } | null>(
         `/api/wms/receber?produto_id=${pid?.id}&empresa_id=${empresaId}&galpao_id=${galpaoId}`,
       ),
     enabled: !!(pid?.id && empresaId && galpaoId),
@@ -268,7 +288,8 @@ export function ReceberModal({
               localizacao_id: locId,
             },
           ],
-          nf_referencia: obs || undefined,
+          origem_tipo: origem,
+          observacoes: obs || undefined,
         }),
       });
       if (!r.ok) {
@@ -293,7 +314,7 @@ export function ReceberModal({
   return (
     <Modal
       title="Receber mercadoria"
-      subtitle="Entrada no ledger com sugestão de putaway"
+      subtitle="Entrada no ledger com sugestão automática de putaway"
       onClose={onClose}
       footer={
         <>
@@ -343,7 +364,35 @@ export function ReceberModal({
         </Field>
       </div>
 
+      <Field label="Origem">
+        <div className="wms-seg wms-seg-full">
+          {RECEBER_ORIGEM_OPTS.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              className={`wms-seg-btn ${origem === o.id ? "is-active" : ""}`}
+              onClick={() => setOrigem(o.id)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </Field>
+
       <div className="wms-row-3">
+        <Field label="Empresa (dona)">
+          <select
+            className="wms-select"
+            value={empresaId}
+            onChange={(e) => setEmpresaIdUser(e.target.value)}
+          >
+            {empresasGalpao.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.nome}
+              </option>
+            ))}
+          </select>
+        </Field>
         <Field label="Galpão">
           <select
             className="wms-select"
@@ -361,19 +410,6 @@ export function ReceberModal({
             ))}
           </select>
         </Field>
-        <Field label="Empresa (dona)">
-          <select
-            className="wms-select"
-            value={empresaId}
-            onChange={(e) => setEmpresaIdUser(e.target.value)}
-          >
-            {empresasGalpao.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.nome}
-              </option>
-            ))}
-          </select>
-        </Field>
         <Field label="Localização" required>
           <LocalizacaoSelect
             galpaoId={galpaoId}
@@ -387,18 +423,23 @@ export function ReceberModal({
         <div className="wms-hint-card">
           <Icon name="sparkle" size={12} />
           <div>
-            <strong>Sugestão de putaway aplicada.</strong>{" "}
-            <div className="wms-td-mute">{sugQuery.data.motivo}</div>
+            <div>
+              <strong>Sugestão de putaway:</strong>{" "}
+              <span className="wms-mono">
+                {sugQuery.data.codigo ?? sugQuery.data.localizacao_id}
+              </span>
+            </div>
+            <div className="wms-td-mute">{sugQuery.data.razao}</div>
           </div>
         </div>
       )}
 
-      <Field label="NF / referência">
-        <input
-          className="wms-input"
+      <Field label="Observação">
+        <textarea
+          className="wms-textarea"
           value={obs}
           onChange={(e) => setObs(e.target.value)}
-          placeholder="NF, lote, observações…"
+          placeholder="NF, lote, observações de recebimento…"
         />
       </Field>
     </Modal>

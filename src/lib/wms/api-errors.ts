@@ -29,11 +29,29 @@ interface ErrorOpts {
  *   return NextResponse.json({ error: String(e) }, { status: 500 })
  * que vazava nomes de tabela, constraints, SQL completo pro browser.
  */
+/**
+ * Extrai mensagem de erro de:
+ * - Error nativo (.message)
+ * - PostgrestError do Supabase (objeto plain com .message — NÃO é Error instance)
+ * - Qualquer outro objeto com .message: string
+ * - Strings/numbers (String())
+ *
+ * Sem esse helper, PostgrestError caía em String(obj) e o client recebia
+ * "[object Object]" em vez de "duplicate key value violates...".
+ */
+function extractErrorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "object" && e !== null) {
+    const obj = e as Record<string, unknown>;
+    if (typeof obj.message === "string") return obj.message;
+  }
+  return String(e);
+}
+
 export function wmsErrorResponse(opts: ErrorOpts): NextResponse {
   const status = opts.status ?? 500;
   const isClientError = status >= 400 && status < 500;
-  const errMsg =
-    opts.error instanceof Error ? opts.error.message : String(opts.error);
+  const errMsg = extractErrorMessage(opts.error);
 
   logger.logError({
     error: opts.error,

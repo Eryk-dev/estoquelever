@@ -22,6 +22,30 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: wms-api-errors-object-object-on-postgrest
+    date: "2026-05-11"
+    source: wms.api-errors
+    category: business_logic
+    message: "Toasts WMS mostram '[object Object]' em vez da mensagem de erro real"
+    cause: >
+      wmsErrorResponse() em src/lib/wms/api-errors.ts extraía mensagem com
+      `opts.error instanceof Error ? opts.error.message : String(opts.error)`.
+      PostgrestError do Supabase é um plain object com .message — NÃO é Error
+      instance. Caia em String(obj) que vira "[object Object]". O client
+      recebia { error: "[object Object]" }, useMutation.onError mostrava o
+      texto literal em vez da mensagem (ex: "duplicate key value violates
+      unique constraint ...").
+    fix: >
+      Adicionado helper extractErrorMessage(e) que detecta Error, depois
+      objeto com .message: string (PostgrestError, response.error do Supabase,
+      etc), e por último String(). Mensagens reais agora chegam no client.
+    files:
+      - src/lib/wms/api-errors.ts
+    tags: [wms, error-handling, postgrest, supabase, toast, object-object, logger]
+    notes: >
+      Mesmo padrão pode aparecer em outros helpers de erro (não WMS) que usam
+      instanceof Error como única extração. Auditar futuramente.
+
   - id: wms-galpoes-dropdown-vazio-shape-mismatch
     date: "2026-05-11"
     source: wms.galpoes-fetch

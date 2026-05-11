@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Icon, Modal, Field, fmtNum, useAutoFocus } from "./wms-ui";
@@ -171,38 +171,221 @@ export function ProdutoCombo({
 }
 
 // ──────────────────────────────────────────────────────────────────
-// Localização select
+// LocalizacaoCombo — input com autocomplete + criar inline.
+// Substitui o antigo <select>: o operador digita o código (ex. "A-01-03"),
+// vê sugestões filtradas, e se o código não existir, Enter ou o botão
+// "Adicionar" criam a localização e a selecionam.
 
-export function LocalizacaoSelect({
+export function LocalizacaoCombo({
   galpaoId,
   value,
   onChange,
   allowedTipos,
+  placeholder,
 }: {
   galpaoId: string | null;
   value: string;
   onChange: (id: string) => void;
   allowedTipos?: TipoLocalizacao[];
+  placeholder?: string;
 }) {
+  const qc = useQueryClient();
   const { data } = useLocalizacoes(galpaoId);
-  const opts = (data?.rows ?? []).filter(
-    (l) => l.ativo && (!allowedTipos || allowedTipos.includes(l.tipo)),
+  const todas = useMemo(
+    () =>
+      (data?.rows ?? []).filter(
+        (l) => l.ativo && (!allowedTipos || allowedTipos.includes(l.tipo)),
+      ),
+    [data, allowedTipos],
+  );
+  const selected = todas.find((l) => l.id === value) ?? null;
+
+  const [q, setQ] = useState(selected?.codigo ?? "");
+  const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Sincroniza o texto exibido quando o valor selecionado muda externamente
+  useEffect(() => {
+    setQ(selected?.codigo ?? "");
+  }, [value, selected?.codigo]);
+
+  // Quando o galpão muda, limpa input se o valor anterior não está mais no domínio
+  useEffect(() => {
+    if (value && !todas.some((l) => l.id === value)) {
+      onChange("");
+      setQ("");
+    }
+  }, [galpaoId, todas, value, onChange]);
+
+  const ql = q.trim().toLowerCase();
+  const filtered = useMemo(
+    () =>
+      ql === ""
+        ? todas.slice(0, 12)
+        : todas
+            .filter(
+              (l) =>
+                l.codigo.toLowerCase().includes(ql) ||
+                (l.descricao ?? "").toLowerCase().includes(ql),
+            )
+            .slice(0, 12),
+    [todas, ql],
   );
 
+  const queryNorm = q.trim().toUpperCase();
+  const exact = todas.find((l) => l.codigo.toUpperCase() === queryNorm);
+  const showAdd =
+    queryNorm.length > 0 && !exact && !adding && !!galpaoId;
+
+  async function commitAdd() {
+    if (!galpaoId || !queryNorm) return;
+    setAdding(true);
+    try {
+      const r = await sisoFetch("/api/wms/localizacoes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          galpao_id: galpaoId,
+          codigo: queryNorm,
+          tipo: allowedTipos?.[0] ?? "picking",
+        }),
+      });
+      if (!r.ok) {
+        const body = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${r.status}`);
+      }
+      const loc = (await r.json()) as Localizacao;
+      toast.success(`Localização ${loc.codigo} criada`);
+      await qc.invalidateQueries({ queryKey: ["wms-modal-locs", galpaoId] });
+      await qc.invalidateQueries({ queryKey: ["wms-locs", galpaoId] });
+      onChange(loc.id);
+      setQ(loc.codigo);
+      setOpen(false);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  function commitSelect(loc: Localizacao) {
+    onChange(loc.id);
+    setQ(loc.codigo);
+    setOpen(false);
+  }
+
+  function handleKey(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setOpen(true);
+      setHighlight((h) =>
+        Math.min(h + 1, filtered.length + (showAdd ? 1 : 0) - 1),
+      );
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (exact) {
+        commitSelect(exact);
+        return;
+      }
+      const items = filtered;
+      if (highlight < items.length) {
+        commitSelect(items[highlight]);
+      } else if (showAdd) {
+        commitAdd();
+      } else if (items.length === 1) {
+        commitSelect(items[0]);
+      }
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      setQ(selected?.codigo ?? "");
+    }
+  }
+
+  const disabled = !galpaoId;
+
   return (
-    <select
-      className="wms-select"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="">— selecionar —</option>
-      {opts.map((l) => (
-        <option key={l.id} value={l.id}>
-          {l.codigo} ({l.tipo})
-          {l.descricao ? ` — ${l.descricao}` : ""}
-        </option>
-      ))}
-    </select>
+    <div className="wms-picker">
+      <div
+        className="wms-search-wrap"
+        style={disabled ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+      >
+        <Icon name="search" size={13} />
+        <input
+          ref={inputRef}
+          className="wms-mono"
+          value={q}
+          disabled={disabled}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setOpen(true);
+            setHighlight(0);
+            // Se o usuário começou a editar, limpa a seleção atual.
+            if (selected && selected.codigo !== e.target.value) {
+              onChange("");
+            }
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => {
+            // Pequeno delay para permitir clique nos itens do dropdown
+            setTimeout(() => setOpen(false), 150);
+          }}
+          onKeyDown={handleKey}
+          placeholder={
+            disabled
+              ? "Escolha o galpão primeiro"
+              : placeholder ?? "Bipar ou digitar código…"
+          }
+        />
+      </div>
+      {open && !disabled && (filtered.length > 0 || showAdd) && (
+        <div className="wms-picker-list">
+          {filtered.map((l, i) => (
+            <button
+              key={l.id}
+              type="button"
+              className="wms-picker-item"
+              data-highlight={highlight === i ? "true" : undefined}
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setHighlight(i)}
+              onClick={() => commitSelect(l)}
+            >
+              <span className="wms-mono">{l.codigo}</span>
+              <span className="wms-picker-desc">
+                <span className="wms-td-mute">{l.tipo}</span>
+                {l.descricao ? ` · ${l.descricao}` : ""}
+              </span>
+            </button>
+          ))}
+          {showAdd && (
+            <button
+              type="button"
+              className="wms-picker-item"
+              data-highlight={highlight === filtered.length ? "true" : undefined}
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setHighlight(filtered.length)}
+              disabled={adding}
+              onClick={commitAdd}
+            >
+              <Icon name="plus" size={11} />
+              <span>
+                Adicionar <span className="wms-mono">{queryNorm}</span>
+              </span>
+              <span
+                className="wms-td-mute"
+                style={{ fontSize: 11.5, marginLeft: "auto" }}
+              >
+                {adding ? "criando…" : "Enter ↵"}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -411,7 +594,7 @@ export function ReceberModal({
           </select>
         </Field>
         <Field label="Localização" required>
-          <LocalizacaoSelect
+          <LocalizacaoCombo
             galpaoId={galpaoId}
             value={locId}
             onChange={(v) => setLocIdUser(v)}
@@ -592,7 +775,7 @@ export function AjusteModal({
           </select>
         </Field>
         <Field label="Localização" required>
-          <LocalizacaoSelect
+          <LocalizacaoCombo
             galpaoId={galpaoId}
             value={locId}
             onChange={(v) => setLocIdUser(v)}
@@ -764,7 +947,7 @@ export function TransferModal({
             </select>
           </Field>
           <Field label="Localização">
-            <LocalizacaoSelect
+            <LocalizacaoCombo
               galpaoId={galOrig || null}
               value={locOrig}
               onChange={setLocOrig}
@@ -807,7 +990,7 @@ export function TransferModal({
             </select>
           </Field>
           <Field label="Localização">
-            <LocalizacaoSelect
+            <LocalizacaoCombo
               galpaoId={galDest || null}
               value={locDest}
               onChange={setLocDest}

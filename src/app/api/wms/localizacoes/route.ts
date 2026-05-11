@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listarLocalizacoes, criarLocalizacao } from "@/lib/wms/localizacoes";
-import { requireAuth, requireAdmin } from "@/lib/wms/auth";
+import { requireAuth } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function GET(req: NextRequest) {
@@ -12,7 +12,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAdmin(req);
+  // Any authenticated user can create a localização — the combobox in
+  // operational modals (Receber, Ajuste, Transferência) lets operators
+  // add a missing código on the fly to avoid blocking the flow.
+  const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
 
   const body = await req.json();

@@ -1,6 +1,8 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { wmsApi } from "@/lib/wms/api-client";
+import { LocalizacaoCombo } from "@/components/wms/ui/modals";
+import type { TipoLocalizacao } from "@/lib/wms/types";
 
 interface QuadruplaValue {
   empresa_id?: string;
@@ -12,7 +14,7 @@ interface Props {
   value: QuadruplaValue;
   onChange: (v: QuadruplaValue) => void;
   showLocalizacao?: boolean;
-  filtroTipoLocalizacao?: string;
+  filtroTipoLocalizacao?: TipoLocalizacao;
 }
 
 interface EmpresaRow {
@@ -25,12 +27,6 @@ interface GalpaoRow {
   id: string;
   nome: string;
   empresas?: EmpresaRow[];
-}
-
-interface LocRow {
-  id: string;
-  codigo: string;
-  tipo: string;
 }
 
 export function QuadruplaPicker({
@@ -64,18 +60,7 @@ export function QuadruplaPicker({
     (g.empresas ?? []).map((e) => ({ ...e, galpao_id: g.id })),
   );
   const empresaSel = empresasAtivas.find((e) => e.id === value.empresa_id);
-  const galpaoId = empresaSel?.galpao_id;
-
-  const { data: locs } = useQuery({
-    queryKey: ["wms-locs", galpaoId],
-    queryFn: () =>
-      wmsApi<{ rows: LocRow[] }>(`/api/wms/localizacoes?galpao_id=${galpaoId}`),
-    enabled: !!galpaoId && showLocalizacao,
-  });
-
-  const locsFiltradas = filtroTipoLocalizacao
-    ? (locs?.rows ?? []).filter((l) => l.tipo === filtroTipoLocalizacao)
-    : (locs?.rows ?? []);
+  const galpaoId = empresaSel?.galpao_id ?? null;
 
   return (
     <div
@@ -105,25 +90,20 @@ export function QuadruplaPicker({
       </select>
 
       {showLocalizacao && (
-        <select
-          className="wms-select"
+        <LocalizacaoCombo
+          galpaoId={galpaoId}
           value={value.localizacao_id ?? ""}
-          disabled={!galpaoId}
-          onChange={(e) =>
+          allowedTipos={
+            filtroTipoLocalizacao ? [filtroTipoLocalizacao] : undefined
+          }
+          onChange={(id) =>
             onChange({
               ...value,
-              galpao_id: galpaoId,
-              localizacao_id: e.target.value || undefined,
+              galpao_id: galpaoId ?? undefined,
+              localizacao_id: id || undefined,
             })
           }
-        >
-          <option value="">— localização —</option>
-          {locsFiltradas.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.codigo} ({l.tipo})
-            </option>
-          ))}
-        </select>
+        />
       )}
     </div>
   );

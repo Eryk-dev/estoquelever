@@ -22,6 +22,30 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: wms-estoque-drawer-not-opens-from-cmdk
+    date: "2026-05-11"
+    source: wms.estoque.page
+    category: business_logic
+    message: "Drawer do produto não abre ao clicar em produto no Cmd+K quando já estamos em /wms/estoque"
+    cause: >
+      EstoquePage inicializava drawerProdutoId via useState(initialProduto), onde
+      initialProduto = searchParams?.get("produto"). useState só usa o valor na PRIMEIRA
+      render. Quando o usuário já está em /wms/estoque e clica num produto no Cmd+K,
+      router.push muda a URL pra ?produto=X mas o componente não remonta — initialProduto
+      recalcula pra X mas useState ignora, drawerProdutoId continua null. Funcionava
+      quando o usuário vinha de outra página (fresh mount).
+    fix: >
+      Trocou state mirror por derived state: drawerProdutoId = initialProduto ?? localProdutoId.
+      URL tem precedência (Cmd+K e links externos), state local lida com cliques em linhas
+      da tabela (que não mudam URL). No close, limpa state local e router.replace se veio
+      de query. Padrão correto em React — não espelhar prop/url em state.
+    files:
+      - src/app/wms/estoque/page.tsx
+    tags: [wms, estoque, drawer, cmd-k, useState, useSearchParams, derived-state, react-hooks]
+    notes: >
+      Regra do ESLint react-hooks/set-state-in-effect (Next 16) bloqueia a alternativa
+      ingênua de usar useEffect pra sincronizar. Derived state é a abordagem correta.
+
   - id: wms-ledger-empresa-fk-ambiguity
     date: "2026-05-11"
     source: wms.ledger

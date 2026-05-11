@@ -44,9 +44,11 @@ export default function EstoquePage() {
   const [filterGalpao, setFilterGalpao] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [drawerProdutoId, setDrawerProdutoId] = useState<string | null>(
-    initialProduto,
-  );
+  // Drawer = URL (via Cmd+K ou link externo) OU state local (clique em linha
+  // da tabela). URL tem precedência pra que Cmd+K abra o drawer mesmo quando
+  // já estamos em /wms/estoque (caso em que o componente não remonta).
+  const [localProdutoId, setLocalProdutoId] = useState<string | null>(null);
+  const drawerProdutoId = initialProduto ?? localProdutoId;
   const modals = useWmsModals();
 
   const estoqueQuery = useQuery({
@@ -274,7 +276,7 @@ export default function EstoquePage() {
                   onToggle={() =>
                     setExpanded(isExpanded ? null : r.produtoId)
                   }
-                  onOpenProduto={() => setDrawerProdutoId(r.produtoId)}
+                  onOpenProduto={() => setLocalProdutoId(r.produtoId)}
                   onAction={(kind) => {
                     const produto = {
                       id: r.produtoId,
@@ -304,7 +306,7 @@ export default function EstoquePage() {
         <ProdutoDrawer
           produtoId={drawerProdutoId}
           onClose={() => {
-            setDrawerProdutoId(null);
+            setLocalProdutoId(null);
             // limpa querystring se veio de Cmd+K
             if (initialProduto) router.replace("/wms/estoque");
           }}

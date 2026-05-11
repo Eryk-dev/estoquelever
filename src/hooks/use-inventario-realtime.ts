@@ -26,8 +26,10 @@ export interface Contagem {
 export interface LocSessao {
   id: string;
   localizacao_id: string;
+  area_id: string | null;
   status: string;
   bloqueada_por: string | null;
+  localizacao?: { codigo?: string; tipo?: string };
 }
 
 interface SessaoSnapshot {

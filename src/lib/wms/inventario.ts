@@ -340,6 +340,25 @@ export async function aprovarSessao(
     .from("siso_inventario_sessoes")
     .update({ status: "aprovada", aprovada_por: aprovadaPor })
     .eq("id", sessaoId);
+
+  // Libera locks externos. Aplicação (gerar movs) é só ato contábil — não
+  // precisa segurar lock contra outras sessões. Antes, locks só saíam em
+  // aplicarSessao, então sessões aprovadas-mas-não-aplicadas bloqueavam
+  // novas sessões nas mesmas localizações.
+  const { data: locs } = await sb
+    .from("siso_inventario_localizacoes")
+    .select("localizacao_id")
+    .eq("sessao_id", sessaoId);
+  const locIds = ((locs ?? []) as Array<{ localizacao_id: string }>).map(
+    (l) => l.localizacao_id,
+  );
+  if (locIds.length > 0) {
+    await sb
+      .from("siso_localizacao_locks")
+      .update({ finalizado_em: new Date().toISOString() })
+      .in("localizacao_id", locIds)
+      .is("finalizado_em", null);
+  }
 }
 
 export async function aplicarSessao(

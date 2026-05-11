@@ -22,6 +22,28 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: wms-inventario-aprovar-nao-libera-locks
+    date: "2026-05-11"
+    source: wms.inventario.aprovar
+    category: business_logic
+    message: "uq_loc_lock_ativo violation ao iniciar nova sessão de inventário"
+    cause: >
+      aprovarSessao() em src/lib/wms/inventario.ts só mudava o status pra
+      'aprovada' — não tocava em siso_localizacao_locks. Locks eram criados
+      em iniciarSessao() e só liberados em aplicarSessao(). Resultado:
+      sessões com status='aprovada' mas 'não aplicada' (cenário comum em
+      review/aprovação manual de divergências) bloqueavam novas sessões
+      nas mesmas localizações via UNIQUE(localizacao_id) WHERE finalizado_em IS NULL.
+    fix: >
+      aprovarSessao() agora libera os locks externos. Aplicação (gerar movs)
+      passou a ser só ato contábil, não precisa segurar lock. aplicarSessao()
+      mantém a liberação (idempotente: WHERE finalizado_em IS NULL).
+      Locks órfãos da sessão 6a027ed3 foram liberados manualmente no banco
+      via UPDATE.
+    files:
+      - src/lib/wms/inventario.ts
+    tags: [wms, inventario, locks, uq_loc_lock_ativo, aprovar, aplicar, anti-colisao]
+
   - id: wms-api-errors-object-object-on-postgrest
     date: "2026-05-11"
     source: wms.api-errors

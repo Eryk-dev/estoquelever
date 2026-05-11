@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Icon, Modal, Field, fmtNum, useAutoFocus } from "./wms-ui";
@@ -182,12 +189,18 @@ export function LocalizacaoCombo({
   onChange,
   allowedTipos,
   placeholder,
+  allowCreate = true,
 }: {
   galpaoId: string | null;
   value: string;
   onChange: (id: string) => void;
   allowedTipos?: TipoLocalizacao[];
   placeholder?: string;
+  /** Permite criar localização inline quando o código digitado não existe.
+   *  Default true. Use false em fluxos onde criar uma nova loc seria um erro
+   *  (ex: transferência inter-galpão — operador digita errado e cria loc órfã
+   *  sem saldo). */
+  allowCreate?: boolean;
 }) {
   const qc = useQueryClient();
   const { data } = useLocalizacoes(galpaoId);
@@ -237,7 +250,9 @@ export function LocalizacaoCombo({
   const queryNorm = q.trim().toUpperCase();
   const exact = todas.find((l) => l.codigo.toUpperCase() === queryNorm);
   const showAdd =
-    queryNorm.length > 0 && !exact && !adding && !!galpaoId;
+    allowCreate && queryNorm.length > 0 && !exact && !adding && !!galpaoId;
+  const showNoMatch =
+    !allowCreate && queryNorm.length > 0 && !exact && filtered.length === 0;
 
   async function commitAdd() {
     if (!galpaoId || !queryNorm) return;
@@ -342,7 +357,7 @@ export function LocalizacaoCombo({
           }
         />
       </div>
-      {open && !disabled && (filtered.length > 0 || showAdd) && (
+      {open && !disabled && (filtered.length > 0 || showAdd || showNoMatch) && (
         <div className="wms-picker-list">
           {filtered.map((l, i) => (
             <button
@@ -382,6 +397,12 @@ export function LocalizacaoCombo({
                 {adding ? "criando…" : "Enter ↵"}
               </span>
             </button>
+          )}
+          {showNoMatch && (
+            <div className="wms-picker-empty">
+              <Icon name="alert" size={11} /> Nenhuma localização com esse
+              código. Criação não permitida aqui.
+            </div>
           )}
         </div>
       )}
@@ -944,6 +965,201 @@ interface TransferItem {
   locOrigem: string;
 }
 
+interface LocalSaldo {
+  localizacao_id: string;
+  codigo: string;
+  tipo: string;
+  saldo: number;
+}
+
+function TransferItemRow({
+  item,
+  idx,
+  galOrig,
+  empresaId,
+  canRemove,
+  onChange,
+  onRemove,
+}: {
+  item: TransferItem;
+  idx: number;
+  galOrig: string;
+  empresaId: string;
+  canRemove: boolean;
+  onChange: (patch: Partial<TransferItem>) => void;
+  onRemove: () => void;
+}) {
+  // Busca localizações onde o SKU já tem saldo no galpão origem.
+  // Reusa o GET /api/wms/receber que já agrega esse dado.
+  const ready = !!item.produto && !!galOrig && !!empresaId;
+  const sugQuery = useQuery({
+    queryKey: ["wms-putaway", item.produto?.id, empresaId, galOrig],
+    queryFn: () =>
+      wmsApi<{
+        localizacao_id: string;
+        codigo?: string;
+        razao: string;
+        locaisExistentes: LocalSaldo[];
+      } | null>(
+        `/api/wms/receber?produto_id=${item.produto!.id}&empresa_id=${empresaId}&galpao_id=${galOrig}`,
+      ),
+    enabled: ready,
+    staleTime: 30 * 1000,
+  });
+
+  const locais = useMemo(
+    () => sugQuery.data?.locaisExistentes ?? [],
+    [sugQuery.data],
+  );
+
+  // Auto-seleciona a primeira (maior saldo em picking) quando o produto muda
+  // e ainda não há escolha manual. onChange é estável (useCallback no parent).
+  useEffect(() => {
+    if (item.produto && !item.locOrigem && locais.length > 0) {
+      onChange({ locOrigem: locais[0].localizacao_id });
+    }
+  }, [item.produto, item.locOrigem, locais, onChange]);
+
+  const locSel = locais.find((l) => l.localizacao_id === item.locOrigem);
+  const qtyNum = Number(item.qty);
+  const overQty = !!locSel && qtyNum > Number(locSel.saldo);
+
+  return (
+    <div
+      style={{
+        padding: 10,
+        background: "var(--wms-c-faint)",
+        border: "1px solid var(--wms-c-border)",
+        borderRadius: "var(--wms-r-3)",
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 90px 1fr 32px",
+          gap: 8,
+          alignItems: "end",
+        }}
+      >
+        <Field label={idx === 0 ? "Produto" : undefined} required>
+          <ProdutoCombo
+            value={item.produto}
+            onChange={(p) =>
+              onChange({ produto: p, locOrigem: "" })
+            }
+          />
+        </Field>
+        <Field
+          label={idx === 0 ? "Qty" : undefined}
+          required
+          hint={
+            locSel
+              ? `disp: ${fmtNum(Number(locSel.saldo))}`
+              : undefined
+          }
+        >
+          <input
+            className={`wms-input wms-mono wms-tar ${overQty ? "wms-input-danger" : ""}`}
+            type="number"
+            min="1"
+            value={item.qty}
+            onChange={(e) => onChange({ qty: e.target.value })}
+            placeholder="0"
+          />
+        </Field>
+        <Field
+          label={idx === 0 ? "Localização origem" : undefined}
+          required
+        >
+          <LocalizacaoCombo
+            galpaoId={galOrig || null}
+            value={item.locOrigem}
+            onChange={(v) => onChange({ locOrigem: v })}
+            allowCreate={false}
+          />
+        </Field>
+        <button
+          type="button"
+          className="wms-btn-icon"
+          onClick={onRemove}
+          disabled={!canRemove}
+          title="Remover item"
+          style={{ marginBottom: 4 }}
+        >
+          <Icon name="x" size={12} />
+        </button>
+      </div>
+
+      {ready && locais.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: "1px dashed var(--wms-c-border)",
+          }}
+        >
+          <span
+            className="wms-td-mute"
+            style={{ fontSize: 11, alignSelf: "center", marginRight: 2 }}
+          >
+            <Icon name="box" size={10} /> Onde tem saldo:
+          </span>
+          {locais.map((l) => {
+            const isSelected = l.localizacao_id === item.locOrigem;
+            return (
+              <button
+                key={l.localizacao_id}
+                type="button"
+                onClick={() =>
+                  onChange({ locOrigem: l.localizacao_id })
+                }
+                className={`wms-btn wms-btn-sm ${
+                  isSelected ? "wms-btn-primary" : "wms-btn-ghost"
+                }`}
+                style={{ fontSize: 11 }}
+              >
+                <span className="wms-mono">{l.codigo}</span>
+                <span
+                  className="wms-td-mute"
+                  style={{ marginLeft: 5, fontSize: 10.5 }}
+                >
+                  {fmtNum(Number(l.saldo))} un · {l.tipo}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {ready && !sugQuery.isLoading && locais.length === 0 && (
+        <div
+          className="wms-td-mute"
+          style={{
+            fontSize: 11,
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: "1px dashed var(--wms-c-border)",
+          }}
+        >
+          <Icon name="alert" size={10} /> Esse SKU não tem saldo no galpão
+          origem.
+        </div>
+      )}
+      {overQty && (
+        <div
+          className="wms-td-warn"
+          style={{ fontSize: 11, marginTop: 6 }}
+        >
+          <Icon name="alert" size={10} /> Qty maior que o saldo disponível na
+          localização ({fmtNum(Number(locSel!.saldo))}).
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TransferModal({
   seed,
   onClose,
@@ -976,19 +1192,22 @@ export function TransferModal({
   );
   const empresaId = empresaIdUser ?? empresasOrig[0]?.id ?? "";
 
-  function updateItem(idx: number, patch: Partial<TransferItem>) {
+  // useCallback pra estabilidade — TransferItemRow tem useEffect que depende
+  // dessa função; sem useCallback, ela mudaria toda render e o effect rodaria
+  // em loop.
+  const updateItem = useCallback((idx: number, patch: Partial<TransferItem>) => {
     setItens((prev) =>
       prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)),
     );
-  }
-  function addItem() {
+  }, []);
+  const addItem = useCallback(() => {
     setItens((prev) => [...prev, { produto: null, qty: "", locOrigem: "" }]);
-  }
-  function removeItem(idx: number) {
+  }, []);
+  const removeItem = useCallback((idx: number) => {
     setItens((prev) =>
       prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev,
     );
-  }
+  }, []);
 
   const mut = useMutation({
     mutationFn: async () => {
@@ -1137,56 +1356,16 @@ export function TransferModal({
         }}
       >
         {itens.map((it, idx) => (
-          <div
+          <TransferItemRow
             key={idx}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 90px 1fr 32px",
-              gap: 8,
-              alignItems: "end",
-              padding: 10,
-              background: "var(--wms-c-faint)",
-              border: "1px solid var(--wms-c-border)",
-              borderRadius: "var(--wms-r-3)",
-            }}
-          >
-            <Field label={idx === 0 ? "Produto" : undefined} required>
-              <ProdutoCombo
-                value={it.produto}
-                onChange={(p) => updateItem(idx, { produto: p })}
-              />
-            </Field>
-            <Field label={idx === 0 ? "Qty" : undefined} required>
-              <input
-                className="wms-input wms-mono wms-tar"
-                type="number"
-                min="1"
-                value={it.qty}
-                onChange={(e) => updateItem(idx, { qty: e.target.value })}
-                placeholder="0"
-              />
-            </Field>
-            <Field
-              label={idx === 0 ? "Localização origem" : undefined}
-              required
-            >
-              <LocalizacaoCombo
-                galpaoId={galOrig || null}
-                value={it.locOrigem}
-                onChange={(v) => updateItem(idx, { locOrigem: v })}
-              />
-            </Field>
-            <button
-              type="button"
-              className="wms-btn-icon"
-              onClick={() => removeItem(idx)}
-              disabled={itens.length === 1}
-              title="Remover item"
-              style={{ marginBottom: 4 }}
-            >
-              <Icon name="x" size={12} />
-            </button>
-          </div>
+            item={it}
+            idx={idx}
+            galOrig={galOrig}
+            empresaId={empresaId}
+            canRemove={itens.length > 1}
+            onChange={(patch) => updateItem(idx, patch)}
+            onRemove={() => removeItem(idx)}
+          />
         ))}
       </div>
 

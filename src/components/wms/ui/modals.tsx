@@ -396,24 +396,18 @@ interface ModalProdutoSeed {
   produto?: Produto;
 }
 
-type ReceberOrigem =
-  | "compra_manual"
-  | "nf_compra"
-  | "devolucao"
-  | "retroativo";
+type ReceberOrigem = "compra_manual" | "nf_compra" | "devolucao";
 
 const RECEBER_ORIGEM_OPTS: { id: ReceberOrigem; label: string }[] = [
   { id: "compra_manual", label: "Compra manual" },
   { id: "nf_compra", label: "NF de compra" },
   { id: "devolucao", label: "Devolução" },
-  { id: "retroativo", label: "Retroativo" },
 ];
 
 // Mapeia escolha do UI pro tipo canônico de origem usado no ledger.
+// Retroativo não é uma opção: é inferido da data escolhida (data < hoje).
 function origemToBackend(o: ReceberOrigem): string {
   switch (o) {
-    case "retroativo":
-      return "lancamento_retroativo";
     case "devolucao":
       return "nf_devolucao_cliente";
     case "compra_manual":
@@ -500,13 +494,10 @@ export function ReceberModal({
 
   const mut = useMutation({
     mutationFn: async () => {
-      // Se o usuário escolheu "retroativo" mas manteve data de hoje, OU
-      // escolheu uma origem normal mas data no passado, normaliza coerência:
-      // data no passado sempre vira lancamento_retroativo.
-      const origemFinal =
-        isRetroativo && origem !== "retroativo"
-          ? "lancamento_retroativo"
-          : origemToBackend(origem);
+      // Data no passado vira lancamento_retroativo automaticamente.
+      const origemFinal = isRetroativo
+        ? "lancamento_retroativo"
+        : origemToBackend(origem);
       const r = await sisoFetch("/api/wms/receber", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -553,6 +544,7 @@ export function ReceberModal({
     <Modal
       title="Receber mercadoria"
       subtitle="Entrada no ledger com sugestão automática de putaway"
+      width={720}
       onClose={onClose}
       footer={
         <>
@@ -635,7 +627,7 @@ export function ReceberModal({
         </Field>
       </div>
 
-      <div className="wms-row-3">
+      <div className="wms-row-2">
         <Field label="Empresa (dona)">
           <select
             className="wms-select"
@@ -666,14 +658,14 @@ export function ReceberModal({
             ))}
           </select>
         </Field>
-        <Field label="Localização" required>
-          <LocalizacaoCombo
-            galpaoId={galpaoId}
-            value={locId}
-            onChange={(v) => setLocIdUser(v)}
-          />
-        </Field>
       </div>
+      <Field label="Localização" required>
+        <LocalizacaoCombo
+          galpaoId={galpaoId}
+          value={locId}
+          onChange={(v) => setLocIdUser(v)}
+        />
+      </Field>
 
       {locaisExistentes.length > 0 && (
         <div

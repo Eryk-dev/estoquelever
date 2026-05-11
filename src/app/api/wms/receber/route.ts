@@ -13,6 +13,24 @@ export async function POST(req: NextRequest) {
   if (!body.empresa_dona_id || !body.galpao_id || !Array.isArray(body.itens)) {
     return NextResponse.json({ error: "campos obrigatórios faltando" }, { status: 400 });
   }
+  // Valida data_recebimento se vier: precisa ser ISO parseável e não pode
+  // ser futuro (no max o relógio atual do servidor com 5min de tolerância
+  // pra clock skew entre cliente/servidor).
+  if (body.data_recebimento !== undefined && body.data_recebimento !== null) {
+    const ts = new Date(body.data_recebimento);
+    if (isNaN(ts.getTime())) {
+      return NextResponse.json(
+        { error: "data_recebimento inválida" },
+        { status: 400 },
+      );
+    }
+    if (ts.getTime() > Date.now() + 5 * 60 * 1000) {
+      return NextResponse.json(
+        { error: "data_recebimento não pode ser no futuro" },
+        { status: 400 },
+      );
+    }
+  }
   try {
     await receberEstoque({ ...body, usuario_id: auth.user.id });
     return NextResponse.json({ ok: true });
@@ -26,6 +44,7 @@ export async function POST(req: NextRequest) {
         empresa_dona_id: body.empresa_dona_id,
         galpao_id: body.galpao_id,
         nf_referencia: body.nf_referencia,
+        data_recebimento: body.data_recebimento,
         n_itens: Array.isArray(body.itens) ? body.itens.length : 0,
       },
     });

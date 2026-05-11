@@ -1,6 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao } from "./ledger";
-import type { Quadrupla, Movimentacao } from "./types";
+import type { Quadrupla, Movimentacao, OrigemTipo } from "./types";
 import { logger } from "@/lib/logger";
 
 interface ItemRecebimento {
@@ -16,9 +16,29 @@ export interface ReceberInput {
   itens: ItemRecebimento[];
   nf_referencia?: string;
   usuario_id: string;
+  /**
+   * ISO timestamp da data do recebimento. Se omitido, usa now().
+   * Permite lançamento retroativo direto pelo modal de Receber sem fluxo
+   * separado em /wms/retroativos.
+   */
+  data_recebimento?: string;
+  /**
+   * Tipo de origem. Default "compra_manual". O modal de Receber pode passar
+   * "lancamento_retroativo" (data no passado) ou "nf_devolucao_cliente"
+   * (devolução). Não validamos contra OrigemTipo aqui — o RPC do ledger
+   * aceita qualquer string e a constraint da tabela rejeita inválidos.
+   */
+  origem_tipo?: OrigemTipo;
+  observacoes?: string;
 }
 
 export async function receberEstoque(input: ReceberInput): Promise<void> {
+  const origemTipo = input.origem_tipo ?? "compra_manual";
+  const obsBase =
+    input.observacoes ??
+    (input.nf_referencia
+      ? `recebimento NF ${input.nf_referencia}`
+      : "recebimento sem NF");
   for (const item of input.itens) {
     await inserirMovimentacao({
       quadrupla: {
@@ -29,13 +49,12 @@ export async function receberEstoque(input: ReceberInput): Promise<void> {
       },
       tipo: "E",
       qty: item.qty,
-      origem_tipo: "compra_manual",
+      origem_tipo: origemTipo,
       origem_detalhes: { nf_referencia: input.nf_referencia },
       custo_unitario: item.custo_unitario,
       usuario_id: input.usuario_id,
-      observacoes: input.nf_referencia
-        ? `recebimento NF ${input.nf_referencia}`
-        : "recebimento sem NF",
+      observacoes: obsBase,
+      criado_em: input.data_recebimento,
     });
     if (item.custo_unitario !== undefined) {
       await recalcularCustoMedio(

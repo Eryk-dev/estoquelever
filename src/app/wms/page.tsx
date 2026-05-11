@@ -67,22 +67,10 @@ const GROUPS: Group[] = [
         desc: "Classificação A/B/C/D",
       },
       {
-        href: "/wms/retroativos",
-        icon: "history",
-        title: "Retroativos",
-        desc: "Pendências de reconciliação",
-      },
-      {
         href: "/wms/troca-sku",
         icon: "edit",
         title: "Troca SKU",
         desc: "Substituição na separação",
-      },
-      {
-        href: "/wms/ajuste",
-        icon: "sliders",
-        title: "Ajuste manual",
-        desc: "Entrada ou saída com motivo",
       },
     ],
   },

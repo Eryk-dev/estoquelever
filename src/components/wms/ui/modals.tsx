@@ -400,16 +400,49 @@ type ReceberOrigem =
   | "compra_manual"
   | "nf_compra"
   | "devolucao"
-  | "transferencia"
   | "retroativo";
 
 const RECEBER_ORIGEM_OPTS: { id: ReceberOrigem; label: string }[] = [
   { id: "compra_manual", label: "Compra manual" },
   { id: "nf_compra", label: "NF de compra" },
   { id: "devolucao", label: "Devolução" },
-  { id: "transferencia", label: "Transferência" },
   { id: "retroativo", label: "Retroativo" },
 ];
+
+// Mapeia escolha do UI pro tipo canônico de origem usado no ledger.
+function origemToBackend(o: ReceberOrigem): string {
+  switch (o) {
+    case "retroativo":
+      return "lancamento_retroativo";
+    case "devolucao":
+      return "nf_devolucao_cliente";
+    case "compra_manual":
+    case "nf_compra":
+    default:
+      return "compra_manual";
+  }
+}
+
+// Data de hoje em YYYY-MM-DD no timezone local.
+function hojeISODate(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Constrói timestamp ISO a partir de date string + hora atual local.
+// Preserva hora-do-dia no audit trail; quando a data é hoje, vira ~now().
+function buildTimestamp(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const now = new Date();
+  return new Date(
+    y,
+    m - 1,
+    d,
+    now.getHours(),
+    now.getMinutes(),
+    now.getSeconds(),
+  ).toISOString();
+}
 
 export function ReceberModal({
   seed,
@@ -426,11 +459,14 @@ export function ReceberModal({
   const [qty, setQty] = useState("");
   const [custo, setCusto] = useState("");
   const [origem, setOrigem] = useState<ReceberOrigem>("compra_manual");
+  const [data, setData] = useState<string>(hojeISODate());
   const [empresaIdUser, setEmpresaIdUser] = useState<string | null>(null);
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
   const [locIdUser, setLocIdUser] = useState<string | null>(null);
   const [obs, setObs] = useState("");
   const qc = useQueryClient();
+  const today = hojeISODate();
+  const isRetroativo = data !== today;
 
   // Valores efetivos: user choice ?? padrão derivado dos dados
   const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
@@ -457,6 +493,13 @@ export function ReceberModal({
 
   const mut = useMutation({
     mutationFn: async () => {
+      // Se o usuário escolheu "retroativo" mas manteve data de hoje, OU
+      // escolheu uma origem normal mas data no passado, normaliza coerência:
+      // data no passado sempre vira lancamento_retroativo.
+      const origemFinal =
+        isRetroativo && origem !== "retroativo"
+          ? "lancamento_retroativo"
+          : origemToBackend(origem);
       const r = await sisoFetch("/api/wms/receber", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -471,8 +514,9 @@ export function ReceberModal({
               localizacao_id: locId,
             },
           ],
-          origem_tipo: origem,
+          origem_tipo: origemFinal,
           observacoes: obs || undefined,
+          data_recebimento: buildTimestamp(data),
         }),
       });
       if (!r.ok) {
@@ -484,6 +528,10 @@ export function ReceberModal({
       toast.success(`Entrada registrada: +${fmtNum(Number(qty))} de ${pid!.sku}`);
       qc.invalidateQueries({ queryKey: ["wms-estoque"] });
       qc.invalidateQueries({ queryKey: ["wms-ledger"] });
+      qc.invalidateQueries({ queryKey: ["wms-produtos"] });
+      qc.invalidateQueries({ queryKey: ["wms-cobertura-all"] });
+      qc.invalidateQueries({ queryKey: ["wms-cobertura"] });
+      qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
       onClose();
     },
     onError: (err: Error) => {
@@ -547,20 +595,38 @@ export function ReceberModal({
         </Field>
       </div>
 
-      <Field label="Origem">
-        <div className="wms-seg wms-seg-full">
-          {RECEBER_ORIGEM_OPTS.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              className={`wms-seg-btn ${origem === o.id ? "is-active" : ""}`}
-              onClick={() => setOrigem(o.id)}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </Field>
+      <div className="wms-row-2">
+        <Field label="Origem">
+          <div className="wms-seg wms-seg-full">
+            {RECEBER_ORIGEM_OPTS.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                className={`wms-seg-btn ${origem === o.id ? "is-active" : ""}`}
+                onClick={() => setOrigem(o.id)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field
+          label="Data do recebimento"
+          hint={
+            isRetroativo
+              ? "Data no passado — registrado como retroativo"
+              : "Hoje"
+          }
+        >
+          <input
+            className="wms-input"
+            type="date"
+            value={data}
+            max={today}
+            onChange={(e) => setData(e.target.value || today)}
+          />
+        </Field>
+      </div>
 
       <div className="wms-row-3">
         <Field label="Empresa (dona)">
@@ -685,6 +751,10 @@ export function AjusteModal({
       toast.success(`Ajuste registrado: ${sign}${fmtNum(Number(qty))} de ${pid!.sku}`);
       qc.invalidateQueries({ queryKey: ["wms-estoque"] });
       qc.invalidateQueries({ queryKey: ["wms-ledger"] });
+      qc.invalidateQueries({ queryKey: ["wms-produtos"] });
+      qc.invalidateQueries({ queryKey: ["wms-cobertura-all"] });
+      qc.invalidateQueries({ queryKey: ["wms-cobertura"] });
+      qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
       onClose();
     },
     onError: (err: Error) => toast.error(err.message),
@@ -868,6 +938,10 @@ export function TransferModal({
       );
       qc.invalidateQueries({ queryKey: ["wms-estoque"] });
       qc.invalidateQueries({ queryKey: ["wms-ledger"] });
+      qc.invalidateQueries({ queryKey: ["wms-produtos"] });
+      qc.invalidateQueries({ queryKey: ["wms-cobertura-all"] });
+      qc.invalidateQueries({ queryKey: ["wms-cobertura"] });
+      qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
       onClose();
     },
     onError: (err: Error) => toast.error(err.message),

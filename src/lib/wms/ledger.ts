@@ -61,6 +61,12 @@ interface InserirMovInput {
   usuario_id?: string;
   observacoes?: string;
   estorno_de?: string;
+  /**
+   * Data/hora da movimentação. Se omitido, usa now() no DB.
+   * Permite registrar movimentações retroativas (data no passado) sem fluxo
+   * separado — ex: receber mercadoria que chegou ontem.
+   */
+  criado_em?: string;
 }
 
 /**
@@ -104,6 +110,7 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
     p_usuario: input.usuario_id ?? null,
     p_observacoes: input.observacoes ?? null,
     p_estorno_de: input.estorno_de ?? null,
+    p_criado_em: input.criado_em ?? null,
   });
   if (error) {
     logger.error("wms.ledger", "falha ao inserir mov", { error, input });

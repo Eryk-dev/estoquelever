@@ -686,7 +686,8 @@ export default function WmsSeparacaoPage() {
         }}
       />
 
-      {/* Toolbar de filtros */}
+      {/* Toolbar — filtros à esquerda, ações primárias da tab à direita.
+          Inline (sem sticky), agrupado em uma linha que faz wrap quando estreito. */}
       <div className="wms-toolbar" style={{ marginTop: 16 }}>
         <div className="wms-search-wrap">
           <Icon name="search" size={13} />
@@ -761,7 +762,253 @@ export default function WmsSeparacaoPage() {
             ))}
           </select>
         )}
+
+        {/* Ações primárias da tab — empurradas pra direita */}
+        {pedidos.length > 0 && (
+          <div
+            style={{
+              marginLeft: "auto",
+              display: "flex",
+              gap: 6,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <PrimaryTabActions
+              tab={tab}
+              effectiveCount={effectiveCount}
+              hasSelection={selectedArr.length > 0}
+              selectedCount={selectedArr.length}
+              totalCount={pedidos.length}
+              separadoStats={separadoStats}
+              loading={
+                iniciarMut.isPending ||
+                retryEtiquetaMut.isPending ||
+                reimprimirMut.isPending
+              }
+              onSepararChecklist={batchSepararChecklist}
+              onEmbalar={batchEmbalar}
+              onRetryEtiqueta={(ids) =>
+                retryEtiquetaMut.mutate(ids ?? effectiveIds)
+              }
+            />
+          </div>
+        )}
       </div>
+
+      {/* Selection bar — só visível quando há pedidos marcados.
+          Contador + ações secundárias (Tag, Mover, Forçar pendente, Retry, Imprimir).
+          Inline, sem sticky — fica logo abaixo da toolbar. */}
+      {selectedArr.length > 0 && pedidos.length > 0 && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: "8px 12px",
+            background: "var(--wms-c-info-bg)",
+            border: "1px solid var(--wms-c-info-bd)",
+            borderRadius: "var(--wms-r-2)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            flexWrap: "wrap",
+            fontSize: 12,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              color: "var(--wms-c-info)",
+              fontWeight: 500,
+            }}
+          >
+            <strong>{selectedArr.length}</strong> selecionado(s)
+            <button
+              className="wms-btn wms-btn-ghost wms-btn-sm"
+              onClick={clearSelection}
+              type="button"
+            >
+              <Icon name="x" size={11} />
+              Limpar
+            </button>
+
+            {/* Tag */}
+            <div style={{ position: "relative" }}>
+              <button
+                className="wms-btn wms-btn-ghost wms-btn-sm"
+                onClick={() => setTagModalOpen(!tagModalOpen)}
+                type="button"
+                disabled={addTagMut.isPending || removeTagMut.isPending}
+              >
+                <Icon name="tag" size={11} />
+                Tag · {selectedArr.length}
+              </button>
+              {tagModalOpen && (
+                <TagPopover
+                  onClose={() => setTagModalOpen(false)}
+                  onAdd={(tag) => {
+                    addTagMut.mutate({ ids: selectedArr, tag });
+                    setTagModalOpen(false);
+                  }}
+                  onRemove={(tag) =>
+                    removeTagMut.mutate({ ids: selectedArr, tag })
+                  }
+                  tagsExistentes={allTags}
+                  tagsNaSelection={(() => {
+                    const set = new Set<string>();
+                    for (const p of pedidos) {
+                      if (selectedIds.has(p.id)) {
+                        for (const t of p.separacao_tags) set.add(t);
+                      }
+                    }
+                    return Array.from(set);
+                  })()}
+                  pending={addTagMut.isPending || removeTagMut.isPending}
+                />
+              )}
+            </div>
+
+            {/* Mover etapa (admin) */}
+            {isAdmin && moveTargets && (
+              <div style={{ position: "relative" }}>
+                <button
+                  className="wms-btn wms-btn-ghost wms-btn-sm"
+                  type="button"
+                  onClick={() => setMoveOpen(!moveOpen)}
+                  disabled={moverEtapaMut.isPending}
+                >
+                  <Icon name="arrow-right" size={11} />
+                  Mover…
+                </button>
+                {moveOpen && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top: "100%",
+                      marginTop: 6,
+                      minWidth: 200,
+                      background: "var(--wms-c-paper)",
+                      border: "1px solid var(--wms-c-border)",
+                      borderRadius: "var(--wms-r-3)",
+                      padding: 4,
+                      boxShadow: "0 10px 28px -12px rgba(0,0,0,.25)",
+                      zIndex: 20,
+                    }}
+                  >
+                    {moveTargets.back.length > 0 && (
+                      <>
+                        <div
+                          className="wms-td-mute"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            textTransform: "uppercase",
+                            letterSpacing: ".06em",
+                            padding: "6px 10px 2px",
+                          }}
+                        >
+                          Voltar para
+                        </div>
+                        {moveTargets.back.map((t) => (
+                          <button
+                            key={t.value}
+                            type="button"
+                            onClick={() =>
+                              moverEtapaMut.mutate({
+                                ids: selectedArr,
+                                novo_status: t.value,
+                              })
+                            }
+                            style={moverItem()}
+                          >
+                            {t.label}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {moveTargets.forward.length > 0 && (
+                      <>
+                        <div
+                          className="wms-td-mute"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            textTransform: "uppercase",
+                            letterSpacing: ".06em",
+                            padding: "6px 10px 2px",
+                          }}
+                        >
+                          Avançar para
+                        </div>
+                        {moveTargets.forward.map((t) => (
+                          <button
+                            key={t.value}
+                            type="button"
+                            onClick={() =>
+                              moverEtapaMut.mutate({
+                                ids: selectedArr,
+                                novo_status: t.value,
+                              })
+                            }
+                            style={moverItem()}
+                          >
+                            {t.label}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {/* Ações específicas por tab que requerem selection */}
+            {tab === "aguardando_nf" && isAdmin && (
+              <button
+                className="wms-btn wms-btn-ghost wms-btn-sm"
+                onClick={() => forcarPendenteMut.mutate(selectedArr)}
+                disabled={forcarPendenteMut.isPending}
+                type="button"
+              >
+                <Icon name="alert" size={11} />
+                Forçar pendente · {selectedArr.length}
+              </button>
+            )}
+            {tab === "embalado" && (
+              <>
+                <button
+                  className="wms-btn wms-btn-ghost wms-btn-sm"
+                  onClick={() => retryEtiquetaMut.mutate(selectedArr)}
+                  disabled={retryEtiquetaMut.isPending}
+                  type="button"
+                  style={{
+                    borderColor: "var(--wms-c-warn-bd)",
+                    background: "var(--wms-c-warn-bg)",
+                    color: "var(--wms-c-warn)",
+                  }}
+                >
+                  <Icon name="rotate" size={11} />
+                  Retry etiqueta · {selectedArr.length}
+                </button>
+                <button
+                  className="wms-btn wms-btn-primary wms-btn-sm"
+                  onClick={() => reimprimirMut.mutate(selectedArr)}
+                  disabled={reimprimirMut.isPending}
+                  type="button"
+                >
+                  <Icon name="download" size={11} />
+                  Imprimir · {selectedArr.length}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Aviso "X sem etiqueta" no separado (paridade legado) */}
       {tab === "separado" && separadoStats.semEtiqueta > 0 && (
@@ -1046,61 +1293,149 @@ export default function WmsSeparacaoPage() {
         </div>
       )}
 
-      {/* Footer sticky de ações — SEMPRE visível quando há pedidos na tab.
-          Opera em selection se houver, senão em todos os pedidos da tab. */}
-      {pedidos.length > 0 && (
-        <BatchActions
-          tab={tab}
-          effectiveCount={effectiveCount}
-          selectedCount={selectedArr.length}
-          totalCount={pedidos.length}
-          isAdmin={isAdmin}
-          moveTargets={moveTargets}
-          moveOpen={moveOpen}
-          setMoveOpen={setMoveOpen}
-          tagModalOpen={tagModalOpen}
-          setTagModalOpen={setTagModalOpen}
-          onClear={clearSelection}
-          onSepararChecklist={batchSepararChecklist}
-          onEmbalar={batchEmbalar}
-          onForcarPendente={() => forcarPendenteMut.mutate(effectiveIds)}
-          onMoverEtapa={(novo) =>
-            moverEtapaMut.mutate({ ids: effectiveIds, novo_status: novo })
-          }
-          onRetryEtiqueta={(ids) =>
-            retryEtiquetaMut.mutate(ids ?? effectiveIds)
-          }
-          onReimprimir={() => reimprimirMut.mutate(effectiveIds)}
-          separadoStats={separadoStats}
-          loading={
-            iniciarMut.isPending ||
-            forcarPendenteMut.isPending ||
-            moverEtapaMut.isPending ||
-            retryEtiquetaMut.isPending ||
-            reimprimirMut.isPending
-          }
-          // Tags
-          onAddTag={(tag) =>
-            addTagMut.mutate({ ids: selectedArr, tag })
-          }
-          onRemoveTag={(tag) =>
-            removeTagMut.mutate({ ids: selectedArr, tag })
-          }
-          tagsExistentes={allTags}
-          tagsNaSelection={(() => {
-            const set = new Set<string>();
-            for (const p of pedidos) {
-              if (selectedIds.has(p.id)) {
-                for (const t of p.separacao_tags) set.add(t);
-              }
-            }
-            return Array.from(set);
-          })()}
-          tagPending={addTagMut.isPending || removeTagMut.isPending}
-        />
-      )}
     </>
   );
+}
+
+// ─── Ações primárias inline na toolbar ───────────────────────────────────
+
+interface PrimaryTabActionsProps {
+  tab: Tab;
+  effectiveCount: number;
+  hasSelection: boolean;
+  selectedCount: number;
+  totalCount: number;
+  separadoStats: SeparadoStatsShape;
+  loading: boolean;
+  onSepararChecklist: (modo?: string) => void;
+  onEmbalar: (modo?: string, idsOverride?: string[]) => void;
+  onRetryEtiqueta: (ids?: string[]) => void;
+}
+
+function PrimaryTabActions({
+  tab,
+  effectiveCount,
+  hasSelection,
+  selectedCount,
+  totalCount,
+  separadoStats,
+  loading,
+  onSepararChecklist,
+  onEmbalar,
+  onRetryEtiqueta,
+}: PrimaryTabActionsProps) {
+  // Indicador "operando em todos" vs "operando em selection" (texto consistente)
+  const countLabel = hasSelection
+    ? `${selectedCount} selecionado(s)`
+    : `${totalCount} pedido(s)`;
+
+  if (tab === "aguardando_compra") {
+    return (
+      <>
+        <button
+          className="wms-btn wms-btn-primary wms-btn-sm"
+          onClick={() => onSepararChecklist("pick-oc")}
+          disabled={loading}
+          type="button"
+          title={`Iniciar separação pick-OC para ${countLabel}`}
+        >
+          <Icon name="arrow-right" size={11} />
+          {loading ? "Iniciando…" : `Separar (pick-OC) · ${effectiveCount}`}
+        </button>
+      </>
+    );
+  }
+
+  if (tab === "aguardando_separacao") {
+    return (
+      <button
+        className="wms-btn wms-btn-primary wms-btn-sm"
+        onClick={() => onSepararChecklist()}
+        disabled={loading}
+        type="button"
+        title={`Iniciar separação para ${countLabel}`}
+      >
+        <Icon name="arrow-right" size={11} />
+        {loading ? "Iniciando…" : `Separar · ${effectiveCount}`}
+      </button>
+    );
+  }
+
+  if (tab === "em_separacao") {
+    return (
+      <button
+        className="wms-btn wms-btn-primary wms-btn-sm"
+        onClick={() => onSepararChecklist()}
+        disabled={loading}
+        type="button"
+        title={`Retomar separação para ${countLabel}`}
+      >
+        <Icon name="arrow-right" size={11} />
+        {loading ? "Retomando…" : `Retomar · ${effectiveCount}`}
+      </button>
+    );
+  }
+
+  if (tab === "separado") {
+    return (
+      <>
+        <button
+          className="wms-btn wms-btn-primary wms-btn-sm"
+          onClick={() => onEmbalar()}
+          disabled={loading}
+          type="button"
+          title={`Embalar ${countLabel}`}
+        >
+          <Icon name="check" size={11} />
+          {hasSelection
+            ? `Embalar · ${selectedCount}`
+            : `Embalar todos (${totalCount})`}
+        </button>
+        {separadoStats.semEtiqueta > 0 && separadoStats.semEtiquetaIds && (
+          <button
+            className="wms-btn wms-btn-ghost wms-btn-sm"
+            onClick={() => onRetryEtiqueta(separadoStats.semEtiquetaIds!)}
+            disabled={loading}
+            type="button"
+            style={{
+              borderColor: "var(--wms-c-warn-bd)",
+              background: "var(--wms-c-warn-bg)",
+              color: "var(--wms-c-warn)",
+            }}
+          >
+            <Icon name="rotate" size={11} />
+            {loading
+              ? "Tentando…"
+              : `Gerar ${separadoStats.semEtiqueta} etiqueta(s)`}
+          </button>
+        )}
+        {separadoStats.semEtiqueta > 0 &&
+          separadoStats.comEtiqueta > 0 &&
+          separadoStats.comEtiquetaIds && (
+            <button
+              className="wms-btn wms-btn-primary wms-btn-sm"
+              onClick={() =>
+                onEmbalar(undefined, separadoStats.comEtiquetaIds)
+              }
+              disabled={loading}
+              type="button"
+              title="Embala só os pedidos que já têm etiqueta pronta"
+              style={{
+                background: "var(--wms-c-ok)",
+                borderColor: "var(--wms-c-ok)",
+              }}
+            >
+              <Icon name="check" size={11} />
+              Embalar {separadoStats.comEtiqueta} com etiqueta
+            </button>
+          )}
+      </>
+    );
+  }
+
+  // aguardando_nf e embalado: ação principal requer selection — só aparece na
+  // selection bar. Retorna nada na toolbar.
+  return null;
 }
 
 // ─── Subcomponents ────────────────────────────────────────────────────────
@@ -1395,7 +1730,7 @@ function TagPopover({
   );
 }
 
-// ─── Batch actions footer ─────────────────────────────────────────────────
+// ─── Shapes auxiliares ────────────────────────────────────────────────────
 
 interface SeparadoStatsShape {
   comEtiqueta: number;
@@ -1405,393 +1740,9 @@ interface SeparadoStatsShape {
   semEtiquetaIds?: string[];
 }
 
-function BatchActions({
-  tab,
-  effectiveCount,
-  selectedCount,
-  totalCount,
-  isAdmin,
-  moveTargets,
-  moveOpen,
-  setMoveOpen,
-  tagModalOpen,
-  setTagModalOpen,
-  onClear,
-  onSepararChecklist,
-  onEmbalar,
-  onForcarPendente,
-  onMoverEtapa,
-  onRetryEtiqueta,
-  onReimprimir,
-  separadoStats,
-  loading,
-  onAddTag,
-  onRemoveTag,
-  tagsExistentes,
-  tagsNaSelection,
-  tagPending,
-}: {
-  tab: Tab;
-  effectiveCount: number;
-  selectedCount: number;
-  totalCount: number;
-  isAdmin: boolean;
-  moveTargets:
-    | {
-        back: { value: StatusServer; label: string }[];
-        forward: { value: StatusServer; label: string }[];
-      }
-    | undefined;
-  moveOpen: boolean;
-  setMoveOpen: (v: boolean) => void;
-  tagModalOpen: boolean;
-  setTagModalOpen: (v: boolean) => void;
-  onClear: () => void;
-  onSepararChecklist: (modo?: string) => void;
-  onEmbalar: (modo?: string, idsOverride?: string[]) => void;
-  onForcarPendente: () => void;
-  onMoverEtapa: (status: StatusServer) => void;
-  onRetryEtiqueta: (ids?: string[]) => void;
-  onReimprimir: () => void;
-  separadoStats: SeparadoStatsShape;
-  loading: boolean;
-  onAddTag: (tag: string) => void;
-  onRemoveTag: (tag: string) => void;
-  tagsExistentes: string[];
-  tagsNaSelection: string[];
-  tagPending: boolean;
-}) {
-  // Tag só faz sentido com selection (operar em selection apenas).
-  const hasSelection = selectedCount > 0;
+// (BatchActions órfão removido — ações agora vivem inline na toolbar via
+// <PrimaryTabActions> e na selection bar acima da tabela.)
 
-  return (
-    <div
-      style={{
-        position: "sticky",
-        bottom: 0,
-        marginTop: 16,
-        padding: "10px 14px",
-        background: "var(--wms-c-paper)",
-        border: "1px solid var(--wms-c-border)",
-        borderRadius: "var(--wms-r-3)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 10,
-        flexWrap: "wrap",
-        boxShadow: "0 6px 20px -10px rgba(0,0,0,.18)",
-        zIndex: 10,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          fontSize: 13,
-        }}
-      >
-        {hasSelection ? (
-          <>
-            <strong>{selectedCount}</strong> selecionado(s)
-            <button
-              className="wms-btn wms-btn-ghost wms-btn-sm"
-              onClick={onClear}
-              type="button"
-            >
-              <Icon name="x" size={11} />
-              Limpar
-            </button>
-            {/* Tag — só com selection */}
-            <div style={{ position: "relative" }}>
-              <button
-                className="wms-btn wms-btn-ghost wms-btn-sm"
-                onClick={() => setTagModalOpen(!tagModalOpen)}
-                type="button"
-                disabled={tagPending}
-              >
-                <Icon name="tag" size={11} />
-                Tag · {selectedCount}
-              </button>
-              {tagModalOpen && (
-                <TagPopover
-                  onClose={() => setTagModalOpen(false)}
-                  onAdd={(tag) => {
-                    onAddTag(tag);
-                    setTagModalOpen(false);
-                  }}
-                  onRemove={(tag) => {
-                    onRemoveTag(tag);
-                  }}
-                  tagsExistentes={tagsExistentes}
-                  tagsNaSelection={tagsNaSelection}
-                  pending={tagPending}
-                />
-              )}
-            </div>
-          </>
-        ) : (
-          <span className="wms-td-mute" style={{ fontSize: 12 }}>
-            <strong>{totalCount}</strong> pedido(s) na tab
-          </span>
-        )}
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          gap: 6,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        {/* Mover (admin) — só com selection (paridade legado) */}
-        {isAdmin && moveTargets && hasSelection && (
-          <div style={{ position: "relative" }}>
-            <button
-              className="wms-btn wms-btn-ghost wms-btn-sm"
-              type="button"
-              onClick={() => setMoveOpen(!moveOpen)}
-              disabled={loading}
-            >
-              <Icon name="arrow-right" size={11} />
-              Mover…
-            </button>
-            {moveOpen && (
-              <div
-                style={{
-                  position: "absolute",
-                  right: 0,
-                  bottom: "100%",
-                  marginBottom: 6,
-                  minWidth: 200,
-                  background: "var(--wms-c-paper)",
-                  border: "1px solid var(--wms-c-border)",
-                  borderRadius: "var(--wms-r-3)",
-                  padding: 4,
-                  boxShadow: "0 10px 28px -12px rgba(0,0,0,.25)",
-                  zIndex: 20,
-                }}
-              >
-                {moveTargets.back.length > 0 && (
-                  <>
-                    <div
-                      className="wms-td-mute"
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 600,
-                        textTransform: "uppercase",
-                        letterSpacing: ".06em",
-                        padding: "6px 10px 2px",
-                      }}
-                    >
-                      Voltar para
-                    </div>
-                    {moveTargets.back.map((t) => (
-                      <button
-                        key={t.value}
-                        type="button"
-                        onClick={() => onMoverEtapa(t.value)}
-                        style={moverItem()}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </>
-                )}
-                {moveTargets.forward.length > 0 && (
-                  <>
-                    <div
-                      className="wms-td-mute"
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 600,
-                        textTransform: "uppercase",
-                        letterSpacing: ".06em",
-                        padding: "6px 10px 2px",
-                      }}
-                    >
-                      Avançar para
-                    </div>
-                    {moveTargets.forward.map((t) => (
-                      <button
-                        key={t.value}
-                        type="button"
-                        onClick={() => onMoverEtapa(t.value)}
-                        style={moverItem()}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Ações específicas por tab — sempre visíveis quando há pedidos */}
-        {tab === "aguardando_compra" && (
-          <button
-            className="wms-btn wms-btn-primary wms-btn-sm"
-            onClick={() => onSepararChecklist("pick-oc")}
-            disabled={loading}
-            type="button"
-          >
-            <Icon name="arrow-right" size={11} />
-            {loading
-              ? "Iniciando…"
-              : `Separar (pick-OC) · ${effectiveCount}`}
-          </button>
-        )}
-
-        {tab === "aguardando_nf" && isAdmin && (
-          <button
-            className="wms-btn wms-btn-ghost wms-btn-sm"
-            onClick={onForcarPendente}
-            disabled={loading || !hasSelection}
-            type="button"
-            title={
-              hasSelection
-                ? "Pula a NF e move pra Aguardando Separação"
-                : "Selecione pedidos pra forçar pendente"
-            }
-          >
-            <Icon name="alert" size={11} />
-            {loading
-              ? "Movendo…"
-              : `Forçar pendente · ${selectedCount || 0}`}
-          </button>
-        )}
-
-        {tab === "aguardando_separacao" && (
-          <button
-            className="wms-btn wms-btn-primary wms-btn-sm"
-            onClick={() => onSepararChecklist()}
-            disabled={loading}
-            type="button"
-          >
-            <Icon name="arrow-right" size={11} />
-            {loading
-              ? "Iniciando…"
-              : `Separar · ${effectiveCount} pedido(s)`}
-          </button>
-        )}
-
-        {tab === "em_separacao" && (
-          <button
-            className="wms-btn wms-btn-primary wms-btn-sm"
-            onClick={() => onSepararChecklist()}
-            disabled={loading}
-            type="button"
-          >
-            <Icon name="arrow-right" size={11} />
-            {loading
-              ? "Retomando…"
-              : `Retomar · ${effectiveCount} pedido(s)`}
-          </button>
-        )}
-
-        {tab === "separado" && (
-          <>
-            <button
-              className="wms-btn wms-btn-ghost wms-btn-sm"
-              onClick={() => onEmbalar()}
-              disabled={loading}
-              type="button"
-            >
-              <Icon name="check" size={11} />
-              {hasSelection
-                ? `Embalar · ${selectedCount}`
-                : `Embalar todos (${totalCount})`}
-            </button>
-            {separadoStats.semEtiqueta > 0 && separadoStats.semEtiquetaIds && (
-              <button
-                className="wms-btn wms-btn-ghost wms-btn-sm"
-                onClick={() =>
-                  onRetryEtiqueta(separadoStats.semEtiquetaIds!)
-                }
-                disabled={loading}
-                type="button"
-                style={{
-                  borderColor: "var(--wms-c-warn-bd)",
-                  background: "var(--wms-c-warn-bg)",
-                  color: "var(--wms-c-warn)",
-                }}
-              >
-                <Icon name="rotate" size={11} />
-                {loading
-                  ? "Tentando…"
-                  : `Gerar ${separadoStats.semEtiqueta} etiqueta(s)`}
-              </button>
-            )}
-            {separadoStats.semEtiqueta > 0 &&
-              separadoStats.comEtiqueta > 0 &&
-              separadoStats.comEtiquetaIds && (
-                <button
-                  className="wms-btn wms-btn-primary wms-btn-sm"
-                  onClick={() =>
-                    onEmbalar(undefined, separadoStats.comEtiquetaIds)
-                  }
-                  disabled={loading}
-                  type="button"
-                  title="Embala só os pedidos que já têm etiqueta pronta"
-                  style={{
-                    background: "var(--wms-c-ok)",
-                    borderColor: "var(--wms-c-ok)",
-                  }}
-                >
-                  <Icon name="check" size={11} />
-                  Embalar {separadoStats.comEtiqueta} com etiqueta
-                </button>
-              )}
-          </>
-        )}
-
-        {tab === "embalado" && (
-          <>
-            <button
-              className="wms-btn wms-btn-ghost wms-btn-sm"
-              onClick={() => onRetryEtiqueta()}
-              disabled={loading || !hasSelection}
-              type="button"
-              title={
-                hasSelection
-                  ? "Tenta recuperar etiquetas faltantes"
-                  : "Selecione pedidos pra retry"
-              }
-              style={
-                hasSelection
-                  ? {
-                      borderColor: "var(--wms-c-warn-bd)",
-                      background: "var(--wms-c-warn-bg)",
-                      color: "var(--wms-c-warn)",
-                    }
-                  : undefined
-              }
-            >
-              <Icon name="rotate" size={11} />
-              {loading
-                ? "Tentando…"
-                : `Retry etiqueta · ${selectedCount || 0}`}
-            </button>
-            <button
-              className="wms-btn wms-btn-primary wms-btn-sm"
-              onClick={onReimprimir}
-              disabled={loading || !hasSelection}
-              type="button"
-            >
-              <Icon name="download" size={11} />
-              {loading
-                ? "Imprimindo…"
-                : `Imprimir · ${selectedCount || 0} etiqueta(s)`}
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function moverItem(): React.CSSProperties {
   return {

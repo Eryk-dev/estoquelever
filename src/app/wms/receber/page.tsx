@@ -403,6 +403,7 @@ function TabLote() {
               putaway={putawayQueries[idx]?.data}
               isFetching={!!putawayQueries[idx]?.isFetching}
               galpaoId={galpaoId}
+              locsById={locsById}
               canResolve={!!empresaId && !!galpaoId}
               onChange={(next) =>
                 setItens((prev) =>
@@ -569,6 +570,7 @@ function ItemLoteRow({
   putaway,
   isFetching,
   galpaoId,
+  locsById,
   canResolve,
   onChange,
   onRemove,
@@ -577,6 +579,7 @@ function ItemLoteRow({
   putaway?: PutawayResp;
   isFetching: boolean;
   galpaoId: string;
+  locsById: Map<string, { codigo: string; tipo: string }>;
   canResolve: boolean;
   onChange: (next: ItemLote) => void;
   onRemove: () => void;
@@ -584,8 +587,15 @@ function ItemLoteRow({
   const [trocandoLoc, setTrocandoLoc] = useState(false);
 
   const locIdAtual = item.locIdOverride ?? putaway?.localizacao_id ?? "";
+  // Resolve o codigo na ordem: override explicito (chips) > catalogo de locs
+  // do galpao (cobre selecoes via combo, que so trazem o id) > sugestao do
+  // putaway > vazio. Sem o lookup em locsById, selecoes via combo exibiriam
+  // o codigo da sugestao original em vez da loc escolhida.
   const locCodigoAtual =
-    item.locCodigoOverride ?? putaway?.codigo ?? "";
+    item.locCodigoOverride ??
+    (locIdAtual ? locsById.get(locIdAtual)?.codigo : undefined) ??
+    putaway?.codigo ??
+    "";
   const isSugestao =
     !!putaway && locIdAtual === putaway.localizacao_id && !item.locIdOverride;
 

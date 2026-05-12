@@ -583,3 +583,26 @@ erros:
   files:
     - src/app/wms/receber/page.tsx
   tags: [wms, receber, lote, localizacao, combo, autocomplete, putaway, ux]
+
+- id: wms-receber-lote-codigo-loc-errado-apos-combo
+  date: 2026-05-12
+  source: wms.receber.lote.ItemLoteRow
+  category: business_logic
+  message: "Apos escolher uma loc pelo combo 'Trocar loc', a linha do item exibe o codigo da loc sugerida original em vez da loc selecionada (mas o Plano de guarda mostra a correta)."
+  cause: >
+    O callback do LocalizacaoCombo so salvava o id em locIdOverride e zerava
+    locCodigoOverride. A linha do item resolvia o codigo via
+    `item.locCodigoOverride ?? putaway?.codigo ?? ""`, caindo no codigo da
+    sugestao do putaway. O Plano de guarda nao tinha o problema porque ja
+    olhava o mapa locsById (catalogo de locs do galpao). Os chips de "Onde
+    ja tem saldo" nao tinham o problema porque setavam codigo + id juntos.
+    So o caminho do combo ficava inconsistente.
+  fix: >
+    Passa locsById como prop pro ItemLoteRow e resolve o codigo na ordem:
+    override explicito (chips) > lookup em locsById pelo id atual (cobre
+    selecoes via combo) > sugestao do putaway > vazio. Estado interno do
+    item segue como antes (locCodigoOverride permanece null pra selecoes
+    via combo); a resolucao acontece so no momento da renderizacao.
+  files:
+    - src/app/wms/receber/page.tsx
+  tags: [wms, receber, lote, localizacao, combo, display, ux]

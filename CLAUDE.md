@@ -504,8 +504,8 @@ Schema 4D: cada posição de estoque é única por **(produto, dona, galpão, lo
 
 | Table | Purpose |
 |---|---|
-| `siso_fornecedores` | Fornecedores únicos (nome unique, prefixo_sku, cnpj). 11 cadastrados via auto-cadastro do mapeamento canônico. |
-| `siso_produto_fornecedores` | Relação produto↔fornecedor com lead_time min/medio/max + custo_unitario + qty_minima_pedido + multiplo_compra + flag preferencial. UNIQUE(produto, fornecedor). |
+| `siso_fornecedores` | Fornecedores únicos (nome unique, prefixo_sku, cnpj, lead_time_dias_min/medio/max nullable). 11 cadastrados via auto-cadastro do mapeamento canônico. Lead time aqui é **default**: ao vincular um produto via `vincularProdutoFornecedor`/`upsertProdutoFornecedor` (sync Tiny) sem lead_time explícito, herda esses valores. |
+| `siso_produto_fornecedores` | Relação produto↔fornecedor com lead_time min/medio/max + custo_unitario + qty_minima_pedido + multiplo_compra + flag preferencial. UNIQUE(produto, fornecedor). Lead time pode ser sobrescrito por produto; defaults vêm de `siso_fornecedores` no insert. |
 | `siso_emprestimo_regras` | Matriz N×N direcional credora→devedora (UNIQUE par + CHECK credora ≠ devedora). Tem `limites_por_produto jsonb` pra limite por SKU + `limite_max_por_produto numeric` global. |
 | `siso_localizacao_locks` | Locks operacionais de localização (cycle_count, contagem_completa, manutencao). UNIQUE parcial WHERE finalizado_em IS NULL. |
 

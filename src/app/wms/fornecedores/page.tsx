@@ -4,15 +4,55 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
-import { Icon, PageHeader, Pagination, Field } from "@/components/wms/ui/wms-ui";
+import {
+  Icon,
+  PageHeader,
+  Pagination,
+  Field,
+  Modal,
+} from "@/components/wms/ui/wms-ui";
 import type { Fornecedor } from "@/lib/wms/fornecedores";
+
+interface LeadTimeForm {
+  min: string;
+  medio: string;
+  max: string;
+}
+
+function ltFromFornecedor(f: Fornecedor): LeadTimeForm {
+  return {
+    min: f.lead_time_dias_min != null ? String(f.lead_time_dias_min) : "",
+    medio: f.lead_time_dias_medio != null ? String(f.lead_time_dias_medio) : "",
+    max: f.lead_time_dias_max != null ? String(f.lead_time_dias_max) : "",
+  };
+}
+
+function parseLt(v: string): number | null {
+  const t = v.trim();
+  if (t === "") return null;
+  const n = parseInt(t, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function fmtLt(f: Fornecedor): string {
+  const { lead_time_dias_min: a, lead_time_dias_medio: m, lead_time_dias_max: x } = f;
+  if (a == null && m == null && x == null) return "—";
+  const parts = [a ?? "·", m ?? "·", x ?? "·"];
+  return parts.join(" / ");
+}
 
 export default function FornecedoresPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isAdmin = (user?.cargos ?? [user?.cargo]).includes("admin");
   const [showForm, setShowForm] = useState(false);
-  const [novo, setNovo] = useState({ nome: "", cnpj: "", prefixo_sku: "" });
+  const [novo, setNovo] = useState({
+    nome: "",
+    cnpj: "",
+    prefixo_sku: "",
+    lt: { min: "", medio: "", max: "" } as LeadTimeForm,
+  });
+  const [editando, setEditando] = useState<Fornecedor | null>(null);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 100;
 
@@ -30,11 +70,19 @@ export default function FornecedoresPage() {
           nome: novo.nome,
           cnpj: novo.cnpj || undefined,
           prefixo_sku: novo.prefixo_sku || undefined,
+          lead_time_dias_min: parseLt(novo.lt.min),
+          lead_time_dias_medio: parseLt(novo.lt.medio),
+          lead_time_dias_max: parseLt(novo.lt.max),
         }),
       }),
     onSuccess: () => {
       toast.success("Fornecedor criado");
-      setNovo({ nome: "", cnpj: "", prefixo_sku: "" });
+      setNovo({
+        nome: "",
+        cnpj: "",
+        prefixo_sku: "",
+        lt: { min: "", medio: "", max: "" },
+      });
       setShowForm(false);
       queryClient.invalidateQueries({ queryKey: ["wms-fornecedores"] });
     },
@@ -131,11 +179,62 @@ export default function FornecedoresPage() {
           </div>
           <div
             style={{
+              marginTop: 12,
+              paddingTop: 12,
+              borderTop: "1px dashed var(--wms-c-border)",
+            }}
+          >
+            <p className="wms-td-mute" style={{ marginBottom: 8, fontSize: 12 }}>
+              Lead time (dias) — defaults herdados ao vincular um produto novo a
+              este fornecedor. Em branco = sem default.
+            </p>
+            <div className="wms-row-3">
+              <Field label="Mínimo">
+                <input
+                  className="wms-input"
+                  inputMode="numeric"
+                  value={novo.lt.min}
+                  onChange={(e) =>
+                    setNovo({ ...novo, lt: { ...novo.lt, min: e.target.value } })
+                  }
+                  placeholder="ex.: 7"
+                />
+              </Field>
+              <Field label="Médio">
+                <input
+                  className="wms-input"
+                  inputMode="numeric"
+                  value={novo.lt.medio}
+                  onChange={(e) =>
+                    setNovo({
+                      ...novo,
+                      lt: { ...novo.lt, medio: e.target.value },
+                    })
+                  }
+                  placeholder="ex.: 14"
+                />
+              </Field>
+              <Field label="Máximo">
+                <input
+                  className="wms-input"
+                  inputMode="numeric"
+                  value={novo.lt.max}
+                  onChange={(e) =>
+                    setNovo({ ...novo, lt: { ...novo.lt, max: e.target.value } })
+                  }
+                  placeholder="ex.: 30"
+                />
+              </Field>
+            </div>
+          </div>
+          <div
+            style={{
               display: "flex",
               justifyContent: "flex-end",
               gap: 8,
               paddingTop: 12,
               borderTop: "1px solid var(--wms-c-border)",
+              marginTop: 12,
             }}
           >
             <button
@@ -188,6 +287,10 @@ export default function FornecedoresPage() {
                   <th>Nome</th>
                   <th>Prefixo SKU</th>
                   <th>CNPJ</th>
+                  <th title="Lead time min / médio / máx (dias)">
+                    Lead time (dias)
+                  </th>
+                  {isAdmin && <th style={{ width: 80 }}></th>}
                 </tr>
               </thead>
               <tbody>
@@ -198,6 +301,20 @@ export default function FornecedoresPage() {
                     </td>
                     <td className="wms-mono">{f.prefixo_sku ?? "—"}</td>
                     <td className="wms-mono wms-td-mute">{f.cnpj ?? "—"}</td>
+                    <td className="wms-mono">{fmtLt(f)}</td>
+                    {isAdmin && (
+                      <td>
+                        <button
+                          type="button"
+                          className="wms-btn wms-btn-ghost"
+                          onClick={() => setEditando(f)}
+                          title="Editar fornecedor"
+                        >
+                          <Icon name="edit" size={12} />
+                          Editar
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -212,6 +329,105 @@ export default function FornecedoresPage() {
           />
         </>
       )}
+
+      {editando && (
+        <EditarFornecedorModal
+          fornecedor={editando}
+          onClose={() => setEditando(null)}
+          onSaved={() => {
+            setEditando(null);
+            queryClient.invalidateQueries({ queryKey: ["wms-fornecedores"] });
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function EditarFornecedorModal({
+  fornecedor,
+  onClose,
+  onSaved,
+}: {
+  fornecedor: Fornecedor;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [lt, setLt] = useState<LeadTimeForm>(ltFromFornecedor(fornecedor));
+
+  const salvar = useMutation({
+    mutationFn: () =>
+      wmsApi<Fornecedor>(`/api/wms/fornecedores/${fornecedor.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lead_time_dias_min: parseLt(lt.min),
+          lead_time_dias_medio: parseLt(lt.medio),
+          lead_time_dias_max: parseLt(lt.max),
+        }),
+      }),
+    onSuccess: () => {
+      toast.success("Fornecedor atualizado");
+      onSaved();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <Modal
+      title={`Editar ${fornecedor.nome}`}
+      subtitle="Defaults de lead time herdados ao vincular novos produtos."
+      width={520}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="wms-btn wms-btn-ghost" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            className="wms-btn wms-btn-primary"
+            disabled={salvar.isPending}
+            onClick={() => salvar.mutate()}
+          >
+            <Icon name="check" size={11} />
+            {salvar.isPending ? "Salvando…" : "Salvar"}
+          </button>
+        </>
+      }
+    >
+      <p className="wms-td-mute" style={{ fontSize: 12, marginBottom: 12 }}>
+        Lead time (dias). Em branco = sem default. Vínculos já existentes em{" "}
+        <strong>produto × fornecedor</strong> não são alterados aqui.
+      </p>
+      <div className="wms-row-3">
+        <Field label="Mínimo">
+          <input
+            className="wms-input"
+            inputMode="numeric"
+            value={lt.min}
+            onChange={(e) => setLt({ ...lt, min: e.target.value })}
+            placeholder="ex.: 7"
+          />
+        </Field>
+        <Field label="Médio">
+          <input
+            className="wms-input"
+            inputMode="numeric"
+            value={lt.medio}
+            onChange={(e) => setLt({ ...lt, medio: e.target.value })}
+            placeholder="ex.: 14"
+          />
+        </Field>
+        <Field label="Máximo">
+          <input
+            className="wms-input"
+            inputMode="numeric"
+            value={lt.max}
+            onChange={(e) => setLt({ ...lt, max: e.target.value })}
+            placeholder="ex.: 30"
+          />
+        </Field>
+      </div>
+    </Modal>
   );
 }

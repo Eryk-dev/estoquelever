@@ -8,6 +8,16 @@ interface PatchFornecedorBody {
   cnpj?: string | null;
   prefixo_sku?: string | null;
   ativo?: boolean;
+  lead_time_dias_min?: number | null;
+  lead_time_dias_medio?: number | null;
+  lead_time_dias_max?: number | null;
+}
+
+function parseLeadTime(v: unknown): number | null {
+  if (v === null || v === "") return null;
+  if (typeof v === "number" && Number.isFinite(v) && v >= 0) return Math.trunc(v);
+  if (typeof v === "string" && /^\d+$/.test(v.trim())) return parseInt(v, 10);
+  throw new Error("lead_time: valor inválido");
 }
 
 function pickPatchFields(body: unknown): PatchFornecedorBody {
@@ -20,6 +30,9 @@ function pickPatchFields(body: unknown): PatchFornecedorBody {
     out.prefixo_sku = b.prefixo_sku;
   }
   if (typeof b.ativo === "boolean") out.ativo = b.ativo;
+  if ("lead_time_dias_min" in b) out.lead_time_dias_min = parseLeadTime(b.lead_time_dias_min);
+  if ("lead_time_dias_medio" in b) out.lead_time_dias_medio = parseLeadTime(b.lead_time_dias_medio);
+  if ("lead_time_dias_max" in b) out.lead_time_dias_max = parseLeadTime(b.lead_time_dias_max);
   return out;
 }
 
@@ -32,7 +45,15 @@ export async function PATCH(
 
   const { id } = await params;
   const body = await req.json();
-  const allowed = pickPatchFields(body);
+  let allowed: PatchFornecedorBody;
+  try {
+    allowed = pickPatchFields(body);
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "campo inválido" },
+      { status: 400 },
+    );
+  }
   if (Object.keys(allowed).length === 0) {
     return NextResponse.json(
       { error: "nenhum campo válido pra atualizar" },
@@ -40,6 +61,29 @@ export async function PATCH(
     );
   }
   const sb = createServiceClient();
+
+  // Pré-validação amigável da ordenação (DB também enforce via CHECK).
+  if (
+    "lead_time_dias_min" in allowed ||
+    "lead_time_dias_medio" in allowed ||
+    "lead_time_dias_max" in allowed
+  ) {
+    const { data: atual } = await sb
+      .from("siso_fornecedores")
+      .select("lead_time_dias_min, lead_time_dias_medio, lead_time_dias_max")
+      .eq("id", id)
+      .single();
+    const a = (atual ?? {}) as Record<string, number | null>;
+    const min = "lead_time_dias_min" in allowed ? allowed.lead_time_dias_min : a.lead_time_dias_min;
+    const medio = "lead_time_dias_medio" in allowed ? allowed.lead_time_dias_medio : a.lead_time_dias_medio;
+    const max = "lead_time_dias_max" in allowed ? allowed.lead_time_dias_max : a.lead_time_dias_max;
+    if (min != null && medio != null && min > medio) {
+      return NextResponse.json({ error: "min não pode ser maior que médio" }, { status: 400 });
+    }
+    if (medio != null && max != null && medio > max) {
+      return NextResponse.json({ error: "médio não pode ser maior que máximo" }, { status: 400 });
+    }
+  }
   const { data, error } = await sb
     .from("siso_fornecedores")
     .update({ ...allowed, atualizado_em: new Date().toISOString() })

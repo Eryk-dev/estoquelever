@@ -8,6 +8,10 @@ export interface Fornecedor {
   ativo: boolean;
   observacoes: string | null;
   tiny_fornecedor_id: number | null;
+  /** Default mínimo herdado em vínculos novos com produto. */
+  lead_time_dias_min: number | null;
+  lead_time_dias_medio: number | null;
+  lead_time_dias_max: number | null;
 }
 
 export interface ProdutoFornecedor {
@@ -43,6 +47,9 @@ export async function criarFornecedor(input: {
   cnpj?: string;
   prefixo_sku?: string;
   observacoes?: string;
+  lead_time_dias_min?: number | null;
+  lead_time_dias_medio?: number | null;
+  lead_time_dias_max?: number | null;
 }): Promise<Fornecedor> {
   const sb = createServiceClient();
   const { data, error } = await sb
@@ -91,9 +98,41 @@ export async function vincularProdutoFornecedor(input: {
       .update({ preferencial: false })
       .eq("produto_id", input.produto_id);
   }
+
+  // Herda lead time do fornecedor quando o caller não informa explicitamente.
+  // Só busca quando ao menos um campo está vazio, pra não pagar round-trip à toa.
+  const precisaHerdar =
+    input.lead_time_dias_min === undefined ||
+    input.lead_time_dias_medio === undefined ||
+    input.lead_time_dias_max === undefined;
+  let payload: Record<string, unknown> = { ...input };
+  if (precisaHerdar) {
+    const { data: forn } = await sb
+      .from("siso_fornecedores")
+      .select("lead_time_dias_min, lead_time_dias_medio, lead_time_dias_max")
+      .eq("id", input.fornecedor_id)
+      .single();
+    if (forn) {
+      const f = forn as {
+        lead_time_dias_min: number | null;
+        lead_time_dias_medio: number | null;
+        lead_time_dias_max: number | null;
+      };
+      if (input.lead_time_dias_min === undefined && f.lead_time_dias_min !== null) {
+        payload.lead_time_dias_min = f.lead_time_dias_min;
+      }
+      if (input.lead_time_dias_medio === undefined && f.lead_time_dias_medio !== null) {
+        payload.lead_time_dias_medio = f.lead_time_dias_medio;
+      }
+      if (input.lead_time_dias_max === undefined && f.lead_time_dias_max !== null) {
+        payload.lead_time_dias_max = f.lead_time_dias_max;
+      }
+    }
+  }
+
   const { data, error } = await sb
     .from("siso_produto_fornecedores")
-    .insert(input)
+    .insert(payload)
     .select()
     .single();
   if (error) throw error;
@@ -191,19 +230,47 @@ export async function upsertProdutoFornecedor(input: {
       .update({ preferencial: false })
       .eq("produto_id", input.produto_id);
   }
+
+  // Em INSERT (vínculo novo) herda lead time do fornecedor, se configurado.
+  // Em UPDATE preserva o lead time existente, então só inclui esses campos
+  // no payload quando a linha ainda não existe.
+  const { data: existente } = await sb
+    .from("siso_produto_fornecedores")
+    .select("id")
+    .eq("produto_id", input.produto_id)
+    .eq("fornecedor_id", input.fornecedor_id)
+    .maybeSingle();
+
+  const payload: Record<string, unknown> = {
+    produto_id: input.produto_id,
+    fornecedor_id: input.fornecedor_id,
+    codigo_fornecedor: input.codigo_fornecedor ?? null,
+    custo_unitario: input.custo_unitario ?? null,
+    preferencial: input.preferencial ?? false,
+    atualizado_em: new Date().toISOString(),
+  };
+
+  if (!existente) {
+    const { data: forn } = await sb
+      .from("siso_fornecedores")
+      .select("lead_time_dias_min, lead_time_dias_medio, lead_time_dias_max")
+      .eq("id", input.fornecedor_id)
+      .single();
+    if (forn) {
+      const f = forn as {
+        lead_time_dias_min: number | null;
+        lead_time_dias_medio: number | null;
+        lead_time_dias_max: number | null;
+      };
+      if (f.lead_time_dias_min !== null) payload.lead_time_dias_min = f.lead_time_dias_min;
+      if (f.lead_time_dias_medio !== null) payload.lead_time_dias_medio = f.lead_time_dias_medio;
+      if (f.lead_time_dias_max !== null) payload.lead_time_dias_max = f.lead_time_dias_max;
+    }
+  }
+
   const { error } = await sb
     .from("siso_produto_fornecedores")
-    .upsert(
-      {
-        produto_id: input.produto_id,
-        fornecedor_id: input.fornecedor_id,
-        codigo_fornecedor: input.codigo_fornecedor ?? null,
-        custo_unitario: input.custo_unitario ?? null,
-        preferencial: input.preferencial ?? false,
-        atualizado_em: new Date().toISOString(),
-      },
-      { onConflict: "produto_id,fornecedor_id" },
-    );
+    .upsert(payload, { onConflict: "produto_id,fornecedor_id" });
   if (error) throw error;
 }
 

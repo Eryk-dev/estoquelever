@@ -4809,10 +4809,10 @@ Motor de decisão própria/empréstimo/OC. Algoritmo puro testável (`rotearPedi
 Lista fornecedores ativos. **Response:** `{ rows: Fornecedor[] }`.
 
 ### POST /api/wms/fornecedores
-Cria fornecedor. **Body:** `{ nome, cnpj?, prefixo_sku?, observacoes? }`. **400** se sem nome.
+Cria fornecedor. **Body:** `{ nome, cnpj?, prefixo_sku?, observacoes?, lead_time_dias_min?, lead_time_dias_medio?, lead_time_dias_max? }`. **400** se sem nome. Lead time é validado: `min ≤ medio ≤ max`, todos opcionais e independentes (qualquer um pode ficar null). Quando setado, vira default para novos vínculos `siso_produto_fornecedores`.
 
 ### PATCH /api/wms/fornecedores/[id]
-Atualiza campos.
+Atualiza campos. **Body:** `{ nome?, cnpj?, prefixo_sku?, ativo?, lead_time_dias_min?, lead_time_dias_medio?, lead_time_dias_max? }`. Lead time pode receber `null` pra limpar. Ordenação `min ≤ medio ≤ max` validada considerando valores atuais quando só parte é informada.
 
 ### DELETE /api/wms/fornecedores/[id]
 Soft delete (ativo=false).

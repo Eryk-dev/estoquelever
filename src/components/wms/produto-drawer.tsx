@@ -418,9 +418,42 @@ function Overview({
   reservado: number;
   onTab: (t: TabId) => void;
 }) {
-  const todas = [...linhas].sort(
-    (a, b) => Number(b.saldo) - Number(a.saldo),
-  );
+  // Resumo agrega por (galpão, localização) — soma das empresas, sem dividir
+  // por dona. Aba "Estoque por local" mostra o breakdown completo.
+  const porLocalizacao = (() => {
+    const map = new Map<
+      string,
+      {
+        galpao_id: string;
+        galpao_nome: string;
+        loc_id: string;
+        loc_codigo: string;
+        saldo: number;
+        reservado: number;
+        disponivel: number;
+      }
+    >();
+    for (const l of linhas) {
+      const key = `${l.galpao.id}::${l.localizacao.id}`;
+      const cur = map.get(key);
+      if (cur) {
+        cur.saldo += Number(l.saldo);
+        cur.reservado += Number(l.reservado);
+        cur.disponivel += Number(l.disponivel);
+      } else {
+        map.set(key, {
+          galpao_id: l.galpao.id,
+          galpao_nome: l.galpao.nome,
+          loc_id: l.localizacao.id,
+          loc_codigo: l.localizacao.codigo,
+          saldo: Number(l.saldo),
+          reservado: Number(l.reservado),
+          disponivel: Number(l.disponivel),
+        });
+      }
+    }
+    return [...map.values()].sort((a, b) => b.saldo - a.saldo);
+  })();
   return (
     <div className="wms-ov-grid">
       <Card
@@ -431,24 +464,21 @@ function Overview({
           </button>
         }
       >
-        {todas.length === 0 && (
+        {porLocalizacao.length === 0 && (
           <div className="wms-exp-empty">Sem estoque registrado.</div>
         )}
-        {todas.map((l, i) => (
-          <div className="wms-ov-loc" key={i}>
+        {porLocalizacao.map((l) => (
+          <div className="wms-ov-loc" key={`${l.galpao_id}::${l.loc_id}`}>
             <div className="wms-ov-loc-where">
-              <span className="wms-chip-emp">
-                {l.empresa.nome.slice(0, 3).toUpperCase()}
-              </span>
-              <span className="wms-td-mute">{l.galpao.nome}</span>
-              <span className="wms-mono">/ {l.localizacao.codigo}</span>
+              <span className="wms-td-mute">{l.galpao_nome}</span>
+              <span className="wms-mono">/ {l.loc_codigo}</span>
             </div>
             <div className="wms-ov-loc-stock">
               <span className="wms-mono">
-                {fmtNum(Number(l.disponivel))}
+                {fmtNum(l.disponivel)}
                 <span className="wms-td-mute">
                   {" "}
-                  / {fmtNum(Number(l.saldo))}
+                  / {fmtNum(l.saldo)}
                 </span>
               </span>
             </div>

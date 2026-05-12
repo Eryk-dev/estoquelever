@@ -21,7 +21,7 @@ interface EstoqueItem {
   disponivel: number;
   custo_medio: number;
   atualizado_em: string;
-  produto: { id: string; sku: string; descricao: string };
+  produto: { id: string; sku: string; descricao: string; imagem_url: string | null };
   empresa: { id: string; nome: string };
   galpao: { id: string; nome: string };
   localizacao: { id: string; codigo: string; tipo: string };
@@ -110,6 +110,7 @@ export default function EstoquePage() {
     let result = (estoqueQuery.data?.rows ?? []).map((r) => {
       const sku = r.itens[0]?.produto.sku ?? "";
       const descricao = r.itens[0]?.produto.descricao ?? r.nome;
+      const imagemUrl = r.itens[0]?.produto.imagem_url ?? null;
       const cobertura = coberturaMap.get(r.chave);
       const custoMedio =
         r.itens.reduce(
@@ -124,6 +125,7 @@ export default function EstoquePage() {
         produtoId: r.chave,
         sku,
         descricao,
+        imagemUrl,
         saldo: Number(r.saldo),
         reservado: Number(r.reservado),
         disponivel: Number(r.disponivel),
@@ -285,6 +287,7 @@ export default function EstoquePage() {
           <thead>
             <tr>
               <th style={{ width: 28 }}></th>
+              <th style={{ width: 44 }}></th>
               <th>SKU</th>
               <th>Produto</th>
               <th className="wms-tar">Físico</th>
@@ -299,21 +302,21 @@ export default function EstoquePage() {
           <tbody>
             {estoqueQuery.isLoading && (
               <tr>
-                <td colSpan={10} className="wms-td-empty">
+                <td colSpan={11} className="wms-td-empty">
                   Carregando estoque…
                 </td>
               </tr>
             )}
             {estoqueQuery.isError && (
               <tr>
-                <td colSpan={10} className="wms-td-empty wms-td-danger">
+                <td colSpan={11} className="wms-td-empty wms-td-danger">
                   Erro: {(estoqueQuery.error as Error).message}
                 </td>
               </tr>
             )}
             {!estoqueQuery.isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={10} className="wms-td-empty">
+                <td colSpan={11} className="wms-td-empty">
                   Nenhum produto encontrado.
                 </td>
               </tr>
@@ -335,7 +338,7 @@ export default function EstoquePage() {
                       sku: r.sku,
                       descricao: r.descricao,
                       gtin: null,
-                      imagem_url: null,
+                      imagem_url: r.imagemUrl,
                       unidade: "UN",
                       ncm: null,
                       cest: null,
@@ -372,6 +375,7 @@ function ExpandableRow({
     produtoId: string;
     sku: string;
     descricao: string;
+    imagemUrl: string | null;
     saldo: number;
     reservado: number;
     disponivel: number;
@@ -401,6 +405,21 @@ function ExpandableRow({
           >
             <Icon name={expanded ? "chevron-d" : "chevron-r"} size={11} />
           </button>
+        </td>
+        <td>
+          {row.imagemUrl && (
+            <img
+              src={row.imagemUrl}
+              alt=""
+              loading="lazy"
+              className="wms-thumb wms-thumb-sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenProduto();
+              }}
+              style={{ cursor: "pointer" }}
+            />
+          )}
         </td>
         <td className="wms-mono">
           <a
@@ -489,7 +508,7 @@ function ExpandableRow({
       {expanded && (
         <tr className="wms-tr-expanded">
           <td></td>
-          <td colSpan={9}>
+          <td colSpan={10}>
             <div className="wms-exp">
               <div className="wms-exp-grid">
                 <div className="wms-exp-col">

@@ -130,6 +130,15 @@ export function ProdutoDrawer({
           <>
             <div className="wms-pd-hd">
               <div className="wms-pd-hd-top">
+                {produto.imagem_url && (
+                  <img
+                    src={produto.imagem_url}
+                    alt=""
+                    loading="lazy"
+                    className="wms-thumb wms-thumb-lg"
+                    style={{ marginRight: 14 }}
+                  />
+                )}
                 <div className="wms-pd-hd-info">
                   <div className="wms-pd-hd-sku">{produto.sku}</div>
                   <h2>{produto.descricao}</h2>

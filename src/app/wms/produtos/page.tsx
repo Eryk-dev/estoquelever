@@ -111,6 +111,7 @@ export default function ProdutosPage() {
           <table>
             <thead>
               <tr>
+                <th style={{ width: 44 }}></th>
                 <th>SKU</th>
                 <th>Descrição</th>
                 <th>GTIN</th>
@@ -122,6 +123,18 @@ export default function ProdutosPage() {
             <tbody>
               {rows.map((p) => (
                 <tr key={p.id} className="wms-tr-clickable">
+                  <td>
+                    {p.imagem_url && (
+                      <img
+                        src={p.imagem_url}
+                        alt=""
+                        loading="lazy"
+                        className="wms-thumb wms-thumb-sm"
+                        onClick={() => openDrawer(p.id)}
+                        style={{ cursor: "pointer" }}
+                      />
+                    )}
+                  </td>
                   <td className="wms-mono">
                     <a
                       className="wms-link-row"

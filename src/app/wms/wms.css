@@ -546,6 +546,25 @@
 .wms-cov-cell { display: flex; align-items: center; gap: 8px; }
 .wms-cov-dias { font-family: var(--wms-font-mono); font-size: 11.5px; color: var(--wms-c-mute); }
 
+/* Thumbnails de produto · só renderizadas quando imagem_url existe.
+   Cobre 4 tamanhos: xs (tabela densa), sm (lista padrão), md (cards/handheld),
+   lg (cabeçalho de drawer). object-fit:contain pra mostrar a peça inteira
+   sobre fundo branco — fundos do mlstatic já vêm em branco, então o contraste
+   se mantém em dark mode. */
+.wms-thumb {
+  display: inline-block;
+  flex-shrink: 0;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid var(--wms-c-border);
+  border-radius: 4px;
+  vertical-align: middle;
+}
+.wms-thumb-xs { width: 24px; height: 24px; }
+.wms-thumb-sm { width: 36px; height: 36px; }
+.wms-thumb-md { width: 56px; height: 56px; border-radius: 6px; }
+.wms-thumb-lg { width: 104px; height: 104px; border-radius: 8px; }
+
 /* ============================================================
    Expanded row detail
    ============================================================ */

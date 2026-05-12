@@ -176,7 +176,12 @@ function TabLote() {
         locId: string | null;
         locCodigo: string;
         locTipo: string;
-        itens: Array<{ uid: string; sku: string; qty: number }>;
+        itens: Array<{
+          uid: string;
+          sku: string;
+          qty: number;
+          imagem_url: string | null;
+        }>;
       }
     >();
     itens.forEach((it, idx) => {
@@ -200,7 +205,12 @@ function TabLote() {
         locTipo,
         itens: [],
       };
-      grp.itens.push({ uid: it.uid, sku: it.produto.sku, qty: Number(it.qty) });
+      grp.itens.push({
+        uid: it.uid,
+        sku: it.produto.sku,
+        qty: Number(it.qty),
+        imagem_url: it.produto.imagem_url,
+      });
       grupos.set(key, grp);
     });
     return Array.from(grupos.values()).sort((a, b) => {
@@ -520,12 +530,24 @@ function TabLote() {
                     key={i.uid}
                     style={{
                       display: "flex",
+                      alignItems: "center",
+                      gap: 6,
                       justifyContent: "space-between",
                       fontSize: 11.5,
                       padding: "2px 0",
                     }}
                   >
-                    <span className="wms-mono">{i.sku}</span>
+                    {i.imagem_url && (
+                      <img
+                        src={i.imagem_url}
+                        alt=""
+                        loading="lazy"
+                        className="wms-thumb wms-thumb-xs"
+                      />
+                    )}
+                    <span className="wms-mono" style={{ flex: 1, minWidth: 0 }}>
+                      {i.sku}
+                    </span>
                     <span className="wms-mono wms-tar">{fmtNum(i.qty)} un</span>
                   </li>
                 ))}

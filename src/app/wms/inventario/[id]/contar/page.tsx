@@ -28,12 +28,14 @@ interface ProdutoMin {
   id: string;
   sku: string;
   descricao?: string;
+  imagem_url?: string | null;
 }
 
 interface ContagemLocal {
   sku: string;
   produto_id: string;
   descricao?: string;
+  imagem_url?: string | null;
   qty: number;
   esperado?: number;
   empresa_dona_id: string | null;
@@ -143,6 +145,7 @@ export default function ContarPage({
           sku: e.sku,
           produto_id: e.produto_id,
           descricao: e.descricao,
+          imagem_url: e.imagem_url,
           qty: 0,
           esperado: e.saldo_esperado,
           empresa_dona_id: e.empresa_dona_id,
@@ -264,6 +267,7 @@ export default function ContarPage({
                   ...c,
                   qty: modo === "incremental" ? c.qty + qty : qty,
                   empresa_dona_id: c.empresa_dona_id ?? empresaDona,
+                  imagem_url: c.imagem_url ?? produto!.imagem_url ?? null,
                 }
               : c,
           );
@@ -274,6 +278,7 @@ export default function ContarPage({
             produto_id: produto!.id,
             sku: produto!.sku,
             descricao: produto!.descricao,
+            imagem_url: produto!.imagem_url ?? null,
             qty,
             empresa_dona_id: empresaDona,
           },
@@ -702,6 +707,7 @@ function CounterView({
           <table>
             <thead>
               <tr>
+                <th style={{ width: 64 }}></th>
                 <th>SKU</th>
                 <th>Descrição</th>
                 <th className="wms-tar" style={{ width: 110 }}>
@@ -713,6 +719,16 @@ function CounterView({
             <tbody>
               {contagens.map((c) => (
                 <tr key={c.produto_id}>
+                  <td>
+                    {c.imagem_url && (
+                      <img
+                        src={c.imagem_url}
+                        alt=""
+                        loading="lazy"
+                        className="wms-thumb wms-thumb-md"
+                      />
+                    )}
+                  </td>
                   <td className="wms-mono">{c.sku}</td>
                   <td className="wms-td-mute" style={{ fontSize: 12 }}>
                     {c.descricao ?? "—"}

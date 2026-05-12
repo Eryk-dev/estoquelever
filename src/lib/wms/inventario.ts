@@ -263,6 +263,7 @@ export interface EsperadoItem {
   produto_id: string;
   sku: string;
   descricao: string;
+  imagem_url: string | null;
   saldo_esperado: number;
   empresa_dona_id: string;
 }
@@ -299,6 +300,28 @@ export async function pegarProximaLoc(
     modo?: ModoContagem;
     esperados?: EsperadoItem[] | null;
   };
+  // Enriquece esperados com imagem_url — RPC não retorna pra evitar bloat
+  // no payload de roteamento; aqui é a hora de pagar o lookup (lista
+  // pequena, normalmente <10 SKUs por loc) pra ajudar o operador a
+  // identificar visualmente a peça no handheld.
+  let esperadosEnriched = r.esperados ?? undefined;
+  if (esperadosEnriched && esperadosEnriched.length > 0) {
+    const ids = esperadosEnriched.map((e) => e.produto_id);
+    const { data: imgs } = await sb
+      .from("siso_produtos")
+      .select("id, imagem_url")
+      .in("id", ids);
+    const imgMap = new Map(
+      ((imgs ?? []) as Array<{ id: string; imagem_url: string | null }>).map(
+        (p) => [p.id, p.imagem_url],
+      ),
+    );
+    esperadosEnriched = esperadosEnriched.map((e) => ({
+      ...e,
+      imagem_url: imgMap.get(e.produto_id) ?? null,
+    }));
+  }
+
   return {
     pool_vazio: r.pool_vazio === true,
     inv_loc_id: r.inv_loc_id,
@@ -307,7 +330,7 @@ export async function pegarProximaLoc(
     tipo: r.tipo,
     zona: r.zona,
     modo: r.modo,
-    esperados: r.esperados ?? undefined,
+    esperados: esperadosEnriched,
   };
 }
 

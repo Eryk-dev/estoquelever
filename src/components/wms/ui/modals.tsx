@@ -112,8 +112,19 @@ export function ProdutoCombo({
   if (value && !open) {
     return (
       <div className="wms-picker">
-        <div className="wms-picker-selected">
-          <div>
+        <div
+          className="wms-picker-selected"
+          style={{ display: "flex", alignItems: "center", gap: 10 }}
+        >
+          {value.imagem_url && (
+            <img
+              src={value.imagem_url}
+              alt=""
+              loading="lazy"
+              className="wms-thumb wms-thumb-sm"
+            />
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div className="wms-mono">{value.sku}</div>
             <div className="wms-td-mute" style={{ fontSize: 12 }}>
               {value.descricao}
@@ -167,6 +178,14 @@ export function ProdutoCombo({
                 setQ("");
               }}
             >
+              {p.imagem_url && (
+                <img
+                  src={p.imagem_url}
+                  alt=""
+                  loading="lazy"
+                  className="wms-thumb wms-thumb-xs"
+                />
+              )}
               <span className="wms-mono">{p.sku}</span>
               <span className="wms-picker-desc">{p.descricao}</span>
             </button>

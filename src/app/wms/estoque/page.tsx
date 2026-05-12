@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams, useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
@@ -20,6 +20,7 @@ interface EstoqueItem {
   reservado: number;
   disponivel: number;
   custo_medio: number;
+  atualizado_em: string;
   produto: { id: string; sku: string; descricao: string };
   empresa: { id: string; nome: string };
   galpao: { id: string; nome: string };
@@ -38,18 +39,35 @@ interface EstoqueAgregado {
 export default function EstoquePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialProduto = searchParams?.get("produto") ?? null;
+  // Drawer state vive na URL (?produto=ID) — sobrevive a F5 e dá link
+  // compartilhável. Cmd+K e clique na tabela usam o mesmo mecanismo.
+  const drawerProdutoId = searchParams?.get("produto") ?? null;
 
   const [q, setQ] = useState("");
   const [filterGalpao, setFilterGalpao] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [expanded, setExpanded] = useState<string | null>(null);
-  // Drawer = URL (via Cmd+K ou link externo) OU state local (clique em linha
-  // da tabela). URL tem precedência pra que Cmd+K abra o drawer mesmo quando
-  // já estamos em /wms/estoque (caso em que o componente não remonta).
-  const [localProdutoId, setLocalProdutoId] = useState<string | null>(null);
-  const drawerProdutoId = initialProduto ?? localProdutoId;
   const modals = useWmsModals();
+
+  const openDrawer = useCallback(
+    (id: string) => {
+      const params = new URLSearchParams(
+        Array.from(searchParams?.entries() ?? []),
+      );
+      params.set("produto", id);
+      router.push(`?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams],
+  );
+
+  const closeDrawer = useCallback(() => {
+    const params = new URLSearchParams(
+      Array.from(searchParams?.entries() ?? []),
+    );
+    params.delete("produto");
+    const qs = params.toString();
+    router.push(qs ? `?${qs}` : "?", { scroll: false });
+  }, [router, searchParams]);
 
   const estoqueQuery = useQuery({
     queryKey: ["wms-estoque", "produto"],
@@ -115,7 +133,10 @@ export default function EstoquePage() {
       result = result.filter(
         (r) =>
           r.sku.toLowerCase().includes(ql) ||
-          r.descricao.toLowerCase().includes(ql),
+          r.descricao.toLowerCase().includes(ql) ||
+          r.itens.some((i) =>
+            i.localizacao.codigo.toLowerCase().includes(ql),
+          ),
       );
     }
     if (filterGalpao !== "all") {
@@ -186,7 +207,7 @@ export default function EstoquePage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar SKU ou descrição…"
+            placeholder="Buscar SKU, descrição ou localização (ex: SP-03-02)…"
           />
           {q && (
             <button className="wms-search-clear" onClick={() => setQ("")}>
@@ -276,7 +297,7 @@ export default function EstoquePage() {
                   onToggle={() =>
                     setExpanded(isExpanded ? null : r.produtoId)
                   }
-                  onOpenProduto={() => setLocalProdutoId(r.produtoId)}
+                  onOpenProduto={() => openDrawer(r.produtoId)}
                   onAction={(kind) => {
                     const produto = {
                       id: r.produtoId,
@@ -303,14 +324,7 @@ export default function EstoquePage() {
       </div>
 
       {drawerProdutoId && (
-        <ProdutoDrawer
-          produtoId={drawerProdutoId}
-          onClose={() => {
-            setLocalProdutoId(null);
-            // limpa querystring se veio de Cmd+K
-            if (initialProduto) router.replace("/wms/estoque");
-          }}
-        />
+        <ProdutoDrawer produtoId={drawerProdutoId} onClose={closeDrawer} />
       )}
     </>
   );

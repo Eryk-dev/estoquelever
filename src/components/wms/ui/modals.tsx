@@ -551,6 +551,10 @@ export function ReceberModal({
       qc.invalidateQueries({ queryKey: ["wms-cobertura-all"] });
       qc.invalidateQueries({ queryKey: ["wms-cobertura"] });
       qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-estoque"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-ledger"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-cobertura"] });
       onClose();
     },
     onError: (err: Error) => {
@@ -835,6 +839,10 @@ export function AjusteModal({
       qc.invalidateQueries({ queryKey: ["wms-cobertura-all"] });
       qc.invalidateQueries({ queryKey: ["wms-cobertura"] });
       qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-estoque"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-ledger"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-cobertura"] });
       onClose();
     },
     onError: (err: Error) => toast.error(err.message),
@@ -1241,6 +1249,10 @@ export function TransferModal({
       qc.invalidateQueries({ queryKey: ["wms-cobertura-all"] });
       qc.invalidateQueries({ queryKey: ["wms-cobertura"] });
       qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-estoque"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-ledger"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-cobertura"] });
       qc.invalidateQueries({ queryKey: ["wms-transferencias"] });
       onClose();
     },

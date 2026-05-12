@@ -1,8 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   Icon,
@@ -14,9 +14,30 @@ import type { Produto } from "@/lib/wms/types";
 
 export default function ProdutosPage() {
   const [q, setQ] = useState("");
-  const [drawerId, setDrawerId] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const drawerId = searchParams?.get("produto") ?? null;
+
+  const openDrawer = useCallback(
+    (id: string) => {
+      const params = new URLSearchParams(
+        Array.from(searchParams?.entries() ?? []),
+      );
+      params.set("produto", id);
+      router.push(`?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams],
+  );
+
+  const closeDrawer = useCallback(() => {
+    const params = new URLSearchParams(
+      Array.from(searchParams?.entries() ?? []),
+    );
+    params.delete("produto");
+    const qs = params.toString();
+    router.push(qs ? `?${qs}` : "?", { scroll: false });
+  }, [router, searchParams]);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-produtos", q],
@@ -104,7 +125,7 @@ export default function ProdutosPage() {
                   <td className="wms-mono">
                     <a
                       className="wms-link-row"
-                      onClick={() => setDrawerId(p.id)}
+                      onClick={() => openDrawer(p.id)}
                     >
                       {p.sku}
                     </a>
@@ -112,7 +133,7 @@ export default function ProdutosPage() {
                   <td className="wms-td-desc">
                     <a
                       className="wms-link-row"
-                      onClick={() => setDrawerId(p.id)}
+                      onClick={() => openDrawer(p.id)}
                     >
                       {p.descricao}
                     </a>
@@ -141,7 +162,7 @@ export default function ProdutosPage() {
                       type="button"
                       className="wms-btn-icon"
                       title="Abrir detalhe"
-                      onClick={() => setDrawerId(p.id)}
+                      onClick={() => openDrawer(p.id)}
                     >
                       <Icon name="chevron-r" size={11} />
                     </button>
@@ -154,13 +175,7 @@ export default function ProdutosPage() {
       )}
 
       {drawerId && (
-        <ProdutoDrawer
-          produtoId={drawerId}
-          onClose={() => {
-            setDrawerId(null);
-            router.refresh();
-          }}
-        />
+        <ProdutoDrawer produtoId={drawerId} onClose={closeDrawer} />
       )}
     </>
   );

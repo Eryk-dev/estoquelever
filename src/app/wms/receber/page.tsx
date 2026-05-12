@@ -287,6 +287,10 @@ function TabLote() {
       qc.invalidateQueries({ queryKey: ["wms-cobertura-all"] });
       qc.invalidateQueries({ queryKey: ["wms-cobertura"] });
       qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-estoque"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-ledger"] });
+      qc.invalidateQueries({ queryKey: ["wms-produto-cobertura"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });

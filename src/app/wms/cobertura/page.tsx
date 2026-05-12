@@ -1,6 +1,7 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, PageHeader, StatusBadge, fmtNum } from "@/components/wms/ui/wms-ui";
 import { ProdutoDrawer } from "@/components/wms/produto-drawer";
@@ -27,7 +28,29 @@ const STATUS_OPTS: Array<{
 
 export default function CoberturaPage() {
   const [filter, setFilter] = useState<StatusCobertura | "all">("all");
-  const [drawer, setDrawer] = useState<string | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const drawer = searchParams?.get("produto") ?? null;
+
+  const openDrawer = useCallback(
+    (id: string) => {
+      const params = new URLSearchParams(
+        Array.from(searchParams?.entries() ?? []),
+      );
+      params.set("produto", id);
+      router.push(`?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams],
+  );
+
+  const closeDrawer = useCallback(() => {
+    const params = new URLSearchParams(
+      Array.from(searchParams?.entries() ?? []),
+    );
+    params.delete("produto");
+    const qs = params.toString();
+    router.push(qs ? `?${qs}` : "?", { scroll: false });
+  }, [router, searchParams]);
 
   const query = useQuery({
     queryKey: ["wms-cobertura"],
@@ -123,7 +146,7 @@ export default function CoberturaPage() {
               <tr
                 key={`${r.produto_id}-${r.galpao_id}-${i}`}
                 className="wms-tr-clickable"
-                onClick={() => setDrawer(r.produto_id)}
+                onClick={() => openDrawer(r.produto_id)}
               >
                 <td>
                   <StatusBadge status={r.status_cobertura} />
@@ -161,7 +184,7 @@ export default function CoberturaPage() {
       </div>
 
       {drawer && (
-        <ProdutoDrawer produtoId={drawer} onClose={() => setDrawer(null)} />
+        <ProdutoDrawer produtoId={drawer} onClose={closeDrawer} />
       )}
     </>
   );

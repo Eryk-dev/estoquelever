@@ -539,7 +539,20 @@ function EstoquePorLocal({
   linhas: EstoqueLinhaItem[];
   onAction: (k: "ajuste" | "transferir") => void;
 }) {
-  if (linhas.length === 0) {
+  // Double sort: galpão asc → localização asc (natural/numérica via
+  // localeCompare numeric pra ordenar B-02-03 antes de B-02-10 etc).
+  const ordenadas = [...linhas].sort((a, b) => {
+    const g = a.galpao.nome.localeCompare(b.galpao.nome, "pt-BR", {
+      sensitivity: "base",
+    });
+    if (g !== 0) return g;
+    return a.localizacao.codigo.localeCompare(
+      b.localizacao.codigo,
+      "pt-BR",
+      { numeric: true, sensitivity: "base" },
+    );
+  });
+  if (ordenadas.length === 0) {
     return (
       <div className="wms-exp-empty" style={{ padding: 24 }}>
         Sem estoque em nenhuma localização.
@@ -561,7 +574,7 @@ function EstoquePorLocal({
         </tr>
       </thead>
       <tbody>
-        {linhas.map((l, idx) => (
+        {ordenadas.map((l, idx) => (
           <tr key={idx}>
             <td>
               <span className="wms-chip-emp">

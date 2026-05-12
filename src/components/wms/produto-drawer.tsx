@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
@@ -1422,6 +1423,12 @@ function AdicionarComponenteForm({
     descricao: string;
   } | null>(null);
   const [qty, setQty] = useState("1");
+  const inputWrapRef = useRef<HTMLDivElement | null>(null);
+  const [dropdownRect, setDropdownRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
 
   const buscaQuery = useQuery({
     queryKey: ["wms-produtos-busca-componente", q],
@@ -1451,6 +1458,28 @@ function AdicionarComponenteForm({
     (p) => p.id !== kitId && !jaVinculados.has(p.id) && !p.eh_kit,
   );
 
+  const showDropdown = !selecionado && q.length >= 2 && candidatos.length > 0;
+
+  useLayoutEffect(() => {
+    if (!showDropdown) {
+      setDropdownRect(null);
+      return;
+    }
+    const update = () => {
+      const el = inputWrapRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setDropdownRect({ top: r.bottom + 2, left: r.left, width: r.width });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [showDropdown, candidatos.length]);
+
   return (
     <div
       style={{
@@ -1460,7 +1489,7 @@ function AdicionarComponenteForm({
         alignItems: "end",
       }}
     >
-      <div style={{ position: "relative" }}>
+      <div ref={inputWrapRef} style={{ position: "relative" }}>
         <div className="wms-ov-meta-lbl">Buscar componente (SKU ou nome)</div>
         {selecionado ? (
           <div
@@ -1486,53 +1515,57 @@ function AdicionarComponenteForm({
             </button>
           </div>
         ) : (
-          <>
-            <input
-              className="wms-input"
-              placeholder="SKU ou descrição…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-            {q.length >= 2 && candidatos.length > 0 && (
-              <div
-                style={{
-                  position: "absolute",
-                  top: "100%",
-                  left: 0,
-                  right: 0,
-                  background: "var(--wms-c-bg-elev)",
-                  border: "1px solid var(--wms-c-border)",
-                  borderRadius: 4,
-                  zIndex: 10,
-                  maxHeight: 240,
-                  overflowY: "auto",
-                }}
-              >
-                {candidatos.map((p) => (
-                  <div
-                    key={p.id}
-                    style={{
-                      padding: "6px 10px",
-                      cursor: "pointer",
-                      borderBottom: "1px solid var(--wms-c-border)",
-                    }}
-                    onClick={() => {
-                      setSelecionado({
-                        id: p.id,
-                        sku: p.sku,
-                        descricao: p.descricao,
-                      });
-                      setQ("");
-                    }}
-                  >
-                    <span className="wms-mono">{p.sku}</span>{" "}
-                    <span className="wms-td-mute">{p.descricao}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
+          <input
+            className="wms-input"
+            placeholder="SKU ou descrição…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
         )}
+        {showDropdown &&
+          dropdownRect &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              style={{
+                position: "fixed",
+                top: dropdownRect.top,
+                left: dropdownRect.left,
+                width: dropdownRect.width,
+                background: "var(--wms-c-bg-elev)",
+                border: "1px solid var(--wms-c-border)",
+                borderRadius: 4,
+                zIndex: 9999,
+                maxHeight: 240,
+                overflowY: "auto",
+                boxShadow: "0 8px 24px rgba(0,0,0,.18)",
+              }}
+            >
+              {candidatos.map((p) => (
+                <div
+                  key={p.id}
+                  style={{
+                    padding: "6px 10px",
+                    cursor: "pointer",
+                    borderBottom: "1px solid var(--wms-c-border)",
+                  }}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setSelecionado({
+                      id: p.id,
+                      sku: p.sku,
+                      descricao: p.descricao,
+                    });
+                    setQ("");
+                  }}
+                >
+                  <span className="wms-mono">{p.sku}</span>{" "}
+                  <span className="wms-td-mute">{p.descricao}</span>
+                </div>
+              ))}
+            </div>,
+            document.body,
+          )}
       </div>
       <div>
         <div className="wms-ov-meta-lbl">Qty / kit</div>

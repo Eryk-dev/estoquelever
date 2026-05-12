@@ -112,9 +112,12 @@
 .wms-sb-hd {
   padding: 14px 14px 10px;
   border-bottom: 1px solid var(--wms-c-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .wms-sb-logo {
-  display: flex; align-items: center; gap: 10px; padding: 4px 4px 12px;
+  display: flex; align-items: center; gap: 10px; padding: 4px 4px 8px;
 }
 .wms-sb-logo-mark {
   width: 28px; height: 28px; border-radius: var(--wms-r-2);
@@ -1484,70 +1487,98 @@
 }
 
 /* ============================================================
-   Filtro global de galpão — barra sticky no topo da view
-   (Decisão D3: persistente, aplica em todos os grupos)
+   Switcher de galpão — no topo da sidebar (substitui a barra sticky)
+   Botão clicável estilo wms-sb-cmd que abre dropdown listbox.
    ============================================================ */
 
-.wms-glf {
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  background: var(--wms-c-bg);
-  border-bottom: 1px solid var(--wms-c-border);
-  padding: 8px 32px;
+.wms-sb-gs { position: relative; }
+.wms-sb-gs-btn {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 12px;
-}
-.wms-glf-lbl {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--wms-c-mute);
-  font-weight: 600;
-}
-.wms-glf-seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
+  gap: 8px;
   background: var(--wms-c-panel-2);
   border: 1px solid var(--wms-c-border);
   border-radius: var(--wms-r-2);
-  padding: 2px;
-}
-.wms-glf-seg-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 0;
-  background: transparent;
-  color: var(--wms-c-mute);
-  font-size: 12px;
-  font-weight: 500;
-  padding: 3px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.wms-glf-seg-btn:hover {
-  background: var(--wms-c-panel);
+  padding: 6px 8px;
   color: var(--wms-c-fg);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background .12s, border-color .12s;
 }
-.wms-glf-seg-btn.is-active {
-  background: var(--wms-c-fg);
-  color: var(--wms-c-bg);
+.wms-sb-gs-btn:hover,
+.wms-sb-gs-btn.is-open {
+  background: var(--wms-c-faint);
+  border-color: var(--wms-c-border-2);
 }
-.wms-glf-seg-btn.is-active:hover { background: var(--wms-c-fg-2); }
-.wms-glf-seg-btn .wms-glf-dot {
-  width: 6px;
-  height: 6px;
+.wms-sb-gs-lbl {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wms-sb-gs-dot {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
-.wms-glf-hint {
-  margin-left: auto;
+.wms-sb-gs-dot-all {
+  background: transparent;
+  border: 1.5px solid var(--wms-c-mute);
+  box-sizing: border-box;
+}
+.wms-sb-gs-caret {
   color: var(--wms-c-mute);
-  font-size: 11px;
+  flex-shrink: 0;
+  transition: transform .15s;
+}
+.wms-sb-gs-btn.is-open .wms-sb-gs-caret { transform: rotate(180deg); }
+
+.wms-sb-gs-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border-2);
+  border-radius: var(--wms-r-2);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.10), 0 2px 6px rgba(0, 0, 0, 0.04);
+  padding: 4px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.wms-sb-gs-opt {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--wms-r-1);
+  padding: 6px 8px;
+  color: var(--wms-c-fg-2);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.wms-sb-gs-opt:hover { background: var(--wms-c-panel-2); color: var(--wms-c-fg); }
+.wms-sb-gs-opt.is-sel { color: var(--wms-c-fg); font-weight: 500; }
+.wms-sb-gs-opt-lbl {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wms-sb-gs-check { color: var(--wms-c-fg); flex-shrink: 0; }
+.wms-sb-gs-sep {
+  height: 1px;
+  background: var(--wms-c-border);
+  margin: 4px 2px;
 }
 
 /* ============================================================
@@ -2073,7 +2104,6 @@
   .wms-app { grid-template-columns: 1fr; }
   .wms-sb { display: none; }
   .wms-view { padding: 16px; }
-  .wms-glf { padding: 8px 16px; }
   .wms-hand-item {
     grid-template-columns: 24px minmax(0,1fr) 70px;
   }

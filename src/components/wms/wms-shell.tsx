@@ -23,7 +23,7 @@ import {
   RealocarModal,
   TransferModal,
 } from "@/components/wms/ui/modals";
-import { FiltroGalpaoGlobal } from "@/components/wms/filtro-galpao-global";
+import { SidebarGalpaoSwitcher } from "@/components/wms/sidebar-galpao-switcher";
 import type { Produto } from "@/lib/wms/types";
 
 // ──────────────────────────────────────────────────────────────────
@@ -163,6 +163,7 @@ function Sidebar({
             <div className="wms-sb-logo-org">SISO</div>
           </div>
         </Link>
+        <SidebarGalpaoSwitcher />
         <button className="wms-sb-cmd" onClick={onCmdK}>
           <Icon name="search" size={12} />
           <span>Buscar</span>
@@ -486,7 +487,6 @@ export function WmsShell({ children }: { children: ReactNode }) {
             userRole={role}
           />
           <div className="wms-main">
-            <FiltroGalpaoGlobal />
             <div className="wms-view">{children}</div>
           </div>
 

@@ -6,6 +6,7 @@ import { wmsApi } from "@/lib/wms/api-client";
 import {
   Card,
   Icon,
+  Pagination,
   StatusBadge,
   LocTipoBadge,
   fmtBRL,
@@ -56,6 +57,15 @@ export function ProdutoDrawer({
 }) {
   const [tab, setTab] = useState<TabId>("overview");
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  // Derive-during-render: reseta a paginação quando o produto muda
+  // sem usar useEffect (padrão recomendado pelo React).
+  const [movsPage, setMovsPage] = useState(1);
+  const [movsPageFor, setMovsPageFor] = useState(produtoId);
+  if (movsPageFor !== produtoId) {
+    setMovsPageFor(produtoId);
+    setMovsPage(1);
+  }
+  const MOVS_PAGE_SIZE = 100;
   const modals = useWmsModals();
 
   // ESC fecha
@@ -81,10 +91,12 @@ export function ProdutoDrawer({
   });
 
   const ledgerQuery = useQuery({
-    queryKey: ["wms-produto-ledger", produtoId],
+    queryKey: ["wms-produto-ledger", produtoId, movsPage],
     queryFn: () =>
-      wmsApi<{ rows: MovComposite[] }>(
-        `/api/wms/ledger?produto_id=${produtoId}&limit=200`,
+      wmsApi<{ rows: MovComposite[]; total: number }>(
+        `/api/wms/ledger?produto_id=${produtoId}&limit=${MOVS_PAGE_SIZE}&offset=${
+          (movsPage - 1) * MOVS_PAGE_SIZE
+        }`,
       ),
   });
 
@@ -110,6 +122,7 @@ export function ProdutoDrawer({
   const agregado = estoqueQuery.data?.rows[0];
   const linhas = agregado?.itens ?? [];
   const movs = ledgerQuery.data?.rows ?? [];
+  const movsTotal = ledgerQuery.data?.total ?? 0;
   const cobertura = coberturaQuery.data?.[0];
   const ultimasContagens = ultimasContagensQuery.data?.rows ?? [];
 
@@ -305,7 +318,14 @@ export function ProdutoDrawer({
                 />
               )}
               {tab === "movs" && (
-                <Movimentacoes movs={movs} contagens={ultimasContagens} />
+                <Movimentacoes
+                  movs={movs}
+                  contagens={ultimasContagens}
+                  total={movsTotal}
+                  pageSize={MOVS_PAGE_SIZE}
+                  page={movsPage}
+                  onPageChange={setMovsPage}
+                />
               )}
               {tab === "cobertura" && <Cobertura c={cobertura} />}
               {tab === "fornec" && <Fornecedores produto={produto} />}
@@ -573,9 +593,17 @@ function EstoquePorLocal({
 function Movimentacoes({
   movs,
   contagens,
+  total,
+  pageSize,
+  page,
+  onPageChange,
 }: {
   movs: MovComposite[];
   contagens: UltimaContagemProduto[];
+  total: number;
+  pageSize: number;
+  page: number;
+  onPageChange: (p: number) => void;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -585,11 +613,20 @@ function Movimentacoes({
           Sem movimentações no ledger.
         </div>
       ) : (
-        <div className="wms-ledger-list">
-          {movs.map((m) => (
-            <LedgerRow key={m.id} m={m} />
-          ))}
-        </div>
+        <>
+          <div className="wms-ledger-list">
+            {movs.map((m) => (
+              <LedgerRow key={m.id} m={m} />
+            ))}
+          </div>
+          <Pagination
+            total={total}
+            pageSize={pageSize}
+            page={page}
+            onPageChange={onPageChange}
+            label="movimentações"
+          />
+        </>
       )}
     </div>
   );

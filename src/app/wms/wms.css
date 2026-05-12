@@ -477,6 +477,58 @@
 .wms-tbl-compact thead th { padding: 6px 12px; }
 .wms-tbl-comfy   tbody td { padding: 12px 12px; }
 
+/* Pagination — usada em tabelas grandes pra evitar render de centenas+ de linhas */
+.wms-pag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 4px 4px;
+  font-size: 12.5px;
+  color: var(--wms-c-mute);
+}
+.wms-pag-info strong { color: var(--wms-c-fg); font-weight: 600; }
+.wms-pag-ctrl { display: flex; align-items: center; gap: 4px; }
+.wms-pag-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-2);
+  color: var(--wms-c-fg-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .12s ease;
+}
+.wms-pag-btn:hover:not(:disabled) {
+  background: var(--wms-c-panel-2);
+  border-color: var(--wms-c-border-2);
+  color: var(--wms-c-fg);
+}
+.wms-pag-btn.is-active {
+  background: var(--wms-c-fg);
+  color: var(--wms-c-bg);
+  border-color: var(--wms-c-fg);
+}
+.wms-pag-btn:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+.wms-pag-gap {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--wms-c-mute);
+  user-select: none;
+}
+
 .wms-tr-clickable { cursor: pointer; }
 .wms-tr-clickable:hover { background: var(--wms-c-panel-2); }
 .wms-tr-clickable.is-expanded { background: var(--wms-c-faint); }

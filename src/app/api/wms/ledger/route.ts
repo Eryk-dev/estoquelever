@@ -10,6 +10,9 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const sb = createServiceClient();
 
+  const limit = Number(sp.get("limit") ?? 100);
+  const offset = Number(sp.get("offset") ?? 0);
+
   let q = sb
     .from("siso_movimentacoes")
     .select(
@@ -20,9 +23,10 @@ export async function GET(req: NextRequest) {
         galpao:siso_galpoes(nome),
         localizacao:siso_localizacoes(codigo, tipo)
       `,
+      { count: "exact" },
     )
     .order("criado_em", { ascending: false })
-    .limit(Number(sp.get("limit") ?? 100));
+    .range(offset, offset + limit - 1);
 
   const produtoId = sp.get("produto_id");
   const empresaId = sp.get("empresa_id");
@@ -40,7 +44,7 @@ export async function GET(req: NextRequest) {
   if (desde) q = q.gte("criado_em", desde);
   if (ate) q = q.lte("criado_em", ate);
 
-  const { data, error } = await q;
+  const { data, count, error } = await q;
   if (error) {
     return wmsErrorResponse({
       source: "wms.ledger",
@@ -49,5 +53,5 @@ export async function GET(req: NextRequest) {
       requestMethod: "GET",
     });
   }
-  return NextResponse.json({ rows: data ?? [] });
+  return NextResponse.json({ rows: data ?? [], total: count ?? 0 });
 }

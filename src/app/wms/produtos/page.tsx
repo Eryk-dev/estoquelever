@@ -7,6 +7,7 @@ import { wmsApi } from "@/lib/wms/api-client";
 import {
   Icon,
   PageHeader,
+  Pagination,
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
 import { ProdutoDrawer } from "@/components/wms/produto-drawer";
@@ -15,6 +16,8 @@ import type { Produto } from "@/lib/wms/types";
 
 export default function ProdutosPage() {
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 100;
   const [lightbox, setLightbox] = useState<{
     imagens: string[];
     sku: string;
@@ -24,6 +27,13 @@ export default function ProdutosPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const drawerId = searchParams?.get("produto") ?? null;
+
+  // Wrapper que reseta a página ao trocar a busca (evita ficar em página
+  // vazia após buscar termo com poucos resultados).
+  const handleSearchChange = (value: string) => {
+    setQ(value);
+    setPage(1);
+  };
 
   const openDrawer = useCallback(
     (id: string) => {
@@ -46,10 +56,12 @@ export default function ProdutosPage() {
   }, [router, searchParams]);
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["wms-produtos", q],
+    queryKey: ["wms-produtos", q, page],
     queryFn: () =>
       wmsApi<{ rows: Produto[]; total: number }>(
-        `/api/wms/produtos?q=${encodeURIComponent(q)}`,
+        `/api/wms/produtos?q=${encodeURIComponent(q)}&limit=${PAGE_SIZE}&offset=${
+          (page - 1) * PAGE_SIZE
+        }`,
       ),
   });
 
@@ -79,11 +91,14 @@ export default function ProdutosPage() {
           <Icon name="search" size={13} />
           <input
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             placeholder="SKU, descrição ou GTIN…"
           />
           {q && (
-            <button className="wms-search-clear" onClick={() => setQ("")}>
+            <button
+              className="wms-search-clear"
+              onClick={() => handleSearchChange("")}
+            >
               <Icon name="x" size={11} />
             </button>
           )}
@@ -201,6 +216,14 @@ export default function ProdutosPage() {
           </table>
         </div>
       )}
+
+      <Pagination
+        total={data?.total ?? 0}
+        pageSize={PAGE_SIZE}
+        page={page}
+        onPageChange={setPage}
+        label="produtos"
+      />
 
       {drawerId && (
         <ProdutoDrawer produtoId={drawerId} onClose={closeDrawer} />

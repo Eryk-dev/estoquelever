@@ -7,6 +7,7 @@ import {
   PageHeader,
   Icon,
   Kpi,
+  Pagination,
   StatusBadge,
   fmtBRL,
   fmtNum,
@@ -55,6 +56,8 @@ export default function EstoquePage() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"saldo" | "atualizacao">("saldo");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 100;
   const [lightbox, setLightbox] = useState<{
     imagens: string[];
     sku: string;
@@ -185,6 +188,16 @@ export default function EstoquePage() {
     filterStatus,
     sortBy,
   ]);
+
+  const totalRows = rows.length;
+  // Derive-during-render: se a página atual está além do total filtrado,
+  // volta pra 1 sem disparar useEffect (padrão recomendado pelo React).
+  const maxPage = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  const currentPage = Math.min(page, maxPage);
+  const pagedRows = useMemo(
+    () => rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [rows, currentPage],
+  );
 
   const totalSaldo = rows.reduce((s, r) => s + r.saldo, 0);
   const totalReservado = rows.reduce((s, r) => s + r.reservado, 0);
@@ -335,7 +348,7 @@ export default function EstoquePage() {
                 </td>
               </tr>
             )}
-            {rows.map((r) => {
+            {pagedRows.map((r) => {
               const isExpanded = expanded === r.produtoId;
               return (
                 <ExpandableRow
@@ -386,6 +399,14 @@ export default function EstoquePage() {
           </tbody>
         </table>
       </div>
+
+      <Pagination
+        total={totalRows}
+        pageSize={PAGE_SIZE}
+        page={currentPage}
+        onPageChange={setPage}
+        label="produtos"
+      />
 
       {drawerProdutoId && (
         <ProdutoDrawer produtoId={drawerProdutoId} onClose={closeDrawer} />

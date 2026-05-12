@@ -582,6 +582,107 @@ export function fmtRelative(iso: string | Date): string {
 }
 
 // ──────────────────────────────────────────────────────────────────
+// Pagination — paginação compacta para tabelas grandes
+
+export function Pagination({
+  total,
+  pageSize,
+  page,
+  onPageChange,
+  label = "itens",
+}: {
+  total: number;
+  pageSize: number;
+  page: number;
+  onPageChange: (p: number) => void;
+  label?: string;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(Math.max(1, page), totalPages);
+  if (total <= pageSize) return null;
+  const startIdx = (current - 1) * pageSize + 1;
+  const endIdx = Math.min(current * pageSize, total);
+  const go = (p: number) => onPageChange(Math.min(Math.max(1, p), totalPages));
+  const pages = pageWindow(current, totalPages);
+  return (
+    <div className="wms-pag">
+      <div className="wms-pag-info">
+        Mostrando <strong>{fmtNum(startIdx)}</strong>–
+        <strong>{fmtNum(endIdx)}</strong> de{" "}
+        <strong>{fmtNum(total)}</strong> {label}
+      </div>
+      <div className="wms-pag-ctrl">
+        <button
+          className="wms-pag-btn"
+          onClick={() => go(1)}
+          disabled={current === 1}
+          aria-label="Primeira página"
+          title="Primeira"
+        >
+          <Icon name="chevron-l" size={11} />
+          <Icon name="chevron-l" size={11} />
+        </button>
+        <button
+          className="wms-pag-btn"
+          onClick={() => go(current - 1)}
+          disabled={current === 1}
+          aria-label="Página anterior"
+        >
+          <Icon name="chevron-l" size={11} />
+        </button>
+        {pages.map((p, i) =>
+          p === "…" ? (
+            <span key={`gap-${i}`} className="wms-pag-gap">
+              …
+            </span>
+          ) : (
+            <button
+              key={p}
+              className={`wms-pag-btn ${p === current ? "is-active" : ""}`}
+              onClick={() => go(p)}
+            >
+              {p}
+            </button>
+          ),
+        )}
+        <button
+          className="wms-pag-btn"
+          onClick={() => go(current + 1)}
+          disabled={current === totalPages}
+          aria-label="Próxima página"
+        >
+          <Icon name="chevron-r" size={11} />
+        </button>
+        <button
+          className="wms-pag-btn"
+          onClick={() => go(totalPages)}
+          disabled={current === totalPages}
+          aria-label="Última página"
+          title="Última"
+        >
+          <Icon name="chevron-r" size={11} />
+          <Icon name="chevron-r" size={11} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function pageWindow(current: number, total: number): (number | "…")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const out: (number | "…")[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+  if (start > 2) out.push("…");
+  for (let p = start; p <= end; p++) out.push(p);
+  if (end < total - 1) out.push("…");
+  out.push(total);
+  return out;
+}
+
+// ──────────────────────────────────────────────────────────────────
 // useAutoFocus — utilitário para inputs
 
 export function useAutoFocus<T extends HTMLElement>(active: boolean) {

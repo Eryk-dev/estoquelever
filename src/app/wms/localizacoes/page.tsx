@@ -1,11 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   Icon,
   PageHeader,
+  Pagination,
   LocTipoBadge,
   Field,
 } from "@/components/wms/ui/wms-ui";
@@ -28,11 +29,20 @@ export default function LocalizacoesPage() {
   const queryClient = useQueryClient();
   const [galpaoId, setGalpaoId] = useState<string>("");
   const [showForm, setShowForm] = useState(false);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 100;
   const [novo, setNovo] = useState({
     codigo: "",
     descricao: "",
     tipo: "picking" as TipoLocalizacao,
   });
+
+  // Wrapper que reseta a página ao trocar de galpão (evita ficar em
+  // página vazia caso o novo galpão tenha menos localizações).
+  const selectGalpao = (id: string) => {
+    setGalpaoId(id);
+    setPage(1);
+  };
 
   const { data: galpoes } = useQuery({
     queryKey: ["galpoes"],
@@ -64,7 +74,14 @@ export default function LocalizacoesPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const rows = locsQuery.data?.rows ?? [];
+  const rows = useMemo(
+    () => locsQuery.data?.rows ?? [],
+    [locsQuery.data],
+  );
+  const pagedRows = useMemo(
+    () => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [rows, page],
+  );
   const galpoesList = galpoes ?? [];
 
   return (
@@ -90,7 +107,7 @@ export default function LocalizacoesPage() {
             <button
               key={g.id}
               className={`wms-seg-btn ${galpaoId === g.id ? "is-active" : ""}`}
-              onClick={() => setGalpaoId(g.id)}
+              onClick={() => selectGalpao(g.id)}
             >
               {g.nome}
             </button>
@@ -200,28 +217,37 @@ export default function LocalizacoesPage() {
             </div>
           )}
           {rows.length > 0 && (
-            <div className="wms-tbl">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Código</th>
-                    <th>Descrição</th>
-                    <th>Tipo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((l) => (
-                    <tr key={l.id}>
-                      <td className="wms-mono">{l.codigo}</td>
-                      <td className="wms-td-mute">{l.descricao ?? "—"}</td>
-                      <td>
-                        <LocTipoBadge tipo={l.tipo} />
-                      </td>
+            <>
+              <div className="wms-tbl">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Código</th>
+                      <th>Descrição</th>
+                      <th>Tipo</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {pagedRows.map((l) => (
+                      <tr key={l.id}>
+                        <td className="wms-mono">{l.codigo}</td>
+                        <td className="wms-td-mute">{l.descricao ?? "—"}</td>
+                        <td>
+                          <LocTipoBadge tipo={l.tipo} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination
+                total={rows.length}
+                pageSize={PAGE_SIZE}
+                page={page}
+                onPageChange={setPage}
+                label="localizações"
+              />
+            </>
           )}
         </>
       )}

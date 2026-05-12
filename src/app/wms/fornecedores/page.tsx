@@ -1,10 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
-import { Icon, PageHeader, Field } from "@/components/wms/ui/wms-ui";
+import { Icon, PageHeader, Pagination, Field } from "@/components/wms/ui/wms-ui";
 import type { Fornecedor } from "@/lib/wms/fornecedores";
 
 export default function FornecedoresPage() {
@@ -13,6 +13,8 @@ export default function FornecedoresPage() {
   const isAdmin = (user?.cargos ?? [user?.cargo]).includes("admin");
   const [showForm, setShowForm] = useState(false);
   const [novo, setNovo] = useState({ nome: "", cnpj: "", prefixo_sku: "" });
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 100;
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-fornecedores"],
@@ -52,7 +54,11 @@ export default function FornecedoresPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const rows = data?.rows ?? [];
+  const rows = useMemo(() => data?.rows ?? [], [data]);
+  const pagedRows = useMemo(
+    () => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [rows, page],
+  );
 
   return (
     <>
@@ -174,28 +180,37 @@ export default function FornecedoresPage() {
         </div>
       )}
       {rows.length > 0 && (
-        <div className="wms-tbl">
-          <table>
-            <thead>
-              <tr>
-                <th>Nome</th>
-                <th>Prefixo SKU</th>
-                <th>CNPJ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((f) => (
-                <tr key={f.id}>
-                  <td>
-                    <strong>{f.nome}</strong>
-                  </td>
-                  <td className="wms-mono">{f.prefixo_sku ?? "—"}</td>
-                  <td className="wms-mono wms-td-mute">{f.cnpj ?? "—"}</td>
+        <>
+          <div className="wms-tbl">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>Prefixo SKU</th>
+                  <th>CNPJ</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {pagedRows.map((f) => (
+                  <tr key={f.id}>
+                    <td>
+                      <strong>{f.nome}</strong>
+                    </td>
+                    <td className="wms-mono">{f.prefixo_sku ?? "—"}</td>
+                    <td className="wms-mono wms-td-mute">{f.cnpj ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            total={rows.length}
+            pageSize={PAGE_SIZE}
+            page={page}
+            onPageChange={setPage}
+            label="fornecedores"
+          />
+        </>
       )}
     </>
   );

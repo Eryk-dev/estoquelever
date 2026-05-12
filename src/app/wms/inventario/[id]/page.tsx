@@ -517,6 +517,7 @@ function SlotCard({
   locs: Array<{
     status: string;
     bloqueada_por: string | null;
+    slot_atribuido: number | null;
     localizacao?: { codigo?: string };
   }>;
 }) {
@@ -526,6 +527,18 @@ function SlotCard({
         (l) => l.bloqueada_por === op.usuario_id && l.status === "em_contagem",
       )
     : undefined;
+
+  // Bucket pré-atribuído a este slot (modo soft do cycle count manual).
+  // total = quantas locs foram atribuídas ao slot na criação da sessão.
+  // contadas = quantas dessas já foram finalizadas (status contada/aprovada).
+  const bucket = useMemo(() => {
+    const atribuidas = locs.filter((l) => l.slot_atribuido === slot);
+    if (atribuidas.length === 0) return null;
+    const contadas = atribuidas.filter(
+      (l) => l.status === "contada" || l.status === "aprovada",
+    ).length;
+    return { total: atribuidas.length, contadas };
+  }, [locs, slot]);
 
   const horasAtivo = op
     ? Math.max(0.001, (Date.now() - new Date(op.entrou_em).getTime()) / 3600000)
@@ -560,6 +573,18 @@ function SlotCard({
           </span>
         )}
       </div>
+      {bucket && (
+        <div
+          className="wms-td-mute"
+          style={{
+            fontSize: 11,
+            fontFamily: "var(--wms-mono)",
+          }}
+          title="Locs pré-atribuídas a este slot. Operador pode puxar de outros buckets quando este esvaziar."
+        >
+          bucket {bucket.contadas}/{bucket.total}
+        </div>
+      )}
       {livre ? (
         <div className="wms-td-mute" style={{ fontSize: 12 }}>
           Slot livre

@@ -14,6 +14,63 @@ import {
   fmtNum,
 } from "@/components/wms/ui/wms-ui";
 import type { SugestaoLoc, MotivoLoc, ModoContagem, TipoSessao } from "@/lib/wms/inventario";
+import type { Localizacao } from "@/lib/wms/types";
+
+// ─────────────────────────────────────────────────────────────────────
+// Distribuição soft: agrupa locs por zona, faz greedy LPT entre N
+// buckets de operador. Cada loc recebe slot_atribuido 1..N.
+//
+// Por que LPT (Longest Processing Time first): mantém zonas inteiras
+// no mesmo bucket (operador não anda entre zonas) e balanceia contagem
+// por bucket (variância pequena).
+// ─────────────────────────────────────────────────────────────────────
+
+interface BucketResultado {
+  slot: number;
+  locIds: string[];
+  zonas: string[];
+}
+
+function zonaDe(loc: Pick<Localizacao, "zona" | "codigo">): string {
+  if (loc.zona && loc.zona.trim()) return loc.zona.trim();
+  const prefix = loc.codigo.split("-")[0];
+  return prefix || loc.codigo;
+}
+
+function distribuirEmBuckets(
+  locs: Localizacao[],
+  numOperadores: number,
+): BucketResultado[] {
+  const buckets: BucketResultado[] = Array.from(
+    { length: numOperadores },
+    (_, i) => ({ slot: i + 1, locIds: [], zonas: [] }),
+  );
+  if (locs.length === 0 || numOperadores < 1) return buckets;
+
+  // Agrupa por zona
+  const porZona = new Map<string, Localizacao[]>();
+  for (const l of locs) {
+    const z = zonaDe(l);
+    const arr = porZona.get(z) ?? [];
+    arr.push(l);
+    porZona.set(z, arr);
+  }
+
+  // Ordena zonas por tamanho DESC (LPT)
+  const zonasOrdenadas = Array.from(porZona.entries()).sort(
+    (a, b) => b[1].length - a[1].length,
+  );
+
+  // Greedy: cada zona vai no bucket com menor carga
+  for (const [zona, locsDaZona] of zonasOrdenadas) {
+    const menor = buckets.reduce((min, b) =>
+      b.locIds.length < min.locIds.length ? b : min,
+    );
+    for (const l of locsDaZona) menor.locIds.push(l.id);
+    menor.zonas.push(zona);
+  }
+  return buckets;
+}
 
 interface SessaoRow {
   id: string;
@@ -185,6 +242,7 @@ function NovaSessaoModal({
   const [removidas, setRemovidas] = useState<Set<string>>(new Set());
   const [locsManual, setLocsManual] = useState<Set<string>>(new Set());
   const [anchorManualId, setAnchorManualId] = useState<string | null>(null);
+  const [numOperadores, setNumOperadores] = useState(3);
 
   const galpoesQuery = useGalpoes();
   const locsQuery = useLocalizacoes(galpaoId || null);
@@ -193,6 +251,24 @@ function NovaSessaoModal({
       galpoesQuery.data?.find((g) => g.id === galpaoId)?.empresas ?? [],
     [galpoesQuery.data, galpaoId],
   );
+
+  // Buckets pra cycle count manual (distribuição soft entre N operadores).
+  // Recalcula quando: locs selecionadas mudam OU número de operadores muda.
+  const bucketsManual = useMemo<BucketResultado[]>(() => {
+    if (tipoCriacao !== "manual" || locsManual.size === 0) return [];
+    const rows = locsQuery.data?.rows ?? [];
+    const selecionadas = rows.filter((l) => locsManual.has(l.id));
+    return distribuirEmBuckets(selecionadas, numOperadores);
+  }, [tipoCriacao, locsManual, locsQuery.data, numOperadores]);
+
+  // Mapa locId -> slot pro envio no criar
+  const slotPorLocId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const b of bucketsManual) {
+      for (const id of b.locIds) m.set(id, b.slot);
+    }
+    return m;
+  }, [bucketsManual]);
 
   const sugerir = useMutation({
     mutationFn: () =>
@@ -239,8 +315,11 @@ function NovaSessaoModal({
     const tipo: TipoSessao =
       tipoCriacao === "completo" ? "completo" : "cycle_count";
 
-    let localizacoes: Array<{ localizacao_id: string; motivo?: MotivoLoc }> =
-      [];
+    let localizacoes: Array<{
+      localizacao_id: string;
+      motivo?: MotivoLoc;
+      slot_atribuido?: number | null;
+    }> = [];
 
     if (tipoCriacao === "inteligente") {
       if (!sugestao || sugestao.length === 0) {
@@ -256,6 +335,7 @@ function NovaSessaoModal({
       localizacoes = Array.from(locsManual).map((id) => ({
         localizacao_id: id,
         motivo: "manual" as const,
+        slot_atribuido: slotPorLocId.get(id) ?? null,
       }));
     } else {
       const todas = locsQuery.data?.rows ?? [];
@@ -542,6 +622,102 @@ function NovaSessaoModal({
               <div className="wms-exp-empty">Carregando localizações…</div>
             ) : (
               <>
+                {/* Controle de quantos operadores vão trabalhar nesta sessão.
+                    Distribuição é soft: cada loc é pré-atribuída a um slot,
+                    mas operadores podem puxar de outros buckets quando o
+                    próprio esvaziar (smart routing do RPC mantém a ordem). */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "180px 1fr",
+                    gap: 12,
+                    alignItems: "center",
+                    marginBottom: 12,
+                    padding: 10,
+                    background: "var(--wms-c-faint)",
+                    border: "1px solid var(--wms-c-border)",
+                    borderRadius: "var(--wms-r-3)",
+                  }}
+                >
+                  <Field
+                    label="Quantos operadores"
+                    hint="Slots OP1..OPN"
+                  >
+                    <input
+                      className="wms-input wms-mono wms-tar"
+                      type="number"
+                      min={1}
+                      max={5}
+                      value={numOperadores}
+                      onChange={(e) => {
+                        const v = Math.max(
+                          1,
+                          Math.min(5, Number(e.target.value) || 1),
+                        );
+                        setNumOperadores(v);
+                      }}
+                    />
+                  </Field>
+                  <div>
+                    {locsManual.size === 0 ? (
+                      <div
+                        className="wms-td-mute"
+                        style={{ fontSize: 11.5 }}
+                      >
+                        Selecione localizações abaixo pra ver a distribuição
+                        em buckets por zona.
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 6,
+                        }}
+                      >
+                        {bucketsManual.map((b) => (
+                          <div
+                            key={b.slot}
+                            style={{
+                              border: "1px solid var(--wms-c-border)",
+                              background: "var(--wms-c-panel)",
+                              borderRadius: "var(--wms-r-3)",
+                              padding: "5px 8px",
+                              fontSize: 11.5,
+                              minWidth: 110,
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 2,
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                fontWeight: 600,
+                              }}
+                            >
+                              <span>OP{b.slot}</span>
+                              <span className="wms-mono">
+                                {b.locIds.length} loc
+                                {b.locIds.length === 1 ? "" : "s"}
+                              </span>
+                            </div>
+                            <div
+                              className="wms-td-mute"
+                              style={{ fontSize: 10.5 }}
+                            >
+                              {b.zonas.length === 0
+                                ? "—"
+                                : `zona${b.zonas.length > 1 ? "s" : ""} ${b.zonas.join(", ")}`}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div
                   style={{
                     display: "flex",

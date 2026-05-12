@@ -4834,10 +4834,16 @@ Cron-friendly. **Auth:** `x-worker-secret`. Insere mov L pra reservas com `expir
 Lista sessões. Query: `status`, `galpao_id`.
 
 ### POST /api/wms/inventario
-Cria sessão. Body: `{ tipo, galpao_id, modo_contagem?, tolerancia_pct?, exige_aprovacao_acima_valor?, areas: [{ nome, operador_id?, localizacao_ids[] }] }`. Defaults: blind, 2%, R$1000.
+Cria sessão (v2 — pool compartilhado com slots dinâmicos OP1..OP5).
+
+**Body:** `{ tipo: 'cycle_count'|'completo', galpao_id, nome?, empresa_dona_id?, modo_contagem?: 'blind'|'aberto', tolerancia_pct?, tolerancia_qty_min?, exige_aprovacao_acima_valor?, observacoes?, localizacoes: [{ localizacao_id, motivo?, slot_atribuido? }] }`.
+
+Defaults: blind, 2%, R$1000.
+
+**`slot_atribuido` (1..5 ou NULL):** distribuição soft entre operadores no cycle count manual. Quando setado, o RPC `wms_inventario_proxima_loc` prioriza essa loc pro operador que está no slot correspondente; quando o bucket próprio esvazia, o operador cai naturalmente nas regras de continuidade/anti-colisão e pode puxar de buckets de colegas. Sessões sem `slot_atribuido` (NULL em todas as locs) usam pull queue puro (comportamento v2 original).
 
 ### GET /api/wms/inventario/[id]
-Detalhe consolidado: `{ sessao, areas, localizacoes, contagens, divergencias }` (5 queries paralelas).
+Detalhe consolidado: `{ sessao, operadores, localizacoes, contagens, divergencias }` (5 queries paralelas). `localizacoes[].slot_atribuido` retorna o bucket de cada loc (NULL = pool comum).
 
 ### PATCH /api/wms/inventario/[id]
 Update genérico de campos da sessão.

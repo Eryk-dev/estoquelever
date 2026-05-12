@@ -34,6 +34,8 @@ export interface LocSessao {
   contagem_iniciada_em: string | null;
   contagem_finalizada_em: string | null;
   motivo: string | null;
+  /** Slot (1..5) pré-atribuído ao operador. NULL = sem bucket (pool comum). */
+  slot_atribuido: number | null;
   localizacao?: { codigo?: string; tipo?: string; zona?: string };
   bloqueada_por_user?: { nome?: string } | null;
 }

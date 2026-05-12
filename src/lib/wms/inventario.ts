@@ -25,6 +25,12 @@ export type MotivoLoc =
 export interface LocSessaoInput {
   localizacao_id: string;
   motivo?: MotivoLoc;
+  /** Slot do operador (1..5) ao qual essa loc fica pré-atribuída.
+   *  Quando NULL, a loc entra no pool comum (smart routing decide o owner).
+   *  Quando setado, o RPC wms_inventario_proxima_loc prioriza essa loc pro
+   *  operador que está no slot correspondente; quando o bucket esvazia,
+   *  caí naturalmente nas regras de continuidade/anti-colisão. */
+  slot_atribuido?: number | null;
 }
 
 export interface CriarSessaoInput {
@@ -70,6 +76,13 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
     sessao_id: sessaoId,
     localizacao_id: l.localizacao_id,
     motivo: l.motivo ?? "manual",
+    slot_atribuido:
+      l.slot_atribuido != null &&
+      Number.isInteger(l.slot_atribuido) &&
+      l.slot_atribuido >= 1 &&
+      l.slot_atribuido <= 5
+        ? l.slot_atribuido
+        : null,
   }));
 
   const { error: errL } = await sb

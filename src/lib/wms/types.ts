@@ -59,6 +59,9 @@ export interface Localizacao {
   tipo: TipoLocalizacao;
   ativo: boolean;
   criado_em: string;
+  /** Override manual da zona. Quando NULL, sistema infere via
+   *  `codigo.split("-")[0]` (mesma lógica do RPC wms_inventario_proxima_loc). */
+  zona?: string | null;
 }
 
 export interface EstoqueLinha {

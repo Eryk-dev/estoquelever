@@ -587,7 +587,8 @@ function EstoquePorLocal({
     );
   }
   return (
-    <table className="wms-full-tbl wms-tbl-grouped">
+    <div className="wms-card">
+      <table className="wms-full-tbl wms-tbl-grouped">
       <thead>
         <tr>
           <th>Empresa</th>
@@ -662,7 +663,8 @@ function EstoquePorLocal({
           ))}
         </tbody>
       ))}
-    </table>
+      </table>
+    </div>
   );
 }
 

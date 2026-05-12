@@ -4582,6 +4582,41 @@ Força sincronização com Tiny via mapeamento ativo. Atualiza descricao, gtin, 
 
 **Response 200:** `{ ok: true }` ou 500 com erro.
 
+### GET /api/wms/produtos/[id]/ultimas-contagens
+
+Retorna a última contagem de inventário desse produto agrupada por (localização + empresa dona). Inclui contagens de sessões em qualquer status menos `cancelada` — útil pra mostrar "conferido em X" mesmo quando a contagem não gerou divergência (e portanto não há mov no ledger). Usado pela aba "Movimentações" do produto.
+
+**Auth:** `requireAuth` (qualquer usuário autenticado).
+
+**RPC:** `wms_produto_ultimas_contagens(p_produto_id uuid)` faz `DISTINCT ON (localizacao_id, empresa_dona_id)` ordenado por `criado_em DESC`. Joina com `siso_localizacoes`, `siso_galpoes`, `siso_empresas`, `siso_usuarios`, `siso_inventario_sessoes` e `siso_estoque` (LEFT) pra trazer o saldo atual da quádrupla.
+
+**Response 200:**
+```json
+{
+  "rows": [
+    {
+      "localizacao_id": "uuid",
+      "loc_codigo": "A-01-01",
+      "loc_tipo": "picking",
+      "galpao_id": "uuid",
+      "galpao_nome": "CWB",
+      "empresa_dona_id": "uuid",
+      "empresa_nome": "NetAir",
+      "qty_contada": 10,
+      "contada_por": "uuid",
+      "contada_por_nome": "Eryk",
+      "contada_em": "2026-05-12T14:17:31Z",
+      "sessao_id": "uuid",
+      "sessao_nome": "rua a",
+      "sessao_status": "aplicada",
+      "saldo_atual": 10
+    }
+  ]
+}
+```
+
+Ordenado por `contada_em DESC` (a primeira linha é a última contagem global do produto).
+
 ### GET /api/wms/localizacoes
 
 Lista localizações ativas, opcionalmente filtradas por galpão.

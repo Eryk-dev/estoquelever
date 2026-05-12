@@ -828,3 +828,39 @@ export async function aplicarSessao(
 
 // Alias retrocompat — alguns callers ainda importam o nome antigo.
 export const criarSessaoInventario = criarSessao;
+
+// ─────────────────────────────────────────────────────────────────────
+// Últimas contagens por produto — feed pra aba "Movimentações" do produto
+// Mostra "quando esse produto foi conferido pela última vez em cada loc"
+// mesmo quando a contagem não gerou divergência (e portanto não há mov
+// no ledger). Pula sessões canceladas.
+// ─────────────────────────────────────────────────────────────────────
+
+export interface UltimaContagemProduto {
+  localizacao_id: string;
+  loc_codigo: string;
+  loc_tipo: string;
+  galpao_id: string;
+  galpao_nome: string;
+  empresa_dona_id: string;
+  empresa_nome: string;
+  qty_contada: number;
+  contada_por: string;
+  contada_por_nome: string | null;
+  contada_em: string;
+  sessao_id: string;
+  sessao_nome: string | null;
+  sessao_status: StatusSessao;
+  saldo_atual: number;
+}
+
+export async function ultimasContagensDoProduto(
+  produtoId: string,
+): Promise<UltimaContagemProduto[]> {
+  const sb = createServiceClient();
+  const { data, error } = await sb.rpc("wms_produto_ultimas_contagens", {
+    p_produto_id: produtoId,
+  });
+  if (error) throw error;
+  return (data ?? []) as UltimaContagemProduto[];
+}

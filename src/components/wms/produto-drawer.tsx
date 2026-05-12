@@ -17,6 +17,7 @@ import { useWmsModals } from "@/components/wms/wms-shell";
 import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import type { Produto, Movimentacao } from "@/lib/wms/types";
 import type { LinhaCobertura } from "@/lib/wms/cobertura";
+import type { UltimaContagemProduto } from "@/lib/wms/inventario";
 
 type TabId = "overview" | "estoque" | "movs" | "cobertura" | "fornec" | "fotos";
 
@@ -97,11 +98,20 @@ export function ProdutoDrawer({
     },
   });
 
+  const ultimasContagensQuery = useQuery({
+    queryKey: ["wms-produto-ultimas-contagens", produtoId],
+    queryFn: () =>
+      wmsApi<{ rows: UltimaContagemProduto[] }>(
+        `/api/wms/produtos/${produtoId}/ultimas-contagens`,
+      ),
+  });
+
   const produto = produtoQuery.data;
   const agregado = estoqueQuery.data?.rows[0];
   const linhas = agregado?.itens ?? [];
   const movs = ledgerQuery.data?.rows ?? [];
   const cobertura = coberturaQuery.data?.[0];
+  const ultimasContagens = ultimasContagensQuery.data?.rows ?? [];
 
   const saldo = agregado ? Number(agregado.saldo) : 0;
   const reservado = agregado ? Number(agregado.reservado) : 0;
@@ -294,7 +304,9 @@ export function ProdutoDrawer({
                   onAction={openAction}
                 />
               )}
-              {tab === "movs" && <Movimentacoes movs={movs} />}
+              {tab === "movs" && (
+                <Movimentacoes movs={movs} contagens={ultimasContagens} />
+              )}
               {tab === "cobertura" && <Cobertura c={cobertura} />}
               {tab === "fornec" && <Fornecedores produto={produto} />}
               {tab === "fotos" && (
@@ -558,19 +570,122 @@ function EstoquePorLocal({
   );
 }
 
-function Movimentacoes({ movs }: { movs: MovComposite[] }) {
-  if (movs.length === 0) {
+function Movimentacoes({
+  movs,
+  contagens,
+}: {
+  movs: MovComposite[];
+  contagens: UltimaContagemProduto[];
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <ContagensInventario contagens={contagens} />
+      {movs.length === 0 ? (
+        <div className="wms-exp-empty" style={{ padding: 24 }}>
+          Sem movimentações no ledger.
+        </div>
+      ) : (
+        <div className="wms-ledger-list">
+          {movs.map((m) => (
+            <LedgerRow key={m.id} m={m} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContagensInventario({
+  contagens,
+}: {
+  contagens: UltimaContagemProduto[];
+}) {
+  if (contagens.length === 0) {
     return (
-      <div className="wms-exp-empty" style={{ padding: 24 }}>
-        Sem movimentações.
-      </div>
+      <Card title="Conferências de inventário">
+        <div className="wms-exp-empty">
+          Este produto ainda não foi contado em nenhuma sessão de inventário.
+        </div>
+      </Card>
     );
   }
+  const ultima = contagens[0]; // RPC já ordena por contada_em DESC
   return (
-    <div className="wms-ledger-list">
-      {movs.map((m) => (
-        <LedgerRow key={m.id} m={m} />
-      ))}
+    <Card
+      title="Conferências de inventário"
+      actions={
+        <span className="wms-td-mute" style={{ fontSize: 12 }}>
+          Última: {fmtRelative(ultima.contada_em)}
+        </span>
+      }
+    >
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: 0 }}
+      >
+        {contagens.map((c) => (
+          <ContagemRow
+            key={`${c.localizacao_id}-${c.empresa_dona_id}`}
+            c={c}
+          />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function ContagemRow({ c }: { c: UltimaContagemProduto }) {
+  const conferido = Number(c.qty_contada);
+  const atual = Number(c.saldo_atual);
+  const divergiu = conferido !== atual;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        padding: "10px 0",
+        borderBottom: "1px solid var(--wms-c-border)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          minWidth: 0,
+          flex: 1,
+        }}
+      >
+        <span className="wms-chip-emp">
+          {c.empresa_nome.slice(0, 3).toUpperCase()}
+        </span>
+        <span className="wms-td-mute" style={{ fontSize: 12 }}>
+          {c.galpao_nome}
+        </span>
+        <span className="wms-mono" style={{ fontSize: 13 }}>
+          / {c.loc_codigo}
+        </span>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: 2,
+          fontSize: 12,
+        }}
+      >
+        <div className="wms-mono">
+          {fmtNum(conferido)} bipado
+          {divergiu && (
+            <span className="wms-td-mute"> · atual {fmtNum(atual)}</span>
+          )}
+        </div>
+        <div className="wms-td-mute" style={{ fontSize: 11 }}>
+          {c.contada_por_nome ?? "—"} · {fmtRelative(c.contada_em)}
+        </div>
+      </div>
     </div>
   );
 }

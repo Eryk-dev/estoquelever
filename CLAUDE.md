@@ -406,6 +406,7 @@ wms/  (subset of src/)
     produtos/route.ts              # GET (list/search), POST (create)
     produtos/[id]/route.ts         # GET, PATCH
     produtos/[id]/sync/route.ts    # POST — força sync com Tiny
+    produtos/[id]/ultimas-contagens/route.ts  # GET — última contagem de inventário por loc+dona (feed da aba Movimentações do produto)
     localizacoes/route.ts          # GET (por galpão), POST
     localizacoes/[id]/route.ts     # PATCH, DELETE (com proteção saldo>0)
     estoque/route.ts               # GET ?view=dono|galpao|localizacao|produto

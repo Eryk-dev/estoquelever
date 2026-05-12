@@ -8,14 +8,14 @@ import { createServiceClient } from "@/lib/supabase-server";
 import type { Produto, ProdutoKitComposicao } from "@/lib/wms/types";
 
 export interface KitDisponivelPorGalpao {
-  empresa_dona_id: string;
-  empresa_nome: string;
   galpao_id: string;
   galpao_nome: string;
   disponivel_kits: number;
   gargalo_componente_id: string | null;
   gargalo_componente_sku: string | null;
   gargalo_disponivel: number | null;
+  /** Lista das empresas que têm estoque dos componentes neste galpão. */
+  empresas_contribuindo: string | null;
 }
 
 export interface KitDisponivel {
@@ -314,14 +314,13 @@ export async function calcularDisponivel(
   const disponivel = Number(dispData ?? 0);
   const breakdownRaw =
     (brkData as Array<{
-      empresa_dona_id: string;
-      empresa_nome: string;
       galpao_id: string;
       galpao_nome: string;
       disponivel_kits: number;
       gargalo_componente_id: string | null;
       gargalo_componente_sku: string | null;
       gargalo_disponivel: number | null;
+      empresas_contribuindo: string | null;
     }> | null) ?? [];
 
   // Se filtro de galpão estiver setado, restringe o breakdown também (a RPC
@@ -332,8 +331,6 @@ export async function calcularDisponivel(
       filtros.galpao_id ? r.galpao_id === filtros.galpao_id : true,
     )
     .map((r) => ({
-      empresa_dona_id: r.empresa_dona_id,
-      empresa_nome: r.empresa_nome,
       galpao_id: r.galpao_id,
       galpao_nome: r.galpao_nome,
       disponivel_kits: Number(r.disponivel_kits),
@@ -341,6 +338,7 @@ export async function calcularDisponivel(
       gargalo_componente_sku: r.gargalo_componente_sku,
       gargalo_disponivel:
         r.gargalo_disponivel != null ? Number(r.gargalo_disponivel) : null,
+      empresas_contribuindo: r.empresas_contribuindo,
     }));
 
   // Gargalo "global": o componente que mais frequentemente é gargalo nos

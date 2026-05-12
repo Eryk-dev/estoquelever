@@ -1276,14 +1276,13 @@ interface KitComposicaoRow {
 }
 
 interface KitDisponivelPorGalpao {
-  empresa_dona_id: string;
-  empresa_nome: string;
   galpao_id: string;
   galpao_nome: string;
   disponivel_kits: number;
   gargalo_componente_id: string | null;
   gargalo_componente_sku: string | null;
   gargalo_disponivel: number | null;
+  empresas_contribuindo: string | null;
 }
 
 interface KitDisponivelInfo {
@@ -1359,8 +1358,9 @@ function KitTab({ produto }: { produto: Produto }) {
             className="wms-td-mute"
             style={{ fontSize: 12.5, marginTop: 0, marginBottom: 10 }}
           >
-            Kits são montados por galpão — cada galpão precisa ter todos os
-            componentes. Total = soma do que dá pra montar em cada galpão.
+            Kits são montados fisicamente no galpão — cada galpão precisa ter
+            todos os componentes (não importa quem é dono do estoque). Total =
+            soma do que dá pra montar em cada galpão.
           </p>
           <div className="wms-ov-meta-grid">
             <div>
@@ -1399,17 +1399,16 @@ function KitTab({ produto }: { produto: Produto }) {
                 <thead>
                   <tr>
                     <th>Galpão</th>
-                    <th>Empresa</th>
                     <th className="wms-tar">Kits montáveis</th>
                     <th>Gargalo</th>
                     <th className="wms-tar">Saldo do gargalo</th>
+                    <th>Empresas contribuindo</th>
                   </tr>
                 </thead>
                 <tbody>
                   {disp.por_galpao.map((g) => (
-                    <tr key={`${g.empresa_dona_id}-${g.galpao_id}`}>
-                      <td>{g.galpao_nome}</td>
-                      <td className="wms-td-mute">{g.empresa_nome}</td>
+                    <tr key={g.galpao_id}>
+                      <td style={{ fontWeight: 600 }}>{g.galpao_nome}</td>
                       <td className="wms-tar wms-mono wms-td-strong">
                         {fmtNum(g.disponivel_kits)}
                       </td>
@@ -1420,6 +1419,9 @@ function KitTab({ produto }: { produto: Produto }) {
                         {g.gargalo_disponivel != null
                           ? fmtNum(g.gargalo_disponivel)
                           : "—"}
+                      </td>
+                      <td className="wms-td-mute" style={{ fontSize: 12 }}>
+                        {g.empresas_contribuindo ?? "—"}
                       </td>
                     </tr>
                   ))}

@@ -5,7 +5,7 @@
 // `wms_kit_disponivel` no Postgres.
 
 import { createServiceClient } from "@/lib/supabase-server";
-import type { ProdutoKitComposicao } from "@/lib/wms/types";
+import type { Produto, ProdutoKitComposicao } from "@/lib/wms/types";
 
 export interface KitDisponivel {
   kit_id: string;
@@ -14,6 +14,95 @@ export interface KitDisponivel {
   gargalo_produto_id: string | null;
   gargalo_sku: string | null;
   gargalo_disponivel: number | null;
+}
+
+export interface ComponentePosicao {
+  empresa: { id: string; nome: string };
+  galpao: { id: string; nome: string };
+  localizacao: { id: string; codigo: string };
+  saldo: number;
+  reservado: number;
+  disponivel: number;
+}
+
+export interface ComponenteEstoque {
+  disponivel_total: number;
+  saldo_total: number;
+  reservado_total: number;
+  posicoes: ComponentePosicao[];
+}
+
+/**
+ * Para uma lista de produtos, retorna o saldo agregado e as posições
+ * (empresa × galpão × localização) onde cada produto tem saldo > 0.
+ * Usado pelo KitTab pra mostrar onde cada componente está.
+ */
+export async function listarEstoqueComponentes(
+  produtoIds: string[],
+  filtros: { empresa_dona_id?: string; galpao_id?: string } = {},
+): Promise<Map<string, ComponenteEstoque>> {
+  const map = new Map<string, ComponenteEstoque>();
+  if (produtoIds.length === 0) return map;
+
+  const sb = createServiceClient();
+  let q = sb
+    .from("siso_estoque")
+    .select(
+      `produto_id, saldo, reservado, disponivel,
+       empresa:siso_empresas(id, nome),
+       galpao:siso_galpoes(id, nome),
+       localizacao:siso_localizacoes(id, codigo)`,
+    )
+    .in("produto_id", produtoIds)
+    .gt("saldo", 0);
+  if (filtros.empresa_dona_id) {
+    q = q.eq("empresa_dona_id", filtros.empresa_dona_id);
+  }
+  if (filtros.galpao_id) {
+    q = q.eq("galpao_id", filtros.galpao_id);
+  }
+  const { data, error } = await q;
+  if (error) throw error;
+
+  for (const r of data ?? []) {
+    const row = r as unknown as {
+      produto_id: string;
+      saldo: number;
+      reservado: number;
+      disponivel: number;
+      empresa: { id: string; nome: string };
+      galpao: { id: string; nome: string };
+      localizacao: { id: string; codigo: string };
+    };
+    const existing =
+      map.get(row.produto_id) ??
+      ({
+        disponivel_total: 0,
+        saldo_total: 0,
+        reservado_total: 0,
+        posicoes: [],
+      } as ComponenteEstoque);
+    const disp = Number(row.disponivel ?? 0);
+    const saldo = Number(row.saldo ?? 0);
+    const res = Number(row.reservado ?? 0);
+    existing.disponivel_total += disp;
+    existing.saldo_total += saldo;
+    existing.reservado_total += res;
+    existing.posicoes.push({
+      empresa: row.empresa,
+      galpao: row.galpao,
+      localizacao: row.localizacao,
+      saldo,
+      reservado: res,
+      disponivel: disp,
+    });
+    map.set(row.produto_id, existing);
+  }
+
+  for (const e of map.values()) {
+    e.posicoes.sort((a, b) => b.disponivel - a.disponivel);
+  }
+  return map;
 }
 
 /** Lista a composição do kit, com dados do componente. */
@@ -32,6 +121,59 @@ export async function listarComposicaoKit(
     .order("criado_em", { ascending: true });
   if (error) throw error;
   return (data ?? []) as unknown as ProdutoKitComposicao[];
+}
+
+/**
+ * Encontra kits cujos componentes têm SKU/descrição/GTIN compatíveis
+ * com a query. Usado na busca de produtos/estoque pra mostrar "este SKU
+ * também participa destes kits".
+ *
+ * Retorna os kits completos (Produto) — não os componentes — porque a UI
+ * quer listá-los como entradas adicionais nos resultados da busca.
+ *
+ * @param excludeProdutoIds — IDs que já apareceram nos resultados diretos,
+ *   pra evitar duplicação quando o próprio kit já matched pelo SKU dele.
+ */
+export async function buscarKitsContendoQuery(
+  query: string,
+  opts: { excludeProdutoIds?: string[]; limit?: number } = {},
+): Promise<Produto[]> {
+  const sb = createServiceClient();
+  const q = query.trim();
+  if (!q) return [];
+
+  // 1) Acha produtos (componentes) que casam com a query.
+  const { data: matches, error: errMatch } = await sb
+    .from("siso_produtos")
+    .select("id")
+    .or(`sku.ilike.%${q}%,descricao.ilike.%${q}%,gtin.eq.${q}`)
+    .eq("eh_kit", false)
+    .limit(200);
+  if (errMatch) throw errMatch;
+  const componenteIds = (matches ?? []).map((r) => (r as { id: string }).id);
+  if (componenteIds.length === 0) return [];
+
+  // 2) Acha kits que contêm esses componentes.
+  const { data: kitRows, error: errKits } = await sb
+    .from("siso_produto_kits")
+    .select(
+      `kit_produto_id,
+       kit:siso_produtos!siso_produto_kits_kit_produto_id_fkey(*)`,
+    )
+    .in("componente_produto_id", componenteIds);
+  if (errKits) throw errKits;
+
+  const seen = new Set(opts.excludeProdutoIds ?? []);
+  const out: Produto[] = [];
+  for (const r of kitRows ?? []) {
+    const kit = (r as unknown as { kit: Produto | null }).kit;
+    if (!kit) continue;
+    if (seen.has(kit.id)) continue;
+    seen.add(kit.id);
+    out.push(kit);
+    if (opts.limit && out.length >= opts.limit) break;
+  }
+  return out;
 }
 
 /** Lista produtos que contêm este produto como componente (kits onde ele participa). */

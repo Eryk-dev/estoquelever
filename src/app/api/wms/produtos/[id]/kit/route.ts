@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   listarComposicaoKit,
+  listarEstoqueComponentes,
   upsertComponente,
   removerComponente,
   calcularDisponivel,
@@ -28,7 +29,23 @@ export async function GET(
         galpao_id: galpao,
       }),
     ]);
-    return NextResponse.json({ composicao, disponivel });
+    const estoquePorComponente = await listarEstoqueComponentes(
+      composicao.map((c) => c.componente_produto_id),
+      { empresa_dona_id: empresa, galpao_id: galpao },
+    );
+    const composicaoComEstoque = composicao.map((c) => ({
+      ...c,
+      estoque: estoquePorComponente.get(c.componente_produto_id) ?? {
+        disponivel_total: 0,
+        saldo_total: 0,
+        reservado_total: 0,
+        posicoes: [],
+      },
+    }));
+    return NextResponse.json({
+      composicao: composicaoComEstoque,
+      disponivel,
+    });
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.produtos.kit.get",

@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams, useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
+import type { Produto } from "@/lib/wms/types";
 import {
   PageHeader,
   Icon,
@@ -96,6 +97,28 @@ export default function EstoquePage() {
     queryFn: () =>
       wmsApi<{ rows: LinhaCobertura[] }>(`/api/wms/cobertura`),
   });
+
+  // Busca paralela de kits cujos componentes casam com `q`. Só dispara
+  // quando há query. Mostra-os como linhas adicionais abaixo da tabela
+  // (kits não têm saldo direto — só disponibilidade derivada).
+  const kitsQuery = useQuery({
+    queryKey: ["wms-estoque-kits-por-componente", q],
+    queryFn: () =>
+      wmsApi<{
+        rows: Produto[];
+        total: number;
+        kits_por_componente?: number;
+      }>(
+        `/api/wms/produtos?q=${encodeURIComponent(q)}&limit=20&offset=0&incluir_kits_por_componente=true`,
+      ),
+    enabled: q.trim().length >= 2,
+  });
+  const kitsExtras = useMemo<Produto[]>(() => {
+    const d = kitsQuery.data;
+    const n = d?.kits_por_componente ?? 0;
+    if (!d || n === 0) return [];
+    return d.rows.slice(d.rows.length - n);
+  }, [kitsQuery.data]);
 
   // Map cobertura por produto
   const coberturaMap = useMemo(() => {
@@ -348,6 +371,84 @@ export default function EstoquePage() {
                 </td>
               </tr>
             )}
+            {kitsExtras.length > 0 && currentPage === 1 && (
+              <tr>
+                <td colSpan={11} style={{
+                  padding: "8px 12px",
+                  background: "var(--wms-c-panel-2)",
+                  fontSize: 11.5,
+                  textTransform: "uppercase",
+                  letterSpacing: ".06em",
+                  color: "var(--wms-c-mute)",
+                  fontWeight: 600,
+                  borderTop: "1px solid var(--wms-c-border)",
+                  borderBottom: "1px solid var(--wms-c-border)",
+                }}>
+                  Kits que contêm “{q}” como componente
+                </td>
+              </tr>
+            )}
+            {kitsExtras.length > 0 && currentPage === 1 && kitsExtras.map((kit) => (
+              <tr
+                key={`kit-${kit.id}`}
+                className="wms-tr-clickable"
+                onClick={() => openDrawer(kit.id)}
+              >
+                <td></td>
+                <td>
+                  {kit.imagem_url && (
+                    <img
+                      src={kit.imagem_url}
+                      alt=""
+                      loading="lazy"
+                      className="wms-thumb wms-thumb-sm"
+                    />
+                  )}
+                </td>
+                <td className="wms-mono">
+                  <a className="wms-link-row">{kit.sku}</a>
+                </td>
+                <td className="wms-td-desc">
+                  <span style={{
+                    display: "inline-block",
+                    fontSize: 10,
+                    padding: "1px 6px",
+                    borderRadius: 3,
+                    background: "var(--wms-c-info-bg)",
+                    color: "var(--wms-c-info)",
+                    border: "1px solid var(--wms-c-info-bd)",
+                    marginRight: 6,
+                    textTransform: "uppercase",
+                    letterSpacing: ".04em",
+                    fontWeight: 600,
+                    verticalAlign: "middle",
+                  }}>
+                    Kit
+                  </span>
+                  <a className="wms-link-row">{kit.descricao}</a>
+                </td>
+                <td className="wms-tar wms-mono wms-td-mute" title="Kit virtual — sem saldo próprio">—</td>
+                <td className="wms-tar wms-mono wms-td-mute">—</td>
+                <td className="wms-tar wms-mono wms-td-mute" title="Veja o detalhe pra disponibilidade derivada">—</td>
+                <td className="wms-tar wms-td-mute">—</td>
+                <td className="wms-td-mute" style={{ fontSize: 12 }}>
+                  Disponibilidade derivada dos componentes
+                </td>
+                <td className="wms-tar wms-td-mute">—</td>
+                <td className="wms-td-actions">
+                  <button
+                    className="wms-btn-icon"
+                    title="Abrir detalhe do kit"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openDrawer(kit.id);
+                    }}
+                  >
+                    <Icon name="chevron-r" size={11} />
+                  </button>
+                </td>
+              </tr>
+            ))}
             {pagedRows.map((r) => {
               const isExpanded = expanded === r.produtoId;
               return (

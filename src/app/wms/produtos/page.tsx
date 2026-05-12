@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -58,10 +58,10 @@ export default function ProdutosPage() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-produtos", q, page],
     queryFn: () =>
-      wmsApi<{ rows: Produto[]; total: number }>(
+      wmsApi<{ rows: Produto[]; total: number; kits_por_componente?: number }>(
         `/api/wms/produtos?q=${encodeURIComponent(q)}&limit=${PAGE_SIZE}&offset=${
           (page - 1) * PAGE_SIZE
-        }`,
+        }&incluir_kits_por_componente=${q ? "true" : "false"}`,
       ),
   });
 
@@ -76,6 +76,8 @@ export default function ProdutosPage() {
   });
 
   const rows = data?.rows ?? [];
+  const kitsExtras = data?.kits_por_componente ?? 0;
+  const dividerAt = kitsExtras > 0 ? rows.length - kitsExtras : -1;
 
   return (
     <>
@@ -142,8 +144,26 @@ export default function ProdutosPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((p) => (
-                <tr key={p.id} className="wms-tr-clickable">
+              {rows.map((p, idx) => (
+                <Fragment key={p.id}>
+                {idx === dividerAt && (
+                  <tr>
+                    <td colSpan={7} style={{
+                      padding: "8px 12px",
+                      background: "var(--wms-c-panel-2)",
+                      fontSize: 11.5,
+                      textTransform: "uppercase",
+                      letterSpacing: ".06em",
+                      color: "var(--wms-c-mute)",
+                      fontWeight: 600,
+                      borderTop: "1px solid var(--wms-c-border)",
+                      borderBottom: "1px solid var(--wms-c-border)",
+                    }}>
+                      Kits que contêm “{q}” como componente
+                    </td>
+                  </tr>
+                )}
+                <tr className="wms-tr-clickable">
                   <td>
                     {p.imagem_url && (
                       <img
@@ -211,6 +231,7 @@ export default function ProdutosPage() {
                     </button>
                   </td>
                 </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>

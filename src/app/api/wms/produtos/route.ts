@@ -10,11 +10,14 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   try {
     const ativoParam = sp.get("ativo");
+    const incluirKits = sp.get("incluir_kits_por_componente");
     const result = await listarProdutos({
       q: sp.get("q") ?? undefined,
       ativo: ativoParam === "false" ? false : ativoParam === "true" ? true : undefined,
       limit: sp.get("limit") ? Number(sp.get("limit")) : 50,
       offset: sp.get("offset") ? Number(sp.get("offset")) : 0,
+      incluir_kits_por_componente:
+        incluirKits === "true" || incluirKits === "1",
     });
     return NextResponse.json(result);
   } catch (e) {

@@ -1260,6 +1260,19 @@ interface KitComposicaoRow {
     imagem_url: string | null;
     ativo: boolean;
   };
+  estoque: {
+    disponivel_total: number;
+    saldo_total: number;
+    reservado_total: number;
+    posicoes: Array<{
+      empresa: { id: string; nome: string };
+      galpao: { id: string; nome: string };
+      localizacao: { id: string; codigo: string };
+      saldo: number;
+      reservado: number;
+      disponivel: number;
+    }>;
+  };
 }
 
 interface KitDisponivelInfo {
@@ -1368,6 +1381,7 @@ function KitTab({ produto }: { produto: Produto }) {
               <th style={{ width: 36 }}></th>
               <th>SKU</th>
               <th>Componente</th>
+              <th style={{ width: 260 }}>Estoque · Localização</th>
               <th className="wms-tar" style={{ width: 120 }}>
                 Qty/kit
               </th>
@@ -1461,10 +1475,7 @@ function AdicionarComponenteForm({
   const showDropdown = !selecionado && q.length >= 2 && candidatos.length > 0;
 
   useLayoutEffect(() => {
-    if (!showDropdown) {
-      setDropdownRect(null);
-      return;
-    }
+    if (!showDropdown) return;
     const update = () => {
       const el = inputWrapRef.current;
       if (!el) return;
@@ -1608,6 +1619,62 @@ function ComponenteRow({
       </td>
       <td className="wms-mono">{row.componente.sku}</td>
       <td className="wms-td-desc">{row.componente.descricao}</td>
+      <td>
+        {row.estoque.posicoes.length === 0 ? (
+          <span className="wms-td-mute" style={{ fontSize: 12 }}>
+            sem saldo
+          </span>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div>
+              <span className="wms-mono" style={{ fontWeight: 600 }}>
+                {fmtNum(row.estoque.disponivel_total)}
+              </span>
+              <span
+                className="wms-td-mute"
+                style={{ fontSize: 11.5, marginLeft: 6 }}
+              >
+                {row.estoque.posicoes.length === 1
+                  ? "em 1 loc"
+                  : `em ${row.estoque.posicoes.length} locs`}
+                {row.estoque.reservado_total > 0
+                  ? ` · ${fmtNum(row.estoque.reservado_total)} reserv.`
+                  : ""}
+              </span>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 1,
+                fontSize: 11.5,
+                color: "var(--wms-c-mute)",
+              }}
+            >
+              {row.estoque.posicoes.slice(0, 3).map((p, i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 8,
+                  }}
+                >
+                  <span className="wms-mono" style={{ color: "var(--wms-c-fg-2)" }}>
+                    {p.galpao.nome} · {p.localizacao.codigo}
+                  </span>
+                  <span className="wms-mono">{fmtNum(p.disponivel)}</span>
+                </div>
+              ))}
+              {row.estoque.posicoes.length > 3 && (
+                <div style={{ fontSize: 11 }}>
+                  +{row.estoque.posicoes.length - 3} outras
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </td>
       <td className="wms-tar">
         {editing ? (
           <input

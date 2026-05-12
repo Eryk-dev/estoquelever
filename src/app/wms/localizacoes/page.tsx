@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
@@ -11,6 +11,7 @@ import {
   Field,
 } from "@/components/wms/ui/wms-ui";
 import type { Localizacao, TipoLocalizacao } from "@/lib/wms/types";
+import { useAuth } from "@/lib/auth-context";
 
 const TIPOS: TipoLocalizacao[] = [
   "picking",
@@ -20,14 +21,12 @@ const TIPOS: TipoLocalizacao[] = [
   "quarentena",
 ];
 
-interface GalpaoRow {
-  id: string;
-  nome: string;
-}
-
 export default function LocalizacoesPage() {
   const queryClient = useQueryClient();
-  const [galpaoId, setGalpaoId] = useState<string>("");
+  // Galpão vem só da sidebar (auth-context). Quando é "Todos" (null),
+  // pedimos pro usuário escolher — a página gerencia locs de um galpão por vez.
+  const { activeGalpaoId } = useAuth();
+  const galpaoId = activeGalpaoId ?? "";
   const [showForm, setShowForm] = useState(false);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 100;
@@ -37,17 +36,11 @@ export default function LocalizacoesPage() {
     tipo: "picking" as TipoLocalizacao,
   });
 
-  // Wrapper que reseta a página ao trocar de galpão (evita ficar em
-  // página vazia caso o novo galpão tenha menos localizações).
-  const selectGalpao = (id: string) => {
-    setGalpaoId(id);
+  // Reseta a página ao trocar de galpão (evita ficar em página vazia
+  // se o novo galpão tem menos localizações).
+  useEffect(() => {
     setPage(1);
-  };
-
-  const { data: galpoes } = useQuery({
-    queryKey: ["galpoes"],
-    queryFn: () => wmsApi<GalpaoRow[]>("/api/admin/galpoes"),
-  });
+  }, [activeGalpaoId]);
 
   const locsQuery = useQuery({
     queryKey: ["wms-locs", galpaoId],
@@ -82,7 +75,6 @@ export default function LocalizacoesPage() {
     () => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [rows, page],
   );
-  const galpoesList = galpoes ?? [];
 
   return (
     <>
@@ -101,24 +93,13 @@ export default function LocalizacoesPage() {
         </button>
       </PageHeader>
 
-      {galpoesList.length > 0 && (
-        <div className="wms-seg" style={{ marginBottom: 16 }}>
-          {galpoesList.map((g) => (
-            <button
-              key={g.id}
-              className={`wms-seg-btn ${galpaoId === g.id ? "is-active" : ""}`}
-              onClick={() => selectGalpao(g.id)}
-            >
-              {g.nome}
-            </button>
-          ))}
-        </div>
-      )}
-
       {!galpaoId && (
         <div className="wms-empty-block">
           <h3>Escolha um galpão</h3>
-          <p>Selecione um galpão acima para ver e gerenciar suas localizações.</p>
+          <p>
+            Selecione um galpão específico na sidebar para ver e gerenciar suas
+            localizações.
+          </p>
         </div>
       )}
 

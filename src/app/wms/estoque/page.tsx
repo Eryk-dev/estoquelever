@@ -17,6 +17,7 @@ import { useWmsModals } from "@/components/wms/wms-shell";
 import { ProdutoDrawer } from "@/components/wms/produto-drawer";
 import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import type { LinhaCobertura } from "@/lib/wms/cobertura";
+import { useAuth } from "@/lib/auth-context";
 
 interface EstoqueItem {
   saldo: number;
@@ -52,8 +53,12 @@ export default function EstoquePage() {
   // compartilhável. Cmd+K e clique na tabela usam o mesmo mecanismo.
   const drawerProdutoId = searchParams?.get("produto") ?? null;
 
+  // Galpão filter vem só da sidebar (auth-context). Sem pílula inline pra
+  // evitar duas fontes de verdade.
+  const { activeGalpaoId } = useAuth();
+  const filterGalpao = activeGalpaoId ?? "all";
+
   const [q, setQ] = useState("");
-  const [filterGalpao, setFilterGalpao] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"saldo" | "atualizacao">("saldo");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -136,14 +141,6 @@ export default function EstoquePage() {
     }
     return m;
   }, [coberturaQuery.data, filterGalpao]);
-
-  const galpoes = useMemo(() => {
-    const set = new Map<string, string>();
-    for (const r of estoqueQuery.data?.rows ?? []) {
-      for (const i of r.itens) set.set(i.galpao.id, i.galpao.nome);
-    }
-    return Array.from(set, ([id, nome]) => ({ id, nome }));
-  }, [estoqueQuery.data]);
 
   const rows = useMemo(() => {
     let result = (estoqueQuery.data?.rows ?? []).map((r) => {
@@ -322,25 +319,6 @@ export default function EstoquePage() {
             </button>
           )}
         </div>
-        {galpoes.length > 1 && (
-          <div className="wms-seg">
-            <button
-              className={`wms-seg-btn ${filterGalpao === "all" ? "is-active" : ""}`}
-              onClick={() => setFilterGalpao("all")}
-            >
-              Todos galpões
-            </button>
-            {galpoes.map((g) => (
-              <button
-                key={g.id}
-                className={`wms-seg-btn ${filterGalpao === g.id ? "is-active" : ""}`}
-                onClick={() => setFilterGalpao(g.id)}
-              >
-                {g.nome}
-              </button>
-            ))}
-          </div>
-        )}
         <select
           className="wms-select"
           value={filterStatus}

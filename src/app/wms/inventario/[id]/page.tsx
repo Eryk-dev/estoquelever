@@ -50,8 +50,9 @@ const STATUS_GUIDE: Record<
   revisao: {
     titulo: "Em revisão",
     descricao:
-      "Contagem encerrada. Divergências computadas. Revise as pendentes e aprove pra liberar pra aplicação.",
-    proximo: "Resolva divergências (aprovar/rejeitar) e aprove a sessão.",
+      "Contagem encerrada. Divergências computadas. Abra a tela de divergências, resolva cada pendente (aprovar/rejeitar) e depois clique em 'Aprovar sessão'.",
+    proximo:
+      "1) Resolver pendentes em /divergencias · 2) Aprovar sessão · 3) Aplicar no estoque.",
   },
   aprovada: {
     titulo: "Sessão aprovada",
@@ -89,6 +90,29 @@ export default function InventarioSupervisorPage({
     queryFn: () => wmsApi<SessaoData>(`/api/wms/inventario/${id}`),
   });
 
+  // Divergências (só faz sentido buscar quando sessão está em revisao+)
+  const divQuery = useQuery({
+    queryKey: ["wms-inv-div", id],
+    queryFn: () =>
+      wmsApi<{ rows: Array<{ status: string }> }>(
+        `/api/wms/inventario/${id}/divergencias`,
+      ),
+    enabled:
+      data?.sessao?.status === "revisao" ||
+      data?.sessao?.status === "aprovada" ||
+      data?.sessao?.status === "aplicada",
+  });
+  const divStats = useMemo(() => {
+    const rows = divQuery.data?.rows ?? [];
+    return {
+      total: rows.length,
+      pendentes: rows.filter((d) => d.status === "pendente").length,
+      aprovadas: rows.filter((d) => d.status === "aprovada").length,
+      rejeitadas: rows.filter((d) => d.status === "rejeitada").length,
+      aplicadas: rows.filter((d) => d.status === "aplicada").length,
+    };
+  }, [divQuery.data]);
+
   const iniciar = useMutation({
     mutationFn: () =>
       wmsApi<{ ok: true }>(`/api/wms/inventario/${id}/iniciar`, {
@@ -103,18 +127,44 @@ export default function InventarioSupervisorPage({
 
   const encerrar = useMutation({
     mutationFn: (parcial: boolean = false) =>
-      wmsApi<{ ok: true }>(`/api/wms/inventario/${id}/aprovar`, {
+      wmsApi<{
+        ok: true;
+        parcial: boolean;
+        status: "revisao" | "aprovada";
+        divergencias: { total: number; pendentes: number; aprovadas: number };
+      }>(`/api/wms/inventario/${id}/aprovar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ parcial }),
       }),
-    onSuccess: (_data, parcial) => {
-      toast.success(
-        parcial
-          ? "Inventário parcial enviado · só locs contadas viraram divergência"
-          : "Contagem encerrada · divergências computadas",
-      );
+    onSuccess: (r) => {
       setEncerrarOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
+      queryClient.invalidateQueries({ queryKey: ["wms-inv-div", id] });
+      if (r.status === "aprovada") {
+        toast.success(
+          `Contagem encerrada · ${r.divergencias.aprovadas} divergência(s) aprovada(s) dentro da tolerância · sessão aprovada`,
+        );
+      } else if (r.divergencias.pendentes > 0) {
+        toast.warning(
+          `${r.divergencias.pendentes} divergência(s) pendente(s) · revise antes de aprovar`,
+        );
+        router.push(`/wms/inventario/${id}/divergencias`);
+      } else {
+        toast.success("Contagem encerrada · sem divergências");
+      }
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const aprovarSessao = useMutation({
+    mutationFn: () =>
+      wmsApi<{ ok: true; status: "aprovada" }>(
+        `/api/wms/inventario/${id}/aprovar-sessao`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      toast.success("Sessão aprovada — pronto pra aplicar no estoque");
       queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -192,6 +242,7 @@ export default function InventarioSupervisorPage({
   const anyPending =
     iniciar.isPending ||
     encerrar.isPending ||
+    aprovarSessao.isPending ||
     aplicar.isPending ||
     cancelar.isPending;
   const guide = status ? STATUS_GUIDE[status] : undefined;
@@ -221,7 +272,17 @@ export default function InventarioSupervisorPage({
         <Kpi label="Contadas" value={`${stats.contadas} (${stats.pct}%)`} />
         <Kpi label="Em contagem" value={stats.emContagem} />
         <Kpi label="Pendentes" value={stats.pendentes} />
-        <Kpi label="Divergentes" value={stats.divergentes} danger={stats.divergentes > 0} />
+        <Kpi
+          label="Divergências"
+          value={
+            divStats.total > 0
+              ? `${divStats.pendentes}/${divStats.total}`
+              : status === "em_andamento" || status === "planejada"
+                ? "—"
+                : "0"
+          }
+          danger={divStats.pendentes > 0}
+        />
         <Kpi label="Velocidade média" value={`${velocidadeMedia} locs/h`} />
       </div>
 
@@ -317,11 +378,47 @@ export default function InventarioSupervisorPage({
         {(status === "revisao" || status === "aprovada" || status === "aplicada") && (
           <Link
             href={`/wms/inventario/${id}/divergencias`}
-            className="wms-btn wms-btn-ghost"
+            className={
+              status === "revisao" && divStats.pendentes > 0
+                ? "wms-btn wms-btn-primary"
+                : "wms-btn wms-btn-ghost"
+            }
           >
             <Icon name="alert" size={11} />
-            {status === "aplicada" ? "Ver relatório" : "Divergências"}
+            {status === "aplicada"
+              ? "Ver relatório"
+              : status === "revisao" && divStats.pendentes > 0
+                ? `Resolver ${divStats.pendentes} divergência(s)`
+                : `Divergências (${divStats.total})`}
           </Link>
+        )}
+        {status === "revisao" && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-primary"
+            disabled={
+              anyPending ||
+              divStats.pendentes > 0 ||
+              (divQuery.isLoading && divStats.total === 0)
+            }
+            title={
+              divStats.pendentes > 0
+                ? "Resolva todas as divergências pendentes antes de aprovar"
+                : "Aprovar sessão (próximo: aplicar no estoque)"
+            }
+            onClick={() => {
+              if (
+                confirm(
+                  `Aprovar a sessão? ${divStats.aprovadas} divergência(s) serão liberadas pra aplicação no estoque (gera movimentações no ledger).`,
+                )
+              ) {
+                aprovarSessao.mutate();
+              }
+            }}
+          >
+            <Icon name="check" size={11} />
+            {aprovarSessao.isPending ? "Aprovando…" : "Aprovar sessão"}
+          </button>
         )}
         {status === "aprovada" && (
           <button

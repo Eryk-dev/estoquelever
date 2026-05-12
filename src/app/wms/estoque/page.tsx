@@ -185,6 +185,8 @@ export default function EstoquePage() {
         subtitle={`${rows.length} produtos · ${fmtNum(totalSaldo)} unidades · ${fmtBRL(
           totalValor,
         )} em estoque`}
+        backHref="/wms"
+        backLabel="Voltar ao WMS"
       >
         <button
           className="wms-btn wms-btn-ghost"

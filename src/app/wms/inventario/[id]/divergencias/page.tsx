@@ -73,6 +73,8 @@ export default function DivergenciasPage({
       <PageHeader
         title="Divergências"
         subtitle={`Sessão ${id.slice(0, 8)} · ${rows.length} divergência(s)`}
+        backHref={`/wms/inventario/${id}`}
+        backLabel="Voltar à sessão"
       />
 
       {rows.length > 0 && (

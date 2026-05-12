@@ -29,7 +29,9 @@ export type IconName =
   | "plus"
   | "minus"
   | "arrow-right"
+  | "arrow-left"
   | "chevron-r"
+  | "chevron-l"
   | "chevron-d"
   | "chevron-u"
   | "check"
@@ -172,10 +174,22 @@ export function Icon({ name, size = 14, className }: IconProps) {
           <path d="M3 8h10M9 4l4 4-4 4" />
         </svg>
       );
+    case "arrow-left":
+      return (
+        <svg {...common}>
+          <path d="M13 8H3M7 4L3 8l4 4" />
+        </svg>
+      );
     case "chevron-r":
       return (
         <svg {...common}>
           <path d="M6 3l5 5-5 5" />
+        </svg>
+      );
+    case "chevron-l":
+      return (
+        <svg {...common}>
+          <path d="M10 3l-5 5 5 5" />
         </svg>
       );
     case "chevron-d":
@@ -279,15 +293,37 @@ export function Icon({ name, size = 14, className }: IconProps) {
 export function PageHeader({
   title,
   subtitle,
+  backHref,
+  backLabel,
   children,
 }: {
   title: string;
   subtitle?: ReactNode;
+  backHref?: string;
+  backLabel?: string;
   children?: ReactNode;
 }) {
   return (
     <div className="wms-ph">
       <div className="wms-ph-title">
+        {backHref ? (
+          <a
+            href={backHref}
+            className="wms-link-back"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 12,
+              color: "var(--wms-c-muted)",
+              textDecoration: "none",
+              marginBottom: 4,
+            }}
+          >
+            <Icon name="chevron-l" size={11} />
+            {backLabel ?? "Voltar"}
+          </a>
+        ) : null}
         <h1>{title}</h1>
         {subtitle ? <p className="wms-ph-sub">{subtitle}</p> : null}
       </div>

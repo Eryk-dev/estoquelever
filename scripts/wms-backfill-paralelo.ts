@@ -33,17 +33,30 @@ async function carregarLista(
 ): Promise<ProdutoComMapping[]> {
   const sb = createServiceClient();
   // 1) Produtos elegíveis (imagens vazias se !force, ou todos se force).
-  let qBase = sb
-    .from("siso_produtos")
-    .select("id, sku")
-    .eq("ativo", true)
-    .order("sku", { ascending: true });
-  if (!force) qBase = qBase.eq("imagens", "{}");
-  if (limit > 0) qBase = qBase.limit(limit);
-
-  const { data: produtos, error } = await qBase;
-  if (error) throw error;
-  const lista = (produtos ?? []) as Array<{ id: string; sku: string }>;
+  // Supabase tem cap default de 1000 — paginamos com range pra pegar tudo.
+  const lista: Array<{ id: string; sku: string }> = [];
+  const PAGE = 1000;
+  let offset = 0;
+  while (true) {
+    const ate = offset + PAGE - 1;
+    let qBase = sb
+      .from("siso_produtos")
+      .select("id, sku")
+      .eq("ativo", true)
+      .order("sku", { ascending: true })
+      .range(offset, ate);
+    if (!force) qBase = qBase.eq("imagens", "{}");
+    const { data, error } = await qBase;
+    if (error) throw error;
+    const batch = (data ?? []) as Array<{ id: string; sku: string }>;
+    lista.push(...batch);
+    if (batch.length < PAGE) break;
+    if (limit > 0 && lista.length >= limit) {
+      lista.splice(limit);
+      break;
+    }
+    offset += PAGE;
+  }
   if (lista.length === 0) return [];
 
   // 2) Mapping empresa → produto (em chunks pra não estourar URL).

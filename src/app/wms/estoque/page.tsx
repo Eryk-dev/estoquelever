@@ -13,6 +13,7 @@ import {
 } from "@/components/wms/ui/wms-ui";
 import { useWmsModals } from "@/components/wms/wms-shell";
 import { ProdutoDrawer } from "@/components/wms/produto-drawer";
+import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import type { LinhaCobertura } from "@/lib/wms/cobertura";
 
 interface EstoqueItem {
@@ -21,7 +22,13 @@ interface EstoqueItem {
   disponivel: number;
   custo_medio: number;
   atualizado_em: string;
-  produto: { id: string; sku: string; descricao: string; imagem_url: string | null };
+  produto: {
+    id: string;
+    sku: string;
+    descricao: string;
+    imagem_url: string | null;
+    imagens: string[];
+  };
   empresa: { id: string; nome: string };
   galpao: { id: string; nome: string };
   localizacao: { id: string; codigo: string; tipo: string };
@@ -48,6 +55,11 @@ export default function EstoquePage() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"saldo" | "atualizacao">("saldo");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{
+    imagens: string[];
+    sku: string;
+    descricao: string;
+  } | null>(null);
   const modals = useWmsModals();
 
   const openDrawer = useCallback(
@@ -111,6 +123,7 @@ export default function EstoquePage() {
       const sku = r.itens[0]?.produto.sku ?? "";
       const descricao = r.itens[0]?.produto.descricao ?? r.nome;
       const imagemUrl = r.itens[0]?.produto.imagem_url ?? null;
+      const imagens = r.itens[0]?.produto.imagens ?? [];
       const cobertura = coberturaMap.get(r.chave);
       const custoMedio =
         r.itens.reduce(
@@ -126,6 +139,7 @@ export default function EstoquePage() {
         sku,
         descricao,
         imagemUrl,
+        imagens,
         saldo: Number(r.saldo),
         reservado: Number(r.reservado),
         disponivel: Number(r.disponivel),
@@ -332,6 +346,21 @@ export default function EstoquePage() {
                     setExpanded(isExpanded ? null : r.produtoId)
                   }
                   onOpenProduto={() => openDrawer(r.produtoId)}
+                  onOpenLightbox={() => {
+                    const imgs =
+                      r.imagens.length > 0
+                        ? r.imagens
+                        : r.imagemUrl
+                          ? [r.imagemUrl]
+                          : [];
+                    if (imgs.length > 0) {
+                      setLightbox({
+                        imagens: imgs,
+                        sku: r.sku,
+                        descricao: r.descricao,
+                      });
+                    }
+                  }}
                   onAction={(kind) => {
                     const produto = {
                       id: r.produtoId,
@@ -339,6 +368,7 @@ export default function EstoquePage() {
                       descricao: r.descricao,
                       gtin: null,
                       imagem_url: r.imagemUrl,
+                      imagens: r.imagens,
                       unidade: "UN",
                       ncm: null,
                       cest: null,
@@ -360,6 +390,15 @@ export default function EstoquePage() {
       {drawerProdutoId && (
         <ProdutoDrawer produtoId={drawerProdutoId} onClose={closeDrawer} />
       )}
+
+      {lightbox && (
+        <ProdutoLightbox
+          imagens={lightbox.imagens}
+          sku={lightbox.sku}
+          descricao={lightbox.descricao}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </>
   );
 }
@@ -369,6 +408,7 @@ function ExpandableRow({
   expanded,
   onToggle,
   onOpenProduto,
+  onOpenLightbox,
   onAction,
 }: {
   row: {
@@ -376,6 +416,7 @@ function ExpandableRow({
     sku: string;
     descricao: string;
     imagemUrl: string | null;
+    imagens: string[];
     saldo: number;
     reservado: number;
     disponivel: number;
@@ -387,6 +428,7 @@ function ExpandableRow({
   expanded: boolean;
   onToggle: () => void;
   onOpenProduto: () => void;
+  onOpenLightbox: () => void;
   onAction: (kind: "receber" | "ajuste" | "transferir") => void;
 }) {
   return (
@@ -412,12 +454,11 @@ function ExpandableRow({
               src={row.imagemUrl}
               alt=""
               loading="lazy"
-              className="wms-thumb wms-thumb-sm"
+              className="wms-thumb wms-thumb-sm wms-thumb-click"
               onClick={(e) => {
                 e.stopPropagation();
-                onOpenProduto();
+                onOpenLightbox();
               }}
-              style={{ cursor: "pointer" }}
             />
           )}
         </td>

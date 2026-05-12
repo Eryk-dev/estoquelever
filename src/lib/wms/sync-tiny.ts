@@ -49,7 +49,11 @@ export async function sincronizarProduto(produtoId: string): Promise<void> {
   if (completo.unidade) patch.unidade = completo.unidade;
   if (completo.ncm) patch.ncm = completo.ncm;
   if (completo.origem != null) patch.origem_fiscal = completo.origem;
-  if (detalhe.imagemUrl) patch.imagem_url = detalhe.imagemUrl;
+  // Sempre persiste imagens[] (mesmo vazio — produto pode ter perdido
+   // anexo no Tiny). imagem_url = primeira pra manter capa consistente
+   // sem precisar mexer em todos os consumers de uma vez.
+   patch.imagens = detalhe.imagens;
+   patch.imagem_url = detalhe.imagemUrl;
 
   const { error: errUpdate } = await sb.from("siso_produtos").update(patch).eq("id", produtoId);
   if (errUpdate) throw errUpdate;

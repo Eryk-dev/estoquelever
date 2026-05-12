@@ -14,10 +14,11 @@ import {
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
 import { useWmsModals } from "@/components/wms/wms-shell";
+import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import type { Produto, Movimentacao } from "@/lib/wms/types";
 import type { LinhaCobertura } from "@/lib/wms/cobertura";
 
-type TabId = "overview" | "estoque" | "movs" | "cobertura" | "fornec";
+type TabId = "overview" | "estoque" | "movs" | "cobertura" | "fornec" | "fotos";
 
 interface EstoqueLinhaItem {
   saldo: number;
@@ -53,6 +54,7 @@ export function ProdutoDrawer({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<TabId>("overview");
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
   const modals = useWmsModals();
 
   // ESC fecha
@@ -135,8 +137,9 @@ export function ProdutoDrawer({
                     src={produto.imagem_url}
                     alt=""
                     loading="lazy"
-                    className="wms-thumb wms-thumb-lg"
+                    className="wms-thumb wms-thumb-lg wms-thumb-click"
                     style={{ marginRight: 14 }}
+                    onClick={() => setLightboxIdx(0)}
                   />
                 )}
                 <div className="wms-pd-hd-info">
@@ -252,6 +255,11 @@ export function ProdutoDrawer({
                     { id: "movs", label: "Movimentações", count: movs.length },
                     { id: "cobertura", label: "Cobertura" },
                     { id: "fornec", label: "Fornecedores" },
+                    {
+                      id: "fotos",
+                      label: "Fotos",
+                      count: produto.imagens?.length ?? 0,
+                    },
                   ] as { id: TabId; label: string; count?: number }[]
                 ).map((t) => (
                   <button
@@ -289,10 +297,58 @@ export function ProdutoDrawer({
               {tab === "movs" && <Movimentacoes movs={movs} />}
               {tab === "cobertura" && <Cobertura c={cobertura} />}
               {tab === "fornec" && <Fornecedores produto={produto} />}
+              {tab === "fotos" && (
+                <Fotos
+                  imagens={produto.imagens ?? []}
+                  onOpen={(i) => setLightboxIdx(i)}
+                />
+              )}
             </div>
           </>
         )}
       </div>
+      {lightboxIdx !== null && produto && (produto.imagens?.length ?? 0) > 0 && (
+        <ProdutoLightbox
+          imagens={produto.imagens}
+          initialIndex={lightboxIdx}
+          sku={produto.sku}
+          descricao={produto.descricao}
+          onClose={() => setLightboxIdx(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function Fotos({
+  imagens,
+  onOpen,
+}: {
+  imagens: string[];
+  onOpen: (i: number) => void;
+}) {
+  if (imagens.length === 0) {
+    return (
+      <div className="wms-exp-empty" style={{ padding: 24 }}>
+        Sem fotos cadastradas. As fotos vêm dos anexos do produto no Tiny —
+        rode &quot;Sincronizar com Tiny&quot; pra atualizar.
+      </div>
+    );
+  }
+  return (
+    <div className="wms-photos-grid">
+      {imagens.map((src, i) => (
+        <button
+          key={src + i}
+          type="button"
+          className="wms-photo-tile"
+          onClick={() => onOpen(i)}
+          aria-label={`Abrir foto ${i + 1}`}
+        >
+          <img src={src} alt="" loading="lazy" />
+          <span className="wms-photo-tile-idx">{i + 1}</span>
+        </button>
+      ))}
     </div>
   );
 }

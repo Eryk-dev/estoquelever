@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
 import { useInventarioRealtime } from "@/hooks/use-inventario-realtime";
 import { Icon, PageHeader, fmtNum } from "@/components/wms/ui/wms-ui";
+import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import { useAuth } from "@/lib/auth-context";
 import type {
   ProximaLocOutput,
@@ -29,6 +30,7 @@ interface ProdutoMin {
   sku: string;
   descricao?: string;
   imagem_url?: string | null;
+  imagens?: string[];
 }
 
 interface ContagemLocal {
@@ -36,6 +38,7 @@ interface ContagemLocal {
   produto_id: string;
   descricao?: string;
   imagem_url?: string | null;
+  imagens?: string[];
   qty: number;
   esperado?: number;
   empresa_dona_id: string | null;
@@ -62,6 +65,11 @@ export default function ContarPage({
     minutos: number;
   } | null>(null);
   const [entrouEm, setEntrouEm] = useState<number | null>(null);
+  const [lightbox, setLightbox] = useState<{
+    imagens: string[];
+    sku: string;
+    descricao: string;
+  } | null>(null);
   const scanRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useQuery({
@@ -146,6 +154,7 @@ export default function ContarPage({
           produto_id: e.produto_id,
           descricao: e.descricao,
           imagem_url: e.imagem_url,
+          imagens: e.imagens,
           qty: 0,
           esperado: e.saldo_esperado,
           empresa_dona_id: e.empresa_dona_id,
@@ -268,6 +277,10 @@ export default function ContarPage({
                   qty: modo === "incremental" ? c.qty + qty : qty,
                   empresa_dona_id: c.empresa_dona_id ?? empresaDona,
                   imagem_url: c.imagem_url ?? produto!.imagem_url ?? null,
+                  imagens:
+                    c.imagens && c.imagens.length > 0
+                      ? c.imagens
+                      : produto!.imagens ?? [],
                 }
               : c,
           );
@@ -279,6 +292,7 @@ export default function ContarPage({
             sku: produto!.sku,
             descricao: produto!.descricao,
             imagem_url: produto!.imagem_url ?? null,
+            imagens: produto!.imagens ?? [],
             qty,
             empresa_dona_id: empresaDona,
           },
@@ -423,6 +437,30 @@ export default function ContarPage({
             registrarContagemPorSku(sku, qty, "absoluto")
           }
           onDefinirQty={(c, q) => definirQtyAbsoluta(c, q)}
+          onImageClick={(c) => {
+            const imgs =
+              c.imagens && c.imagens.length > 0
+                ? c.imagens
+                : c.imagem_url
+                  ? [c.imagem_url]
+                  : [];
+            if (imgs.length > 0) {
+              setLightbox({
+                imagens: imgs,
+                sku: c.sku,
+                descricao: c.descricao ?? "",
+              });
+            }
+          }}
+        />
+      )}
+
+      {lightbox && (
+        <ProdutoLightbox
+          imagens={lightbox.imagens}
+          sku={lightbox.sku}
+          descricao={lightbox.descricao}
+          onClose={() => setLightbox(null)}
         />
       )}
     </>
@@ -581,6 +619,7 @@ function CounterView({
   finalizando,
   onAdicionarSku,
   onDefinirQty,
+  onImageClick,
 }: {
   loc: ProximaLocOutput;
   contagens: ContagemLocal[];
@@ -593,6 +632,7 @@ function CounterView({
   finalizando: boolean;
   onAdicionarSku: (sku: string, qty: number) => Promise<void> | void;
   onDefinirQty: (c: ContagemLocal, novaQty: number) => Promise<void> | void;
+  onImageClick: (c: ContagemLocal) => void;
 }) {
   const totalContado = useMemo(
     () => contagens.reduce((acc, c) => acc + c.qty, 0),
@@ -725,7 +765,8 @@ function CounterView({
                         src={c.imagem_url}
                         alt=""
                         loading="lazy"
-                        className="wms-thumb wms-thumb-md"
+                        className="wms-thumb wms-thumb-md wms-thumb-click"
+                        onClick={() => onImageClick(c)}
                       />
                     )}
                   </td>

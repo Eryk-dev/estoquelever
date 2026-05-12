@@ -34,6 +34,7 @@ export interface Produto {
   descricao: string;
   gtin: string | null;
   imagem_url: string | null;
+  imagens: string[];
   unidade: string;
   ncm: string | null;
   cest: string | null;

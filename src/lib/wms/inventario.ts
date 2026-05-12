@@ -264,6 +264,7 @@ export interface EsperadoItem {
   sku: string;
   descricao: string;
   imagem_url: string | null;
+  imagens: string[];
   saldo_esperado: number;
   empresa_dona_id: string;
 }
@@ -309,17 +310,26 @@ export async function pegarProximaLoc(
     const ids = esperadosEnriched.map((e) => e.produto_id);
     const { data: imgs } = await sb
       .from("siso_produtos")
-      .select("id, imagem_url")
+      .select("id, imagem_url, imagens")
       .in("id", ids);
     const imgMap = new Map(
-      ((imgs ?? []) as Array<{ id: string; imagem_url: string | null }>).map(
-        (p) => [p.id, p.imagem_url],
-      ),
+      ((imgs ?? []) as Array<{
+        id: string;
+        imagem_url: string | null;
+        imagens: string[] | null;
+      }>).map((p) => [
+        p.id,
+        { imagem_url: p.imagem_url, imagens: p.imagens ?? [] },
+      ]),
     );
-    esperadosEnriched = esperadosEnriched.map((e) => ({
-      ...e,
-      imagem_url: imgMap.get(e.produto_id) ?? null,
-    }));
+    esperadosEnriched = esperadosEnriched.map((e) => {
+      const m = imgMap.get(e.produto_id);
+      return {
+        ...e,
+        imagem_url: m?.imagem_url ?? null,
+        imagens: m?.imagens ?? [],
+      };
+    });
   }
 
   return {

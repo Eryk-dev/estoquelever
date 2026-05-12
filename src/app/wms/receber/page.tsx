@@ -18,6 +18,7 @@ import {
   useLocalizacoes,
 } from "@/components/wms/ui/modals";
 import { useWmsModals } from "@/components/wms/wms-shell";
+import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import type { Produto } from "@/lib/wms/types";
 
 type Tab = "individual" | "lote";
@@ -125,6 +126,11 @@ function makeUid() {
 function TabLote() {
   const qc = useQueryClient();
   const { data: galpoes } = useGalpoes();
+  const [lightbox, setLightbox] = useState<{
+    imagens: string[];
+    sku: string;
+    descricao: string;
+  } | null>(null);
   const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
   const defaultGalpao = galpoesList.find((g) => g.empresas.length > 0);
 
@@ -181,6 +187,8 @@ function TabLote() {
           sku: string;
           qty: number;
           imagem_url: string | null;
+          imagens: string[];
+          descricao: string;
         }>;
       }
     >();
@@ -210,6 +218,8 @@ function TabLote() {
         sku: it.produto.sku,
         qty: Number(it.qty),
         imagem_url: it.produto.imagem_url,
+        imagens: it.produto.imagens ?? [],
+        descricao: it.produto.descricao,
       });
       grupos.set(key, grp);
     });
@@ -415,6 +425,18 @@ function TabLote() {
               galpaoId={galpaoId}
               locsById={locsById}
               canResolve={!!empresaId && !!galpaoId}
+              onImageClick={(p) =>
+                setLightbox({
+                  imagens:
+                    p.imagens && p.imagens.length > 0
+                      ? p.imagens
+                      : p.imagem_url
+                        ? [p.imagem_url]
+                        : [],
+                  sku: p.sku,
+                  descricao: p.descricao,
+                })
+              }
               onChange={(next) =>
                 setItens((prev) =>
                   prev.map((x, i) => (i === idx ? next : x)),
@@ -542,7 +564,17 @@ function TabLote() {
                         src={i.imagem_url}
                         alt=""
                         loading="lazy"
-                        className="wms-thumb wms-thumb-xs"
+                        className="wms-thumb wms-thumb-xs wms-thumb-click"
+                        onClick={() =>
+                          setLightbox({
+                            imagens:
+                              i.imagens.length > 0
+                                ? i.imagens
+                                : [i.imagem_url!],
+                            sku: i.sku,
+                            descricao: i.descricao,
+                          })
+                        }
                       />
                     )}
                     <span className="wms-mono" style={{ flex: 1, minWidth: 0 }}>
@@ -580,6 +612,15 @@ function TabLote() {
             : `Confirmar lote (${itensValidos.length})`}
         </button>
       </aside>
+
+      {lightbox && (
+        <ProdutoLightbox
+          imagens={lightbox.imagens}
+          sku={lightbox.sku}
+          descricao={lightbox.descricao}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }
@@ -596,6 +637,7 @@ function ItemLoteRow({
   canResolve,
   onChange,
   onRemove,
+  onImageClick,
 }: {
   item: ItemLote;
   putaway?: PutawayResp;
@@ -605,6 +647,7 @@ function ItemLoteRow({
   canResolve: boolean;
   onChange: (next: ItemLote) => void;
   onRemove: () => void;
+  onImageClick?: (p: Produto) => void;
 }) {
   const [trocandoLoc, setTrocandoLoc] = useState(false);
 
@@ -646,6 +689,7 @@ function ItemLoteRow({
               })
             }
             autoFocus={!item.produto}
+            onImageClick={onImageClick}
           />
         </div>
         <input

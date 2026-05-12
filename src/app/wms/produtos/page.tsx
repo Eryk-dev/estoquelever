@@ -10,10 +10,16 @@ import {
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
 import { ProdutoDrawer } from "@/components/wms/produto-drawer";
+import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import type { Produto } from "@/lib/wms/types";
 
 export default function ProdutosPage() {
   const [q, setQ] = useState("");
+  const [lightbox, setLightbox] = useState<{
+    imagens: string[];
+    sku: string;
+    descricao: string;
+  } | null>(null);
   const queryClient = useQueryClient();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -129,9 +135,18 @@ export default function ProdutosPage() {
                         src={p.imagem_url}
                         alt=""
                         loading="lazy"
-                        className="wms-thumb wms-thumb-sm"
-                        onClick={() => openDrawer(p.id)}
-                        style={{ cursor: "pointer" }}
+                        className="wms-thumb wms-thumb-sm wms-thumb-click"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLightbox({
+                            imagens:
+                              p.imagens && p.imagens.length > 0
+                                ? p.imagens
+                                : [p.imagem_url!],
+                            sku: p.sku,
+                            descricao: p.descricao,
+                          });
+                        }}
                       />
                     )}
                   </td>
@@ -189,6 +204,15 @@ export default function ProdutosPage() {
 
       {drawerId && (
         <ProdutoDrawer produtoId={drawerId} onClose={closeDrawer} />
+      )}
+
+      {lightbox && (
+        <ProdutoLightbox
+          imagens={lightbox.imagens}
+          sku={lightbox.sku}
+          descricao={lightbox.descricao}
+          onClose={() => setLightbox(null)}
+        />
       )}
     </>
   );

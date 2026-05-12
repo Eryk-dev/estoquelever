@@ -98,10 +98,14 @@ export function ProdutoCombo({
   value,
   onChange,
   autoFocus = false,
+  onImageClick,
 }: {
   value: Produto | null;
   onChange: (p: Produto | null) => void;
   autoFocus?: boolean;
+  /** Quando passado, clicar na imagem da seleção atual chama este handler
+   *  (tipicamente abre um lightbox). Sem ele, a imagem é estática. */
+  onImageClick?: (p: Produto) => void;
 }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -121,7 +125,12 @@ export function ProdutoCombo({
               src={value.imagem_url}
               alt=""
               loading="lazy"
-              className="wms-thumb wms-thumb-sm"
+              className={`wms-thumb wms-thumb-sm ${
+                onImageClick ? "wms-thumb-click" : ""
+              }`}
+              onClick={
+                onImageClick ? () => onImageClick(value) : undefined
+              }
             />
           )}
           <div style={{ flex: 1, minWidth: 0 }}>

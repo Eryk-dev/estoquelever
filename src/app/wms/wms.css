@@ -564,6 +564,124 @@
 .wms-thumb-sm { width: 36px; height: 36px; }
 .wms-thumb-md { width: 56px; height: 56px; border-radius: 6px; }
 .wms-thumb-lg { width: 104px; height: 104px; border-radius: 8px; }
+.wms-thumb-click { cursor: zoom-in; transition: transform .12s ease; }
+.wms-thumb-click:hover { transform: scale(1.04); border-color: var(--wms-c-fg); }
+
+/* Lightbox · carrossel de fotos do produto */
+.wms-lb-overlay {
+  position: fixed; inset: 0;
+  background: rgba(8, 7, 6, .92);
+  z-index: 9999;
+  display: flex; flex-direction: column;
+  padding: 60px 24px 24px;
+  animation: wms-lb-fade .15s ease-out;
+}
+@keyframes wms-lb-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.wms-lb-close {
+  position: absolute; top: 14px; right: 14px;
+  width: 40px; height: 40px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.18);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.wms-lb-close:hover { background: rgba(255,255,255,.15); }
+
+.wms-lb-meta {
+  position: absolute; top: 18px; left: 18px;
+  color: rgba(255,255,255,.78);
+  display: flex; align-items: center; gap: 12px;
+  font-size: 13px;
+  max-width: calc(100% - 80px);
+}
+.wms-lb-sku { color: #fff; font-weight: 600; }
+.wms-lb-desc { color: rgba(255,255,255,.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw; }
+.wms-lb-counter { color: rgba(255,255,255,.5); font-family: var(--wms-font-mono); font-size: 12px; }
+
+.wms-lb-stage {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  min-height: 0;
+}
+.wms-lb-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto; height: auto;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.4);
+}
+.wms-lb-nav {
+  position: absolute;
+  top: 50%; transform: translateY(-50%);
+  width: 48px; height: 48px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.10);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.20);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.wms-lb-nav:hover { background: rgba(255,255,255,.20); }
+.wms-lb-nav-prev { left: 4px; }
+.wms-lb-nav-next { right: 4px; }
+
+.wms-lb-strip {
+  display: flex; gap: 6px;
+  justify-content: center;
+  margin-top: 16px;
+  flex-wrap: wrap;
+  max-height: 80px; overflow-y: auto;
+}
+.wms-lb-thumb {
+  width: 64px; height: 64px;
+  border-radius: 4px;
+  background: #fff;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+}
+.wms-lb-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.wms-lb-thumb.is-active { border-color: #fff; }
+.wms-lb-thumb:hover { border-color: rgba(255,255,255,.5); }
+
+/* Grid de fotos na aba Fotos do drawer */
+.wms-photos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  padding: 4px;
+}
+.wms-photo-tile {
+  aspect-ratio: 1;
+  background: #fff;
+  border: 1px solid var(--wms-c-border);
+  border-radius: 6px;
+  cursor: zoom-in;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+  transition: border-color .12s ease;
+}
+.wms-photo-tile:hover { border-color: var(--wms-c-fg); }
+.wms-photo-tile img { width: 100%; height: 100%; object-fit: contain; }
+.wms-photo-tile-idx {
+  position: absolute; top: 6px; left: 6px;
+  background: rgba(0,0,0,.55);
+  color: #fff;
+  font-family: var(--wms-font-mono);
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
 
 /* ============================================================
    Expanded row detail

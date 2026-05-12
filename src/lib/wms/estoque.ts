@@ -8,7 +8,7 @@ interface EstoqueRow {
   disponivel: number;
   custo_medio: number;
   atualizado_em: string;
-  produto: { id: string; sku: string; descricao: string; imagem_url: string | null };
+  produto: { id: string; sku: string; descricao: string; imagem_url: string | null; imagens: string[] };
   empresa: { id: string; nome: string };
   galpao: { id: string; nome: string; cidade: string | null; estado: string | null };
   localizacao: { id: string; codigo: string; tipo: string };
@@ -33,7 +33,7 @@ export async function saldosPorPerspectiva(
     .select(
       `
         id, saldo, reservado, disponivel, custo_medio, atualizado_em,
-        produto:siso_produtos(id, sku, descricao, imagem_url),
+        produto:siso_produtos(id, sku, descricao, imagem_url, imagens),
         empresa:siso_empresas(id, nome),
         galpao:siso_galpoes(id, nome, cidade, estado),
         localizacao:siso_localizacoes(id, codigo, tipo)

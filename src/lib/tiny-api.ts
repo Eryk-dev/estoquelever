@@ -259,15 +259,17 @@ export async function getEstoque(
   return tinyFetch<TinyEstoque>(`/estoque/${produtoId}`, { token });
 }
 
-/** Product detail (tipo + image + gtin + descricaoComplementar) */
+/** Product detail (tipo + images + gtin + descricaoComplementar) */
 export interface TinyProdutoDetalhe {
   tipo: string; // K=Kit, S=Simples, V=Variacoes, F=Fabricado, M=MateriaPrima
+  imagens: string[];
+  /** imagens[0] ou null. Mantido pro consumidor que só quer a capa. */
   imagemUrl: string | null;
   gtin: string | null;
   descricaoComplementar: string | null;
 }
 
-/** Fetch product detail — returns tipo, first image URL, GTIN, and complementary description (where OEM codes typically live) */
+/** Fetch product detail — returns tipo, all image URLs, GTIN, and complementary description (where OEM codes typically live) */
 export async function getProdutoDetalhe(
   token: string,
   produtoId: number,
@@ -278,9 +280,13 @@ export async function getProdutoDetalhe(
     descricaoComplementar?: string | null;
     anexos?: Array<{ url?: string | null }>;
   }>(`/produtos/${produtoId}`, { token });
+  const imagens = (res.anexos ?? [])
+    .map((a) => a.url)
+    .filter((u): u is string => typeof u === "string" && u.length > 0);
   return {
     tipo: res.tipo ?? "S",
-    imagemUrl: res.anexos?.[0]?.url ?? null,
+    imagens,
+    imagemUrl: imagens[0] ?? null,
     gtin: res.gtin || null,
     descricaoComplementar: res.descricaoComplementar ?? null,
   };

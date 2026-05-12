@@ -305,23 +305,23 @@ function Overview({
   reservado: number;
   onTab: (t: TabId) => void;
 }) {
-  const top3 = [...linhas]
-    .sort((a, b) => Number(b.saldo) - Number(a.saldo))
-    .slice(0, 3);
+  const todas = [...linhas].sort(
+    (a, b) => Number(b.saldo) - Number(a.saldo),
+  );
   return (
     <div className="wms-ov-grid">
       <Card
-        title="Onde está"
+        title="Localização"
         actions={
           <button className="wms-btn-link" onClick={() => onTab("estoque")}>
-            Ver tudo →
+            Ver detalhes →
           </button>
         }
       >
-        {top3.length === 0 && (
+        {todas.length === 0 && (
           <div className="wms-exp-empty">Sem estoque registrado.</div>
         )}
-        {top3.map((l, i) => (
+        {todas.map((l, i) => (
           <div className="wms-ov-loc" key={i}>
             <div className="wms-ov-loc-where">
               <span className="wms-chip-emp">

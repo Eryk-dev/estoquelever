@@ -1,23 +1,31 @@
 "use client";
 
 // Tela WMS de Separação — wrappeada pelo `WmsShell` via `app/wms/layout.tsx`.
-// DNA: `app/wms/estoque/page.tsx` (toolbar densa + tabela) + `app/wms/transferir/page.tsx`
-// (segmented + footer de ações). Reaproveita o componente `TabsStatusSeparacao`
-// e `DecisaoLabel` do pacote vendas/.
+// Paridade funcional total com /separacao legado:
+//   - 6 tabs por status_separacao (validacao_oc agrupado em aguardando_separacao)
+//   - Multi-select com Shift-range
+//   - Ações em lote SEMPRE visíveis quando há pedidos na tab (operam em selection
+//     ou em todos os pedidos da tab quando não há selection)
+//   - Sistema de tags (modal add/remove + quick-add com tags existentes)
+//   - "Embalar com etiqueta" no separado (botão diferenciado quando há mix)
+//   - Aviso amber "X sem etiqueta" no separado
+//   - Encaminhar pra outro galpão (dropdown inline por linha, admin only)
+//   - Forçar pendente (admin only, tab aguardando_nf)
+//   - Mover etapa (admin) — dropdown "Voltar para / Avançar para"
+//   - Realtime via useRealtimeSeparacao()
 //
 // Decisões em vigor:
 //   D3 — filtro global de galpão aplica server-side via header X-Galpao-Id
-//        (já mandado por sisoFetch). Empresa NÃO é exposta no toolbar (D4).
-//   D6 — usa <DecisaoLabel> pra mostrar a decisão final por pedido.
-//
-// Polling 10s. Realtime fica como TODO (`useRealtimeSeparacao` no legado).
+//   D4 — empresa NÃO é exposta no toolbar nem nos cards
+//   D6 — usa <DecisaoLabel> pra mostrar a decisão final por pedido
 
-import { useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { sisoFetch, useAuth } from "@/lib/auth-context";
+import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import {
   Icon,
   PageHeader,
@@ -256,6 +264,9 @@ export default function WmsSeparacaoPage() {
   const sort = searchParams?.get("sort") ?? "data_pedido";
   const fornecedor = searchParams?.get("fornecedor") ?? "";
 
+  // Realtime: auto-refresh quando outros operadores mudam status (paridade legado)
+  useRealtimeSeparacao();
+
   const updateParam = useCallback(
     (key: string, value: string) => {
       const params = new URLSearchParams(
@@ -278,6 +289,8 @@ export default function WmsSeparacaoPage() {
     selection.key === contextKey ? selection.ids : new Set();
   const lastCheckedIdxRef = useRef<number | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [tagModalOpen, setTagModalOpen] = useState(false);
+  const [encaminharOpenId, setEncaminharOpenId] = useState<string | null>(null);
 
   // ── Query principal ────────────────────────────────────────────────────
   const queryString = useMemo(() => {
@@ -310,8 +323,6 @@ export default function WmsSeparacaoPage() {
         return r.json() as Promise<SeparacaoResponse>;
       },
       refetchInterval: 10_000,
-      // TODO: trocar polling por useRealtimeSeparacao() quando o WMS Layout
-      // permitir hooks que dependem do session ID já hidratado.
     });
 
   const tagsQuery = useQuery<{ tags: string[] }>({
@@ -340,6 +351,7 @@ export default function WmsSeparacaoPage() {
   );
 
   const pedidosRaw = data?.pedidos ?? [];
+  const galpoesAll = data?.galpoes ?? [];
 
   // Filtro client-side de fornecedor (só na tab aguardando_compra).
   const pedidos = useMemo(() => {
@@ -406,8 +418,6 @@ export default function WmsSeparacaoPage() {
   const iniciarMut = useMutation({
     mutationFn: async (ids: string[]) => {
       if (!user) throw new Error("Sessão expirada");
-      // POST /iniciar é idempotente, mas pode falhar quando todos já estão
-      // em separação — nesse caso seguimos pro checklist mesmo assim.
       await sisoFetch("/api/separacao/iniciar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -435,11 +445,15 @@ export default function WmsSeparacaoPage() {
     onSuccess: (body) => {
       const movidos = body.total ?? 0;
       if (movidos > 0)
-        toast.success(`${movidos} pedido(s) movido(s) pra Aguardando Separação`);
+        toast.success(
+          `${movidos} pedido(s) movido(s) pra Aguardando Separação`,
+        );
       const semNf = body.pedidos_sem_nf?.length ?? 0;
       const naoAut = body.pedidos_nf_nao_autorizada?.length ?? 0;
       if (semNf > 0) toast.warning(`${semNf} pedido(s) sem NF`);
       if (naoAut > 0) toast.warning(`${naoAut} pedido(s) com NF não autorizada`);
+      if (movidos === 0 && semNf === 0 && naoAut === 0)
+        toast.info("Nenhum pedido elegível para mover");
       clearSelection();
       refetch();
     },
@@ -526,29 +540,129 @@ export default function WmsSeparacaoPage() {
     },
   });
 
-  // ── Batch actions per tab ──────────────────────────────────────────────
+  const addTagMut = useMutation({
+    mutationFn: async (args: { ids: string[]; tag: string }) => {
+      const r = await sisoFetch("/api/separacao/tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedido_ids: args.ids,
+          tags: [args.tag.trim()],
+          action: "add",
+        }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      return { total: body.total as number, tag: args.tag.trim() };
+    },
+    onSuccess: ({ total, tag }) => {
+      toast.success(`Tag "${tag}" adicionada a ${total} pedido(s)`);
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["wms-separacao-tags"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const removeTagMut = useMutation({
+    mutationFn: async (args: { ids: string[]; tag: string }) => {
+      const r = await sisoFetch("/api/separacao/tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedido_ids: args.ids,
+          tags: [args.tag],
+          action: "remove",
+        }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      return args.tag;
+    },
+    onSuccess: (tag) => {
+      toast.success(`Tag "${tag}" removida`);
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["wms-separacao-tags"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const encaminharMut = useMutation({
+    mutationFn: async (args: { pedido_id: string; galpao_destino_id: string }) => {
+      const r = await sisoFetch("/api/separacao/encaminhar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedido_ids: [args.pedido_id],
+          galpao_destino_id: args.galpao_destino_id,
+        }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      return body as {
+        encaminhados: string[];
+        falhas: { pedido_id: string; erro: string }[];
+        galpao_destino_nome: string;
+      };
+    },
+    onSuccess: (body) => {
+      setEncaminharOpenId(null);
+      if (body.encaminhados?.length > 0) {
+        toast.success(`Pedido encaminhado para ${body.galpao_destino_nome}`);
+        refetch();
+      }
+      if (body.falhas?.length > 0) {
+        toast.error(body.falhas[0].erro ?? "Falha ao encaminhar");
+      }
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // ── Lógica de IDs pra ações em lote ─────────────────────────────────────
+  // Paridade com legado: quando NÃO há selection, ações operam em todos os pedidos da tab.
   const selectedArr = Array.from(selectedIds);
+  const effectiveIds =
+    selectedArr.length > 0 ? selectedArr : pedidos.map((p) => p.id);
+  const effectiveCount = effectiveIds.length;
 
   function batchSepararChecklist(modo?: string) {
-    if (selectedArr.length === 0) return;
-    iniciarMut.mutate(selectedArr, {
+    if (effectiveIds.length === 0) return;
+    iniciarMut.mutate(effectiveIds, {
       onSettled: () => {
         const qs = new URLSearchParams();
-        qs.set("pedidos", selectedArr.join(","));
+        qs.set("pedidos", effectiveIds.join(","));
         if (modo) qs.set("modo", modo);
-        // Usa o checklist legado (não há rota WMS ainda).
         router.push(`/wms/separacao/checklist?${qs.toString()}`);
       },
     });
   }
 
-  function batchEmbalar(modo?: string) {
-    if (selectedArr.length === 0) return;
+  function batchEmbalar(modo?: string, idsOverride?: string[]) {
+    const ids = idsOverride ?? effectiveIds;
+    if (ids.length === 0) return;
     const qs = new URLSearchParams();
-    qs.set("pedidos", selectedArr.join(","));
+    qs.set("pedidos", ids.join(","));
     if (modo) qs.set("modo", modo);
     router.push(`/wms/separacao/embalagem?${qs.toString()}`);
   }
+
+  // Cálculos auxiliares pra ações da tab "separado"
+  const separadoStats = useMemo(() => {
+    if (tab !== "separado")
+      return { comEtiqueta: 0, semEtiqueta: 0, sourceIds: [] as string[] };
+    const source =
+      selectedArr.length > 0
+        ? pedidos.filter((p) => selectedIds.has(p.id))
+        : pedidos;
+    const comEtiqueta = source.filter((p) => p.etiqueta_pronta);
+    const semEtiqueta = source.filter((p) => !p.etiqueta_pronta);
+    return {
+      comEtiqueta: comEtiqueta.length,
+      semEtiqueta: semEtiqueta.length,
+      sourceIds: source.map((p) => p.id),
+      comEtiquetaIds: comEtiqueta.map((p) => p.id),
+      semEtiquetaIds: semEtiqueta.map((p) => p.id),
+    };
+  }, [tab, pedidos, selectedArr, selectedIds]);
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
@@ -567,6 +681,8 @@ export default function WmsSeparacaoPage() {
           updateParam("tab", next);
           clearSelection();
           lastCheckedIdxRef.current = null;
+          setEncaminharOpenId(null);
+          if (next !== "aguardando_compra") updateParam("fornecedor", "");
         }}
       />
 
@@ -647,6 +763,30 @@ export default function WmsSeparacaoPage() {
         )}
       </div>
 
+      {/* Aviso "X sem etiqueta" no separado (paridade legado) */}
+      {tab === "separado" && separadoStats.semEtiqueta > 0 && (
+        <div
+          style={{
+            marginTop: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 12px",
+            background: "var(--wms-c-warn-bg)",
+            color: "var(--wms-c-warn)",
+            border: "1px solid var(--wms-c-warn-bd)",
+            borderRadius: "var(--wms-r-2)",
+            fontSize: 12,
+          }}
+        >
+          <Icon name="alert" size={12} />
+          <span>
+            <strong>{separadoStats.semEtiqueta}</strong> pedido(s) sem etiqueta
+            pronta — impressão será mais lenta
+          </span>
+        </div>
+      )}
+
       {/* Lista */}
       {isLoading ? (
         <div className="wms-loading-pane">
@@ -698,6 +838,7 @@ export default function WmsSeparacaoPage() {
                 <th>Idade</th>
                 <th className="wms-tar">Itens</th>
                 <th>Tags</th>
+                <th style={{ width: 36 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -709,6 +850,10 @@ export default function WmsSeparacaoPage() {
                   p.total_itens > 0
                     ? Math.round((p.itens_marcados / p.total_itens) * 100)
                     : 0;
+                const canEncaminhar =
+                  (p.status_separacao === "aguardando_separacao" ||
+                    p.status_separacao === "em_separacao") &&
+                  galpoesAll.filter((g) => g.id !== p.galpao_id).length > 0;
                 return (
                   <tr
                     key={p.id}
@@ -765,6 +910,14 @@ export default function WmsSeparacaoPage() {
                       >
                         {galpao}
                       </span>
+                      {p.encaminhado_de && (
+                        <div
+                          className="wms-td-mute"
+                          style={{ fontSize: 10, marginTop: 2 }}
+                        >
+                          Encaminhado de {p.encaminhado_de}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <DecisaoLabel
@@ -783,12 +936,8 @@ export default function WmsSeparacaoPage() {
                         }}
                       >
                         <StatusBadge status={p.status_separacao} />
-                        {/* Badges N/A/E — sinais rápidos de NF/Agrupamento/Etiqueta */}
                         {p.nf_emitida && (
-                          <span
-                            title="NF emitida"
-                            style={badgeFlag("info")}
-                          >
+                          <span title="NF emitida" style={badgeFlag("info")}>
                             N
                           </span>
                         )}
@@ -840,11 +989,53 @@ export default function WmsSeparacaoPage() {
                     </td>
                     <td>
                       {p.separacao_tags.length > 0 ? (
-                        <span style={{ fontSize: 11 }}>
-                          {p.separacao_tags.join(", ")}
-                        </span>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: 3,
+                          }}
+                        >
+                          {p.separacao_tags.map((t) => (
+                            <span
+                              key={t}
+                              style={{
+                                fontSize: 10,
+                                padding: "1px 5px",
+                                background: "var(--wms-c-info-bg)",
+                                color: "var(--wms-c-info)",
+                                border: "1px solid var(--wms-c-info-bd)",
+                                borderRadius: 3,
+                                fontWeight: 500,
+                              }}
+                            >
+                              {t}
+                            </span>
+                          ))}
+                        </div>
                       ) : (
                         <span className="wms-td-mute">—</span>
+                      )}
+                    </td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {canEncaminhar && (
+                        <EncaminharDropdown
+                          pedido={p}
+                          galpoes={galpoesAll}
+                          open={encaminharOpenId === p.id}
+                          onToggle={() =>
+                            setEncaminharOpenId(
+                              encaminharOpenId === p.id ? null : p.id,
+                            )
+                          }
+                          onSubmit={(galpao_destino_id) =>
+                            encaminharMut.mutate({
+                              pedido_id: p.id,
+                              galpao_destino_id,
+                            })
+                          }
+                          pending={encaminharMut.isPending}
+                        />
                       )}
                     </td>
                   </tr>
@@ -855,25 +1046,32 @@ export default function WmsSeparacaoPage() {
         </div>
       )}
 
-      {/* Footer sticky de ações em lote */}
-      {selectedIds.size > 0 && (
+      {/* Footer sticky de ações — SEMPRE visível quando há pedidos na tab.
+          Opera em selection se houver, senão em todos os pedidos da tab. */}
+      {pedidos.length > 0 && (
         <BatchActions
           tab={tab}
-          ids={selectedArr}
-          pedidos={pedidos}
+          effectiveCount={effectiveCount}
+          selectedCount={selectedArr.length}
+          totalCount={pedidos.length}
           isAdmin={isAdmin}
           moveTargets={moveTargets}
           moveOpen={moveOpen}
           setMoveOpen={setMoveOpen}
+          tagModalOpen={tagModalOpen}
+          setTagModalOpen={setTagModalOpen}
           onClear={clearSelection}
           onSepararChecklist={batchSepararChecklist}
           onEmbalar={batchEmbalar}
-          onForcarPendente={() => forcarPendenteMut.mutate(selectedArr)}
+          onForcarPendente={() => forcarPendenteMut.mutate(effectiveIds)}
           onMoverEtapa={(novo) =>
-            moverEtapaMut.mutate({ ids: selectedArr, novo_status: novo })
+            moverEtapaMut.mutate({ ids: effectiveIds, novo_status: novo })
           }
-          onRetryEtiqueta={() => retryEtiquetaMut.mutate(selectedArr)}
-          onReimprimir={() => reimprimirMut.mutate(selectedArr)}
+          onRetryEtiqueta={(ids) =>
+            retryEtiquetaMut.mutate(ids ?? effectiveIds)
+          }
+          onReimprimir={() => reimprimirMut.mutate(effectiveIds)}
+          separadoStats={separadoStats}
           loading={
             iniciarMut.isPending ||
             forcarPendenteMut.isPending ||
@@ -881,6 +1079,24 @@ export default function WmsSeparacaoPage() {
             retryEtiquetaMut.isPending ||
             reimprimirMut.isPending
           }
+          // Tags
+          onAddTag={(tag) =>
+            addTagMut.mutate({ ids: selectedArr, tag })
+          }
+          onRemoveTag={(tag) =>
+            removeTagMut.mutate({ ids: selectedArr, tag })
+          }
+          tagsExistentes={allTags}
+          tagsNaSelection={(() => {
+            const set = new Set<string>();
+            for (const p of pedidos) {
+              if (selectedIds.has(p.id)) {
+                for (const t of p.separacao_tags) set.add(t);
+              }
+            }
+            return Array.from(set);
+          })()}
+          tagPending={addTagMut.isPending || removeTagMut.isPending}
         />
       )}
     </>
@@ -916,14 +1132,290 @@ function badgeFlag(tone: "info" | "ok" | "warn"): React.CSSProperties {
   };
 }
 
+// ─── Encaminhar dropdown (inline por linha) ───────────────────────────────
+
+function EncaminharDropdown({
+  pedido,
+  galpoes,
+  open,
+  onToggle,
+  onSubmit,
+  pending,
+}: {
+  pedido: { id: string; galpao_id: string | null };
+  galpoes: { id: string; nome: string }[];
+  open: boolean;
+  onToggle: () => void;
+  onSubmit: (galpao_destino_id: string) => void;
+  pending: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onToggle();
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open, onToggle]);
+
+  const destinos = galpoes.filter((g) => g.id !== pedido.galpao_id);
+  if (destinos.length === 0) return null;
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        className="wms-btn-icon"
+        title="Encaminhar para outro galpão"
+        onClick={onToggle}
+        disabled={pending}
+      >
+        <Icon name="arrows" size={12} />
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "100%",
+            marginTop: 4,
+            minWidth: 180,
+            background: "var(--wms-c-paper)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-3)",
+            padding: 4,
+            boxShadow: "0 10px 28px -12px rgba(0,0,0,.25)",
+            zIndex: 20,
+          }}
+        >
+          <div
+            className="wms-td-mute"
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: ".06em",
+              padding: "6px 10px 2px",
+            }}
+          >
+            Encaminhar para
+          </div>
+          {destinos.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              onClick={() => onSubmit(g.id)}
+              disabled={pending}
+              style={moverItem()}
+            >
+              {g.nome}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tag modal (popover acima do footer) ──────────────────────────────────
+
+function TagPopover({
+  onClose,
+  onAdd,
+  onRemove,
+  tagsExistentes,
+  tagsNaSelection,
+  pending,
+}: {
+  onClose: () => void;
+  onAdd: (tag: string) => void;
+  onRemove: (tag: string) => void;
+  tagsExistentes: string[];
+  tagsNaSelection: string[];
+  pending: boolean;
+}) {
+  const [input, setInput] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: "absolute",
+        bottom: "100%",
+        marginBottom: 6,
+        left: 0,
+        width: 320,
+        background: "var(--wms-c-paper)",
+        border: "1px solid var(--wms-c-border)",
+        borderRadius: "var(--wms-r-3)",
+        padding: 10,
+        boxShadow: "0 10px 28px -12px rgba(0,0,0,.25)",
+        zIndex: 25,
+      }}
+    >
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input
+          className="wms-input"
+          autoFocus
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && input.trim()) {
+              e.preventDefault();
+              onAdd(input.trim());
+              setInput("");
+            }
+          }}
+          placeholder="Nome da tag…"
+          disabled={pending}
+        />
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary wms-btn-sm"
+          disabled={!input.trim() || pending}
+          onClick={() => {
+            onAdd(input.trim());
+            setInput("");
+          }}
+        >
+          <Icon name="plus" size={11} />
+          Add
+        </button>
+      </div>
+
+      {tagsExistentes.length > 0 && (
+        <>
+          <div
+            className="wms-td-mute"
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: ".06em",
+              marginTop: 8,
+              marginBottom: 4,
+            }}
+          >
+            Adicionar existente
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {tagsExistentes.map((t) => (
+              <button
+                key={t}
+                type="button"
+                disabled={pending}
+                onClick={() => onAdd(t)}
+                style={{
+                  fontSize: 10,
+                  padding: "2px 7px",
+                  background: "var(--wms-c-info-bg)",
+                  color: "var(--wms-c-info)",
+                  border: "1px solid var(--wms-c-info-bd)",
+                  borderRadius: 3,
+                  fontWeight: 500,
+                  cursor: pending ? "not-allowed" : "pointer",
+                  opacity: pending ? 0.4 : 1,
+                }}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {tagsNaSelection.length > 0 && (
+        <>
+          <div
+            style={{
+              borderTop: "1px solid var(--wms-c-border)",
+              marginTop: 10,
+              paddingTop: 8,
+            }}
+          >
+            <div
+              className="wms-td-mute"
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                marginBottom: 4,
+              }}
+            >
+              Remover da selection
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {tagsNaSelection.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  disabled={pending}
+                  onClick={() => onRemove(t)}
+                  style={{
+                    fontSize: 10,
+                    padding: "2px 7px",
+                    background: "var(--wms-c-danger-bg)",
+                    color: "var(--wms-c-danger)",
+                    border: "1px solid var(--wms-c-danger-bd)",
+                    borderRadius: 3,
+                    fontWeight: 500,
+                    cursor: pending ? "not-allowed" : "pointer",
+                    opacity: pending ? 0.4 : 1,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 3,
+                  }}
+                >
+                  <Icon name="x" size={9} />
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Batch actions footer ─────────────────────────────────────────────────
+
+interface SeparadoStatsShape {
+  comEtiqueta: number;
+  semEtiqueta: number;
+  sourceIds: string[];
+  comEtiquetaIds?: string[];
+  semEtiquetaIds?: string[];
+}
+
 function BatchActions({
   tab,
-  ids,
-  pedidos,
+  effectiveCount,
+  selectedCount,
+  totalCount,
   isAdmin,
   moveTargets,
   moveOpen,
   setMoveOpen,
+  tagModalOpen,
+  setTagModalOpen,
   onClear,
   onSepararChecklist,
   onEmbalar,
@@ -931,11 +1423,18 @@ function BatchActions({
   onMoverEtapa,
   onRetryEtiqueta,
   onReimprimir,
+  separadoStats,
   loading,
+  onAddTag,
+  onRemoveTag,
+  tagsExistentes,
+  tagsNaSelection,
+  tagPending,
 }: {
   tab: Tab;
-  ids: string[];
-  pedidos: SeparacaoPedido[];
+  effectiveCount: number;
+  selectedCount: number;
+  totalCount: number;
   isAdmin: boolean;
   moveTargets:
     | {
@@ -945,23 +1444,25 @@ function BatchActions({
     | undefined;
   moveOpen: boolean;
   setMoveOpen: (v: boolean) => void;
+  tagModalOpen: boolean;
+  setTagModalOpen: (v: boolean) => void;
   onClear: () => void;
   onSepararChecklist: (modo?: string) => void;
-  onEmbalar: (modo?: string) => void;
+  onEmbalar: (modo?: string, idsOverride?: string[]) => void;
   onForcarPendente: () => void;
   onMoverEtapa: (status: StatusServer) => void;
-  onRetryEtiqueta: () => void;
+  onRetryEtiqueta: (ids?: string[]) => void;
   onReimprimir: () => void;
+  separadoStats: SeparadoStatsShape;
   loading: boolean;
+  onAddTag: (tag: string) => void;
+  onRemoveTag: (tag: string) => void;
+  tagsExistentes: string[];
+  tagsNaSelection: string[];
+  tagPending: boolean;
 }) {
-  const selecionados = pedidos.filter((p) => ids.includes(p.id));
-  const engatilhados = selecionados.filter(
-    (p) => p.nf_emitida && p.agrupamento_criado,
-  );
-  const canEmbalarOC =
-    tab === "aguardando_compra" &&
-    engatilhados.length === selecionados.length &&
-    selecionados.length > 0;
+  // Tag só faz sentido com selection (operar em selection apenas).
+  const hasSelection = selectedCount > 0;
 
   return (
     <div
@@ -990,15 +1491,50 @@ function BatchActions({
           fontSize: 13,
         }}
       >
-        <strong>{ids.length}</strong> pedido(s) selecionado(s)
-        <button
-          className="wms-btn wms-btn-ghost wms-btn-sm"
-          onClick={onClear}
-          type="button"
-        >
-          <Icon name="x" size={11} />
-          Limpar
-        </button>
+        {hasSelection ? (
+          <>
+            <strong>{selectedCount}</strong> selecionado(s)
+            <button
+              className="wms-btn wms-btn-ghost wms-btn-sm"
+              onClick={onClear}
+              type="button"
+            >
+              <Icon name="x" size={11} />
+              Limpar
+            </button>
+            {/* Tag — só com selection */}
+            <div style={{ position: "relative" }}>
+              <button
+                className="wms-btn wms-btn-ghost wms-btn-sm"
+                onClick={() => setTagModalOpen(!tagModalOpen)}
+                type="button"
+                disabled={tagPending}
+              >
+                <Icon name="tag" size={11} />
+                Tag · {selectedCount}
+              </button>
+              {tagModalOpen && (
+                <TagPopover
+                  onClose={() => setTagModalOpen(false)}
+                  onAdd={(tag) => {
+                    onAddTag(tag);
+                    setTagModalOpen(false);
+                  }}
+                  onRemove={(tag) => {
+                    onRemoveTag(tag);
+                  }}
+                  tagsExistentes={tagsExistentes}
+                  tagsNaSelection={tagsNaSelection}
+                  pending={tagPending}
+                />
+              )}
+            </div>
+          </>
+        ) : (
+          <span className="wms-td-mute" style={{ fontSize: 12 }}>
+            <strong>{totalCount}</strong> pedido(s) na tab
+          </span>
+        )}
       </div>
 
       <div
@@ -1009,8 +1545,8 @@ function BatchActions({
           alignItems: "center",
         }}
       >
-        {/* Mover (admin) */}
-        {isAdmin && moveTargets && (
+        {/* Mover (admin) — só com selection (paridade legado) */}
+        {isAdmin && moveTargets && hasSelection && (
           <div style={{ position: "relative" }}>
             <button
               className="wms-btn wms-btn-ghost wms-btn-sm"
@@ -1094,43 +1630,37 @@ function BatchActions({
           </div>
         )}
 
-        {/* Ações específicas por tab */}
+        {/* Ações específicas por tab — sempre visíveis quando há pedidos */}
         {tab === "aguardando_compra" && (
-          <>
-            <button
-              className="wms-btn wms-btn-primary wms-btn-sm"
-              onClick={() => onSepararChecklist("pick-oc")}
-              disabled={loading}
-              type="button"
-            >
-              <Icon name="arrow-right" size={11} />
-              Separar (pick-OC) · {ids.length}
-            </button>
-            {canEmbalarOC && (
-              <button
-                className="wms-btn wms-btn-primary wms-btn-sm"
-                onClick={() => onEmbalar("embalagem-oc")}
-                disabled={loading}
-                type="button"
-                title="Todos os selecionados têm NF + agrupamento prontos"
-              >
-                <Icon name="check" size={11} />
-                Embalar engatilhados · {engatilhados.length}
-              </button>
-            )}
-          </>
+          <button
+            className="wms-btn wms-btn-primary wms-btn-sm"
+            onClick={() => onSepararChecklist("pick-oc")}
+            disabled={loading}
+            type="button"
+          >
+            <Icon name="arrow-right" size={11} />
+            {loading
+              ? "Iniciando…"
+              : `Separar (pick-OC) · ${effectiveCount}`}
+          </button>
         )}
 
         {tab === "aguardando_nf" && isAdmin && (
           <button
             className="wms-btn wms-btn-ghost wms-btn-sm"
             onClick={onForcarPendente}
-            disabled={loading}
+            disabled={loading || !hasSelection}
             type="button"
-            title="Pula a NF e move pra Aguardando Separação"
+            title={
+              hasSelection
+                ? "Pula a NF e move pra Aguardando Separação"
+                : "Selecione pedidos pra forçar pendente"
+            }
           >
             <Icon name="alert" size={11} />
-            Forçar pendente · {ids.length}
+            {loading
+              ? "Movendo…"
+              : `Forçar pendente · ${selectedCount || 0}`}
           </button>
         )}
 
@@ -1142,7 +1672,9 @@ function BatchActions({
             type="button"
           >
             <Icon name="arrow-right" size={11} />
-            Iniciar separação · {ids.length}
+            {loading
+              ? "Iniciando…"
+              : `Separar · ${effectiveCount} pedido(s)`}
           </button>
         )}
 
@@ -1154,7 +1686,9 @@ function BatchActions({
             type="button"
           >
             <Icon name="arrow-right" size={11} />
-            Retomar · {ids.length}
+            {loading
+              ? "Retomando…"
+              : `Retomar · ${effectiveCount} pedido(s)`}
           </button>
         )}
 
@@ -1162,22 +1696,55 @@ function BatchActions({
           <>
             <button
               className="wms-btn wms-btn-ghost wms-btn-sm"
-              onClick={onRetryEtiqueta}
-              disabled={loading}
-              type="button"
-            >
-              <Icon name="rotate" size={11} />
-              Gerar etiqueta · {ids.length}
-            </button>
-            <button
-              className="wms-btn wms-btn-primary wms-btn-sm"
               onClick={() => onEmbalar()}
               disabled={loading}
               type="button"
             >
               <Icon name="check" size={11} />
-              Embalar · {ids.length}
+              {hasSelection
+                ? `Embalar · ${selectedCount}`
+                : `Embalar todos (${totalCount})`}
             </button>
+            {separadoStats.semEtiqueta > 0 && separadoStats.semEtiquetaIds && (
+              <button
+                className="wms-btn wms-btn-ghost wms-btn-sm"
+                onClick={() =>
+                  onRetryEtiqueta(separadoStats.semEtiquetaIds!)
+                }
+                disabled={loading}
+                type="button"
+                style={{
+                  borderColor: "var(--wms-c-warn-bd)",
+                  background: "var(--wms-c-warn-bg)",
+                  color: "var(--wms-c-warn)",
+                }}
+              >
+                <Icon name="rotate" size={11} />
+                {loading
+                  ? "Tentando…"
+                  : `Gerar ${separadoStats.semEtiqueta} etiqueta(s)`}
+              </button>
+            )}
+            {separadoStats.semEtiqueta > 0 &&
+              separadoStats.comEtiqueta > 0 &&
+              separadoStats.comEtiquetaIds && (
+                <button
+                  className="wms-btn wms-btn-primary wms-btn-sm"
+                  onClick={() =>
+                    onEmbalar(undefined, separadoStats.comEtiquetaIds)
+                  }
+                  disabled={loading}
+                  type="button"
+                  title="Embala só os pedidos que já têm etiqueta pronta"
+                  style={{
+                    background: "var(--wms-c-ok)",
+                    borderColor: "var(--wms-c-ok)",
+                  }}
+                >
+                  <Icon name="check" size={11} />
+                  Embalar {separadoStats.comEtiqueta} com etiqueta
+                </button>
+              )}
           </>
         )}
 
@@ -1185,21 +1752,39 @@ function BatchActions({
           <>
             <button
               className="wms-btn wms-btn-ghost wms-btn-sm"
-              onClick={onRetryEtiqueta}
-              disabled={loading}
+              onClick={() => onRetryEtiqueta()}
+              disabled={loading || !hasSelection}
               type="button"
+              title={
+                hasSelection
+                  ? "Tenta recuperar etiquetas faltantes"
+                  : "Selecione pedidos pra retry"
+              }
+              style={
+                hasSelection
+                  ? {
+                      borderColor: "var(--wms-c-warn-bd)",
+                      background: "var(--wms-c-warn-bg)",
+                      color: "var(--wms-c-warn)",
+                    }
+                  : undefined
+              }
             >
               <Icon name="rotate" size={11} />
-              Retry etiqueta · {ids.length}
+              {loading
+                ? "Tentando…"
+                : `Retry etiqueta · ${selectedCount || 0}`}
             </button>
             <button
               className="wms-btn wms-btn-primary wms-btn-sm"
               onClick={onReimprimir}
-              disabled={loading}
+              disabled={loading || !hasSelection}
               type="button"
             >
               <Icon name="download" size={11} />
-              Imprimir · {ids.length}
+              {loading
+                ? "Imprimindo…"
+                : `Imprimir · ${selectedCount || 0} etiqueta(s)`}
             </button>
           </>
         )}

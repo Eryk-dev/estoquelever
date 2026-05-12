@@ -77,15 +77,18 @@ export function ProdutoLightbox({
         )}
       </div>
 
-      <div
-        className="wms-lb-stage"
-        onClick={(e) => e.stopPropagation()}
-      >
+      {/* Stage NÃO stop-propaga — clicar no espaço vazio em volta da foto
+          fecha o lightbox (UX padrão de visualizador). Só a imagem e os
+          botões de navegação param a propagação. */}
+      <div className="wms-lb-stage">
         {imagens.length > 1 && (
           <button
             type="button"
             className="wms-lb-nav wms-lb-nav-prev"
-            onClick={prev}
+            onClick={(e) => {
+              e.stopPropagation();
+              prev();
+            }}
             aria-label="Anterior"
           >
             <Icon name="chevron-l" size={22} />
@@ -97,13 +100,17 @@ export function ProdutoLightbox({
           src={imagens[idx]}
           alt={descricao ?? ""}
           className="wms-lb-img"
+          onClick={(e) => e.stopPropagation()}
         />
 
         {imagens.length > 1 && (
           <button
             type="button"
             className="wms-lb-nav wms-lb-nav-next"
-            onClick={next}
+            onClick={(e) => {
+              e.stopPropagation();
+              next();
+            }}
             aria-label="Próxima"
           >
             <Icon name="chevron-r" size={22} />

@@ -118,3 +118,85 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
   }
   return mov as unknown as Movimentacao;
 }
+
+/**
+ * Vende N unidades de um kit virtual — explode em N saídas dos componentes
+ * proporcionais à composição (qty_no_kit × qtyKits por componente).
+ *
+ * Compartilha origem_id entre todas as movs geradas pra serem rastreáveis
+ * como um único evento de venda.
+ *
+ * Pré-requisitos:
+ * - produto na quadrupla precisa ser um kit (eh_kit=true)
+ * - precisa ter composição cadastrada em siso_produto_kits
+ * - estoque dos componentes na MESMA empresa_dona+galpao+localizacao da
+ *   quadrupla do kit (limitação: kit "vendido" tem que ter os componentes
+ *   no mesmo local físico — ou o chamador passa quadruplas alternativas)
+ */
+export async function venderKit(input: {
+  kit: Quadrupla;
+  qtyKits: number;
+  origem_tipo: OrigemTipo;
+  origem_id?: string;
+  origem_detalhes?: Record<string, unknown>;
+  nota_fiscal_id?: number;
+  custo_unitario?: number;
+  usuario_id?: string;
+  observacoes?: string;
+}): Promise<Movimentacao[]> {
+  if (input.qtyKits <= 0) {
+    throw new Error("qtyKits deve ser positivo");
+  }
+  const sb = createServiceClient();
+
+  const { data: prod } = await sb
+    .from("siso_produtos")
+    .select("eh_kit, sku")
+    .eq("id", input.kit.produto_id)
+    .maybeSingle();
+  if (!prod) throw new Error("kit não encontrado");
+  if (!(prod as { eh_kit: boolean }).eh_kit) {
+    throw new Error("Produto não é um kit");
+  }
+
+  const { data: composicao } = await sb
+    .from("siso_produto_kits")
+    .select("componente_produto_id, quantidade")
+    .eq("kit_produto_id", input.kit.produto_id);
+  if (!composicao || composicao.length === 0) {
+    throw new Error("kit sem composição cadastrada");
+  }
+
+  const origemId = input.origem_id ?? crypto.randomUUID();
+  const movs: Movimentacao[] = [];
+  for (const c of composicao as Array<{
+    componente_produto_id: string;
+    quantidade: number;
+  }>) {
+    const mov = await inserirMovimentacao({
+      quadrupla: {
+        ...input.kit,
+        produto_id: c.componente_produto_id,
+      },
+      tipo: "S",
+      qty: Number(c.quantidade) * input.qtyKits,
+      origem_tipo: input.origem_tipo,
+      origem_id: origemId,
+      origem_detalhes: {
+        ...(input.origem_detalhes ?? {}),
+        kit_produto_id: input.kit.produto_id,
+        kit_sku: (prod as { sku: string }).sku,
+        kit_qty: input.qtyKits,
+        kit_componente: true,
+      },
+      nota_fiscal_id: input.nota_fiscal_id,
+      custo_unitario: input.custo_unitario,
+      usuario_id: input.usuario_id,
+      observacoes:
+        input.observacoes ??
+        `Venda de ${input.qtyKits} kit ${(prod as { sku: string }).sku}`,
+    });
+    movs.push(mov);
+  }
+  return movs;
+}

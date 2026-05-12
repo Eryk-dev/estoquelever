@@ -5,12 +5,13 @@ import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 interface PatchProdutoFornecedorBody {
   preferencial?: boolean;
-  lead_time_min?: number;
-  lead_time_medio?: number;
-  lead_time_max?: number;
+  lead_time_dias_min?: number;
+  lead_time_dias_medio?: number;
+  lead_time_dias_max?: number;
   custo_unitario?: number | null;
   qty_minima_pedido?: number | null;
   multiplo_compra?: number | null;
+  codigo_fornecedor?: string | null;
   ativo?: boolean;
 }
 
@@ -19,11 +20,15 @@ function pickPatchFields(body: unknown): PatchProdutoFornecedorBody {
   const b = body as Record<string, unknown>;
   const out: PatchProdutoFornecedorBody = {};
   if (typeof b.preferencial === "boolean") out.preferencial = b.preferencial;
-  if (typeof b.lead_time_min === "number") out.lead_time_min = b.lead_time_min;
-  if (typeof b.lead_time_medio === "number") {
-    out.lead_time_medio = b.lead_time_medio;
+  if (typeof b.lead_time_dias_min === "number") {
+    out.lead_time_dias_min = b.lead_time_dias_min;
   }
-  if (typeof b.lead_time_max === "number") out.lead_time_max = b.lead_time_max;
+  if (typeof b.lead_time_dias_medio === "number") {
+    out.lead_time_dias_medio = b.lead_time_dias_medio;
+  }
+  if (typeof b.lead_time_dias_max === "number") {
+    out.lead_time_dias_max = b.lead_time_dias_max;
+  }
   if (b.custo_unitario === null || typeof b.custo_unitario === "number") {
     out.custo_unitario = b.custo_unitario as number | null;
   }
@@ -32,6 +37,9 @@ function pickPatchFields(body: unknown): PatchProdutoFornecedorBody {
   }
   if (b.multiplo_compra === null || typeof b.multiplo_compra === "number") {
     out.multiplo_compra = b.multiplo_compra as number | null;
+  }
+  if (b.codigo_fornecedor === null || typeof b.codigo_fornecedor === "string") {
+    out.codigo_fornecedor = b.codigo_fornecedor as string | null;
   }
   if (typeof b.ativo === "boolean") out.ativo = b.ativo;
   return out;

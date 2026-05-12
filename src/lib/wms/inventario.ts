@@ -427,6 +427,46 @@ export async function registrarContagem(
   input: RegistrarContagemInput,
 ): Promise<void> {
   const sb = createServiceClient();
+
+  // Se o produto bipado é um kit, expande pra contagens dos componentes
+  // (qty_no_kit × qty_bipada por componente). Não registra contagem pro
+  // próprio SKU do kit — kits não têm saldo direto em siso_estoque.
+  const { data: prod } = await sb
+    .from("siso_produtos")
+    .select("eh_kit")
+    .eq("id", input.produto_id)
+    .maybeSingle();
+
+  if (prod && (prod as { eh_kit?: boolean }).eh_kit) {
+    const { data: comps } = await sb
+      .from("siso_produto_kits")
+      .select("componente_produto_id, quantidade")
+      .eq("kit_produto_id", input.produto_id);
+    if (!comps || comps.length === 0) {
+      throw new Error(
+        "SKU é um kit sem composição cadastrada — defina os componentes antes",
+      );
+    }
+    for (const c of comps as Array<{
+      componente_produto_id: string;
+      quantidade: number;
+    }>) {
+      await registrarContagemSimples(sb, {
+        ...input,
+        produto_id: c.componente_produto_id,
+        qty_contada: Number(c.quantidade) * input.qty_contada,
+      });
+    }
+    return;
+  }
+
+  await registrarContagemSimples(sb, input);
+}
+
+async function registrarContagemSimples(
+  sb: ReturnType<typeof createServiceClient>,
+  input: RegistrarContagemInput,
+): Promise<void> {
   const modo = input.modo ?? "incremental";
 
   const filtro = {

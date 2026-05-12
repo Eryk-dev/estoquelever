@@ -292,6 +292,104 @@ export async function getProdutoDetalhe(
   };
 }
 
+/** Fornecedor info embutida no detalhe do produto. */
+export interface TinyProdutoFornecedor {
+  id: number;
+  nome: string;
+  codigoProdutoNoFornecedor: string | null;
+}
+
+/** Componente embutido no detalhe do produto (somente se tipo='K'). */
+export interface TinyProdutoKitItem {
+  produto: { id: number; sku: string | null; descricao: string | null };
+  quantidade: number;
+}
+
+/**
+ * Union de getProdutoCompleto + getProdutoDetalhe + fornecedores + kit numa
+ * única chamada HTTP. Evita pagar 2x o /produtos/{id} no backfill em massa.
+ */
+export interface TinyProdutoFull extends TinyProdutoCompleto {
+  tipo: string;
+  imagens: string[];
+  imagemUrl: string | null;
+  descricaoComplementar: string | null;
+  fornecedores: TinyProdutoFornecedor[];
+  kit: TinyProdutoKitItem[];
+}
+
+export async function getProdutoFull(
+  token: string,
+  produtoId: number,
+): Promise<TinyProdutoFull> {
+  const res = await tinyFetch<{
+    id: number;
+    descricao?: string;
+    sku?: string;
+    tipo?: string;
+    gtin?: string | null;
+    unidade?: string;
+    ncm?: string;
+    origem?: number | null;
+    precos?: { preco?: number; precoCusto?: number } | null;
+    descricaoComplementar?: string | null;
+    anexos?: Array<{ url?: string | null }>;
+    fornecedores?: Array<{
+      id?: number;
+      nome?: string | null;
+      codigoProdutoNoFornecedor?: string | null;
+    }>;
+    kit?: Array<{
+      produto?: {
+        id?: number;
+        sku?: string | null;
+        descricao?: string | null;
+      };
+      quantidade?: number;
+    }>;
+  }>(`/produtos/${produtoId}`, { token });
+
+  const imagens = (res.anexos ?? [])
+    .map((a) => a.url)
+    .filter((u): u is string => typeof u === "string" && u.length > 0);
+
+  const fornecedores: TinyProdutoFornecedor[] = (res.fornecedores ?? [])
+    .filter((f) => f.id != null && f.nome)
+    .map((f) => ({
+      id: f.id as number,
+      nome: f.nome as string,
+      codigoProdutoNoFornecedor: f.codigoProdutoNoFornecedor ?? null,
+    }));
+
+  const kit: TinyProdutoKitItem[] = (res.kit ?? [])
+    .filter((k) => k.produto?.id != null && k.quantidade != null)
+    .map((k) => ({
+      produto: {
+        id: k.produto!.id as number,
+        sku: k.produto!.sku ?? null,
+        descricao: k.produto!.descricao ?? null,
+      },
+      quantidade: k.quantidade as number,
+    }));
+
+  return {
+    id: res.id,
+    descricao: res.descricao ?? "",
+    sku: res.sku ?? "",
+    precos: res.precos ?? null,
+    gtin: res.gtin || null,
+    unidade: res.unidade,
+    ncm: res.ncm,
+    origem: res.origem ?? null,
+    tipo: res.tipo ?? "S",
+    imagens,
+    imagemUrl: imagens[0] ?? null,
+    descricaoComplementar: res.descricaoComplementar ?? null,
+    fornecedores,
+    kit,
+  };
+}
+
 /** Kit component from GET /produtos/{id}/kit */
 export interface TinyKitComponente {
   produto: {

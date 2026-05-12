@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   Card,
@@ -20,7 +21,14 @@ import type { Produto, Movimentacao } from "@/lib/wms/types";
 import type { LinhaCobertura } from "@/lib/wms/cobertura";
 import type { UltimaContagemProduto } from "@/lib/wms/inventario";
 
-type TabId = "overview" | "estoque" | "movs" | "cobertura" | "fornec" | "fotos";
+type TabId =
+  | "overview"
+  | "estoque"
+  | "movs"
+  | "cobertura"
+  | "fornec"
+  | "kit"
+  | "fotos";
 
 interface EstoqueLinhaItem {
   saldo: number;
@@ -272,12 +280,18 @@ export function ProdutoDrawer({
                     { id: "overview", label: "Visão geral" },
                     {
                       id: "estoque",
-                      label: "Estoque por local",
-                      count: linhas.length,
+                      label: produto.eh_kit
+                        ? "Estoque (derivado)"
+                        : "Estoque por local",
+                      count: produto.eh_kit ? undefined : linhas.length,
                     },
                     { id: "movs", label: "Movimentações", count: movs.length },
                     { id: "cobertura", label: "Cobertura" },
                     { id: "fornec", label: "Fornecedores" },
+                    {
+                      id: "kit",
+                      label: produto.eh_kit ? "Composição" : "Kit",
+                    },
                     {
                       id: "fotos",
                       label: "Fotos",
@@ -329,6 +343,7 @@ export function ProdutoDrawer({
               )}
               {tab === "cobertura" && <Cobertura c={cobertura} />}
               {tab === "fornec" && <Fornecedores produto={produto} />}
+              {tab === "kit" && <KitTab produto={produto} />}
               {tab === "fotos" && (
                 <Fotos
                   imagens={produto.imagens ?? []}
@@ -796,7 +811,32 @@ function Cobertura({ c }: { c?: LinhaCobertura }) {
   );
 }
 
+interface FornecRow {
+  id: string;
+  fornecedor_id: string;
+  preferencial: boolean;
+  lead_time_dias_medio: number | null;
+  custo_unitario: number | null;
+  qty_minima_pedido: number | null;
+  multiplo_compra: number | null;
+  codigo_fornecedor: string | null;
+  ativo: boolean;
+  fornecedor: {
+    id: string;
+    nome: string;
+    cnpj: string | null;
+    prefixo_sku: string | null;
+  } | null;
+}
+
+interface FornecedorLite {
+  id: string;
+  nome: string;
+  prefixo_sku: string | null;
+}
+
 function Fornecedores({ produto }: { produto: Produto }) {
+  const qc = useQueryClient();
   const fornecQuery = useQuery({
     queryKey: ["wms-produto-fornecedores", produto.id],
     queryFn: () =>
@@ -804,96 +844,787 @@ function Fornecedores({ produto }: { produto: Produto }) {
         `/api/wms/produto-fornecedores?produto_id=${produto.id}`,
       ),
   });
+  const todosFornecQuery = useQuery({
+    queryKey: ["wms-fornecedores-all"],
+    queryFn: () => wmsApi<FornecedorLite[]>(`/api/wms/fornecedores`),
+  });
   const rows = fornecQuery.data?.rows ?? [];
-  if (rows.length === 0) {
-    return (
-      <div className="wms-exp-empty" style={{ padding: 24 }}>
-        Nenhum fornecedor vinculado a este produto.
-      </div>
-    );
-  }
+  const todos = todosFornecQuery.data ?? [];
+  const jaVinculados = new Set(rows.map((r) => r.fornecedor_id));
+  const disponiveis = todos.filter((f) => !jaVinculados.has(f.id));
+
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: ["wms-produto-fornecedores", produto.id] });
+
+  const adicionar = useMutation({
+    mutationFn: (input: {
+      fornecedor_id: string;
+      codigo_fornecedor: string | null;
+      custo_unitario: number | null;
+    }) =>
+      wmsApi(`/api/wms/produto-fornecedores`, {
+        method: "POST",
+        body: JSON.stringify({
+          produto_id: produto.id,
+          fornecedor_id: input.fornecedor_id,
+          codigo_fornecedor: input.codigo_fornecedor,
+          custo_unitario: input.custo_unitario,
+          preferencial: rows.length === 0,
+        }),
+      }),
+    onSuccess: () => {
+      toast.success("Fornecedor vinculado");
+      invalidate();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const atualizar = useMutation({
+    mutationFn: (input: {
+      id: string;
+      patch: Partial<{
+        codigo_fornecedor: string | null;
+        custo_unitario: number | null;
+        qty_minima_pedido: number | null;
+        multiplo_compra: number | null;
+        lead_time_dias_medio: number;
+        preferencial: boolean;
+      }>;
+    }) =>
+      wmsApi(`/api/wms/produto-fornecedores/${input.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(input.patch),
+      }),
+    onSuccess: () => invalidate(),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const remover = useMutation({
+    mutationFn: (id: string) =>
+      wmsApi(`/api/wms/produto-fornecedores/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast.success("Fornecedor removido");
+      invalidate();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return (
-    <div>
-      {rows.map((f) => (
-        <div
-          key={f.id}
-          className={`wms-card ${f.preferencial ? "" : ""}`}
-          style={{
-            marginBottom: 12,
-            border: f.preferencial
-              ? "1px solid var(--wms-c-fg)"
-              : "1px solid var(--wms-c-border)",
-          }}
-        >
-          <div className="wms-card-h">
-            <div>
-              {f.preferencial && (
-                <div
-                  style={{
-                    fontSize: 10.5,
-                    textTransform: "uppercase",
-                    letterSpacing: ".06em",
-                    color: "var(--wms-c-mute)",
-                    fontWeight: 600,
-                  }}
-                >
-                  Fornecedor preferencial
-                </div>
-              )}
-              <h3>{f.fornecedor?.nome}</h3>
-            </div>
-          </div>
-          <div className="wms-card-body">
-            <div className="wms-ov-meta-grid">
-              <div>
-                <div className="wms-ov-meta-lbl">Lead time</div>
-                <div className="wms-mono">
-                  {f.lead_time_medio ?? "—"} dias
-                </div>
-              </div>
-              <div>
-                <div className="wms-ov-meta-lbl">Custo unitário</div>
-                <div className="wms-mono">{fmtBRL(f.custo_unitario)}</div>
-              </div>
-              <div>
-                <div className="wms-ov-meta-lbl">Qty mínima</div>
-                <div className="wms-mono">{f.qty_minima_pedido ?? "—"}</div>
-              </div>
-              <div>
-                <div className="wms-ov-meta-lbl">Múltiplo de compra</div>
-                <div className="wms-mono">{f.multiplo_compra ?? "—"}</div>
-              </div>
-              <div>
-                <div className="wms-ov-meta-lbl">Prefixo SKU</div>
-                <div className="wms-mono">
-                  {f.fornecedor?.prefixo_sku ?? "—"}
-                </div>
-              </div>
-              <div>
-                <div className="wms-ov-meta-lbl">CNPJ</div>
-                <div className="wms-mono">{f.fornecedor?.cnpj ?? "—"}</div>
-              </div>
-            </div>
-          </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <AdicionarFornecedorForm
+        disponiveis={disponiveis}
+        loading={adicionar.isPending}
+        onSubmit={(input) => adicionar.mutate(input)}
+      />
+
+      {fornecQuery.isLoading ? (
+        <div className="wms-loading-pane">Carregando fornecedores…</div>
+      ) : rows.length === 0 ? (
+        <div className="wms-exp-empty">
+          Nenhum fornecedor vinculado. Use o formulário acima pra adicionar.
         </div>
-      ))}
+      ) : (
+        rows.map((f) => (
+          <FornecedorEditCard
+            key={f.id}
+            row={f}
+            onPatch={(patch) => atualizar.mutate({ id: f.id, patch })}
+            onRemove={() => {
+              if (confirm(`Remover fornecedor ${f.fornecedor?.nome}?`)) {
+                remover.mutate(f.id);
+              }
+            }}
+          />
+        ))
+      )}
     </div>
   );
 }
 
-interface FornecRow {
-  id: string;
-  preferencial: boolean;
-  lead_time_medio: number | null;
-  custo_unitario: number | null;
-  qty_minima_pedido: number | null;
-  multiplo_compra: number | null;
-  fornecedor?: {
-    id: string;
-    nome: string;
-    cnpj: string | null;
-    prefixo_sku: string | null;
+function AdicionarFornecedorForm({
+  disponiveis,
+  loading,
+  onSubmit,
+}: {
+  disponiveis: FornecedorLite[];
+  loading: boolean;
+  onSubmit: (input: {
+    fornecedor_id: string;
+    codigo_fornecedor: string | null;
+    custo_unitario: number | null;
+  }) => void;
+}) {
+  const [fornecedorId, setFornecedorId] = useState("");
+  const [codigo, setCodigo] = useState("");
+  const [custo, setCusto] = useState("");
+
+  const submit = () => {
+    if (!fornecedorId) {
+      toast.error("Escolha um fornecedor");
+      return;
+    }
+    onSubmit({
+      fornecedor_id: fornecedorId,
+      codigo_fornecedor: codigo.trim() || null,
+      custo_unitario: custo.trim() ? parseFloat(custo) : null,
+    });
+    setFornecedorId("");
+    setCodigo("");
+    setCusto("");
   };
+
+  return (
+    <Card title="Adicionar fornecedor">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr 120px auto",
+          gap: 8,
+          alignItems: "end",
+        }}
+      >
+        <div>
+          <div className="wms-ov-meta-lbl">Fornecedor</div>
+          <select
+            className="wms-input"
+            value={fornecedorId}
+            onChange={(e) => setFornecedorId(e.target.value)}
+          >
+            <option value="">— selecione —</option>
+            {disponiveis.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.nome}
+                {f.prefixo_sku ? ` (${f.prefixo_sku})` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <div className="wms-ov-meta-lbl">Código do produto no fornecedor</div>
+          <input
+            className="wms-input wms-mono"
+            placeholder="ex.: ABC-123"
+            value={codigo}
+            onChange={(e) => setCodigo(e.target.value)}
+          />
+        </div>
+        <div>
+          <div className="wms-ov-meta-lbl">Custo (R$)</div>
+          <input
+            className="wms-input wms-mono"
+            placeholder="0,00"
+            inputMode="decimal"
+            value={custo}
+            onChange={(e) => setCusto(e.target.value.replace(",", "."))}
+          />
+        </div>
+        <button
+          className="wms-btn wms-btn-sm"
+          onClick={submit}
+          disabled={loading || !fornecedorId}
+        >
+          <Icon name="plus" size={11} /> Vincular
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+function FornecedorEditCard({
+  row,
+  onPatch,
+  onRemove,
+}: {
+  row: FornecRow;
+  onPatch: (
+    patch: Partial<{
+      codigo_fornecedor: string | null;
+      custo_unitario: number | null;
+      qty_minima_pedido: number | null;
+      multiplo_compra: number | null;
+      lead_time_dias_medio: number;
+      preferencial: boolean;
+    }>,
+  ) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div
+      className="wms-card"
+      style={{
+        border: row.preferencial
+          ? "1px solid var(--wms-c-fg)"
+          : "1px solid var(--wms-c-border)",
+      }}
+    >
+      <div className="wms-card-h">
+        <div>
+          {row.preferencial && (
+            <div
+              style={{
+                fontSize: 10.5,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                color: "var(--wms-c-mute)",
+                fontWeight: 600,
+              }}
+            >
+              Fornecedor preferencial
+            </div>
+          )}
+          <h3>{row.fornecedor?.nome ?? "(fornecedor removido)"}</h3>
+          {row.fornecedor?.prefixo_sku && (
+            <div className="wms-td-mute" style={{ fontSize: 12 }}>
+              Prefixo SKU{" "}
+              <span className="wms-mono">{row.fornecedor.prefixo_sku}</span>
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {!row.preferencial && (
+            <button
+              className="wms-btn wms-btn-sm wms-btn-ghost"
+              onClick={() => onPatch({ preferencial: true })}
+              title="Marcar como preferencial"
+            >
+              <Icon name="check" size={11} /> Tornar preferencial
+            </button>
+          )}
+          <button
+            className="wms-btn-icon"
+            onClick={onRemove}
+            title="Remover fornecedor"
+          >
+            <Icon name="x" size={11} />
+          </button>
+        </div>
+      </div>
+      <div className="wms-card-body">
+        <div className="wms-ov-meta-grid">
+          <CampoEdit
+            label="Código no fornecedor"
+            value={row.codigo_fornecedor}
+            onSave={(v) => onPatch({ codigo_fornecedor: v || null })}
+            mono
+            placeholder="—"
+          />
+          <CampoEdit
+            label="Custo unitário"
+            value={row.custo_unitario != null ? String(row.custo_unitario) : ""}
+            onSave={(v) =>
+              onPatch({
+                custo_unitario: v.trim()
+                  ? parseFloat(v.replace(",", "."))
+                  : null,
+              })
+            }
+            mono
+            placeholder="0,00"
+            display={
+              row.custo_unitario != null ? fmtBRL(row.custo_unitario) : "—"
+            }
+          />
+          <CampoEdit
+            label="Lead time (dias)"
+            value={
+              row.lead_time_dias_medio != null
+                ? String(row.lead_time_dias_medio)
+                : ""
+            }
+            onSave={(v) => {
+              const n = parseInt(v, 10);
+              if (Number.isFinite(n) && n >= 0) {
+                onPatch({ lead_time_dias_medio: n });
+              }
+            }}
+            mono
+            placeholder="14"
+          />
+          <CampoEdit
+            label="Qty mínima"
+            value={
+              row.qty_minima_pedido != null
+                ? String(row.qty_minima_pedido)
+                : ""
+            }
+            onSave={(v) =>
+              onPatch({
+                qty_minima_pedido: v.trim()
+                  ? parseFloat(v.replace(",", "."))
+                  : null,
+              })
+            }
+            mono
+            placeholder="1"
+          />
+          <CampoEdit
+            label="Múltiplo de compra"
+            value={
+              row.multiplo_compra != null ? String(row.multiplo_compra) : ""
+            }
+            onSave={(v) =>
+              onPatch({
+                multiplo_compra: v.trim()
+                  ? parseFloat(v.replace(",", "."))
+                  : null,
+              })
+            }
+            mono
+            placeholder="1"
+          />
+          <div>
+            <div className="wms-ov-meta-lbl">CNPJ</div>
+            <div className="wms-mono">{row.fornecedor?.cnpj ?? "—"}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Campo inline editável — clica pra editar, blur/Enter pra salvar. */
+function CampoEdit({
+  label,
+  value,
+  onSave,
+  mono,
+  placeholder,
+  display,
+}: {
+  label: string;
+  value: string | null;
+  onSave: (v: string) => void;
+  mono?: boolean;
+  placeholder?: string;
+  display?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState(value ?? "");
+  // Derive-during-render: sincroniza estado interno quando a prop muda externa
+  // (ex: invalidate da query) sem cascading renders via useEffect.
+  const [valueFor, setValueFor] = useState(value);
+  if (valueFor !== value) {
+    setValueFor(value);
+    setLocal(value ?? "");
+  }
+  const cssMono = mono ? " wms-mono" : "";
+  return (
+    <div>
+      <div className="wms-ov-meta-lbl">{label}</div>
+      {editing ? (
+        <input
+          autoFocus
+          className={`wms-input${cssMono}`}
+          value={local}
+          placeholder={placeholder}
+          onChange={(e) => setLocal(e.target.value)}
+          onBlur={() => {
+            setEditing(false);
+            if (local !== (value ?? "")) onSave(local);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") {
+              setLocal(value ?? "");
+              setEditing(false);
+            }
+          }}
+        />
+      ) : (
+        <div
+          className={`wms${cssMono} wms-link-row`}
+          onClick={() => setEditing(true)}
+          style={{ cursor: "pointer" }}
+          title="Clique pra editar"
+        >
+          {display ?? value ?? placeholder ?? "—"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── KIT TAB ───────────────────────────────────────────────────────────────
+
+interface KitComposicaoRow {
+  id: string;
+  componente_produto_id: string;
+  quantidade: number;
+  componente: {
+    id: string;
+    sku: string;
+    descricao: string;
+    imagem_url: string | null;
+    ativo: boolean;
+  };
+}
+
+interface KitDisponivelInfo {
+  disponivel: number;
+  gargalo_sku: string | null;
+  gargalo_disponivel: number | null;
+}
+
+function KitTab({ produto }: { produto: Produto }) {
+  const qc = useQueryClient();
+  const kitQuery = useQuery({
+    queryKey: ["wms-produto-kit", produto.id],
+    queryFn: () =>
+      wmsApi<{
+        composicao: KitComposicaoRow[];
+        disponivel: KitDisponivelInfo;
+      }>(`/api/wms/produtos/${produto.id}/kit`),
+  });
+
+  const upsert = useMutation({
+    mutationFn: (input: {
+      componente_produto_id: string;
+      quantidade: number;
+    }) =>
+      wmsApi(`/api/wms/produtos/${produto.id}/kit`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      toast.success("Componente atualizado");
+      qc.invalidateQueries({ queryKey: ["wms-produto-kit", produto.id] });
+      qc.invalidateQueries({ queryKey: ["wms-produto", produto.id] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const remover = useMutation({
+    mutationFn: (componente_id: string) =>
+      wmsApi(
+        `/api/wms/produtos/${produto.id}/kit?componente_id=${componente_id}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wms-produto-kit", produto.id] });
+      qc.invalidateQueries({ queryKey: ["wms-produto", produto.id] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const composicao = kitQuery.data?.composicao ?? [];
+  const disp = kitQuery.data?.disponivel;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <Card title="Composição do kit">
+        <p className="wms-td-mute" style={{ fontSize: 13, marginTop: 0 }}>
+          Kits são SKUs virtuais — o estoque é derivado da quantidade dos
+          componentes. Não é possível dar entrada direta de saldo num kit.
+        </p>
+        <AdicionarComponenteForm
+          jaVinculados={new Set(composicao.map((c) => c.componente_produto_id))}
+          kitId={produto.id}
+          loading={upsert.isPending}
+          onSubmit={upsert.mutate}
+        />
+      </Card>
+
+      {produto.eh_kit && disp && (
+        <Card title="Estoque derivado">
+          <div className="wms-ov-meta-grid">
+            <div>
+              <div className="wms-ov-meta-lbl">Disponível (kits)</div>
+              <div
+                className="wms-mono"
+                style={{ fontSize: 20, fontWeight: 700 }}
+              >
+                {fmtNum(disp.disponivel)}
+              </div>
+            </div>
+            <div>
+              <div className="wms-ov-meta-lbl">Gargalo</div>
+              <div className="wms-mono">{disp.gargalo_sku ?? "—"}</div>
+              {disp.gargalo_disponivel != null && (
+                <div className="wms-td-mute" style={{ fontSize: 12 }}>
+                  {fmtNum(disp.gargalo_disponivel)} un. do gargalo no estoque
+                </div>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {kitQuery.isLoading ? (
+        <div className="wms-loading-pane">Carregando composição…</div>
+      ) : composicao.length === 0 ? (
+        <div className="wms-exp-empty">
+          {produto.eh_kit
+            ? "Kit sem componentes — adicione acima pra começar."
+            : "Este SKU ainda não é um kit. Ao adicionar o primeiro componente, ele vira automaticamente um kit."}
+        </div>
+      ) : (
+        <table className="wms-full-tbl">
+          <thead>
+            <tr>
+              <th style={{ width: 36 }}></th>
+              <th>SKU</th>
+              <th>Componente</th>
+              <th className="wms-tar" style={{ width: 120 }}>
+                Qty/kit
+              </th>
+              <th style={{ width: 48 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {composicao.map((c) => (
+              <ComponenteRow
+                key={c.id}
+                row={c}
+                kitId={produto.id}
+                onQtyChange={(qty) =>
+                  upsert.mutate({
+                    componente_produto_id: c.componente_produto_id,
+                    quantidade: qty,
+                  })
+                }
+                onRemove={() => {
+                  if (
+                    confirm(`Remover ${c.componente.sku} da composição do kit?`)
+                  ) {
+                    remover.mutate(c.componente_produto_id);
+                  }
+                }}
+              />
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function AdicionarComponenteForm({
+  jaVinculados,
+  kitId,
+  loading,
+  onSubmit,
+}: {
+  jaVinculados: Set<string>;
+  kitId: string;
+  loading: boolean;
+  onSubmit: (input: {
+    componente_produto_id: string;
+    quantidade: number;
+  }) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [selecionado, setSelecionado] = useState<{
+    id: string;
+    sku: string;
+    descricao: string;
+  } | null>(null);
+  const [qty, setQty] = useState("1");
+
+  const buscaQuery = useQuery({
+    queryKey: ["wms-produtos-busca-componente", q],
+    queryFn: () =>
+      wmsApi<{
+        rows: Array<{ id: string; sku: string; descricao: string; eh_kit: boolean }>;
+      }>(
+        `/api/wms/produtos?q=${encodeURIComponent(q)}&limit=10&offset=0`,
+      ),
+    enabled: q.length >= 2 && !selecionado,
+  });
+
+  const submit = () => {
+    if (!selecionado) return;
+    const n = parseFloat(qty.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) {
+      toast.error("Quantidade inválida");
+      return;
+    }
+    onSubmit({ componente_produto_id: selecionado.id, quantidade: n });
+    setSelecionado(null);
+    setQ("");
+    setQty("1");
+  };
+
+  const candidatos = (buscaQuery.data?.rows ?? []).filter(
+    (p) => p.id !== kitId && !jaVinculados.has(p.id) && !p.eh_kit,
+  );
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 100px auto",
+        gap: 8,
+        alignItems: "end",
+      }}
+    >
+      <div style={{ position: "relative" }}>
+        <div className="wms-ov-meta-lbl">Buscar componente (SKU ou nome)</div>
+        {selecionado ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              border: "1px solid var(--wms-c-border)",
+              borderRadius: 4,
+            }}
+          >
+            <span className="wms-mono">{selecionado.sku}</span>
+            <span className="wms-td-mute" style={{ flex: 1 }}>
+              {selecionado.descricao}
+            </span>
+            <button
+              className="wms-btn-icon"
+              onClick={() => setSelecionado(null)}
+              title="Limpar seleção"
+            >
+              <Icon name="x" size={11} />
+            </button>
+          </div>
+        ) : (
+          <>
+            <input
+              className="wms-input"
+              placeholder="SKU ou descrição…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            {q.length >= 2 && candidatos.length > 0 && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "100%",
+                  left: 0,
+                  right: 0,
+                  background: "var(--wms-c-bg-elev)",
+                  border: "1px solid var(--wms-c-border)",
+                  borderRadius: 4,
+                  zIndex: 10,
+                  maxHeight: 240,
+                  overflowY: "auto",
+                }}
+              >
+                {candidatos.map((p) => (
+                  <div
+                    key={p.id}
+                    style={{
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                      borderBottom: "1px solid var(--wms-c-border)",
+                    }}
+                    onClick={() => {
+                      setSelecionado({
+                        id: p.id,
+                        sku: p.sku,
+                        descricao: p.descricao,
+                      });
+                      setQ("");
+                    }}
+                  >
+                    <span className="wms-mono">{p.sku}</span>{" "}
+                    <span className="wms-td-mute">{p.descricao}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <div>
+        <div className="wms-ov-meta-lbl">Qty / kit</div>
+        <input
+          className="wms-input wms-mono"
+          value={qty}
+          onChange={(e) => setQty(e.target.value)}
+          inputMode="decimal"
+        />
+      </div>
+      <button
+        className="wms-btn wms-btn-sm"
+        onClick={submit}
+        disabled={loading || !selecionado}
+      >
+        <Icon name="plus" size={11} /> Adicionar
+      </button>
+    </div>
+  );
+}
+
+function ComponenteRow({
+  row,
+  kitId: _kitId,
+  onQtyChange,
+  onRemove,
+}: {
+  row: KitComposicaoRow;
+  kitId: string;
+  onQtyChange: (qty: number) => void;
+  onRemove: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState(String(row.quantidade));
+  return (
+    <tr>
+      <td>
+        {row.componente.imagem_url && (
+          <img
+            src={row.componente.imagem_url}
+            alt=""
+            loading="lazy"
+            className="wms-thumb wms-thumb-sm"
+          />
+        )}
+      </td>
+      <td className="wms-mono">{row.componente.sku}</td>
+      <td className="wms-td-desc">{row.componente.descricao}</td>
+      <td className="wms-tar">
+        {editing ? (
+          <input
+            autoFocus
+            className="wms-input wms-mono"
+            style={{ width: 90, textAlign: "right" }}
+            value={local}
+            onChange={(e) => setLocal(e.target.value)}
+            onBlur={() => {
+              setEditing(false);
+              const n = parseFloat(local.replace(",", "."));
+              if (Number.isFinite(n) && n > 0 && n !== Number(row.quantidade)) {
+                onQtyChange(n);
+              } else {
+                setLocal(String(row.quantidade));
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") {
+                setLocal(String(row.quantidade));
+                setEditing(false);
+              }
+            }}
+          />
+        ) : (
+          <span
+            className="wms-mono wms-link-row"
+            onClick={() => setEditing(true)}
+            style={{ cursor: "pointer" }}
+            title="Clique pra editar"
+          >
+            {fmtNum(Number(row.quantidade))}
+          </span>
+        )}
+      </td>
+      <td className="wms-td-actions">
+        <button
+          className="wms-btn-icon"
+          onClick={onRemove}
+          title="Remover componente"
+        >
+          <Icon name="x" size={11} />
+        </button>
+      </td>
+    </tr>
+  );
 }
 
 function LedgerMini({ m }: { m: MovComposite }) {

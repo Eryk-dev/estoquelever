@@ -41,8 +41,25 @@ export interface Produto {
   origem_fiscal: number | null;
   sincronizado_em: string | null;
   ativo: boolean;
+  eh_kit: boolean;
   criado_em: string;
   atualizado_em: string;
+}
+
+export interface ProdutoKit {
+  id: string;
+  kit_produto_id: string;
+  componente_produto_id: string;
+  quantidade: number;
+  criado_em: string;
+}
+
+/** Composição expandida (com dados do componente embutidos) — usado pela UI. */
+export interface ProdutoKitComposicao extends ProdutoKit {
+  componente: Pick<
+    Produto,
+    "id" | "sku" | "descricao" | "imagem_url" | "ativo"
+  >;
 }
 
 export interface ProdutoEmpresa {

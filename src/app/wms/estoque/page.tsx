@@ -388,6 +388,7 @@ export default function EstoquePage() {
                       origem_fiscal: null,
                       sincronizado_em: null,
                       ativo: true,
+                      eh_kit: false,
                       criado_em: "",
                       atualizado_em: "",
                     };

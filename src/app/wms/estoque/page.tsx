@@ -46,6 +46,7 @@ export default function EstoquePage() {
   const [q, setQ] = useState("");
   const [filterGalpao, setFilterGalpao] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<"saldo" | "atualizacao">("saldo");
   const [expanded, setExpanded] = useState<string | null>(null);
   const modals = useWmsModals();
 
@@ -115,6 +116,10 @@ export default function EstoquePage() {
           (s, i) => s + Number(i.custo_medio) * Number(i.saldo),
           0,
         ) / Math.max(r.saldo, 1);
+      const atualizadoEm = r.itens.reduce((max, i) => {
+        const t = i.atualizado_em ? new Date(i.atualizado_em).getTime() : 0;
+        return t > max ? t : max;
+      }, 0);
       return {
         produtoId: r.chave,
         sku,
@@ -125,6 +130,7 @@ export default function EstoquePage() {
         itens: r.itens,
         cobertura,
         custoMedio,
+        atualizadoEm,
       };
     });
 
@@ -149,8 +155,20 @@ export default function EstoquePage() {
         (r) => r.cobertura?.status_cobertura === filterStatus,
       );
     }
+    if (sortBy === "atualizacao") {
+      result = [...result].sort((a, b) => b.atualizadoEm - a.atualizadoEm);
+    } else {
+      result = [...result].sort((a, b) => b.saldo - a.saldo);
+    }
     return result;
-  }, [estoqueQuery.data, coberturaMap, q, filterGalpao, filterStatus]);
+  }, [
+    estoqueQuery.data,
+    coberturaMap,
+    q,
+    filterGalpao,
+    filterStatus,
+    sortBy,
+  ]);
 
   const totalSaldo = rows.reduce((s, r) => s + r.saldo, 0);
   const totalReservado = rows.reduce((s, r) => s + r.reservado, 0);
@@ -246,6 +264,17 @@ export default function EstoquePage() {
           <option value="ok">OK</option>
           <option value="sem_giro">Sem giro</option>
           <option value="lead_time_risco">Sem fornecedor</option>
+        </select>
+        <select
+          className="wms-select"
+          value={sortBy}
+          onChange={(e) =>
+            setSortBy(e.target.value as "saldo" | "atualizacao")
+          }
+          style={{ width: 200 }}
+        >
+          <option value="saldo">Ordenar: saldo</option>
+          <option value="atualizacao">Ordenar: data atualização</option>
         </select>
       </div>
 
@@ -347,6 +376,7 @@ function ExpandableRow({
     itens: EstoqueItem[];
     cobertura?: LinhaCobertura;
     custoMedio: number;
+    atualizadoEm: number;
   };
   expanded: boolean;
   onToggle: () => void;

@@ -184,6 +184,7 @@ function NovaSessaoModal({
   const [sugestao, setSugestao] = useState<SugestaoLoc[] | null>(null);
   const [removidas, setRemovidas] = useState<Set<string>>(new Set());
   const [locsManual, setLocsManual] = useState<Set<string>>(new Set());
+  const [anchorManualId, setAnchorManualId] = useState<string | null>(null);
 
   const galpoesQuery = useGalpoes();
   const locsQuery = useLocalizacoes(galpaoId || null);
@@ -363,6 +364,7 @@ function NovaSessaoModal({
               setEmpresaDonaId("");
               setSugestao(null);
               setLocsManual(new Set());
+              setAnchorManualId(null);
             }}
           >
             <option value="">— selecione —</option>
@@ -551,25 +553,32 @@ function NovaSessaoModal({
                   <div className="wms-td-mute" style={{ fontSize: 12 }}>
                     {locsManual.size} de {locsQuery.data?.rows?.length ?? 0}{" "}
                     selecionada(s)
+                    <span style={{ marginLeft: 8, opacity: 0.7 }}>
+                      · Shift+clique para selecionar intervalo
+                    </span>
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
                     <button
                       type="button"
                       className="wms-btn wms-btn-ghost wms-btn-sm"
-                      onClick={() =>
+                      onClick={() => {
                         setLocsManual(
                           new Set(
                             (locsQuery.data?.rows ?? []).map((l) => l.id),
                           ),
-                        )
-                      }
+                        );
+                        setAnchorManualId(null);
+                      }}
                     >
                       Marcar todas
                     </button>
                     <button
                       type="button"
                       className="wms-btn wms-btn-ghost wms-btn-sm"
-                      onClick={() => setLocsManual(new Set())}
+                      onClick={() => {
+                        setLocsManual(new Set());
+                        setAnchorManualId(null);
+                      }}
                     >
                       Limpar
                     </button>
@@ -585,13 +594,56 @@ function NovaSessaoModal({
                     gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
                     gap: 4,
                     padding: 8,
+                    userSelect: "none",
                   }}
                 >
                   {(locsQuery.data?.rows ?? []).map((l) => {
                     const checked = locsManual.has(l.id);
+                    const rows = locsQuery.data?.rows ?? [];
+                    const handleToggle = (e: React.MouseEvent) => {
+                      e.preventDefault();
+                      const ids = rows.map((r) => r.id);
+                      if (
+                        e.shiftKey &&
+                        anchorManualId &&
+                        anchorManualId !== l.id
+                      ) {
+                        const a = ids.indexOf(anchorManualId);
+                        const b = ids.indexOf(l.id);
+                        if (a >= 0 && b >= 0) {
+                          const [from, to] = a < b ? [a, b] : [b, a];
+                          const rangeIds = ids.slice(from, to + 1);
+                          const shouldSelect = locsManual.has(anchorManualId);
+                          const ns = new Set(locsManual);
+                          for (const rid of rangeIds) {
+                            if (shouldSelect) ns.add(rid);
+                            else ns.delete(rid);
+                          }
+                          setLocsManual(ns);
+                          setAnchorManualId(l.id);
+                          return;
+                        }
+                      }
+                      const ns = new Set(locsManual);
+                      if (ns.has(l.id)) ns.delete(l.id);
+                      else ns.add(l.id);
+                      setLocsManual(ns);
+                      setAnchorManualId(l.id);
+                    };
                     return (
-                      <label
+                      <div
                         key={l.id}
+                        role="checkbox"
+                        aria-checked={checked}
+                        tabIndex={0}
+                        onClick={handleToggle}
+                        onKeyDown={(e) => {
+                          if (e.key === " " || e.key === "Enter") {
+                            handleToggle(
+                              e as unknown as React.MouseEvent,
+                            );
+                          }
+                        }}
                         style={{
                           display: "flex",
                           alignItems: "center",
@@ -608,15 +660,12 @@ function NovaSessaoModal({
                         <input
                           type="checkbox"
                           checked={checked}
-                          onChange={() => {
-                            const ns = new Set(locsManual);
-                            if (checked) ns.delete(l.id);
-                            else ns.add(l.id);
-                            setLocsManual(ns);
-                          }}
+                          readOnly
+                          tabIndex={-1}
+                          style={{ pointerEvents: "none" }}
                         />
                         <span className="wms-mono">{l.codigo}</span>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>

@@ -35,6 +35,7 @@ interface ContagemLocal {
   descricao?: string;
   qty: number;
   esperado?: number;
+  empresa_dona_id: string | null;
 }
 
 type Etapa = "slot-picker" | "standby" | "confirming-loc" | "counting" | "pool-vazio";
@@ -143,6 +144,7 @@ export default function ContarPage({
           descricao: e.descricao,
           qty: 0,
           esperado: e.saldo_esperado,
+          empresa_dona_id: e.empresa_dona_id,
         })),
       );
       setEtapa("confirming-loc");
@@ -195,7 +197,20 @@ export default function ContarPage({
   }
 
   async function registrarBipe(v: string) {
+    return registrarContagemPorSku(v, 1, "incremental");
+  }
+
+  // Função genérica usada por: bipe (+1 incremental), Adicionar SKU manual (qty absoluto)
+  async function registrarContagemPorSku(
+    v: string,
+    qty: number,
+    modo: "incremental" | "absoluto",
+  ) {
     if (!locAtual?.loc_id || !sessao) return;
+    if (!Number.isFinite(qty) || qty < 0) {
+      toast.error("Quantidade inválida");
+      return;
+    }
 
     // Lookup produto por SKU/GTIN
     let produto: ProdutoMin | undefined;
@@ -235,15 +250,21 @@ export default function ContarPage({
           localizacao_id: locAtual.loc_id,
           produto_id: produto.id,
           empresa_dona_id: empresaDona,
-          qty_contada: 1,
-          modo: "incremental",
+          qty_contada: qty,
+          modo,
         }),
       });
       setContagens((prev) => {
         const existente = prev.find((c) => c.produto_id === produto!.id);
         if (existente) {
           return prev.map((c) =>
-            c.produto_id === produto!.id ? { ...c, qty: c.qty + 1 } : c,
+            c.produto_id === produto!.id
+              ? {
+                  ...c,
+                  qty: modo === "incremental" ? c.qty + qty : qty,
+                  empresa_dona_id: c.empresa_dona_id ?? empresaDona,
+                }
+              : c,
           );
         }
         return [
@@ -252,11 +273,58 @@ export default function ContarPage({
             produto_id: produto!.id,
             sku: produto!.sku,
             descricao: produto!.descricao,
-            qty: 1,
+            qty,
+            empresa_dona_id: empresaDona,
           },
         ];
       });
     } catch (e) {
+      toast.error((e as Error).message);
+    }
+  }
+
+  // Edita inline a quantidade de uma linha já listada (sempre absoluto)
+  async function definirQtyAbsoluta(c: ContagemLocal, novaQty: number) {
+    if (!locAtual?.loc_id || !sessao) return;
+    if (!Number.isFinite(novaQty) || novaQty < 0) {
+      toast.error("Quantidade inválida");
+      return;
+    }
+    if (novaQty === c.qty) return;
+
+    const empresaDona = c.empresa_dona_id ?? sessao.empresa_dona_id ?? null;
+    if (!empresaDona) {
+      toast.error(
+        "Não foi possível identificar a empresa dona deste SKU.",
+      );
+      return;
+    }
+    const qtyAnterior = c.qty;
+    // Atualização otimista
+    setContagens((prev) =>
+      prev.map((x) =>
+        x.produto_id === c.produto_id ? { ...x, qty: novaQty } : x,
+      ),
+    );
+    try {
+      await wmsApi(`/api/wms/inventario/${id}/contagens`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          localizacao_id: locAtual.loc_id,
+          produto_id: c.produto_id,
+          empresa_dona_id: empresaDona,
+          qty_contada: novaQty,
+          modo: "absoluto",
+        }),
+      });
+    } catch (e) {
+      // Reverte se a API falhar
+      setContagens((prev) =>
+        prev.map((x) =>
+          x.produto_id === c.produto_id ? { ...x, qty: qtyAnterior } : x,
+        ),
+      );
       toast.error((e as Error).message);
     }
   }
@@ -344,6 +412,10 @@ export default function ContarPage({
           onConfirmar={() => setEtapa("counting")}
           onFinalizar={() => finalizarLoc.mutate()}
           finalizando={finalizarLoc.isPending}
+          onAdicionarSku={(sku, qty) =>
+            registrarContagemPorSku(sku, qty, "absoluto")
+          }
+          onDefinirQty={(c, q) => definirQtyAbsoluta(c, q)}
         />
       )}
     </>
@@ -496,6 +568,8 @@ function CounterView({
   onConfirmar,
   onFinalizar,
   finalizando,
+  onAdicionarSku,
+  onDefinirQty,
 }: {
   loc: ProximaLocOutput;
   contagens: ContagemLocal[];
@@ -506,6 +580,8 @@ function CounterView({
   onConfirmar: () => void;
   onFinalizar: () => void;
   finalizando: boolean;
+  onAdicionarSku: (sku: string, qty: number) => Promise<void> | void;
+  onDefinirQty: (c: ContagemLocal, novaQty: number) => Promise<void> | void;
 }) {
   const totalContado = useMemo(
     () => contagens.reduce((acc, c) => acc + c.qty, 0),
@@ -558,16 +634,25 @@ function CounterView({
           }}
         >
           <div style={{ marginBottom: 8 }}>
-            <strong>Bipe o QR da localização</strong> pra confirmar (recomendado).
+            <strong>Bipe o QR ou digite o código da localização</strong> pra
+            confirmar.
             <br />
-            Ou clique abaixo se a loc não tem etiqueta.
+            Se a loc não tem etiqueta, clique abaixo.
           </div>
           <button
             type="button"
             className="wms-btn wms-btn-ghost wms-btn-sm"
-            onClick={onConfirmar}
+            onClick={() => {
+              if (
+                confirm(
+                  `Confirmar que você está em ${loc.codigo} sem ler etiqueta?`,
+                )
+              ) {
+                onConfirmar();
+              }
+            }}
           >
-            Sem QR — confirmar manualmente
+            Loc sem etiqueta — confirmar mesmo assim
           </button>
         </div>
       )}
@@ -577,7 +662,7 @@ function CounterView({
         ref={scanRef}
         placeholder={
           confirmingLoc
-            ? "bipe o QR da localização"
+            ? "bipe o QR ou digite o código da localização"
             : "bipe SKU ou GTIN do produto"
         }
         onKeyDown={(e) => {
@@ -591,6 +676,11 @@ function CounterView({
         style={{ marginBottom: 16 }}
       />
 
+      {/* Adicionar SKU manualmente — só na fase de contagem */}
+      {!confirmingLoc && (
+        <AddSkuManual onAdicionar={onAdicionarSku} />
+      )}
+
       {/* Lista de contagens */}
       <h3 className="wms-sec-h">
         Contagens nesta loc · {fmtNum(totalContado)} item(s)
@@ -599,7 +689,7 @@ function CounterView({
         <div className="wms-exp-empty">
           {confirmingLoc
             ? "Confirme a loc e comece a bipar."
-            : "Bipe os produtos da prateleira."}
+            : "Bipe os produtos ou adicione manualmente."}
         </div>
       ) : (
         <div className="wms-tbl">
@@ -608,7 +698,9 @@ function CounterView({
               <tr>
                 <th>SKU</th>
                 <th>Descrição</th>
-                <th className="wms-tar">Bipado</th>
+                <th className="wms-tar" style={{ width: 110 }}>
+                  Bipado
+                </th>
                 {!modoBlind && <th className="wms-tar">Esperado</th>}
               </tr>
             </thead>
@@ -619,7 +711,16 @@ function CounterView({
                   <td className="wms-td-mute" style={{ fontSize: 12 }}>
                     {c.descricao ?? "—"}
                   </td>
-                  <td className="wms-tar wms-mono">{fmtNum(c.qty)}</td>
+                  <td className="wms-tar">
+                    {confirmingLoc ? (
+                      <span className="wms-mono">{fmtNum(c.qty)}</span>
+                    ) : (
+                      <EditableQty
+                        value={c.qty}
+                        onCommit={(n) => onDefinirQty(c, n)}
+                      />
+                    )}
+                  </td>
                   {!modoBlind && (
                     <td className="wms-tar wms-mono wms-td-mute">
                       {c.esperado !== undefined ? fmtNum(c.esperado) : "—"}
@@ -721,6 +822,153 @@ function ResumoFinal({
           Ver painel
         </button>
       </div>
+    </div>
+  );
+}
+
+// Input editável de quantidade — commit no blur ou Enter, revert no Escape
+function EditableQty({
+  value,
+  onCommit,
+}: {
+  value: number;
+  onCommit: (n: number) => Promise<void> | void;
+}) {
+  const [val, setVal] = useState<string>(String(value));
+  // Mantém o input sincronizado se o valor mudar de fora (ex: bipe extra)
+  useEffect(() => {
+    setVal(String(value));
+  }, [value]);
+
+  const commit = () => {
+    const n = Number(val);
+    if (!Number.isFinite(n) || n < 0) {
+      setVal(String(value));
+      return;
+    }
+    if (n === value) return;
+    onCommit(n);
+  };
+
+  return (
+    <input
+      type="number"
+      min={0}
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          (e.target as HTMLInputElement).blur();
+        } else if (e.key === "Escape") {
+          setVal(String(value));
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      className="wms-mono"
+      style={{
+        width: 72,
+        textAlign: "right",
+        background: "transparent",
+        border: "1px solid var(--wms-c-border)",
+        borderRadius: 4,
+        padding: "3px 6px",
+        fontSize: 13,
+      }}
+    />
+  );
+}
+
+// Formulário inline pra adicionar SKU manualmente (define qty absoluta)
+function AddSkuManual({
+  onAdicionar,
+}: {
+  onAdicionar: (sku: string, qty: number) => Promise<void> | void;
+}) {
+  const [sku, setSku] = useState("");
+  const [qty, setQty] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const valid =
+    sku.trim().length > 0 && Number.isFinite(Number(qty)) && Number(qty) > 0;
+
+  async function submit() {
+    if (!valid || busy) return;
+    setBusy(true);
+    try {
+      await onAdicionar(sku.trim(), Number(qty));
+      setSku("");
+      setQty("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 6,
+        alignItems: "center",
+        marginBottom: 16,
+        padding: 10,
+        border: "1px dashed var(--wms-c-border)",
+        borderRadius: "var(--wms-r-3)",
+        background: "var(--wms-c-faint)",
+      }}
+    >
+      <span className="wms-td-mute" style={{ fontSize: 12, marginRight: 4 }}>
+        Adicionar manualmente:
+      </span>
+      <input
+        type="text"
+        value={sku}
+        onChange={(e) => setSku(e.target.value)}
+        placeholder="SKU ou GTIN"
+        className="wms-mono"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: "var(--wms-c-panel)",
+          border: "1px solid var(--wms-c-border)",
+          borderRadius: 4,
+          padding: "6px 8px",
+          fontSize: 13,
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submit();
+        }}
+      />
+      <input
+        type="number"
+        value={qty}
+        onChange={(e) => setQty(e.target.value)}
+        placeholder="qty"
+        min={1}
+        className="wms-mono"
+        style={{
+          width: 80,
+          background: "var(--wms-c-panel)",
+          border: "1px solid var(--wms-c-border)",
+          borderRadius: 4,
+          padding: "6px 8px",
+          fontSize: 13,
+          textAlign: "right",
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submit();
+        }}
+      />
+      <button
+        type="button"
+        className="wms-btn wms-btn-ghost wms-btn-sm"
+        disabled={!valid || busy}
+        onClick={submit}
+      >
+        <Icon name="plus" size={11} />
+        {busy ? "…" : "Adicionar"}
+      </button>
     </div>
   );
 }

@@ -847,10 +847,11 @@ function Fornecedores({ produto }: { produto: Produto }) {
   });
   const todosFornecQuery = useQuery({
     queryKey: ["wms-fornecedores-all"],
-    queryFn: () => wmsApi<FornecedorLite[]>(`/api/wms/fornecedores`),
+    queryFn: () =>
+      wmsApi<{ rows: FornecedorLite[] }>(`/api/wms/fornecedores`),
   });
   const rows = fornecQuery.data?.rows ?? [];
-  const todos = todosFornecQuery.data ?? [];
+  const todos = todosFornecQuery.data?.rows ?? [];
   const jaVinculados = new Set(rows.map((r) => r.fornecedor_id));
   const disponiveis = todos.filter((f) => !jaVinculados.has(f.id));
 

@@ -1,4 +1,8 @@
 "use client";
+// Decisão D4: `hideEmpresa` oculta o seletor de empresa em movimentações
+// internas (transferência inter-galpão, replenishment, ajuste de saída).
+// Empresa permanece como metadado contábil (preservada no banco), mas é
+// OCULTA da UI. Pai DEVE passar `galpaoId` quando usar `hideEmpresa=true`.
 import { useQuery } from "@tanstack/react-query";
 import { wmsApi } from "@/lib/wms/api-client";
 import { LocalizacaoCombo } from "@/components/wms/ui/modals";
@@ -15,6 +19,11 @@ interface Props {
   onChange: (v: QuadruplaValue) => void;
   showLocalizacao?: boolean;
   filtroTipoLocalizacao?: TipoLocalizacao;
+  /** Decisão D4: oculta o seletor de empresa. Operador só escolhe localização.
+   *  Pai DEVE passar `galpaoId` ou derivar empresa via outro caminho. */
+  hideEmpresa?: boolean;
+  /** Se `hideEmpresa=true`, este galpão é usado pra filtrar localizações. */
+  galpaoId?: string | null;
 }
 
 interface EmpresaRow {
@@ -34,6 +43,8 @@ export function QuadruplaPicker({
   onChange,
   showLocalizacao = true,
   filtroTipoLocalizacao,
+  hideEmpresa = false,
+  galpaoId: galpaoIdProp,
 }: Props) {
   const { data: galpoesResp } = useQuery({
     queryKey: ["galpoes"],
@@ -53,7 +64,31 @@ export function QuadruplaPicker({
           .map((e) => ({ id: e.id, nome: e.nome, galpao_id: g.id })),
       }));
     },
+    enabled: !hideEmpresa,
   });
+
+  if (hideEmpresa) {
+    // Modo D4: só localização. Galpão vem do pai via prop.
+    const galpaoId = galpaoIdProp ?? null;
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
+        <LocalizacaoCombo
+          galpaoId={galpaoId}
+          value={value.localizacao_id ?? ""}
+          allowedTipos={
+            filtroTipoLocalizacao ? [filtroTipoLocalizacao] : undefined
+          }
+          onChange={(id) =>
+            onChange({
+              empresa_id: value.empresa_id,
+              galpao_id: galpaoId ?? undefined,
+              localizacao_id: id || undefined,
+            })
+          }
+        />
+      </div>
+    );
+  }
 
   const galpoes = galpoesResp ?? [];
   const empresasAtivas: EmpresaRow[] = galpoes.flatMap((g) =>

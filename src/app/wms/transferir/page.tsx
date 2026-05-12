@@ -1,5 +1,9 @@
 "use client";
 
+// Decisão D4: operador nunca vê empresa em transferências inter-galpão.
+// O campo empresa_dona_id continua no schema (metadado contábil),
+// mas é OCULTO da UI. Empresa de origem == empresa de destino (sticky).
+
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -231,13 +235,26 @@ function EmTransitoList({
             }}
           >
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>
-                <span className="wms-chip-emp">
-                  {(t.empresa?.nome ?? "?").slice(0, 3).toUpperCase()}
-                </span>{" "}
-                {t.galpao_origem?.nome ?? "?"}{" "}
-                <Icon name="arrow-right" size={12} />{" "}
-                {t.galpao_destino?.nome ?? "?"}
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <span
+                  className={`wms-pcard-chip is-galpao is-${(t.galpao_origem?.nome ?? "").toLowerCase()}`}
+                >
+                  {t.galpao_origem?.nome ?? "?"}
+                </span>
+                <Icon name="arrow-right" size={12} />
+                <span
+                  className={`wms-pcard-chip is-galpao is-${(t.galpao_destino?.nome ?? "").toLowerCase()}`}
+                >
+                  {t.galpao_destino?.nome ?? "?"}
+                </span>
               </div>
               <div
                 className="wms-td-mute"

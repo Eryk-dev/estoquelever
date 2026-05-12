@@ -23,6 +23,7 @@ import {
   RealocarModal,
   TransferModal,
 } from "@/components/wms/ui/modals";
+import { FiltroGalpaoGlobal } from "@/components/wms/filtro-galpao-global";
 import type { Produto } from "@/lib/wms/types";
 
 // ──────────────────────────────────────────────────────────────────
@@ -73,6 +74,15 @@ interface NavSection {
 
 const NAV_SECTIONS: NavSection[] = [
   {
+    id: "vendas",
+    label: "Vendas",
+    itens: [
+      { href: "/wms/pedidos", icon: "clipboard", label: "Pedidos" },
+      { href: "/wms/separacao", icon: "list", label: "Separação" },
+      { href: "/wms/compras", icon: "truck", label: "Compras" },
+    ],
+  },
+  {
     id: "principal",
     label: "Visibilidade",
     itens: [
@@ -103,6 +113,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Cadastros",
     itens: [
       { href: "/wms/produtos", icon: "tag", label: "Produtos" },
+      { href: "/wms/cross", icon: "sparkle", label: "Cross" },
       { href: "/wms/localizacoes", icon: "pin", label: "Localizações" },
       { href: "/wms/fornecedores", icon: "truck", label: "Fornecedores" },
       { href: "/wms/emprestimos", icon: "handshake", label: "Empréstimos" },
@@ -120,6 +131,9 @@ function isActive(pathname: string, href: string): boolean {
       !pathname.startsWith("/wms/inventario/metricas")
     );
   }
+  // /wms/separacao casa checklist + embalagem (sub-rotas)
+  // /wms/pedidos casa /wms/pedidos/[id]
+  // /wms/cross casa /wms/cross/[sku]
   return pathname.startsWith(`${href}/`);
 }
 
@@ -472,6 +486,7 @@ export function WmsShell({ children }: { children: ReactNode }) {
             userRole={role}
           />
           <div className="wms-main">
+            <FiltroGalpaoGlobal />
             <div className="wms-view">{children}</div>
           </div>
 

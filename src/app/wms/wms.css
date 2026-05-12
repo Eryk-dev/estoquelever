@@ -30,6 +30,14 @@
   --wms-c-info-bg:  #eff6ff;
   --wms-c-info-bd:  #bfdbfe;
 
+  /* Lever Talents brand accents — aplicados só em CTAs, logo e links críticos
+     (decisão D1 da unificação). Resto do WMS continua neutro. */
+  --wms-c-brand-cyan:        #23D8D3;
+  --wms-c-brand-cyan-hover:  #1FC7C2;
+  --wms-c-brand-cyan-faint:  #E6FBFA;
+  --wms-c-brand-navy:        #051C2C;
+  --wms-c-brand-navy-light:  #0A2E4A;
+
   --wms-r-1: 4px;
   --wms-r-2: 6px;
   --wms-r-3: 8px;
@@ -1174,6 +1182,33 @@
 .wms-full-tbl td { padding: 8px 10px; border-bottom: 1px solid var(--wms-c-border); font-size: 13px; }
 .wms-full-tbl tr:last-child td { border-bottom: 0; }
 
+/* Grouped table — sections per galpão com header agregado */
+.wms-tbl-grouped .wms-tbl-group + .wms-tbl-group .wms-tbl-group-hd td {
+  border-top: 2px solid var(--wms-c-border);
+}
+.wms-tbl-group-hd td {
+  background: var(--wms-c-panel-2);
+  font-size: 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--wms-c-border);
+}
+.wms-tbl-group-name {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: 11.5px;
+  color: var(--wms-c-fg);
+}
+.wms-tbl-group-count {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--wms-c-mute);
+}
+/* Restaura o "sem borda no último tr" — agora aplica-se ao último tr do
+   último tbody, não ao último tr global. */
+.wms-tbl-grouped tr:last-child td { border-bottom: 1px solid var(--wms-c-border); }
+.wms-tbl-grouped .wms-tbl-group:last-of-type tr:last-child td { border-bottom: 0; }
+
 /* Ledger row (full) */
 .wms-ledger-list {
   background: var(--wms-c-panel);
@@ -1420,9 +1455,635 @@
 .wms-home-card-title { font-weight: 600; font-size: 13.5px; color: var(--wms-c-fg); margin-bottom: 2px; }
 .wms-home-card-desc { font-size: 12px; color: var(--wms-c-mute); }
 
+/* ============================================================
+   Brand CTA — usa acentos Lever (cyan + navy) só em momentos de marca:
+   logo da sidebar, CTAs primários estratégicos. Resto continua neutro.
+   ============================================================ */
+
+.wms-btn-brand {
+  background: var(--wms-c-brand-cyan);
+  color: var(--wms-c-brand-navy);
+  border-color: var(--wms-c-brand-cyan);
+  font-weight: 600;
+}
+.wms-btn-brand:hover:not(:disabled) {
+  background: var(--wms-c-brand-cyan-hover);
+  border-color: var(--wms-c-brand-cyan-hover);
+}
+
+.wms-link-brand {
+  color: var(--wms-c-info);
+  font-weight: 500;
+}
+.wms-link-brand:hover { text-decoration: underline; }
+
+/* Logo mark da sidebar — fundo navy, marca cyan */
+.wms-sb-logo-mark {
+  background: var(--wms-c-brand-navy);
+  color: var(--wms-c-brand-cyan);
+}
+
+/* ============================================================
+   Filtro global de galpão — barra sticky no topo da view
+   (Decisão D3: persistente, aplica em todos os grupos)
+   ============================================================ */
+
+.wms-glf {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--wms-c-bg);
+  border-bottom: 1px solid var(--wms-c-border);
+  padding: 8px 32px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+.wms-glf-lbl {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--wms-c-mute);
+  font-weight: 600;
+}
+.wms-glf-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--wms-c-panel-2);
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-2);
+  padding: 2px;
+}
+.wms-glf-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--wms-c-mute);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wms-glf-seg-btn:hover {
+  background: var(--wms-c-panel);
+  color: var(--wms-c-fg);
+}
+.wms-glf-seg-btn.is-active {
+  background: var(--wms-c-fg);
+  color: var(--wms-c-bg);
+}
+.wms-glf-seg-btn.is-active:hover { background: var(--wms-c-fg-2); }
+.wms-glf-seg-btn .wms-glf-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.wms-glf-hint {
+  margin-left: auto;
+  color: var(--wms-c-mute);
+  font-size: 11px;
+}
+
+/* ============================================================
+   Vendas — pílulas de estoque por galpão (Decisão D8)
+   4 estados: sem-dado/zero/atende/parcial reaproveitando tokens WMS
+   ============================================================ */
+
+.wms-stk-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.wms-stk-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11.5px;
+  line-height: 1.2;
+  font-weight: 500;
+  white-space: nowrap;
+  background: var(--wms-c-panel);
+  cursor: default;
+}
+.wms-stk-pill-galpao {
+  font-family: var(--wms-font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.wms-stk-pill-qty {
+  font-family: var(--wms-font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.wms-stk-pill-suffix {
+  font-size: 10.5px;
+  color: var(--wms-c-mute);
+}
+.wms-stk-pill.is-mute  { color: var(--wms-c-mute);    border-color: var(--wms-c-border-2); background: var(--wms-c-faint); }
+.wms-stk-pill.is-danger { color: var(--wms-c-danger);  border-color: var(--wms-c-danger-bd); background: var(--wms-c-danger-bg); }
+.wms-stk-pill.is-ok    { color: var(--wms-c-ok);      border-color: var(--wms-c-ok-bd);     background: var(--wms-c-ok-bg); }
+.wms-stk-pill.is-warn  { color: var(--wms-c-warn);    border-color: var(--wms-c-warn-bd);   background: var(--wms-c-warn-bg); }
+.wms-stk-pill.is-active {
+  box-shadow: 0 0 0 2px var(--wms-c-fg);
+  font-weight: 600;
+}
+.wms-stk-pill-reserv {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--wms-c-warn);
+  margin-left: 2px;
+  font-weight: 500;
+}
+
+/* ============================================================
+   Vendas — rótulo de decisão (substituto do dropdown legado, Decisão D6)
+   ============================================================ */
+
+.wms-dec-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--wms-r-2);
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.wms-dec-label .wms-dec-arrow { font-family: var(--wms-font-mono); }
+.wms-dec-label.is-propria       { background: var(--wms-c-ok-bg);     color: var(--wms-c-ok);     border-color: var(--wms-c-ok-bd); }
+.wms-dec-label.is-transferencia { background: var(--wms-c-info-bg);   color: var(--wms-c-info);   border-color: var(--wms-c-info-bd); }
+.wms-dec-label.is-oc            { background: var(--wms-c-warn-bg);   color: var(--wms-c-warn);   border-color: var(--wms-c-warn-bd); }
+
+/* ============================================================
+   Vendas — tabs grossas de status_separacao (Decisão D7)
+   Preserva paradigma legado, reestilizado no DNA WMS
+   ============================================================ */
+
+.wms-stab {
+  display: inline-flex;
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-3);
+  padding: 4px;
+  gap: 2px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.wms-stab-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--wms-c-fg-2);
+  padding: 7px 14px;
+  border-radius: var(--wms-r-2);
+  cursor: pointer;
+  font-size: 12px;
+  min-width: 96px;
+  transition: background .12s;
+}
+.wms-stab-btn:hover { background: var(--wms-c-panel-2); }
+.wms-stab-btn.is-active {
+  background: var(--wms-c-fg);
+  color: var(--wms-c-bg);
+}
+.wms-stab-btn-lbl {
+  font-weight: 500;
+  font-size: 12.5px;
+  letter-spacing: -0.01em;
+}
+.wms-stab-btn-n {
+  font-family: var(--wms-font-mono);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+.wms-stab-btn.is-active .wms-stab-btn-n { color: var(--wms-c-bg); }
+
+/* ============================================================
+   Vendas — banner de exceções (compras)
+   ============================================================ */
+
+.wms-exc-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.wms-exc-section {
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-3);
+  padding: 10px 12px;
+  background: var(--wms-c-panel);
+}
+.wms-exc-section.is-cancel  { border-color: var(--wms-c-danger-bd); background: var(--wms-c-danger-bg); }
+.wms-exc-section.is-equiv   { border-color: var(--wms-c-info-bd);   background: var(--wms-c-info-bg); }
+.wms-exc-section.is-indisp  { border-color: var(--wms-c-warn-bd);   background: var(--wms-c-warn-bg); }
+.wms-exc-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* ============================================================
+   Vendas — card de pedido (DNA WMS aplicado ao paradigma SISO)
+   ============================================================ */
+
+.wms-pcard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-3);
+  padding: 14px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.wms-pcard:hover { border-color: var(--wms-c-border-2); box-shadow: var(--wms-shadow-sm); }
+.wms-pcard-h {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.wms-pcard-h-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.wms-pcard-num {
+  font-family: var(--wms-font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.wms-pcard-cliente {
+  font-size: 13px;
+  color: var(--wms-c-fg);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wms-pcard-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--wms-font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--wms-c-border-2);
+  background: var(--wms-c-faint);
+  color: var(--wms-c-fg-2);
+  text-transform: uppercase;
+}
+.wms-pcard-chip.is-cwb { background: #EEF2FF; color: #4338ca; border-color: #c7d2fe; }
+.wms-pcard-chip.is-sp  { background: #FFF7ED; color: #c2410c; border-color: #fed7aa; }
+.wms-pcard-chip.is-galpao { font-weight: 700; padding: 3px 10px; font-size: 11px; }
+.wms-pcard-chip-arrow { color: var(--wms-c-mute); font-family: var(--wms-font-mono); }
+.wms-pcard-meta {
+  font-size: 11.5px;
+  color: var(--wms-c-mute);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wms-pcard-actions { display: flex; gap: 6px; align-items: center; }
+
+.wms-pcard-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-2);
+  background: var(--wms-c-panel);
+}
+.wms-pcard-item-sku {
+  font-family: var(--wms-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wms-pcard-item-desc {
+  font-size: 12px;
+  color: var(--wms-c-fg-2);
+  margin-top: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wms-pcard-item-qty {
+  font-family: var(--wms-font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--wms-c-fg);
+}
+.wms-pcard-banner-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--wms-c-danger-bg);
+  color: var(--wms-c-danger);
+  border: 1px solid var(--wms-c-danger-bd);
+  border-radius: var(--wms-r-2);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ============================================================
+   Vendas — segmented control de tabs leves (4 sub-tabs em /pedidos)
+   ============================================================ */
+
+.wms-vtab {
+  display: inline-flex;
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-2);
+  padding: 3px;
+  gap: 2px;
+}
+.wms-vtab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: var(--wms-c-mute);
+  border: 0;
+  border-radius: var(--wms-r-1);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.wms-vtab-btn:hover { background: var(--wms-c-panel-2); color: var(--wms-c-fg); }
+.wms-vtab-btn.is-active {
+  background: var(--wms-c-fg);
+  color: var(--wms-c-bg);
+}
+.wms-vtab-btn .wms-vtab-n {
+  font-family: var(--wms-font-mono);
+  font-size: 11.5px;
+}
+
+/* ============================================================
+   Vendas — timeline (detalhe do pedido)
+   ============================================================ */
+
+.wms-tline {
+  position: relative;
+  padding-left: 20px;
+  border-left: 2px solid var(--wms-c-border);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.wms-tline-item {
+  position: relative;
+}
+.wms-tline-item::before {
+  content: "";
+  position: absolute;
+  left: -27px;
+  top: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--wms-c-panel);
+  border: 2px solid var(--wms-c-border-2);
+}
+.wms-tline-item.is-ok::before     { border-color: var(--wms-c-ok);     background: var(--wms-c-ok); }
+.wms-tline-item.is-info::before   { border-color: var(--wms-c-info);   background: var(--wms-c-info); }
+.wms-tline-item.is-warn::before   { border-color: var(--wms-c-warn);   background: var(--wms-c-warn); }
+.wms-tline-item.is-danger::before { border-color: var(--wms-c-danger); background: var(--wms-c-danger); }
+.wms-tline-h {
+  font-size: 12.5px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wms-tline-when {
+  font-size: 11px;
+  color: var(--wms-c-mute);
+  font-family: var(--wms-font-mono);
+}
+.wms-tline-detail {
+  font-size: 11.5px;
+  color: var(--wms-c-mute);
+  margin-top: 3px;
+}
+
+/* ============================================================
+   Vendas — handheld checklist (wave picking)
+   ============================================================ */
+
+.wms-hand-scan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  background: var(--wms-c-fg);
+  color: var(--wms-c-bg);
+  border-radius: var(--wms-r-3);
+  margin-bottom: 16px;
+  position: sticky;
+  top: 50px;
+  z-index: 20;
+}
+.wms-hand-scan-lbl {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--wms-c-mute-2);
+}
+.wms-hand-scan-input {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-family: var(--wms-font-mono);
+  font-size: 18px;
+  font-weight: 500;
+  width: 100%;
+  outline: none;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--wms-c-mute);
+}
+.wms-hand-scan-input:focus { border-bottom-color: var(--wms-c-brand-cyan); }
+.wms-hand-scan-feedback {
+  font-size: 12px;
+  color: var(--wms-c-mute-2);
+  min-height: 16px;
+}
+.wms-hand-scan-feedback.is-ok    { color: var(--wms-c-brand-cyan); font-weight: 500; }
+.wms-hand-scan-feedback.is-warn  { color: #fbbf24; font-weight: 500; }
+.wms-hand-scan-feedback.is-error { color: #f87171; font-weight: 500; }
+
+.wms-hand-item {
+  display: grid;
+  grid-template-columns: 28px 44px minmax(0,1fr) 90px 60px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-3);
+  margin-bottom: 6px;
+  transition: background .15s, border-color .15s;
+}
+.wms-hand-item.is-done {
+  background: var(--wms-c-ok-bg);
+  border-color: var(--wms-c-ok-bd);
+}
+.wms-hand-item.is-oc {
+  background: var(--wms-c-warn-bg);
+  border-color: var(--wms-c-warn-bd);
+}
+.wms-hand-item-check {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1.5px solid var(--wms-c-border-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.wms-hand-item.is-done .wms-hand-item-check {
+  background: var(--wms-c-ok);
+  color: var(--wms-c-bg);
+  border-color: var(--wms-c-ok);
+}
+.wms-hand-item-loc {
+  font-family: var(--wms-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.wms-hand-section-oc {
+  margin-top: 24px;
+  padding: 12px;
+  border: 2px solid var(--wms-c-warn-bd);
+  border-radius: var(--wms-r-3);
+  background: var(--wms-c-warn-bg);
+}
+.wms-hand-section-oc-h {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--wms-c-warn);
+}
+
+/* ============================================================
+   Vendas — cards de fornecedor (compras)
+   ============================================================ */
+
+.wms-frc {
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border);
+  border-left: 3px solid var(--wms-c-border-2);
+  border-radius: var(--wms-r-3);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.wms-frc.is-fresh   { border-left-color: var(--wms-c-ok); }
+.wms-frc.is-aging   { border-left-color: var(--wms-c-warn); }
+.wms-frc.is-overdue { border-left-color: var(--wms-c-danger); }
+.wms-frc-h {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  background: var(--wms-c-panel);
+}
+.wms-frc-h:hover { background: var(--wms-c-panel-2); }
+.wms-frc-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.wms-frc-meta {
+  font-size: 11.5px;
+  color: var(--wms-c-mute);
+}
+.wms-frc-body {
+  border-top: 1px solid var(--wms-c-border);
+  padding: 8px 14px 14px;
+}
+.wms-frc-row {
+  display: grid;
+  grid-template-columns: 24px 44px minmax(0,1fr) 90px 90px 24px;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--wms-c-border);
+}
+.wms-frc-row:last-child { border-bottom: 0; }
+
+/* Aging chips */
+.wms-aging-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--wms-font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+.wms-aging-chip.is-fresh   { background: var(--wms-c-ok-bg);     color: var(--wms-c-ok);     border-color: var(--wms-c-ok-bd); }
+.wms-aging-chip.is-aging   { background: var(--wms-c-warn-bg);   color: var(--wms-c-warn);   border-color: var(--wms-c-warn-bd); }
+.wms-aging-chip.is-overdue { background: var(--wms-c-danger-bg); color: var(--wms-c-danger); border-color: var(--wms-c-danger-bd); }
+
 /* Mobile fallback: empilha sidebar */
 @media (max-width: 720px) {
   .wms-app { grid-template-columns: 1fr; }
   .wms-sb { display: none; }
   .wms-view { padding: 16px; }
+  .wms-glf { padding: 8px 16px; }
+  .wms-hand-item {
+    grid-template-columns: 24px minmax(0,1fr) 70px;
+  }
+  .wms-hand-item img { display: none; }
+  .wms-pcard-item {
+    grid-template-columns: 36px minmax(0,1fr) auto;
+  }
+  .wms-frc-row {
+    grid-template-columns: 20px minmax(0,1fr) 70px 24px;
+  }
+  .wms-frc-row > :nth-child(2),
+  .wms-frc-row > :nth-child(5) { display: none; }
 }

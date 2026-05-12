@@ -552,6 +552,33 @@ function EstoquePorLocal({
       { numeric: true, sensitivity: "base" },
     );
   });
+  // Agrupa por galpão preservando a ordem já estabelecida.
+  const grupos: Array<{
+    galpao_id: string;
+    galpao_nome: string;
+    itens: EstoqueLinhaItem[];
+    saldo: number;
+    reservado: number;
+    disponivel: number;
+  }> = [];
+  for (const l of ordenadas) {
+    let g = grupos[grupos.length - 1];
+    if (!g || g.galpao_id !== l.galpao.id) {
+      g = {
+        galpao_id: l.galpao.id,
+        galpao_nome: l.galpao.nome,
+        itens: [],
+        saldo: 0,
+        reservado: 0,
+        disponivel: 0,
+      };
+      grupos.push(g);
+    }
+    g.itens.push(l);
+    g.saldo += Number(l.saldo);
+    g.reservado += Number(l.reservado);
+    g.disponivel += Number(l.disponivel);
+  }
   if (ordenadas.length === 0) {
     return (
       <div className="wms-exp-empty" style={{ padding: 24 }}>
@@ -560,7 +587,7 @@ function EstoquePorLocal({
     );
   }
   return (
-    <table className="wms-full-tbl">
+    <table className="wms-full-tbl wms-tbl-grouped">
       <thead>
         <tr>
           <th>Empresa</th>
@@ -573,48 +600,68 @@ function EstoquePorLocal({
           <th></th>
         </tr>
       </thead>
-      <tbody>
-        {ordenadas.map((l, idx) => (
-          <tr key={idx}>
-            <td>
-              <span className="wms-chip-emp">
-                {l.empresa.nome.slice(0, 3).toUpperCase()}
-              </span>{" "}
-              <span className="wms-td-mute">{l.empresa.nome}</span>
+      {grupos.map((g) => (
+        <tbody key={g.galpao_id} className="wms-tbl-group">
+          <tr className="wms-tbl-group-hd">
+            <td colSpan={4}>
+              <span className="wms-tbl-group-name">{g.galpao_nome}</span>
+              <span className="wms-tbl-group-count">
+                {g.itens.length} {g.itens.length === 1 ? "local" : "locais"}
+              </span>
             </td>
-            <td>{l.galpao.nome}</td>
-            <td>
-              <span className="wms-mono">{l.localizacao.codigo}</span>
-            </td>
-            <td>
-              <LocTipoBadge tipo={l.localizacao.tipo} />
-            </td>
-            <td className="wms-tar wms-mono">{fmtNum(Number(l.saldo))}</td>
+            <td className="wms-tar wms-mono">{fmtNum(g.saldo)}</td>
             <td className="wms-tar wms-mono wms-td-warn">
-              {Number(l.reservado) > 0 ? fmtNum(Number(l.reservado)) : "—"}
+              {g.reservado > 0 ? fmtNum(g.reservado) : "—"}
             </td>
             <td className="wms-tar wms-mono wms-td-strong">
-              {fmtNum(Number(l.disponivel))}
+              {fmtNum(g.disponivel)}
             </td>
-            <td className="wms-td-actions">
-              <button
-                className="wms-btn-icon"
-                onClick={() => onAction("ajuste")}
-                title="Saída/ajuste"
-              >
-                <Icon name="minus" size={11} />
-              </button>
-              <button
-                className="wms-btn-icon"
-                onClick={() => onAction("transferir")}
-                title="Transferir"
-              >
-                <Icon name="arrow-right" size={11} />
-              </button>
-            </td>
+            <td></td>
           </tr>
-        ))}
-      </tbody>
+          {g.itens.map((l, idx) => (
+            <tr key={`${g.galpao_id}-${idx}`}>
+              <td>
+                <span className="wms-chip-emp">
+                  {l.empresa.nome.slice(0, 3).toUpperCase()}
+                </span>{" "}
+                <span className="wms-td-mute">{l.empresa.nome}</span>
+              </td>
+              <td className="wms-td-mute">{l.galpao.nome}</td>
+              <td>
+                <span className="wms-mono">{l.localizacao.codigo}</span>
+              </td>
+              <td>
+                <LocTipoBadge tipo={l.localizacao.tipo} />
+              </td>
+              <td className="wms-tar wms-mono">{fmtNum(Number(l.saldo))}</td>
+              <td className="wms-tar wms-mono wms-td-warn">
+                {Number(l.reservado) > 0
+                  ? fmtNum(Number(l.reservado))
+                  : "—"}
+              </td>
+              <td className="wms-tar wms-mono wms-td-strong">
+                {fmtNum(Number(l.disponivel))}
+              </td>
+              <td className="wms-td-actions">
+                <button
+                  className="wms-btn-icon"
+                  onClick={() => onAction("ajuste")}
+                  title="Saída/ajuste"
+                >
+                  <Icon name="minus" size={11} />
+                </button>
+                <button
+                  className="wms-btn-icon"
+                  onClick={() => onAction("transferir")}
+                  title="Transferir"
+                >
+                  <Icon name="arrow-right" size={11} />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      ))}
     </table>
   );
 }

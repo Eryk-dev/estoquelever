@@ -9,6 +9,7 @@
  */
 
 import { getContextEmpresaId, tinyQueue } from "./tiny-queue";
+import { isTinyDisabled, tinyStubResponse } from "./tiny-stub";
 
 const TINY_BASE = "https://api.tiny.com.br/public-api/v3";
 
@@ -22,13 +23,21 @@ const MAX_RETRIES = 3;
 
 /**
  * Main entry point for Tiny API calls.
- * Routes through the in-memory queue when an empresa context is set
- * (via runWithEmpresa), otherwise calls directly.
+ *
+ * When TINY_DISABLED=true, routes to the local stub (tiny-stub.ts) which
+ * reads/writes against staging Supabase tables instead of api.tiny.com.br.
+ *
+ * Otherwise routes through the in-memory queue when an empresa context is set
+ * (via runWithEmpresa), or calls directly.
  */
 async function tinyFetch<T>(
   path: string,
   opts: TinyRequestOptions,
 ): Promise<T> {
+  if (isTinyDisabled()) {
+    return tinyStubResponse<T>(path, opts.method ?? "GET", opts.body);
+  }
+
   const empresaId = getContextEmpresaId();
 
   if (empresaId) {

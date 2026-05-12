@@ -11,6 +11,8 @@ import { registrarEvento } from "./historico-service";
 import { criarAgrupamentoFase1 } from "./agrupamento-service";
 import type { NfWebhookPayload } from "./nf-webhook-handler";
 import type { TinyPedidoItem } from "./tiny-api";
+import { wmsAsSource } from "./wms/flags";
+import { processWebhookWms } from "./webhook-processor-wms";
 
 /** Serialize any thrown value into a readable string */
 function serializeError(err: unknown): string {
@@ -196,6 +198,20 @@ export async function processWebhook(
         .eq("id", webhookLogId);
 
       return;
+    }
+
+    // ─── WMS_AS_SOURCE branch ────────────────────────────────────────────
+    // Quando flag ligada, o fluxo WMS lê estoque de siso_estoque (não Tiny),
+    // roteia via algoritmo WMS-3 e cria reservas no ledger. Substitui todas
+    // as etapas 5-12 do fluxo legado abaixo.
+    if (wmsAsSource()) {
+      return await processWebhookWms({
+        webhookLogId,
+        pedido,
+        empresaOrigemId,
+        galpaoOrigemId,
+        galpaoOrigemNome,
+      });
     }
 
     // 5. Enrich each item with stock from all empresas in the grupo

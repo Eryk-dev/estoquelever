@@ -11,6 +11,10 @@
 
 import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
+import { isTinyDisabled } from "./tiny-stub";
+
+const STAGING_FAKE_TOKEN = "FAKE-STAGING-TOKEN";
+const STAGING_FAKE_CONNECTION_ID = "00000000-0000-0000-0000-000000000000";
 
 // ─── OAuth2 endpoints ───────────────────────────────────────────────────────
 
@@ -109,6 +113,7 @@ export async function refreshAccessToken(params: {
  * Automatically refreshes if expired.
  */
 export async function getValidToken(connectionId: string): Promise<string> {
+  if (isTinyDisabled()) return STAGING_FAKE_TOKEN;
   const supabase = createServiceClient();
 
   const { data: conn } = await supabase
@@ -188,6 +193,9 @@ export async function getValidToken(connectionId: string): Promise<string> {
 export async function getValidTokenByEmpresa(
   empresaId: string,
 ): Promise<{ token: string; connectionId: string }> {
+  if (isTinyDisabled()) {
+    return { token: STAGING_FAKE_TOKEN, connectionId: STAGING_FAKE_CONNECTION_ID };
+  }
   const supabase = createServiceClient();
 
   const { data: conn } = await supabase
@@ -209,6 +217,9 @@ export async function getValidTokenByEmpresa(
 export async function getValidTokenByFilial(
   filial: "CWB" | "SP",
 ): Promise<{ token: string; connectionId: string }> {
+  if (isTinyDisabled()) {
+    return { token: STAGING_FAKE_TOKEN, connectionId: STAGING_FAKE_CONNECTION_ID };
+  }
   const supabase = createServiceClient();
 
   const { data: conn } = await supabase

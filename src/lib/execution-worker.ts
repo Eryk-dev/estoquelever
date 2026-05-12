@@ -40,6 +40,8 @@ import { getEmpresaById } from "./empresa-lookup";
 import { logger } from "./logger";
 import { criarAgrupamentoFase1 } from "./agrupamento-service";
 import { getFornecedorBySku } from "./sku-fornecedor";
+import { wmsAsSource } from "./wms/flags";
+import { executarEstoquePosNfWms } from "./execution-worker-wms";
 
 // ─── Shared: enrich NF data + transition if already authorized ──────────────
 // After NF generation, checks Tiny API for authorization status.
@@ -424,6 +426,32 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
   // Stock posting (lancarEstoqueNota) and transition happen ONLY via NF webhook.
   await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, notaId);
 
+  // ─── WMS_AS_SOURCE: como não há NF webhook real pra triggar pos_nf, ────
+  // se a chave foi salva agora (via stub ou Tiny real autorizando rápido),
+  // enfileira lancar_estoque_pos_nf imediatamente.
+  if (wmsAsSource()) {
+    const { data: check } = await supabase
+      .from("siso_pedidos")
+      .select("chave_acesso_nf")
+      .eq("id", job.pedido_id)
+      .single();
+
+    if (check?.chave_acesso_nf) {
+      await supabase.from("siso_fila_execucao").insert({
+        pedido_id: job.pedido_id,
+        tipo: "lancar_estoque_pos_nf",
+        empresa_id: job.empresa_id,
+        decisao: "propria",
+        atualizado_em: new Date().toISOString(),
+      });
+      kickWorker().catch(() => {});
+      logger.info("worker", "WMS mode: pos_nf enfileirado direto (sem aguardar webhook)", {
+        pedidoId: job.pedido_id,
+      });
+      return;
+    }
+  }
+
   logger.info("worker", "NF gerada, aguardando webhook para lançar estoque (própria)", {
     pedidoId: job.pedido_id,
     notaId,
@@ -755,6 +783,14 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
 // ─── Post-NF stock posting (triggered by NF webhook via lancar_estoque_pos_nf job) ──
 
 async function executarEstoquePosNfPropria(job: FilaJob): Promise<void> {
+  if (wmsAsSource()) {
+    return executarEstoquePosNfWms({
+      pedido_id: job.pedido_id,
+      empresa_id: job.empresa_id,
+      decisao: job.decisao,
+    });
+  }
+
   const supabase = createServiceClient();
 
   const { data: pedido, error: pedidoErr } = await supabase
@@ -796,6 +832,14 @@ async function executarEstoquePosNfPropria(job: FilaJob): Promise<void> {
 }
 
 async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
+  if (wmsAsSource()) {
+    return executarEstoquePosNfWms({
+      pedido_id: job.pedido_id,
+      empresa_id: job.empresa_id,
+      decisao: job.decisao,
+    });
+  }
+
   const supabase = createServiceClient();
 
   const { data: pedido, error: pedidoErr } = await supabase

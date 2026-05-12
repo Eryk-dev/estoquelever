@@ -349,7 +349,8 @@ export type StatusKey =
   | "em_andamento"
   | "planejada"
   | "revisao"
-  | "aprovada";
+  | "aprovada"
+  | "cancelada";
 
 const STATUS_MAP: Record<StatusKey, { label: string; cls: string }> = {
   ok: { label: "OK", cls: "ok" },
@@ -359,13 +360,18 @@ const STATUS_MAP: Record<StatusKey, { label: string; cls: string }> = {
   sem_giro: { label: "Sem giro", cls: "mute" },
   aguardando_classificacao: { label: "Aguardando", cls: "warn" },
   classificada: { label: "Classificada", cls: "info" },
-  aplicada: { label: "Aplicada", cls: "ok" },
-  pendente: { label: "Pendente", cls: "warn" },
-  reconciliado: { label: "Reconciliado", cls: "ok" },
-  em_andamento: { label: "Em andamento", cls: "info" },
+  // Inventário: ciclo de status com 6 cores distintas.
+  // planejada (cinza claro) → em_andamento (azul) → revisao (amarelo)
+  // → aprovada (verde outlined) → aplicada (verde sólido) | cancelada (slate riscado).
   planejada: { label: "Planejada", cls: "mute" },
+  em_andamento: { label: "Em andamento", cls: "info" },
   revisao: { label: "Revisão", cls: "warn" },
   aprovada: { label: "Aprovada", cls: "ok" },
+  aplicada: { label: "Aplicada", cls: "aplicada" },
+  cancelada: { label: "Cancelada", cls: "cancelada" },
+  // Outros contextos
+  pendente: { label: "Pendente", cls: "warn" },
+  reconciliado: { label: "Reconciliado", cls: "ok" },
 };
 
 export function StatusBadge({

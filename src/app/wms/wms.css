@@ -524,6 +524,11 @@
 .wms-badge-danger { background: var(--wms-c-danger-bg); border-color: var(--wms-c-danger-bd); color: var(--wms-c-danger); }
 .wms-badge-info   { background: var(--wms-c-info-bg);   border-color: var(--wms-c-info-bd);   color: var(--wms-c-info); }
 .wms-badge-mute   { background: var(--wms-c-panel-2);   border-color: var(--wms-c-border);    color: var(--wms-c-mute); }
+/* Inventário · status terminais — visualmente distintos dos intermediários.
+   aplicada = sólido verde (sucesso final, vs aprovada outlined).
+   cancelada = sólido slate escuro com strike (terminal sem mov, vs danger). */
+.wms-badge-aplicada  { background: var(--wms-c-ok);      border-color: var(--wms-c-ok);        color: #fff; }
+.wms-badge-cancelada { background: #475569;              border-color: #334155;                color: #fff; text-decoration: line-through; text-decoration-thickness: 1px; }
 
 .wms-chip-emp {
   display: inline-block;

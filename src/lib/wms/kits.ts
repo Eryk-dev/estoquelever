@@ -7,13 +7,27 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import type { Produto, ProdutoKitComposicao } from "@/lib/wms/types";
 
+export interface KitDisponivelPorGalpao {
+  empresa_dona_id: string;
+  empresa_nome: string;
+  galpao_id: string;
+  galpao_nome: string;
+  disponivel_kits: number;
+  gargalo_componente_id: string | null;
+  gargalo_componente_sku: string | null;
+  gargalo_disponivel: number | null;
+}
+
 export interface KitDisponivel {
   kit_id: string;
+  /** Total montável — soma do que dá pra montar em cada galpão. */
   disponivel: number;
-  /** Componente que limita o cálculo (gargalo). */
+  /** Componente que limita globalmente (menor (disp/qty) considerando soma por galpão). */
   gargalo_produto_id: string | null;
   gargalo_sku: string | null;
   gargalo_disponivel: number | null;
+  /** Breakdown por (empresa_dona, galpão). */
+  por_galpao: KitDisponivelPorGalpao[];
 }
 
 export interface ComponentePosicao {
@@ -269,79 +283,86 @@ export async function removerComponente(input: {
   }
 }
 
-/** Calcula disponível derivado do kit + identifica gargalo. */
+/**
+ * Calcula disponível derivado do kit POR GALPÃO + identifica gargalo global.
+ *
+ * Regra: cada galpão precisa ter TODOS os componentes presentes pra contar.
+ * O total é a soma das montagens possíveis em cada galpão (não pode misturar
+ * estoque entre galpões — exigiria transferência prévia).
+ */
 export async function calcularDisponivel(
   kitProdutoId: string,
   filtros: { empresa_dona_id?: string; galpao_id?: string } = {},
 ): Promise<KitDisponivel> {
   const sb = createServiceClient();
-  const { data: dispData, error: errRpc } = await sb.rpc(
-    "wms_kit_disponivel",
-    {
-      p_kit_id: kitProdutoId,
-      p_empresa_dona_id: filtros.empresa_dona_id ?? null,
-      p_galpao_id: filtros.galpao_id ?? null,
-    },
-  );
+
+  const [{ data: dispData, error: errRpc }, { data: brkData, error: errBrk }] =
+    await Promise.all([
+      sb.rpc("wms_kit_disponivel", {
+        p_kit_id: kitProdutoId,
+        p_empresa_dona_id: filtros.empresa_dona_id ?? null,
+        p_galpao_id: filtros.galpao_id ?? null,
+      }),
+      sb.rpc("wms_kit_disponivel_por_galpao", {
+        p_kit_id: kitProdutoId,
+        p_empresa_dona_id: filtros.empresa_dona_id ?? null,
+      }),
+    ]);
   if (errRpc) throw errRpc;
+  if (errBrk) throw errBrk;
+
   const disponivel = Number(dispData ?? 0);
+  const breakdownRaw =
+    (brkData as Array<{
+      empresa_dona_id: string;
+      empresa_nome: string;
+      galpao_id: string;
+      galpao_nome: string;
+      disponivel_kits: number;
+      gargalo_componente_id: string | null;
+      gargalo_componente_sku: string | null;
+      gargalo_disponivel: number | null;
+    }> | null) ?? [];
 
-  // Identifica gargalo: componente com menor disp/qty.
-  const composicao = await listarComposicaoKit(kitProdutoId);
-  if (composicao.length === 0) {
-    return {
-      kit_id: kitProdutoId,
-      disponivel: 0,
-      gargalo_produto_id: null,
-      gargalo_sku: null,
-      gargalo_disponivel: null,
-    };
-  }
+  // Se filtro de galpão estiver setado, restringe o breakdown também (a RPC
+  // de breakdown não recebe galpão pra retornar todas as linhas e a UI
+  // decidir; aqui aplicamos o filtro defensivamente).
+  const por_galpao: KitDisponivelPorGalpao[] = breakdownRaw
+    .filter((r) =>
+      filtros.galpao_id ? r.galpao_id === filtros.galpao_id : true,
+    )
+    .map((r) => ({
+      empresa_dona_id: r.empresa_dona_id,
+      empresa_nome: r.empresa_nome,
+      galpao_id: r.galpao_id,
+      galpao_nome: r.galpao_nome,
+      disponivel_kits: Number(r.disponivel_kits),
+      gargalo_componente_id: r.gargalo_componente_id,
+      gargalo_componente_sku: r.gargalo_componente_sku,
+      gargalo_disponivel:
+        r.gargalo_disponivel != null ? Number(r.gargalo_disponivel) : null,
+    }));
 
-  // Soma disponível agregado por componente (com mesmos filtros).
-  let queryEst = sb
-    .from("siso_estoque")
-    .select("produto_id, disponivel")
-    .in(
-      "produto_id",
-      composicao.map((c) => c.componente_produto_id),
-    );
-  if (filtros.empresa_dona_id) {
-    queryEst = queryEst.eq("empresa_dona_id", filtros.empresa_dona_id);
-  }
-  if (filtros.galpao_id) {
-    queryEst = queryEst.eq("galpao_id", filtros.galpao_id);
-  }
-  const { data: estData, error: errEst } = await queryEst;
-  if (errEst) throw errEst;
-
-  const dispPorProd = new Map<string, number>();
-  for (const e of estData ?? []) {
-    const id = (e as { produto_id: string }).produto_id;
-    dispPorProd.set(
-      id,
-      (dispPorProd.get(id) ?? 0) +
-        Number((e as { disponivel: number }).disponivel ?? 0),
-    );
-  }
-
-  let gargalo = composicao[0];
-  let menorKits = Number.MAX_SAFE_INTEGER;
-  for (const c of composicao) {
-    const dispComp = dispPorProd.get(c.componente_produto_id) ?? 0;
-    const kitsPossiveis = Math.floor(dispComp / Number(c.quantidade));
-    if (kitsPossiveis < menorKits) {
-      menorKits = kitsPossiveis;
-      gargalo = c;
-    }
+  // Gargalo "global": o componente que mais frequentemente é gargalo nos
+  // galpões com saldo, ou o gargalo do galpão de maior produção (proxy útil
+  // pra UI). Quando nenhum galpão tem composição completa, fica null.
+  let gargalo_produto_id: string | null = null;
+  let gargalo_sku: string | null = null;
+  let gargalo_disponivel: number | null = null;
+  if (por_galpao.length > 0) {
+    const top = por_galpao[0]; // já vem ordenado por kits DESC
+    gargalo_produto_id = top.gargalo_componente_id;
+    gargalo_sku = top.gargalo_componente_sku;
+    gargalo_disponivel = top.gargalo_disponivel;
   }
 
   return {
     kit_id: kitProdutoId,
     disponivel,
-    gargalo_produto_id: gargalo.componente_produto_id,
-    gargalo_sku: gargalo.componente.sku,
-    gargalo_disponivel: dispPorProd.get(gargalo.componente_produto_id) ?? 0,
+    gargalo_produto_id,
+    gargalo_sku,
+    gargalo_disponivel,
+    por_galpao,
   };
 }
 

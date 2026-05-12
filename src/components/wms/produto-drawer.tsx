@@ -1275,10 +1275,22 @@ interface KitComposicaoRow {
   };
 }
 
+interface KitDisponivelPorGalpao {
+  empresa_dona_id: string;
+  empresa_nome: string;
+  galpao_id: string;
+  galpao_nome: string;
+  disponivel_kits: number;
+  gargalo_componente_id: string | null;
+  gargalo_componente_sku: string | null;
+  gargalo_disponivel: number | null;
+}
+
 interface KitDisponivelInfo {
   disponivel: number;
   gargalo_sku: string | null;
   gargalo_disponivel: number | null;
+  por_galpao: KitDisponivelPorGalpao[];
 }
 
 function KitTab({ produto }: { produto: Produto }) {
@@ -1343,9 +1355,16 @@ function KitTab({ produto }: { produto: Produto }) {
 
       {produto.eh_kit && disp && (
         <Card title="Estoque derivado">
+          <p
+            className="wms-td-mute"
+            style={{ fontSize: 12.5, marginTop: 0, marginBottom: 10 }}
+          >
+            Kits são montados por galpão — cada galpão precisa ter todos os
+            componentes. Total = soma do que dá pra montar em cada galpão.
+          </p>
           <div className="wms-ov-meta-grid">
             <div>
-              <div className="wms-ov-meta-lbl">Disponível (kits)</div>
+              <div className="wms-ov-meta-lbl">Total montável (kits)</div>
               <div
                 className="wms-mono"
                 style={{ fontSize: 20, fontWeight: 700 }}
@@ -1354,15 +1373,60 @@ function KitTab({ produto }: { produto: Produto }) {
               </div>
             </div>
             <div>
-              <div className="wms-ov-meta-lbl">Gargalo</div>
-              <div className="wms-mono">{disp.gargalo_sku ?? "—"}</div>
-              {disp.gargalo_disponivel != null && (
-                <div className="wms-td-mute" style={{ fontSize: 12 }}>
-                  {fmtNum(disp.gargalo_disponivel)} un. do gargalo no estoque
-                </div>
-              )}
+              <div className="wms-ov-meta-lbl">Galpões com composição</div>
+              <div className="wms-mono" style={{ fontSize: 20, fontWeight: 700 }}>
+                {disp.por_galpao.length}
+              </div>
+              <div className="wms-td-mute" style={{ fontSize: 12 }}>
+                {disp.por_galpao.length === 0
+                  ? "nenhum galpão tem todos os componentes"
+                  : disp.por_galpao.length === 1
+                    ? "1 galpão monta o kit completo"
+                    : `${disp.por_galpao.length} galpões montam o kit completo`}
+              </div>
             </div>
           </div>
+
+          {disp.por_galpao.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div
+                className="wms-ov-meta-lbl"
+                style={{ marginBottom: 6 }}
+              >
+                Quebra por galpão
+              </div>
+              <table className="wms-full-tbl">
+                <thead>
+                  <tr>
+                    <th>Galpão</th>
+                    <th>Empresa</th>
+                    <th className="wms-tar">Kits montáveis</th>
+                    <th>Gargalo</th>
+                    <th className="wms-tar">Saldo do gargalo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {disp.por_galpao.map((g) => (
+                    <tr key={`${g.empresa_dona_id}-${g.galpao_id}`}>
+                      <td>{g.galpao_nome}</td>
+                      <td className="wms-td-mute">{g.empresa_nome}</td>
+                      <td className="wms-tar wms-mono wms-td-strong">
+                        {fmtNum(g.disponivel_kits)}
+                      </td>
+                      <td className="wms-mono">
+                        {g.gargalo_componente_sku ?? "—"}
+                      </td>
+                      <td className="wms-tar wms-mono wms-td-mute">
+                        {g.gargalo_disponivel != null
+                          ? fmtNum(g.gargalo_disponivel)
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Card>
       )}
 

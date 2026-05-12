@@ -154,66 +154,68 @@ export default function EmprestimosPage() {
               ))}
             </select>
           </div>
-          <div
-            style={{
-              display: "flex",
-              gap: 16,
-              alignItems: "center",
-              marginTop: 12,
-              padding: "10px 12px",
-              background: "var(--wms-c-faint)",
-              border: "1px solid var(--wms-c-border)",
-              borderRadius: "var(--wms-r-3)",
-            }}
-          >
-            <span
+          <div style={{ marginTop: 12 }}>
+            <div
               className="wms-td-mute"
-              style={{ fontSize: 11, fontWeight: 600 }}
+              style={{ fontSize: 11, fontWeight: 600, marginBottom: 6 }}
             >
-              Operações permitidas:
-            </span>
-            <label
-              style={{
-                display: "flex",
-                gap: 6,
-                alignItems: "center",
-                fontSize: 13,
-                cursor: "pointer",
-              }}
+              Operações permitidas
+            </div>
+            <div className="wms-seg wms-seg-full">
+              <button
+                type="button"
+                className={`wms-seg-btn ${permiteEmprestimo && !permiteSwap ? "is-active" : ""}`}
+                onClick={() => {
+                  setPermiteEmprestimo(true);
+                  setPermiteSwap(false);
+                }}
+              >
+                Só empréstimo
+              </button>
+              <button
+                type="button"
+                className={`wms-seg-btn ${!permiteEmprestimo && permiteSwap ? "is-active" : ""}`}
+                onClick={() => {
+                  setPermiteEmprestimo(false);
+                  setPermiteSwap(true);
+                }}
+              >
+                Só swap
+              </button>
+              <button
+                type="button"
+                className={`wms-seg-btn ${permiteEmprestimo && permiteSwap ? "is-active" : ""}`}
+                onClick={() => {
+                  setPermiteEmprestimo(true);
+                  setPermiteSwap(true);
+                }}
+              >
+                Empréstimo + Swap
+              </button>
+            </div>
+            <div
+              className="wms-td-mute"
+              style={{ fontSize: 11, marginTop: 6 }}
             >
-              <input
-                type="checkbox"
-                checked={permiteEmprestimo}
-                onChange={(e) => setPermiteEmprestimo(e.target.checked)}
-              />
-              <span>
-                <strong>Empréstimo unidirecional</strong>{" "}
-                <span className="wms-td-mute" style={{ fontSize: 11 }}>
-                  · credora empresta pra devedora (cria saldo devedor)
-                </span>
-              </span>
-            </label>
-            <label
-              style={{
-                display: "flex",
-                gap: 6,
-                alignItems: "center",
-                fontSize: 13,
-                cursor: "pointer",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={permiteSwap}
-                onChange={(e) => setPermiteSwap(e.target.checked)}
-              />
-              <span>
-                <strong>Swap simétrico</strong>{" "}
-                <span className="wms-td-mute" style={{ fontSize: 11 }}>
-                  · permuta cruzada (requer flag nas DUAS direções)
-                </span>
-              </span>
-            </label>
+              {permiteEmprestimo && permiteSwap && (
+                <>
+                  Credora pode emprestar unidirecionalmente E participar de
+                  permuta cruzada (swap precisa estar ativo nas duas direções).
+                </>
+              )}
+              {permiteEmprestimo && !permiteSwap && (
+                <>
+                  Credora só empresta unidirecionalmente — cria saldo devedor
+                  que precisa ser quitado.
+                </>
+              )}
+              {!permiteEmprestimo && permiteSwap && (
+                <>
+                  Par só pode trocar estoque cruzado simultaneamente (saldo
+                  devedor líquido zero). Nenhum empréstimo unilateral.
+                </>
+              )}
+            </div>
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
             <button

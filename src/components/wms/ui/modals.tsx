@@ -417,9 +417,9 @@ interface ModalProdutoSeed {
   produto?: Produto;
 }
 
-type ReceberOrigem = "compra_manual" | "nf_compra" | "devolucao";
+export type ReceberOrigem = "compra_manual" | "nf_compra" | "devolucao";
 
-const RECEBER_ORIGEM_OPTS: { id: ReceberOrigem; label: string }[] = [
+export const RECEBER_ORIGEM_OPTS: { id: ReceberOrigem; label: string }[] = [
   { id: "compra_manual", label: "Compra manual" },
   { id: "nf_compra", label: "NF de compra" },
   { id: "devolucao", label: "Devolução" },
@@ -427,7 +427,7 @@ const RECEBER_ORIGEM_OPTS: { id: ReceberOrigem; label: string }[] = [
 
 // Mapeia escolha do UI pro tipo canônico de origem usado no ledger.
 // Retroativo não é uma opção: é inferido da data escolhida (data < hoje).
-function origemToBackend(o: ReceberOrigem): string {
+export function origemToBackend(o: ReceberOrigem): string {
   switch (o) {
     case "devolucao":
       return "nf_devolucao_cliente";
@@ -439,14 +439,14 @@ function origemToBackend(o: ReceberOrigem): string {
 }
 
 // Data de hoje em YYYY-MM-DD no timezone local.
-function hojeISODate(): string {
+export function hojeISODate(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 // Constrói timestamp ISO a partir de date string + hora atual local.
 // Preserva hora-do-dia no audit trail; quando a data é hoje, vira ~now().
-function buildTimestamp(dateStr: string): string {
+export function buildTimestamp(dateStr: string): string {
   const [y, m, d] = dateStr.split("-").map(Number);
   const now = new Date();
   return new Date(

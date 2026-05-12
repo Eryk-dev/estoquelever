@@ -225,29 +225,44 @@ export default function ContarPage({
       return;
     }
 
-    // Lookup produto por SKU/GTIN
-    let produto: ProdutoMin | undefined;
-    try {
-      const r = await wmsApi<{ rows?: ProdutoMin[] }>(
-        `/api/wms/produtos?q=${encodeURIComponent(v)}&limit=1`,
-      );
-      produto = r.rows?.[0];
-    } catch {
-      // ignora — produto fica undefined
-    }
-    if (!produto) {
-      toast.error(`SKU não encontrado: ${v}`);
-      return;
+    // 1) Tenta resolver produto via esperados local — evita round-trip GET no caso quente
+    const vNorm = v.trim().toUpperCase();
+    const esperadoMatch = locAtual.esperados?.find(
+      (e: EsperadoItem) => e.sku?.toUpperCase() === vNorm,
+    );
+
+    let produto: ProdutoMin;
+    let empresaDona: string | null;
+
+    if (esperadoMatch) {
+      produto = {
+        id: esperadoMatch.produto_id,
+        sku: esperadoMatch.sku,
+        descricao: esperadoMatch.descricao,
+        imagem_url: esperadoMatch.imagem_url,
+        imagens: esperadoMatch.imagens,
+      };
+      empresaDona =
+        sessao.empresa_dona_id ?? esperadoMatch.empresa_dona_id ?? null;
+    } else {
+      // Fallback: produto não está nos esperados — busca no servidor
+      let lookup: ProdutoMin | undefined;
+      try {
+        const r = await wmsApi<{ rows?: ProdutoMin[] }>(
+          `/api/wms/produtos?q=${encodeURIComponent(v)}&limit=1`,
+        );
+        lookup = r.rows?.[0];
+      } catch {
+        // ignora — produto fica undefined
+      }
+      if (!lookup) {
+        toast.error(`SKU não encontrado: ${v}`);
+        return;
+      }
+      produto = lookup;
+      empresaDona = sessao.empresa_dona_id ?? null;
     }
 
-    // Resolve empresa_dona: se sessão não restringe, pega do esperado (modo aberto)
-    let empresaDona = sessao.empresa_dona_id ?? null;
-    if (!empresaDona) {
-      const esp = locAtual.esperados?.find(
-        (e: EsperadoItem) => e.produto_id === produto!.id,
-      );
-      empresaDona = esp?.empresa_dona_id ?? null;
-    }
     if (!empresaDona) {
       toast.error(
         "Não foi possível identificar a empresa dona. Configure a sessão com empresa_dona_id.",
@@ -255,6 +270,42 @@ export default function ContarPage({
       return;
     }
 
+    // 2) Optimistic UI update ANTES do POST — UI responde imediatamente
+    let qtyAnterior: number | null = null; // null = produto não existia na lista
+    setContagens((prev) => {
+      const existente = prev.find((c) => c.produto_id === produto.id);
+      qtyAnterior = existente?.qty ?? null;
+      if (existente) {
+        return prev.map((c) =>
+          c.produto_id === produto.id
+            ? {
+                ...c,
+                qty: modo === "incremental" ? c.qty + qty : qty,
+                empresa_dona_id: c.empresa_dona_id ?? empresaDona,
+                imagem_url: c.imagem_url ?? produto.imagem_url ?? null,
+                imagens:
+                  c.imagens && c.imagens.length > 0
+                    ? c.imagens
+                    : produto.imagens ?? [],
+              }
+            : c,
+        );
+      }
+      return [
+        ...prev,
+        {
+          produto_id: produto.id,
+          sku: produto.sku,
+          descricao: produto.descricao,
+          imagem_url: produto.imagem_url ?? null,
+          imagens: produto.imagens ?? [],
+          qty,
+          empresa_dona_id: empresaDona,
+        },
+      ];
+    });
+
+    // 3) POST em background — reverte o otimista se falhar
     try {
       await wmsApi(`/api/wms/inventario/${id}/contagens`, {
         method: "POST",
@@ -267,38 +318,31 @@ export default function ContarPage({
           modo,
         }),
       });
+    } catch (e) {
+      // Rollback robusto contra bipes em paralelo:
+      //  - incremental: subtrai qty da linha atual (delta-based)
+      //  - absoluto: volta pra valor anterior; remove se não existia
       setContagens((prev) => {
-        const existente = prev.find((c) => c.produto_id === produto!.id);
-        if (existente) {
+        const existente = prev.find((c) => c.produto_id === produto.id);
+        if (!existente) return prev;
+        if (modo === "incremental") {
+          const novoQty = existente.qty - qty;
+          if (novoQty <= 0 && qtyAnterior === null) {
+            return prev.filter((c) => c.produto_id !== produto.id);
+          }
           return prev.map((c) =>
-            c.produto_id === produto!.id
-              ? {
-                  ...c,
-                  qty: modo === "incremental" ? c.qty + qty : qty,
-                  empresa_dona_id: c.empresa_dona_id ?? empresaDona,
-                  imagem_url: c.imagem_url ?? produto!.imagem_url ?? null,
-                  imagens:
-                    c.imagens && c.imagens.length > 0
-                      ? c.imagens
-                      : produto!.imagens ?? [],
-                }
+            c.produto_id === produto.id
+              ? { ...c, qty: Math.max(0, novoQty) }
               : c,
           );
         }
-        return [
-          ...prev,
-          {
-            produto_id: produto!.id,
-            sku: produto!.sku,
-            descricao: produto!.descricao,
-            imagem_url: produto!.imagem_url ?? null,
-            imagens: produto!.imagens ?? [],
-            qty,
-            empresa_dona_id: empresaDona,
-          },
-        ];
+        if (qtyAnterior === null) {
+          return prev.filter((c) => c.produto_id !== produto.id);
+        }
+        return prev.map((c) =>
+          c.produto_id === produto.id ? { ...c, qty: qtyAnterior! } : c,
+        );
       });
-    } catch (e) {
       toast.error((e as Error).message);
     }
   }

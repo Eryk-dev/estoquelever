@@ -740,6 +740,21 @@ export function LedgerRow({ m }: { m: MovComposite }) {
           {m.empresa?.nome ?? ""} · {m.galpao?.nome ?? ""} ·{" "}
           <span className="wms-mono">{m.localizacao?.codigo ?? ""}</span>
         </div>
+        {m.custo_unitario != null && (
+          <div className="wms-lr-where wms-td-mute">
+            <span className="wms-mono">
+              {fmtBRL(Number(m.custo_unitario))}
+            </span>{" "}
+            <span style={{ opacity: 0.7 }}>×</span>{" "}
+            <span className="wms-mono">{fmtNum(Number(m.quantidade))}</span>{" "}
+            <span style={{ opacity: 0.7 }}>=</span>{" "}
+            <span className="wms-mono">
+              {fmtBRL(
+                Number(m.custo_unitario) * Number(m.quantidade),
+              )}
+            </span>
+          </div>
+        )}
         {m.observacoes && <div className="wms-lr-obs">{m.observacoes}</div>}
       </div>
       <div className="wms-lr-saldo">

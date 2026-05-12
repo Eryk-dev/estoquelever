@@ -22,15 +22,29 @@ const LOG_SOURCE = "tiny-queue";
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-/** Max requests per empresa per 60s window (Tiny limit is 60, we keep 5 buffer) */
-const MAX_PER_MINUTE = 55;
+/**
+ * Max requests per empresa per 60s window. Default 55 (Tiny limit é 60 com
+ * 5 de buffer). Override via env `TINY_RATE_LIMIT_PER_MIN` pra scripts de
+ * backfill que sabem que estão usando só GETs (o limite de read costuma ser
+ * mais permissivo).
+ */
+const MAX_PER_MINUTE = parseInt(
+  process.env.TINY_RATE_LIMIT_PER_MIN ?? "55",
+  10,
+);
 const WINDOW_MS = 60_000;
 
 /** Minimum interval between dispatches: spreads requests evenly across the window */
-const MIN_INTERVAL_MS = Math.ceil(WINDOW_MS / MAX_PER_MINUTE); // ~1091ms
+const MIN_INTERVAL_MS = Math.ceil(WINDOW_MS / MAX_PER_MINUTE);
 
-/** Max concurrent in-flight requests per empresa (safety net for slow responses) */
-const MAX_CONCURRENT = 5;
+/**
+ * Max concurrent in-flight requests per empresa. Override via env
+ * `TINY_MAX_CONCURRENT` pra backfill paralelo.
+ */
+const MAX_CONCURRENT = parseInt(
+  process.env.TINY_MAX_CONCURRENT ?? "5",
+  10,
+);
 
 /** Max time a request can wait in queue before being rejected */
 const MAX_QUEUE_WAIT_MS = 120_000;

@@ -149,8 +149,11 @@ function fmtETA(ms: number): string {
 }
 
 // Workers paralelos puxando da mesma fila (rate-limit do tiny-queue cuida
-// do throttling pra não exceder 55/min · 5 concurrent por empresa).
-const WORKERS_POR_FILA = 4;
+// do throttling). Override via env WORKERS_POR_FILA.
+const WORKERS_POR_FILA = parseInt(
+  process.env.WORKERS_POR_FILA ?? "4",
+  10,
+);
 
 async function processarFila(
   nome: string,
@@ -217,6 +220,11 @@ async function main(): Promise<void> {
     console.warn("⚠ destino NÃO é staging — interrompendo por segurança.");
     process.exit(1);
   }
+  console.log(
+    `config: workers/fila=${WORKERS_POR_FILA} | ` +
+      `tiny rate=${process.env.TINY_RATE_LIMIT_PER_MIN ?? "55"}/min/empresa | ` +
+      `concurrent=${process.env.TINY_MAX_CONCURRENT ?? "5"}/empresa`,
+  );
 
   console.log("carregando lista de produtos pra processar…");
   const produtos = await carregarLista(force, limit);

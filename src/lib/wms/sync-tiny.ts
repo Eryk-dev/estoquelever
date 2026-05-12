@@ -72,7 +72,11 @@ export async function sincronizarProduto(
   if (full.gtin) patch.gtin = full.gtin;
   if (full.unidade) patch.unidade = full.unidade;
   if (full.ncm) patch.ncm = full.ncm;
-  if (full.origem != null) patch.origem_fiscal = full.origem;
+  // origem pode vir como "" do Tiny — protege smallint.
+  if (full.origem != null && full.origem !== ("" as unknown)) {
+    const origemNum = Number(full.origem);
+    if (Number.isInteger(origemNum)) patch.origem_fiscal = origemNum;
+  }
   // Sempre persiste imagens[] (mesmo vazio — produto pode ter perdido
   // anexo no Tiny). imagem_url = primeira pra manter capa consistente.
   patch.imagens = full.imagens;

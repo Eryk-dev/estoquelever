@@ -149,7 +149,26 @@ export async function ensureFornecedorTiny(input: {
     })
     .select()
     .single();
-  if (error) throw error;
+
+  // Race com outra thread paralela: outra fila criou o mesmo fornecedor
+  // entre o nosso SELECT e nosso INSERT. Re-busca e retorna o existente.
+  if (error) {
+    const isUnique =
+      typeof (error as { code?: string }).code === "string" &&
+      (error as { code: string }).code === "23505";
+    if (isUnique) {
+      const { data: retry } = await sb
+        .from("siso_fornecedores")
+        .select("*")
+        .or(
+          `tiny_fornecedor_id.eq.${input.tiny_fornecedor_id},nome.ilike.${nomeNorm.replace(/[*%]/g, " ")}`,
+        )
+        .limit(1)
+        .maybeSingle();
+      if (retry) return retry as Fornecedor;
+    }
+    throw error;
+  }
   return criado as Fornecedor;
 }
 

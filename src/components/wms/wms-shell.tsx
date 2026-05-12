@@ -78,7 +78,6 @@ const NAV_SECTIONS: NavSection[] = [
     itens: [
       { href: "/wms/estoque", icon: "box", label: "Estoque" },
       { href: "/wms/cobertura", icon: "gauge", label: "Cobertura" },
-      { href: "/wms/ledger", icon: "list", label: "Movimentações" },
     ],
   },
   {

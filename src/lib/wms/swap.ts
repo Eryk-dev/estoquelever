@@ -67,12 +67,15 @@ export async function detectarSwap(
 ): Promise<SwapOportunidade[]> {
   const sb = createServiceClient();
 
-  // Lista empresas que podem emprestar pra vendedora (i.e., regra credora→vendedora ativa)
+  // Lista empresas que podem emprestar pra vendedora via SWAP (irmã→vendedora
+  // com permite_swap=true). Filtra explicitamente — empréstimo unidirecional
+  // sem swap não conta aqui (use roteamento.ts pra isso).
   const { data: regrasParaVendedora } = await sb
     .from("siso_emprestimo_regras")
     .select("empresa_credora_id")
     .eq("empresa_devedora_id", vendedora_id)
-    .eq("ativo", true);
+    .eq("ativo", true)
+    .eq("permite_swap", true);
   const credorasDeVendedora = new Set(
     ((regrasParaVendedora ?? []) as Array<{ empresa_credora_id: string }>).map(
       (r) => r.empresa_credora_id,
@@ -80,13 +83,14 @@ export async function detectarSwap(
   );
   if (credorasDeVendedora.size === 0) return [];
 
-  // Lista empresas pra quem vendedora pode emprestar (i.e., regra vendedora→devedora ativa)
-  // Pra swap, precisamos da intersecção: empresa I onde I→V E V→I existem.
+  // Pra swap simétrico precisamos da intersecção: empresa I onde a regra
+  // I→V tem permite_swap=true E a regra V→I também tem permite_swap=true.
   const { data: regrasDeVendedora } = await sb
     .from("siso_emprestimo_regras")
     .select("empresa_devedora_id")
     .eq("empresa_credora_id", vendedora_id)
-    .eq("ativo", true);
+    .eq("ativo", true)
+    .eq("permite_swap", true);
   const devedorasDeVendedora = new Set(
     ((regrasDeVendedora ?? []) as Array<{ empresa_devedora_id: string }>).map(
       (r) => r.empresa_devedora_id,

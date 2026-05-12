@@ -7,6 +7,8 @@ interface PatchRegraBody {
   limite_max_por_produto?: number | null;
   limites_por_produto?: Record<string, number>;
   ativo?: boolean;
+  permite_emprestimo?: boolean;
+  permite_swap?: boolean;
 }
 
 function pickPatchFields(body: unknown): PatchRegraBody {
@@ -20,6 +22,9 @@ function pickPatchFields(body: unknown): PatchRegraBody {
     out.limites_por_produto = b.limites_por_produto as Record<string, number>;
   }
   if (typeof b.ativo === "boolean") out.ativo = b.ativo;
+  if (typeof b.permite_emprestimo === "boolean")
+    out.permite_emprestimo = b.permite_emprestimo;
+  if (typeof b.permite_swap === "boolean") out.permite_swap = b.permite_swap;
   return out;
 }
 

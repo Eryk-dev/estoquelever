@@ -21,6 +21,8 @@ export default function EmprestimosPage() {
   const [showForm, setShowForm] = useState(false);
   const [credora, setCredora] = useState<string>("");
   const [devedora, setDevedora] = useState<string>("");
+  const [permiteEmprestimo, setPermiteEmprestimo] = useState(true);
+  const [permiteSwap, setPermiteSwap] = useState(true);
 
   const { data: galpoes } = useQuery({
     queryKey: ["galpoes"],
@@ -65,12 +67,16 @@ export default function EmprestimosPage() {
         body: JSON.stringify({
           empresa_credora_id: credora,
           empresa_devedora_id: devedora,
+          permite_emprestimo: permiteEmprestimo,
+          permite_swap: permiteSwap,
         }),
       }),
     onSuccess: () => {
       toast.success("Regra criada");
       setCredora("");
       setDevedora("");
+      setPermiteEmprestimo(true);
+      setPermiteSwap(true);
       setShowForm(false);
       queryClient.invalidateQueries({ queryKey: ["wms-regras"] });
     },
@@ -147,11 +153,78 @@ export default function EmprestimosPage() {
                 </option>
               ))}
             </select>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              gap: 16,
+              alignItems: "center",
+              marginTop: 12,
+              padding: "10px 12px",
+              background: "var(--wms-c-faint)",
+              border: "1px solid var(--wms-c-border)",
+              borderRadius: "var(--wms-r-3)",
+            }}
+          >
+            <span
+              className="wms-td-mute"
+              style={{ fontSize: 11, fontWeight: 600 }}
+            >
+              Operações permitidas:
+            </span>
+            <label
+              style={{
+                display: "flex",
+                gap: 6,
+                alignItems: "center",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={permiteEmprestimo}
+                onChange={(e) => setPermiteEmprestimo(e.target.checked)}
+              />
+              <span>
+                <strong>Empréstimo unidirecional</strong>{" "}
+                <span className="wms-td-mute" style={{ fontSize: 11 }}>
+                  · credora empresta pra devedora (cria saldo devedor)
+                </span>
+              </span>
+            </label>
+            <label
+              style={{
+                display: "flex",
+                gap: 6,
+                alignItems: "center",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={permiteSwap}
+                onChange={(e) => setPermiteSwap(e.target.checked)}
+              />
+              <span>
+                <strong>Swap simétrico</strong>{" "}
+                <span className="wms-td-mute" style={{ fontSize: 11 }}>
+                  · permuta cruzada (requer flag nas DUAS direções)
+                </span>
+              </span>
+            </label>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
             <button
               type="button"
               className="wms-btn wms-btn-primary"
               disabled={
-                !credora || !devedora || credora === devedora || criar.isPending
+                !credora ||
+                !devedora ||
+                credora === devedora ||
+                (!permiteEmprestimo && !permiteSwap) ||
+                criar.isPending
               }
               onClick={() => criar.mutate()}
             >
@@ -173,6 +246,17 @@ export default function EmprestimosPage() {
             >
               <Icon name="alert" />
               <span>Credora e devedora não podem ser a mesma empresa.</span>
+            </div>
+          )}
+          {!permiteEmprestimo && !permiteSwap && (
+            <div
+              className="wms-hint-card wms-hint-danger"
+              style={{ marginTop: 10 }}
+            >
+              <Icon name="alert" />
+              <span>
+                Escolha pelo menos uma operação (empréstimo ou swap).
+              </span>
             </div>
           )}
         </div>
@@ -205,6 +289,8 @@ export default function EmprestimosPage() {
                   <th>Credora</th>
                   <th></th>
                   <th>Devedora</th>
+                  <th className="wms-tac">Empréstimo</th>
+                  <th className="wms-tac">Swap</th>
                   <th className="wms-tar">Limite global</th>
                   <th className="wms-tar">Limites por SKU</th>
                   <th className="wms-tar">Ações</th>
@@ -289,21 +375,31 @@ function RegraRow({
   );
 
   const atualizar = useMutation({
-    mutationFn: () =>
+    mutationFn: (patch: Record<string, unknown>) =>
       wmsApi<EmprestimoRegra>(`/api/wms/emprestimo-regras/${regra.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          limite_max_por_produto: limite === "" ? null : Number(limite),
-        }),
+        body: JSON.stringify(patch),
       }),
     onSuccess: () => {
-      toast.success("Limite atualizado");
-      setEditando(false);
       queryClient.invalidateQueries({ queryKey: ["wms-regras"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  const toggleFlag = (flag: "permite_emprestimo" | "permite_swap") => {
+    const novoValor = !regra[flag];
+    atualizar.mutate(
+      { [flag]: novoValor },
+      {
+        onSuccess: () => {
+          toast.success(
+            `${flag === "permite_emprestimo" ? "Empréstimo" : "Swap"} ${novoValor ? "permitido" : "bloqueado"}`,
+          );
+        },
+      },
+    );
+  };
 
   return (
     <tr>
@@ -312,6 +408,62 @@ function RegraRow({
         <Icon name="arrow-right" size={11} />
       </td>
       <td>{empresaNome(regra.empresa_devedora_id)}</td>
+      <td className="wms-tac">
+        <button
+          type="button"
+          className={`wms-toggle-pill ${regra.permite_emprestimo ? "is-on" : "is-off"}`}
+          onClick={() => toggleFlag("permite_emprestimo")}
+          title={
+            regra.permite_emprestimo
+              ? "Empréstimo permitido — clique pra bloquear"
+              : "Empréstimo bloqueado — clique pra permitir"
+          }
+          style={{
+            padding: "3px 10px",
+            borderRadius: 999,
+            border: "1px solid var(--wms-c-border)",
+            background: regra.permite_emprestimo
+              ? "var(--wms-c-success-faint, #d1fae5)"
+              : "var(--wms-c-faint)",
+            color: regra.permite_emprestimo
+              ? "var(--wms-c-success, #047857)"
+              : "var(--wms-c-mute, #9ca3af)",
+            fontSize: 11,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          {regra.permite_emprestimo ? "✓ sim" : "— não"}
+        </button>
+      </td>
+      <td className="wms-tac">
+        <button
+          type="button"
+          className={`wms-toggle-pill ${regra.permite_swap ? "is-on" : "is-off"}`}
+          onClick={() => toggleFlag("permite_swap")}
+          title={
+            regra.permite_swap
+              ? "Swap permitido — clique pra bloquear"
+              : "Swap bloqueado — clique pra permitir"
+          }
+          style={{
+            padding: "3px 10px",
+            borderRadius: 999,
+            border: "1px solid var(--wms-c-border)",
+            background: regra.permite_swap
+              ? "var(--wms-c-success-faint, #d1fae5)"
+              : "var(--wms-c-faint)",
+            color: regra.permite_swap
+              ? "var(--wms-c-success, #047857)"
+              : "var(--wms-c-mute, #9ca3af)",
+            fontSize: 11,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          {regra.permite_swap ? "✓ sim" : "— não"}
+        </button>
+      </td>
       <td className="wms-tar wms-mono">
         {editando ? (
           <input
@@ -338,7 +490,19 @@ function RegraRow({
               type="button"
               className="wms-btn wms-btn-sm wms-btn-primary"
               disabled={atualizar.isPending}
-              onClick={() => atualizar.mutate()}
+              onClick={() =>
+                atualizar.mutate(
+                  {
+                    limite_max_por_produto: limite === "" ? null : Number(limite),
+                  },
+                  {
+                    onSuccess: () => {
+                      toast.success("Limite atualizado");
+                      setEditando(false);
+                    },
+                  },
+                )
+              }
             >
               Salvar
             </button>

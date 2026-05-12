@@ -5,6 +5,8 @@ export interface EmprestimoRegra {
   empresa_credora_id: string;
   empresa_devedora_id: string;
   ativo: boolean;
+  permite_emprestimo: boolean;
+  permite_swap: boolean;
   limite_max_por_produto: number | null;
   limites_por_produto: Record<string, number>;
   observacoes: string | null;
@@ -32,6 +34,8 @@ export async function criarRegra(input: {
   empresa_devedora_id: string;
   limite_max_por_produto?: number;
   observacoes?: string;
+  permite_emprestimo?: boolean;
+  permite_swap?: boolean;
 }): Promise<EmprestimoRegra> {
   if (input.empresa_credora_id === input.empresa_devedora_id) {
     throw new Error("credora e devedora devem ser empresas diferentes");
@@ -39,7 +43,14 @@ export async function criarRegra(input: {
   const sb = createServiceClient();
   const { data, error } = await sb
     .from("siso_emprestimo_regras")
-    .insert(input)
+    .insert({
+      empresa_credora_id: input.empresa_credora_id,
+      empresa_devedora_id: input.empresa_devedora_id,
+      limite_max_por_produto: input.limite_max_por_produto ?? null,
+      observacoes: input.observacoes ?? null,
+      permite_emprestimo: input.permite_emprestimo ?? true,
+      permite_swap: input.permite_swap ?? true,
+    })
     .select()
     .single();
   if (error) throw error;

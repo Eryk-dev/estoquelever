@@ -181,11 +181,15 @@ export async function rotearPedidoDoBanco(
     .select("id, cidade, estado")
     .eq("ativo", true);
 
+  // Filtra apenas regras com permite_emprestimo=true. Regras com swap-only
+  // (permite_swap=true mas permite_emprestimo=false) NÃO aparecem como credoras
+  // pro roteamento unidirecional — só swap pode usá-las.
   const { data: regras } = await sb
     .from("siso_emprestimo_regras")
     .select("empresa_credora_id, limites_por_produto")
     .eq("empresa_devedora_id", empresaVendedoraId)
-    .eq("ativo", true);
+    .eq("ativo", true)
+    .eq("permite_emprestimo", true);
 
   const limitePorCredoraProduto = new Map<string, Map<string, number>>();
   for (const r of (regras ?? []) as Array<{

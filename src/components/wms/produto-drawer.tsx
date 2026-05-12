@@ -864,6 +864,7 @@ function Fornecedores({ produto }: { produto: Produto }) {
     }) =>
       wmsApi(`/api/wms/produto-fornecedores`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           produto_id: produto.id,
           fornecedor_id: input.fornecedor_id,
@@ -893,6 +894,7 @@ function Fornecedores({ produto }: { produto: Produto }) {
     }) =>
       wmsApi(`/api/wms/produto-fornecedores/${input.id}`, {
         method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input.patch),
       }),
     onSuccess: () => invalidate(),
@@ -1283,6 +1285,7 @@ function KitTab({ produto }: { produto: Produto }) {
     }) =>
       wmsApi(`/api/wms/produtos/${produto.id}/kit`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       }),
     onSuccess: () => {

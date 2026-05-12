@@ -11,10 +11,17 @@ export async function POST(
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
+  let parcial = false;
   try {
-    await computarDivergencias(id);
+    const body = (await req.json().catch(() => ({}))) as { parcial?: unknown };
+    parcial = body?.parcial === true;
+  } catch {
+    // body opcional — ignora erro de parsing
+  }
+  try {
+    await computarDivergencias(id, { parcial });
     await aprovarSessao(id, auth.user.id);
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, parcial });
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.inventario.aprovar",
@@ -22,7 +29,7 @@ export async function POST(
       status: 400,
       requestPath: `/api/wms/inventario/${id}/aprovar`,
       requestMethod: "POST",
-      metadata: { sessao_id: id },
+      metadata: { sessao_id: id, parcial },
     });
   }
 }

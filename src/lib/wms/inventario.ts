@@ -403,15 +403,61 @@ export async function registrarContagem(
 // Computar divergências (sessão → revisão)
 // Soma todas as contagens da quádrupla (vários operadores combinam),
 // compara com saldo do sistema, classifica conforme tolerância.
+//
+// Modo parcial: só considera locs efetivamente finalizadas (contada|aprovada).
+// Locs pendentes/em_contagem ficam intocadas — seus locks externos são
+// liberados normalmente em aprovarSessao junto com as outras.
 // ─────────────────────────────────────────────────────────────────────
 
-export async function computarDivergencias(sessaoId: string): Promise<void> {
-  const sb = createServiceClient();
+export interface ComputarDivergenciasOpts {
+  parcial?: boolean;
+}
 
-  const { data: contagens } = await sb
+export async function computarDivergencias(
+  sessaoId: string,
+  opts: ComputarDivergenciasOpts = {},
+): Promise<void> {
+  const sb = createServiceClient();
+  const parcial = opts.parcial === true;
+
+  // Em modo parcial, só consideramos locs finalizadas (contada|aprovada).
+  // As pendentes/em_contagem são puladas — contagens órfãs delas não viram diverg.
+  let locsConsideradasIds: string[] | null = null;
+  if (parcial) {
+    const { data: locsFinalizadas } = await sb
+      .from("siso_inventario_localizacoes")
+      .select("localizacao_id")
+      .eq("sessao_id", sessaoId)
+      .in("status", ["contada", "aprovada"]);
+    locsConsideradasIds = (
+      (locsFinalizadas ?? []) as Array<{ localizacao_id: string }>
+    ).map((l) => l.localizacao_id);
+    if (locsConsideradasIds.length === 0) {
+      // Nada pra processar — só avança o status pra revisao e fecha slots
+      await sb
+        .from("siso_inventario_sessoes")
+        .update({
+          status: "revisao",
+          finalizada_em: new Date().toISOString(),
+        })
+        .eq("id", sessaoId);
+      await sb
+        .from("siso_inventario_operadores")
+        .update({ finalizado_em: new Date().toISOString() })
+        .eq("sessao_id", sessaoId)
+        .is("finalizado_em", null);
+      return;
+    }
+  }
+
+  let contagensQuery = sb
     .from("siso_inventario_contagens")
     .select("localizacao_id, produto_id, empresa_dona_id, qty_contada")
     .eq("sessao_id", sessaoId);
+  if (locsConsideradasIds) {
+    contagensQuery = contagensQuery.in("localizacao_id", locsConsideradasIds);
+  }
+  const { data: contagens } = await contagensQuery;
 
   type ContagemRow = {
     localizacao_id: string;
@@ -445,14 +491,20 @@ export async function computarDivergencias(sessaoId: string): Promise<void> {
     }
   }
 
-  // Detecta locs com saldo > 0 que ninguém bipou — geram divergência (qty=0)
-  const { data: locsSessao } = await sb
-    .from("siso_inventario_localizacoes")
-    .select("localizacao_id")
-    .eq("sessao_id", sessaoId);
-  const locIds = ((locsSessao ?? []) as Array<{ localizacao_id: string }>).map(
-    (l) => l.localizacao_id,
-  );
+  // Detecta locs com saldo > 0 que ninguém bipou — geram divergência (qty=0).
+  // Em modo parcial, só considera locs finalizadas (já filtradas em locsConsideradasIds).
+  let locIds: string[];
+  if (locsConsideradasIds) {
+    locIds = locsConsideradasIds;
+  } else {
+    const { data: locsSessao } = await sb
+      .from("siso_inventario_localizacoes")
+      .select("localizacao_id")
+      .eq("sessao_id", sessaoId);
+    locIds = ((locsSessao ?? []) as Array<{ localizacao_id: string }>).map(
+      (l) => l.localizacao_id,
+    );
+  }
 
   if (locIds.length > 0) {
     let estoqueQuery = sb

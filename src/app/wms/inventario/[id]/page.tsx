@@ -1,5 +1,5 @@
 "use client";
-import { use, useMemo } from "react";
+import { use, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -11,6 +11,7 @@ import {
 } from "@/hooks/use-inventario-realtime";
 import {
   Icon,
+  Modal,
   PageHeader,
   StatusBadge,
   Kpi,
@@ -80,6 +81,8 @@ export default function InventarioSupervisorPage({
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const { contagens, locs, operadores } = useInventarioRealtime(id);
+  const [encerrarOpen, setEncerrarOpen] = useState(false);
+  const [cancelarOpen, setCancelarOpen] = useState(false);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-inv", id],
@@ -99,13 +102,35 @@ export default function InventarioSupervisorPage({
   });
 
   const encerrar = useMutation({
-    mutationFn: () =>
+    mutationFn: (parcial: boolean = false) =>
       wmsApi<{ ok: true }>(`/api/wms/inventario/${id}/aprovar`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parcial }),
+      }),
+    onSuccess: (_data, parcial) => {
+      toast.success(
+        parcial
+          ? "Inventário parcial enviado · só locs contadas viraram divergência"
+          : "Contagem encerrada · divergências computadas",
+      );
+      setEncerrarOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const cancelar = useMutation({
+    mutationFn: () =>
+      wmsApi<{ ok: true }>(`/api/wms/inventario/${id}`, {
+        method: "DELETE",
       }),
     onSuccess: () => {
-      toast.success("Contagem encerrada · divergências computadas");
+      toast.success("Sessão cancelada · locks liberados");
+      setCancelarOpen(false);
+      setEncerrarOpen(false);
       queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
+      router.push("/wms/inventario");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -164,8 +189,13 @@ export default function InventarioSupervisorPage({
 
   const sessao = data?.sessao;
   const status = sessao?.status;
-  const anyPending = iniciar.isPending || encerrar.isPending || aplicar.isPending;
+  const anyPending =
+    iniciar.isPending ||
+    encerrar.isPending ||
+    aplicar.isPending ||
+    cancelar.isPending;
   const guide = status ? STATUS_GUIDE[status] : undefined;
+  const podeCancelar = status === "planejada" || status === "em_andamento";
 
   const meuSlot = user
     ? operadores.find(
@@ -254,24 +284,34 @@ export default function InventarioSupervisorPage({
           <button
             type="button"
             className="wms-btn wms-btn-primary"
-            disabled={anyPending || stats.pendentes > 0}
-            title={
-              stats.pendentes > 0
-                ? "Ainda há localizações pendentes no pool"
-                : ""
-            }
+            disabled={anyPending}
             onClick={() => {
+              if (stats.pendentes > 0) {
+                setEncerrarOpen(true);
+                return;
+              }
               if (
                 confirm(
-                  `Encerrar a contagem? ${stats.pendentes > 0 ? `Faltam ${stats.pendentes} locs no pool — elas serão tratadas como qty=0.` : "Todas as locs foram contadas."} As divergências serão computadas.`,
+                  "Encerrar a contagem? Todas as locs foram contadas. As divergências serão computadas.",
                 )
               ) {
-                encerrar.mutate();
+                encerrar.mutate(false);
               }
             }}
           >
             <Icon name="check" size={11} />
             {encerrar.isPending ? "Encerrando…" : "Encerrar contagem"}
+          </button>
+        )}
+        {podeCancelar && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-ghost"
+            disabled={anyPending}
+            onClick={() => setCancelarOpen(true)}
+          >
+            <Icon name="x" size={11} />
+            Cancelar sessão
           </button>
         )}
         {(status === "revisao" || status === "aprovada" || status === "aplicada") && (
@@ -343,6 +383,121 @@ export default function InventarioSupervisorPage({
             </table>
           </div>
         </>
+      )}
+
+      {encerrarOpen && (
+        <Modal
+          title="Encerrar contagem"
+          subtitle={`Pool de ${stats.total} loc(s) — ${stats.contadas} contada(s), ${stats.pendentes} pendente(s)`}
+          width={520}
+          onClose={() => !anyPending && setEncerrarOpen(false)}
+          footer={
+            <>
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                disabled={anyPending}
+                onClick={() => setEncerrarOpen(false)}
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-danger"
+                disabled={anyPending}
+                onClick={() => {
+                  if (
+                    confirm(
+                      "Cancelar a sessão? Tudo que foi bipado será descartado. Não dá pra desfazer.",
+                    )
+                  ) {
+                    cancelar.mutate();
+                  }
+                }}
+              >
+                <Icon name="x" size={11} />
+                {cancelar.isPending ? "Cancelando…" : "Cancelar tudo"}
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-primary"
+                disabled={anyPending}
+                onClick={() => encerrar.mutate(true)}
+              >
+                <Icon name="check" size={11} />
+                {encerrar.isPending
+                  ? "Enviando…"
+                  : `Subir parcial (${stats.contadas})`}
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, marginBottom: 12 }}>
+            Você ainda tem <strong>{stats.pendentes}</strong> localização(ões)
+            sem terminar. Escolha o que fazer:
+          </p>
+          <ul
+            style={{
+              fontSize: 13,
+              lineHeight: 1.6,
+              paddingLeft: 18,
+              marginBottom: 4,
+            }}
+          >
+            <li>
+              <strong>Subir parcial</strong> — só as {stats.contadas} loc(s)
+              finalizada(s) viram divergência. As {stats.pendentes} pendente(s)
+              ficam intocadas (estoque do sistema mantido).
+            </li>
+            <li>
+              <strong>Cancelar tudo</strong> — sessão é cancelada, locks são
+              liberados e nenhuma divergência é gerada.
+            </li>
+          </ul>
+        </Modal>
+      )}
+
+      {cancelarOpen && (
+        <Modal
+          title="Cancelar sessão"
+          subtitle={`${sessao?.nome ?? "Sessão"} · ${status}`}
+          width={460}
+          onClose={() => !anyPending && setCancelarOpen(false)}
+          footer={
+            <>
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                disabled={anyPending}
+                onClick={() => setCancelarOpen(false)}
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-danger"
+                disabled={anyPending}
+                onClick={() => cancelar.mutate()}
+              >
+                <Icon name="x" size={11} />
+                {cancelar.isPending ? "Cancelando…" : "Cancelar sessão"}
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13 }}>
+            A sessão será marcada como <strong>cancelada</strong>, os locks
+            externos das {stats.total} loc(s) são liberados e nenhuma
+            movimentação de estoque é gerada.
+          </p>
+          {stats.contadas > 0 || contagens.length > 0 ? (
+            <p style={{ fontSize: 12.5, marginTop: 8 }} className="wms-td-mute">
+              <Icon name="alert" size={11} /> Você já tem {stats.contadas}{" "}
+              loc(s) contada(s) e {contagens.length} bipe(s) registrados — eles
+              serão descartados.
+            </p>
+          ) : null}
+        </Modal>
       )}
     </>
   );

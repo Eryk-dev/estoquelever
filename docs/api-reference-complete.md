@@ -4851,6 +4851,12 @@ Cria locks em `siso_localizacao_locks` (motivo='cycle_count') e muda status pra 
 ### POST /api/wms/inventario/[id]/aprovar
 Computa divergências + aprova sessão. **400** se há divergências `pendente`.
 
+**Body (opcional):** `{ parcial?: boolean }`.
+- `parcial=false` (default): comportamento histórico — todas as locs do pool são consideradas. Locs com saldo>0 que ninguém bipou viram divergência qty=0.
+- `parcial=true`: só processa locs com status `contada`/`aprovada`. Locs `pendente`/`em_contagem` são puladas (não geram divergência; estoque do sistema mantido). Use quando o supervisor quer encerrar antes de terminar todo o pool e descartar o que não foi contado.
+
+**Response:** `{ ok: true, parcial: boolean }`.
+
 ### POST /api/wms/inventario/[id]/aplicar
 Gera movs `origem_tipo='inventario'` no ledger pra cada divergência aprovada (E ou S conforme delta). Marca divergências como `aplicada` e libera locks. **Response:** `{ movsGeradas }`.
 

@@ -1526,35 +1526,37 @@ function AdicionarComponenteForm({
           dropdownRect &&
           typeof document !== "undefined" &&
           createPortal(
-            <div
-              className="wms-picker-list"
-              style={{
-                position: "fixed",
-                top: dropdownRect.top,
-                left: dropdownRect.left,
-                width: dropdownRect.width,
-                zIndex: 9999,
-              }}
-            >
-              {candidatos.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className="wms-picker-item"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    setSelecionado({
-                      id: p.id,
-                      sku: p.sku,
-                      descricao: p.descricao,
-                    });
-                    setQ("");
-                  }}
-                >
-                  <span className="wms-mono">{p.sku}</span>
-                  <span className="wms-picker-desc">{p.descricao}</span>
-                </button>
-              ))}
+            <div className="wms-root" style={{ display: "contents" }}>
+              <div
+                className="wms-picker-list"
+                style={{
+                  position: "fixed",
+                  top: dropdownRect.top,
+                  left: dropdownRect.left,
+                  width: dropdownRect.width,
+                  zIndex: 9999,
+                }}
+              >
+                {candidatos.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="wms-picker-item"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setSelecionado({
+                        id: p.id,
+                        sku: p.sku,
+                        descricao: p.descricao,
+                      });
+                      setQ("");
+                    }}
+                  >
+                    <span className="wms-mono">{p.sku}</span>
+                    <span className="wms-picker-desc">{p.descricao}</span>
+                  </button>
+                ))}
+              </div>
             </div>,
             document.body,
           )}

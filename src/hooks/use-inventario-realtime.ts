@@ -6,8 +6,8 @@ import { wmsApi } from "@/lib/wms/api-client";
 // Cliente anônimo só pra subscribe ao Realtime channel.
 // IMPORTANTE: a leitura inicial NÃO usa esse client — vai pelo
 // endpoint /api/wms/inventario/[id] que é auth-gated. O channel só
-// recebe eventos operacionais (contagens novas + atualizações de
-// status de localização) que são informação de baixa sensibilidade.
+// recebe eventos operacionais (contagens, status de locs, slots de
+// operadores) que são informação de baixa sensibilidade.
 const sb = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -17,35 +17,55 @@ export interface Contagem {
   id: string;
   localizacao_id: string;
   produto_id: string;
+  empresa_dona_id: string;
   qty_contada: number;
-  rodada: number;
   criado_em: string;
   contada_por: string;
+  contada_por_user?: { nome?: string };
+  produto?: { sku?: string; descricao?: string };
 }
 
 export interface LocSessao {
   id: string;
   localizacao_id: string;
-  area_id: string | null;
   status: string;
   bloqueada_por: string | null;
-  localizacao?: { codigo?: string; tipo?: string };
+  bloqueada_em: string | null;
+  contagem_iniciada_em: string | null;
+  contagem_finalizada_em: string | null;
+  motivo: string | null;
+  localizacao?: { codigo?: string; tipo?: string; zona?: string };
+  bloqueada_por_user?: { nome?: string } | null;
+}
+
+export interface Operador {
+  id: string;
+  slot: number;
+  sessao_id: string;
+  usuario_id: string;
+  entrou_em: string;
+  finalizado_em: string | null;
+  locs_contadas: number;
+  ultima_acao_em: string;
+  usuario?: { nome?: string };
 }
 
 interface SessaoSnapshot {
   contagens?: Contagem[];
   localizacoes?: LocSessao[];
+  operadores?: Operador[];
 }
 
 export function useInventarioRealtime(sessaoId: string | null) {
   const [contagens, setContagens] = useState<Contagem[]>([]);
   const [locs, setLocs] = useState<LocSessao[]>([]);
+  const [operadores, setOperadores] = useState<Operador[]>([]);
 
   useEffect(() => {
     if (!sessaoId) return;
     let cancelled = false;
 
-    // 1. Snapshot inicial via API auth-gated (passa pelo session header).
+    // 1. Snapshot inicial via API auth-gated
     (async () => {
       try {
         const snap = await wmsApi<SessaoSnapshot>(
@@ -54,12 +74,13 @@ export function useInventarioRealtime(sessaoId: string | null) {
         if (cancelled) return;
         setContagens((snap.contagens ?? []) as Contagem[]);
         setLocs((snap.localizacoes ?? []) as LocSessao[]);
+        setOperadores((snap.operadores ?? []) as Operador[]);
       } catch {
-        // Falha de auth/rede: estado fica vazio, UI mostra empty state.
+        // Falha de auth/rede: estado vazio, UI mostra empty state
       }
     })();
 
-    // 2. Realtime: aplica eventos incrementalmente sobre o snapshot.
+    // 2. Realtime: aplica eventos incrementalmente
     const channel = sb
       .channel(`inventario:${sessaoId}`)
       .on(
@@ -70,7 +91,7 @@ export function useInventarioRealtime(sessaoId: string | null) {
           table: "siso_inventario_contagens",
           filter: `sessao_id=eq.${sessaoId}`,
         },
-        ({ new: r }) => setContagens((prev) => [...prev, r as Contagem]),
+        ({ new: r }) => setContagens((prev) => [r as Contagem, ...prev]),
       )
       .on(
         "postgres_changes",
@@ -83,7 +104,32 @@ export function useInventarioRealtime(sessaoId: string | null) {
         ({ new: r }) =>
           setLocs((prev) =>
             prev.map((x) =>
-              x.id === (r as LocSessao).id ? (r as LocSessao) : x,
+              x.id === (r as LocSessao).id ? { ...x, ...(r as LocSessao) } : x,
+            ),
+          ),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "siso_inventario_operadores",
+          filter: `sessao_id=eq.${sessaoId}`,
+        },
+        ({ new: r }) => setOperadores((prev) => [...prev, r as Operador]),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "siso_inventario_operadores",
+          filter: `sessao_id=eq.${sessaoId}`,
+        },
+        ({ new: r }) =>
+          setOperadores((prev) =>
+            prev.map((x) =>
+              x.id === (r as Operador).id ? { ...x, ...(r as Operador) } : x,
             ),
           ),
       )
@@ -95,5 +141,5 @@ export function useInventarioRealtime(sessaoId: string | null) {
     };
   }, [sessaoId]);
 
-  return { contagens, locs };
+  return { contagens, locs, operadores };
 }

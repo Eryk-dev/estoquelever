@@ -45,7 +45,7 @@ export default function DivergenciasPage({
       acao,
     }: {
       divergencia_id: string;
-      acao: "aprovar" | "rejeitar" | "recontar";
+      acao: "aprovar" | "rejeitar";
     }) =>
       wmsApi<{ ok: true }>(`/api/wms/inventario/${id}/divergencias`, {
         method: "PATCH",
@@ -188,20 +188,6 @@ export default function DivergenciasPage({
                             }
                           >
                             <Icon name="check" size={11} />
-                          </button>
-                          <button
-                            type="button"
-                            className="wms-btn wms-btn-sm wms-btn-ghost"
-                            disabled={resolver.isPending}
-                            title="Recontar"
-                            onClick={() =>
-                              resolver.mutate({
-                                divergencia_id: d.id,
-                                acao: "recontar",
-                              })
-                            }
-                          >
-                            <Icon name="rotate" size={11} />
                           </button>
                           <button
                             type="button"

@@ -1,31 +1,43 @@
 "use client";
-import { use, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
-import { ScanContagem } from "@/components/wms/scan-contagem";
+import { useInventarioRealtime } from "@/hooks/use-inventario-realtime";
 import { Icon, PageHeader, fmtNum } from "@/components/wms/ui/wms-ui";
-
-interface LocSessao {
-  id: string;
-  localizacao_id: string;
-  status: string;
-  localizacao?: { codigo?: string; tipo?: string };
-}
+import { useAuth } from "@/lib/auth-context";
+import type {
+  ProximaLocOutput,
+  EsperadoItem,
+} from "@/lib/wms/inventario";
 
 interface SessaoDetail {
   sessao?: {
+    id: string;
+    nome?: string;
     tipo: string;
-    modo_contagem: string;
-    empresa_dona_id?: string;
+    modo_contagem: "aberto" | "blind";
+    empresa_dona_id?: string | null;
+    status: string;
   };
-  localizacoes?: LocSessao[];
 }
 
 interface ProdutoMin {
   id: string;
   sku: string;
+  descricao?: string;
 }
+
+interface ContagemLocal {
+  sku: string;
+  produto_id: string;
+  descricao?: string;
+  qty: number;
+  esperado?: number;
+}
+
+type Etapa = "slot-picker" | "standby" | "confirming-loc" | "counting" | "pool-vazio";
 
 export default function ContarPage({
   params,
@@ -33,242 +45,706 @@ export default function ContarPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const router = useRouter();
   const queryClient = useQueryClient();
-  const [locId, setLocId] = useState<string>("");
-  const [contagensLocal, setContagensLocal] = useState<
-    { sku: string; produto_id: string; qty: number }[]
-  >([]);
+  const { user } = useAuth();
+  const { operadores } = useInventarioRealtime(id);
+
+  const [etapa, setEtapa] = useState<Etapa>("slot-picker");
+  const [locAtual, setLocAtual] = useState<ProximaLocOutput | null>(null);
+  const [contagens, setContagens] = useState<ContagemLocal[]>([]);
+  const [resumoFinal, setResumoFinal] = useState<{
+    locs: number;
+    minutos: number;
+  } | null>(null);
+  const [entrouEm, setEntrouEm] = useState<number | null>(null);
+  const scanRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["wms-inv", id],
     queryFn: () => wmsApi<SessaoDetail>(`/api/wms/inventario/${id}`),
   });
-  const sessao = data?.sessao;
-  const localizacoes = (data?.localizacoes ?? []).filter(
-    (l) => l.status === "pendente" || l.status === "recontagem",
-  );
-  const blind =
-    sessao?.modo_contagem === "blind" ||
-    sessao?.modo_contagem === "duplo_blind";
-  const locAtual = (data?.localizacoes ?? []).find(
-    (l) => l.localizacao_id === locId,
-  );
 
-  const pegarLoc = useMutation({
-    mutationFn: (newLocId: string) =>
-      wmsApi<{ ok: true }>(
-        `/api/wms/inventario/${id}/localizacoes/${newLocId}/bloquear`,
+  const sessao = data?.sessao;
+  const modoBlind = sessao?.modo_contagem === "blind";
+
+  // Detecta se o user já está num slot
+  const meuSlot = user
+    ? operadores.find(
+        (o) => o.usuario_id === user.id && o.finalizado_em === null,
+      )
+    : undefined;
+
+  // Sincroniza etapa com slot: se já tem slot e tá em slot-picker, vai pra standby
+  useEffect(() => {
+    if (meuSlot && etapa === "slot-picker") {
+      setEtapa("standby");
+      setEntrouEm(new Date(meuSlot.entrou_em).getTime());
+    }
+  }, [meuSlot, etapa]);
+
+  // Auto-foco no scan quando aplicável
+  useEffect(() => {
+    if (etapa === "confirming-loc" || etapa === "counting") {
+      scanRef.current?.focus();
+    }
+  }, [etapa]);
+
+  // ─── Mutations ───
+  const entrarSlot = useMutation({
+    mutationFn: (slot: number) =>
+      wmsApi<{ ok: true; slot: number }>(
+        `/api/wms/inventario/${id}/slots/${slot}/entrar`,
         { method: "POST" },
       ),
-    onSuccess: (_, newLocId) => {
-      setLocId(newLocId);
-      setContagensLocal([]);
-      toast.success("Localização bloqueada");
+    onSuccess: (r) => {
+      toast.success(`Entrou como OP${r.slot}`);
+      setEntrouEm(Date.now());
+      setEtapa("standby");
       queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const sairSlot = useMutation({
+    mutationFn: () =>
+      wmsApi<{ ok: true }>(`/api/wms/inventario/${id}/slots`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      toast.success("Você saiu do slot");
+      router.push(`/wms/inventario/${id}`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const pegarProxima = useMutation({
+    mutationFn: () =>
+      wmsApi<ProximaLocOutput>(`/api/wms/inventario/${id}/proxima-loc`, {
+        method: "POST",
+      }),
+    onSuccess: (r) => {
+      if (r.pool_vazio) {
+        const minutos = entrouEm
+          ? Math.round((Date.now() - entrouEm) / 60000)
+          : 0;
+        setResumoFinal({
+          locs: meuSlot?.locs_contadas ?? 0,
+          minutos,
+        });
+        setEtapa("pool-vazio");
+        return;
+      }
+      setLocAtual(r);
+      setContagens(
+        (r.esperados ?? []).map((e: EsperadoItem) => ({
+          sku: e.sku,
+          produto_id: e.produto_id,
+          descricao: e.descricao,
+          qty: 0,
+          esperado: e.saldo_esperado,
+        })),
+      );
+      setEtapa("confirming-loc");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const finalizarLoc = useMutation({
+    mutationFn: () => {
+      if (!locAtual?.inv_loc_id)
+        return Promise.reject(new Error("nenhuma loc ativa"));
+      return wmsApi<{ ok: true }>(
+        `/api/wms/inventario/${id}/localizacoes/${locAtual.inv_loc_id}/finalizar`,
+        { method: "POST" },
+      );
+    },
+    onSuccess: () => {
+      toast.success("Localização finalizada");
+      setLocAtual(null);
+      setContagens([]);
+      setEtapa("standby");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // ─── Scan handler ───
   async function handleScan(value: string) {
-    if (!sessao?.empresa_dona_id) {
+    const v = value.trim();
+    if (!v) return;
+
+    // Estado confirming-loc: aceita o código da loc OU primeiro SKU
+    if (etapa === "confirming-loc") {
+      if (
+        locAtual?.codigo &&
+        v.toLowerCase() === locAtual.codigo.toLowerCase()
+      ) {
+        toast.success("Localização confirmada");
+        setEtapa("counting");
+        return;
+      }
+      // Não é o código da loc — assume que é produto e prossegue
+      setEtapa("counting");
+      await registrarBipe(v);
+      return;
+    }
+
+    if (etapa === "counting") {
+      await registrarBipe(v);
+    }
+  }
+
+  async function registrarBipe(v: string) {
+    if (!locAtual?.loc_id || !sessao) return;
+
+    // Lookup produto por SKU/GTIN
+    let produto: ProdutoMin | undefined;
+    try {
+      const r = await wmsApi<{ rows?: ProdutoMin[] }>(
+        `/api/wms/produtos?q=${encodeURIComponent(v)}&limit=1`,
+      );
+      produto = r.rows?.[0];
+    } catch {
+      // ignora — produto fica undefined
+    }
+    if (!produto) {
+      toast.error(`SKU não encontrado: ${v}`);
+      return;
+    }
+
+    // Resolve empresa_dona: se sessão não restringe, pega do esperado (modo aberto)
+    let empresaDona = sessao.empresa_dona_id ?? null;
+    if (!empresaDona) {
+      const esp = locAtual.esperados?.find(
+        (e: EsperadoItem) => e.produto_id === produto!.id,
+      );
+      empresaDona = esp?.empresa_dona_id ?? null;
+    }
+    if (!empresaDona) {
       toast.error(
-        "Sessão sem empresa_dona_id — configure antes de contar (multi-empresa)",
+        "Não foi possível identificar a empresa dona. Configure a sessão com empresa_dona_id.",
       );
       return;
     }
+
     try {
-      const r = await wmsApi<{ rows?: ProdutoMin[] }>(
-        `/api/wms/produtos?q=${encodeURIComponent(value)}&limit=1`,
-      );
-      const p = r.rows?.[0];
-      if (!p) {
-        toast.error("SKU não encontrado");
-        return;
-      }
       await wmsApi(`/api/wms/inventario/${id}/contagens`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          localizacao_id: locId,
-          produto_id: p.id,
-          empresa_dona_id: sessao.empresa_dona_id,
+          localizacao_id: locAtual.loc_id,
+          produto_id: produto.id,
+          empresa_dona_id: empresaDona,
           qty_contada: 1,
           modo: "incremental",
         }),
       });
-      setContagensLocal((prev) => {
-        const existing = prev.find((c) => c.produto_id === p.id);
-        if (existing) {
+      setContagens((prev) => {
+        const existente = prev.find((c) => c.produto_id === produto!.id);
+        if (existente) {
           return prev.map((c) =>
-            c.produto_id === p.id ? { ...c, qty: c.qty + 1 } : c,
+            c.produto_id === produto!.id ? { ...c, qty: c.qty + 1 } : c,
           );
         }
-        return [...prev, { sku: p.sku, produto_id: p.id, qty: 1 }];
+        return [
+          ...prev,
+          {
+            produto_id: produto!.id,
+            sku: produto!.sku,
+            descricao: produto!.descricao,
+            qty: 1,
+          },
+        ];
       });
     } catch (e) {
       toast.error((e as Error).message);
     }
   }
 
-  const finalizar = useMutation({
-    mutationFn: () =>
-      wmsApi<{ ok: true }>(
-        `/api/wms/inventario/${id}/localizacoes/${locId}/bloquear`,
-        { method: "DELETE" },
-      ),
-    onSuccess: () => {
-      setLocId("");
-      setContagensLocal([]);
-      toast.success("Localização concluída");
-      queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  if (isLoading)
+  // ─── Render por etapa ───
+  if (isLoading) {
     return <div className="wms-loading-pane">Carregando sessão…</div>;
+  }
 
+  if (!sessao || sessao.status === "cancelada") {
+    return (
+      <div className="wms-empty-block">
+        <h3>Sessão indisponível</h3>
+        <p>Esta sessão não pode receber contagens.</p>
+      </div>
+    );
+  }
+
+  // Resumo final
+  if (etapa === "pool-vazio") {
+    return (
+      <ResumoFinal
+        locsContadas={resumoFinal?.locs ?? meuSlot?.locs_contadas ?? 0}
+        minutos={resumoFinal?.minutos ?? 0}
+        onSair={() => sairSlot.mutate()}
+        onVoltar={() => router.push(`/wms/inventario/${id}`)}
+      />
+    );
+  }
+
+  // Slot picker
+  if (etapa === "slot-picker") {
+    return (
+      <SlotPicker
+        operadores={operadores}
+        meuId={user?.id}
+        onEscolher={(slot) => entrarSlot.mutate(slot)}
+        pending={entrarSlot.isPending}
+      />
+    );
+  }
+
+  // Standby / confirming / counting — header comum
   return (
     <>
       <PageHeader
-        title="Contagem"
-        subtitle={`Sessão ${id.slice(0, 8)} · modo ${sessao?.modo_contagem ?? "—"}`}
-      />
+        title={sessao.nome ?? `Sessão ${id.slice(0, 8)}`}
+        subtitle={`Você é OP${meuSlot?.slot ?? "?"} · ${
+          modoBlind ? "blind" : "aberto"
+        }`}
+      >
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost wms-btn-sm"
+          onClick={() => {
+            if (
+              confirm(
+                "Sair do slot? Locs em contagem ficam liberadas pra cleanup.",
+              )
+            ) {
+              sairSlot.mutate();
+            }
+          }}
+        >
+          Sair do slot
+        </button>
+      </PageHeader>
 
-      {blind && (
-        <div className="wms-hint-card" style={{ marginBottom: 14 }}>
-          <Icon name="alert" />
-          <span>
-            <strong>Modo blind.</strong> Você não vê o saldo esperado durante a
-            contagem.
-          </span>
+      {etapa === "standby" && (
+        <StandbyView
+          locsContadas={meuSlot?.locs_contadas ?? 0}
+          onPegarProxima={() => pegarProxima.mutate()}
+          pending={pegarProxima.isPending}
+        />
+      )}
+
+      {(etapa === "confirming-loc" || etapa === "counting") && locAtual && (
+        <CounterView
+          loc={locAtual}
+          contagens={contagens}
+          confirmingLoc={etapa === "confirming-loc"}
+          modoBlind={modoBlind}
+          scanRef={scanRef}
+          onScan={handleScan}
+          onConfirmar={() => setEtapa("counting")}
+          onFinalizar={() => finalizarLoc.mutate()}
+          finalizando={finalizarLoc.isPending}
+        />
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Sub-views
+// ─────────────────────────────────────────────────────────────────────
+
+function SlotPicker({
+  operadores,
+  meuId,
+  onEscolher,
+  pending,
+}: {
+  operadores: Array<{
+    slot: number;
+    usuario_id: string;
+    finalizado_em: string | null;
+    locs_contadas: number;
+    usuario?: { nome?: string };
+  }>;
+  meuId?: string;
+  onEscolher: (slot: number) => void;
+  pending: boolean;
+}) {
+  return (
+    <>
+      <PageHeader
+        title="Quem é você?"
+        subtitle="Escolha um slot livre. Você e até 4 colegas podem contar ao mesmo tempo."
+      />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {[1, 2, 3, 4, 5].map((slot) => {
+          const op = operadores.find(
+            (o) => o.slot === slot && o.finalizado_em === null,
+          );
+          const livre = !op;
+          const ehMeuSlotJa = op && op.usuario_id === meuId;
+          return (
+            <button
+              key={slot}
+              type="button"
+              disabled={!livre || pending}
+              onClick={() => onEscolher(slot)}
+              style={{
+                padding: 18,
+                minHeight: 110,
+                borderRadius: "var(--wms-r-3)",
+                border: livre
+                  ? "2px dashed var(--wms-c-border)"
+                  : "1px solid var(--wms-c-border)",
+                background: livre ? "transparent" : "var(--wms-c-faint)",
+                cursor: livre ? "pointer" : "not-allowed",
+                opacity: livre ? 1 : 0.6,
+                textAlign: "left",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              <strong style={{ fontSize: 16 }}>OP{slot}</strong>
+              {livre ? (
+                <span className="wms-td-mute" style={{ fontSize: 12 }}>
+                  Slot livre — clique pra entrar
+                </span>
+              ) : (
+                <>
+                  <span style={{ fontSize: 13 }}>
+                    {op.usuario?.nome ?? "Operador"}
+                  </span>
+                  <span
+                    className="wms-td-mute"
+                    style={{ fontSize: 11.5 }}
+                  >
+                    {op.locs_contadas} loc(s) contada(s)
+                    {ehMeuSlotJa && " · é você"}
+                  </span>
+                </>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function StandbyView({
+  locsContadas,
+  onPegarProxima,
+  pending,
+}: {
+  locsContadas: number;
+  onPegarProxima: () => void;
+  pending: boolean;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 24,
+        padding: "32px 16px",
+      }}
+    >
+      <div className="wms-td-mute" style={{ fontSize: 14 }}>
+        {locsContadas === 0
+          ? "Pronto pra começar?"
+          : `Você já contou ${locsContadas} loc(s)`}
+      </div>
+      <button
+        type="button"
+        className="wms-btn wms-btn-primary"
+        disabled={pending}
+        onClick={onPegarProxima}
+        style={{
+          fontSize: 18,
+          padding: "20px 32px",
+          minHeight: 80,
+          minWidth: 280,
+        }}
+      >
+        <Icon name="arrow-right" size={18} />
+        {pending ? "Buscando…" : "PEGAR PRÓXIMA LOCALIZAÇÃO"}
+      </button>
+      <div className="wms-td-mute" style={{ fontSize: 12, textAlign: "center" }}>
+        O sistema vai te direcionar pra loc mais próxima da última
+        <br />e longe dos outros operadores.
+      </div>
+    </div>
+  );
+}
+
+function CounterView({
+  loc,
+  contagens,
+  confirmingLoc,
+  modoBlind,
+  scanRef,
+  onScan,
+  onConfirmar,
+  onFinalizar,
+  finalizando,
+}: {
+  loc: ProximaLocOutput;
+  contagens: ContagemLocal[];
+  confirmingLoc: boolean;
+  modoBlind: boolean;
+  scanRef: React.RefObject<HTMLInputElement | null>;
+  onScan: (v: string) => void;
+  onConfirmar: () => void;
+  onFinalizar: () => void;
+  finalizando: boolean;
+}) {
+  const totalContado = useMemo(
+    () => contagens.reduce((acc, c) => acc + c.qty, 0),
+    [contagens],
+  );
+
+  return (
+    <>
+      {/* Header da loc atual */}
+      <div
+        style={{
+          background: confirmingLoc
+            ? "var(--wms-c-warning-bg, #fef3c7)"
+            : "var(--wms-c-faint)",
+          border: "1px solid var(--wms-c-border)",
+          borderRadius: "var(--wms-r-3)",
+          padding: 18,
+          marginBottom: 14,
+          textAlign: "center",
+        }}
+      >
+        <div
+          className="wms-td-mute"
+          style={{ fontSize: 11, marginBottom: 4, letterSpacing: 1 }}
+        >
+          {confirmingLoc ? "VÁ ATÉ A LOCALIZAÇÃO" : "CONTANDO"}
+        </div>
+        <div
+          className="wms-mono"
+          style={{ fontSize: 32, fontWeight: 700, lineHeight: 1.1 }}
+        >
+          {loc.codigo}
+        </div>
+        {loc.zona && (
+          <div className="wms-td-mute" style={{ fontSize: 12, marginTop: 4 }}>
+            zona {loc.zona} · {loc.tipo}
+          </div>
+        )}
+      </div>
+
+      {confirmingLoc && (
+        <div
+          style={{
+            background: "var(--wms-c-panel)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-3)",
+            padding: 14,
+            marginBottom: 14,
+            fontSize: 13,
+          }}
+        >
+          <div style={{ marginBottom: 8 }}>
+            <strong>Bipe o QR da localização</strong> pra confirmar (recomendado).
+            <br />
+            Ou clique abaixo se a loc não tem etiqueta.
+          </div>
+          <button
+            type="button"
+            className="wms-btn wms-btn-ghost wms-btn-sm"
+            onClick={onConfirmar}
+          >
+            Sem QR — confirmar manualmente
+          </button>
         </div>
       )}
 
-      {!locId ? (
-        <>
-          <h3 className="wms-sec-h">Localizações pendentes</h3>
-          {localizacoes.length === 0 ? (
-            <div className="wms-empty-block">
-              <h3>Nenhuma localização disponível</h3>
-              <p>
-                Todas as localizações da sessão já foram contadas ou estão
-                bloqueadas por outro operador.
-              </p>
-            </div>
-          ) : (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                gap: 8,
-              }}
-            >
-              {localizacoes.map((l) => (
-                <button
-                  key={l.id}
-                  type="button"
-                  className="wms-card"
-                  style={{ textAlign: "left", cursor: "pointer" }}
-                  disabled={pegarLoc.isPending}
-                  onClick={() => pegarLoc.mutate(l.localizacao_id)}
-                >
-                  <div className="wms-card-body">
-                    <div className="wms-mono" style={{ fontSize: 14, fontWeight: 600 }}>
-                      {l.localizacao?.codigo}
-                    </div>
-                    <div className="wms-td-mute" style={{ fontSize: 12 }}>
-                      {l.localizacao?.tipo}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </>
+      {/* Scan input */}
+      <input
+        ref={scanRef}
+        placeholder={
+          confirmingLoc
+            ? "bipe o QR da localização"
+            : "bipe SKU ou GTIN do produto"
+        }
+        onKeyDown={(e) => {
+          const target = e.target as HTMLInputElement;
+          if (e.key === "Enter" && target.value) {
+            onScan(target.value);
+            target.value = "";
+          }
+        }}
+        className="w-full rounded-xl border-2 border-line bg-paper px-3 py-3 font-mono text-lg text-ink placeholder:text-ink-faint focus:border-ink focus:outline-none"
+        style={{ marginBottom: 16 }}
+      />
+
+      {/* Lista de contagens */}
+      <h3 className="wms-sec-h">
+        Contagens nesta loc · {fmtNum(totalContado)} item(s)
+      </h3>
+      {contagens.length === 0 ? (
+        <div className="wms-exp-empty">
+          {confirmingLoc
+            ? "Confirme a loc e comece a bipar."
+            : "Bipe os produtos da prateleira."}
+        </div>
       ) : (
-        <>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "10px 14px",
-              background: "var(--wms-c-faint)",
-              border: "1px solid var(--wms-c-border)",
-              borderRadius: "var(--wms-r-3)",
-              marginBottom: 12,
-            }}
-          >
-            <div>
-              <div className="wms-td-mute" style={{ fontSize: 11 }}>
-                Contando
-              </div>
-              <div className="wms-mono" style={{ fontSize: 16, fontWeight: 600 }}>
-                {locAtual?.localizacao?.codigo ?? locId.slice(0, 8)}
-              </div>
-            </div>
-            <button
-              type="button"
-              className="wms-btn wms-btn-ghost wms-btn-sm"
-              onClick={() => {
-                setLocId("");
-                setContagensLocal([]);
-              }}
-            >
-              Trocar localização
-            </button>
-          </div>
-
-          <ScanContagem onScan={handleScan} />
-
-          <h3 className="wms-sec-h" style={{ marginTop: 16 }}>
-            Contagens nesta localização
-          </h3>
-          {contagensLocal.length === 0 ? (
-            <div className="wms-exp-empty">Nenhum bipe ainda.</div>
-          ) : (
-            <div className="wms-tbl">
-              <table>
-                <thead>
-                  <tr>
-                    <th>SKU</th>
-                    <th className="wms-tar">Quantidade</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contagensLocal.map((c) => (
-                    <tr key={c.produto_id}>
-                      <td className="wms-mono">{c.sku}</td>
-                      <td className="wms-tar wms-mono">{fmtNum(c.qty)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              marginTop: 16,
-              paddingTop: 16,
-              borderTop: "1px solid var(--wms-c-border)",
-            }}
-          >
-            <button
-              type="button"
-              className="wms-btn wms-btn-primary"
-              disabled={contagensLocal.length === 0 || finalizar.isPending}
-              onClick={() => finalizar.mutate()}
-            >
-              <Icon name="check" size={11} />
-              {finalizar.isPending ? "Finalizando…" : "Finalizar localização"}
-            </button>
-          </div>
-        </>
+        <div className="wms-tbl">
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Descrição</th>
+                <th className="wms-tar">Bipado</th>
+                {!modoBlind && <th className="wms-tar">Esperado</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {contagens.map((c) => (
+                <tr key={c.produto_id}>
+                  <td className="wms-mono">{c.sku}</td>
+                  <td className="wms-td-mute" style={{ fontSize: 12 }}>
+                    {c.descricao ?? "—"}
+                  </td>
+                  <td className="wms-tar wms-mono">{fmtNum(c.qty)}</td>
+                  {!modoBlind && (
+                    <td className="wms-tar wms-mono wms-td-mute">
+                      {c.esperado !== undefined ? fmtNum(c.esperado) : "—"}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
+
+      {/* Botão finalizar */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          marginTop: 20,
+          paddingTop: 14,
+          borderTop: "1px solid var(--wms-c-border)",
+        }}
+      >
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary"
+          disabled={confirmingLoc || finalizando}
+          onClick={onFinalizar}
+        >
+          <Icon name="check" size={11} />
+          {finalizando ? "Finalizando…" : "FINALIZAR LOCALIZAÇÃO"}
+        </button>
+      </div>
     </>
+  );
+}
+
+function ResumoFinal({
+  locsContadas,
+  minutos,
+  onSair,
+  onVoltar,
+}: {
+  locsContadas: number;
+  minutos: number;
+  onSair: () => void;
+  onVoltar: () => void;
+}) {
+  const velocidade = minutos > 0 ? Math.round((locsContadas / minutos) * 60) : 0;
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 18,
+        padding: "48px 16px",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: 56 }}>🎉</div>
+      <div style={{ fontSize: 22, fontWeight: 700 }}>Você terminou!</div>
+      <div className="wms-td-mute" style={{ maxWidth: 360 }}>
+        O pool de localizações foi esvaziado. Obrigado pela contagem.
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 10,
+          marginTop: 12,
+          width: "100%",
+          maxWidth: 480,
+        }}
+      >
+        <Kpi label="Locs contadas" value={locsContadas} />
+        <Kpi
+          label="Tempo"
+          value={
+            minutos < 60
+              ? `${minutos}min`
+              : `${Math.floor(minutos / 60)}h ${minutos % 60}min`
+          }
+        />
+        <Kpi label="Velocidade" value={`${velocidade} locs/h`} />
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary"
+          onClick={onSair}
+        >
+          Sair do slot
+        </button>
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost"
+          onClick={onVoltar}
+        >
+          Ver painel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Kpi local pra não importar de wms-ui inline
+function Kpi({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div
+      style={{
+        border: "1px solid var(--wms-c-border)",
+        borderRadius: "var(--wms-r-3)",
+        padding: 10,
+        textAlign: "center",
+      }}
+    >
+      <div
+        className="wms-td-mute"
+        style={{ fontSize: 11, letterSpacing: 0.5 }}
+      >
+        {label}
+      </div>
+      <div className="wms-mono" style={{ fontSize: 18, fontWeight: 700 }}>
+        {value}
+      </div>
+    </div>
   );
 }

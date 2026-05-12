@@ -51,16 +51,19 @@ export async function PATCH(
     );
   }
   const sb = createServiceClient();
+  // Sem "recontagem" no novo fluxo — supervisor decide só aprovar/rejeitar
+  // a divergência depois da contagem encerrada.
   const novoStatus =
     body.acao === "aprovar"
       ? "aprovada"
       : body.acao === "rejeitar"
         ? "rejeitada"
-        : body.acao === "recontar"
-          ? "recontagem_solicitada"
-          : null;
+        : null;
   if (!novoStatus) {
-    return NextResponse.json({ error: "acao inválida" }, { status: 400 });
+    return NextResponse.json(
+      { error: "acao inválida (use 'aprovar' ou 'rejeitar')" },
+      { status: 400 },
+    );
   }
 
   await sb
@@ -72,26 +75,6 @@ export async function PATCH(
       observacoes_resolucao: body.observacoes,
     })
     .eq("id", body.divergencia_id);
-
-  if (body.acao === "recontar") {
-    const { data: d } = await sb
-      .from("siso_inventario_divergencias")
-      .select("localizacao_id, sessao_id")
-      .eq("id", body.divergencia_id)
-      .single();
-    if (d) {
-      const dr = d as { localizacao_id: string; sessao_id: string };
-      await sb
-        .from("siso_inventario_localizacoes")
-        .update({
-          status: "recontagem",
-          bloqueada_por: null,
-          bloqueada_em: null,
-        })
-        .eq("sessao_id", dr.sessao_id)
-        .eq("localizacao_id", dr.localizacao_id);
-    }
-  }
 
   return NextResponse.json({ ok: true });
 }

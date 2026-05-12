@@ -5,13 +5,17 @@ import { toast } from "sonner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
-import { useInventarioRealtime } from "@/hooks/use-inventario-realtime";
+import {
+  useInventarioRealtime,
+  type Operador,
+} from "@/hooks/use-inventario-realtime";
 import {
   Icon,
   PageHeader,
   StatusBadge,
   Kpi,
 } from "@/components/wms/ui/wms-ui";
+import { useAuth } from "@/lib/auth-context";
 
 interface SessaoData {
   sessao?: {
@@ -19,9 +23,11 @@ interface SessaoData {
     tipo: string;
     modo_contagem: string;
     nome?: string;
+    galpao?: { nome?: string };
     criado_em?: string;
+    iniciada_em?: string;
+    tamanho_pool?: number;
   } | null;
-  areas?: Array<{ id: string; nome: string; operador?: { nome?: string } }>;
 }
 
 const STATUS_GUIDE: Record<
@@ -31,31 +37,30 @@ const STATUS_GUIDE: Record<
   planejada: {
     titulo: "Sessão criada",
     descricao:
-      "As localizações foram configuradas. Inicie pra criar os locks e começar a contar.",
-    proximo: "Inicie e abra o handheld pra bipar produtos.",
+      "Aguardando operador assumir um slot. Quando o primeiro entrar, a sessão arranca automaticamente.",
+    proximo: "Operadores entram pela tela handheld e puxam locs uma a uma.",
   },
   em_andamento: {
     titulo: "Contagem em andamento",
     descricao:
-      "Operador deve abrir o handheld, pegar uma localização e bipar produtos. Quando todas estiverem contadas, finalize a sessão.",
-    proximo:
-      "Use o handheld pra contar e 'Finalizar & aprovar' quando terminar.",
+      "Operadores estão puxando localizações do pool. Acompanhe ao vivo. Quando o pool esvaziar, encerre pra computar divergências.",
+    proximo: "Encerre a sessão quando todas as locs forem contadas.",
   },
   revisao: {
     titulo: "Em revisão",
     descricao:
-      "Contagem finalizada. Há divergências entre saldo do sistema e contagem.",
-    proximo: "Resolva as divergências (aprovar/recontar/rejeitar) e aprove.",
+      "Contagem encerrada. Divergências computadas. Revise as pendentes e aprove pra liberar pra aplicação.",
+    proximo: "Resolva divergências (aprovar/rejeitar) e aprove a sessão.",
   },
   aprovada: {
     titulo: "Sessão aprovada",
     descricao:
-      "Divergências aprovadas. Aplique no estoque pra gerar as movimentações no ledger.",
+      "Pronto pra aplicar no estoque — vai gerar movimentações no ledger.",
     proximo: "Clique em 'Aplicar no estoque'.",
   },
   aplicada: {
     titulo: "Concluída",
-    descricao: "Movimentações geradas. Veja o relatório final.",
+    descricao: "Movimentações geradas. Sessão fechada.",
     proximo: "—",
   },
   cancelada: {
@@ -65,7 +70,7 @@ const STATUS_GUIDE: Record<
   },
 };
 
-export default function InventarioDetailPage({
+export default function InventarioSupervisorPage({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -73,7 +78,8 @@ export default function InventarioDetailPage({
   const { id } = use(params);
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { contagens, locs } = useInventarioRealtime(id);
+  const { user } = useAuth();
+  const { contagens, locs, operadores } = useInventarioRealtime(id);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-inv", id],
@@ -86,31 +92,19 @@ export default function InventarioDetailPage({
         method: "POST",
       }),
     onSuccess: () => {
-      toast.success("Sessão iniciada");
+      toast.success("Sessão iniciada — operadores já podem entrar");
       queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const iniciarEContar = useMutation({
-    mutationFn: () =>
-      wmsApi<{ ok: true }>(`/api/wms/inventario/${id}/iniciar`, {
-        method: "POST",
-      }),
-    onSuccess: () => {
-      toast.success("Sessão iniciada");
-      router.push(`/wms/inventario/${id}/contar`);
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const aprovar = useMutation({
+  const encerrar = useMutation({
     mutationFn: () =>
       wmsApi<{ ok: true }>(`/api/wms/inventario/${id}/aprovar`, {
         method: "POST",
       }),
     onSuccess: () => {
-      toast.success("Sessão aprovada");
+      toast.success("Contagem encerrada · divergências computadas");
       queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -122,7 +116,7 @@ export default function InventarioDetailPage({
         method: "POST",
       }),
     onSuccess: (r) => {
-      toast.success(`${r.movsGeradas} movs geradas`);
+      toast.success(`${r.movsGeradas} movimentações geradas no ledger`);
       queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
       queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
       queryClient.invalidateQueries({ queryKey: ["wms-ledger"] });
@@ -130,41 +124,31 @@ export default function InventarioDetailPage({
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const progresso = useMemo(() => {
+  // ─── KPIs derivados do realtime ───
+  const stats = useMemo(() => {
     const total = locs.length;
-    const concluidas = locs.filter(
+    const contadas = locs.filter(
       (l) => l.status === "contada" || l.status === "aprovada",
     ).length;
-    return total > 0 ? concluidas / total : 0;
+    const emContagem = locs.filter((l) => l.status === "em_contagem").length;
+    const pendentes = locs.filter((l) => l.status === "pendente").length;
+    const divergentes = locs.filter((l) => l.status === "divergente").length;
+    const pct = total > 0 ? Math.round((contadas / total) * 100) : 0;
+    return { total, contadas, emContagem, pendentes, divergentes, pct };
   }, [locs]);
 
-  const divergentes = useMemo(
-    () => locs.filter((l) => l.status === "divergente").length,
-    [locs],
-  );
-
-  // Agrega progresso por área usando area_id das localizações
-  const areaStats = useMemo(() => {
-    const m = new Map<
-      string,
-      { total: number; contadas: number; emContagem: number; divergentes: number }
-    >();
-    for (const l of locs) {
-      const key = l.area_id ?? "_sem_area";
-      const cur = m.get(key) ?? {
-        total: 0,
-        contadas: 0,
-        emContagem: 0,
-        divergentes: 0,
-      };
-      cur.total++;
-      if (l.status === "contada" || l.status === "aprovada") cur.contadas++;
-      if (l.status === "em_contagem") cur.emContagem++;
-      if (l.status === "divergente") cur.divergentes++;
-      m.set(key, cur);
-    }
-    return m;
-  }, [locs]);
+  // Velocidade média do galpão (locs/h)
+  const velocidadeMedia = useMemo(() => {
+    const ativos = operadores.filter((o) => o.finalizado_em === null);
+    if (ativos.length === 0) return 0;
+    const totalLocs = ativos.reduce((acc, o) => acc + o.locs_contadas, 0);
+    const horas =
+      ativos.reduce((acc, o) => {
+        const ms = Date.now() - new Date(o.entrou_em).getTime();
+        return acc + ms / 1000 / 3600;
+      }, 0) / ativos.length;
+    return horas > 0 ? Math.round(totalLocs / horas) : 0;
+  }, [operadores]);
 
   if (isLoading) {
     return <div className="wms-loading-pane">Carregando sessão…</div>;
@@ -180,19 +164,14 @@ export default function InventarioDetailPage({
 
   const sessao = data?.sessao;
   const status = sessao?.status;
-  const anyMutationPending =
-    iniciar.isPending ||
-    iniciarEContar.isPending ||
-    aprovar.isPending ||
-    aplicar.isPending;
-  const totalLocs = locs.length;
-  const concluidas = Math.round(progresso * totalLocs);
-  const pendentes = totalLocs - concluidas;
-  const acuracidade =
-    concluidas > 0
-      ? Math.round((1 - divergentes / Math.max(concluidas, 1)) * 100)
-      : 0;
+  const anyPending = iniciar.isPending || encerrar.isPending || aplicar.isPending;
   const guide = status ? STATUS_GUIDE[status] : undefined;
+
+  const meuSlot = user
+    ? operadores.find(
+        (o) => o.usuario_id === user.id && o.finalizado_em === null,
+      )
+    : undefined;
 
   return (
     <>
@@ -200,7 +179,7 @@ export default function InventarioDetailPage({
         title={sessao?.nome ?? `Sessão ${id.slice(0, 8)}`}
         subtitle={
           sessao
-            ? `${sessao.tipo === "cycle_count" ? "Cycle count" : "Completo"} · modo ${sessao.modo_contagem}`
+            ? `${sessao.tipo === "cycle_count" ? "Cycle count" : "Inventário completo"} · modo ${sessao.modo_contagem} · ${sessao.galpao?.nome ?? "—"}`
             : undefined
         }
       >
@@ -208,15 +187,12 @@ export default function InventarioDetailPage({
       </PageHeader>
 
       <div className="wms-kpis">
-        <Kpi label="Pendentes" value={pendentes} />
-        <Kpi label="Concluídas" value={concluidas} />
-        <Kpi
-          label="Divergentes"
-          value={divergentes}
-          danger={divergentes > 0}
-        />
-        <Kpi label="Acuracidade" value={`${acuracidade}%`} />
-        <Kpi label="Contagens registradas" value={contagens.length} />
+        <Kpi label="Pool total" value={stats.total} />
+        <Kpi label="Contadas" value={`${stats.contadas} (${stats.pct}%)`} />
+        <Kpi label="Em contagem" value={stats.emContagem} />
+        <Kpi label="Pendentes" value={stats.pendentes} />
+        <Kpi label="Divergentes" value={stats.divergentes} danger={stats.divergentes > 0} />
+        <Kpi label="Velocidade média" value={`${velocidadeMedia} locs/h`} />
       </div>
 
       {guide && (
@@ -231,9 +207,7 @@ export default function InventarioDetailPage({
             fontSize: 13,
           }}
         >
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            {guide.titulo}
-          </div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{guide.titulo}</div>
           <div className="wms-td-mute" style={{ marginBottom: 6 }}>
             {guide.descricao}
           </div>
@@ -246,181 +220,224 @@ export default function InventarioDetailPage({
         </div>
       )}
 
+      {/* Ações de supervisor */}
       <div
         style={{
           display: "flex",
           gap: 8,
           flexWrap: "wrap",
-          marginBottom: 16,
+          marginBottom: 20,
         }}
       >
         {status === "planejada" && (
-          <>
-            <button
-              type="button"
-              className="wms-btn wms-btn-primary"
-              disabled={anyMutationPending}
-              onClick={() => iniciarEContar.mutate()}
-            >
-              <Icon name="check" size={11} />
-              {iniciarEContar.isPending
-                ? "Iniciando…"
-                : "Iniciar e abrir handheld"}
-            </button>
-            <button
-              type="button"
-              className="wms-btn wms-btn-ghost"
-              disabled={anyMutationPending}
-              onClick={() => iniciar.mutate()}
-            >
-              Só iniciar
-            </button>
-          </>
+          <button
+            type="button"
+            className="wms-btn wms-btn-primary"
+            disabled={anyPending}
+            onClick={() => iniciar.mutate()}
+          >
+            <Icon name="check" size={11} />
+            {iniciar.isPending ? "Iniciando…" : "Iniciar sessão"}
+          </button>
+        )}
+        {(status === "planejada" || status === "em_andamento") && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-ghost"
+            onClick={() => router.push(`/wms/inventario/${id}/contar`)}
+          >
+            <Icon name="clipboard" size={11} />
+            {meuSlot ? `Continuar como OP${meuSlot.slot}` : "Entrar como operador"}
+          </button>
         )}
         {status === "em_andamento" && (
-          <>
-            <Link
-              href={`/wms/inventario/${id}/contar`}
-              className="wms-btn wms-btn-ghost"
-            >
-              <Icon name="clipboard" size={11} />
-              Abrir handheld
-            </Link>
-            <Link
-              href={`/wms/inventario/${id}/divergencias`}
-              className="wms-btn wms-btn-ghost"
-            >
-              <Icon name="alert" size={11} />
-              Ver divergências
-            </Link>
-            <button
-              type="button"
-              className="wms-btn wms-btn-primary"
-              disabled={anyMutationPending}
-              onClick={() => aprovar.mutate()}
-            >
-              <Icon name="check" size={11} />
-              Finalizar & aprovar
-            </button>
-          </>
+          <button
+            type="button"
+            className="wms-btn wms-btn-primary"
+            disabled={anyPending || stats.pendentes > 0}
+            title={
+              stats.pendentes > 0
+                ? "Ainda há localizações pendentes no pool"
+                : ""
+            }
+            onClick={() => {
+              if (
+                confirm(
+                  `Encerrar a contagem? ${stats.pendentes > 0 ? `Faltam ${stats.pendentes} locs no pool — elas serão tratadas como qty=0.` : "Todas as locs foram contadas."} As divergências serão computadas.`,
+                )
+              ) {
+                encerrar.mutate();
+              }
+            }}
+          >
+            <Icon name="check" size={11} />
+            {encerrar.isPending ? "Encerrando…" : "Encerrar contagem"}
+          </button>
+        )}
+        {(status === "revisao" || status === "aprovada" || status === "aplicada") && (
+          <Link
+            href={`/wms/inventario/${id}/divergencias`}
+            className="wms-btn wms-btn-ghost"
+          >
+            <Icon name="alert" size={11} />
+            {status === "aplicada" ? "Ver relatório" : "Divergências"}
+          </Link>
         )}
         {status === "aprovada" && (
           <button
             type="button"
             className="wms-btn wms-btn-primary"
-            disabled={anyMutationPending}
+            disabled={anyPending}
             onClick={() => aplicar.mutate()}
           >
             <Icon name="check" size={11} />
-            Aplicar no estoque
+            {aplicar.isPending ? "Aplicando…" : "Aplicar no estoque"}
           </button>
-        )}
-        {status === "aplicada" && (
-          <Link
-            href={`/wms/inventario/${id}/divergencias`}
-            className="wms-btn wms-btn-ghost"
-          >
-            Ver relatório
-          </Link>
         )}
       </div>
 
-      <div className="wms-card">
-        <div className="wms-card-h">
-          <h3>Áreas</h3>
-          <span className="wms-td-mute" style={{ fontSize: 12 }}>
-            {(data?.areas ?? []).length} configurada(s)
-          </span>
-        </div>
-        <div className="wms-card-body">
-          {(data?.areas ?? []).length === 0 ? (
-            <div className="wms-exp-empty">Nenhuma área configurada.</div>
-          ) : (
-            (data?.areas ?? []).map((a) => {
-              const stats = areaStats.get(a.id) ?? {
-                total: 0,
-                contadas: 0,
-                emContagem: 0,
-                divergentes: 0,
-              };
-              const pct =
-                stats.total > 0
-                  ? Math.round((stats.contadas / stats.total) * 100)
-                  : 0;
-              return (
-                <div
-                  key={a.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "10px 0",
-                    borderBottom: "1px solid var(--wms-c-border)",
-                    fontSize: 13,
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div>
-                      <strong>{a.nome}</strong>
-                      {a.operador?.nome && (
-                        <span className="wms-td-mute">
-                          {" "}— {a.operador.nome}
-                        </span>
-                      )}
-                    </div>
-                    <div
-                      className="wms-td-mute"
-                      style={{ fontSize: 11, marginTop: 2 }}
-                    >
-                      {stats.total} loc(s) · {stats.contadas} contada(s)
-                      {stats.emContagem > 0 &&
-                        ` · ${stats.emContagem} em contagem`}
-                      {stats.divergentes > 0 && (
-                        <span className="wms-td-warn">
-                          {" "}· {stats.divergentes} divergente(s)
-                        </span>
-                      )}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 6,
-                        height: 4,
-                        background: "var(--wms-c-border)",
-                        borderRadius: 2,
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${pct}%`,
-                          height: "100%",
-                          background:
-                            pct === 100
-                              ? "var(--wms-c-success, #16a34a)"
-                              : "var(--wms-c-primary, #1f2937)",
-                          transition: "width .2s",
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div className="wms-mono" style={{ fontSize: 12, minWidth: 48, textAlign: "right" }}>
-                    {pct}%
-                  </div>
-                  {status === "em_andamento" && (
-                    <Link
-                      href={`/wms/inventario/${id}/contar`}
-                      className="wms-btn wms-btn-ghost wms-btn-sm"
-                    >
-                      Abrir
-                    </Link>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
+      {/* Slots de operadores */}
+      <h3 className="wms-sec-h">Slots de operador</h3>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 10,
+          marginBottom: 24,
+        }}
+      >
+        {[1, 2, 3, 4, 5].map((slot) => {
+          const op = operadores.find(
+            (o) => o.slot === slot && o.finalizado_em === null,
+          );
+          return <SlotCard key={slot} slot={slot} op={op} locs={locs} />;
+        })}
       </div>
+
+      {/* Últimos bipes */}
+      {contagens.length > 0 && (
+        <>
+          <h3 className="wms-sec-h">Últimas contagens</h3>
+          <div className="wms-tbl" style={{ maxHeight: 280, overflowY: "auto" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Quando</th>
+                  <th>Operador</th>
+                  <th>SKU</th>
+                  <th className="wms-tar">Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contagens.slice(0, 50).map((c) => (
+                  <tr key={c.id}>
+                    <td className="wms-td-mute wms-mono" style={{ fontSize: 11.5 }}>
+                      {new Date(c.criado_em).toLocaleTimeString("pt-BR")}
+                    </td>
+                    <td>{c.contada_por_user?.nome ?? "—"}</td>
+                    <td className="wms-mono">{c.produto?.sku ?? "—"}</td>
+                    <td className="wms-tar wms-mono">{c.qty_contada}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Card de slot — mostra estado ao vivo de um slot de operador
+// ─────────────────────────────────────────────────────────────────────
+
+function SlotCard({
+  slot,
+  op,
+  locs,
+}: {
+  slot: number;
+  op: Operador | undefined;
+  locs: Array<{
+    status: string;
+    bloqueada_por: string | null;
+    localizacao?: { codigo?: string };
+  }>;
+}) {
+  const livre = !op;
+  const locAtual = op
+    ? locs.find(
+        (l) => l.bloqueada_por === op.usuario_id && l.status === "em_contagem",
+      )
+    : undefined;
+
+  const horasAtivo = op
+    ? Math.max(0.001, (Date.now() - new Date(op.entrou_em).getTime()) / 3600000)
+    : 0;
+  const velocidade =
+    op && horasAtivo > 0 ? Math.round(op.locs_contadas / horasAtivo) : 0;
+
+  return (
+    <div
+      style={{
+        border: livre
+          ? "1px dashed var(--wms-c-border)"
+          : "1px solid var(--wms-c-border)",
+        background: livre ? "transparent" : "var(--wms-c-faint)",
+        borderRadius: "var(--wms-r-3)",
+        padding: 14,
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        minHeight: 130,
+        opacity: livre ? 0.6 : 1,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <strong style={{ fontSize: 13 }}>OP{slot}</strong>
+        {!livre && (
+          <span
+            className="wms-mono wms-td-mute"
+            style={{ fontSize: 11, fontFamily: "var(--wms-mono)" }}
+          >
+            {velocidade} locs/h
+          </span>
+        )}
+      </div>
+      {livre ? (
+        <div className="wms-td-mute" style={{ fontSize: 12 }}>
+          Slot livre
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>
+            {op.usuario?.nome ?? "Operador"}
+          </div>
+          <div
+            className="wms-td-mute"
+            style={{ fontSize: 11.5 }}
+          >
+            {op.locs_contadas} loc(s) contada(s)
+          </div>
+          {locAtual && (
+            <div
+              style={{
+                marginTop: 4,
+                padding: "4px 8px",
+                background: "var(--wms-c-panel-2)",
+                borderRadius: 4,
+                fontSize: 11.5,
+              }}
+            >
+              <span className="wms-td-mute">contando </span>
+              <span className="wms-mono">
+                {locAtual.localizacao?.codigo ?? "—"}
+              </span>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }

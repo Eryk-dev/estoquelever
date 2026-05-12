@@ -3,7 +3,7 @@ import { inserirMovimentacao } from "./ledger";
 import type { TipoMov } from "./types";
 
 export type TipoSessao = "cycle_count" | "completo";
-export type ModoContagem = "aberto" | "blind" | "duplo_blind";
+export type ModoContagem = "aberto" | "blind";
 export type StatusSessao =
   | "planejada"
   | "em_andamento"
@@ -11,65 +11,120 @@ export type StatusSessao =
   | "aprovada"
   | "aplicada"
   | "cancelada";
+export type MotivoLoc =
+  | "curva_a"
+  | "divergente_recente"
+  | "sem_contagem_recente"
+  | "manual"
+  | "completo";
+
+// ─────────────────────────────────────────────────────────────────────
+// Criação de sessão
+// ─────────────────────────────────────────────────────────────────────
+
+export interface LocSessaoInput {
+  localizacao_id: string;
+  motivo?: MotivoLoc;
+}
 
 export interface CriarSessaoInput {
   tipo: TipoSessao;
+  nome?: string;
   galpao_id: string;
-  empresa_dona_id?: string;
+  empresa_dona_id?: string | null;
   modo_contagem?: ModoContagem;
   tolerancia_pct?: number;
   tolerancia_qty_min?: number;
   exige_aprovacao_acima_valor?: number;
-  programada_para?: string;
   observacoes?: string;
   criada_por: string;
-  areas: { nome: string; operador_id?: string; localizacao_ids: string[] }[];
+  localizacoes: LocSessaoInput[];
 }
 
-export async function criarSessaoInventario(
-  input: CriarSessaoInput,
-): Promise<string> {
+export async function criarSessao(input: CriarSessaoInput): Promise<string> {
+  if (input.localizacoes.length === 0) {
+    throw new Error("sessão precisa de pelo menos uma localização");
+  }
   const sb = createServiceClient();
   const { data: sessao, error } = await sb
     .from("siso_inventario_sessoes")
     .insert({
       tipo: input.tipo,
+      nome: input.nome ?? null,
       galpao_id: input.galpao_id,
-      empresa_dona_id: input.empresa_dona_id,
+      empresa_dona_id: input.empresa_dona_id ?? null,
       modo_contagem: input.modo_contagem ?? "blind",
       tolerancia_pct: input.tolerancia_pct ?? 2.0,
       tolerancia_qty_min: input.tolerancia_qty_min ?? 0,
       exige_aprovacao_acima_valor: input.exige_aprovacao_acima_valor ?? 1000,
-      programada_para: input.programada_para,
-      observacoes: input.observacoes,
+      observacoes: input.observacoes ?? null,
       criada_por: input.criada_por,
+      tamanho_pool: input.localizacoes.length,
     })
-    .select()
+    .select("id")
     .single();
   if (error) throw error;
   const sessaoId = (sessao as { id: string }).id;
 
-  for (const a of input.areas) {
-    const { data: area, error: errA } = await sb
-      .from("siso_inventario_areas")
-      .insert({ sessao_id: sessaoId, nome: a.nome, operador_id: a.operador_id })
-      .select()
-      .single();
-    if (errA) throw errA;
-    if (a.localizacao_ids.length > 0) {
-      const rows = a.localizacao_ids.map((loc_id) => ({
-        sessao_id: sessaoId,
-        area_id: (area as { id: string }).id,
-        localizacao_id: loc_id,
-      }));
-      const { error: errL } = await sb
-        .from("siso_inventario_localizacoes")
-        .insert(rows);
-      if (errL) throw errL;
-    }
+  const rows = input.localizacoes.map((l) => ({
+    sessao_id: sessaoId,
+    localizacao_id: l.localizacao_id,
+    motivo: l.motivo ?? "manual",
+  }));
+
+  const { error: errL } = await sb
+    .from("siso_inventario_localizacoes")
+    .insert(rows);
+  if (errL) {
+    // Rollback: a sessão sem locs é inútil. Cancela.
+    await sb
+      .from("siso_inventario_sessoes")
+      .update({ status: "cancelada" })
+      .eq("id", sessaoId);
+    throw errL;
   }
   return sessaoId;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Sugestão inteligente (RPC: wms_inventario_sugerir)
+// ─────────────────────────────────────────────────────────────────────
+
+export interface SugerirInput {
+  galpao_id: string;
+  empresa_dona_id?: string | null;
+  tamanho?: number;
+}
+
+export interface SugestaoLoc {
+  localizacao_id: string;
+  codigo: string;
+  motivo: MotivoLoc;
+  score: number;
+}
+
+export async function sugerirLocalizacoes(
+  input: SugerirInput,
+): Promise<SugestaoLoc[]> {
+  const sb = createServiceClient();
+  const { data, error } = await sb.rpc("wms_inventario_sugerir", {
+    p_galpao: input.galpao_id,
+    p_empresa_dona: input.empresa_dona_id ?? null,
+    p_tamanho: input.tamanho ?? 30,
+  });
+  if (error) throw error;
+  return ((data ?? []) as SugestaoLoc[]).map((r) => ({
+    localizacao_id: r.localizacao_id,
+    codigo: r.codigo,
+    motivo: r.motivo,
+    score: Number(r.score),
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Início de sessão (idempotente — pode ser chamado pelo supervisor OU
+// auto-disparado pelo primeiro operador que entra num slot).
+// ─────────────────────────────────────────────────────────────────────
 
 export async function iniciarSessao(
   sessaoId: string,
@@ -83,12 +138,16 @@ export async function iniciarSessao(
     .eq("id", sessaoId)
     .single();
   if (error || !sessao) throw new Error("sessão não encontrada");
-  if ((sessao as { status: string }).status !== "planejada") {
+  const status = (sessao as { status: StatusSessao }).status;
+
+  if (status === "em_andamento") return; // idempotente
+  if (status !== "planejada") {
     throw new Error(
-      `sessão não está em status 'planejada' (atual: ${(sessao as { status: string }).status})`,
+      `sessão não pode ser iniciada (status atual: ${status})`,
     );
   }
 
+  // Cria locks externos pras locs desta sessão (impede outras operações)
   const { data: locs } = await sb
     .from("siso_inventario_localizacoes")
     .select("localizacao_id")
@@ -102,10 +161,11 @@ export async function iniciarSessao(
     }),
   );
   if (lockRows.length > 0) {
+    // ON CONFLICT DO NOTHING via upsert/ignore — locks existentes não duplicam
     const { error: errLock } = await sb
       .from("siso_localizacao_locks")
       .insert(lockRows);
-    if (errLock) throw errLock;
+    if (errLock && errLock.code !== "23505") throw errLock;
   }
 
   await sb
@@ -114,31 +174,168 @@ export async function iniciarSessao(
     .eq("id", sessaoId);
 }
 
-export async function pegarLocalizacao(
+// ─────────────────────────────────────────────────────────────────────
+// Slots de operador (OP1..OP5)
+// ─────────────────────────────────────────────────────────────────────
+
+export async function entrarSlot(
   sessaoId: string,
-  localizacaoId: string,
+  slot: number,
+  usuarioId: string,
+): Promise<void> {
+  if (slot < 1 || slot > 5) throw new Error("slot deve estar entre 1 e 5");
+  const sb = createServiceClient();
+
+  // Auto-start: se sessão tá planejada, inicia (idempotente)
+  await iniciarSessao(sessaoId, usuarioId);
+
+  // Insere operador no slot — UNIQUE constraint (sessao_id, slot) trava colisão
+  const { error } = await sb.from("siso_inventario_operadores").insert({
+    sessao_id: sessaoId,
+    slot,
+    usuario_id: usuarioId,
+  });
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("slot já está ocupado ou você já está em outro slot");
+    }
+    throw error;
+  }
+}
+
+export async function sairSlot(
+  sessaoId: string,
   usuarioId: string,
 ): Promise<void> {
   const sb = createServiceClient();
-  const { error } = await sb.rpc("wms_inventario_pegar_localizacao", {
+  await sb
+    .from("siso_inventario_operadores")
+    .update({ finalizado_em: new Date().toISOString() })
+    .eq("sessao_id", sessaoId)
+    .eq("usuario_id", usuarioId)
+    .is("finalizado_em", null);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Pull queue: puxar próxima loc (RPC com smart routing + lock atômico)
+// ─────────────────────────────────────────────────────────────────────
+
+export interface EsperadoItem {
+  produto_id: string;
+  sku: string;
+  descricao: string;
+  saldo_esperado: number;
+  empresa_dona_id: string;
+}
+
+export interface ProximaLocOutput {
+  pool_vazio: boolean;
+  inv_loc_id?: string;
+  loc_id?: string;
+  codigo?: string;
+  tipo?: string;
+  zona?: string;
+  modo?: ModoContagem;
+  esperados?: EsperadoItem[];
+}
+
+export async function pegarProximaLoc(
+  sessaoId: string,
+  usuarioId: string,
+): Promise<ProximaLocOutput> {
+  const sb = createServiceClient();
+  const { data, error } = await sb.rpc("wms_inventario_proxima_loc", {
     p_sessao: sessaoId,
-    p_localizacao: localizacaoId,
     p_user: usuarioId,
   });
   if (error) throw error;
+  const r = (data ?? {}) as {
+    ok?: boolean;
+    pool_vazio?: boolean;
+    inv_loc_id?: string;
+    loc_id?: string;
+    codigo?: string;
+    tipo?: string;
+    zona?: string;
+    modo?: ModoContagem;
+    esperados?: EsperadoItem[] | null;
+  };
+  return {
+    pool_vazio: r.pool_vazio === true,
+    inv_loc_id: r.inv_loc_id,
+    loc_id: r.loc_id,
+    codigo: r.codigo,
+    tipo: r.tipo,
+    zona: r.zona,
+    modo: r.modo,
+    esperados: r.esperados ?? undefined,
+  };
 }
 
-export async function liberarLocalizacao(
+// ─────────────────────────────────────────────────────────────────────
+// Finalizar loc: marca como contada e libera o lock; incrementa operador
+// ─────────────────────────────────────────────────────────────────────
+
+export async function finalizarLoc(
   sessaoId: string,
-  localizacaoId: string,
+  invLocId: string,
+  usuarioId: string,
 ): Promise<void> {
   const sb = createServiceClient();
-  await sb
+
+  // Confirma que o user é dono do lock dessa loc
+  const { data: invLoc } = await sb
     .from("siso_inventario_localizacoes")
-    .update({ bloqueada_por: null, bloqueada_em: null, status: "contada" })
+    .select("id, bloqueada_por, status")
+    .eq("id", invLocId)
     .eq("sessao_id", sessaoId)
-    .eq("localizacao_id", localizacaoId);
+    .single();
+  const row = invLoc as {
+    id: string;
+    bloqueada_por: string | null;
+    status: string;
+  } | null;
+  if (!row) throw new Error("localização não encontrada na sessão");
+  if (row.bloqueada_por !== usuarioId) {
+    throw new Error("apenas o operador que bloqueou pode finalizar");
+  }
+  if (row.status !== "em_contagem") {
+    throw new Error(`status inesperado: ${row.status}`);
+  }
+
+  const { error } = await sb
+    .from("siso_inventario_localizacoes")
+    .update({
+      status: "contada",
+      bloqueada_por: null,
+      bloqueada_em: null,
+      contagem_finalizada_em: new Date().toISOString(),
+    })
+    .eq("id", invLocId);
+  if (error) throw error;
+
+  // Incrementa contador do operador (best-effort)
+  const { data: op } = await sb
+    .from("siso_inventario_operadores")
+    .select("id, locs_contadas")
+    .eq("sessao_id", sessaoId)
+    .eq("usuario_id", usuarioId)
+    .is("finalizado_em", null)
+    .single();
+  if (op) {
+    await sb
+      .from("siso_inventario_operadores")
+      .update({
+        locs_contadas: ((op as { locs_contadas: number }).locs_contadas ?? 0) + 1,
+        ultima_acao_em: new Date().toISOString(),
+      })
+      .eq("id", (op as { id: string }).id);
+  }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Contagem (cada bipe)
+// ─────────────────────────────────────────────────────────────────────
 
 export interface RegistrarContagemInput {
   sessao_id: string;
@@ -148,8 +345,8 @@ export interface RegistrarContagemInput {
   qty_contada: number;
   contada_por: string;
   /**
-   * - "incremental" (default): cada bipe soma +qty na contagem do operador.
-   * - "absoluto": substitui contagem prévia do operador por qty_contada.
+   * - "incremental" (default): soma +qty na contagem deste operador na mesma quádrupla.
+   * - "absoluto": substitui contagem prévia.
    */
   modo?: "incremental" | "absoluto";
 }
@@ -165,78 +362,66 @@ export async function registrarContagem(
     localizacao_id: input.localizacao_id,
     produto_id: input.produto_id,
     empresa_dona_id: input.empresa_dona_id,
+    contada_por: input.contada_por,
   };
 
-  const { data: existentes } = await sb
+  // Procura contagem prévia deste operador na mesma quádrupla
+  const { data: existente } = await sb
     .from("siso_inventario_contagens")
-    .select("id, qty_contada, rodada, contada_por")
-    .match(filtro);
+    .select("id, qty_contada")
+    .match(filtro)
+    .maybeSingle();
 
-  type Contagem = {
-    id: string;
-    qty_contada: number;
-    rodada: number;
-    contada_por: string;
-  };
-  const lista = (existentes ?? []) as Contagem[];
-  const minhaContagem = lista.find((e) => e.contada_por === input.contada_por);
-  const rodada = minhaContagem
-    ? minhaContagem.rodada
-    : lista.length > 0
-      ? Math.max(...lista.map((e) => e.rodada)) + 1
-      : 1;
+  type Contagem = { id: string; qty_contada: number };
+  const prev = existente as Contagem | null;
 
-  if (modo === "incremental" && minhaContagem) {
+  if (prev) {
+    const novoQty =
+      modo === "incremental"
+        ? Number(prev.qty_contada) + input.qty_contada
+        : input.qty_contada;
     const { error } = await sb
       .from("siso_inventario_contagens")
-      .update({
-        qty_contada: Number(minhaContagem.qty_contada) + input.qty_contada,
-      })
-      .eq("id", minhaContagem.id);
-    if (error) throw error;
-    return;
-  }
-
-  if (modo === "absoluto" && minhaContagem) {
-    const { error } = await sb
-      .from("siso_inventario_contagens")
-      .update({ qty_contada: input.qty_contada })
-      .eq("id", minhaContagem.id);
+      .update({ qty_contada: novoQty })
+      .eq("id", prev.id);
     if (error) throw error;
     return;
   }
 
   const { error } = await sb.from("siso_inventario_contagens").insert({
-    ...filtro,
+    sessao_id: input.sessao_id,
+    localizacao_id: input.localizacao_id,
+    produto_id: input.produto_id,
+    empresa_dona_id: input.empresa_dona_id,
     qty_contada: input.qty_contada,
     contada_por: input.contada_por,
-    rodada,
   });
   if (error) throw error;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Computar divergências (sessão → revisão)
+// Soma todas as contagens da quádrupla (vários operadores combinam),
+// compara com saldo do sistema, classifica conforme tolerância.
+// ─────────────────────────────────────────────────────────────────────
+
 export async function computarDivergencias(sessaoId: string): Promise<void> {
   const sb = createServiceClient();
+
   const { data: contagens } = await sb
     .from("siso_inventario_contagens")
-    .select(
-      "localizacao_id, produto_id, empresa_dona_id, qty_contada, rodada, criado_em",
-    )
-    .eq("sessao_id", sessaoId)
-    .order("rodada", { ascending: false })
-    .order("criado_em", { ascending: false });
-
-  if (!contagens) return;
+    .select("localizacao_id, produto_id, empresa_dona_id, qty_contada")
+    .eq("sessao_id", sessaoId);
 
   type ContagemRow = {
     localizacao_id: string;
     produto_id: string;
     empresa_dona_id: string;
     qty_contada: number;
-    rodada: number;
-    criado_em: string;
   };
-  const map = new Map<
+
+  // Agrega: soma qty por quádrupla (vários operadores podem ter contado a mesma)
+  const agregado = new Map<
     string,
     {
       localizacao_id: string;
@@ -245,15 +430,65 @@ export async function computarDivergencias(sessaoId: string): Promise<void> {
       qty: number;
     }
   >();
-  for (const c of contagens as ContagemRow[]) {
+  for (const c of (contagens ?? []) as ContagemRow[]) {
     const k = `${c.localizacao_id}|${c.produto_id}|${c.empresa_dona_id}`;
-    if (!map.has(k)) {
-      map.set(k, {
+    const cur = agregado.get(k);
+    if (cur) {
+      cur.qty += Number(c.qty_contada);
+    } else {
+      agregado.set(k, {
         localizacao_id: c.localizacao_id,
         produto_id: c.produto_id,
         empresa_dona_id: c.empresa_dona_id,
         qty: Number(c.qty_contada),
       });
+    }
+  }
+
+  // Detecta locs com saldo > 0 que ninguém bipou — geram divergência (qty=0)
+  const { data: locsSessao } = await sb
+    .from("siso_inventario_localizacoes")
+    .select("localizacao_id")
+    .eq("sessao_id", sessaoId);
+  const locIds = ((locsSessao ?? []) as Array<{ localizacao_id: string }>).map(
+    (l) => l.localizacao_id,
+  );
+
+  if (locIds.length > 0) {
+    let estoqueQuery = sb
+      .from("siso_estoque")
+      .select("produto_id, empresa_dona_id, localizacao_id, saldo")
+      .in("localizacao_id", locIds)
+      .gt("saldo", 0);
+
+    const { data: sessao } = await sb
+      .from("siso_inventario_sessoes")
+      .select("empresa_dona_id")
+      .eq("id", sessaoId)
+      .single();
+    const empresaDona = (sessao as { empresa_dona_id: string | null } | null)
+      ?.empresa_dona_id;
+    if (empresaDona) {
+      estoqueQuery = estoqueQuery.eq("empresa_dona_id", empresaDona);
+    }
+    const { data: estoque } = await estoqueQuery;
+    type EstoqueRow = {
+      produto_id: string;
+      empresa_dona_id: string;
+      localizacao_id: string;
+      saldo: number;
+    };
+    for (const e of (estoque ?? []) as EstoqueRow[]) {
+      const k = `${e.localizacao_id}|${e.produto_id}|${e.empresa_dona_id}`;
+      if (!agregado.has(k)) {
+        // Ninguém bipou esse SKU/dona/loc → conta como qty=0 (sumiu)
+        agregado.set(k, {
+          localizacao_id: e.localizacao_id,
+          produto_id: e.produto_id,
+          empresa_dona_id: e.empresa_dona_id,
+          qty: 0,
+        });
+      }
     }
   }
 
@@ -268,7 +503,7 @@ export async function computarDivergencias(sessaoId: string): Promise<void> {
     exige_aprovacao_acima_valor: number | null;
   } | null;
 
-  for (const v of map.values()) {
+  for (const v of agregado.values()) {
     const { data: estoque } = await sb
       .from("siso_estoque")
       .select("saldo, custo_medio")
@@ -297,28 +532,37 @@ export async function computarDivergencias(sessaoId: string): Promise<void> {
       status = dentroTol && !acimaValor ? "aprovada" : "pendente";
     }
 
-    await sb
-      .from("siso_inventario_divergencias")
-      .upsert(
-        {
-          sessao_id: sessaoId,
-          localizacao_id: v.localizacao_id,
-          produto_id: v.produto_id,
-          empresa_dona_id: v.empresa_dona_id,
-          saldo_sistema,
-          qty_contada_final: v.qty,
-          valor_financeiro,
-          status,
-        },
-        { onConflict: "sessao_id,localizacao_id,produto_id,empresa_dona_id" },
-      );
+    await sb.from("siso_inventario_divergencias").upsert(
+      {
+        sessao_id: sessaoId,
+        localizacao_id: v.localizacao_id,
+        produto_id: v.produto_id,
+        empresa_dona_id: v.empresa_dona_id,
+        saldo_sistema,
+        qty_contada_final: v.qty,
+        valor_financeiro,
+        status,
+      },
+      { onConflict: "sessao_id,localizacao_id,produto_id,empresa_dona_id" },
+    );
   }
 
   await sb
     .from("siso_inventario_sessoes")
     .update({ status: "revisao", finalizada_em: new Date().toISOString() })
     .eq("id", sessaoId);
+
+  // Fecha slots dos operadores ainda ativos
+  await sb
+    .from("siso_inventario_operadores")
+    .update({ finalizado_em: new Date().toISOString() })
+    .eq("sessao_id", sessaoId)
+    .is("finalizado_em", null);
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Aprovar sessão (após resolver divergências)
+// ─────────────────────────────────────────────────────────────────────
 
 export async function aprovarSessao(
   sessaoId: string,
@@ -341,10 +585,8 @@ export async function aprovarSessao(
     .update({ status: "aprovada", aprovada_por: aprovadaPor })
     .eq("id", sessaoId);
 
-  // Libera locks externos. Aplicação (gerar movs) é só ato contábil — não
-  // precisa segurar lock contra outras sessões. Antes, locks só saíam em
-  // aplicarSessao, então sessões aprovadas-mas-não-aplicadas bloqueavam
-  // novas sessões nas mesmas localizações.
+  // Libera locks externos. Aplicação (gerar movs) é só ato contábil —
+  // não precisa segurar lock contra outras sessões.
   const { data: locs } = await sb
     .from("siso_inventario_localizacoes")
     .select("localizacao_id")
@@ -360,6 +602,10 @@ export async function aprovarSessao(
       .is("finalizado_em", null);
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Aplicar sessão → gera movimentações no ledger
+// ─────────────────────────────────────────────────────────────────────
 
 export async function aplicarSessao(
   sessaoId: string,
@@ -440,3 +686,6 @@ export async function aplicarSessao(
 
   return { movsGeradas };
 }
+
+// Alias retrocompat — alguns callers ainda importam o nome antigo.
+export const criarSessaoInventario = criarSessao;

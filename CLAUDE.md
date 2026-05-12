@@ -374,13 +374,13 @@ wms/  (subset of src/)
     emprestimos.ts                 # Regras N×N + saldos devedores via RPC
     roteamento.ts                  # Algoritmo de roteamento PURO (geo-priority) + wrapper rotearPedidoDoBanco
     reservas.ts                    # Reservas atômicas com TTL + cleanup cron-friendly
-    inventario.ts                  # Sessões cycle_count/completo: criar/iniciar/pegar-loc (anti-colisão)/contar/computar-divergencias/aprovar/aplicar
+    inventario.ts                  # v2 (pull queue): criarSessao/sugerirLocalizacoes/iniciarSessao/entrarSlot/sairSlot/pegarProximaLoc/finalizarLoc/registrarContagem/computarDivergencias/aprovarSessao/aplicarSessao
     inventario-recovery.ts         # Detecta sessões e locks órfãos pra cron de cleanup
     devolucoes.ts                  # Classificação A/B/C/D (íntegro/avariado/garantia/troca_sku) com recálculo de custo médio
     cobertura.ts                   # Service de cobertura por giro (lê siso_cobertura_estoque)
     dashboard-geral.ts             # Agrega contadores cross-módulo pra dashboard principal
   src/hooks/
-    use-inventario-realtime.ts     # Subscreve channel inventario:{id} (Supabase Realtime); retorna contagens+locs ao vivo
+    use-inventario-realtime.ts     # Subscreve channel inventario:{id} (Supabase Realtime); retorna contagens + locs + operadores ao vivo
   src/app/wms/
     layout.tsx + page.tsx          # Shell + home com 4 cards (catálogo/localizações/estoque/ledger)
     produtos/page.tsx              # Catálogo de produtos (search + sync com Tiny)
@@ -394,10 +394,10 @@ wms/  (subset of src/)
     retroativos/page.tsx           # Pendências de reconciliação de lançamentos retroativos
     fornecedores/page.tsx          # CRUD fornecedores + botão auto-cadastrar mapeamento
     emprestimos/page.tsx           # Matriz N×N de empréstimos + saldos devedores + limites globais
-    inventario/page.tsx            # Lista sessões + form criar (cycle_count/completo, blind/duplo_blind, tolerância%)
-    inventario/[id]/page.tsx       # Painel realtime do supervisor (progresso, KPIs, ações)
-    inventario/[id]/contar/page.tsx          # Tela handheld do operador (mobile-first, scan incremental)
-    inventario/[id]/divergencias/page.tsx    # Dashboard de divergências (aprovar/recontar/rejeitar)
+    inventario/page.tsx            # Lista sessões + modal de criação com 3 tipos (Inteligente/Manual/Completo). Modo aberto|blind (default blind).
+    inventario/[id]/page.tsx       # Painel realtime do supervisor — 5 slots de operador ao vivo + KPIs + velocidade média + últimos bipes + ações
+    inventario/[id]/contar/page.tsx          # Tela handheld do operador: slot-picker → botão "PEGAR PRÓXIMA LOC" → confirmar loc (QR ou manual) → bipar produtos → finalizar → loop. Resumo final ao esvaziar pool.
+    inventario/[id]/divergencias/page.tsx    # Relatório do supervisor (aprovar/rejeitar). Sem recontagem mid-flow.
     inventario/metricas/page.tsx   # Acuracidade por operador (30d) e por localização
     devolucoes/page.tsx + [id]/page.tsx  # Lista pendentes + tela de classificação A/B/C/D
     cobertura/page.tsx             # Tabela de cobertura por giro com filtros e cores
@@ -429,14 +429,18 @@ wms/  (subset of src/)
     emprestimos/saldos/route.ts    # GET — saldo devedor líquido por par+produto
     rotear/route.ts                # POST — testa algoritmo (debug + integração)
     reservas/cleanup/route.ts      # GET (worker secret) — libera reservas com expira_em < now()
-    inventario/route.ts                                    # GET (lista), POST (criar sessão)
-    inventario/[id]/route.ts                               # GET (consolidado), PATCH, DELETE (cancela)
-    inventario/[id]/iniciar/route.ts                       # POST — cria locks, status='em_andamento'
+    inventario/route.ts                                    # GET (lista), POST (criar sessão — body: { tipo, nome?, galpao_id, empresa_dona_id?, modo_contagem?, localizacoes: [{ localizacao_id, motivo? }] })
+    inventario/sugerir/route.ts                            # POST — algoritmo de sugestão inteligente (mix 50/30/20 — curva A + divergentes 60d + sem contagem 30d)
+    inventario/[id]/route.ts                               # GET (sessão + operadores + locs + contagens + divergências), PATCH, DELETE (cancela)
+    inventario/[id]/iniciar/route.ts                       # POST — idempotente; cria locks, status='em_andamento' (auto-disparado por entrarSlot tb)
+    inventario/[id]/slots/[slot]/entrar/route.ts           # POST — operador assume OP{slot} (auto-inicia sessão se planejada)
+    inventario/[id]/slots/route.ts                         # DELETE — operador sai do slot
+    inventario/[id]/proxima-loc/route.ts                   # POST — pull queue: retorna próxima loc com lock atômico + smart routing (continuidade > anti-colisão > codigo)
+    inventario/[id]/localizacoes/[locId]/finalizar/route.ts # POST — finaliza loc (status=contada, libera lock, incrementa contador do op)
     inventario/[id]/aprovar/route.ts                       # POST — computa divergências + aprova
     inventario/[id]/aplicar/route.ts                       # POST — gera movs origem='inventario'
-    inventario/[id]/contagens/route.ts                     # POST — registra contagem (incremental|absoluto)
-    inventario/[id]/divergencias/route.ts                  # GET, PATCH (aprovar|rejeitar|recontar)
-    inventario/[id]/localizacoes/[locId]/bloquear/route.ts # POST (anti-colisão), DELETE (libera lock)
+    inventario/[id]/contagens/route.ts                     # POST — registra contagem (incremental|absoluto, sem rodada)
+    inventario/[id]/divergencias/route.ts                  # GET, PATCH (aprovar|rejeitar — sem recontagem)
     inventario/metricas/route.ts                           # GET — RPCs operador+localização
     inventario/cleanup/route.ts                            # GET (worker secret) — libera locks órfãos
     devolucoes/route.ts + [id]/classificar/route.ts        # GET fila pendente + POST classificação
@@ -508,17 +512,19 @@ Schema 4D: cada posição de estoque é única por **(produto, dona, galpão, lo
 
 **RPC `wms_saldos_devedores()`**: saldo líquido bidirecional credora↔devedora por produto, considerando movs origem_tipo='emprestimo' não-estornadas. Filtrada (devido > 0).
 
-### WMS Tables (Plano 4 — Inventário)
+### WMS Tables (Plano 4 — Inventário v2: pull queue + slots)
 
-Multi-operador com anti-colisão por localização. Realtime via Supabase Realtime (publication adicionada na migration).
+**v2 rewrite (2026-05-12):** trocamos divisão estática por áreas (causava operador ocioso) por pool compartilhado com pull queue. Operadores assumem slots OP1-OP5 e puxam locs sob demanda com smart routing. Realtime via Supabase Realtime.
 
 | Table | Purpose |
 |---|---|
-| `siso_inventario_sessoes` | Sessão master. Tipo cycle_count\|completo, modo aberto\|blind\|duplo_blind, tolerancia_pct, exige_aprovacao_acima_valor. Status workflow: planejada→em_andamento→revisao→aprovada→aplicada\|cancelada. |
-| `siso_inventario_areas` | Subdivisão da sessão por operador (1 área = 1 operador). UNIQUE(sessao_id, nome). |
-| `siso_inventario_localizacoes` | Localizações da sessão (ligada a area_id). bloqueada_por uuid pra anti-colisão; status pendente\|em_contagem\|contada\|divergente\|recontagem\|aprovada. |
-| `siso_inventario_contagens` | Cada bipe individual (rodada smallint pra duplo blind). Indexada por quádrupla. |
-| `siso_inventario_divergencias` | Saldo sistema vs contagem final por quádrupla. delta + delta_pct GENERATED. Status: pendente\|recontagem_solicitada\|aprovada\|rejeitada\|aplicada. mov_aplicada_id liga ao ledger ao aplicar. |
+| `siso_inventario_sessoes` | Sessão master. nome (opcional), tipo cycle_count\|completo, modo aberto\|blind (default blind, sem duplo_blind), tolerancia_pct, exige_aprovacao_acima_valor, tamanho_pool. Status workflow: planejada→em_andamento→revisao→aprovada→aplicada\|cancelada. |
+| `siso_inventario_operadores` | NOVO. Slots OP1..OP5 dinâmicos: slot smallint (1-5), usuario_id, entrou_em, finalizado_em, locs_contadas, ultima_acao_em. UNIQUE(sessao_id, slot) + UNIQUE parcial (sessao_id, usuario_id) WHERE finalizado_em IS NULL. |
+| `siso_inventario_localizacoes` | Pool de locs da sessão (sem area_id). status pendente\|em_contagem\|contada\|divergente\|aprovada (sem recontagem). motivo (curva_a\|divergente_recente\|sem_contagem_recente\|manual\|completo). bloqueada_por + bloqueada_em pra lock atômico por operador. contagem_iniciada_em + contagem_finalizada_em pra cálculo de tempo médio. |
+| `siso_inventario_contagens` | Cada bipe individual. Sem `rodada` (1 contagem por loc). Indexada por quádrupla. Múltiplos operadores podem contar a mesma loc (caso edge: sairSlot mid-loc), `computarDivergencias` soma todas as contagens da quádrupla. |
+| `siso_inventario_divergencias` | Saldo sistema vs contagem final por quádrupla. delta + delta_pct GENERATED. Status: pendente\|aprovada\|rejeitada\|aplicada (sem recontagem_solicitada). mov_aplicada_id liga ao ledger ao aplicar. |
+
+Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger atualiza em cada bipe — usado pela sugestão inteligente) + `zona text` (override manual pro roteamento; default = prefixo antes do "-").
 
 ### WMS Tables (Plano 5 — Exceções+Dashboards)
 
@@ -528,7 +534,9 @@ Multi-operador com anti-colisão por localização. Realtime via Supabase Realti
 
 **Materialized view `siso_cobertura_estoque`**: agrega disponivel + giro 30d + lead time fornecedor preferencial → `status_cobertura` (ok\|atencao\|critico\|lead_time_risco\|sem_giro). Refresh via `wms_refresh_cobertura()`.
 
-**RPC `wms_inventario_pegar_localizacao(...)`**: UPDATE atômico WHERE bloqueada_por IS NULL. EXCEPTION se já bloqueada (HTTP 409 no endpoint).
+**RPC `wms_inventario_proxima_loc(p_sessao, p_user)`**: pull queue inteligente. Verifica que user tem slot ativo + sessão em_andamento. Seleciona próxima loc com lock atômico (`FOR UPDATE OF inv_loc SKIP LOCKED`). Priorização: (1) mesma zona da última loc deste user — continuidade; (2) zona NÃO ocupada por outros ops ativos — anti-colisão; (3) ordem alfabética do codigo — fallback. Retorna `{ pool_vazio: true }` quando esgotado. Em modo aberto, anexa lista de SKUs esperados.
+
+**RPC `wms_inventario_sugerir(p_galpao, p_empresa_dona?, p_tamanho)`**: algoritmo de sugestão inteligente. Mix 50% locs com produtos curva A (giro 30d via `siso_curva_abc`) + 30% locs com divergências aplicadas nos últimos 60d + 20% locs sem contagem em 30d+ (ou nunca contadas). Filtra apenas locs com saldo > 0. Dedupe automático (loc só aparece em uma categoria, priorizada por peso).
 
 **RPCs métricas**: `wms_metricas_operador()` (acuracidade 30d por user) + `wms_metricas_localizacao()` (cobertura+erro 5000 últimas localizações).
 
@@ -729,7 +737,9 @@ Failure to update documentation means the next developer or LLM will work with s
 - **WMS Fase 0 (Foundation) — implementado, validado em staging** (projeto Supabase `ehbxpbeijofxtsbezwxd`). Schema 4D + ledger imutável + RPC com lock + 4 telas de visualização (catálogo, localizações, saldos por 4 perspectivas, ledger). Dependente de promoção pra prod (Fase 1+ ainda pendente). Spec: `docs/superpowers/specs/2026-05-07-wms-design.md`. Plano executado: `docs/superpowers/plans/2026-05-08-wms-1-foundation.md`.
 - **WMS Plano 2 (Movimentações operacionais) — implementado, validado em staging.** 5 fluxos (receber, transferir inter-galpão, replenishment intra-galpão, ajuste manual com motivo, lançamento retroativo + reconciliação) + sugestão automática de putaway + recálculo de custo médio em entradas com custo. Validação E2E: receber 50 + ajustar -10 = saldo 40, 0 divergências. Plano: `docs/superpowers/plans/2026-05-15-wms-2-movimentacoes.md`.
 - **WMS Plano 3 (Roteamento) — implementado, validado em staging.** Schema fornecedores + matriz de empréstimos N×N (com limites por par+produto) + algoritmo de roteamento puro com geo-priority (home=0, mesma_cidade=1, mesmo_estado=2, outro=3) + reservas atômicas com TTL 48h + cleanup cron-friendly + shadow logging no webhook (legado vs novo, sem mudar comportamento). 9 testes de roteamento + 3 de reservas. Plano: `docs/superpowers/plans/2026-05-22-wms-3-roteamento.md`.
-- **WMS Plano 4 (Inventário robusto) — implementado, validado em staging.** Schema multi-operador com anti-colisão (RPC `wms_inventario_pegar_localizacao` atômico) + Supabase Realtime (`inventario:{id}` channel) + workflow de divergências com tolerância 2% + R$1000 (defaults C1-C3) + 5 telas (lista, supervisor, operador handheld mobile-first, divergências, métricas) + recovery cron de locks órfãos + curva ABC automática via materialized view (giro 30d). Plano: `docs/superpowers/plans/2026-05-29-wms-4-inventario.md`.
+- **WMS Plano 4 v1 (Inventário robusto) — substituído por v2 em 2026-05-12.** Schema original tinha divisão estática por "áreas" (1 área = 1 operador, locs pré-atribuídas), o que causava operador ocioso quando um terminava antes dos outros. Plano original: `docs/superpowers/plans/2026-05-29-wms-4-inventario.md`.
+
+- **WMS Plano 4 v2 (Inventário pull queue + slots) — implementado em staging, 2026-05-12.** Mudança fundamental: pool compartilhado em vez de divisão estática. Operadores assumem slots OP1-OP5 dinâmicos e puxam próxima loc sob demanda via RPC `wms_inventario_proxima_loc` com smart routing (continuidade > anti-colisão por zona > ordem alfabética). Sugestão inteligente via RPC `wms_inventario_sugerir` (mix 50% curva A + 30% divergentes recentes + 20% sem contagem 30d+) — roda sob demanda quando supervisor abre "Cycle Inteligente". 3 tipos de sessão: Inteligente / Manual / Completo. Modo aberto|blind (default blind). Sem recontagem mid-flow — divergências aparecem no relatório do supervisor após encerrar. Tela handheld redesenhada: slot picker → botão gigante "PRÓXIMA LOC" → confirmar (QR ou manual) → bipar produtos → finalizar → loop → resumo final. Migration: `supabase/migrations/20260512_wms_inventario_rewrite.sql`.
 - **WMS Plano 5 (Exceções + dashboards) — implementado, validado em staging. Encerra Fase 0.** Devoluções classificadas A/B/C/D com recálculo de custo médio + transferência pra QUARENTENA + RMA. Troca SKU na separação (2 movs com mesma origem_id) com validação Cross opcional. Webhook NF detecta devolução (best-effort). Materialized view `siso_cobertura_estoque` com status crítico/atenção/lead_time_risco/ok/sem_giro. Dashboard geral (4 cards, refresh 30s). Shell e home reorganizados em 4 grupos. Plano: `docs/superpowers/plans/2026-06-05-wms-5-excecoes-dashboards.md`. Checklist Fase 0: `docs/superpowers/plans/wms-fase0-checklist.md`. **Próximo: Plano 6 (cutover big bang).**
 
 ### Deprecated / To Remove

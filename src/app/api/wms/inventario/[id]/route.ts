@@ -12,22 +12,30 @@ export async function GET(
 
   const { id } = await params;
   const sb = createServiceClient();
-  const [sessao, areas, locs, contagens, divergencias] = await Promise.all([
-    sb.from("siso_inventario_sessoes").select("*").eq("id", id).single(),
+  const [sessao, operadores, locs, contagens, divergencias] = await Promise.all([
     sb
-      .from("siso_inventario_areas")
-      .select("*, operador:siso_usuarios(nome)")
-      .eq("sessao_id", id),
+      .from("siso_inventario_sessoes")
+      .select("*, galpao:siso_galpoes(nome)")
+      .eq("id", id)
+      .single(),
+    sb
+      .from("siso_inventario_operadores")
+      .select("*, usuario:siso_usuarios(nome)")
+      .eq("sessao_id", id)
+      .order("slot", { ascending: true }),
     sb
       .from("siso_inventario_localizacoes")
-      .select("*, localizacao:siso_localizacoes(codigo, tipo)")
+      .select(
+        "*, localizacao:siso_localizacoes(codigo, tipo, zona), bloqueada_por_user:siso_usuarios!siso_inventario_localizacoes_bloqueada_por_fkey(nome)",
+      )
       .eq("sessao_id", id),
     sb
       .from("siso_inventario_contagens")
       .select(
-        "*, contada_por_user:siso_usuarios(nome), produto:siso_produtos(sku)",
+        "*, contada_por_user:siso_usuarios(nome), produto:siso_produtos(sku, descricao)",
       )
-      .eq("sessao_id", id),
+      .eq("sessao_id", id)
+      .order("criado_em", { ascending: false }),
     sb
       .from("siso_inventario_divergencias")
       .select(
@@ -37,10 +45,10 @@ export async function GET(
   ]);
   return NextResponse.json({
     sessao: sessao.data,
-    areas: areas.data,
-    localizacoes: locs.data,
-    contagens: contagens.data,
-    divergencias: divergencias.data,
+    operadores: operadores.data ?? [],
+    localizacoes: locs.data ?? [],
+    contagens: contagens.data ?? [],
+    divergencias: divergencias.data ?? [],
   });
 }
 
@@ -48,7 +56,8 @@ export async function GET(
 // Sem isso, body-spread direto permitia user pular workflow
 // inteiro com PATCH { status: 'aplicada' }.
 interface PatchSessaoBody {
-  modo_contagem?: "aberto" | "blind" | "duplo_blind";
+  nome?: string;
+  modo_contagem?: "aberto" | "blind";
   tolerancia_pct?: number;
   exige_aprovacao_acima_valor?: number;
   observacoes?: string;
@@ -58,11 +67,8 @@ function pickPatchFields(body: unknown): PatchSessaoBody {
   if (!body || typeof body !== "object") return {};
   const b = body as Record<string, unknown>;
   const out: PatchSessaoBody = {};
-  if (
-    b.modo_contagem === "aberto" ||
-    b.modo_contagem === "blind" ||
-    b.modo_contagem === "duplo_blind"
-  ) {
+  if (typeof b.nome === "string") out.nome = b.nome;
+  if (b.modo_contagem === "aberto" || b.modo_contagem === "blind") {
     out.modo_contagem = b.modo_contagem;
   }
   if (typeof b.tolerancia_pct === "number") out.tolerancia_pct = b.tolerancia_pct;

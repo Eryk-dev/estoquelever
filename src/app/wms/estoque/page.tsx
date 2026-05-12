@@ -120,11 +120,12 @@ export default function EstoquePage() {
     return d.rows.slice(d.rows.length - n);
   }, [kitsQuery.data]);
 
-  // Map cobertura por produto
+  // Map cobertura por produto. Quando filtra por galpão, considera só
+  // cobertura desse galpão; caso contrário agrega o pior status do produto.
   const coberturaMap = useMemo(() => {
     const m = new Map<string, LinhaCobertura>();
     for (const r of coberturaQuery.data?.rows ?? []) {
-      // Pode haver múltiplos por produto (galpão/empresa) — agrega o pior
+      if (filterGalpao !== "all" && r.galpao_id !== filterGalpao) continue;
       const cur = m.get(r.produto_id);
       if (
         !cur ||
@@ -134,7 +135,7 @@ export default function EstoquePage() {
       }
     }
     return m;
-  }, [coberturaQuery.data]);
+  }, [coberturaQuery.data, filterGalpao]);
 
   const galpoes = useMemo(() => {
     const set = new Map<string, string>();
@@ -188,9 +189,43 @@ export default function EstoquePage() {
       );
     }
     if (filterGalpao !== "all") {
-      result = result.filter((r) =>
-        r.itens.some((i) => i.galpao.id === filterGalpao),
-      );
+      // Filtra E re-totaliza por galpão. Caso contrário a linha mostraria
+      // o agregado cross-galpão mesmo com pílula CWB/SP selecionada.
+      result = result
+        .map((r) => {
+          const itens = r.itens.filter((i) => i.galpao.id === filterGalpao);
+          if (itens.length === 0) return null;
+          const saldo = itens.reduce((s, i) => s + Number(i.saldo), 0);
+          const reservado = itens.reduce(
+            (s, i) => s + Number(i.reservado),
+            0,
+          );
+          const disponivel = itens.reduce(
+            (s, i) => s + Number(i.disponivel),
+            0,
+          );
+          const custoMedio =
+            itens.reduce(
+              (s, i) => s + Number(i.custo_medio) * Number(i.saldo),
+              0,
+            ) / Math.max(saldo, 1);
+          const atualizadoEm = itens.reduce((max, i) => {
+            const t = i.atualizado_em
+              ? new Date(i.atualizado_em).getTime()
+              : 0;
+            return t > max ? t : max;
+          }, 0);
+          return {
+            ...r,
+            itens,
+            saldo,
+            reservado,
+            disponivel,
+            custoMedio,
+            atualizadoEm,
+          };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
     }
     if (filterStatus !== "all") {
       result = result.filter(

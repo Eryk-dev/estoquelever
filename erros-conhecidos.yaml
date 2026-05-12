@@ -557,3 +557,29 @@ erros:
     - src/lib/auth-context.tsx
     - src/app/login/page.tsx
   tags: [auth, sessao, sisoFetch, localStorage, 401, ux, wms]
+
+- id: wms-receber-lote-trocar-loc-fecha-na-digitacao
+  date: 2026-05-12
+  source: wms.receber.lote.ItemLoteRow
+  category: business_logic
+  message: "No tab Lote do /wms/receber, ao clicar 'Trocar loc' o combo abre mas fecha sozinho assim que o operador comeca a digitar — impossivel alocar outra localizacao."
+  cause: >
+    LocalizacaoCombo (modals.tsx) emite onChange("") enquanto o operador edita
+    o input pra sinalizar "selecao anterior nao vale mais, ainda digitando".
+    No TabLote do receber, o callback do combo rodava setTrocandoLoc(false)
+    incondicionalmente — incluindo nesse sinal de edicao —, desmontando o
+    combo na primeira tecla. Pior: o id "" salvo em locIdOverride fazia
+    locIdAtual = item.locIdOverride ?? putaway?.localizacao_id ?? "" resolver
+    pra "" (string vazia nao eh nullish), e o bloco JSX inteiro (incluindo
+    o proprio botao "Trocar loc") sumia por causa de "&& locIdAtual" na
+    condicional, deixando o operador travado sem acesso ao combo. O caso
+    nunca apareceu no transferir/page.tsx porque la o combo fica sempre
+    montado dentro do modal (sem toggle de visibilidade).
+  fix: >
+    No onChange do LocalizacaoCombo dentro de ItemLoteRow, ignorar sinais
+    com id vazio (early return `if (!id) return;`). So fecha o combo
+    (setTrocandoLoc(false)) e sobrescreve locIdOverride quando vem um id
+    real de selecao confirmada.
+  files:
+    - src/app/wms/receber/page.tsx
+  tags: [wms, receber, lote, localizacao, combo, autocomplete, putaway, ux]

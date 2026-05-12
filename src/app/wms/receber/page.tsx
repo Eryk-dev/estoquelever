@@ -744,12 +744,10 @@ function ItemLoteRow({
             galpaoId={galpaoId || null}
             value={locIdAtual}
             onChange={(id) => {
-              // Buscar codigo da loc a partir do que tem em cache não é trivial
-              // — onChange do combo só dá id. Limpa codigo override pra forçar
-              // re-render via putaway.locaisExistentes (se a loc estiver lá)
-              // ou exibir só o id no plano de guarda. Como o combo é o mesmo
-              // do modal e ele já mostra o código no input, o operador sabe
-              // o que escolheu. Salva id; codigo será resolvido no submit.
+              // O combo emite onChange("") enquanto o operador digita pra
+              // sinalizar "seleção em edição". Ignoramos esse sinal — só
+              // fechamos o combo quando há um id real selecionado.
+              if (!id) return;
               onChange({
                 ...item,
                 locIdOverride: id,

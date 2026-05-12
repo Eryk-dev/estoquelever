@@ -18,7 +18,10 @@ export async function GET(
     .select(
       "*, produto:siso_produtos(sku, descricao), localizacao:siso_localizacoes(codigo)",
     )
-    .eq("sessao_id", id);
+    .eq("sessao_id", id)
+    // delta = 0 não é divergência real — pode ser lixo histórico de versões
+    // antigas do computarDivergencias. Esconde sempre.
+    .neq("delta", 0);
   const status = sp.get("status");
   if (status) q = q.eq("status", status);
   const { data, error } = await q;

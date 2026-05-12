@@ -351,6 +351,11 @@ function NovaSessaoModal({
     if (localizacoes.length === 0)
       return toast.error("Nenhuma localização selecionada");
 
+    // Só o modo manual deixa o supervisor escolher o número de operadores
+    // (porque ele também faz o bucketing por slot). Inteligente e completo
+    // mantêm o default 5 — supervisor pode estender depois se quiser.
+    const numOps = tipoCriacao === "manual" ? numOperadores : 5;
+
     criar.mutate({
       tipo,
       nome: nome || undefined,
@@ -360,6 +365,7 @@ function NovaSessaoModal({
       tolerancia_pct: toleranciaPct,
       exige_aprovacao_acima_valor: exigeAprovacaoValor,
       localizacoes,
+      num_operadores: numOps,
     });
   }
 

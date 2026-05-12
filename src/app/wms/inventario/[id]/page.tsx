@@ -28,6 +28,7 @@ interface SessaoData {
     criado_em?: string;
     iniciada_em?: string;
     tamanho_pool?: number;
+    num_operadores?: number;
   } | null;
 }
 
@@ -434,7 +435,18 @@ export default function InventarioSupervisorPage({
       </div>
 
       {/* Slots de operadores */}
-      <h3 className="wms-sec-h">Slots de operador</h3>
+      <h3 className="wms-sec-h">
+        Slots de operador
+        {sessao?.num_operadores ? (
+          <span
+            className="wms-td-mute"
+            style={{ marginLeft: 6, fontSize: 12, fontWeight: 400 }}
+          >
+            · {sessao.num_operadores} configurado
+            {sessao.num_operadores > 1 ? "s" : ""}
+          </span>
+        ) : null}
+      </h3>
       <div
         style={{
           display: "grid",
@@ -443,7 +455,10 @@ export default function InventarioSupervisorPage({
           marginBottom: 24,
         }}
       >
-        {[1, 2, 3, 4, 5].map((slot) => {
+        {Array.from(
+          { length: Math.max(1, Math.min(5, sessao?.num_operadores ?? 5)) },
+          (_, i) => i + 1,
+        ).map((slot) => {
           const op = operadores.find(
             (o) => o.slot === slot && o.finalizado_em === null,
           );

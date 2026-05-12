@@ -44,6 +44,7 @@ interface PostBody {
   exige_aprovacao_acima_valor?: number;
   observacoes?: string;
   localizacoes?: LocSessaoInput[];
+  num_operadores?: number;
 }
 
 export async function POST(req: NextRequest) {
@@ -78,6 +79,7 @@ export async function POST(req: NextRequest) {
       observacoes: body.observacoes,
       criada_por: auth.user.id,
       localizacoes: body.localizacoes,
+      num_operadores: body.num_operadores,
     });
     return NextResponse.json({ id }, { status: 201 });
   } catch (e) {

@@ -45,6 +45,9 @@ export interface CriarSessaoInput {
   observacoes?: string;
   criada_por: string;
   localizacoes: LocSessaoInput[];
+  /** Quantos slots de operador a sessão expõe (1..5). Default 5.
+   *  A tela handheld só mostra slots OP1..OP{num_operadores}. */
+  num_operadores?: number;
 }
 
 export async function criarSessao(input: CriarSessaoInput): Promise<string> {
@@ -52,6 +55,13 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
     throw new Error("sessão precisa de pelo menos uma localização");
   }
   const sb = createServiceClient();
+  const numOps =
+    input.num_operadores != null &&
+    Number.isInteger(input.num_operadores) &&
+    input.num_operadores >= 1 &&
+    input.num_operadores <= 5
+      ? input.num_operadores
+      : 5;
   const { data: sessao, error } = await sb
     .from("siso_inventario_sessoes")
     .insert({
@@ -66,6 +76,7 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
       observacoes: input.observacoes ?? null,
       criada_por: input.criada_por,
       tamanho_pool: input.localizacoes.length,
+      num_operadores: numOps,
     })
     .select("id")
     .single();
@@ -198,6 +209,21 @@ export async function entrarSlot(
 ): Promise<void> {
   if (slot < 1 || slot > 5) throw new Error("slot deve estar entre 1 e 5");
   const sb = createServiceClient();
+
+  // Valida que o slot está dentro do limite configurado na sessão.
+  // Sessões antigas (sem coluna ou NULL) usam o default 5.
+  const { data: sessaoCfg } = await sb
+    .from("siso_inventario_sessoes")
+    .select("num_operadores")
+    .eq("id", sessaoId)
+    .single();
+  const numOps =
+    (sessaoCfg as { num_operadores?: number | null } | null)?.num_operadores ?? 5;
+  if (slot > numOps) {
+    throw new Error(
+      `essa sessão foi configurada pra ${numOps} operador${numOps > 1 ? "es" : ""} — OP${slot} não está disponível`,
+    );
+  }
 
   // Auto-start: se sessão tá planejada, inicia (idempotente)
   await iniciarSessao(sessaoId, usuarioId);
@@ -581,21 +607,36 @@ export async function computarDivergencias(
     const e = estoque as { saldo: number; custo_medio: number } | null;
     const saldo_sistema = Number(e?.saldo ?? 0);
     const delta = v.qty - saldo_sistema;
+
+    // delta === 0 não é divergência — pula. Se existia uma linha
+    // anterior (re-run), remove pra não poluir a UI.
+    if (delta === 0) {
+      await sb
+        .from("siso_inventario_divergencias")
+        .delete()
+        .match({
+          sessao_id: sessaoId,
+          localizacao_id: v.localizacao_id,
+          produto_id: v.produto_id,
+          empresa_dona_id: v.empresa_dona_id,
+        })
+        .neq("status", "aplicada");
+      continue;
+    }
+
     const delta_pct =
       saldo_sistema === 0 ? null : Math.abs((delta / saldo_sistema) * 100);
     const valor_financeiro = Number(e?.custo_medio ?? 0) * delta;
 
-    let status: "aprovada" | "pendente" = "aprovada";
-    if (delta !== 0) {
-      const dentroTol =
-        (s?.tolerancia_pct ?? 0) > 0 && delta_pct !== null
-          ? delta_pct <= s!.tolerancia_pct
-          : Math.abs(delta) <= (s?.tolerancia_qty_min ?? 0);
-      const acimaValor =
-        s?.exige_aprovacao_acima_valor != null &&
-        Math.abs(valor_financeiro) > Number(s.exige_aprovacao_acima_valor);
-      status = dentroTol && !acimaValor ? "aprovada" : "pendente";
-    }
+    const dentroTol =
+      (s?.tolerancia_pct ?? 0) > 0 && delta_pct !== null
+        ? delta_pct <= s!.tolerancia_pct
+        : Math.abs(delta) <= (s?.tolerancia_qty_min ?? 0);
+    const acimaValor =
+      s?.exige_aprovacao_acima_valor != null &&
+      Math.abs(valor_financeiro) > Number(s.exige_aprovacao_acima_valor);
+    const status: "aprovada" | "pendente" =
+      dentroTol && !acimaValor ? "aprovada" : "pendente";
 
     await sb.from("siso_inventario_divergencias").upsert(
       {

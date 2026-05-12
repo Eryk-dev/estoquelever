@@ -20,6 +20,7 @@ interface SessaoDetail {
     modo_contagem: "aberto" | "blind";
     empresa_dona_id?: string | null;
     status: string;
+    num_operadores?: number;
   };
 }
 
@@ -363,6 +364,7 @@ export default function ContarPage({
         meuId={user?.id}
         onEscolher={(slot) => entrarSlot.mutate(slot)}
         pending={entrarSlot.isPending}
+        numSlots={sessao?.num_operadores ?? 5}
       />
     );
   }
@@ -431,6 +433,7 @@ function SlotPicker({
   meuId,
   onEscolher,
   pending,
+  numSlots,
 }: {
   operadores: Array<{
     slot: number;
@@ -442,13 +445,16 @@ function SlotPicker({
   meuId?: string;
   onEscolher: (slot: number) => void;
   pending: boolean;
+  numSlots: number;
 }) {
+  const slots = Array.from({ length: Math.max(1, Math.min(5, numSlots)) }, (_, i) => i + 1);
+  const subtitle =
+    numSlots > 1
+      ? `Escolha um slot livre. Você e até ${numSlots - 1} colega${numSlots - 1 > 1 ? "s" : ""} podem contar ao mesmo tempo.`
+      : "Sessão configurada pra 1 operador.";
   return (
     <>
-      <PageHeader
-        title="Quem é você?"
-        subtitle="Escolha um slot livre. Você e até 4 colegas podem contar ao mesmo tempo."
-      />
+      <PageHeader title="Quem é você?" subtitle={subtitle} />
       <div
         style={{
           display: "grid",
@@ -456,7 +462,7 @@ function SlotPicker({
           gap: 10,
         }}
       >
-        {[1, 2, 3, 4, 5].map((slot) => {
+        {slots.map((slot) => {
           const op = operadores.find(
             (o) => o.slot === slot && o.finalizado_em === null,
           );

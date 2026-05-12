@@ -1527,28 +1527,20 @@ function AdicionarComponenteForm({
           typeof document !== "undefined" &&
           createPortal(
             <div
+              className="wms-picker-list"
               style={{
                 position: "fixed",
                 top: dropdownRect.top,
                 left: dropdownRect.left,
                 width: dropdownRect.width,
-                background: "var(--wms-c-bg-elev)",
-                border: "1px solid var(--wms-c-border)",
-                borderRadius: 4,
                 zIndex: 9999,
-                maxHeight: 240,
-                overflowY: "auto",
-                boxShadow: "0 8px 24px rgba(0,0,0,.18)",
               }}
             >
               {candidatos.map((p) => (
-                <div
+                <button
                   key={p.id}
-                  style={{
-                    padding: "6px 10px",
-                    cursor: "pointer",
-                    borderBottom: "1px solid var(--wms-c-border)",
-                  }}
+                  type="button"
+                  className="wms-picker-item"
                   onMouseDown={(e) => {
                     e.preventDefault();
                     setSelecionado({
@@ -1559,9 +1551,9 @@ function AdicionarComponenteForm({
                     setQ("");
                   }}
                 >
-                  <span className="wms-mono">{p.sku}</span>{" "}
-                  <span className="wms-td-mute">{p.descricao}</span>
-                </div>
+                  <span className="wms-mono">{p.sku}</span>
+                  <span className="wms-picker-desc">{p.descricao}</span>
+                </button>
               ))}
             </div>,
             document.body,
@@ -1577,7 +1569,7 @@ function AdicionarComponenteForm({
         />
       </div>
       <button
-        className="wms-btn wms-btn-sm"
+        className="wms-btn"
         onClick={submit}
         disabled={loading || !selecionado}
       >

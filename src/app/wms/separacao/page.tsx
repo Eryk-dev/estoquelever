@@ -279,6 +279,24 @@ export default function WmsSeparacaoPage() {
     [router, searchParams],
   );
 
+  // Atualiza múltiplos params numa única chamada — evita o bug de race
+  // condition do React quando 2 updateParam consecutivos são chamados
+  // no mesmo handler (segundo lê searchParams stale e reverte o primeiro).
+  // Sintoma desse bug: clicar em tab com count=0 não mudava de tab.
+  const updateParams = useCallback(
+    (updates: Record<string, string>) => {
+      const params = new URLSearchParams(
+        Array.from(searchParams?.entries() ?? []),
+      );
+      for (const [key, value] of Object.entries(updates)) {
+        if (value) params.set(key, value);
+        else params.delete(key);
+      }
+      router.replace(`?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams],
+  );
+
   // Selection state — chaveada por (galpao + tab) pra resetar ao trocar contexto.
   const contextKey = `${activeGalpaoId ?? "all"}:${tab}`;
   const [selection, setSelection] = useState<{
@@ -664,6 +682,27 @@ export default function WmsSeparacaoPage() {
     };
   }, [tab, pedidos, selectedArr, selectedIds]);
 
+  // Cálculo de pedidos "engatilhados" na tab Aguardando OC — pedidos com itens
+  // OC já comprados, NF emitida E agrupamento criado. Esses podem ser embalados
+  // direto via /wms/separacao/embalagem?modo=embalagem-oc: a tela abre como se
+  // os produtos já estivessem separados e o operador só bipa pra sair etiqueta.
+  // Paridade visual com botão verde "Embalar X pedido(s)" do legado.
+  const engatilhadoStats = useMemo(() => {
+    if (tab !== "aguardando_compra")
+      return { count: 0, ids: [] as string[] };
+    const source =
+      selectedArr.length > 0
+        ? pedidos.filter((p) => selectedIds.has(p.id))
+        : pedidos;
+    const engatilhados = source.filter(
+      (p) => p.nf_emitida && p.agrupamento_criado,
+    );
+    return {
+      count: engatilhados.length,
+      ids: engatilhados.map((p) => p.id),
+    };
+  }, [tab, pedidos, selectedArr, selectedIds]);
+
   // ── Render ─────────────────────────────────────────────────────────────
   return (
     <>
@@ -678,11 +717,14 @@ export default function WmsSeparacaoPage() {
         active={tab}
         counts={counts}
         onChange={(next) => {
-          updateParam("tab", next);
+          // BATCH em uma só chamada — chamadas consecutivas de updateParam
+          // levavam searchParams stale e reverter mudanças (bug das tabs zeradas).
+          const updates: Record<string, string> = { tab: next };
+          if (next !== "aguardando_compra") updates.fornecedor = "";
+          updateParams(updates);
           clearSelection();
           lastCheckedIdxRef.current = null;
           setEncaminharOpenId(null);
-          if (next !== "aguardando_compra") updateParam("fornecedor", "");
         }}
       />
 
@@ -781,6 +823,7 @@ export default function WmsSeparacaoPage() {
               selectedCount={selectedArr.length}
               totalCount={pedidos.length}
               separadoStats={separadoStats}
+              engatilhadoStats={engatilhadoStats}
               loading={
                 iniciarMut.isPending ||
                 retryEtiquetaMut.isPending ||
@@ -1306,6 +1349,7 @@ interface PrimaryTabActionsProps {
   selectedCount: number;
   totalCount: number;
   separadoStats: SeparadoStatsShape;
+  engatilhadoStats: { count: number; ids: string[] };
   loading: boolean;
   onSepararChecklist: (modo?: string) => void;
   onEmbalar: (modo?: string, idsOverride?: string[]) => void;
@@ -1319,6 +1363,7 @@ function PrimaryTabActions({
   selectedCount,
   totalCount,
   separadoStats,
+  engatilhadoStats,
   loading,
   onSepararChecklist,
   onEmbalar,
@@ -1342,6 +1387,28 @@ function PrimaryTabActions({
           <Icon name="arrow-right" size={11} />
           {loading ? "Iniciando…" : `Separar (pick-OC) · ${effectiveCount}`}
         </button>
+
+        {/* Embalar direto (modo=embalagem-oc) — só quando há pedidos
+            engatilhados (NF emitida + agrupamento criado). Botão verde
+            (--wms-c-ok) pra destacar como atalho operacional: abre a
+            tela de embalagem como se os produtos já estivessem separados
+            e o operador só bipa pra sair etiqueta. Paridade com legado. */}
+        {engatilhadoStats.count > 0 && (
+          <button
+            className="wms-btn wms-btn-primary wms-btn-sm"
+            onClick={() => onEmbalar("embalagem-oc", engatilhadoStats.ids)}
+            disabled={loading}
+            type="button"
+            title="Pedidos com NF + agrupamento prontos — abre a tela de embalagem direto"
+            style={{
+              background: "var(--wms-c-ok)",
+              borderColor: "var(--wms-c-ok)",
+            }}
+          >
+            <Icon name="check" size={11} />
+            Embalar {engatilhadoStats.count} pedido(s)
+          </button>
+        )}
       </>
     );
   }

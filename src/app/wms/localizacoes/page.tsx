@@ -70,6 +70,7 @@ export default function LocalizacoesPage() {
   const [showForm, setShowForm] = useState(false);
   const [modo, setModo] = useState<Modo>("individual");
   const [page, setPage] = useState(1);
+  const [busca, setBusca] = useState("");
   const PAGE_SIZE = 100;
   const [novo, setNovo] = useState({
     codigo: "",
@@ -84,6 +85,10 @@ export default function LocalizacoesPage() {
   useEffect(() => {
     setPage(1);
   }, [activeGalpaoId]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [busca]);
 
   const locsQuery = useQuery({
     queryKey: ["wms-locs", galpaoId],
@@ -221,9 +226,18 @@ export default function LocalizacoesPage() {
     () => locsQuery.data?.rows ?? [],
     [locsQuery.data],
   );
+  const filteredRows = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    if (!termo) return rows;
+    return rows.filter(
+      (l) =>
+        l.codigo.toLowerCase().includes(termo) ||
+        (l.descricao?.toLowerCase().includes(termo) ?? false),
+    );
+  }, [rows, busca]);
   const pagedRows = useMemo(
-    () => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [rows, page],
+    () => filteredRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filteredRows, page],
   );
 
   const loteValido =
@@ -688,46 +702,116 @@ export default function LocalizacoesPage() {
           )}
           {rows.length > 0 && (
             <>
-              <div className="wms-tbl">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Código</th>
-                      <th>Descrição</th>
-                      <th>Tipo</th>
-                      <th style={{ width: 60, textAlign: "right" }}>Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagedRows.map((l) => (
-                      <tr key={l.id}>
-                        <td className="wms-mono">{l.codigo}</td>
-                        <td className="wms-td-mute">{l.descricao ?? "—"}</td>
-                        <td>
-                          <LocTipoBadge tipo={l.tipo} />
-                        </td>
-                        <td className="wms-td-actions">
-                          <button
-                            type="button"
-                            className="wms-btn-icon"
-                            title="Excluir localização"
-                            onClick={() => setExcluindo(l)}
-                          >
-                            <Icon name="trash" size={12} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 12,
+                }}
+              >
+                <div style={{ position: "relative", flex: "0 0 320px" }}>
+                  <span
+                    style={{
+                      position: "absolute",
+                      left: 10,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      color: "var(--wms-c-fg-3)",
+                      pointerEvents: "none",
+                      display: "flex",
+                    }}
+                  >
+                    <Icon name="search" size={12} />
+                  </span>
+                  <input
+                    className="wms-input"
+                    style={{ paddingLeft: 30, paddingRight: busca ? 30 : 10 }}
+                    placeholder="Buscar por código ou descrição…"
+                    value={busca}
+                    onChange={(e) => setBusca(e.target.value)}
+                  />
+                  {busca && (
+                    <button
+                      type="button"
+                      className="wms-btn-icon"
+                      title="Limpar"
+                      onClick={() => setBusca("")}
+                      style={{
+                        position: "absolute",
+                        right: 4,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                      }}
+                    >
+                      <Icon name="x" size={11} />
+                    </button>
+                  )}
+                </div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--wms-c-fg-3)",
+                  }}
+                >
+                  {busca
+                    ? `${filteredRows.length} de ${rows.length}`
+                    : `${rows.length} no total`}
+                </div>
               </div>
-              <Pagination
-                total={rows.length}
-                pageSize={PAGE_SIZE}
-                page={page}
-                onPageChange={setPage}
-                label="localizações"
-              />
+
+              {filteredRows.length === 0 ? (
+                <div className="wms-empty-block">
+                  <h3>Nada encontrado</h3>
+                  <p>
+                    Nenhuma localização corresponde a{" "}
+                    <span className="wms-mono">&quot;{busca}&quot;</span>.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="wms-tbl">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Código</th>
+                          <th>Descrição</th>
+                          <th>Tipo</th>
+                          <th style={{ width: 60, textAlign: "right" }}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pagedRows.map((l) => (
+                          <tr key={l.id}>
+                            <td className="wms-mono">{l.codigo}</td>
+                            <td className="wms-td-mute">{l.descricao ?? "—"}</td>
+                            <td>
+                              <LocTipoBadge tipo={l.tipo} />
+                            </td>
+                            <td className="wms-td-actions">
+                              <button
+                                type="button"
+                                className="wms-btn-icon"
+                                title="Excluir localização"
+                                onClick={() => setExcluindo(l)}
+                              >
+                                <Icon name="trash" size={12} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Pagination
+                    total={filteredRows.length}
+                    pageSize={PAGE_SIZE}
+                    page={page}
+                    onPageChange={setPage}
+                    label="localizações"
+                  />
+                </>
+              )}
             </>
           )}
         </>

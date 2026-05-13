@@ -68,11 +68,25 @@ export function gerarCodigosLote(input: LoteCodigosInput): LoteCodigosResult {
 
 export async function listarLocalizacoes(galpaoId?: string): Promise<Localizacao[]> {
   const sb = createServiceClient();
-  let q = sb.from("siso_localizacoes").select("*").eq("ativo", true).order("codigo");
-  if (galpaoId) q = q.eq("galpao_id", galpaoId);
-  const { data, error } = await q;
-  if (error) throw error;
-  return (data ?? []) as Localizacao[];
+  const PAGE = 1000;
+  const all: Localizacao[] = [];
+  let offset = 0;
+  while (true) {
+    let q = sb
+      .from("siso_localizacoes")
+      .select("*")
+      .eq("ativo", true)
+      .order("codigo")
+      .range(offset, offset + PAGE - 1);
+    if (galpaoId) q = q.eq("galpao_id", galpaoId);
+    const { data, error } = await q;
+    if (error) throw error;
+    const batch = (data ?? []) as Localizacao[];
+    all.push(...batch);
+    if (batch.length < PAGE) break;
+    offset += PAGE;
+  }
+  return all;
 }
 
 export async function criarLocalizacao(input: {

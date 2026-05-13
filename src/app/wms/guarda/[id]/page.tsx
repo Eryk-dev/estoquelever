@@ -64,12 +64,26 @@ export default function GuardaTabletPage() {
     return m;
   }, [locsResp]);
 
+  // Prioridade do destino:
+  //   1) override do scan/troca do operador
+  //   2) loc destino decidida no recebimento (pendência)
+  //   3) sugestão dinâmica de putaway
   const destinoEscolhido = destinoOverride ?? {
-    id: data?.sugestao?.localizacao_id ?? "",
-    codigo: data?.sugestao?.codigo ?? "",
+    id:
+      pend?.localizacao_destino_id ??
+      data?.sugestao?.localizacao_id ??
+      "",
+    codigo:
+      pend?.localizacao_destino?.codigo ??
+      data?.sugestao?.codigo ??
+      "",
   };
+  const destinoVemDoRecebimento =
+    !destinoOverride && !!pend?.localizacao_destino_id;
   const destinoEhSugestao =
-    !destinoOverride && data?.sugestao?.localizacao_id === destinoEscolhido.id;
+    !destinoOverride &&
+    !pend?.localizacao_destino_id &&
+    data?.sugestao?.localizacao_id === destinoEscolhido.id;
 
   // Quando carregar a pendência, popula o input de qty com qty_pendente
   useEffect(() => {
@@ -374,14 +388,19 @@ export default function GuardaTabletPage() {
               >
                 {destinoEscolhido.codigo || "—"}
               </span>
+              {destinoVemDoRecebimento && (
+                <span className="wms-td-mute" style={{ fontSize: 11 }}>
+                  <Icon name="sparkle" size={10} /> decidido no recebimento
+                </span>
+              )}
               {destinoEhSugestao && data?.sugestao?.razao && (
                 <span className="wms-td-mute" style={{ fontSize: 11 }}>
                   <Icon name="sparkle" size={10} /> {data.sugestao.razao}
                 </span>
               )}
-              {!destinoEhSugestao && destinoOverride && (
+              {destinoOverride && (
                 <span className="wms-td-mute" style={{ fontSize: 11 }}>
-                  (escolhida pelo operador)
+                  (trocada pelo operador)
                 </span>
               )}
             </div>

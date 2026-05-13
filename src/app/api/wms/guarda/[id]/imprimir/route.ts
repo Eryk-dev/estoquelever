@@ -65,12 +65,17 @@ export async function POST(
       );
     }
 
-    // Resolve o código da loc pra etiqueta: override > sugestão > origem
+    // Resolve o código da loc pra etiqueta. Prioridade:
+    //   1) override explícito do body
+    //   2) loc destino decidida no recebimento (pend.localizacao_destino)
+    //   3) sugestão dinâmica (loc com saldo>0 do mesmo SKU ≠ RECEBIMENTO)
+    //   4) loc de origem como último recurso ("—" se nada)
     let localizacaoCodigo = localizacaoCodigoOverride;
+    if (!localizacaoCodigo && pend.localizacao_destino?.codigo) {
+      localizacaoCodigo = pend.localizacao_destino.codigo;
+    }
     if (!localizacaoCodigo) {
       const sb = createServiceClient();
-      // Tenta sugestão de putaway (já existe no GET detalhe). Pra evitar
-      // duplicar lógica, busca direto a loc com saldo>0 do mesmo SKU.
       const { data: existentes } = await sb
         .from("siso_estoque")
         .select("localizacao:siso_localizacoes(codigo, tipo)")

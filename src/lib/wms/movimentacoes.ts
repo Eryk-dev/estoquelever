@@ -8,6 +8,12 @@ interface ItemRecebimento {
   produto_id: string;
   qty: number;
   custo_unitario?: number;
+  /**
+   * Loc destino decidida pelo operador no recebimento (opcional).
+   * Salva na pendência pra etiqueta e default do tablet. Se omitida,
+   * tablet decide via putaway no momento da guarda.
+   */
+  localizacao_destino_id?: string;
 }
 
 export interface ReceberInput {
@@ -37,6 +43,8 @@ export interface ReceberResult {
   pendencia_ids: string[];
   /** ID da loc RECEBIMENTO usada (uma por galpão). */
   localizacao_recebimento_id: string;
+  /** UUID do lote — compartilhado entre todas as pendências desta chamada. */
+  lote_id: string;
 }
 
 /**
@@ -58,6 +66,9 @@ export async function receberEstoque(
       : "recebimento sem NF");
   const localizacaoRecebimentoId = await resolverLocRecebimento(input.galpao_id);
   const pendenciaIds: string[] = [];
+  // 1 lote_id por chamada — agrupa todas as pendências desta confirmação
+  // pra montar a rota de guarda no tablet.
+  const loteId = crypto.randomUUID();
 
   for (const item of input.itens) {
     const mov = await inserirMovimentacao({
@@ -93,12 +104,14 @@ export async function receberEstoque(
       empresa_dona_id: input.empresa_dona_id,
       galpao_id: input.galpao_id,
       localizacao_origem_id: localizacaoRecebimentoId,
+      localizacao_destino_id: item.localizacao_destino_id ?? null,
       mov_entrada_id: mov.id,
       qty_inicial: item.qty,
       origem_tipo: origemTipo,
       nf_referencia: input.nf_referencia,
       custo_unitario: item.custo_unitario,
       observacoes: input.observacoes,
+      lote_id: loteId,
     });
     pendenciaIds.push(pendenciaId);
   }
@@ -106,6 +119,7 @@ export async function receberEstoque(
   return {
     pendencia_ids: pendenciaIds,
     localizacao_recebimento_id: localizacaoRecebimentoId,
+    lote_id: loteId,
   };
 }
 

@@ -390,9 +390,10 @@ wms/  (subset of src/)
     localizacoes/page.tsx          # Configurar localizações por galpão
     estoque/page.tsx               # Saldos em 4 perspectivas
     ledger/page.tsx                # Histórico imutável de movimentações
-    receber/page.tsx               # Etapa 1/2 — registro do que chegou no dock (loc=RECEBIMENTO). Sem decisão de loc final, sem plano de guarda — cria pendências em siso_wms_pendencias_guarda. Checkbox "imprimir etiquetas ao confirmar" dispara o maço via /api/wms/guarda/imprimir-lote.
-    guarda/page.tsx                # Etapa 2/2 — fila de pendências de put-away (filtros: ativas/guardadas/canceladas, galpão, busca SKU). Refetch 30s.
-    guarda/[id]/page.tsx           # Tablet de guarda — imprime etiqueta (2-por-folha pareada), bipa QR da loc destino, confirma. Suporta guarda parcial (qty<qty_pendente deixa pendência aberta) e cancelamento com motivo.
+    receber/page.tsx               # Etapa 1/2 — registra entrada no dock. Operador escolhe loc destino opcional por item (vê locs com saldo + sugestão de putaway). Plano de guarda na sidebar agrupa por loc. Checkboxes: "imprimir etiquetas ao confirmar" + "abrir rota de guarda do lote".
+    guarda/page.tsx                # Etapa 2/2 — fila de pendências AGRUPADAS por lote (1 recebimento confirmar = 1 lote). Botão grande "Guardar tudo" no topo bundla todos os lotes + avulsas numa rota só. Cards de lote com "Iniciar rota". Avulsas com botão dedicado. Refetch 30s.
+    guarda/rota/page.tsx           # Tablet de ROTA — fila ordenada por loc destino (alfabético), operador avança pendência a pendência: bipa loc → confirma → próxima. Query params: ?lote=X | ?ids=a,b,c | ?todas=true&galpao=X.
+    guarda/[id]/page.tsx           # Tablet INDIVIDUAL pra 1 pendência (uso direto, fora de rota). Destino default vem do recebimento se setado, senão sugestão putaway.
     transferir/page.tsx            # Transferência inter-galpão (origem→destino)
     replenishment/page.tsx         # Replenishment intra-galpão (mover entre localizações no mesmo galpão)
     ajuste/page.tsx                # Ajuste manual com motivo (entrada ou saída)
@@ -418,13 +419,14 @@ wms/  (subset of src/)
     ledger/route.ts                # GET com filtros (produto/empresa/galpao/origem_tipo/desde/ate)
     snapshot-inicial/route.ts      # POST (admin only, idempotente, ?dryRun=true)
     reconciliacao/route.ts         # GET (worker-secret, cron-friendly, ?fix=true)
-    receber/route.ts               # POST receber estoque (resolve loc=RECEBIMENTO + cria 1 pendência por linha; retorna pendencia_ids) + GET sugestão de putaway
-    guarda/route.ts                                          # GET — lista pendências de guarda (filtros: galpao_id, empresa_dona_id, status CSV, q, limit)
+    receber/route.ts               # POST receber estoque (resolve loc=RECEBIMENTO + cria 1 pendência por linha com lote_id compartilhado + localizacao_destino_id opcional por item; retorna pendencia_ids + lote_id) + GET sugestão de putaway
+    guarda/route.ts                                          # GET — lista pendências de guarda (filtros: galpao_id, empresa_dona_id, status CSV, q, limit). Frontend agrupa por lote_id pra montar cards de lote + avulsas.
+    guarda/rota/route.ts                                     # GET — pendências ordenadas por loc destino asc (NULL no fim). Filtros: ?lote=X | ?ids=a,b,c | ?galpao=X&todas=true. Usado pela página /wms/guarda/rota.
     guarda/[id]/route.ts                                     # GET — detalhe da pendência + sugestão de loc destino + locs com saldo do mesmo SKU
     guarda/[id]/iniciar/route.ts                             # POST — marca status='em_guarda' (idempotente)
     guarda/[id]/confirmar/route.ts                           # POST { qty, localizacao_destino_id } — mov par S+E (replenishment_intra) RECEBIMENTO→loc destino; suporta guarda parcial
     guarda/[id]/cancelar/route.ts                            # POST { motivo } — cancela sem mover estoque (saída física é fluxo separado)
-    guarda/[id]/imprimir/route.ts                            # POST { qty?, localizacao_codigo? } — imprime etiqueta de produto (1 por unidade, 2-por-folha)
+    guarda/[id]/imprimir/route.ts                            # POST { qty?, localizacao_codigo? } — imprime etiqueta de produto (1 por unidade, 2-por-folha). Default = pendência.localizacao_destino se set, senão melhor candidato dinâmico.
     guarda/imprimir-lote/route.ts                            # POST { pendencia_ids } — imprime maço inteiro de etiquetas; usado pelo recebimento ao confirmar lote
     transferir-galpao/route.ts     # POST transferência inter-galpão (par S+E com origem_id)
     replenishment/route.ts         # POST replenishment intra-galpão

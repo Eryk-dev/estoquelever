@@ -66,23 +66,28 @@ export async function POST(req: NextRequest) {
       }
       galpaoId = pend.galpao_id;
 
-      // Loc na etiqueta = melhor candidato de destino (loc com saldo do
-      // mesmo SKU que não seja a própria RECEBIMENTO). Se nada, marca "—".
-      const { data: existentes } = await sb
-        .from("siso_estoque")
-        .select("localizacao:siso_localizacoes(codigo)")
-        .match({
-          produto_id: pend.produto_id,
-          empresa_dona_id: pend.empresa_dona_id,
-          galpao_id: pend.galpao_id,
-        })
-        .gt("saldo", 0)
-        .neq("localizacao_id", pend.localizacao_origem_id)
-        .order("saldo", { ascending: false })
-        .limit(1);
-      type Lin = { localizacao?: { codigo?: string } };
-      const candidato = ((existentes ?? []) as Lin[])[0];
-      const localizacao = candidato?.localizacao?.codigo ?? "—";
+      // Loc na etiqueta. Prioridade:
+      //   1) loc destino decidida no recebimento (pend.localizacao_destino)
+      //   2) candidato com saldo>0 do mesmo SKU (excluindo RECEBIMENTO)
+      //   3) "—" se nenhum
+      let localizacao = pend.localizacao_destino?.codigo ?? null;
+      if (!localizacao) {
+        const { data: existentes } = await sb
+          .from("siso_estoque")
+          .select("localizacao:siso_localizacoes(codigo)")
+          .match({
+            produto_id: pend.produto_id,
+            empresa_dona_id: pend.empresa_dona_id,
+            galpao_id: pend.galpao_id,
+          })
+          .gt("saldo", 0)
+          .neq("localizacao_id", pend.localizacao_origem_id)
+          .order("saldo", { ascending: false })
+          .limit(1);
+        type Lin = { localizacao?: { codigo?: string } };
+        const candidato = ((existentes ?? []) as Lin[])[0];
+        localizacao = candidato?.localizacao?.codigo ?? "—";
+      }
 
       linhas.push({
         etiqueta: {

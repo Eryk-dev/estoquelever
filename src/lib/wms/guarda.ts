@@ -24,6 +24,18 @@ export interface PendenciaGuarda {
   empresa_dona_id: string;
   galpao_id: string;
   localizacao_origem_id: string;
+  /**
+   * Loc destino decidida pelo operador do recebimento (opcional).
+   * Quando NULL, o tablet usa sugestão dinâmica de putaway.
+   * Não força a guarda — operador pode bipa outra loc pra trocar.
+   */
+  localizacao_destino_id: string | null;
+  /**
+   * UUID compartilhado entre pendências do mesmo recebimento.
+   * Frontend usa pra agrupar a fila em rotas (1 lote = 1 caminhada).
+   * NULL em pendências avulsas (pré-feature ou casos edge).
+   */
+  lote_id: string | null;
   mov_entrada_id: string;
   nf_referencia: string | null;
   origem_tipo: string;
@@ -48,6 +60,7 @@ export interface PendenciaJoined extends PendenciaGuarda {
   empresa: { nome: string } | null;
   galpao: { nome: string } | null;
   localizacao_origem: { codigo: string } | null;
+  localizacao_destino: { codigo: string; tipo: string } | null;
 }
 
 /**
@@ -88,16 +101,40 @@ export interface CriarPendenciaInput {
   empresa_dona_id: string;
   galpao_id: string;
   localizacao_origem_id: string;
+  /**
+   * Loc destino opcional decidida no recebimento. Valida que pertence ao
+   * mesmo galpão e é diferente da origem. Se NULL, o tablet decide depois.
+   */
+  localizacao_destino_id?: string | null;
   mov_entrada_id: string;
   qty_inicial: number;
   origem_tipo: string;
   nf_referencia?: string | null;
   custo_unitario?: number | null;
   observacoes?: string | null;
+  /** UUID compartilhado entre pendências do mesmo recebimento (agrupamento de rota). */
+  lote_id?: string | null;
 }
 
 export async function criarPendencia(input: CriarPendenciaInput): Promise<string> {
   const sb = createServiceClient();
+  // Valida loc destino (se passada). Erro aqui aborta a criação da pendência
+  // — recebedor recebe 400 e arruma a escolha antes de confirmar de novo.
+  if (input.localizacao_destino_id) {
+    if (input.localizacao_destino_id === input.localizacao_origem_id) {
+      throw new Error("loc destino não pode ser igual à loc de recebimento");
+    }
+    const { data: locDest } = await sb
+      .from("siso_localizacoes")
+      .select("id, galpao_id, ativo")
+      .eq("id", input.localizacao_destino_id)
+      .maybeSingle();
+    if (!locDest) throw new Error("localização destino não encontrada");
+    if (!locDest.ativo) throw new Error("localização destino inativa");
+    if (locDest.galpao_id !== input.galpao_id) {
+      throw new Error("localização destino é de outro galpão");
+    }
+  }
   const { data, error } = await sb
     .from("siso_wms_pendencias_guarda")
     .insert({
@@ -105,12 +142,14 @@ export async function criarPendencia(input: CriarPendenciaInput): Promise<string
       empresa_dona_id: input.empresa_dona_id,
       galpao_id: input.galpao_id,
       localizacao_origem_id: input.localizacao_origem_id,
+      localizacao_destino_id: input.localizacao_destino_id ?? null,
       mov_entrada_id: input.mov_entrada_id,
       qty_inicial: input.qty_inicial,
       origem_tipo: input.origem_tipo,
       nf_referencia: input.nf_referencia ?? null,
       custo_unitario: input.custo_unitario ?? null,
       observacoes: input.observacoes ?? null,
+      lote_id: input.lote_id ?? null,
     })
     .select("id")
     .single();
@@ -141,8 +180,9 @@ export async function listarPendencias(
         produto:siso_produtos(sku, descricao, imagem_url),
         empresa:siso_empresas!empresa_dona_id(nome),
         galpao:siso_galpoes(nome),
-        localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo)
-      `,
+        localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo),
+        localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo)
+`,
     )
     .in("status", statusFiltro)
     .order("criada_em", { ascending: true })
@@ -166,6 +206,72 @@ export async function listarPendencias(
   return rows;
 }
 
+/**
+ * Lista pendências de uma rota (lote, ids ad-hoc, ou todas do galpão).
+ *
+ * Ordena por loc destino (codigo asc, NULL no fim — pendências sem loc
+ * decidida no recebimento). Pendências em status terminal são filtradas.
+ *
+ * - `lote_id`: pega tudo do lote
+ * - `pendencia_ids`: pega só esses (rota ad-hoc / "guardar tudo" com sub-seleção)
+ * - `galpao_id + todas=true`: pega tudo do galpão ativo (botão "Guardar tudo")
+ *
+ * Mutex de filtros: ao menos um precisa ser informado.
+ */
+export async function listarRotaPendencias(input: {
+  lote_id?: string;
+  pendencia_ids?: string[];
+  galpao_id?: string;
+  empresa_dona_id?: string;
+  todas?: boolean;
+}): Promise<PendenciaJoined[]> {
+  const { lote_id, pendencia_ids, galpao_id, empresa_dona_id, todas } = input;
+  if (!lote_id && !pendencia_ids?.length && !(galpao_id && todas)) {
+    throw new Error("informe lote_id, pendencia_ids, ou galpao_id+todas");
+  }
+
+  const sb = createServiceClient();
+  let q = sb
+    .from("siso_wms_pendencias_guarda")
+    .select(
+      `
+        *,
+        produto:siso_produtos(sku, descricao, imagem_url),
+        empresa:siso_empresas!empresa_dona_id(nome),
+        galpao:siso_galpoes(nome),
+        localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo),
+        localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo)
+      `,
+    )
+    .in("status", ["pendente", "em_guarda"]);
+
+  if (lote_id) q = q.eq("lote_id", lote_id);
+  if (pendencia_ids?.length) q = q.in("id", pendencia_ids);
+  if (galpao_id) q = q.eq("galpao_id", galpao_id);
+  if (empresa_dona_id) q = q.eq("empresa_dona_id", empresa_dona_id);
+
+  const { data, error } = await q.limit(500);
+  if (error) throw error;
+  const rows = ((data ?? []) as unknown as PendenciaJoined[]).map(
+    normalizarNumeros,
+  );
+
+  // Ordena: por codigo da loc destino asc, NULL no fim, depois criada_em asc
+  // pra estabilidade entre pendências sem loc decidida.
+  rows.sort((a, b) => {
+    const aCod = a.localizacao_destino?.codigo ?? null;
+    const bCod = b.localizacao_destino?.codigo ?? null;
+    if (aCod === null && bCod !== null) return 1;
+    if (aCod !== null && bCod === null) return -1;
+    if (aCod !== null && bCod !== null) {
+      const cmp = aCod.localeCompare(bCod);
+      if (cmp !== 0) return cmp;
+    }
+    return a.criada_em.localeCompare(b.criada_em);
+  });
+  return rows;
+}
+
 export async function obterPendencia(id: string): Promise<PendenciaJoined | null> {
   const sb = createServiceClient();
   const { data, error } = await sb
@@ -176,8 +282,9 @@ export async function obterPendencia(id: string): Promise<PendenciaJoined | null
         produto:siso_produtos(sku, descricao, imagem_url),
         empresa:siso_empresas!empresa_dona_id(nome),
         galpao:siso_galpoes(nome),
-        localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo)
-      `,
+        localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo),
+        localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo)
+`,
     )
     .eq("id", id)
     .maybeSingle();

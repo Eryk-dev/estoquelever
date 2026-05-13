@@ -505,21 +505,21 @@ export function ReceberModal({
   const [data, setData] = useState<string>(hojeISODate());
   const [empresaIdUser, setEmpresaIdUser] = useState<string | null>(null);
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
+  const [locIdUser, setLocIdUser] = useState<string | null>(null);
+  const [locCodigoUser, setLocCodigoUser] = useState<string | null>(null);
   const [obs, setObs] = useState("");
   const qc = useQueryClient();
   const today = hojeISODate();
   const isRetroativo = data !== today;
 
-  // Valores efetivos: user choice ?? padrão derivado dos dados
   const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
   const galpao = galpoesList.find((g) => g.id === galpaoId);
   const empresasGalpao = galpao?.empresas ?? [];
   const empresaId = empresaIdUser ?? empresasGalpao[0]?.id ?? "";
 
-  // Após o split em 2 etapas, a peça sempre cai em RECEBIMENTO. A loc final
-  // é decidida no fluxo de Guarda (/wms/guarda). Mantemos a query de
-  // sugestão só pra mostrar ao operador "esse SKU já tem casa, vai pra
-  // tal loc quando guardar" — mas não é editável aqui.
+  // Sugestão de putaway + locs onde o SKU já tem saldo. O operador pode
+  // aceitar a sugestão, escolher uma das locs com saldo, ou deixar em branco
+  // (tablet decide na hora da guarda).
   const sugQuery = useQuery({
     queryKey: ["wms-putaway", pid?.id, empresaId, galpaoId],
     queryFn: () =>
@@ -527,6 +527,12 @@ export function ReceberModal({
         localizacao_id: string;
         codigo?: string;
         razao: string;
+        locaisExistentes: Array<{
+          localizacao_id: string;
+          codigo: string;
+          tipo: string;
+          saldo: number;
+        }>;
       } | null>(
         `/api/wms/receber?produto_id=${pid?.id}&empresa_id=${empresaId}&galpao_id=${galpaoId}`,
       ),
@@ -534,9 +540,14 @@ export function ReceberModal({
     staleTime: 30 * 1000,
   });
 
+  // Loc destino efetiva = override ?? sugestão de putaway (pode ser null)
+  const locDestinoId = locIdUser ?? sugQuery.data?.localizacao_id ?? null;
+  const locDestinoCodigo =
+    locCodigoUser ?? sugQuery.data?.codigo ?? null;
+  const locaisExistentes = sugQuery.data?.locaisExistentes ?? [];
+
   const mut = useMutation({
     mutationFn: async () => {
-      // Data no passado vira lancamento_retroativo automaticamente.
       const origemFinal = isRetroativo
         ? "lancamento_retroativo"
         : origemToBackend(origem);
@@ -551,6 +562,7 @@ export function ReceberModal({
               produto_id: pid!.id,
               qty: Number(qty),
               custo_unitario: custo ? Number(custo) : undefined,
+              localizacao_destino_id: locDestinoId ?? undefined,
             },
           ],
           origem_tipo: origemFinal,
@@ -566,6 +578,7 @@ export function ReceberModal({
         ok: boolean;
         pendencia_ids: string[];
         localizacao_recebimento_id: string;
+        lote_id: string;
       };
     },
     onSuccess: () => {
@@ -712,39 +725,110 @@ export function ReceberModal({
         </Field>
       </div>
 
-      <div
-        style={{
-          background: "var(--wms-c-faint)",
-          border: "1px solid var(--wms-c-border)",
-          borderRadius: "var(--wms-r-3)",
-          padding: "10px 12px",
-          marginTop: 8,
-          fontSize: 11.5,
-        }}
+      <Field
+        label="Loc destino"
+        hint="Opcional — se vazio, tablet decide na guarda via putaway"
       >
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>
-          <Icon name="box" size={11} /> Vai pra fila de guarda
-        </div>
-        <div className="wms-td-mute">
-          A peça entra na loc <span className="wms-mono">RECEBIMENTO</span> do
-          galpão. A loc final é decidida na tela /wms/guarda (tablet), com
-          impressão de etiquetas e bipe de QR.
-          {sugQuery.data?.codigo && (
-            <>
-              {" "}
-              Sugestão de destino:{" "}
-              <span className="wms-mono">{sugQuery.data.codigo}</span>
-              {sugQuery.data.razao && (
-                <span className="wms-td-mute">
-                  {" "}
-                  ({sugQuery.data.razao})
-                </span>
-              )}
-              .
-            </>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            className="wms-mono"
+            style={{
+              flex: 1,
+              padding: "8px 10px",
+              border: "1px dashed var(--wms-c-border)",
+              borderRadius: "var(--wms-r-2)",
+              fontSize: 13,
+              fontWeight: 600,
+              color: locDestinoCodigo ? undefined : "var(--wms-c-mute)",
+            }}
+          >
+            {locDestinoCodigo ?? "— sem destino decidido"}
+          </span>
+          {locDestinoCodigo &&
+            !locIdUser &&
+            sugQuery.data?.razao && (
+              <span className="wms-td-mute" style={{ fontSize: 11 }}>
+                <Icon name="sparkle" size={10} /> {sugQuery.data.razao}
+              </span>
+            )}
+          {locIdUser && (
+            <button
+              type="button"
+              className="wms-btn-link"
+              onClick={() => {
+                setLocIdUser(null);
+                setLocCodigoUser(null);
+              }}
+            >
+              Limpar
+            </button>
           )}
         </div>
-      </div>
+      </Field>
+
+      {locaisExistentes.length > 0 && (
+        <div
+          style={{
+            background: "var(--wms-c-faint)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-3)",
+            padding: "10px 12px",
+            marginTop: 8,
+          }}
+        >
+          <div
+            className="wms-td-mute"
+            style={{ fontSize: 11, marginBottom: 6, fontWeight: 600 }}
+          >
+            <Icon name="box" size={11} /> Este SKU já tem saldo em{" "}
+            {locaisExistentes.length} localização
+            {locaisExistentes.length > 1 ? "ões" : ""} desse galpão
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {locaisExistentes.map((l) => {
+              const isSelected = l.localizacao_id === locDestinoId;
+              const isSuggested =
+                l.localizacao_id === sugQuery.data?.localizacao_id;
+              return (
+                <button
+                  key={l.localizacao_id}
+                  type="button"
+                  onClick={() => {
+                    setLocIdUser(l.localizacao_id);
+                    setLocCodigoUser(l.codigo);
+                  }}
+                  className={`wms-btn wms-btn-sm ${
+                    isSelected ? "wms-btn-primary" : "wms-btn-ghost"
+                  }`}
+                  style={{ fontSize: 11.5 }}
+                  title={`${fmtNum(l.saldo)} un. em ${l.codigo}`}
+                >
+                  <span className="wms-mono">{l.codigo}</span>
+                  <span
+                    className="wms-td-mute"
+                    style={{ marginLeft: 6, fontSize: 10.5 }}
+                  >
+                    {fmtNum(l.saldo)} un · {l.tipo}
+                  </span>
+                  {isSuggested && <Icon name="sparkle" size={10} />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <Field label="Trocar loc destino">
+        <LocalizacaoCombo
+          galpaoId={galpaoId}
+          value={locIdUser ?? ""}
+          onChange={(id) => {
+            if (!id) return;
+            setLocIdUser(id);
+            setLocCodigoUser(null);
+          }}
+        />
+      </Field>
 
       <Field label="Observação">
         <textarea

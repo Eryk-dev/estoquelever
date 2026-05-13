@@ -242,6 +242,7 @@ function NovaSessaoModal({
   const [removidas, setRemovidas] = useState<Set<string>>(new Set());
   const [locsManual, setLocsManual] = useState<Set<string>>(new Set());
   const [anchorManualId, setAnchorManualId] = useState<string | null>(null);
+  const [buscaLoc, setBuscaLoc] = useState("");
   const [numOperadores, setNumOperadores] = useState(3);
 
   const galpoesQuery = useGalpoes();
@@ -269,6 +270,16 @@ function NovaSessaoModal({
     }
     return m;
   }, [bucketsManual]);
+
+  // Filtro parcial sobre as locs do galpão (modo manual).
+  // Não afeta seleções — locsManual permanece independente do termo,
+  // permitindo "buscar A-, marcar todas, buscar B-, marcar todas".
+  const locsFiltradas = useMemo(() => {
+    const rows = locsQuery.data?.rows ?? [];
+    const termo = buscaLoc.trim().toLowerCase();
+    if (!termo) return rows;
+    return rows.filter((l) => l.codigo.toLowerCase().includes(termo));
+  }, [locsQuery.data, buscaLoc]);
 
   const sugerir = useMutation({
     mutationFn: () =>
@@ -451,6 +462,7 @@ function NovaSessaoModal({
               setSugestao(null);
               setLocsManual(new Set());
               setAnchorManualId(null);
+              setBuscaLoc("");
             }}
           >
             <option value="">— selecione —</option>
@@ -724,17 +736,79 @@ function NovaSessaoModal({
                   </div>
                 </div>
 
+                {/* Filtro parcial. Não toca em locsManual — usuário pode
+                    buscar A-, marcar visíveis, buscar B-, marcar visíveis e
+                    todas permanecem selecionadas. */}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    marginBottom: 8,
+                    alignItems: "center",
+                  }}
+                >
+                  <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+                    <span
+                      style={{
+                        position: "absolute",
+                        left: 10,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        color: "var(--wms-c-fg-3)",
+                        pointerEvents: "none",
+                        display: "flex",
+                      }}
+                    >
+                      <Icon name="search" size={12} />
+                    </span>
+                    <input
+                      className="wms-input"
+                      style={{
+                        paddingLeft: 30,
+                        paddingRight: buscaLoc ? 30 : 10,
+                      }}
+                      placeholder="Filtrar localizações (ex: A-, ABS-03)…"
+                      value={buscaLoc}
+                      onChange={(e) => setBuscaLoc(e.target.value)}
+                    />
+                    {buscaLoc && (
+                      <button
+                        type="button"
+                        className="wms-btn-icon"
+                        title="Limpar filtro"
+                        onClick={() => setBuscaLoc("")}
+                        style={{
+                          position: "absolute",
+                          right: 4,
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                        }}
+                      >
+                        <Icon name="x" size={11} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
                 <div
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
                     marginBottom: 8,
+                    gap: 8,
+                    flexWrap: "wrap",
                   }}
                 >
                   <div className="wms-td-mute" style={{ fontSize: 12 }}>
                     {locsManual.size} de {locsQuery.data?.rows?.length ?? 0}{" "}
                     selecionada(s)
+                    {buscaLoc.trim() && (
+                      <span style={{ marginLeft: 6 }}>
+                        · {locsFiltradas.length} visíve
+                        {locsFiltradas.length === 1 ? "l" : "is"}
+                      </span>
+                    )}
                     <span style={{ marginLeft: 8, opacity: 0.7 }}>
                       · Shift+clique para selecionar intervalo
                     </span>
@@ -743,26 +817,36 @@ function NovaSessaoModal({
                     <button
                       type="button"
                       className="wms-btn wms-btn-ghost wms-btn-sm"
+                      disabled={locsFiltradas.length === 0}
                       onClick={() => {
-                        setLocsManual(
-                          new Set(
-                            (locsQuery.data?.rows ?? []).map((l) => l.id),
-                          ),
-                        );
+                        // Aditivo: marca apenas as visíveis, mantém as já
+                        // selecionadas que não aparecem no filtro atual.
+                        const ns = new Set(locsManual);
+                        for (const l of locsFiltradas) ns.add(l.id);
+                        setLocsManual(ns);
                         setAnchorManualId(null);
                       }}
                     >
-                      Marcar todas
+                      {buscaLoc.trim()
+                        ? `Marcar visíveis (${locsFiltradas.length})`
+                        : "Marcar todas"}
                     </button>
                     <button
                       type="button"
                       className="wms-btn wms-btn-ghost wms-btn-sm"
                       onClick={() => {
-                        setLocsManual(new Set());
+                        if (buscaLoc.trim()) {
+                          // Limpa apenas as visíveis, preserva o resto.
+                          const ns = new Set(locsManual);
+                          for (const l of locsFiltradas) ns.delete(l.id);
+                          setLocsManual(ns);
+                        } else {
+                          setLocsManual(new Set());
+                        }
                         setAnchorManualId(null);
                       }}
                     >
-                      Limpar
+                      {buscaLoc.trim() ? "Limpar visíveis" : "Limpar"}
                     </button>
                   </div>
                 </div>
@@ -779,16 +863,35 @@ function NovaSessaoModal({
                     userSelect: "none",
                   }}
                 >
-                  {(locsQuery.data?.rows ?? []).map((l) => {
+                  {locsFiltradas.length === 0 && (
+                    <div
+                      className="wms-td-mute"
+                      style={{
+                        gridColumn: "1 / -1",
+                        textAlign: "center",
+                        padding: "16px 8px",
+                        fontSize: 12,
+                      }}
+                    >
+                      Nenhuma localização corresponde a{" "}
+                      <span className="wms-mono">
+                        &quot;{buscaLoc}&quot;
+                      </span>
+                      .
+                    </div>
+                  )}
+                  {locsFiltradas.map((l) => {
                     const checked = locsManual.has(l.id);
-                    const rows = locsQuery.data?.rows ?? [];
                     const handleToggle = (e: React.MouseEvent) => {
                       e.preventDefault();
-                      const ids = rows.map((r) => r.id);
+                      // Range vale apenas dentro da lista visível atual —
+                      // shift sobre âncora fora do filtro não faz sentido.
+                      const ids = locsFiltradas.map((r) => r.id);
                       if (
                         e.shiftKey &&
                         anchorManualId &&
-                        anchorManualId !== l.id
+                        anchorManualId !== l.id &&
+                        ids.includes(anchorManualId)
                       ) {
                         const a = ids.indexOf(anchorManualId);
                         const b = ids.indexOf(l.id);

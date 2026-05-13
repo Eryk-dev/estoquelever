@@ -12,6 +12,10 @@ import { createServiceClient } from "@/lib/supabase-server";
 export async function GET() {
   const supabase = createServiceClient();
 
+  // Hint explícito `siso_empresas!siso_empresas_galpao_id_fkey` desambígua
+  // PostgREST: existem 2 rotas entre siso_galpoes e siso_empresas (direta via
+  // siso_empresas.galpao_id E many-to-many via siso_empresa_galpoes_preferenciais).
+  // Aqui queremos a direta (espelho do primeiro preferencial).
   const { data: galpoes, error } = await supabase
     .from("siso_galpoes")
     .select(`
@@ -19,7 +23,7 @@ export async function GET() {
       printnode_printer_id, printnode_printer_nome,
       printnode_printer_id_produto, printnode_printer_nome_produto,
       criado_em, atualizado_em,
-      siso_empresas (
+      siso_empresas!siso_empresas_galpao_id_fkey (
         id, nome, cnpj, ativo, criado_em, atualizado_em,
         siso_grupo_empresas (
           id, tier,
@@ -27,7 +31,7 @@ export async function GET() {
         ),
         siso_empresa_galpoes_preferenciais (
           galpao_id,
-          siso_galpoes ( id, nome )
+          siso_galpoes!siso_empresa_galpoes_preferenciais_galpao_id_fkey ( id, nome )
         ),
         siso_tiny_connections (
           id, ativo, ultimo_teste_ok, is_authorized:access_token,

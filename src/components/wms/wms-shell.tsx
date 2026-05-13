@@ -120,6 +120,13 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/wms/emprestimos", icon: "handshake", label: "Empréstimos" },
     ],
   },
+  {
+    id: "sistema",
+    label: "Sistema",
+    itens: [
+      { href: "/wms/configuracoes", icon: "building", label: "Configurações" },
+    ],
+  },
 ];
 
 const ALL_NAV: NavItem[] = NAV_SECTIONS.flatMap((s) => s.itens);

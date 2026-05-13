@@ -505,7 +505,6 @@ export function ReceberModal({
   const [data, setData] = useState<string>(hojeISODate());
   const [empresaIdUser, setEmpresaIdUser] = useState<string | null>(null);
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
-  const [locIdUser, setLocIdUser] = useState<string | null>(null);
   const [obs, setObs] = useState("");
   const qc = useQueryClient();
   const today = hojeISODate();
@@ -517,7 +516,10 @@ export function ReceberModal({
   const empresasGalpao = galpao?.empresas ?? [];
   const empresaId = empresaIdUser ?? empresasGalpao[0]?.id ?? "";
 
-  // Sugestão de putaway + localizações onde o SKU já tem saldo
+  // Após o split em 2 etapas, a peça sempre cai em RECEBIMENTO. A loc final
+  // é decidida no fluxo de Guarda (/wms/guarda). Mantemos a query de
+  // sugestão só pra mostrar ao operador "esse SKU já tem casa, vai pra
+  // tal loc quando guardar" — mas não é editável aqui.
   const sugQuery = useQuery({
     queryKey: ["wms-putaway", pid?.id, empresaId, galpaoId],
     queryFn: () =>
@@ -525,21 +527,12 @@ export function ReceberModal({
         localizacao_id: string;
         codigo?: string;
         razao: string;
-        locaisExistentes: Array<{
-          localizacao_id: string;
-          codigo: string;
-          tipo: string;
-          saldo: number;
-        }>;
       } | null>(
         `/api/wms/receber?produto_id=${pid?.id}&empresa_id=${empresaId}&galpao_id=${galpaoId}`,
       ),
     enabled: !!(pid?.id && empresaId && galpaoId),
     staleTime: 30 * 1000,
   });
-
-  const locId = locIdUser ?? sugQuery.data?.localizacao_id ?? "";
-  const locaisExistentes = sugQuery.data?.locaisExistentes ?? [];
 
   const mut = useMutation({
     mutationFn: async () => {
@@ -558,7 +551,6 @@ export function ReceberModal({
               produto_id: pid!.id,
               qty: Number(qty),
               custo_unitario: custo ? Number(custo) : undefined,
-              localizacao_id: locId,
             },
           ],
           origem_tipo: origemFinal,
@@ -570,9 +562,16 @@ export function ReceberModal({
         const body = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error || `HTTP ${r.status}`);
       }
+      return (await r.json()) as {
+        ok: boolean;
+        pendencia_ids: string[];
+        localizacao_recebimento_id: string;
+      };
     },
     onSuccess: () => {
-      toast.success(`Entrada registrada: +${fmtNum(Number(qty))} de ${pid!.sku}`);
+      toast.success(
+        `Entrada registrada: +${fmtNum(Number(qty))} de ${pid!.sku} (vai pra fila de guarda)`,
+      );
       qc.invalidateQueries({ queryKey: ["wms-estoque"] });
       qc.invalidateQueries({ queryKey: ["wms-ledger"] });
       qc.invalidateQueries({ queryKey: ["wms-produtos"] });
@@ -583,6 +582,7 @@ export function ReceberModal({
       qc.invalidateQueries({ queryKey: ["wms-produto-estoque"] });
       qc.invalidateQueries({ queryKey: ["wms-produto-ledger"] });
       qc.invalidateQueries({ queryKey: ["wms-produto-cobertura"] });
+      qc.invalidateQueries({ queryKey: ["wms-guarda"] });
       onClose();
     },
     onError: (err: Error) => {
@@ -591,12 +591,12 @@ export function ReceberModal({
   });
 
   const valid =
-    !!pid && !!empresaId && !!galpaoId && !!locId && Number(qty) > 0;
+    !!pid && !!empresaId && !!galpaoId && Number(qty) > 0;
 
   return (
     <Modal
       title="Receber mercadoria"
-      subtitle="Entrada no ledger com sugestão automática de putaway"
+      subtitle="Entrada no dock (RECEBIMENTO). Loc final é definida em /wms/guarda."
       width={720}
       onClose={onClose}
       footer={
@@ -701,7 +701,6 @@ export function ReceberModal({
             onChange={(e) => {
               setGalpaoIdUser(e.target.value);
               setEmpresaIdUser(null);
-              setLocIdUser(null);
             }}
           >
             {galpoesList.map((g) => (
@@ -712,88 +711,40 @@ export function ReceberModal({
           </select>
         </Field>
       </div>
-      <Field label="Localização" required>
-        <LocalizacaoCombo
-          galpaoId={galpaoId}
-          value={locId}
-          onChange={(v) => setLocIdUser(v)}
-        />
-      </Field>
 
-      {locaisExistentes.length > 0 && (
-        <div
-          style={{
-            background: "var(--wms-c-faint)",
-            border: "1px solid var(--wms-c-border)",
-            borderRadius: "var(--wms-r-3)",
-            padding: "10px 12px",
-            marginTop: 8,
-          }}
-        >
-          <div
-            className="wms-td-mute"
-            style={{ fontSize: 11, marginBottom: 6, fontWeight: 600 }}
-          >
-            <Icon name="box" size={11} /> Este SKU já tem saldo em{" "}
-            {locaisExistentes.length} localização
-            {locaisExistentes.length > 1 ? "ões" : ""} desse galpão
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {locaisExistentes.map((l) => {
-              const isSelected = l.localizacao_id === locId;
-              const isSuggested =
-                l.localizacao_id === sugQuery.data?.localizacao_id;
-              return (
-                <button
-                  key={l.localizacao_id}
-                  type="button"
-                  onClick={() => setLocIdUser(l.localizacao_id)}
-                  className={`wms-btn wms-btn-sm ${
-                    isSelected ? "wms-btn-primary" : "wms-btn-ghost"
-                  }`}
-                  style={{ fontSize: 11.5 }}
-                  title={`${fmtNum(l.saldo)} un. em ${l.codigo}`}
-                >
-                  <span className="wms-mono">{l.codigo}</span>
-                  <span
-                    className="wms-td-mute"
-                    style={{ marginLeft: 6, fontSize: 10.5 }}
-                  >
-                    {fmtNum(l.saldo)} un · {l.tipo}
-                  </span>
-                  {isSuggested && (
-                    <Icon name="sparkle" size={10} />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          {sugQuery.data?.razao && (
-            <div
-              className="wms-td-mute"
-              style={{ fontSize: 11, marginTop: 6 }}
-            >
-              <Icon name="sparkle" size={10} /> {sugQuery.data.razao}
-            </div>
+      <div
+        style={{
+          background: "var(--wms-c-faint)",
+          border: "1px solid var(--wms-c-border)",
+          borderRadius: "var(--wms-r-3)",
+          padding: "10px 12px",
+          marginTop: 8,
+          fontSize: 11.5,
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>
+          <Icon name="box" size={11} /> Vai pra fila de guarda
+        </div>
+        <div className="wms-td-mute">
+          A peça entra na loc <span className="wms-mono">RECEBIMENTO</span> do
+          galpão. A loc final é decidida na tela /wms/guarda (tablet), com
+          impressão de etiquetas e bipe de QR.
+          {sugQuery.data?.codigo && (
+            <>
+              {" "}
+              Sugestão de destino:{" "}
+              <span className="wms-mono">{sugQuery.data.codigo}</span>
+              {sugQuery.data.razao && (
+                <span className="wms-td-mute">
+                  {" "}
+                  ({sugQuery.data.razao})
+                </span>
+              )}
+              .
+            </>
           )}
         </div>
-      )}
-      {locaisExistentes.length === 0 &&
-        sugQuery.data?.localizacao_id &&
-        locId === sugQuery.data.localizacao_id && (
-          <div className="wms-hint-card">
-            <Icon name="sparkle" size={12} />
-            <div>
-              <div>
-                <strong>Sugestão de putaway:</strong>{" "}
-                <span className="wms-mono">
-                  {sugQuery.data.codigo ?? sugQuery.data.localizacao_id}
-                </span>
-              </div>
-              <div className="wms-td-mute">{sugQuery.data.razao}</div>
-            </div>
-          </div>
-        )}
+      </div>
 
       <Field label="Observação">
         <textarea

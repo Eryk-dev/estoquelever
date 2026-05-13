@@ -35,8 +35,8 @@ export async function POST(req: NextRequest) {
     }
   }
   try {
-    await receberEstoque({ ...body, usuario_id: auth.user.id });
-    return NextResponse.json({ ok: true });
+    const result = await receberEstoque({ ...body, usuario_id: auth.user.id });
+    return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.receber",

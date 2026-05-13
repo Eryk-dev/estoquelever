@@ -296,3 +296,105 @@ export async function resolverImpressora(
 export function invalidarCacheImpressora(): void {
   printerCache.clear();
 }
+
+const printerProdutoCache = new Map<string, { value: { printerId: number; printerNome: string } | null; expiresAt: number }>();
+
+/**
+ * Resolve a impressora pra etiqueta de PRODUTO (recebimento/guarda).
+ * Diferente de `resolverImpressora` (etiqueta de envio): prioriza os campos
+ * `_produto`. Se nenhum estiver configurado, faz fallback pra impressora
+ * padrão (mesma da etiqueta de envio) — assim funciona out-of-the-box até o
+ * admin configurar uma impressora dedicada.
+ *
+ * Prioridade:
+ *   1. usuario.printnode_printer_id_produto
+ *   2. galpao.printnode_printer_id_produto
+ *   3. usuario.printnode_printer_id           (fallback envelope)
+ *   4. galpao.printnode_printer_id            (fallback envelope)
+ */
+export async function resolverImpressoraProduto(
+  usuarioId: string,
+  galpaoId: string,
+): Promise<{ printerId: number; printerNome: string; fallbackEnvelope: boolean } | null> {
+  const cacheKey = `${usuarioId}|${galpaoId}`;
+  const cached = printerProdutoCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.value
+      ? { ...cached.value, fallbackEnvelope: false }
+      : null;
+  }
+
+  const supabase = createServiceClient();
+
+  const [userResult, galpaoResult] = await Promise.all([
+    supabase
+      .from("siso_usuarios")
+      .select(
+        "printnode_printer_id, printnode_printer_nome, printnode_printer_id_produto, printnode_printer_nome_produto",
+      )
+      .eq("id", usuarioId)
+      .single(),
+    supabase
+      .from("siso_galpoes")
+      .select(
+        "printnode_printer_id, printnode_printer_nome, printnode_printer_id_produto, printnode_printer_nome_produto",
+      )
+      .eq("id", galpaoId)
+      .single(),
+  ]);
+
+  let result: { printerId: number; printerNome: string } | null = null;
+  let fallbackEnvelope = false;
+
+  const u = userResult.data as
+    | {
+        printnode_printer_id_produto?: number | null;
+        printnode_printer_nome_produto?: string | null;
+        printnode_printer_id?: number | null;
+        printnode_printer_nome?: string | null;
+      }
+    | null;
+  const g = galpaoResult.data as
+    | {
+        printnode_printer_id_produto?: number | null;
+        printnode_printer_nome_produto?: string | null;
+        printnode_printer_id?: number | null;
+        printnode_printer_nome?: string | null;
+      }
+    | null;
+
+  if (u?.printnode_printer_id_produto) {
+    result = {
+      printerId: u.printnode_printer_id_produto,
+      printerNome: u.printnode_printer_nome_produto ?? "",
+    };
+  } else if (g?.printnode_printer_id_produto) {
+    result = {
+      printerId: g.printnode_printer_id_produto,
+      printerNome: g.printnode_printer_nome_produto ?? "",
+    };
+  } else if (u?.printnode_printer_id) {
+    result = {
+      printerId: u.printnode_printer_id,
+      printerNome: u.printnode_printer_nome ?? "",
+    };
+    fallbackEnvelope = true;
+  } else if (g?.printnode_printer_id) {
+    result = {
+      printerId: g.printnode_printer_id,
+      printerNome: g.printnode_printer_nome ?? "",
+    };
+    fallbackEnvelope = true;
+  }
+
+  printerProdutoCache.set(cacheKey, {
+    value: result,
+    expiresAt: Date.now() + PRINTER_CACHE_TTL_MS,
+  });
+  return result ? { ...result, fallbackEnvelope } : null;
+}
+
+/** Clear the produto printer cache (after config changes). */
+export function invalidarCacheImpressoraProduto(): void {
+  printerProdutoCache.clear();
+}

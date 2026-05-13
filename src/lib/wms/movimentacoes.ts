@@ -1,13 +1,13 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao } from "./ledger";
 import type { Quadrupla, Movimentacao, OrigemTipo } from "./types";
+import { criarPendencia, resolverLocRecebimento } from "./guarda";
 import { logger } from "@/lib/logger";
 
 interface ItemRecebimento {
   produto_id: string;
   qty: number;
   custo_unitario?: number;
-  localizacao_id: string;
 }
 
 export interface ReceberInput {
@@ -32,20 +32,40 @@ export interface ReceberInput {
   observacoes?: string;
 }
 
-export async function receberEstoque(input: ReceberInput): Promise<void> {
+export interface ReceberResult {
+  /** IDs das pendências de guarda criadas, na mesma ordem dos itens. */
+  pendencia_ids: string[];
+  /** ID da loc RECEBIMENTO usada (uma por galpão). */
+  localizacao_recebimento_id: string;
+}
+
+/**
+ * Registra o recebimento no ledger E cria pendências de guarda.
+ *
+ * Fluxo de 2 etapas: o caminhão chega, o operador bipa SKU+qty no recebimento,
+ * a mercadoria fica na loc tipo='recebimento' (dock de chegada). Cada linha
+ * vira uma `siso_wms_pendencias_guarda`, que será consumida pela tela
+ * /wms/guarda no tablet (operador imprime etiq, bipa loc destino, confirma).
+ */
+export async function receberEstoque(
+  input: ReceberInput,
+): Promise<ReceberResult> {
   const origemTipo = input.origem_tipo ?? "compra_manual";
   const obsBase =
     input.observacoes ??
     (input.nf_referencia
       ? `recebimento NF ${input.nf_referencia}`
       : "recebimento sem NF");
+  const localizacaoRecebimentoId = await resolverLocRecebimento(input.galpao_id);
+  const pendenciaIds: string[] = [];
+
   for (const item of input.itens) {
-    await inserirMovimentacao({
+    const mov = await inserirMovimentacao({
       quadrupla: {
         produto_id: item.produto_id,
         empresa_dona_id: input.empresa_dona_id,
         galpao_id: input.galpao_id,
-        localizacao_id: item.localizacao_id,
+        localizacao_id: localizacaoRecebimentoId,
       },
       tipo: "E",
       qty: item.qty,
@@ -62,13 +82,31 @@ export async function receberEstoque(input: ReceberInput): Promise<void> {
           produto_id: item.produto_id,
           empresa_dona_id: input.empresa_dona_id,
           galpao_id: input.galpao_id,
-          localizacao_id: item.localizacao_id,
+          localizacao_id: localizacaoRecebimentoId,
         },
         item.qty,
         item.custo_unitario,
       );
     }
+    const pendenciaId = await criarPendencia({
+      produto_id: item.produto_id,
+      empresa_dona_id: input.empresa_dona_id,
+      galpao_id: input.galpao_id,
+      localizacao_origem_id: localizacaoRecebimentoId,
+      mov_entrada_id: mov.id,
+      qty_inicial: item.qty,
+      origem_tipo: origemTipo,
+      nf_referencia: input.nf_referencia,
+      custo_unitario: item.custo_unitario,
+      observacoes: input.observacoes,
+    });
+    pendenciaIds.push(pendenciaId);
   }
+
+  return {
+    pendencia_ids: pendenciaIds,
+    localizacao_recebimento_id: localizacaoRecebimentoId,
+  };
 }
 
 /**

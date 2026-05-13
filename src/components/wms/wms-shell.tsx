@@ -98,6 +98,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/wms/replenishment", icon: "shuffle", label: "Realocar" },
       { href: "/wms/devolucoes", icon: "rotate", label: "Devoluções" },
       { href: "/wms/receber", icon: "plus", label: "Receber" },
+      { href: "/wms/guarda", icon: "box", label: "Guarda" },
     ],
   },
   {

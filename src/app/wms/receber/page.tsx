@@ -151,8 +151,8 @@ function TabLote() {
   const [itens, setItens] = useState<ItemLote[]>([
     { uid: makeUid(), produto: null, qty: "1", custo: "", locIdOverride: null, locCodigoOverride: null },
   ]);
-  const [imprimirAuto, setImprimirAuto] = useState(true);
-  const [iniciarRota, setIniciarRota] = useState(true);
+  const [imprimirAuto, setImprimirAuto] = useState(false);
+  const [iniciarRota, setIniciarRota] = useState(false);
 
   const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
   const galpao = galpoesList.find((g) => g.id === galpaoId);

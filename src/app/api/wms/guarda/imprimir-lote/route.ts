@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
         { status: 502 },
       );
     }
-    return NextResponse.json({ ok: true, ignorados, ...result });
+    return NextResponse.json({ ...result, ignorados, ok: true });
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.guarda.imprimir-lote",

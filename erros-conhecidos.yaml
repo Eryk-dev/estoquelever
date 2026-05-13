@@ -606,3 +606,24 @@ erros:
   files:
     - src/app/wms/receber/page.tsx
   tags: [wms, receber, lote, localizacao, combo, display, ux]
+
+  - id: wms-guarda-rota-hook-apos-early-return
+    date: "2026-05-13"
+    source: wms.guarda.rota
+    category: infrastructure
+    message: "Application error: a client-side exception has occurred while loading"
+    cause: >
+      Em /wms/guarda/rota/page.tsx, useMemo do cálculo de minutosRota foi
+      adicionado depois dos early returns (`if (isLoading) return ...` e
+      `if (isError) return ...`). Isso viola as regras dos hooks: a ordem
+      de chamada de hooks muda entre renders (quando a query sai de
+      isLoading=true pro estado carregado, o useMemo passa a ser invocado).
+      React detecta a violação e desmonta o componente com client-side error.
+    fix: >
+      Movi todos os derivados (tituloRota, tudoConcluido, guardadasFinais,
+      unidadesGuardadas, minutosRota) pra antes dos early returns. minutosRota
+      virou IIFE simples — cálculo barato, não precisa de useMemo.
+    files:
+      - src/app/wms/guarda/rota/page.tsx
+    commit: 11fad16
+    tags: [wms, guarda, rota, hooks, react, early-return, client-error]

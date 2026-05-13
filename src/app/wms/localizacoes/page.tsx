@@ -206,24 +206,25 @@ export default function LocalizacoesPage() {
         >
           {/* Toggle modo */}
           {!preview && (
-            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            <div
+              className="wms-seg"
+              style={{ marginBottom: 14, maxWidth: 360 }}
+            >
               <button
                 type="button"
-                className={`wms-btn ${
-                  modo === "individual" ? "wms-btn-primary" : "wms-btn-ghost"
+                className={`wms-seg-btn ${
+                  modo === "individual" ? "is-active" : ""
                 }`}
                 onClick={() => setModo("individual")}
               >
-                Individual
+                <Icon name="plus" size={11} /> Individual
               </button>
               <button
                 type="button"
-                className={`wms-btn ${
-                  modo === "lote" ? "wms-btn-primary" : "wms-btn-ghost"
-                }`}
+                className={`wms-seg-btn ${modo === "lote" ? "is-active" : ""}`}
                 onClick={() => setModo("lote")}
               >
-                Em lote
+                <Icon name="box" size={11} /> Lote
               </button>
             </div>
           )}

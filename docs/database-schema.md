@@ -14,13 +14,14 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 4. [Separation & Packing Tables](#separation--packing-tables)
 5. [Purchase Orders (Compras) Tables](#purchase-orders-compras-tables)
 6. [Inventory & Transfer Modules](#inventory--transfer-modules)
-7. [Infrastructure Tables](#infrastructure-tables)
-8. [Authentication & Sessions](#authentication--sessions)
-9. [Cross (módulo de catálogo e equivalência)](#cross-módulo-de-catálogo-e-equivalência)
-10. [Entity-Relationship Diagram](#entity-relationship-diagram)
-11. [Data Lifecycle Patterns](#data-lifecycle-patterns)
-12. [Important Queries & Access Patterns](#important-queries--access-patterns)
-13. [Migration History Summary](#migration-history-summary)
+7. [WMS — Guarda (put-away)](#wms--guarda-put-away)
+8. [Infrastructure Tables](#infrastructure-tables)
+9. [Authentication & Sessions](#authentication--sessions)
+10. [Cross (módulo de catálogo e equivalência)](#cross-módulo-de-catálogo-e-equivalência)
+11. [Entity-Relationship Diagram](#entity-relationship-diagram)
+12. [Data Lifecycle Patterns](#data-lifecycle-patterns)
+13. [Important Queries & Access Patterns](#important-queries--access-patterns)
+14. [Migration History Summary](#migration-history-summary)
 
 ---
 
@@ -246,8 +247,10 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `nome` | text | NO | UNIQUE | Display name (e.g., "CWB", "SP") |
 | `descricao` | text | YES | | Description |
 | `ativo` | boolean | NO | true | Active flag |
-| `printnode_printer_id` | bigint | YES | | Default PrintNode printer ID for this galpão |
+| `printnode_printer_id` | bigint | YES | | Default PrintNode printer ID (etiqueta de envio) |
 | `printnode_printer_nome` | text | YES | | Printer name (cached) |
+| `printnode_printer_id_produto` | bigint | YES | | Dedicated PrintNode printer pra etiqueta de produto (recebimento/guarda). NULL → fallback pra `printnode_printer_id`. |
+| `printnode_printer_nome_produto` | text | YES | | Cached name da impressora de produto |
 | `criado_em` | timestamptz | NO | now() | Creation timestamp |
 | `atualizado_em` | timestamptz | NO | now() | Last update |
 
@@ -258,6 +261,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 **Notes:**
 - Seeded with "CWB" and "SP" but flexible for additional locations
 - Multiple empresas can belong to one galpão
+- Migration `20260514_wms_guarda_pendencias` adicionou os campos `_produto` + auto-criou 1 `siso_localizacoes` tipo='recebimento' (codigo='RECEBIMENTO') por galpão ativo
 
 ---
 
@@ -635,6 +639,72 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 ---
 
+## WMS — Guarda (put-away)
+
+Tabela introduzida em 2026-05-14 pelo split do recebimento em 2 etapas (dock + guarda). As outras tabelas WMS (siso_produtos, siso_estoque, siso_movimentacoes, siso_localizacoes, etc.) estão documentadas em [`CLAUDE.md`](../CLAUDE.md) na seção "WMS Tables".
+
+### siso_wms_pendencias_guarda
+
+**Purpose:** Fila de pendências de put-away. 1 linha por linha de recebimento (preserva rastreio NF/lote). Criada pelo `POST /api/wms/receber`, consumida pela tela `/wms/guarda` (tablet).
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | gen_random_uuid() | PK |
+| `produto_id` | uuid | NO | FK | → `siso_produtos(id)` |
+| `empresa_dona_id` | uuid | NO | FK | → `siso_empresas(id)` |
+| `galpao_id` | uuid | NO | FK | → `siso_galpoes(id)` |
+| `localizacao_origem_id` | uuid | NO | FK | → `siso_localizacoes(id)` — loc tipo='recebimento' (dock) |
+| `mov_entrada_id` | uuid | NO | FK | → `siso_movimentacoes(id)` da entrada que gerou a pendência |
+| `nf_referencia` | text | YES | | NF de origem (rastreio) |
+| `origem_tipo` | text | NO | | Herdado da mov: `compra_manual`, `nf_compra`, `nf_devolucao_cliente`, `lancamento_retroativo` etc. |
+| `custo_unitario` | numeric(14,4) | YES | | Custo unitário declarado no recebimento |
+| `qty_inicial` | numeric(14,4) | NO | | Quantidade original a guardar (CHECK > 0) |
+| `qty_guardada` | numeric(14,4) | NO | 0 | Quantidade já guardada (CHECK ≥ 0, ≤ qty_inicial) |
+| `qty_pendente` | numeric(14,4) | NO | GENERATED | `qty_inicial - qty_guardada` (STORED — não editável) |
+| `status` | text | NO | 'pendente' | `pendente \| em_guarda \| guardada \| cancelada` |
+| `iniciada_em` | timestamptz | YES | | Quando operador clicou no card |
+| `iniciada_por` | uuid | YES | FK → siso_usuarios | |
+| `guardada_em` | timestamptz | YES | | Setado quando qty_pendente=0 |
+| `cancelada_em` | timestamptz | YES | | |
+| `cancelada_por` | uuid | YES | FK → siso_usuarios | |
+| `motivo_cancelamento` | text | YES | | Obrigatório (≥3 chars) quando status='cancelada' |
+| `observacoes` | text | YES | | |
+| `criada_em` | timestamptz | NO | now() | |
+| `atualizada_em` | timestamptz | NO | now() | Atualizado por trigger |
+
+**Primary Key:** `id`
+
+**Foreign Keys:** `produto_id`, `empresa_dona_id`, `galpao_id`, `localizacao_origem_id`, `mov_entrada_id`, `iniciada_por`, `cancelada_por`
+
+**Indexes:**
+- `idx_pendencias_guarda_fila` (galpao_id, status, criada_em) WHERE status IN ('pendente','em_guarda') — feed da lista ativa
+- `idx_pendencias_guarda_mov` (mov_entrada_id) — rastreio inverso (mov → pendência)
+- `idx_pendencias_guarda_produto` (produto_id, empresa_dona_id, galpao_id) — dashboards por produto
+
+**Check Constraints:**
+- `qty_inicial > 0`
+- `qty_guardada >= 0`
+- `qty_guardada <= qty_inicial`
+- status='guardada' exige `qty_guardada = qty_inicial AND guardada_em IS NOT NULL`
+- status='cancelada' exige `cancelada_em IS NOT NULL`
+
+**Triggers:**
+- `trg_pendencias_guarda_touch` (BEFORE UPDATE) → atualiza `atualizada_em`
+
+**State Machine:**
+```
+pendente ──iniciar──> em_guarda ──confirmar (parcial)──> pendente (qty_pendente > 0)
+                              ──confirmar (total)─────> guardada (terminal)
+                              ──cancelar──────────────> cancelada (terminal)
+```
+
+**Notes:**
+- Cancelamento NÃO move estoque — a peça continua em `siso_estoque` na loc origem. Saída física é fluxo separado (ajuste manual ou devolução fornecedor).
+- Confirmação dispara `replenishmentIntraGalpao` (2 movs `transferencia_localizacao` com mesmo `origem_id`) saindo da loc RECEBIMENTO. Custo médio é propagado da loc origem pra loc destino antes da mov.
+- Guarda parcial é o caso comum quando a loc destino lota: pendência fica aberta com `qty_pendente` decrescido.
+
+---
+
 ## Infrastructure Tables
 
 ### siso_logs
@@ -850,8 +920,10 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `cargo` | text | YES | | Legacy: single role |
 | `cargos` | text[] | NO | '{}' | Array of roles: `admin`, `operador`, `operador_cwb`, `operador_sp`, `comprador` |
 | `ativo` | boolean | NO | true | Active flag |
-| `printnode_printer_id` | bigint | YES | | Per-user PrintNode printer override |
+| `printnode_printer_id` | bigint | YES | | Per-user PrintNode printer override (etiqueta de envio) |
 | `printnode_printer_nome` | text | YES | | Printer name (cached) |
+| `printnode_printer_id_produto` | bigint | YES | | Per-user override pra impressora de etiqueta de produto. Prioridade: user._produto > galpao._produto > user._printer_id > galpao._printer_id. |
+| `printnode_printer_nome_produto` | text | YES | | Printer name (cached) |
 | `criado_em` | timestamptz | NO | now() | Creation |
 | `atualizado_em` | timestamptz | NO | now() | Last update |
 
@@ -861,7 +933,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - PIN is 4 digits, unencrypted (suitable for warehouse environment)
 - `cargos` array replaces legacy `cargo` column (new code uses array)
 - Seed user: Eryk / 1234 / admin
-- `printnode_printer_id` allows per-user label printer assignment
+- `printnode_printer_id` (envio) e `printnode_printer_id_produto` (recebimento) são independentes — operador pode ter 1 impressora pra cada finalidade ou usar fallback
 
 ---
 
@@ -1367,6 +1439,11 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-03-24 | `compras_v2_missing_columns.sql` | Additional purchase columns (compra_quantidade_comprada, comprado_por_nome, prioridade) |
 | 2026-03-26 | `add_encaminhado_de.sql` | Forward tracking: origin galpão name when order manually transferred |
 | 2026-05-06 | `20260506_create_cross_module.sql` | Cross module: siso_produtos_catalogo, siso_produto_oems, siso_produto_veiculos, siso_cross_logs + triggers de denormalização |
+| 2026-05-08 | `20260508_wms_foundation.sql` | WMS Fase 0: siso_produtos, siso_localizacoes, siso_estoque (4D), siso_movimentacoes (ledger) + RPC wms_inserir_movimentacao |
+| 2026-05-22 | `20260522_wms_roteamento.sql` | WMS Plano 3: siso_fornecedores, siso_produto_fornecedores, siso_emprestimo_regras, siso_localizacao_locks + RPC wms_reservar_atomico + wms_saldos_devedores |
+| 2026-05-12 | `20260512_wms_receber_oc_atomico.sql` | **WMS Plano 3:** RPC `wms_receber_oc_atomico(p_produto, p_dona, p_galpao, p_localizacao, p_qty, p_pedido, p_ttl_horas, p_custo_unitario, p_usuario, p_observacoes) RETURNS TABLE(mov_entrada_id uuid, mov_reserva_id uuid)` — entrada + reserva atômicas no recebimento de OC. Delega a `wms_inserir_movimentacao` duas vezes na mesma transação (atomicidade garantida pelo Postgres) |
+| 2026-05-13 | `20260513_wms_swap.sql` | **WMS Plano 4:** adiciona `'swap'` ao CHECK constraint `siso_movimentacoes_origem_tipo_check`. RPC `wms_executar_swap(p_produto, p_empresa_a, p_empresa_b, p_galpao_a, p_galpao_b, p_localizacao_a, p_localizacao_b, p_qty, p_pedido, p_usuario, p_observacoes) RETURNS TABLE(4 mov uuids)` — 4 movs (S+E em galpao_a, S+E em galpao_b) numa transação trocando dona entre 2 galpões. Saldo total por empresa preservado, sem saldo devedor (vs empréstimo). |
+| 2026-05-14 | `20260514_wms_guarda_pendencias.sql` | **Recebimento em 2 etapas:** cria `siso_wms_pendencias_guarda` (fila de put-away), adiciona `printnode_printer_id_produto`/`printnode_printer_nome_produto` em `siso_galpoes` e `siso_usuarios` (impressora dedicada pra etiqueta de produto, com fallback pra impressora de envio), auto-cria 1 `siso_localizacoes` tipo='recebimento' (codigo='RECEBIMENTO') por galpão ativo que não tenha. Trigger `trg_pendencias_guarda_touch` atualiza `atualizada_em` a cada UPDATE. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging
@@ -1375,6 +1452,10 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 4. **Phase 4 (Mar 16-19):** Error tracking + exceptions
 5. **Phase 5 (Mar 23-24):** Inventory + transfer modules
 6. **Phase 6 (May 6):** Cross module — catálogo cacheado + equivalência por OEM/veículo
+7. **Phase 7 (May 8-22):** WMS Fase 0 — catálogo unificado, ledger imutável, roteamento por galpão, reservas atômicas
+8. **Phase 8 (May 12 — Plano 3):** Reservas residuais — cancel libera/estorna, OC recebimento atômico, encaminhar move reservas, admin override liberar-reserva, cron cleanup
+9. **Phase 9 (May 13 — Plano 4):** Fulfillment com swap — origem_tipo 'swap', RPC `wms_executar_swap`, rotearPedido tenta swap entre direta e empréstimo, webhook executa swaps antes das reservas, DecisaoLabel ganha tooltip swap
+10. **Phase 10 (May 14 — Recebimento em 2 etapas):** dock RECEBIMENTO + tabela `siso_wms_pendencias_guarda` + impressora dedicada de etiqueta de produto. `/wms/receber` registra entradas na loc tipo='recebimento' (auto-criada por galpão) e cria pendências; `/wms/guarda` (tablet) consome a fila com bipe de QR + impressão 2-por-folha + replenishment_intra pra loc destino.
 
 ---
 

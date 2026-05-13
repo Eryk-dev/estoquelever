@@ -5,6 +5,7 @@ import { logger } from "@/lib/logger";
 import { buscarEImprimirEtiqueta, imprimirEtiquetaDireta } from "@/lib/etiqueta-service";
 import { registrarEvento } from "@/lib/historico-service";
 import { kickWorker } from "@/lib/execution-worker";
+import { dispararCutoverSePronto } from "@/lib/wms/cutover";
 
 const LOG_SOURCE = "bipar-embalagem-oc";
 
@@ -345,6 +346,15 @@ export async function POST(request: NextRequest) {
         error: queueErr.message,
       });
     }
+
+    // WMS cutover R→L+S: pedido virou embalado pulando separado.
+    // NF ainda não emitida — executor vai disparar depois. Idempotente.
+    dispararCutoverSePronto(pedido.id).catch((err) => {
+      logger.warn(LOG_SOURCE, "Falha ao disparar cutover", {
+        pedidoId: pedido.id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    });
 
     // (f) Print label
     let etiquetaStatus: "impresso" | "falhou" = "falhou";

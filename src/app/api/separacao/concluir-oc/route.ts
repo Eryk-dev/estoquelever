@@ -5,6 +5,7 @@ import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
 import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/agrupamento-service";
 import { kickWorker } from "@/lib/execution-worker";
+import { dispararCutoverSePronto } from "@/lib/wms/cutover";
 
 const LOG_SOURCE = "separacao-concluir-oc";
 
@@ -318,6 +319,20 @@ export async function POST(request: NextRequest) {
         error: err instanceof Error ? err.message : String(err),
       });
     });
+
+    // WMS cutover R→L+S: pedido já está em status forward (separado).
+    // Caso comum aqui é o pedido AINDA NÃO TER NF (vai ser gerada pelo
+    // worker via lancar_estoque). O helper detecta sem_nf e skipa — o
+    // executor (executarSaidaPropria/Transferencia) chama o helper de novo
+    // após gerar a NF, quando a interseção forward+NF fica satisfeita.
+    for (const pid of separados) {
+      dispararCutoverSePronto(pid).catch((err) => {
+        logger.warn(LOG_SOURCE, "Falha ao disparar cutover", {
+          pedidoId: pid,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
 
     const operadorNome = operador_id ? undefined : session.nome;
     registrarEventos(

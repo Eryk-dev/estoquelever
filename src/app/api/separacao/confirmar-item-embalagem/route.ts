@@ -5,6 +5,7 @@ import { logger } from "@/lib/logger";
 import { buscarEImprimirEtiqueta, imprimirEtiquetaDireta } from "@/lib/etiqueta-service";
 import { registrarEvento } from "@/lib/historico-service";
 import { kickWorker } from "@/lib/execution-worker";
+import { dispararCutoverSePronto } from "@/lib/wms/cutover";
 
 /**
  * POST /api/separacao/confirmar-item-embalagem
@@ -262,6 +263,16 @@ export async function POST(request: NextRequest) {
 
         kickWorker().catch(() => {});
 
+        // WMS cutover R→L+S: pedido virou embalado pela embalagem direta OC.
+        // Normalmente sem NF ainda (vai ser gerada pelo lancar_estoque worker)
+        // — helper skipa e o executor dispara depois. Idempotente.
+        dispararCutoverSePronto(pedido.id).catch((err) => {
+          logger.warn("confirmar-item-embalagem", "Falha ao disparar cutover (OC direta)", {
+            pedidoId: pedido.id,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        });
+
         return NextResponse.json({
           pedido_item_id,
           quantidade_bipada: newBipada,
@@ -303,6 +314,15 @@ export async function POST(request: NextRequest) {
         pedidoId: item.pedido_id,
         evento: "embalagem_concluida",
       }).catch(() => {});
+
+      // WMS cutover R→L+S: pedido virou embalado. Normalmente já lançado no
+      // /concluir (separado) — helper retorna ja_lancado. Idempotente.
+      dispararCutoverSePronto(item.pedido_id).catch((err) => {
+        logger.warn("confirmar-item-embalagem", "Falha ao disparar cutover (normal)", {
+          pedidoId: item.pedido_id,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
 
       const etiqueta = await buscarEImprimirEtiqueta(item.pedido_id, session.id);
       return NextResponse.json({

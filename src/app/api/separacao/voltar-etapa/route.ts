@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
+import { dispararCutoverSePronto, reverterCutoverSeRetrocedeu } from "@/lib/wms/cutover";
 import type { StatusSeparacao } from "@/types";
 
 /**
@@ -231,6 +232,28 @@ export async function POST(request: NextRequest) {
           }
         }
       }
+    }
+
+    // WMS cutover R→L+S coherence:
+    //   - Forward para conjunto {separado, embalado, expedido}: dispararCutoverSePronto
+    //   - Backward saindo do conjunto forward com estoque_lancado=true: reverterCutoverSeRetrocedeu
+    // Ambos são idempotentes e checkam a invariante internamente — chamar
+    // os dois pra cada pid é seguro (um vira no-op pelo motivo).
+    for (const pid of validIds) {
+      await dispararCutoverSePronto(pid).catch((err) => {
+        logger.warn("voltar-etapa", "Falha ao disparar cutover", {
+          pedidoId: pid,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+      await reverterCutoverSeRetrocedeu(pid, novoStatus, "voltar_etapa", session.id).catch(
+        (err) => {
+          logger.warn("voltar-etapa", "Falha ao reverter cutover", {
+            pedidoId: pid,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        },
+      );
     }
 
     // Record in history

@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { buscarEImprimirEtiqueta, imprimirEtiquetaDireta } from "@/lib/etiqueta-service";
 import { registrarEvento } from "@/lib/historico-service";
+import { dispararCutoverSePronto } from "@/lib/wms/cutover";
 import type { BipEmbalagemResult } from "@/types";
 
 /**
@@ -159,6 +160,15 @@ export async function POST(request: NextRequest) {
         evento: "embalagem_concluida",
         detalhes: { sku, galpao_id },
       }).catch(() => {});
+
+      // WMS cutover R→L+S: pedido virou embalado (forward set).
+      // Helper é idempotente — em modo Tiny não faz nada.
+      dispararCutoverSePronto(result.pedido_id).catch((err) => {
+        logger.warn("bipar-embalagem", "Falha ao disparar cutover", {
+          pedidoId: result.pedido_id,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
 
       // Fast path: bip RPC already claimed the etiqueta and returned print fields
       // Slow path: claim wasn't included (already claimed elsewhere) → fall back to full flow

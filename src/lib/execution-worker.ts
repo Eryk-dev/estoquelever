@@ -42,6 +42,7 @@ import { criarAgrupamentoFase1 } from "./agrupamento-service";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { wmsAsSource } from "./wms/flags";
 import { executarEstoquePosNfWms } from "./execution-worker-wms";
+import { dispararCutoverSePronto } from "./wms/cutover";
 
 // ─── Shared: enrich NF data + transition if already authorized ──────────────
 // After NF generation, checks Tiny API for authorization status.
@@ -426,30 +427,19 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
   // Stock posting (lancarEstoqueNota) and transition happen ONLY via NF webhook.
   await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, notaId);
 
-  // ─── WMS_AS_SOURCE: como não há NF webhook real pra triggar pos_nf, ────
-  // se a chave foi salva agora (via stub ou Tiny real autorizando rápido),
-  // enfileira lancar_estoque_pos_nf imediatamente.
+  // ─── WMS_AS_SOURCE: cutover acontece quando pedido atinge status forward
+  // (separado/embalado/expedido) COM NF emitida. Aqui a NF acabou de ser
+  // gerada — se o pedido já estava em status forward (ex: fluxo concluir-oc
+  // que vira separado ANTES de gerar NF), o helper dispara agora. Caso normal
+  // (status=aguardando_separacao), o helper guarda — o /concluir vai disparar.
   if (wmsAsSource()) {
-    const { data: check } = await supabase
-      .from("siso_pedidos")
-      .select("chave_acesso_nf")
-      .eq("id", job.pedido_id)
-      .single();
-
-    if (check?.chave_acesso_nf) {
-      await supabase.from("siso_fila_execucao").insert({
-        pedido_id: job.pedido_id,
-        tipo: "lancar_estoque_pos_nf",
-        empresa_id: job.empresa_id,
-        decisao: "propria",
-        atualizado_em: new Date().toISOString(),
-      });
-      kickWorker().catch(() => {});
-      logger.info("worker", "WMS mode: pos_nf enfileirado direto (sem aguardar webhook)", {
-        pedidoId: job.pedido_id,
-      });
-      return;
-    }
+    const result = await dispararCutoverSePronto(job.pedido_id);
+    logger.info("worker", "WMS mode: dispararCutoverSePronto pós-NF (propria)", {
+      pedidoId: job.pedido_id,
+      enqueued: result.enqueued,
+      motivo: result.motivo,
+    });
+    return;
   }
 
   logger.info("worker", "NF gerada, aguardando webhook para lançar estoque (própria)", {
@@ -751,25 +741,36 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     .single();
 
   if (pedidoCheck?.chave_acesso_nf) {
-    const { error: insertErr } = await supabase.from("siso_fila_execucao").insert({
-      pedido_id: job.pedido_id,
-      tipo: "lancar_estoque_pos_nf",
-      empresa_id: job.empresa_id,
-      decisao: job.decisao,
-      atualizado_em: new Date().toISOString(),
-    });
-
-    if (!insertErr) {
-      logger.info("worker", "NF já autorizada — job lancar_estoque_pos_nf criado direto", {
+    if (wmsAsSource()) {
+      // WMS: helper decide se dispara (depende de status forward + estoque_lancado)
+      const result = await dispararCutoverSePronto(job.pedido_id);
+      logger.info("worker", "WMS mode: dispararCutoverSePronto pós-NF (transferencia)", {
         pedidoId: job.pedido_id,
-        empresaId: job.empresa_id,
+        enqueued: result.enqueued,
+        motivo: result.motivo,
       });
-      kickWorker().catch(() => {});
     } else {
-      logger.warn("worker", "Falha ao criar job lancar_estoque_pos_nf direto", {
-        pedidoId: job.pedido_id,
-        error: insertErr.message,
+      // Legacy Tiny: enfileira pos_nf direto pra rodar via worker.
+      const { error: insertErr } = await supabase.from("siso_fila_execucao").insert({
+        pedido_id: job.pedido_id,
+        tipo: "lancar_estoque_pos_nf",
+        empresa_id: job.empresa_id,
+        decisao: job.decisao,
+        atualizado_em: new Date().toISOString(),
       });
+
+      if (!insertErr) {
+        logger.info("worker", "NF já autorizada — job lancar_estoque_pos_nf criado direto", {
+          pedidoId: job.pedido_id,
+          empresaId: job.empresa_id,
+        });
+        kickWorker().catch(() => {});
+      } else {
+        logger.warn("worker", "Falha ao criar job lancar_estoque_pos_nf direto", {
+          pedidoId: job.pedido_id,
+          error: insertErr.message,
+        });
+      }
     }
   } else {
     logger.info("worker", "NF gerada, aguardando webhook para lançar estoque (transferência)", {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
+import { reverterCutoverSeRetrocedeu } from "@/lib/wms/cutover";
 
 /**
  * POST /api/separacao/desfazer-bip
@@ -170,6 +171,20 @@ export async function POST(request: NextRequest) {
           p_status: null,
         });
       }
+
+      // WMS cutover reverse: se saiu do conjunto forward com estoque_lancado=true,
+      // estorna S, recria R. Idempotente — no-op se nada precisa reverter.
+      await reverterCutoverSeRetrocedeu(
+        pedido_id,
+        newStatusSeparacao,
+        "desfazer_bip",
+        session.id,
+      ).catch((err) => {
+        logger.warn("separacao-desfazer-bip", "Falha ao reverter cutover", {
+          pedidoId: pedido_id,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
     }
 
     logger.info("separacao-desfazer-bip", "Bip desfeito", {

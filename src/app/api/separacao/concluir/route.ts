@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
 import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/agrupamento-service";
+import { dispararCutoverSePronto } from "@/lib/wms/cutover";
 
 
 /**
@@ -195,6 +196,18 @@ export async function POST(request: NextRequest) {
           evento: "separacao_concluida" as const,
         })),
       ).catch(() => {});
+
+      // WMS cutover R→L+S: pedido entrou no conjunto forward (separado).
+      // Helper é idempotente e gateado por wmsAsSource() — em modo Tiny
+      // não faz nada, em WMS dispara se NF já emitida (caso normal).
+      for (const pid of separados) {
+        dispararCutoverSePronto(pid).catch((err) => {
+          logger.warn("separacao-concluir", "Falha ao disparar cutover", {
+            pedidoId: pid,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
 
       // Fire-and-forget: ensure agrupamentos exist and ZPL labels are cached.
       // This is a second chance — the first attempt was at iniciar time.

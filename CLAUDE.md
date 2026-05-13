@@ -124,7 +124,7 @@ src/
     inventario/page.tsx            # Inventory — barcode scanning, location tagging, stock updates
     transferencias/page.tsx        # Transfers — inter-galpão stock transfer
     etiquetas/page.tsx             # Address labels — ZPL generation + PrintNode printing
-    configuracoes/page.tsx         # Settings — Galpao/Empresa hierarchy, Grupos, Tiny, PrintNode
+    configuracoes/page.tsx         # SISO legacy — Galpao/Empresa hierarchy, Grupos, Tiny, PrintNode. WMS usa /wms/configuracoes.
     monitoramento/page.tsx         # Monitoring dashboard (admin only) — DEPRECATED, see painel/gerencial
     admin/usuarios/page.tsx        # User CRUD (admin only)
     api/
@@ -399,7 +399,9 @@ wms/  (subset of src/)
     ajuste/page.tsx                # Ajuste manual com motivo (entrada ou saída)
     retroativos/page.tsx           # Pendências de reconciliação de lançamentos retroativos
     fornecedores/page.tsx          # CRUD fornecedores + botão auto-cadastrar mapeamento
-    emprestimos/page.tsx           # Matriz N×N de empréstimos + saldos devedores + limites globais
+    emprestimos/page.tsx           # APENAS saldos devedores (read-only). Criar/editar regras vive em /wms/configuracoes (aba Empréstimos & Swaps).
+    configuracoes/page.tsx                   # WMS settings — 3 abas: Galpões / Empresas / Empréstimos & Swaps. Empresas têm 0..N galpões preferenciais (multi-select), substituindo o vínculo 1:1 antigo. Grupos & Tiers do SISO legacy NÃO aparecem aqui.
+    configuracoes/conexoes/page.tsx          # Sub-page WMS-styled: Webhook Tiny URL + OAuth2 por empresa (client_id/secret, autorizar, depósito) + PrintNode (API key, impressoras por galpão e override por usuário). Acessível só via /wms/configuracoes (link "Conexões & impressoras"). Substitui o link antigo pra /configuracoes legacy.
     inventario/page.tsx            # Lista sessões + modal de criação com 3 tipos (Inteligente/Manual/Completo). Modo aberto|blind (default blind).
     inventario/[id]/page.tsx       # Painel realtime do supervisor — 5 slots de operador ao vivo + KPIs + velocidade média + últimos bipes + ações
     inventario/[id]/contar/page.tsx          # Tela handheld do operador: slot-picker → botão "PEGAR PRÓXIMA LOC" → confirmar loc (QR ou manual) → bipar produtos → finalizar → loop. Resumo final ao esvaziar pool.
@@ -414,6 +416,7 @@ wms/  (subset of src/)
     produtos/[id]/sync/route.ts    # POST — força sync com Tiny
     produtos/[id]/ultimas-contagens/route.ts  # GET — última contagem de inventário por loc+dona (feed da aba Movimentações do produto)
     localizacoes/route.ts          # GET (por galpão), POST
+    localizacoes/lote/route.ts     # POST — cria em lote (prefixo + ranges h/v), bulk upsert idempotente, suporta preview
     localizacoes/[id]/route.ts     # PATCH, DELETE (com proteção saldo>0)
     estoque/route.ts               # GET ?view=dono|galpao|localizacao|produto
     ledger/route.ts                # GET com filtros (produto/empresa/galpao/origem_tipo/desde/ate)
@@ -494,9 +497,10 @@ All tables are prefixed with `siso_`:
 | Table | Purpose |
 |---|---|
 | `siso_galpoes` | Physical locations (id, nome unique, descricao, ativo, printnode config). WMS adds: cidade, estado, pais |
-| `siso_empresas` | Tiny ERP accounts (id, nome, cnpj unique, galpao_id FK, ativo) |
-| `siso_grupos` | Business affinity groups (id, nome unique) |
-| `siso_grupo_empresas` | N:1 empresa→grupo with tier (empresa_id unique) |
+| `siso_empresas` | Tiny ERP accounts (id, nome, cnpj unique, ativo). **`galpao_id` é DEPRECADO** (mantido nullable como espelho do primeiro preferencial via trigger). Empresa não pertence mais a um galpão. |
+| `siso_empresa_galpoes_preferenciais` | **N:N opcional** (empresa_id, galpao_id, PK composta). Galpões preferenciais (geo-priority=0 no roteamento). Empresa pode ter 0..N. Trigger AFTER mantém `siso_empresas.galpao_id` espelhando primeiro preferencial (ordem alfabética por nome) pra compat de consumidores legados. |
+| `siso_grupos` | Business affinity groups (id, nome unique) — usado pelo SISO legacy, não pelo WMS. |
+| `siso_grupo_empresas` | N:1 empresa→grupo with tier (empresa_id unique) — SISO legacy. |
 
 ### WMS Tables (Plano 1 — Foundation)
 

@@ -1,4 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
+import { logger } from "@/lib/logger";
 import { inserirMovimentacao } from "./ledger";
 
 /**
@@ -117,13 +118,17 @@ export async function detectarSwap(
       .maybeSingle();
     if (!saldoIrmaDest || Number(saldoIrmaDest.disponivel) <= 0) continue;
 
-    // Leg 2: saldo da vendedora em OUTROS galpões (preferencialmente home da irmã)
-    const { data: irmaEmpresa } = await sb
-      .from("siso_empresas")
+    // Leg 2: saldo da vendedora em OUTROS galpões (preferencialmente em algum
+    // dos galpões preferenciais da irmã — N:N opcional).
+    const { data: irmaPrefRows } = await sb
+      .from("siso_empresa_galpoes_preferenciais")
       .select("galpao_id")
-      .eq("id", irma_id)
-      .single();
-    const homeIrma = (irmaEmpresa as { galpao_id: string } | null)?.galpao_id;
+      .eq("empresa_id", irma_id);
+    const homesIrma = new Set(
+      (irmaPrefRows ?? []).map(
+        (r) => (r as { galpao_id: string }).galpao_id,
+      ),
+    );
 
     const { data: saldosVendedoraOutros } = await sb
       .from("siso_estoque")
@@ -135,11 +140,12 @@ export async function detectarSwap(
 
     if (!saldosVendedoraOutros || saldosVendedoraOutros.length === 0) continue;
 
-    // Prefere o galpão home da irmã (se vendedora tem saldo lá), senão maior saldo
+    // Prefere galpões preferenciais da irmã (qualquer um da lista), depois
+    // ordena por maior saldo. Irmã sem preferenciais → só ordena por saldo.
     type Row = { galpao_id: string; disponivel: number };
     const ordered = (saldosVendedoraOutros as Row[]).sort((a, b) => {
-      const aHome = a.galpao_id === homeIrma ? 0 : 1;
-      const bHome = b.galpao_id === homeIrma ? 0 : 1;
+      const aHome = homesIrma.has(a.galpao_id) ? 0 : 1;
+      const bHome = homesIrma.has(b.galpao_id) ? 0 : 1;
       if (aHome !== bHome) return aHome - bHome;
       return Number(b.disponivel) - Number(a.disponivel);
     });
@@ -308,6 +314,71 @@ export async function executarSwap(
       leg2_entrada_irma: mov2E.id,
     },
   };
+}
+
+/**
+ * Swap atômico (Plano 4): 4 movs origem_tipo='swap' numa única transação via
+ * RPC `wms_executar_swap`. Diferente do `executarSwap` legacy, NÃO cria saldo
+ * devedor entre as empresas — é uma troca limpa, saldo total preservado.
+ *
+ * Use este wrapper no fluxo automático de fulfillment do
+ * webhook-processor-wms. O `executarSwap` legacy (origem=emprestimo) fica
+ * pros endpoints manuais `/api/wms/swap/*`.
+ */
+export interface ExecutarSwapAtomicoInput {
+  produto_id: string;
+  /** Empresa que vai "ganhar" estoque em galpao_a (tipicamente vendedora) */
+  empresa_a_id: string;
+  /** Empresa par — vai "ganhar" estoque em galpao_b */
+  empresa_b_id: string;
+  /** Galpão onde a empresa_a quer cumprir o pedido */
+  galpao_a_id: string;
+  /** Galpão espelho onde empresa_a tem estoque pra ceder em troca */
+  galpao_b_id: string;
+  /** Localização em galpao_a onde empresa_b tinha o estoque (post-swap empresa_a) */
+  localizacao_a_id: string;
+  /** Localização em galpao_b onde empresa_a tinha o estoque (post-swap empresa_b) */
+  localizacao_b_id: string;
+  qty: number;
+  pedido_id: string;
+  usuario_id?: string;
+  observacoes?: string;
+}
+
+export interface ExecutarSwapAtomicoResult {
+  mov_saida_b_em_a: string;
+  mov_entrada_a_em_a: string;
+  mov_saida_a_em_b: string;
+  mov_entrada_b_em_b: string;
+}
+
+export async function executarSwapAtomico(
+  input: ExecutarSwapAtomicoInput,
+): Promise<ExecutarSwapAtomicoResult> {
+  const sb = createServiceClient();
+  const { data, error } = await sb.rpc("wms_executar_swap", {
+    p_produto: input.produto_id,
+    p_empresa_a: input.empresa_a_id,
+    p_empresa_b: input.empresa_b_id,
+    p_galpao_a: input.galpao_a_id,
+    p_galpao_b: input.galpao_b_id,
+    p_localizacao_a: input.localizacao_a_id,
+    p_localizacao_b: input.localizacao_b_id,
+    p_qty: input.qty,
+    p_pedido: input.pedido_id,
+    p_usuario: input.usuario_id ?? null,
+    p_observacoes: input.observacoes ?? null,
+  });
+  if (error) {
+    logger.error("wms.swap", "wms_executar_swap falhou", { error, input });
+    throw error;
+  }
+  const rows = (data ?? []) as ExecutarSwapAtomicoResult[];
+  const first = rows[0];
+  if (!first) {
+    throw new Error("RPC wms_executar_swap não retornou movimentações");
+  }
+  return first;
 }
 
 /**

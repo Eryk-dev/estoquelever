@@ -7,19 +7,16 @@ import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, PageHeader } from "@/components/wms/ui/wms-ui";
 import { AbaGalpoes } from "@/components/wms/configuracoes/aba-galpoes";
 import { AbaEmpresas } from "@/components/wms/configuracoes/aba-empresas";
-import { AbaGrupos } from "@/components/wms/configuracoes/aba-grupos";
-import type {
-  GalpaoHierarquiaWms,
-  GrupoInfoWms,
-} from "@/components/wms/configuracoes/types";
+import { AbaEmprestimos } from "@/components/wms/configuracoes/aba-emprestimos";
+import type { GalpaoHierarquiaWms } from "@/components/wms/configuracoes/types";
 import { useAuth } from "@/lib/auth-context";
 
-type AbaId = "galpoes" | "empresas" | "grupos";
+type AbaId = "galpoes" | "empresas" | "emprestimos";
 
 const ABAS: { id: AbaId; label: string }[] = [
   { id: "galpoes", label: "Galpões" },
   { id: "empresas", label: "Empresas" },
-  { id: "grupos", label: "Grupos & Tiers" },
+  { id: "emprestimos", label: "Empréstimos & Swaps" },
 ];
 
 export default function WmsConfiguracoesPage() {
@@ -32,19 +29,14 @@ export default function WmsConfiguracoesPage() {
     queryFn: () => wmsApi<GalpaoHierarquiaWms[]>("/api/admin/galpoes"),
   });
 
-  const gruposQuery = useQuery({
-    queryKey: ["wms-cfg-grupos"],
-    queryFn: () => wmsApi<GrupoInfoWms[]>("/api/admin/grupos"),
-    enabled: aba === "grupos" || aba === "empresas",
-  });
-
   const galpoes = galpoesQuery.data ?? [];
-  const grupos = gruposQuery.data ?? [];
 
   const counts = {
     galpoes: galpoes.length,
-    empresas: galpoes.reduce((acc, g) => acc + g.siso_empresas.length, 0),
-    grupos: grupos.length,
+    empresas: new Set(
+      galpoes.flatMap((g) => g.siso_empresas.map((e) => e.id)),
+    ).size,
+    emprestimos: "—" as const,
   };
 
   if (!isAdmin) {
@@ -53,7 +45,7 @@ export default function WmsConfiguracoesPage() {
         <PageHeader title="Configurações" />
         <div className="wms-empty-block">
           <h3>Acesso restrito</h3>
-          <p>Apenas administradores podem editar galpões, empresas e grupos.</p>
+          <p>Apenas administradores podem editar a configuração do WMS.</p>
         </div>
       </>
     );
@@ -63,12 +55,12 @@ export default function WmsConfiguracoesPage() {
     <>
       <PageHeader
         title="Configurações"
-        subtitle="Galpões, empresas e grupos do WMS"
+        subtitle="Galpões, empresas e regras de empréstimo/swap"
       >
         <Link
-          href="/configuracoes"
+          href="/wms/configuracoes/conexoes"
           className="wms-btn wms-btn-ghost"
-          title="Conexão Tiny OAuth2, PrintNode e webhook"
+          title="Conexão Tiny OAuth2, depósitos, PrintNode e webhook"
         >
           <Icon name="sliders" size={12} />
           Conexões &amp; impressoras
@@ -107,11 +99,10 @@ export default function WmsConfiguracoesPage() {
       {aba === "empresas" && (
         <AbaEmpresas galpoes={galpoes} isLoading={galpoesQuery.isLoading} />
       )}
-      {aba === "grupos" && (
-        <AbaGrupos
-          grupos={grupos}
+      {aba === "emprestimos" && (
+        <AbaEmprestimos
           galpoes={galpoes}
-          isLoading={galpoesQuery.isLoading || gruposQuery.isLoading}
+          isLoading={galpoesQuery.isLoading}
         />
       )}
     </>

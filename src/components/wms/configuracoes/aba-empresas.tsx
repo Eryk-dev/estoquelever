@@ -7,6 +7,11 @@ import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, Field } from "@/components/wms/ui/wms-ui";
 import type { GalpaoHierarquiaWms, EmpresaHierarquiaWms } from "./types";
 
+interface EmpresaFlat extends EmpresaHierarquiaWms {
+  galpao_principal_id: string | null;
+  galpao_principal_nome: string | null;
+}
+
 function StatusConexao({ empresa }: { empresa: EmpresaHierarquiaWms }) {
   if (!empresa.ativo) {
     return <span className="wms-badge wms-badge-mute">Inativa</span>;
@@ -20,6 +25,33 @@ function StatusConexao({ empresa }: { empresa: EmpresaHierarquiaWms }) {
   return <span className="wms-badge wms-badge-mute">Sem conexão</span>;
 }
 
+function PreferenciaisChips({
+  preferenciais,
+}: {
+  preferenciais: { id: string; nome: string }[];
+}) {
+  if (preferenciais.length === 0) {
+    return <span className="wms-td-mute">—</span>;
+  }
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {preferenciais.map((p) => (
+        <span
+          key={p.id}
+          className="wms-badge"
+          style={{
+            background: "var(--wms-c-faint)",
+            color: "var(--wms-c-fg)",
+            fontWeight: 500,
+          }}
+        >
+          {p.nome}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function AbaEmpresas({
   galpoes,
   isLoading,
@@ -29,7 +61,11 @@ export function AbaEmpresas({
 }) {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
-  const [novo, setNovo] = useState({ nome: "", cnpj: "", galpao_id: "" });
+  const [novo, setNovo] = useState<{
+    nome: string;
+    cnpj: string;
+    preferenciais: string[];
+  }>({ nome: "", cnpj: "", preferenciais: [] });
   const [editando, setEditando] = useState<string | null>(null);
   const [filtroGalpao, setFiltroGalpao] = useState<string>("");
 
@@ -37,18 +73,31 @@ export function AbaEmpresas({
     queryClient.invalidateQueries({ queryKey: ["wms-cfg-galpoes"] });
   };
 
-  const todasEmpresas = useMemo(
-    () =>
-      galpoes.flatMap((g) =>
-        g.siso_empresas.map((e) => ({ ...e, galpao_id: g.id, galpao_nome: g.nome })),
-      ),
-    [galpoes],
-  );
+  // De-dup por id — `galpoes` traz cada empresa aninhada no galpão espelho
+  // (siso_empresas.galpao_id = primeiro preferencial), então cada empresa
+  // aparece em exatamente um galpão na resposta. Mesmo assim guardamos um
+  // Map por segurança.
+  const todasEmpresas = useMemo<EmpresaFlat[]>(() => {
+    const map = new Map<string, EmpresaFlat>();
+    for (const g of galpoes) {
+      for (const e of g.siso_empresas) {
+        if (map.has(e.id)) continue;
+        map.set(e.id, {
+          ...e,
+          galpao_principal_id: g.id,
+          galpao_principal_nome: g.nome,
+        });
+      }
+    }
+    return [...map.values()].sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [galpoes]);
 
   const empresasFiltradas = useMemo(
     () =>
       filtroGalpao
-        ? todasEmpresas.filter((e) => e.galpao_id === filtroGalpao)
+        ? todasEmpresas.filter((e) =>
+            e.preferenciais.some((p) => p.id === filtroGalpao),
+          )
         : todasEmpresas,
     [todasEmpresas, filtroGalpao],
   );
@@ -61,17 +110,25 @@ export function AbaEmpresas({
         body: JSON.stringify({
           nome: novo.nome,
           cnpj: novo.cnpj.replace(/\D/g, ""),
-          galpao_id: novo.galpao_id,
+          galpoes_preferenciais: novo.preferenciais,
         }),
       }),
     onSuccess: () => {
       toast.success("Empresa criada — configure a conexão Tiny em seguida");
-      setNovo({ nome: "", cnpj: "", galpao_id: "" });
+      setNovo({ nome: "", cnpj: "", preferenciais: [] });
       setShowForm(false);
       invalidate();
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  const toggleNovoPref = (id: string) => {
+    setNovo((s) =>
+      s.preferenciais.includes(id)
+        ? { ...s, preferenciais: s.preferenciais.filter((p) => p !== id) }
+        : { ...s, preferenciais: [...s.preferenciais, id] },
+    );
+  };
 
   return (
     <>
@@ -90,8 +147,9 @@ export function AbaEmpresas({
             Empresas
           </h3>
           <p className="wms-td-mute" style={{ fontSize: 12, marginTop: 2 }}>
-            Contas Tiny (CNPJ) ancoradas a um galpão. A conexão OAuth2 e
-            configurações de depósito vivem em <code>/configuracoes</code> legado.
+            Empresas operam em todos os galpões. Marcar 1 ou mais{" "}
+            <strong>preferenciais</strong> é opcional — define o viés
+            geográfico no roteamento (geo-priority 0).
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -99,12 +157,13 @@ export function AbaEmpresas({
             className="wms-select"
             value={filtroGalpao}
             onChange={(e) => setFiltroGalpao(e.target.value)}
-            style={{ minWidth: 180 }}
+            style={{ minWidth: 200 }}
+            title="Filtra empresas que tenham o galpão como preferencial"
           >
-            <option value="">Todos os galpões</option>
+            <option value="">Todos (sem filtro)</option>
             {galpoes.map((g) => (
               <option key={g.id} value={g.id}>
-                {g.nome}
+                Preferencial: {g.nome}
               </option>
             ))}
           </select>
@@ -112,8 +171,6 @@ export function AbaEmpresas({
             type="button"
             className="wms-btn wms-btn-primary"
             onClick={() => setShowForm((s) => !s)}
-            disabled={galpoes.length === 0}
-            title={galpoes.length === 0 ? "Cadastre um galpão antes" : undefined}
           >
             <Icon name="plus" size={12} />
             Nova empresa
@@ -152,22 +209,60 @@ export function AbaEmpresas({
                 placeholder="34857388000163"
               />
             </Field>
-            <Field label="Galpão" required>
-              <select
-                className="wms-select"
-                value={novo.galpao_id}
-                onChange={(e) => setNovo({ ...novo, galpao_id: e.target.value })}
-              >
-                <option value="">Selecione…</option>
+            <div />
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <div
+              className="wms-td-mute"
+              style={{ fontSize: 11, fontWeight: 600, marginBottom: 6 }}
+            >
+              Galpões preferenciais (opcional)
+            </div>
+            {galpoes.length === 0 ? (
+              <p className="wms-td-mute" style={{ fontSize: 12 }}>
+                Cadastre pelo menos um galpão primeiro.
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {galpoes
                   .filter((g) => g.ativo)
-                  .map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.nome}
-                    </option>
-                  ))}
-              </select>
-            </Field>
+                  .map((g) => {
+                    const ativo = novo.preferenciais.includes(g.id);
+                    return (
+                      <button
+                        key={g.id}
+                        type="button"
+                        onClick={() => toggleNovoPref(g.id)}
+                        className={`wms-toggle-pill ${ativo ? "is-on" : "is-off"}`}
+                        style={{
+                          padding: "4px 10px",
+                          borderRadius: 999,
+                          border: "1px solid var(--wms-c-border)",
+                          background: ativo
+                            ? "var(--wms-c-success-faint, #d1fae5)"
+                            : "var(--wms-c-faint)",
+                          color: ativo
+                            ? "var(--wms-c-success, #047857)"
+                            : "var(--wms-c-mute, #9ca3af)",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {ativo ? "✓ " : "+ "}
+                        {g.nome}
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
+            <p
+              className="wms-td-mute"
+              style={{ fontSize: 11, marginTop: 6, marginBottom: 0 }}
+            >
+              Empresa sem preferencial é válida — significa que o roteamento
+              decide por cobertura sem viés geográfico.
+            </p>
           </div>
           <div
             style={{
@@ -184,7 +279,7 @@ export function AbaEmpresas({
               className="wms-btn wms-btn-ghost"
               onClick={() => {
                 setShowForm(false);
-                setNovo({ nome: "", cnpj: "", galpao_id: "" });
+                setNovo({ nome: "", cnpj: "", preferenciais: [] });
               }}
             >
               Cancelar
@@ -195,7 +290,6 @@ export function AbaEmpresas({
               disabled={
                 !novo.nome.trim() ||
                 novo.cnpj.replace(/\D/g, "").length < 8 ||
-                !novo.galpao_id ||
                 criar.isPending
               }
               onClick={() => criar.mutate()}
@@ -212,10 +306,13 @@ export function AbaEmpresas({
       )}
       {!isLoading && empresasFiltradas.length === 0 && (
         <div className="wms-empty-block">
-          <h3>Nenhuma empresa {filtroGalpao ? "neste galpão" : "cadastrada"}</h3>
+          <h3>
+            Nenhuma empresa
+            {filtroGalpao ? " com esse galpão preferencial" : " cadastrada"}
+          </h3>
           <p>
             {filtroGalpao
-              ? "Adicione uma empresa associada a este galpão."
+              ? "Empresas só aparecem aqui quando o galpão escolhido está marcado como preferencial."
               : "Cadastre uma empresa pra começar."}
           </p>
         </div>
@@ -227,8 +324,7 @@ export function AbaEmpresas({
               <tr>
                 <th>Nome</th>
                 <th>CNPJ</th>
-                <th>Galpão</th>
-                <th>Grupo / Tier</th>
+                <th>Preferenciais</th>
                 <th>Conexão</th>
                 <th style={{ width: 80 }}></th>
               </tr>
@@ -261,7 +357,7 @@ function LinhaEmpresa({
   onFechar,
   onSalvo,
 }: {
-  empresa: EmpresaHierarquiaWms & { galpao_id: string; galpao_nome: string };
+  empresa: EmpresaFlat;
   galpoes: GalpaoHierarquiaWms[];
   editando: boolean;
   onEditar: () => void;
@@ -270,7 +366,7 @@ function LinhaEmpresa({
 }) {
   const [form, setForm] = useState({
     nome: empresa.nome,
-    galpao_id: empresa.galpao_id,
+    preferenciais: empresa.preferenciais.map((p) => p.id),
     ativo: empresa.ativo,
   });
 
@@ -281,7 +377,7 @@ function LinhaEmpresa({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           nome: form.nome,
-          galpao_id: form.galpao_id,
+          galpoes_preferenciais: form.preferenciais,
           ativo: form.ativo,
         }),
       }),
@@ -293,6 +389,14 @@ function LinhaEmpresa({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const togglePref = (id: string) => {
+    setForm((s) =>
+      s.preferenciais.includes(id)
+        ? { ...s, preferenciais: s.preferenciais.filter((p) => p !== id) }
+        : { ...s, preferenciais: [...s.preferenciais, id] },
+    );
+  };
+
   if (!editando) {
     return (
       <tr style={{ opacity: empresa.ativo ? 1 : 0.55 }}>
@@ -300,18 +404,8 @@ function LinhaEmpresa({
           <strong>{empresa.nome}</strong>
         </td>
         <td className="wms-mono wms-td-mute">{empresa.cnpj}</td>
-        <td>{empresa.galpao_nome}</td>
         <td>
-          {empresa.grupo ? (
-            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-              <span>{empresa.grupo.nome}</span>
-              {empresa.tier != null && (
-                <span className="wms-mono wms-td-mute">T{empresa.tier}</span>
-              )}
-            </span>
-          ) : (
-            <span className="wms-td-mute">—</span>
-          )}
+          <PreferenciaisChips preferenciais={empresa.preferenciais} />
         </td>
         <td>
           <StatusConexao empresa={empresa} />
@@ -332,7 +426,7 @@ function LinhaEmpresa({
 
   return (
     <tr style={{ background: "var(--wms-c-panel)" }}>
-      <td colSpan={6} style={{ padding: 14 }}>
+      <td colSpan={5} style={{ padding: 14 }}>
         <div className="wms-row-3">
           <Field label="Nome" required>
             <input
@@ -341,18 +435,13 @@ function LinhaEmpresa({
               onChange={(e) => setForm({ ...form, nome: e.target.value })}
             />
           </Field>
-          <Field label="Galpão" required>
-            <select
-              className="wms-select"
-              value={form.galpao_id}
-              onChange={(e) => setForm({ ...form, galpao_id: e.target.value })}
-            >
-              {galpoes.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.nome}
-                </option>
-              ))}
-            </select>
+          <Field label="CNPJ">
+            <input
+              className="wms-input wms-mono"
+              value={empresa.cnpj}
+              disabled
+              title="CNPJ não pode ser alterado (referenciado por webhooks Tiny). Pra remover, desative."
+            />
           </Field>
           <Field label="Status">
             <label
@@ -374,13 +463,52 @@ function LinhaEmpresa({
             </label>
           </Field>
         </div>
-        <p
-          className="wms-td-mute"
-          style={{ fontSize: 11, marginTop: 8, marginBottom: 0 }}
-        >
-          CNPJ não pode ser alterado depois de criado (referenciado por webhooks Tiny).
-          Pra remover de fato, desative.
-        </p>
+        <div style={{ marginTop: 10 }}>
+          <div
+            className="wms-td-mute"
+            style={{ fontSize: 11, fontWeight: 600, marginBottom: 6 }}
+          >
+            Galpões preferenciais
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {galpoes
+              .filter((g) => g.ativo)
+              .map((g) => {
+                const ativo = form.preferenciais.includes(g.id);
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => togglePref(g.id)}
+                    className={`wms-toggle-pill ${ativo ? "is-on" : "is-off"}`}
+                    style={{
+                      padding: "4px 10px",
+                      borderRadius: 999,
+                      border: "1px solid var(--wms-c-border)",
+                      background: ativo
+                        ? "var(--wms-c-success-faint, #d1fae5)"
+                        : "var(--wms-c-faint)",
+                      color: ativo
+                        ? "var(--wms-c-success, #047857)"
+                        : "var(--wms-c-mute, #9ca3af)",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {ativo ? "✓ " : "+ "}
+                    {g.nome}
+                  </button>
+                );
+              })}
+          </div>
+          <p
+            className="wms-td-mute"
+            style={{ fontSize: 11, marginTop: 6, marginBottom: 0 }}
+          >
+            Vazio = sem viés geográfico no roteamento.
+          </p>
+        </div>
         <div
           style={{
             display: "flex",
@@ -399,7 +527,7 @@ function LinhaEmpresa({
           <button
             type="button"
             className="wms-btn wms-btn-primary"
-            disabled={!form.nome.trim() || !form.galpao_id || salvar.isPending}
+            disabled={!form.nome.trim() || salvar.isPending}
             onClick={() => salvar.mutate()}
           >
             <Icon name="check" size={11} />

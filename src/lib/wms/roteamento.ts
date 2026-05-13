@@ -7,7 +7,14 @@ export interface GalpaoLite {
 }
 export interface EmpresaLite {
   id: string;
-  galpao_id: string;
+  /**
+   * Galpões preferenciais (geo-priority=0 no roteamento). 0..N.
+   * - Vazio: todos os galpões empatam (a empresa não tem preferência geográfica).
+   * - 1 ou mais: cada um vira "home" — o roteador prefere candidatos nesses
+   *   galpões; outros caem em cidade/UF/outro conforme distância geográfica
+   *   ao MAIS PRÓXIMO dos preferenciais.
+   */
+  galpoes_preferenciais: string[];
 }
 export interface ItemPedido {
   produto_id: string;
@@ -22,7 +29,17 @@ export interface RotaItem extends ItemPedido {
   empresa_dona_id: string;
   galpao_id: string;
   localizacao_id: string;
-  tipo: "propria" | "emprestimo";
+  tipo: "propria" | "emprestimo" | "swap";
+  /**
+   * Detalhes do swap quando tipo='swap'. A "vendedora" recebe a quadrupla
+   * (empresa_dona_id, galpao_id, localizacao_id) após swap, e o "par" recebe
+   * a quadrupla do espelho (mesmo produto, mesmo qty) no swap.galpao_par.
+   */
+  swap?: {
+    empresa_par_id: string;
+    galpao_par_id: string;
+    localizacao_par_id: string;
+  };
 }
 export type RotaResult =
   | { decisao: "propria" | "emprestimo"; rotas: RotaItem[]; galpao_id: string }
@@ -32,6 +49,12 @@ export interface RotearContext {
   vendedora: EmpresaLite;
   galpoes: GalpaoLite[];
   credoras: string[];
+  /**
+   * Empresas com regra de swap ATIVA com a vendedora (par bidirecional).
+   * Usadas pra tentar swap antes de empréstimo. Pode incluir empresas que
+   * NÃO estão em `credoras` (regras swap-only com permite_emprestimo=false).
+   */
+  swapPartners?: string[];
   itens: ItemPedido[];
   buscarLinha: (q: {
     produto_id: string;
@@ -41,13 +64,39 @@ export interface RotearContext {
   }) => Promise<LinhaCandidata | null>;
 }
 
-export function geoPriority(galpao: GalpaoLite, home: GalpaoLite): number {
-  if (galpao.id === home.id) return 0;
-  if (galpao.cidade && galpao.cidade === home.cidade && galpao.estado === home.estado) {
-    return 1;
+/**
+ * Distância geo-priority do `galpao` em relação a um conjunto de "homes"
+ * (preferenciais da empresa vendedora). Retorna o MENOR (mais próximo).
+ *
+ *   0 — galpao está entre os preferenciais (ou empresa sem preferenciais)
+ *   1 — mesma cidade + UF de algum preferencial
+ *   2 — mesma UF de algum preferencial
+ *   3 — outro
+ *
+ * Quando `homes` está vazio (empresa sem preferenciais), todos os galpões
+ * empatam em 0 — i.e. roteamento sem viés geográfico, decisão por cobertura.
+ */
+export function geoPriority(
+  galpao: GalpaoLite,
+  homes: GalpaoLite | GalpaoLite[],
+): number {
+  const lista = Array.isArray(homes) ? homes : [homes];
+  if (lista.length === 0) return 0;
+
+  let best = 3;
+  for (const home of lista) {
+    if (galpao.id === home.id) return 0;
+    if (
+      galpao.cidade &&
+      galpao.cidade === home.cidade &&
+      galpao.estado === home.estado
+    ) {
+      best = Math.min(best, 1);
+    } else if (galpao.estado && galpao.estado === home.estado) {
+      best = Math.min(best, 2);
+    }
   }
-  if (galpao.estado && galpao.estado === home.estado) return 2;
-  return 3;
+  return best;
 }
 
 /**
@@ -58,8 +107,11 @@ export function geoPriority(galpao: GalpaoLite, home: GalpaoLite): number {
  * 4. Escolhe o melhor; se nenhum cobre tudo, OC com motivo
  */
 export async function rotearPedido(ctx: RotearContext): Promise<RotaResult> {
-  const home = ctx.galpoes.find((g) => g.id === ctx.vendedora.galpao_id);
-  if (!home) return { decisao: "oc", motivo: "sem_cobertura" };
+  // Resolve preferenciais → GalpaoLite[]. Empresa sem preferenciais → array
+  // vazio, geoPriority retorna 0 pra qualquer galpão (decisão por cobertura).
+  const homes: GalpaoLite[] = (ctx.vendedora.galpoes_preferenciais ?? [])
+    .map((id) => ctx.galpoes.find((g) => g.id === id))
+    .filter((g): g is GalpaoLite => g != null);
 
   type Candidato = { galpao: GalpaoLite; rotas: RotaItem[]; tudoProprio: boolean };
   const candidatos: Candidato[] = [];
@@ -70,50 +122,112 @@ export async function rotearPedido(ctx: RotearContext): Promise<RotaResult> {
     let tudoProprio = true;
 
     for (const item of ctx.itens) {
+      let qtyRestante = item.qty;
+
+      // ─── 1. Próprio: pega o que estiver disponível no galpão ─────────────
+      // buscarLinha(qty=1) retorna linha com `disponivel` real; tomamos min.
       const proprio = await ctx.buscarLinha({
         produto_id: item.produto_id,
         empresa_dona_id: ctx.vendedora.id,
         galpao_id: galpao.id,
-        qty: item.qty,
+        qty: 1,
       });
-      if (proprio) {
+      if (proprio && proprio.disponivel > 0) {
+        const qtyTomada = Math.min(qtyRestante, proprio.disponivel);
         rotas.push({
-          ...item,
+          produto_id: item.produto_id,
+          qty: qtyTomada,
           empresa_dona_id: ctx.vendedora.id,
           galpao_id: galpao.id,
           localizacao_id: proprio.localizacao_id,
           tipo: "propria",
         });
-        continue;
+        qtyRestante -= qtyTomada;
       }
 
-      let emprestimo: { donaId: string; linha: LinhaCandidata } | null = null;
-      for (const credoraId of ctx.credoras) {
-        const linha = await ctx.buscarLinha({
-          produto_id: item.produto_id,
-          empresa_dona_id: credoraId,
-          galpao_id: galpao.id,
-          qty: item.qty,
-        });
-        if (linha) {
-          emprestimo = { donaId: credoraId, linha };
-          break;
+      // ─── 2. Swap parcial com cada partner em ordem ───────────────────────
+      // Toma min(qtyRestante, partner_disp_no_galpao, V_disp_no_espelho).
+      // Espelho preferido por geo-priority em relação ao partner.
+      if (qtyRestante > 0) {
+        for (const partnerId of ctx.swapPartners ?? []) {
+          if (qtyRestante <= 0) break;
+          const linhaPartner = await ctx.buscarLinha({
+            produto_id: item.produto_id,
+            empresa_dona_id: partnerId,
+            galpao_id: galpao.id,
+            qty: 1,
+          });
+          if (!linhaPartner || linhaPartner.disponivel <= 0) continue;
+
+          const espelhosOrdenados = ctx.galpoes
+            .filter((g) => g.id !== galpao.id)
+            .sort((a, b) => geoPriority(a, galpao) - geoPriority(b, galpao));
+          let escolhido: { galpaoEspelho: GalpaoLite; linhaEspelho: LinhaCandidata } | null = null;
+          for (const espelho of espelhosOrdenados) {
+            const linhaEspelho = await ctx.buscarLinha({
+              produto_id: item.produto_id,
+              empresa_dona_id: ctx.vendedora.id,
+              galpao_id: espelho.id,
+              qty: 1,
+            });
+            if (linhaEspelho && linhaEspelho.disponivel > 0) {
+              escolhido = { galpaoEspelho: espelho, linhaEspelho };
+              break;
+            }
+          }
+          if (!escolhido) continue;
+
+          const qtyTomada = Math.min(
+            qtyRestante,
+            linhaPartner.disponivel,
+            escolhido.linhaEspelho.disponivel,
+          );
+          rotas.push({
+            produto_id: item.produto_id,
+            qty: qtyTomada,
+            empresa_dona_id: ctx.vendedora.id,
+            galpao_id: galpao.id,
+            localizacao_id: linhaPartner.localizacao_id,
+            tipo: "swap",
+            swap: {
+              empresa_par_id: partnerId,
+              galpao_par_id: escolhido.galpaoEspelho.id,
+              localizacao_par_id: escolhido.linhaEspelho.localizacao_id,
+            },
+          });
+          qtyRestante -= qtyTomada;
         }
       }
-      if (emprestimo) {
-        rotas.push({
-          ...item,
-          empresa_dona_id: emprestimo.donaId,
-          galpao_id: galpao.id,
-          localizacao_id: emprestimo.linha.localizacao_id,
-          tipo: "emprestimo",
-        });
-        tudoProprio = false;
-        continue;
+
+      // ─── 3. Empréstimo parcial com cada credora em ordem ─────────────────
+      if (qtyRestante > 0) {
+        for (const credoraId of ctx.credoras) {
+          if (qtyRestante <= 0) break;
+          const linha = await ctx.buscarLinha({
+            produto_id: item.produto_id,
+            empresa_dona_id: credoraId,
+            galpao_id: galpao.id,
+            qty: 1,
+          });
+          if (!linha || linha.disponivel <= 0) continue;
+          const qtyTomada = Math.min(qtyRestante, linha.disponivel);
+          rotas.push({
+            produto_id: item.produto_id,
+            qty: qtyTomada,
+            empresa_dona_id: credoraId,
+            galpao_id: galpao.id,
+            localizacao_id: linha.localizacao_id,
+            tipo: "emprestimo",
+          });
+          qtyRestante -= qtyTomada;
+          tudoProprio = false;
+        }
       }
 
-      cobreTudo = false;
-      break;
+      if (qtyRestante > 0) {
+        cobreTudo = false;
+        break;
+      }
     }
 
     if (cobreTudo) candidatos.push({ galpao, rotas, tudoProprio });
@@ -142,7 +256,7 @@ export async function rotearPedido(ctx: RotearContext): Promise<RotaResult> {
   }
 
   candidatos.sort(
-    (a, b) => geoPriority(a.galpao, home) - geoPriority(b.galpao, home),
+    (a, b) => geoPriority(a.galpao, homes) - geoPriority(b.galpao, homes),
   );
   const escolhido = candidatos[0];
   return {
@@ -171,20 +285,29 @@ export async function rotearPedidoDoBanco(
 
   const { data: vendedora } = await sb
     .from("siso_empresas")
-    .select("id, galpao_id")
+    .select("id")
     .eq("id", empresaVendedoraId)
     .single();
   if (!vendedora) return { decisao: "oc", motivo: "sem_cobertura" };
+
+  // Carrega galpões preferenciais (N:N) — empresa pode ter 0..N. Vazio = sem
+  // preferência geográfica (roteamento decide por cobertura).
+  const { data: prefRows } = await sb
+    .from("siso_empresa_galpoes_preferenciais")
+    .select("galpao_id")
+    .eq("empresa_id", empresaVendedoraId);
+  const galpoesPreferenciais = (prefRows ?? []).map(
+    (r) => (r as { galpao_id: string }).galpao_id,
+  );
 
   const { data: galpoes } = await sb
     .from("siso_galpoes")
     .select("id, cidade, estado")
     .eq("ativo", true);
 
-  // Filtra apenas regras com permite_emprestimo=true. Regras com swap-only
-  // (permite_swap=true mas permite_emprestimo=false) NÃO aparecem como credoras
-  // pro roteamento unidirecional — só swap pode usá-las.
-  const { data: regras } = await sb
+  // Empréstimo: vendedora é devedora, credora "empresta" estoque dela.
+  // Filtra apenas regras com permite_emprestimo=true.
+  const { data: regrasEmprestimo } = await sb
     .from("siso_emprestimo_regras")
     .select("empresa_credora_id, limites_por_produto")
     .eq("empresa_devedora_id", empresaVendedoraId)
@@ -192,7 +315,7 @@ export async function rotearPedidoDoBanco(
     .eq("permite_emprestimo", true);
 
   const limitePorCredoraProduto = new Map<string, Map<string, number>>();
-  for (const r of (regras ?? []) as Array<{
+  for (const r of (regrasEmprestimo ?? []) as Array<{
     empresa_credora_id: string;
     limites_por_produto: Record<string, number>;
   }>) {
@@ -203,19 +326,60 @@ export async function rotearPedidoDoBanco(
     limitePorCredoraProduto.set(r.empresa_credora_id, lim);
   }
 
-  const credoras = (regras ?? []).map(
+  const credoras = (regrasEmprestimo ?? []).map(
     (r) => (r as { empresa_credora_id: string }).empresa_credora_id,
   );
 
+  // ─── Plano 4: parceiros de swap (bidirecional) ────────────────────────────
+  // Swap é simétrico: se A↔B é permitido, qualquer um pode iniciar. Carrega
+  // regras com permite_swap=true onde a vendedora aparece em qualquer lado.
+  const { data: regrasSwap } = await sb
+    .from("siso_emprestimo_regras")
+    .select("empresa_credora_id, empresa_devedora_id, limites_por_produto")
+    .or(
+      `empresa_credora_id.eq.${empresaVendedoraId},empresa_devedora_id.eq.${empresaVendedoraId}`,
+    )
+    .eq("ativo", true)
+    .eq("permite_swap", true);
+
+  const limitePorPartnerProduto = new Map<string, Map<string, number>>();
+  const swapPartners = new Set<string>();
+  for (const r of (regrasSwap ?? []) as Array<{
+    empresa_credora_id: string;
+    empresa_devedora_id: string;
+    limites_por_produto: Record<string, number>;
+  }>) {
+    const partnerId =
+      r.empresa_credora_id === empresaVendedoraId
+        ? r.empresa_devedora_id
+        : r.empresa_credora_id;
+    swapPartners.add(partnerId);
+    const lim = limitePorPartnerProduto.get(partnerId) ?? new Map();
+    for (const [pid, qty] of Object.entries(r.limites_por_produto ?? {})) {
+      // Em swap o limite é compartilhado entre os dois sentidos — usa o maior
+      // entre o já registrado e o atual (regras simétricas tendem a ter mesmo limite)
+      lim.set(pid, Math.max(lim.get(pid) ?? 0, Number(qty)));
+    }
+    limitePorPartnerProduto.set(partnerId, lim);
+  }
+
   return rotearPedido({
-    vendedora: vendedora as EmpresaLite,
+    vendedora: {
+      id: empresaVendedoraId,
+      galpoes_preferenciais: galpoesPreferenciais,
+    },
     galpoes: (galpoes ?? []) as GalpaoLite[],
     credoras,
+    swapPartners: Array.from(swapPartners),
     itens,
     buscarLinha: async (q) => {
-      // Aplicar limite por produto se a dona é credora (não vendedora)
+      // Aplicar limite por produto se a dona é credora (não vendedora).
+      // Empréstimo unidirecional usa limitePorCredoraProduto; swap usa
+      // limitePorPartnerProduto (regras com permite_swap=true).
       if (q.empresa_dona_id !== empresaVendedoraId) {
-        const lim = limitePorCredoraProduto.get(q.empresa_dona_id)?.get(q.produto_id);
+        const limCred = limitePorCredoraProduto.get(q.empresa_dona_id)?.get(q.produto_id);
+        const limSwap = limitePorPartnerProduto.get(q.empresa_dona_id)?.get(q.produto_id);
+        const lim = limCred ?? limSwap;
         if (lim !== undefined && q.qty > lim) return null;
       }
       const { data } = await sb

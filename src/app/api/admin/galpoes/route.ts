@@ -3,7 +3,11 @@ import { createServiceClient } from "@/lib/supabase-server";
 
 /**
  * GET /api/admin/galpoes
- * Returns galpoes with nested empresas, grupo info, and connection status.
+ *
+ * Retorna galpões com empresas aninhadas (status conexão Tiny, grupo legacy,
+ * preferenciais novos). Os campos `grupo`/`tier`/`grupoEmpresaId` ainda existem
+ * pra retrocompat do SISO legacy (/configuracoes). O WMS lê `preferenciais`,
+ * que é a fonte de verdade pós-migration 20260514_wms_empresa_galpoes_preferenciais.
  */
 export async function GET() {
   const supabase = createServiceClient();
@@ -21,6 +25,10 @@ export async function GET() {
           id, tier,
           siso_grupos ( id, nome )
         ),
+        siso_empresa_galpoes_preferenciais (
+          galpao_id,
+          siso_galpoes ( id, nome )
+        ),
         siso_tiny_connections (
           id, ativo, ultimo_teste_ok, is_authorized:access_token,
           deposito_id, deposito_nome
@@ -33,7 +41,7 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Transform: flatten connection status
+  // Transform: flatten connection status, flatten preferenciais.
   const result = (galpoes ?? []).map((g) => ({
     ...g,
     siso_empresas: ((g.siso_empresas as unknown[]) ?? []).map((raw) => {
@@ -47,11 +55,23 @@ export async function GET() {
       }>) ?? [];
       const grupoRel = grupoRels[0];
 
+      const prefRels = (e.siso_empresa_galpoes_preferenciais as Array<{
+        galpao_id: string;
+        siso_galpoes: { id: string; nome: string } | null;
+      }>) ?? [];
+      const preferenciais = prefRels
+        .map((p) => ({
+          id: p.galpao_id,
+          nome: p.siso_galpoes?.nome ?? "",
+        }))
+        .sort((a, b) => a.nome.localeCompare(b.nome));
+
       return {
         id: e.id,
         nome: e.nome,
         cnpj: e.cnpj,
         ativo: e.ativo,
+        preferenciais,
         grupo: grupoRel ? { id: grupoRel.siso_grupos.id, nome: grupoRel.siso_grupos.nome } : null,
         tier: grupoRel?.tier ?? null,
         grupoEmpresaId: grupoRel?.id ?? null,

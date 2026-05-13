@@ -20,11 +20,28 @@ describe("geoPriority", () => {
   it("estado diferente vira 3", () => {
     expect(geoPriority({ id: "x", cidade: "SP", estado: "SP" }, home)).toBe(3);
   });
+
+  it("array de homes — retorna a menor distância entre todos", () => {
+    const homes: GalpaoLite[] = [
+      { id: "h1", cidade: "CWB", estado: "PR" },
+      { id: "h2", cidade: "SP", estado: "SP" },
+    ];
+    expect(geoPriority({ id: "h2", cidade: "SP", estado: "SP" }, homes)).toBe(0);
+    expect(geoPriority({ id: "x", cidade: "SP", estado: "SP" }, homes)).toBe(1);
+    expect(geoPriority({ id: "x", cidade: "FOZ", estado: "PR" }, homes)).toBe(2);
+    expect(geoPriority({ id: "x", cidade: "RJ", estado: "RJ" }, homes)).toBe(3);
+  });
+
+  it("array vazio — todos empatam em 0 (sem preferência geo)", () => {
+    expect(
+      geoPriority({ id: "x", cidade: "RJ", estado: "RJ" }, [] as GalpaoLite[]),
+    ).toBe(0);
+  });
 });
 
 const galpaoCwb: GalpaoLite = { id: "g-cwb", cidade: "CWB", estado: "PR" };
 const galpaoSp: GalpaoLite = { id: "g-sp", cidade: "SP", estado: "SP" };
-const empresaA: EmpresaLite = { id: "a", galpao_id: "g-cwb" }; // home CWB
+const empresaA: EmpresaLite = { id: "a", galpoes_preferenciais: ["g-cwb"] }; // home CWB
 // Empresa B simulada para testes de empréstimo (saldo em outra dona)
 
 type BuscarLinha = RotearContext["buscarLinha"];
@@ -115,5 +132,166 @@ describe("rotearPedido", () => {
     });
     expect(r.decisao).toBe("propria");
     if (r.decisao !== "oc") expect(r.galpao_id).toBe("g-cwb");
+  });
+});
+
+// ─── Plano 4: testes de swap ─────────────────────────────────────────────
+describe("rotearPedido — swap (Plano 4)", () => {
+  it("escolhe swap quando V não tem em home mas par tem + V tem espelho", async () => {
+    // V vendendo p1 qty=2.
+    // home V = CWB. Em CWB: NetParts tem p1 (qty>=2). Em SP: V tem p1 (qty>=2).
+    // Swap deveria rolar: V ganha em CWB, NetParts ganha em SP.
+    const buscar: BuscarLinha = async ({ empresa_dona_id, galpao_id }) => {
+      if (empresa_dona_id === "np" && galpao_id === "g-cwb") {
+        return { id: "lc-cwb-np", localizacao_id: "lc-cwb-np", disponivel: 10 };
+      }
+      if (empresa_dona_id === "a" && galpao_id === "g-sp") {
+        return { id: "lc-sp-a", localizacao_id: "lc-sp-a", disponivel: 10 };
+      }
+      return null;
+    };
+    const r = await rotearPedido({
+      vendedora: empresaA,
+      galpoes: [galpaoCwb, galpaoSp],
+      credoras: [],
+      swapPartners: ["np"],
+      itens: [{ produto_id: "p1", qty: 2 }],
+      buscarLinha: buscar,
+    });
+    expect(r.decisao).toBe("propria"); // decisao agregada continua propria
+    if (r.decisao !== "oc") {
+      expect(r.rotas).toHaveLength(1);
+      expect(r.rotas[0].tipo).toBe("swap");
+      expect(r.rotas[0].galpao_id).toBe("g-cwb");
+      expect(r.rotas[0].empresa_dona_id).toBe("a");
+      expect(r.rotas[0].swap?.empresa_par_id).toBe("np");
+      expect(r.rotas[0].swap?.galpao_par_id).toBe("g-sp");
+    }
+  });
+
+  it("ignora swap quando V não tem espelho em nenhum outro galpão", async () => {
+    // NetParts tem em CWB mas V não tem em SP — sem espelho → não-swap.
+    const buscar: BuscarLinha = async ({ empresa_dona_id, galpao_id }) => {
+      if (empresa_dona_id === "np" && galpao_id === "g-cwb") {
+        return { id: "x", localizacao_id: "lx", disponivel: 10 };
+      }
+      return null;
+    };
+    const r = await rotearPedido({
+      vendedora: empresaA,
+      galpoes: [galpaoCwb, galpaoSp],
+      credoras: [],
+      swapPartners: ["np"],
+      itens: [{ produto_id: "p1", qty: 2 }],
+      buscarLinha: buscar,
+    });
+    // Sem swap nem própria nem empréstimo (credoras=[]) → OC
+    expect(r.decisao).toBe("oc");
+  });
+
+  it("prefere própria sobre swap mesmo quando swap é possível", async () => {
+    // V tem direto em CWB E swap também seria possível. Própria ganha.
+    const buscar: BuscarLinha = async ({ empresa_dona_id, galpao_id }) => {
+      if (empresa_dona_id === "a" && galpao_id === "g-cwb") {
+        return { id: "own", localizacao_id: "lown", disponivel: 10 };
+      }
+      if (empresa_dona_id === "np" && galpao_id === "g-cwb") {
+        return { id: "np-cwb", localizacao_id: "lnp-cwb", disponivel: 10 };
+      }
+      if (empresa_dona_id === "a" && galpao_id === "g-sp") {
+        return { id: "v-sp", localizacao_id: "lv-sp", disponivel: 10 };
+      }
+      return null;
+    };
+    const r = await rotearPedido({
+      vendedora: empresaA,
+      galpoes: [galpaoCwb, galpaoSp],
+      credoras: [],
+      swapPartners: ["np"],
+      itens: [{ produto_id: "p1", qty: 1 }],
+      buscarLinha: buscar,
+    });
+    expect(r.decisao).toBe("propria");
+    if (r.decisao !== "oc") {
+      expect(r.rotas[0].tipo).toBe("propria");
+      expect(r.rotas[0].localizacao_id).toBe("lown");
+    }
+  });
+
+  it("prefere swap sobre empréstimo quando ambos são viáveis", async () => {
+    // V não tem em CWB. NetParts (swap partner) tem em CWB + V tem em SP.
+    // OutraEmpresa (credora) também tem em CWB.
+    // Swap deve ganhar (não cria saldo devedor).
+    const buscar: BuscarLinha = async ({ empresa_dona_id, galpao_id }) => {
+      if (empresa_dona_id === "np" && galpao_id === "g-cwb") {
+        return { id: "np-cwb", localizacao_id: "lnp-cwb", disponivel: 10 };
+      }
+      if (empresa_dona_id === "credora" && galpao_id === "g-cwb") {
+        return { id: "cred-cwb", localizacao_id: "lcred", disponivel: 10 };
+      }
+      if (empresa_dona_id === "a" && galpao_id === "g-sp") {
+        return { id: "a-sp", localizacao_id: "la-sp", disponivel: 10 };
+      }
+      return null;
+    };
+    const r = await rotearPedido({
+      vendedora: empresaA,
+      galpoes: [galpaoCwb, galpaoSp],
+      credoras: ["credora"],
+      swapPartners: ["np"],
+      itens: [{ produto_id: "p1", qty: 1 }],
+      buscarLinha: buscar,
+    });
+    expect(r.decisao).toBe("propria");
+    if (r.decisao !== "oc") {
+      expect(r.rotas[0].tipo).toBe("swap");
+      expect(r.rotas[0].swap?.empresa_par_id).toBe("np");
+    }
+  });
+
+  it("cai pra empréstimo quando swap falha por falta de espelho", async () => {
+    // NetParts tem em CWB. V não tem em outro galpão (sem espelho). Credora
+    // tem em CWB → empréstimo.
+    const buscar: BuscarLinha = async ({ empresa_dona_id, galpao_id }) => {
+      if (empresa_dona_id === "np" && galpao_id === "g-cwb") {
+        return { id: "np", localizacao_id: "lnp", disponivel: 10 };
+      }
+      if (empresa_dona_id === "credora" && galpao_id === "g-cwb") {
+        return { id: "cred", localizacao_id: "lcred", disponivel: 10 };
+      }
+      return null;
+    };
+    const r = await rotearPedido({
+      vendedora: empresaA,
+      galpoes: [galpaoCwb, galpaoSp],
+      credoras: ["credora"],
+      swapPartners: ["np"],
+      itens: [{ produto_id: "p1", qty: 1 }],
+      buscarLinha: buscar,
+    });
+    expect(r.decisao).toBe("emprestimo");
+    if (r.decisao !== "oc") {
+      expect(r.rotas[0].tipo).toBe("emprestimo");
+      expect(r.rotas[0].empresa_dona_id).toBe("credora");
+    }
+  });
+
+  it("OC quando swap impossível e sem credoras", async () => {
+    // NetParts tem em CWB, mas V não tem em outro lugar. Sem credoras. → OC.
+    const buscar: BuscarLinha = async ({ empresa_dona_id, galpao_id }) => {
+      if (empresa_dona_id === "np" && galpao_id === "g-cwb") {
+        return { id: "x", localizacao_id: "lx", disponivel: 10 };
+      }
+      return null;
+    };
+    const r = await rotearPedido({
+      vendedora: empresaA,
+      galpoes: [galpaoCwb, galpaoSp],
+      credoras: [],
+      swapPartners: ["np"],
+      itens: [{ produto_id: "p1", qty: 1 }],
+      buscarLinha: buscar,
+    });
+    expect(r.decisao).toBe("oc");
   });
 });

@@ -95,7 +95,7 @@ BEGIN
     JOIN siso_inventario_localizacoes il
       ON il.sessao_id = d.sessao_id AND il.localizacao_id = d.localizacao_id
     JOIN siso_inventario_sessoes s ON s.id = il.sessao_id
-    WHERE s.criada_em >= v_desde
+    WHERE s.criado_em >= v_desde
       AND il.bloqueada_por IS NOT NULL
       AND (p_galpao_id IS NULL OR s.galpao_id = p_galpao_id)
     GROUP BY 1
@@ -248,7 +248,7 @@ BEGIN
   WITH lt AS (
     SELECT
       p.id,
-      EXTRACT(EPOCH FROM (p.embalagem_concluida_em - p.created_at))/60 AS minutos,
+      EXTRACT(EPOCH FROM (p.embalagem_concluida_em - p.criado_em))/60 AS minutos,
       CASE
         WHEN p.embalagem_concluida_em >= now() - interval '24 hours' THEN '24h'
         WHEN p.embalagem_concluida_em >= now() - interval '7 days' THEN '7d'
@@ -319,11 +319,12 @@ CREATE OR REPLACE FUNCTION wms_insights_throughput_hora(
   media_14d numeric,
   delta_pct numeric
 ) LANGUAGE plpgsql STABLE AS $$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
   WITH horas AS (SELECT generate_series(0, 23) AS h),
-  hoje AS (
-    SELECT EXTRACT(HOUR FROM p.embalagem_concluida_em AT TIME ZONE 'America/Sao_Paulo')::int AS hora,
+  hj AS (
+    SELECT EXTRACT(HOUR FROM p.embalagem_concluida_em AT TIME ZONE 'America/Sao_Paulo')::int AS h_,
            COUNT(*)::int AS qtd
     FROM siso_pedidos p
     LEFT JOIN siso_empresas e ON e.id = p.empresa_origem_id
@@ -332,8 +333,8 @@ BEGIN
     GROUP BY 1
   ),
   media AS (
-    SELECT hora, AVG(qtd)::numeric AS m FROM (
-      SELECT EXTRACT(HOUR FROM p.embalagem_concluida_em AT TIME ZONE 'America/Sao_Paulo')::int AS hora,
+    SELECT h_, AVG(qtd)::numeric AS m FROM (
+      SELECT EXTRACT(HOUR FROM p.embalagem_concluida_em AT TIME ZONE 'America/Sao_Paulo')::int AS h_,
              p.embalagem_concluida_em::date AS dia,
              COUNT(*)::numeric AS qtd
       FROM siso_pedidos p
@@ -349,8 +350,8 @@ BEGIN
       THEN ROUND((COALESCE(hj.qtd, 0)::numeric / m.m - 1) * 100, 1)
       ELSE NULL END
   FROM horas h
-  LEFT JOIN hoje hj ON hj.hora = h.h
-  LEFT JOIN media m ON m.hora = h.h
+  LEFT JOIN hj ON hj.h_ = h.h
+  LEFT JOIN media m ON m.h_ = h.h
   ORDER BY h.h;
 END;
 $$;
@@ -400,12 +401,12 @@ BEGIN
     GROUP BY 1
   ),
   divs AS (
-    SELECT s.criada_em::date AS dia, COUNT(d.id)::int AS qtd
+    SELECT s.criado_em::date AS dia, COUNT(d.id)::int AS qtd
     FROM siso_inventario_divergencias d
     JOIN siso_inventario_localizacoes il
       ON il.sessao_id = d.sessao_id AND il.localizacao_id = d.localizacao_id
     JOIN siso_inventario_sessoes s ON s.id = il.sessao_id
-    WHERE il.bloqueada_por = p_user_id AND s.criada_em::date >= v_desde
+    WHERE il.bloqueada_por = p_user_id AND s.criado_em::date >= v_desde
     GROUP BY 1
   )
   SELECT d.d,
@@ -439,6 +440,7 @@ CREATE OR REPLACE FUNCTION wms_insights_estoque_quadrante(
   status_cobertura text,
   curva text
 ) LANGUAGE plpgsql STABLE AS $$
+#variable_conflict use_column
 BEGIN
   RETURN QUERY
   SELECT
@@ -446,15 +448,15 @@ BEGIN
     p.sku,
     c.giro_diario,
     c.dias_cobertura,
-    c.disponivel_total,
+    c.disponivel_total AS saldo,
     c.disponivel_total * COALESCE(e.custo_medio_avg, 0) AS valor,
     c.status_cobertura,
     COALESCE(abc.curva, 'C') AS curva
   FROM siso_cobertura_estoque c
   JOIN siso_produtos p ON p.id = c.produto_id
   LEFT JOIN (
-    SELECT produto_id, empresa_dona_id, galpao_id, AVG(custo_medio) AS custo_medio_avg
-    FROM siso_estoque GROUP BY 1, 2, 3
+    SELECT se.produto_id, se.empresa_dona_id, se.galpao_id, AVG(se.custo_medio) AS custo_medio_avg
+    FROM siso_estoque se GROUP BY 1, 2, 3
   ) e ON e.produto_id = c.produto_id
     AND e.empresa_dona_id = c.empresa_dona_id
     AND e.galpao_id = c.galpao_id
@@ -474,15 +476,16 @@ CREATE OR REPLACE FUNCTION wms_insights_devolucoes_agregado(
   qtd int,
   qtd_pendentes int
 ) LANGUAGE plpgsql STABLE AS $$
+#variable_conflict use_column
 DECLARE v_desde timestamptz := now() - (p_dias || ' days')::interval;
 BEGIN
   RETURN QUERY
   SELECT
-    COALESCE(classificacao, 'pendente')::text,
-    COUNT(*)::int,
-    COUNT(*) FILTER (WHERE status = 'aguardando_classificacao')::int
-  FROM siso_devolucoes_pendentes
-  WHERE criado_em >= v_desde
+    COALESCE(d.classificacao, 'pendente')::text AS classificacao,
+    COUNT(*)::int AS qtd,
+    COUNT(*) FILTER (WHERE d.status = 'aguardando_classificacao')::int AS qtd_pendentes
+  FROM siso_devolucoes_pendentes d
+  WHERE d.criado_em >= v_desde
   GROUP BY 1
   ORDER BY 2 DESC;
 END;
@@ -564,13 +567,13 @@ BEGIN
   ) t;
 
   -- Lead time 24h
-  SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (embalagem_concluida_em - created_at))/60)
+  SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (p.embalagem_concluida_em - p.criado_em))/60)
   INTO v_lead_time_p50_24h
   FROM siso_pedidos p LEFT JOIN siso_empresas e ON e.id = p.empresa_origem_id
   WHERE p.embalagem_concluida_em >= now() - interval '24 hours'
     AND (p_galpao_id IS NULL OR e.galpao_id = p_galpao_id);
 
-  SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (embalagem_concluida_em - created_at))/60)
+  SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (p.embalagem_concluida_em - p.criado_em))/60)
   INTO v_lead_time_p50_7d
   FROM siso_pedidos p LEFT JOIN siso_empresas e ON e.id = p.empresa_origem_id
   WHERE p.embalagem_concluida_em >= now() - interval '7 days'

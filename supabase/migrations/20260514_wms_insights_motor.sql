@@ -164,13 +164,13 @@ BEGIN
     JOIN siso_inventario_localizacoes il
       ON il.sessao_id = d.sessao_id AND il.localizacao_id = d.localizacao_id
     JOIN siso_inventario_sessoes s ON s.id = il.sessao_id
-    WHERE s.criada_em >= now() - interval '30 days'
+    WHERE s.criado_em >= now() - interval '30 days'
       AND il.bloqueada_por IS NOT NULL
     GROUP BY 1, 2
   ),
   mediana_galpao AS (
     SELECT galpao_id,
-           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY qtd) AS mediana
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY qtd)::numeric AS mediana
     FROM divs
     GROUP BY 1
   )
@@ -327,7 +327,7 @@ BEGIN
   RETURN QUERY
   WITH p90_24h AS (
     SELECT empresa_origem_id,
-           PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (embalagem_concluida_em - created_at))/60) AS p90_min
+           (PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (embalagem_concluida_em - criado_em))/60))::numeric AS p90_min
     FROM siso_pedidos
     WHERE embalagem_concluida_em IS NOT NULL
       AND embalagem_concluida_em >= now() - interval '24 hours'
@@ -335,7 +335,7 @@ BEGIN
   ),
   p90_30d AS (
     SELECT empresa_origem_id,
-           PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (embalagem_concluida_em - created_at))/60) AS p90_min
+           (PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (embalagem_concluida_em - criado_em))/60))::numeric AS p90_min
     FROM siso_pedidos
     WHERE embalagem_concluida_em IS NOT NULL
       AND embalagem_concluida_em >= now() - interval '30 days'

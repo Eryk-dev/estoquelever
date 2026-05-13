@@ -59,6 +59,39 @@ function GuardaRotaContent() {
   const concluidas = fila.length - restantes;
   // 1º não-zerado vira "ativa" pra autoFocus
   const ativaId = fila.find((p) => p.qty_pendente > 0)?.id ?? null;
+  // Pendências ativas: usadas pelo "Imprimir todas as etiquetas" no header
+  const pendenciasAtivasIds = fila
+    .filter((p) => p.qty_pendente > 0)
+    .map((p) => p.id);
+
+  const imprimirTudo = useMutation({
+    mutationFn: async () => {
+      if (pendenciasAtivasIds.length === 0) {
+        throw new Error("nenhuma pendência ativa pra imprimir");
+      }
+      const r = await sisoFetch("/api/wms/guarda/imprimir-lote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pendencia_ids: pendenciasAtivasIds }),
+      });
+      if (!r.ok) {
+        const b = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error || `HTTP ${r.status}`);
+      }
+      return (await r.json()) as {
+        ok: boolean;
+        totalEtiquetas?: number;
+        totalFolhas?: number;
+        fallbackEnvelope?: boolean;
+      };
+    },
+    onSuccess: (r) => {
+      toast.success(
+        `${r.totalEtiquetas} etiquetas em ${r.totalFolhas} folhas${r.fallbackEnvelope ? " (impressora de envio)" : ""}`,
+      );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   function onPendenciaResolvida() {
     qc.invalidateQueries({ queryKey: ["wms-guarda-rota", queryString] });
@@ -157,7 +190,21 @@ function GuardaRotaContent() {
             {concluidas} de {fila.length} concluídas · {restantes} restantes
           </div>
         </div>
-        <div style={{ width: 60 }} />
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost"
+          onClick={() => imprimirTudo.mutate()}
+          disabled={
+            imprimirTudo.isPending || pendenciasAtivasIds.length === 0
+          }
+          style={{ fontSize: 12 }}
+          title="Imprime de uma vez as etiquetas de todas as pendências ainda ativas"
+        >
+          <Icon name="tag" size={11} />
+          {imprimirTudo.isPending
+            ? "Imprimindo…"
+            : `Imprimir tudo (${pendenciasAtivasIds.length})`}
+        </button>
       </div>
 
       {/* Checklist */}
@@ -625,35 +672,34 @@ function PendenciaCard({
         )}
       </div>
 
-      {/* Qty + ações */}
+      {/* Qty + Confirmar (CTA principal) */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "120px 1fr 1fr",
-          gap: 8,
+          gridTemplateColumns: "140px 1fr",
+          gap: 10,
           alignItems: "center",
         }}
       >
-        <input
-          className="wms-input wms-mono wms-tar"
-          type="number"
-          min="1"
-          max={pendencia.qty_pendente}
-          value={qtyInput}
-          onChange={(e) => setQtyInput(e.target.value)}
-          style={{ fontSize: 16 }}
-          aria-label="Qty a guardar"
-        />
-        <button
-          type="button"
-          className="wms-btn wms-btn-ghost"
-          onClick={() => imprimir.mutate()}
-          disabled={imprimir.isPending}
-          style={{ padding: "12px 10px", fontSize: 13 }}
-        >
-          <Icon name="tag" size={13} />
-          {imprimir.isPending ? "Enviando…" : "Imprimir etiq"}
-        </button>
+        <div>
+          <label
+            className="wms-td-mute"
+            style={{ fontSize: 10.5, fontWeight: 600, display: "block", marginBottom: 4 }}
+            htmlFor={`qty-${id}`}
+          >
+            Qty a guardar
+          </label>
+          <input
+            id={`qty-${id}`}
+            className="wms-input wms-mono wms-tar"
+            type="number"
+            min="1"
+            max={pendencia.qty_pendente}
+            value={qtyInput}
+            onChange={(e) => setQtyInput(e.target.value)}
+            style={{ fontSize: 20, fontWeight: 700, padding: "12px 10px" }}
+          />
+        </div>
         <button
           type="button"
           className="wms-btn wms-btn-primary"
@@ -661,14 +707,37 @@ function PendenciaCard({
           disabled={
             confirmar.isPending || !destinoEscolhido.id || !Number(qtyInput)
           }
-          style={{ padding: "12px 10px", fontSize: 13 }}
+          style={{
+            padding: "18px 14px",
+            fontSize: 16,
+            fontWeight: 700,
+            height: "100%",
+          }}
         >
-          <Icon name="check" size={13} />
+          <Icon name="check" size={16} />
           {confirmar.isPending ? "Confirmando…" : "Confirmar guarda"}
         </button>
       </div>
 
-      <div style={{ textAlign: "right" }}>
+      {/* Ações secundárias */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <button
+          type="button"
+          className="wms-btn-link"
+          onClick={() => imprimir.mutate()}
+          disabled={imprimir.isPending}
+          style={{ fontSize: 11 }}
+        >
+          <Icon name="tag" size={10} />
+          {imprimir.isPending ? "Imprimindo…" : "Imprimir etiqueta deste item"}
+        </button>
         <button
           type="button"
           className="wms-btn-link"

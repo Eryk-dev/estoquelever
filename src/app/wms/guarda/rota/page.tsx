@@ -70,6 +70,37 @@ function GuardaRotaContent() {
     refetch();
   }
 
+  const tituloRota = lote
+    ? "Rota — lote único"
+    : todas
+      ? "Rota — guardar tudo"
+      : ids
+        ? "Rota — seleção"
+        : "Rota";
+
+  const tudoConcluido = !isLoading && (fila.length === 0 || restantes === 0);
+
+  // Métricas pra tela de parabéns (cálculo barato, sem useMemo pra evitar
+  // hook após early return).
+  const guardadasFinais = fila.filter((p) => p.status === "guardada");
+  const unidadesGuardadas = guardadasFinais.reduce(
+    (sum, p) => sum + Number(p.qty_inicial),
+    0,
+  );
+  const minutosRota = (() => {
+    if (guardadasFinais.length === 0) return 0;
+    const inicios = fila
+      .map((p) => p.iniciada_em ?? p.criada_em)
+      .filter(Boolean) as string[];
+    const fins = guardadasFinais
+      .map((p) => p.guardada_em)
+      .filter(Boolean) as string[];
+    if (inicios.length === 0 || fins.length === 0) return 0;
+    const start = Math.min(...inicios.map((s) => new Date(s).getTime()));
+    const end = Math.max(...fins.map((s) => new Date(s).getTime()));
+    return Math.max(1, Math.round((end - start) / 60000));
+  })();
+
   if (isLoading) {
     return <div className="wms-loading-pane">Carregando rota…</div>;
   }
@@ -84,38 +115,16 @@ function GuardaRotaContent() {
       </div>
     );
   }
-  const tituloRota = lote
-    ? "Rota — lote único"
-    : todas
-      ? "Rota — guardar tudo"
-      : ids
-        ? "Rota — seleção"
-        : "Rota";
-
-  const tudoConcluido = fila.length === 0 || restantes === 0;
-
-  // Métricas pra tela de parabéns
-  const guardadasFinais = fila.filter((p) => p.status === "guardada");
-  const unidadesGuardadas = guardadasFinais.reduce(
-    (sum, p) => sum + Number(p.qty_inicial),
-    0,
-  );
-  const minutosRota = useMemo(() => {
-    if (guardadasFinais.length === 0) return 0;
-    const inicios = fila
-      .map((p) => p.iniciada_em ?? p.criada_em)
-      .filter(Boolean) as string[];
-    const fins = guardadasFinais
-      .map((p) => p.guardada_em)
-      .filter(Boolean) as string[];
-    if (inicios.length === 0 || fins.length === 0) return 0;
-    const start = Math.min(...inicios.map((s) => new Date(s).getTime()));
-    const end = Math.max(...fins.map((s) => new Date(s).getTime()));
-    return Math.max(1, Math.round((end - start) / 60000));
-  }, [fila, guardadasFinais]);
 
   if (tudoConcluido) {
-    return <ResumoFinalRota titulo={tituloRota} guardadas={guardadasFinais.length} unidades={unidadesGuardadas} minutos={minutosRota} />;
+    return (
+      <ResumoFinalRota
+        titulo={tituloRota}
+        guardadas={guardadasFinais.length}
+        unidades={unidadesGuardadas}
+        minutos={minutosRota}
+      />
+    );
   }
 
   return (

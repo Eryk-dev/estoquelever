@@ -381,11 +381,11 @@ export default function LocalizacoesPage() {
                     type="number"
                     className="wms-input wms-mono"
                     min={1}
-                    value={lote.h_inicio}
+                    value={lote.h_inicio || ""}
                     onChange={(e) =>
                       setLote({
                         ...lote,
-                        h_inicio: Number(e.target.value) || 1,
+                        h_inicio: parseInt(e.target.value, 10) || 0,
                       })
                     }
                   />
@@ -395,11 +395,11 @@ export default function LocalizacoesPage() {
                     type="number"
                     className="wms-input wms-mono"
                     min={1}
-                    value={lote.h_fim}
+                    value={lote.h_fim || ""}
                     onChange={(e) =>
                       setLote({
                         ...lote,
-                        h_fim: Number(e.target.value) || 1,
+                        h_fim: parseInt(e.target.value, 10) || 0,
                       })
                     }
                   />
@@ -428,11 +428,11 @@ export default function LocalizacoesPage() {
                     type="number"
                     className="wms-input wms-mono"
                     min={1}
-                    value={lote.v_inicio}
+                    value={lote.v_inicio || ""}
                     onChange={(e) =>
                       setLote({
                         ...lote,
-                        v_inicio: Number(e.target.value) || 1,
+                        v_inicio: parseInt(e.target.value, 10) || 0,
                       })
                     }
                   />
@@ -442,11 +442,11 @@ export default function LocalizacoesPage() {
                     type="number"
                     className="wms-input wms-mono"
                     min={1}
-                    value={lote.v_fim}
+                    value={lote.v_fim || ""}
                     onChange={(e) =>
                       setLote({
                         ...lote,
-                        v_fim: Number(e.target.value) || 1,
+                        v_fim: parseInt(e.target.value, 10) || 0,
                       })
                     }
                   />

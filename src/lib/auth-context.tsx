@@ -3,6 +3,8 @@
 import {
   createContext,
   useContext,
+  useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   useCallback,
@@ -228,6 +230,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // network error — silencioso, próxima tentativa do user resolve
     }
   }, [queryClient]);
+
+  // Auto-refresh do user (galpoes, cargos, ativo) uma vez por sessão de aba.
+  // Sem isso, o localStorage cacheia user.galpoes do último login e galpões
+  // criados depois ficam invisíveis no seletor até relogar/criar/editar algo.
+  const didAutoRefresh = useRef(false);
+  useEffect(() => {
+    if (didAutoRefresh.current) return;
+    if (!user?.sessionId) return;
+    didAutoRefresh.current = true;
+    void refreshUser();
+  }, [user?.sessionId, refreshUser]);
 
   return (
     <AuthContext.Provider

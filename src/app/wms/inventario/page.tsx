@@ -186,7 +186,6 @@ function NovaSessaoModal({
   const [locsManual, setLocsManual] = useState<Set<string>>(new Set());
   const [anchorManualId, setAnchorManualId] = useState<string | null>(null);
   const [buscaLoc, setBuscaLoc] = useState("");
-  const [numOperadores, setNumOperadores] = useState(3);
 
   const galpoesQuery = useGalpoes();
   const locsQuery = useLocalizacoes(galpaoId || null);
@@ -308,7 +307,6 @@ function NovaSessaoModal({
       tolerancia_pct: toleranciaPct,
       exige_aprovacao_acima_valor: exigeAprovacaoValor,
       localizacoes,
-      num_operadores: numOperadores,
     });
   }
 
@@ -572,16 +570,12 @@ function NovaSessaoModal({
               <div className="wms-exp-empty">Carregando localizações…</div>
             ) : (
               <>
-                {/* Controle de quantos operadores vão trabalhar nesta sessão.
-                    Distribuição é soft: cada loc é pré-atribuída a um slot,
-                    mas operadores podem puxar de outros buckets quando o
-                    próprio esvaziar (smart routing do RPC mantém a ordem). */}
+                {/* Info: distribuição é dinâmica via claim hierárquico —
+                    qualquer slot 1..5 fica disponível em tempo de execução. */}
                 <div
+                  className="wms-td-mute"
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "180px 1fr",
-                    gap: 12,
-                    alignItems: "center",
+                    fontSize: 11.5,
                     marginBottom: 12,
                     padding: 10,
                     background: "var(--wms-c-faint)",
@@ -589,41 +583,25 @@ function NovaSessaoModal({
                     borderRadius: "var(--wms-r-3)",
                   }}
                 >
-                  <Field label="Operadores esperados" hint="hint informativo">
-                    <input
-                      className="wms-input wms-mono wms-tar"
-                      type="number"
-                      min={1}
-                      max={5}
-                      value={numOperadores}
-                      onChange={(e) => {
-                        const v = Math.max(
-                          1,
-                          Math.min(5, Number(e.target.value) || 1),
-                        );
-                        setNumOperadores(v);
-                      }}
-                    />
-                  </Field>
-                  <div className="wms-td-mute" style={{ fontSize: 11.5 }}>
-                    {locsManual.size === 0 ? (
-                      <>
-                        Selecione localizações abaixo. A distribuição é dinâmica:
-                        cada operador reivindica uma rua livre e desce pelos
-                        prédios. Sem rua livre, pega um prédio com ≥1 prédio de
-                        buffer dos colegas.
-                      </>
-                    ) : (
-                      <>
-                        Pool de <strong>{locsManual.size}</strong> loc
-                        {locsManual.size === 1 ? "" : "s"} em{" "}
-                        <strong>{ruasSelecionadas}</strong> rua
-                        {ruasSelecionadas === 1 ? "" : "s"}. Capacidade ideal:
-                        até {ruasSelecionadas} operadores em paralelo sem
-                        colisão.
-                      </>
-                    )}
-                  </div>
+                  {locsManual.size === 0 ? (
+                    <>
+                      Distribuição dinâmica: cada operador que entrar reivindica
+                      uma rua livre e desce pelos prédios. Sem rua livre, pega
+                      um prédio com ≥1 prédio de buffer dos colegas. Até 5
+                      operadores em paralelo.
+                    </>
+                  ) : (
+                    <>
+                      Pool de <strong>{locsManual.size}</strong> loc
+                      {locsManual.size === 1 ? "" : "s"} em{" "}
+                      <strong>{ruasSelecionadas}</strong> rua
+                      {ruasSelecionadas === 1 ? "" : "s"}. Capacidade ideal:
+                      até <strong>{ruasSelecionadas}</strong> operador
+                      {ruasSelecionadas === 1 ? "" : "es"} em paralelo sem
+                      colisão (mais entram com buffer ou colisão controlada
+                      no último prédio).
+                    </>
+                  )}
                 </div>
 
                 {/* Filtro parcial. Não toca em locsManual — usuário pode

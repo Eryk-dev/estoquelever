@@ -4,9 +4,11 @@ import { useEffect, useRef } from "react";
 export function ScanContagem({
   onScan,
   autoFocus = true,
+  placeholder = "bipe SKU/GTIN",
 }: {
   onScan: (value: string) => void;
   autoFocus?: boolean;
+  placeholder?: string;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -15,7 +17,7 @@ export function ScanContagem({
   return (
     <input
       ref={ref}
-      placeholder="bipe SKU/GTIN"
+      placeholder={placeholder}
       onKeyDown={(e) => {
         const target = e.target as HTMLInputElement;
         if (e.key === "Enter" && target.value) {

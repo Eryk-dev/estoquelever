@@ -409,6 +409,7 @@ export default function GuardaTabletPage() {
               key={`scan-loc-${scanKey}`}
               onScan={handleScanLoc}
               autoFocus
+              placeholder="bipe a localização de guarda"
             />
             <div
               className="wms-td-mute"

@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { sisoFetch } from "@/lib/auth-context";
@@ -13,7 +13,7 @@ import {
   fmtNum,
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
-import { useLocalizacoes } from "@/components/wms/ui/modals";
+import { LocalizacaoCombo, useLocalizacoes } from "@/components/wms/ui/modals";
 import { ScanContagem } from "@/components/wms/scan-contagem";
 import type { PendenciaJoined } from "@/lib/wms/guarda";
 
@@ -31,7 +31,6 @@ export default function GuardaRotaPage() {
 
 function GuardaRotaContent() {
   const sp = useSearchParams();
-  const router = useRouter();
   const qc = useQueryClient();
 
   const lote = sp.get("lote") ?? undefined;
@@ -52,17 +51,14 @@ function GuardaRotaContent() {
     queryKey: ["wms-guarda-rota", queryString],
     queryFn: () => wmsApi<RotaResponse>(`/api/wms/guarda/rota?${queryString}`),
     enabled: !!queryString,
-    refetchInterval: false,
   });
 
   const fila = useMemo(() => data?.rows ?? [], [data]);
-  // Pendência ativa = primeira não-zerada (qty_pendente > 0)
-  const ativaIdx = fila.findIndex((p) => p.qty_pendente > 0);
-  const ativa = ativaIdx >= 0 ? fila[ativaIdx] : null;
   const restantes = fila.filter((p) => p.qty_pendente > 0).length;
   const concluidas = fila.length - restantes;
+  // 1º não-zerado vira "ativa" pra autoFocus
+  const ativaId = fila.find((p) => p.qty_pendente > 0)?.id ?? null;
 
-  // Quando uma pendência é zerada, refetch pra avançar pra próxima
   function onPendenciaResolvida() {
     qc.invalidateQueries({ queryKey: ["wms-guarda-rota", queryString] });
     qc.invalidateQueries({ queryKey: ["wms-guarda"] });
@@ -99,29 +95,6 @@ function GuardaRotaContent() {
     );
   }
 
-  if (!ativa) {
-    return (
-      <div style={{ maxWidth: 880, margin: "0 auto" }}>
-        <div className="wms-empty-block" style={{ textAlign: "center" }}>
-          <Icon name="check" size={20} />
-          <h3 style={{ marginTop: 8 }}>Rota concluída</h3>
-          <p>
-            Todas as {fila.length} pendência{fila.length > 1 ? "s foram" : " foi"}{" "}
-            guardada{fila.length > 1 ? "s" : ""}.
-          </p>
-          <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 16 }}>
-            <Link href="/wms/guarda" className="wms-btn wms-btn-primary">
-              Voltar pra fila
-            </Link>
-            <Link href="/wms/receber" className="wms-btn wms-btn-ghost">
-              Receber mais
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const tituloRota = lote
     ? "Rota — lote único"
     : todas
@@ -130,8 +103,10 @@ function GuardaRotaContent() {
         ? "Rota — seleção"
         : "Rota";
 
+  const tudoConcluido = restantes === 0;
+
   return (
-    <div style={{ maxWidth: 880, margin: "0 auto" }}>
+    <div style={{ maxWidth: 920, margin: "0 auto" }}>
       {/* Header da rota */}
       <div
         style={{
@@ -140,117 +115,88 @@ function GuardaRotaContent() {
           justifyContent: "space-between",
           marginBottom: 12,
           gap: 8,
+          position: "sticky",
+          top: 0,
+          zIndex: 5,
+          background: "var(--wms-c-bg, #fff)",
+          padding: "8px 0",
         }}
       >
-        <div>
-          <Link
-            href="/wms/guarda"
-            className="wms-btn wms-btn-ghost"
-            style={{ fontSize: 12 }}
-          >
-            <Icon name="chevron-l" size={11} /> Fila
-          </Link>
-        </div>
+        <Link
+          href="/wms/guarda"
+          className="wms-btn wms-btn-ghost"
+          style={{ fontSize: 12 }}
+        >
+          <Icon name="chevron-l" size={11} /> Fila
+        </Link>
         <div style={{ flex: 1, textAlign: "center" }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>{tituloRota}</div>
           <div className="wms-td-mute" style={{ fontSize: 11 }}>
-            {concluidas + 1} de {fila.length} · {restantes - 1} restantes
+            {concluidas} de {fila.length} concluídas · {restantes} restantes
           </div>
         </div>
         <div style={{ width: 60 }} />
       </div>
 
-      {/* Pendência ativa — UI igual à de tablet single */}
-      <PendenciaTablet pendencia={ativa} onResolvida={onPendenciaResolvida} />
-
-      {/* Próximas (preview) */}
-      {restantes > 1 && (
+      {tudoConcluido && (
         <div
-          style={{
-            marginTop: 16,
-            background: "var(--wms-c-panel)",
-            border: "1px solid var(--wms-c-border)",
-            borderRadius: "var(--wms-r-3)",
-            padding: 12,
-          }}
+          className="wms-empty-block"
+          style={{ textAlign: "center", marginBottom: 12 }}
         >
-          <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>
-            <Icon name="list" size={11} /> Próximas na rota ({restantes - 1})
-          </div>
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {fila
-              .filter((p) => p.qty_pendente > 0)
-              .slice(1, 6)
-              .map((p) => (
-                <li
-                  key={p.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "4px 0",
-                    fontSize: 12,
-                  }}
-                >
-                  <span
-                    className="wms-mono"
-                    style={{
-                      fontWeight: 600,
-                      flex: 1,
-                      minWidth: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {p.localizacao_destino?.codigo ?? "— sem loc"} ·{" "}
-                    {p.produto?.sku ?? ""}
-                  </span>
-                  <span className="wms-mono wms-td-mute" style={{ fontSize: 11 }}>
-                    {fmtNum(p.qty_pendente)} un
-                  </span>
-                </li>
-              ))}
-            {restantes - 1 > 5 && (
-              <li
-                className="wms-td-mute"
-                style={{ fontSize: 11, textAlign: "center", marginTop: 4 }}
-              >
-                + {restantes - 1 - 5} mais
-              </li>
-            )}
-          </ul>
+          <Icon name="check" size={20} />
+          <h3 style={{ marginTop: 8 }}>Rota concluída</h3>
+          <p>
+            Todas as {fila.length} pendência{fila.length > 1 ? "s foram" : " foi"}{" "}
+            guardada{fila.length > 1 ? "s" : ""}.
+          </p>
         </div>
       )}
+
+      {/* Checklist */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {fila.map((p) => (
+          <PendenciaCard
+            key={p.id}
+            pendencia={p}
+            isActive={p.id === ativaId}
+            onResolvida={onPendenciaResolvida}
+          />
+        ))}
+      </div>
     </div>
   );
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Tablet de uma pendência — extraído pra reuso. Igual à página
-// /wms/guarda/[id] mas inline, com callback ao finalizar pra avançar
-// pra próxima pendência da rota.
+// PendenciaCard — uma linha do checklist. Encapsula scanner, troca de loc,
+// imprimir e confirmar. Colapsa pra um resumo se status terminal.
 
-function PendenciaTablet({
+function PendenciaCard({
   pendencia,
+  isActive,
   onResolvida,
 }: {
   pendencia: PendenciaJoined;
+  isActive: boolean;
   onResolvida: () => void;
 }) {
-  const router = useRouter();
   const id = pendencia.id;
+  const terminal =
+    pendencia.status === "guardada" || pendencia.status === "cancelada";
+
   const [qtyInput, setQtyInput] = useState(String(pendencia.qty_pendente));
   const [destinoOverride, setDestinoOverride] = useState<{
     id: string;
     codigo: string;
   } | null>(null);
   const [scanKey, setScanKey] = useState(0);
+  const [trocandoLoc, setTrocandoLoc] = useState(false);
 
-  // Sempre que a pendência muda (avançou na rota), reseta o estado local
+  // Pendência muda (refetch após resolver alguém) → reseta estado local
   useEffect(() => {
     setQtyInput(String(pendencia.qty_pendente));
     setDestinoOverride(null);
-    setScanKey((k) => k + 1);
+    setTrocandoLoc(false);
   }, [pendencia.id, pendencia.qty_pendente]);
 
   const { data: locsResp } = useLocalizacoes(pendencia.galpao_id);
@@ -262,7 +208,6 @@ function PendenciaTablet({
     return m;
   }, [locsResp]);
 
-  // Loc destino: override do scan > destino decidido no recebimento > vazio
   const destinoEscolhido = destinoOverride ?? {
     id: pendencia.localizacao_destino_id ?? "",
     codigo: pendencia.localizacao_destino?.codigo ?? "",
@@ -270,12 +215,14 @@ function PendenciaTablet({
   const destinoVemDoRecebimento =
     !destinoOverride && !!pendencia.localizacao_destino_id;
 
-  // Inicia idempotente ao abrir
+  // Inicia ao montar (idempotente)
   useEffect(() => {
-    if (pendencia.status === "pendente") {
-      sisoFetch(`/api/wms/guarda/${id}/iniciar`, { method: "POST" }).catch(() => {});
+    if (pendencia.status === "pendente" && isActive) {
+      sisoFetch(`/api/wms/guarda/${id}/iniciar`, { method: "POST" }).catch(
+        () => {},
+      );
     }
-  }, [id, pendencia.status]);
+  }, [id, pendencia.status, isActive]);
 
   const imprimir = useMutation({
     mutationFn: async () => {
@@ -332,10 +279,10 @@ function PendenciaTablet({
     },
     onSuccess: (r) => {
       if (r.totalmente_guardada) {
-        toast.success(`✓ ${pendencia.produto?.sku ?? "guarda"} — próxima…`);
+        toast.success(`✓ ${pendencia.produto?.sku ?? "guarda"}`);
       } else {
         toast.success(
-          `Parcial: faltam ${fmtNum(r.pendencia.qty_pendente)} un dessa pendência`,
+          `Parcial: faltam ${fmtNum(r.pendencia.qty_pendente)} un`,
         );
       }
       onResolvida();
@@ -361,7 +308,7 @@ function PendenciaTablet({
       }
     },
     onSuccess: () => {
-      toast.success("Pendência cancelada — próxima…");
+      toast.success("Pendência cancelada");
       onResolvida();
     },
     onError: (e: Error) => {
@@ -388,112 +335,157 @@ function PendenciaTablet({
     toast.success(`Destino: ${codigo}`);
   }
 
-  return (
-    <>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-        <StatusBadge status={pendencia.status} size="lg" />
-      </div>
-
-      {/* Produto */}
+  // ── Render terminal (colapsado) ─────────────────────────────
+  if (terminal) {
+    const isGuardada = pendencia.status === "guardada";
+    return (
       <div
         style={{
           background: "var(--wms-c-panel)",
           border: "1px solid var(--wms-c-border)",
           borderRadius: "var(--wms-r-3)",
-          padding: 16,
-          marginBottom: 14,
+          padding: 10,
           display: "flex",
-          gap: 14,
           alignItems: "center",
+          gap: 12,
+          opacity: 0.75,
         }}
       >
         {pendencia.produto?.imagem_url && (
           <img
             src={pendencia.produto.imagem_url}
             alt=""
-            className="wms-thumb wms-thumb-lg"
+            loading="lazy"
+            className="wms-thumb wms-thumb-xs"
+          />
+        )}
+        <Icon
+          name={isGuardada ? "check" : "x"}
+          size={16}
+          className={isGuardada ? "wms-c-ok" : "wms-c-danger"}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="wms-mono" style={{ fontSize: 13, fontWeight: 600 }}>
+            {pendencia.produto?.sku ?? "—"}
+            {pendencia.localizacao_destino?.codigo && (
+              <span className="wms-td-mute" style={{ marginLeft: 8, fontWeight: 400 }}>
+                → {pendencia.localizacao_destino.codigo}
+              </span>
+            )}
+          </div>
+          <div
+            className="wms-td-mute"
+            style={{
+              fontSize: 11,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {isGuardada
+              ? `Guardada — ${fmtNum(pendencia.qty_inicial)} un`
+              : `Cancelada — ${pendencia.motivo_cancelamento ?? "sem motivo"}`}
+          </div>
+        </div>
+        <StatusBadge status={pendencia.status} />
+      </div>
+    );
+  }
+
+  // ── Render ativo (expandido) ────────────────────────────────
+  return (
+    <div
+      style={{
+        background: "var(--wms-c-panel)",
+        border: isActive
+          ? "2px solid var(--wms-c-primary, #2563eb)"
+          : "1px solid var(--wms-c-border)",
+        borderRadius: "var(--wms-r-3)",
+        padding: 14,
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+      }}
+    >
+      {/* Header: produto + qty grande */}
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        {pendencia.produto?.imagem_url && (
+          <img
+            src={pendencia.produto.imagem_url}
+            alt=""
+            loading="lazy"
+            className="wms-thumb"
+            style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover" }}
           />
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             className="wms-mono"
-            style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}
+            style={{ fontSize: 17, fontWeight: 700, marginBottom: 2 }}
           >
             {pendencia.produto?.sku ?? "—"}
           </div>
-          <div style={{ fontSize: 13, marginBottom: 6 }}>
+          <div
+            style={{
+              fontSize: 12.5,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
             {pendencia.produto?.descricao ?? ""}
           </div>
           <div
             className="wms-td-mute"
-            style={{ fontSize: 11.5, display: "flex", gap: 14, flexWrap: "wrap" }}
+            style={{ fontSize: 11, display: "flex", gap: 10, flexWrap: "wrap", marginTop: 2 }}
           >
-            <span>
-              <Icon name="box" size={10} /> {pendencia.empresa?.nome ?? "—"}
-            </span>
-            <span>
-              <Icon name="pin" size={10} /> {pendencia.galpao?.nome ?? "—"}
-            </span>
+            <span>{pendencia.empresa?.nome ?? "—"}</span>
             {pendencia.nf_referencia && (
               <span>
                 NF <span className="wms-mono">{pendencia.nf_referencia}</span>
               </span>
             )}
-            <span>Recebida {fmtRelative(pendencia.criada_em)}</span>
+            <span>{fmtRelative(pendencia.criada_em)}</span>
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div className="wms-td-mute" style={{ fontSize: 11 }}>
+          <div className="wms-td-mute" style={{ fontSize: 10.5 }}>
             A guardar
           </div>
-          <div
-            className="wms-mono"
-            style={{ fontSize: 32, fontWeight: 700, lineHeight: 1 }}
-          >
+          <div className="wms-mono" style={{ fontSize: 26, fontWeight: 700, lineHeight: 1 }}>
             {fmtNum(pendencia.qty_pendente)}
           </div>
           {pendencia.qty_guardada > 0 && (
-            <div className="wms-td-mute" style={{ fontSize: 11 }}>
+            <div className="wms-td-mute" style={{ fontSize: 10 }}>
               {fmtNum(pendencia.qty_guardada)} já guardadas
             </div>
           )}
         </div>
       </div>
 
-      {/* Destino + scan */}
-      <div
-        style={{
-          background: "var(--wms-c-panel)",
-          border: "1px solid var(--wms-c-border)",
-          borderRadius: "var(--wms-r-3)",
-          padding: 16,
-          marginBottom: 14,
-        }}
-      >
+      {/* Loc destino + scanner */}
+      <div>
         <div
           style={{
-            fontSize: 11,
+            fontSize: 10.5,
             textTransform: "uppercase",
             letterSpacing: 0.5,
-            marginBottom: 6,
+            marginBottom: 4,
             fontWeight: 600,
           }}
         >
-          <Icon name="pin" size={11} /> Loc destino
+          <Icon name="pin" size={10} /> Loc destino
         </div>
         <div
           style={{
             display: "flex",
             alignItems: "center",
             gap: 10,
-            marginBottom: 10,
+            marginBottom: 6,
             flexWrap: "wrap",
           }}
         >
-          <span
-            className="wms-mono"
-            style={{ fontSize: 28, fontWeight: 700 }}
-          >
+          <span className="wms-mono" style={{ fontSize: 24, fontWeight: 700 }}>
             {destinoEscolhido.codigo || "— sem destino"}
           </span>
           {destinoVemDoRecebimento && (
@@ -506,104 +498,100 @@ function PendenciaTablet({
               (trocada pelo operador)
             </span>
           )}
+          <button
+            type="button"
+            className="wms-btn-link"
+            style={{ marginLeft: "auto", fontSize: 11.5 }}
+            onClick={() => setTrocandoLoc((v) => !v)}
+          >
+            {trocandoLoc ? "Fechar" : "Trocar loc manual"}
+          </button>
         </div>
 
         <ScanContagem
-          key={`scan-loc-${scanKey}`}
+          key={`scan-loc-${id}-${scanKey}`}
           onScan={handleScanLoc}
-          autoFocus
+          autoFocus={isActive}
+          placeholder="bipe a localização de guarda"
         />
-        <div className="wms-td-mute" style={{ fontSize: 11, marginTop: 6 }}>
-          Bipe o QR/código da prateleira pra trocar o destino.
-        </div>
+
+        {trocandoLoc && (
+          <div style={{ marginTop: 8 }}>
+            <LocalizacaoCombo
+              galpaoId={pendencia.galpao_id}
+              value={destinoEscolhido.id}
+              onChange={(locId) => {
+                if (!locId) return;
+                if (locId === pendencia.localizacao_origem_id) {
+                  toast.error("Não pode ser RECEBIMENTO");
+                  return;
+                }
+                const loc = (locsResp?.rows ?? []).find((l) => l.id === locId);
+                setDestinoOverride({
+                  id: locId,
+                  codigo: loc?.codigo ?? "",
+                });
+                setTrocandoLoc(false);
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* Qty + ações */}
       <div
         style={{
-          background: "var(--wms-c-panel)",
-          border: "1px solid var(--wms-c-border)",
-          borderRadius: "var(--wms-r-3)",
-          padding: 16,
-          marginBottom: 14,
+          display: "grid",
+          gridTemplateColumns: "120px 1fr 1fr",
+          gap: 8,
+          alignItems: "center",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            alignItems: "center",
-            marginBottom: 10,
-          }}
+        <input
+          className="wms-input wms-mono wms-tar"
+          type="number"
+          min="1"
+          max={pendencia.qty_pendente}
+          value={qtyInput}
+          onChange={(e) => setQtyInput(e.target.value)}
+          style={{ fontSize: 16 }}
+          aria-label="Qty a guardar"
+        />
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost"
+          onClick={() => imprimir.mutate()}
+          disabled={imprimir.isPending}
+          style={{ padding: "12px 10px", fontSize: 13 }}
         >
-          <label
-            style={{ fontSize: 12, fontWeight: 600 }}
-            htmlFor="guarda-qty"
-          >
-            Qty a guardar
-          </label>
-          <input
-            id="guarda-qty"
-            className="wms-input wms-mono wms-tar"
-            type="number"
-            min="1"
-            max={pendencia.qty_pendente}
-            value={qtyInput}
-            onChange={(e) => setQtyInput(e.target.value)}
-            style={{ width: 110, fontSize: 18 }}
-          />
-          <button
-            type="button"
-            className="wms-btn wms-btn-ghost"
-            onClick={() => setQtyInput(String(pendencia.qty_pendente))}
-            style={{ fontSize: 11.5 }}
-          >
-            = total ({fmtNum(pendencia.qty_pendente)})
-          </button>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <button
-            type="button"
-            className="wms-btn wms-btn-ghost"
-            onClick={() => imprimir.mutate()}
-            disabled={imprimir.isPending}
-            style={{ padding: "14px 12px", fontSize: 14 }}
-          >
-            <Icon name="tag" size={14} />
-            {imprimir.isPending
-              ? "Enviando…"
-              : `Imprimir ${fmtNum(Number(qtyInput) || pendencia.qty_pendente)} etiq`}
-          </button>
-          <button
-            type="button"
-            className="wms-btn wms-btn-primary"
-            onClick={() => confirmar.mutate()}
-            disabled={
-              confirmar.isPending ||
-              !destinoEscolhido.id ||
-              !Number(qtyInput)
-            }
-            style={{ padding: "14px 12px", fontSize: 14 }}
-          >
-            <Icon name="check" size={14} />
-            {confirmar.isPending ? "Confirmando…" : "Confirmar e seguir"}
-          </button>
-        </div>
+          <Icon name="tag" size={13} />
+          {imprimir.isPending ? "Enviando…" : "Imprimir etiq"}
+        </button>
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary"
+          onClick={() => confirmar.mutate()}
+          disabled={
+            confirmar.isPending || !destinoEscolhido.id || !Number(qtyInput)
+          }
+          style={{ padding: "12px 10px", fontSize: 13 }}
+        >
+          <Icon name="check" size={13} />
+          {confirmar.isPending ? "Confirmando…" : "Confirmar guarda"}
+        </button>
       </div>
 
-      <div style={{ textAlign: "center" }}>
+      <div style={{ textAlign: "right" }}>
         <button
           type="button"
           className="wms-btn-link"
           onClick={() => cancelar.mutate()}
           disabled={cancelar.isPending}
-          style={{ color: "var(--wms-c-danger, #c81e1e)" }}
+          style={{ color: "var(--wms-c-danger, #c81e1e)", fontSize: 11 }}
         >
-          <Icon name="trash" size={11} /> Cancelar pendência (peça
-          sumiu/devolvida)
+          <Icon name="trash" size={10} /> Cancelar pendência
         </button>
       </div>
-    </>
+    </div>
   );
 }

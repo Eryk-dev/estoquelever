@@ -418,6 +418,8 @@ wms/  (subset of src/)
     localizacoes/route.ts          # GET (por galpão), POST
     localizacoes/lote/route.ts     # POST — cria em lote (prefixo + ranges h/v), bulk upsert idempotente, suporta preview
     localizacoes/[id]/route.ts     # PATCH, DELETE (com proteção saldo>0)
+    localizacoes/[id]/saldos/route.ts                # GET — lista saldos > 0 (produto+dona+qty) pra UI de exclusão
+    localizacoes/[id]/substituir-e-excluir/route.ts  # POST { destino_id } — move tudo pra outra loc do mesmo galpão e desativa origem
     estoque/route.ts               # GET ?view=dono|galpao|localizacao|produto
     ledger/route.ts                # GET com filtros (produto/empresa/galpao/origem_tipo/desde/ate)
     snapshot-inicial/route.ts      # POST (admin only, idempotente, ?dryRun=true)

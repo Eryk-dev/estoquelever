@@ -4738,6 +4738,46 @@ Atualiza campos da localização.
 
 Desativa logicamente. Falha com 400 se houver saldo>0.
 
+### GET /api/wms/localizacoes/[id]/saldos
+
+Lista saldos > 0 da localização, agrupados por (produto, empresa_dona). Usado no fluxo de exclusão pra mostrar o que precisa ser movido antes da remoção.
+
+**Auth:** `requireAuth`.
+
+**Response 200:**
+```json
+{
+  "rows": [
+    {
+      "produto_id": "uuid",
+      "empresa_dona_id": "uuid",
+      "saldo": 12,
+      "sku": "ABC-123",
+      "descricao": "Produto X",
+      "empresa_nome": "NetParts"
+    }
+  ],
+  "total_qty": 12,
+  "total_linhas": 1
+}
+```
+
+### POST /api/wms/localizacoes/[id]/substituir-e-excluir
+
+Move todo o saldo > 0 da loc origem pra loc destino (mesmo galpão), agrupado por `empresa_dona`, e desativa a origem.
+
+**Auth:** `requireAdmin`.
+
+**Request body:** `{ destino_id: uuid }`.
+
+**Validações:** origem e destino existem; destino está ativo; mesma `galpao_id`; `destino_id !== id`.
+
+**Comportamento:** carrega saldos > 0 da origem, agrupa por `empresa_dona`, chama `replenishmentIntraGalpao` (par S+E por SKU com `origem_tipo='transferencia_localizacao'`) uma vez por dona, depois `desativarLocalizacao(origem)`.
+
+**Atomicidade:** cada par S+E é atômico via `wms_inserir_movimentacao`, mas a sequência não tem rollback. Se falhar mid-flight, alguns SKUs já moveram e a loc origem não foi desativada — rodar de novo é seguro (o já-movido fica em saldo=0 e é ignorado).
+
+**Response 200:** `{ ok, origem_codigo, destino_codigo, donas_movidas, itens_movidos }`.
+
 ### GET /api/wms/estoque
 
 Saldos agregados por perspectiva.

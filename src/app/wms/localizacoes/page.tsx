@@ -39,6 +39,21 @@ type LoteResponse = {
   amostra: { primeiras: string[]; ultimas: string[] };
 };
 
+type SaldoLinha = {
+  produto_id: string;
+  empresa_dona_id: string;
+  saldo: number;
+  sku: string | null;
+  descricao: string | null;
+  empresa_nome: string | null;
+};
+
+type SaldosResponse = {
+  rows: SaldoLinha[];
+  total_qty: number;
+  total_linhas: number;
+};
+
 const LOTE_DEFAULT: LoteForm = {
   prefixo: "",
   h_inicio: 1,
@@ -63,6 +78,8 @@ export default function LocalizacoesPage() {
   });
   const [lote, setLote] = useState<LoteForm>(LOTE_DEFAULT);
   const [preview, setPreview] = useState<LoteResponse | null>(null);
+  const [excluindo, setExcluindo] = useState<Localizacao | null>(null);
+  const [destinoSubsId, setDestinoSubsId] = useState<string>("");
 
   useEffect(() => {
     setPage(1);
@@ -147,6 +164,58 @@ export default function LocalizacoesPage() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  const saldosQuery = useQuery({
+    queryKey: ["wms-loc-saldos", excluindo?.id],
+    queryFn: () =>
+      wmsApi<SaldosResponse>(
+        `/api/wms/localizacoes/${excluindo!.id}/saldos`,
+      ),
+    enabled: !!excluindo,
+  });
+
+  const excluirSimples = useMutation({
+    mutationFn: (id: string) =>
+      wmsApi<{ ok: true }>(`/api/wms/localizacoes/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast.success("Localização removida");
+      setExcluindo(null);
+      setDestinoSubsId("");
+      queryClient.invalidateQueries({ queryKey: ["wms-locs", galpaoId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const substituirEExcluir = useMutation({
+    mutationFn: () =>
+      wmsApi<{
+        ok: true;
+        origem_codigo: string;
+        destino_codigo: string;
+        donas_movidas: number;
+        itens_movidos: number;
+      }>(`/api/wms/localizacoes/${excluindo!.id}/substituir-e-excluir`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ destino_id: destinoSubsId }),
+      }),
+    onSuccess: (data) => {
+      toast.success(
+        `${data.itens_movidos} item${data.itens_movidos !== 1 ? "s" : ""} movido${
+          data.itens_movidos !== 1 ? "s" : ""
+        } pra ${data.destino_codigo}. Loc ${data.origem_codigo} removida.`,
+      );
+      setExcluindo(null);
+      setDestinoSubsId("");
+      queryClient.invalidateQueries({ queryKey: ["wms-locs", galpaoId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const fecharExcluir = () => {
+    setExcluindo(null);
+    setDestinoSubsId("");
+  };
 
   const rows = useMemo(
     () => locsQuery.data?.rows ?? [],
@@ -626,6 +695,7 @@ export default function LocalizacoesPage() {
                       <th>Código</th>
                       <th>Descrição</th>
                       <th>Tipo</th>
+                      <th style={{ width: 60, textAlign: "right" }}>Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -635,6 +705,16 @@ export default function LocalizacoesPage() {
                         <td className="wms-td-mute">{l.descricao ?? "—"}</td>
                         <td>
                           <LocTipoBadge tipo={l.tipo} />
+                        </td>
+                        <td className="wms-td-actions">
+                          <button
+                            type="button"
+                            className="wms-btn-icon"
+                            title="Excluir localização"
+                            onClick={() => setExcluindo(l)}
+                          >
+                            <Icon name="trash" size={12} />
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -652,6 +732,258 @@ export default function LocalizacoesPage() {
           )}
         </>
       )}
+
+      {excluindo && (
+        <ExcluirLocModal
+          loc={excluindo}
+          saldos={saldosQuery.data ?? null}
+          saldosLoading={saldosQuery.isLoading}
+          saldosError={
+            saldosQuery.isError ? (saldosQuery.error as Error).message : null
+          }
+          locsDisponiveis={rows.filter(
+            (l) => l.id !== excluindo.id && l.ativo !== false,
+          )}
+          destinoId={destinoSubsId}
+          onDestinoChange={setDestinoSubsId}
+          onCancelar={fecharExcluir}
+          onExcluirSimples={() => excluirSimples.mutate(excluindo.id)}
+          onSubstituir={() => substituirEExcluir.mutate()}
+          excluindoSimples={excluirSimples.isPending}
+          substituindo={substituirEExcluir.isPending}
+        />
+      )}
     </>
+  );
+}
+
+interface ExcluirLocModalProps {
+  loc: Localizacao;
+  saldos: SaldosResponse | null;
+  saldosLoading: boolean;
+  saldosError: string | null;
+  locsDisponiveis: Localizacao[];
+  destinoId: string;
+  onDestinoChange: (id: string) => void;
+  onCancelar: () => void;
+  onExcluirSimples: () => void;
+  onSubstituir: () => void;
+  excluindoSimples: boolean;
+  substituindo: boolean;
+}
+
+function ExcluirLocModal({
+  loc,
+  saldos,
+  saldosLoading,
+  saldosError,
+  locsDisponiveis,
+  destinoId,
+  onDestinoChange,
+  onCancelar,
+  onExcluirSimples,
+  onSubstituir,
+  excluindoSimples,
+  substituindo,
+}: ExcluirLocModalProps) {
+  const temSaldo = !!saldos && saldos.total_linhas > 0;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 50,
+        padding: 16,
+      }}
+      onClick={onCancelar}
+    >
+      <div
+        style={{
+          background: "var(--wms-c-panel)",
+          border: "1px solid var(--wms-c-border)",
+          borderRadius: "var(--wms-r-3)",
+          width: "100%",
+          maxWidth: 540,
+          maxHeight: "90vh",
+          overflow: "auto",
+          padding: 20,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
+          Excluir <span className="wms-mono">{loc.codigo}</span>
+        </h3>
+
+        {saldosLoading && (
+          <div className="wms-loading-pane">Verificando saldo…</div>
+        )}
+        {saldosError && (
+          <div className="wms-empty-block">
+            <h3>Erro ao verificar saldo</h3>
+            <p>{saldosError}</p>
+          </div>
+        )}
+
+        {!saldosLoading && !saldosError && !temSaldo && (
+          <>
+            <p
+              style={{
+                fontSize: 13,
+                color: "var(--wms-c-fg-2)",
+                margin: "0 0 16px",
+              }}
+            >
+              Esta localização está vazia. Quer remover?
+            </p>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 8,
+                paddingTop: 12,
+                borderTop: "1px solid var(--wms-c-border)",
+              }}
+            >
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                onClick={onCancelar}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-danger"
+                disabled={excluindoSimples}
+                onClick={onExcluirSimples}
+              >
+                <Icon name="trash" size={11} />
+                {excluindoSimples ? "Removendo…" : "Remover"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {!saldosLoading && !saldosError && temSaldo && saldos && (
+          <>
+            <p
+              style={{
+                fontSize: 13,
+                color: "var(--wms-c-fg-2)",
+                margin: "0 0 12px",
+              }}
+            >
+              Esta localização tem saldo. Escolha pra onde mover antes de
+              remover.
+            </p>
+
+            <div
+              style={{
+                background: "var(--wms-c-panel-2)",
+                border: "1px solid var(--wms-c-border)",
+                borderRadius: "var(--wms-r-2)",
+                padding: 10,
+                marginBottom: 14,
+                maxHeight: 200,
+                overflow: "auto",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "var(--wms-c-fg-3)",
+                  marginBottom: 6,
+                }}
+              >
+                {saldos.total_linhas} linha
+                {saldos.total_linhas !== 1 ? "s" : ""} ·{" "}
+                {saldos.total_qty} unidade
+                {saldos.total_qty !== 1 ? "s" : ""}
+              </div>
+              <table style={{ width: "100%", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ color: "var(--wms-c-fg-3)" }}>
+                    <th style={{ textAlign: "left", paddingBottom: 4 }}>SKU</th>
+                    <th style={{ textAlign: "left", paddingBottom: 4 }}>
+                      Empresa
+                    </th>
+                    <th style={{ textAlign: "right", paddingBottom: 4 }}>
+                      Saldo
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {saldos.rows.map((s) => (
+                    <tr key={`${s.produto_id}-${s.empresa_dona_id}`}>
+                      <td className="wms-mono" style={{ paddingRight: 8 }}>
+                        {s.sku ?? s.produto_id.slice(0, 8)}
+                      </td>
+                      <td style={{ color: "var(--wms-c-fg-2)" }}>
+                        {s.empresa_nome ?? "—"}
+                      </td>
+                      <td
+                        className="wms-mono"
+                        style={{ textAlign: "right" }}
+                      >
+                        {s.saldo}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <Field label="Mover para" required>
+              <select
+                className="wms-select"
+                value={destinoId}
+                onChange={(e) => onDestinoChange(e.target.value)}
+              >
+                <option value="">Selecione a localização destino…</option>
+                {locsDisponiveis.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.codigo}
+                    {l.descricao ? ` — ${l.descricao}` : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 8,
+                paddingTop: 14,
+                borderTop: "1px solid var(--wms-c-border)",
+                marginTop: 14,
+              }}
+            >
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                onClick={onCancelar}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-danger"
+                disabled={!destinoId || substituindo}
+                onClick={onSubstituir}
+              >
+                <Icon name="arrows" size={11} />
+                {substituindo ? "Movendo e removendo…" : "Mover e remover"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

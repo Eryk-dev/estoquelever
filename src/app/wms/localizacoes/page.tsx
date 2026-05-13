@@ -81,6 +81,7 @@ export default function LocalizacoesPage() {
   const [preview, setPreview] = useState<LoteResponse | null>(null);
   const [excluindo, setExcluindo] = useState<Localizacao | null>(null);
   const [destinoSubsId, setDestinoSubsId] = useState<string>("");
+  const [editandoTipoId, setEditandoTipoId] = useState<string | null>(null);
 
   useEffect(() => {
     setPage(1);
@@ -177,6 +178,24 @@ export default function LocalizacoesPage() {
         `/api/wms/localizacoes/${excluindo!.id}/saldos`,
       ),
     enabled: !!excluindo,
+  });
+
+  const trocarTipo = useMutation({
+    mutationFn: ({ id, tipo }: { id: string; tipo: TipoLocalizacao }) =>
+      wmsApi<Localizacao>(`/api/wms/localizacoes/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tipo }),
+      }),
+    onSuccess: () => {
+      toast.success("Tipo atualizado");
+      setEditandoTipoId(null);
+      queryClient.invalidateQueries({ queryKey: ["wms-locs", galpaoId] });
+    },
+    onError: (e: Error) => {
+      toast.error(e.message);
+      setEditandoTipoId(null);
+    },
   });
 
   const excluirSimples = useMutation({
@@ -781,25 +800,86 @@ export default function LocalizacoesPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {pagedRows.map((l) => (
-                          <tr key={l.id}>
-                            <td className="wms-mono">{l.codigo}</td>
-                            <td className="wms-td-mute">{l.descricao ?? "—"}</td>
-                            <td>
-                              <LocTipoBadge tipo={l.tipo} />
-                            </td>
-                            <td className="wms-td-actions">
-                              <button
-                                type="button"
-                                className="wms-btn-icon"
-                                title="Excluir localização"
-                                onClick={() => setExcluindo(l)}
-                              >
-                                <Icon name="trash" size={12} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                        {pagedRows.map((l) => {
+                          const editandoEsta = editandoTipoId === l.id;
+                          const salvandoEsta =
+                            trocarTipo.isPending &&
+                            trocarTipo.variables?.id === l.id;
+                          return (
+                            <tr key={l.id}>
+                              <td className="wms-mono">{l.codigo}</td>
+                              <td className="wms-td-mute">
+                                {l.descricao ?? "—"}
+                              </td>
+                              <td>
+                                {editandoEsta ? (
+                                  <select
+                                    autoFocus
+                                    className="wms-select"
+                                    style={{
+                                      height: 26,
+                                      fontSize: 12,
+                                      padding: "0 6px",
+                                      minWidth: 130,
+                                    }}
+                                    value={l.tipo}
+                                    disabled={salvandoEsta}
+                                    onBlur={() => {
+                                      if (!salvandoEsta)
+                                        setEditandoTipoId(null);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Escape")
+                                        setEditandoTipoId(null);
+                                    }}
+                                    onChange={(e) => {
+                                      const novo = e.target
+                                        .value as TipoLocalizacao;
+                                      if (novo === l.tipo) {
+                                        setEditandoTipoId(null);
+                                        return;
+                                      }
+                                      trocarTipo.mutate({
+                                        id: l.id,
+                                        tipo: novo,
+                                      });
+                                    }}
+                                  >
+                                    {TIPOS.map((t) => (
+                                      <option key={t} value={t}>
+                                        {t}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditandoTipoId(l.id)}
+                                    title="Clique para trocar o tipo"
+                                    style={{
+                                      background: "none",
+                                      border: "none",
+                                      padding: 0,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <LocTipoBadge tipo={l.tipo} />
+                                  </button>
+                                )}
+                              </td>
+                              <td className="wms-td-actions">
+                                <button
+                                  type="button"
+                                  className="wms-btn-icon"
+                                  title="Excluir localização"
+                                  onClick={() => setExcluindo(l)}
+                                >
+                                  <Icon name="trash" size={12} />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

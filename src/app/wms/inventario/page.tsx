@@ -14,63 +14,6 @@ import {
   fmtNum,
 } from "@/components/wms/ui/wms-ui";
 import type { SugestaoLoc, MotivoLoc, ModoContagem, TipoSessao } from "@/lib/wms/inventario";
-import type { Localizacao } from "@/lib/wms/types";
-
-// ─────────────────────────────────────────────────────────────────────
-// Distribuição soft: agrupa locs por zona, faz greedy LPT entre N
-// buckets de operador. Cada loc recebe slot_atribuido 1..N.
-//
-// Por que LPT (Longest Processing Time first): mantém zonas inteiras
-// no mesmo bucket (operador não anda entre zonas) e balanceia contagem
-// por bucket (variância pequena).
-// ─────────────────────────────────────────────────────────────────────
-
-interface BucketResultado {
-  slot: number;
-  locIds: string[];
-  zonas: string[];
-}
-
-function zonaDe(loc: Pick<Localizacao, "zona" | "codigo">): string {
-  if (loc.zona && loc.zona.trim()) return loc.zona.trim();
-  const prefix = loc.codigo.split("-")[0];
-  return prefix || loc.codigo;
-}
-
-function distribuirEmBuckets(
-  locs: Localizacao[],
-  numOperadores: number,
-): BucketResultado[] {
-  const buckets: BucketResultado[] = Array.from(
-    { length: numOperadores },
-    (_, i) => ({ slot: i + 1, locIds: [], zonas: [] }),
-  );
-  if (locs.length === 0 || numOperadores < 1) return buckets;
-
-  // Agrupa por zona
-  const porZona = new Map<string, Localizacao[]>();
-  for (const l of locs) {
-    const z = zonaDe(l);
-    const arr = porZona.get(z) ?? [];
-    arr.push(l);
-    porZona.set(z, arr);
-  }
-
-  // Ordena zonas por tamanho DESC (LPT)
-  const zonasOrdenadas = Array.from(porZona.entries()).sort(
-    (a, b) => b[1].length - a[1].length,
-  );
-
-  // Greedy: cada zona vai no bucket com menor carga
-  for (const [zona, locsDaZona] of zonasOrdenadas) {
-    const menor = buckets.reduce((min, b) =>
-      b.locIds.length < min.locIds.length ? b : min,
-    );
-    for (const l of locsDaZona) menor.locIds.push(l.id);
-    menor.zonas.push(zona);
-  }
-  return buckets;
-}
 
 interface SessaoRow {
   id: string;
@@ -253,23 +196,19 @@ function NovaSessaoModal({
     [galpoesQuery.data, galpaoId],
   );
 
-  // Buckets pra cycle count manual (distribuição soft entre N operadores).
-  // Recalcula quando: locs selecionadas mudam OU número de operadores muda.
-  const bucketsManual = useMemo<BucketResultado[]>(() => {
-    if (tipoCriacao !== "manual" || locsManual.size === 0) return [];
+  // Estatística informativa pra UI: quantas ruas distintas o pool toca.
+  // Não afeta criação — distribuição é runtime (claim hierárquico).
+  const ruasSelecionadas = useMemo(() => {
+    if (tipoCriacao !== "manual" || locsManual.size === 0) return 0;
     const rows = locsQuery.data?.rows ?? [];
-    const selecionadas = rows.filter((l) => locsManual.has(l.id));
-    return distribuirEmBuckets(selecionadas, numOperadores);
-  }, [tipoCriacao, locsManual, locsQuery.data, numOperadores]);
-
-  // Mapa locId -> slot pro envio no criar
-  const slotPorLocId = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const b of bucketsManual) {
-      for (const id of b.locIds) m.set(id, b.slot);
+    const ruas = new Set<string>();
+    for (const l of rows) {
+      if (!locsManual.has(l.id)) continue;
+      const r = (l.zona && l.zona.trim()) || l.codigo.split("-")[0] || l.codigo;
+      ruas.add(r);
     }
-    return m;
-  }, [bucketsManual]);
+    return ruas.size;
+  }, [tipoCriacao, locsManual, locsQuery.data]);
 
   // Filtro parcial sobre as locs do galpão (modo manual).
   // Não afeta seleções — locsManual permanece independente do termo,
@@ -329,7 +268,6 @@ function NovaSessaoModal({
     let localizacoes: Array<{
       localizacao_id: string;
       motivo?: MotivoLoc;
-      slot_atribuido?: number | null;
     }> = [];
 
     if (tipoCriacao === "inteligente") {
@@ -346,7 +284,6 @@ function NovaSessaoModal({
       localizacoes = Array.from(locsManual).map((id) => ({
         localizacao_id: id,
         motivo: "manual" as const,
-        slot_atribuido: slotPorLocId.get(id) ?? null,
       }));
     } else {
       const todas = locsQuery.data?.rows ?? [];
@@ -362,11 +299,6 @@ function NovaSessaoModal({
     if (localizacoes.length === 0)
       return toast.error("Nenhuma localização selecionada");
 
-    // Só o modo manual deixa o supervisor escolher o número de operadores
-    // (porque ele também faz o bucketing por slot). Inteligente e completo
-    // mantêm o default 5 — supervisor pode estender depois se quiser.
-    const numOps = tipoCriacao === "manual" ? numOperadores : 5;
-
     criar.mutate({
       tipo,
       nome: nome || undefined,
@@ -376,7 +308,7 @@ function NovaSessaoModal({
       tolerancia_pct: toleranciaPct,
       exige_aprovacao_acima_valor: exigeAprovacaoValor,
       localizacoes,
-      num_operadores: numOps,
+      num_operadores: numOperadores,
     });
   }
 
@@ -657,10 +589,7 @@ function NovaSessaoModal({
                     borderRadius: "var(--wms-r-3)",
                   }}
                 >
-                  <Field
-                    label="Quantos operadores"
-                    hint="Slots OP1..OPN"
-                  >
+                  <Field label="Operadores esperados" hint="hint informativo">
                     <input
                       className="wms-input wms-mono wms-tar"
                       type="number"
@@ -676,62 +605,23 @@ function NovaSessaoModal({
                       }}
                     />
                   </Field>
-                  <div>
+                  <div className="wms-td-mute" style={{ fontSize: 11.5 }}>
                     {locsManual.size === 0 ? (
-                      <div
-                        className="wms-td-mute"
-                        style={{ fontSize: 11.5 }}
-                      >
-                        Selecione localizações abaixo pra ver a distribuição
-                        em buckets por zona.
-                      </div>
+                      <>
+                        Selecione localizações abaixo. A distribuição é dinâmica:
+                        cada operador reivindica uma rua livre e desce pelos
+                        prédios. Sem rua livre, pega um prédio com ≥1 prédio de
+                        buffer dos colegas.
+                      </>
                     ) : (
-                      <div
-                        style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          gap: 6,
-                        }}
-                      >
-                        {bucketsManual.map((b) => (
-                          <div
-                            key={b.slot}
-                            style={{
-                              border: "1px solid var(--wms-c-border)",
-                              background: "var(--wms-c-panel)",
-                              borderRadius: "var(--wms-r-3)",
-                              padding: "5px 8px",
-                              fontSize: 11.5,
-                              minWidth: 110,
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: 2,
-                            }}
-                          >
-                            <div
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                fontWeight: 600,
-                              }}
-                            >
-                              <span>OP{b.slot}</span>
-                              <span className="wms-mono">
-                                {b.locIds.length} loc
-                                {b.locIds.length === 1 ? "" : "s"}
-                              </span>
-                            </div>
-                            <div
-                              className="wms-td-mute"
-                              style={{ fontSize: 10.5 }}
-                            >
-                              {b.zonas.length === 0
-                                ? "—"
-                                : `zona${b.zonas.length > 1 ? "s" : ""} ${b.zonas.join(", ")}`}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      <>
+                        Pool de <strong>{locsManual.size}</strong> loc
+                        {locsManual.size === 1 ? "" : "s"} em{" "}
+                        <strong>{ruasSelecionadas}</strong> rua
+                        {ruasSelecionadas === 1 ? "" : "s"}. Capacidade ideal:
+                        até {ruasSelecionadas} operadores em paralelo sem
+                        colisão.
+                      </>
                     )}
                   </div>
                 </div>

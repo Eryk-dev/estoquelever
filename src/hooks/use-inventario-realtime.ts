@@ -34,11 +34,12 @@ export interface LocSessao {
   contagem_iniciada_em: string | null;
   contagem_finalizada_em: string | null;
   motivo: string | null;
-  /** Slot (1..5) pré-atribuído ao operador. NULL = sem bucket (pool comum). */
-  slot_atribuido: number | null;
   localizacao?: { codigo?: string; tipo?: string; zona?: string };
   bloqueada_por_user?: { nome?: string } | null;
 }
+
+export type ClaimTipo = "rua" | "predio" | "colisao";
+export type ClaimDirecao = "asc" | "desc";
 
 export interface Operador {
   id: string;
@@ -49,6 +50,11 @@ export interface Operador {
   finalizado_em: string | null;
   locs_contadas: number;
   ultima_acao_em: string;
+  /** Claim hierárquico ativo. NULL antes do primeiro pull ou após esgotar. */
+  claim_tipo: ClaimTipo | null;
+  claim_codigo: string | null;
+  claim_direcao: ClaimDirecao | null;
+  claim_atualizado_em: string | null;
   usuario?: { nome?: string };
 }
 

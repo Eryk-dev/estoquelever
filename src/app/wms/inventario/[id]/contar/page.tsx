@@ -715,6 +715,24 @@ function CounterView({
             zona {loc.zona} · {loc.tipo}
           </div>
         )}
+        {loc.claim_tipo && loc.claim_codigo && (
+          <div
+            className="wms-mono"
+            style={{
+              fontSize: 11,
+              marginTop: 4,
+              color:
+                loc.claim_tipo === "colisao"
+                  ? "var(--wms-c-warn, #b76f0e)"
+                  : "var(--wms-c-fg-2)",
+            }}
+          >
+            {loc.claim_tipo === "rua" && `rua ${loc.claim_codigo} ↓`}
+            {loc.claim_tipo === "predio" && `prédio ${loc.claim_codigo} ↓`}
+            {loc.claim_tipo === "colisao" &&
+              `prédio ${loc.claim_codigo} ↑ (compartilhando)`}
+          </div>
+        )}
       </div>
 
       {confirmingLoc && (

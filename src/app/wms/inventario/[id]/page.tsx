@@ -629,7 +629,6 @@ function SlotCard({
   locs: Array<{
     status: string;
     bloqueada_por: string | null;
-    slot_atribuido: number | null;
     localizacao?: { codigo?: string };
   }>;
 }) {
@@ -640,23 +639,26 @@ function SlotCard({
       )
     : undefined;
 
-  // Bucket pré-atribuído a este slot (modo soft do cycle count manual).
-  // total = quantas locs foram atribuídas ao slot na criação da sessão.
-  // contadas = quantas dessas já foram finalizadas (status contada/aprovada).
-  const bucket = useMemo(() => {
-    const atribuidas = locs.filter((l) => l.slot_atribuido === slot);
-    if (atribuidas.length === 0) return null;
-    const contadas = atribuidas.filter(
-      (l) => l.status === "contada" || l.status === "aprovada",
-    ).length;
-    return { total: atribuidas.length, contadas };
-  }, [locs, slot]);
-
   const horasAtivo = op
     ? Math.max(0.001, (Date.now() - new Date(op.entrou_em).getTime()) / 3600000)
     : 0;
   const velocidade =
     op && horasAtivo > 0 ? Math.round(op.locs_contadas / horasAtivo) : 0;
+
+  // Render do claim ao vivo (rua / prédio / colisão + direção)
+  const claimLabel = op?.claim_tipo
+    ? (() => {
+        const arrow =
+          op.claim_direcao === "desc" ? "↑" : op.claim_direcao === "asc" ? "↓" : "";
+        if (op.claim_tipo === "rua") {
+          return `rua ${op.claim_codigo ?? "?"} ${arrow}`.trim();
+        }
+        if (op.claim_tipo === "predio") {
+          return `prédio ${op.claim_codigo ?? "?"} ${arrow}`.trim();
+        }
+        return `colisão ${op.claim_codigo ?? "?"} ${arrow}`.trim();
+      })()
+    : null;
 
   return (
     <div
@@ -685,18 +687,6 @@ function SlotCard({
           </span>
         )}
       </div>
-      {bucket && (
-        <div
-          className="wms-td-mute"
-          style={{
-            fontSize: 11,
-            fontFamily: "var(--wms-mono)",
-          }}
-          title="Locs pré-atribuídas a este slot. Operador pode puxar de outros buckets quando este esvaziar."
-        >
-          bucket {bucket.contadas}/{bucket.total}
-        </div>
-      )}
       {livre ? (
         <div className="wms-td-mute" style={{ fontSize: 12 }}>
           Slot livre
@@ -706,12 +696,30 @@ function SlotCard({
           <div style={{ fontSize: 13, fontWeight: 600 }}>
             {op.usuario?.nome ?? "Operador"}
           </div>
-          <div
-            className="wms-td-mute"
-            style={{ fontSize: 11.5 }}
-          >
+          <div className="wms-td-mute" style={{ fontSize: 11.5 }}>
             {op.locs_contadas} loc(s) contada(s)
           </div>
+          {claimLabel && (
+            <div
+              className="wms-mono"
+              style={{
+                fontSize: 11,
+                color:
+                  op.claim_tipo === "colisao"
+                    ? "var(--wms-c-warn, #b76f0e)"
+                    : "var(--wms-c-fg-2)",
+              }}
+              title={
+                op.claim_tipo === "rua"
+                  ? "Operador tem reivindicação exclusiva da rua"
+                  : op.claim_tipo === "predio"
+                    ? "Operador está num prédio dedicado (com buffer)"
+                    : "Operador compartilhando último prédio (entrou pela ponta oposta)"
+              }
+            >
+              {claimLabel}
+            </div>
+          )}
           {locAtual && (
             <div
               style={{

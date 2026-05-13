@@ -25,12 +25,6 @@ export type MotivoLoc =
 export interface LocSessaoInput {
   localizacao_id: string;
   motivo?: MotivoLoc;
-  /** Slot do operador (1..5) ao qual essa loc fica pré-atribuída.
-   *  Quando NULL, a loc entra no pool comum (smart routing decide o owner).
-   *  Quando setado, o RPC wms_inventario_proxima_loc prioriza essa loc pro
-   *  operador que está no slot correspondente; quando o bucket esvazia,
-   *  caí naturalmente nas regras de continuidade/anti-colisão. */
-  slot_atribuido?: number | null;
 }
 
 export interface CriarSessaoInput {
@@ -45,8 +39,9 @@ export interface CriarSessaoInput {
   observacoes?: string;
   criada_por: string;
   localizacoes: LocSessaoInput[];
-  /** Quantos slots de operador a sessão expõe (1..5). Default 5.
-   *  A tela handheld só mostra slots OP1..OP{num_operadores}. */
+  /** Hint informativo de quantos operadores devem trabalhar (1..5).
+   *  Não restringe quem pode entrar — qualquer operador pode assumir
+   *  qualquer slot 1..5. Usado só pra estimativa de tempo na UI. */
   num_operadores?: number;
 }
 
@@ -87,13 +82,6 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
     sessao_id: sessaoId,
     localizacao_id: l.localizacao_id,
     motivo: l.motivo ?? "manual",
-    slot_atribuido:
-      l.slot_atribuido != null &&
-      Number.isInteger(l.slot_atribuido) &&
-      l.slot_atribuido >= 1 &&
-      l.slot_atribuido <= 5
-        ? l.slot_atribuido
-        : null,
   }));
 
   const { error: errL } = await sb
@@ -210,25 +198,12 @@ export async function entrarSlot(
   if (slot < 1 || slot > 5) throw new Error("slot deve estar entre 1 e 5");
   const sb = createServiceClient();
 
-  // Valida que o slot está dentro do limite configurado na sessão.
-  // Sessões antigas (sem coluna ou NULL) usam o default 5.
-  const { data: sessaoCfg } = await sb
-    .from("siso_inventario_sessoes")
-    .select("num_operadores")
-    .eq("id", sessaoId)
-    .single();
-  const numOps =
-    (sessaoCfg as { num_operadores?: number | null } | null)?.num_operadores ?? 5;
-  if (slot > numOps) {
-    throw new Error(
-      `essa sessão foi configurada pra ${numOps} operador${numOps > 1 ? "es" : ""} — OP${slot} não está disponível`,
-    );
-  }
-
   // Auto-start: se sessão tá planejada, inicia (idempotente)
   await iniciarSessao(sessaoId, usuarioId);
 
-  // Insere operador no slot — UNIQUE constraint (sessao_id, slot) trava colisão
+  // Insere operador no slot — UNIQUE constraint (sessao_id, slot) trava colisão.
+  // num_operadores é só hint informativo; qualquer slot 1..5 fica disponível
+  // (distribuição de trabalho é dinâmica via claim hierárquico no RPC).
   const { error } = await sb.from("siso_inventario_operadores").insert({
     sessao_id: sessaoId,
     slot,
@@ -269,6 +244,9 @@ export interface EsperadoItem {
   empresa_dona_id: string;
 }
 
+export type ClaimTipo = "rua" | "predio" | "colisao";
+export type ClaimDirecao = "asc" | "desc";
+
 export interface ProximaLocOutput {
   pool_vazio: boolean;
   inv_loc_id?: string;
@@ -278,6 +256,13 @@ export interface ProximaLocOutput {
   zona?: string;
   modo?: ModoContagem;
   esperados?: EsperadoItem[];
+  /** Tipo do claim atribuído a este operador. 'rua' = exclusivo da rua,
+   *  'predio' = só esse prédio, 'colisao' = compartilhando último prédio. */
+  claim_tipo?: ClaimTipo;
+  /** Código do claim ('A' pra rua, 'A-03' pra prédio/colisao). */
+  claim_codigo?: string;
+  /** Direção: 'asc' default, 'desc' quando entra em colisão pela ponta oposta. */
+  claim_direcao?: ClaimDirecao;
 }
 
 export async function pegarProximaLoc(
@@ -300,6 +285,9 @@ export async function pegarProximaLoc(
     zona?: string;
     modo?: ModoContagem;
     esperados?: EsperadoItem[] | null;
+    claim_tipo?: ClaimTipo;
+    claim_codigo?: string;
+    claim_direcao?: ClaimDirecao;
   };
   // Enriquece esperados com imagem_url — RPC não retorna pra evitar bloat
   // no payload de roteamento; aqui é a hora de pagar o lookup (lista
@@ -341,6 +329,9 @@ export async function pegarProximaLoc(
     zona: r.zona,
     modo: r.modo,
     esperados: esperadosEnriched,
+    claim_tipo: r.claim_tipo,
+    claim_codigo: r.claim_codigo,
+    claim_direcao: r.claim_direcao,
   };
 }
 

@@ -8,14 +8,16 @@ import { Icon, PageHeader } from "@/components/wms/ui/wms-ui";
 import { AbaGalpoes } from "@/components/wms/configuracoes/aba-galpoes";
 import { AbaEmpresas } from "@/components/wms/configuracoes/aba-empresas";
 import { AbaEmprestimos } from "@/components/wms/configuracoes/aba-emprestimos";
+import { AbaFuncionarios } from "@/components/wms/configuracoes/aba-funcionarios";
 import type { GalpaoHierarquiaWms } from "@/components/wms/configuracoes/types";
 import { useAuth } from "@/lib/auth-context";
 
-type AbaId = "galpoes" | "empresas" | "emprestimos";
+type AbaId = "galpoes" | "empresas" | "funcionarios" | "emprestimos";
 
 const ABAS: { id: AbaId; label: string }[] = [
   { id: "galpoes", label: "Galpões" },
   { id: "empresas", label: "Empresas" },
+  { id: "funcionarios", label: "Funcionários" },
   { id: "emprestimos", label: "Empréstimos & Swaps" },
 ];
 
@@ -29,6 +31,13 @@ export default function WmsConfiguracoesPage() {
     queryFn: () => wmsApi<GalpaoHierarquiaWms[]>("/api/admin/galpoes"),
   });
 
+  const funcionariosCountQuery = useQuery({
+    queryKey: ["wms-cfg-funcionarios"],
+    queryFn: () =>
+      wmsApi<{ id: string }[]>("/api/admin/usuarios"),
+    enabled: isAdmin,
+  });
+
   const galpoes = galpoesQuery.data ?? [];
 
   const counts = {
@@ -36,6 +45,7 @@ export default function WmsConfiguracoesPage() {
     empresas: new Set(
       galpoes.flatMap((g) => g.siso_empresas.map((e) => e.id)),
     ).size,
+    funcionarios: funcionariosCountQuery.data?.length ?? ("—" as const),
     emprestimos: "—" as const,
   };
 
@@ -55,7 +65,7 @@ export default function WmsConfiguracoesPage() {
     <>
       <PageHeader
         title="Configurações"
-        subtitle="Galpões, empresas e regras de empréstimo/swap"
+        subtitle="Galpões, empresas, funcionários e regras de empréstimo/swap"
       >
         <Link
           href="/wms/configuracoes/conexoes"
@@ -99,6 +109,7 @@ export default function WmsConfiguracoesPage() {
       {aba === "empresas" && (
         <AbaEmpresas galpoes={galpoes} isLoading={galpoesQuery.isLoading} />
       )}
+      {aba === "funcionarios" && <AbaFuncionarios galpoes={galpoes} />}
       {aba === "emprestimos" && (
         <AbaEmprestimos
           galpoes={galpoes}

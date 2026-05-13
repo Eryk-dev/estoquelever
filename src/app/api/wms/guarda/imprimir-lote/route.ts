@@ -11,14 +11,15 @@ import { createServiceClient } from "@/lib/supabase-server";
  *
  * Body: { pendencia_ids: string[] }
  *
- * Imprime o maço inteiro de etiquetas pra uma lista de pendências, na
- * ordem dada. Cada pendência contribui qty_pendente etiquetas. Usado pela
- * tela de Recebimento ao confirmar o lote: gera todas as pendências e
- * dispara o lote de etiquetas pro operador colar antes de guardar.
+ * Imprime o maço inteiro de etiquetas pra uma lista de pendências. Pendências
+ * canceladas/totalmente guardadas são puladas (com warning em `ignorados`).
  *
- * Pendências canceladas/totalmente guardadas são puladas (com warning).
- * Localização na etiqueta = sugestão de putaway por SKU (loc com saldo>0
- * que não seja RECEBIMENTO) ou a própria RECEBIMENTO se não houver outra.
+ * Mistura de galpões: AGRUPA por galpao_id e dispara 1 print job por galpão
+ * (impressora pode ser diferente). Falha em algum galpão não aborta os outros
+ * — retorna todos os resultados em `jobs` + erros em `erros`.
+ *
+ * Localização na etiqueta = loc destino decidida no recebimento, ou (se NULL)
+ * candidato com saldo>0 do mesmo SKU, ou "—" como último recurso.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireWarehouseAccess(req);
@@ -42,9 +43,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const sb = createServiceClient();
-    const linhas: { etiqueta: EtiquetaProdutoInput; qty: number }[] = [];
+    type Linha = { etiqueta: EtiquetaProdutoInput; qty: number };
+    const porGalpao = new Map<string, Linha[]>();
     const ignorados: string[] = [];
-    let galpaoId: string | null = null;
 
     for (const id of pendenciaIds) {
       const pend = await obterPendencia(id);
@@ -56,20 +57,7 @@ export async function POST(req: NextRequest) {
         ignorados.push(id);
         continue;
       }
-      // Todas as pendências do lote precisam ser do mesmo galpão pra usar
-      // a mesma impressora. Misturar não faria sentido operacional.
-      if (galpaoId && galpaoId !== pend.galpao_id) {
-        return NextResponse.json(
-          { error: "todas as pendências precisam ser do mesmo galpão" },
-          { status: 400 },
-        );
-      }
-      galpaoId = pend.galpao_id;
 
-      // Loc na etiqueta. Prioridade:
-      //   1) loc destino decidida no recebimento (pend.localizacao_destino)
-      //   2) candidato com saldo>0 do mesmo SKU (excluindo RECEBIMENTO)
-      //   3) "—" se nenhum
       let localizacao = pend.localizacao_destino?.codigo ?? null;
       if (!localizacao) {
         const { data: existentes } = await sb
@@ -89,37 +77,78 @@ export async function POST(req: NextRequest) {
         localizacao = candidato?.localizacao?.codigo ?? "—";
       }
 
-      linhas.push({
+      const linha: Linha = {
         etiqueta: {
           sku: pend.produto.sku,
           descricao: pend.produto.descricao,
           localizacao,
         },
         qty: pend.qty_pendente,
-      });
+      };
+      const arr = porGalpao.get(pend.galpao_id) ?? [];
+      arr.push(linha);
+      porGalpao.set(pend.galpao_id, arr);
     }
 
-    if (linhas.length === 0) {
+    if (porGalpao.size === 0) {
       return NextResponse.json(
         { error: "nenhuma etiqueta pra imprimir", ignorados },
         { status: 400 },
       );
     }
 
-    const result = await imprimirEtiquetasProduto({
-      usuarioId: auth.user.id,
-      galpaoId: galpaoId!,
-      titulo: `Etiquetas recebimento (${linhas.length} linhas)`,
-      linhas,
-    });
+    // Dispara um print job por galpão. Falha em um não aborta os outros.
+    const jobs: Array<{
+      galpaoId: string;
+      jobId?: number;
+      totalEtiquetas?: number;
+      totalFolhas?: number;
+      fallbackEnvelope?: boolean;
+    }> = [];
+    const erros: Array<{ galpaoId: string; error: string }> = [];
+    let totalEtiquetas = 0;
+    let totalFolhas = 0;
+    let algumFallback = false;
 
-    if (!result.ok) {
+    for (const [galpaoId, linhas] of porGalpao.entries()) {
+      const result = await imprimirEtiquetasProduto({
+        usuarioId: auth.user.id,
+        galpaoId,
+        titulo: `Etiquetas recebimento (${linhas.length} linhas)`,
+        linhas,
+      });
+      if (!result.ok) {
+        erros.push({ galpaoId, error: result.error ?? "falha ao imprimir" });
+      } else {
+        jobs.push({
+          galpaoId,
+          jobId: result.jobId,
+          totalEtiquetas: result.totalEtiquetas,
+          totalFolhas: result.totalFolhas,
+          fallbackEnvelope: result.fallbackEnvelope,
+        });
+        totalEtiquetas += result.totalEtiquetas ?? 0;
+        totalFolhas += result.totalFolhas ?? 0;
+        if (result.fallbackEnvelope) algumFallback = true;
+      }
+    }
+
+    if (jobs.length === 0 && erros.length > 0) {
       return NextResponse.json(
-        { error: result.error ?? "falha ao imprimir", ignorados },
+        { error: erros[0].error, erros, ignorados },
         { status: 502 },
       );
     }
-    return NextResponse.json({ ...result, ignorados, ok: true });
+
+    return NextResponse.json({
+      ok: true,
+      ignorados,
+      jobs,
+      erros,
+      totalEtiquetas,
+      totalFolhas,
+      fallbackEnvelope: algumFallback,
+    });
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.guarda.imprimir-lote",

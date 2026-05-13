@@ -226,8 +226,8 @@ export async function listarRotaPendencias(input: {
   todas?: boolean;
 }): Promise<PendenciaJoined[]> {
   const { lote_id, pendencia_ids, galpao_id, empresa_dona_id, todas } = input;
-  if (!lote_id && !pendencia_ids?.length && !(galpao_id && todas)) {
-    throw new Error("informe lote_id, pendencia_ids, ou galpao_id+todas");
+  if (!lote_id && !pendencia_ids?.length && !todas) {
+    throw new Error("informe lote_id, pendencia_ids, ou todas=true");
   }
 
   const sb = createServiceClient();

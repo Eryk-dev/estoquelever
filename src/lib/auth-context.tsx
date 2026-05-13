@@ -32,6 +32,13 @@ interface AuthContextValue {
   setActiveGalpao: (galpaoId: string | null) => void;
   login: (nome: string, pin: string) => Promise<{ ok: boolean; erro?: string }>;
   logout: () => void;
+  /**
+   * Re-busca o usuário em /api/auth/me e atualiza state + localStorage.
+   * Use após criar/editar galpão pra refletir a lista nova no seletor sem
+   * exigir logout. Re-valida activeGalpaoId contra a nova lista (limpa se
+   * sumiu).
+   */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -178,6 +185,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear();
   }, [queryClient]);
 
+  const refreshUser = useCallback(async () => {
+    const stored = getStoredUser();
+    if (!stored?.sessionId) return;
+
+    try {
+      const res = await fetch("/api/auth/me", {
+        headers: { "X-Session-Id": stored.sessionId },
+      });
+      if (!res.ok) {
+        // 401 será tratado pelo sisoFetch em chamadas regulares; aqui só
+        // ignoramos pra não disparar logout fantasma se /me retornar 401
+        // por causa de race condition.
+        return;
+      }
+      const data = await res.json();
+      const cargos: Cargo[] = data.usuario.cargos ?? [data.usuario.cargo];
+      const galpoes: UserGalpao[] = data.usuario.galpoes ?? [];
+      const updated: AuthUser = {
+        id: data.usuario.id,
+        nome: data.usuario.nome,
+        cargo: cargos[0],
+        cargos,
+        galpoes,
+        sessionId: stored.sessionId,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      setUser(updated);
+
+      // Re-valida activeGalpaoId contra a nova lista
+      const currentGalpao = getStoredGalpaoId();
+      const next = resolveInitialGalpaoId(galpoes, cargos, currentGalpao);
+      setActiveGalpaoIdState(next);
+      if (next) {
+        localStorage.setItem(GALPAO_KEY, next);
+      } else {
+        localStorage.removeItem(GALPAO_KEY);
+      }
+
+      queryClient.invalidateQueries();
+    } catch {
+      // network error — silencioso, próxima tentativa do user resolve
+    }
+  }, [queryClient]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -189,6 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setActiveGalpao,
         login,
         logout,
+        refreshUser,
       }}
     >
       {children}

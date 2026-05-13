@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
+import { useAuth } from "@/lib/auth-context";
 import { Icon, Field } from "@/components/wms/ui/wms-ui";
 import type { GalpaoHierarquiaWms } from "./types";
 
@@ -31,6 +32,7 @@ export function AbaGalpoes({
   isLoading: boolean;
 }) {
   const queryClient = useQueryClient();
+  const { refreshUser } = useAuth();
   const [showForm, setShowForm] = useState(false);
   const [novo, setNovo] = useState<NovoGalpao>(EMPTY_NOVO);
   const [editando, setEditando] = useState<string | null>(null);
@@ -41,22 +43,37 @@ export function AbaGalpoes({
 
   const criar = useMutation({
     mutationFn: () =>
-      wmsApi("/api/admin/galpoes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nome: novo.nome,
-          descricao: novo.descricao || undefined,
-          cidade: novo.cidade || undefined,
-          estado: novo.estado || undefined,
-          pais: novo.pais || "BR",
-        }),
-      }),
-    onSuccess: () => {
-      toast.success("Galpão criado");
+      wmsApi<{ id: string; nome: string; admins_vinculados: number; admins_erro: string | null }>(
+        "/api/admin/galpoes",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nome: novo.nome,
+            descricao: novo.descricao || undefined,
+            cidade: novo.cidade || undefined,
+            estado: novo.estado || undefined,
+            pais: novo.pais || "BR",
+          }),
+        },
+      ),
+    onSuccess: async (data) => {
+      if (data.admins_erro) {
+        toast.warning(
+          `Galpão criado, mas falhou ao vincular admins: ${data.admins_erro}`,
+        );
+      } else if (data.admins_vinculados > 0) {
+        toast.success(
+          `Galpão criado e vinculado a ${data.admins_vinculados} admin(s)`,
+        );
+      } else {
+        toast.success("Galpão criado");
+      }
       setNovo(EMPTY_NOVO);
       setShowForm(false);
       invalidate();
+      // Atualiza o seletor do sidebar imediatamente (sem re-login).
+      await refreshUser();
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -243,6 +260,7 @@ function LinhaGalpao({
   onFechar: () => void;
   onSalvo: () => void;
 }) {
+  const { refreshUser } = useAuth();
   const [form, setForm] = useState({
     nome: galpao.nome,
     descricao: galpao.descricao ?? "",
@@ -266,10 +284,12 @@ function LinhaGalpao({
           ativo: form.ativo,
         }),
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Galpão atualizado");
       onSalvo();
       onFechar();
+      // Mudança de ativo (true↔false) ou nome reflete no seletor.
+      await refreshUser();
     },
     onError: (e: Error) => toast.error(e.message),
   });

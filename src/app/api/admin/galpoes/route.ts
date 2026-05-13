@@ -98,7 +98,14 @@ export async function GET() {
 
 /**
  * POST /api/admin/galpoes
- * Create a new galpao.
+ *
+ * Cria galpão e auto-vincula a TODOS os admins ativos via
+ * siso_usuario_galpoes. Semântica: admin vê tudo sem precisar reconfigurar
+ * acesso. Operadores comuns continuam restritos a galpões designados
+ * manualmente em /admin/usuarios.
+ *
+ * O frontend deve chamar refreshUser() após criação pra atualizar o seletor
+ * do sidebar sem re-login.
  */
 export async function POST(request: NextRequest) {
   const body = await request.json();
@@ -136,5 +143,44 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(data, { status: 201 });
+  // Auto-vincula a todos os admins ativos. Erro aqui não bloqueia o galpão
+  // criado — apenas registra no payload pro frontend mostrar warning.
+  let admins_vinculados = 0;
+  let admins_erro: string | null = null;
+  try {
+    const { data: admins } = await supabase
+      .from("siso_usuarios")
+      .select("id, cargo, cargos")
+      .eq("ativo", true);
+
+    const adminIds = (admins ?? [])
+      .filter((u) => {
+        const cargos = (u as { cargo: string; cargos: string[] | null }).cargos
+          ?? [(u as { cargo: string }).cargo];
+        return cargos.includes("admin");
+      })
+      .map((u) => (u as { id: string }).id);
+
+    if (adminIds.length > 0) {
+      const rows = adminIds.map((usuario_id) => ({
+        usuario_id,
+        galpao_id: data.id,
+      }));
+      const { error: ugError } = await supabase
+        .from("siso_usuario_galpoes")
+        .upsert(rows, { onConflict: "usuario_id,galpao_id" });
+      if (ugError) {
+        admins_erro = ugError.message;
+      } else {
+        admins_vinculados = adminIds.length;
+      }
+    }
+  } catch (e) {
+    admins_erro = e instanceof Error ? e.message : "Falha vinculando admins";
+  }
+
+  return NextResponse.json(
+    { ...data, admins_vinculados, admins_erro },
+    { status: 201 },
+  );
 }

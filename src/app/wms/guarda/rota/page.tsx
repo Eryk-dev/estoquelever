@@ -9,6 +9,7 @@ import { sisoFetch } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   Icon,
+  Kpi,
   StatusBadge,
   fmtNum,
   fmtRelative,
@@ -83,18 +84,6 @@ function GuardaRotaContent() {
       </div>
     );
   }
-  if (fila.length === 0) {
-    return (
-      <div className="wms-empty-block">
-        <h3>Rota vazia</h3>
-        <p>Nenhuma pendência ativa nessa rota.</p>
-        <Link href="/wms/guarda" className="wms-btn wms-btn-primary">
-          Voltar pra fila
-        </Link>
-      </div>
-    );
-  }
-
   const tituloRota = lote
     ? "Rota — lote único"
     : todas
@@ -103,7 +92,31 @@ function GuardaRotaContent() {
         ? "Rota — seleção"
         : "Rota";
 
-  const tudoConcluido = restantes === 0;
+  const tudoConcluido = fila.length === 0 || restantes === 0;
+
+  // Métricas pra tela de parabéns
+  const guardadasFinais = fila.filter((p) => p.status === "guardada");
+  const unidadesGuardadas = guardadasFinais.reduce(
+    (sum, p) => sum + Number(p.qty_inicial),
+    0,
+  );
+  const minutosRota = useMemo(() => {
+    if (guardadasFinais.length === 0) return 0;
+    const inicios = fila
+      .map((p) => p.iniciada_em ?? p.criada_em)
+      .filter(Boolean) as string[];
+    const fins = guardadasFinais
+      .map((p) => p.guardada_em)
+      .filter(Boolean) as string[];
+    if (inicios.length === 0 || fins.length === 0) return 0;
+    const start = Math.min(...inicios.map((s) => new Date(s).getTime()));
+    const end = Math.max(...fins.map((s) => new Date(s).getTime()));
+    return Math.max(1, Math.round((end - start) / 60000));
+  }, [fila, guardadasFinais]);
+
+  if (tudoConcluido) {
+    return <ResumoFinalRota titulo={tituloRota} guardadas={guardadasFinais.length} unidades={unidadesGuardadas} minutos={minutosRota} />;
+  }
 
   return (
     <div style={{ maxWidth: 920, margin: "0 auto" }}>
@@ -138,20 +151,6 @@ function GuardaRotaContent() {
         <div style={{ width: 60 }} />
       </div>
 
-      {tudoConcluido && (
-        <div
-          className="wms-empty-block"
-          style={{ textAlign: "center", marginBottom: 12 }}
-        >
-          <Icon name="check" size={20} />
-          <h3 style={{ marginTop: 8 }}>Rota concluída</h3>
-          <p>
-            Todas as {fila.length} pendência{fila.length > 1 ? "s foram" : " foi"}{" "}
-            guardada{fila.length > 1 ? "s" : ""}.
-          </p>
-        </div>
-      )}
-
       {/* Checklist */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {fila.map((p) => (
@@ -162,6 +161,85 @@ function GuardaRotaContent() {
             onResolvida={onPendenciaResolvida}
           />
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// ResumoFinalRota — tela de parabéns ao zerar a fila (mesmo pattern do
+// inventário cíclico: 🎉 + KPIs + CTAs pra fila/receber).
+
+function ResumoFinalRota({
+  titulo,
+  guardadas,
+  unidades,
+  minutos,
+}: {
+  titulo: string;
+  guardadas: number;
+  unidades: number;
+  minutos: number;
+}) {
+  const velocidade =
+    minutos > 0 && guardadas > 0
+      ? Math.round((guardadas / minutos) * 60)
+      : 0;
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 18,
+        padding: "48px 16px",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: 56 }}>🎉</div>
+      <div style={{ fontSize: 22, fontWeight: 700 }}>Rota concluída!</div>
+      <div className="wms-td-mute" style={{ maxWidth: 380 }}>
+        {guardadas > 0
+          ? `Todas as pendências da rota foram guardadas. ${titulo.toLowerCase().includes("tudo") ? "Excelente trabalho!" : "Bom trabalho!"}`
+          : "Esta rota já estava vazia — nenhuma pendência ativa pra guardar."}
+      </div>
+      {guardadas > 0 && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: 10,
+            marginTop: 12,
+            width: "100%",
+            maxWidth: 520,
+          }}
+        >
+          <Kpi label="Pendências" value={guardadas} />
+          <Kpi label="Unidades" value={fmtNum(unidades)} />
+          <Kpi
+            label="Tempo"
+            value={
+              minutos === 0
+                ? "—"
+                : minutos < 60
+                  ? `${minutos}min`
+                  : `${Math.floor(minutos / 60)}h ${minutos % 60}min`
+            }
+          />
+        </div>
+      )}
+      {velocidade > 0 && (
+        <div className="wms-td-mute" style={{ fontSize: 12 }}>
+          Velocidade média: <strong>{velocidade} pendências/h</strong>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", justifyContent: "center" }}>
+        <Link href="/wms/guarda" className="wms-btn wms-btn-primary">
+          <Icon name="chevron-l" size={12} /> Voltar pra fila
+        </Link>
+        <Link href="/wms/receber" className="wms-btn wms-btn-ghost">
+          <Icon name="plus" size={12} /> Receber mais
+        </Link>
       </div>
     </div>
   );

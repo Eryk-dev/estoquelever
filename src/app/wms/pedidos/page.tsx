@@ -12,13 +12,17 @@ import {
   StatusBadge,
 } from "@/components/wms/ui/wms-ui";
 import { PedidoCardWms } from "@/components/wms/vendas/pedido-card-wms";
+import {
+  PedidoCardConcluidoWms,
+  type PedidoConcluidoData,
+} from "@/components/wms/vendas/pedido-card-concluido-wms";
 import { DecisaoLabel } from "@/components/wms/vendas/estoque-por-galpao-bar";
 import {
   getEcommerceAbbr,
   getMarketplaceName,
   formatRelativeTime,
 } from "@/lib/domain-helpers";
-import type { Pedido } from "@/types";
+import type { Pedido, Decisao } from "@/types";
 
 // ── Tipos ───────────────────────────────────────────────────────────
 
@@ -238,9 +242,9 @@ export default function WmsPedidosPage() {
     }
   }, [queryClient, tab]);
 
-  // ── Aprovar pedido (pendente tab) ───────────────────────────────
+  // ── Aprovar pedido (pendente tab) — operador escolhe a decisão ────
   const aprovarPedido = useCallback(
-    async (p: Pedido) => {
+    async (p: Pedido, decisao: Decisao) => {
       if (!user) {
         toast.error("Sessão inválida");
         return;
@@ -251,7 +255,7 @@ export default function WmsPedidosPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             pedidoId: p.id,
-            decisao: p.sugestao,
+            decisao,
             operadorId: user.id,
             operadorNome: user.nome,
           }),
@@ -260,7 +264,7 @@ export default function WmsPedidosPage() {
           const b = (await r.json().catch(() => ({}))) as { error?: string };
           throw new Error(b.error || `HTTP ${r.status}`);
         }
-        toast.success("Pedido aprovado");
+        toast.success(`Pedido #${p.numero} aprovado → ${decisao}`);
         queryClient.invalidateQueries({ queryKey: ["wms-pedidos"] });
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Erro ao aprovar");
@@ -287,9 +291,32 @@ export default function WmsPedidosPage() {
     }
   }, []);
 
-  // ── Mapper Pedido → props do PedidoCardWms ──────────────────────
-  const toCardPedido = useCallback((p: Pedido) => {
-    return {
+  // ── Mappers: Pedido → props dos cards ───────────────────────────
+  const mapItens = useCallback((p: Pedido) => {
+    return (p.itens ?? []).map((it) => ({
+      itemId: it.itemId,
+      produtoId: it.produtoId,
+      sku: it.sku,
+      descricao: it.descricao,
+      quantidadePedida: it.quantidadePedida,
+      imagemUrl: it.imagemUrl,
+      fornecedorOC: it.fornecedorOC,
+      estoques: Object.fromEntries(
+        Object.entries(it.estoques ?? {}).map(([galpao, ge]) => [
+          galpao,
+          {
+            saldo: ge.deposito.saldo,
+            reservado: ge.deposito.reservado,
+            disponivel: ge.deposito.disponivel,
+            localizacao: ge.localizacao,
+          },
+        ]),
+      ),
+    }));
+  }, []);
+
+  const toCardPedido = useCallback(
+    (p: Pedido): Parameters<typeof PedidoCardWms>[0]["pedido"] => ({
       id: p.id,
       numero: p.numero,
       idPedidoEcommerce: p.idPedidoEcommerce,
@@ -301,29 +328,37 @@ export default function WmsPedidosPage() {
       decisaoFinal: p.decisaoFinal,
       compraEstoqueLancadoAlerta: p.compra_estoque_lancado_alerta,
       encaminhadoDe: p.encaminhado_de ?? null,
+      empresaOrigemNome: p.empresaOrigemNome ?? null,
       criadoEm: p.criadoEm,
-      itens: (p.itens ?? []).map((it) => ({
-        itemId: it.itemId,
-        produtoId: it.produtoId,
-        sku: it.sku,
-        descricao: it.descricao,
-        quantidadePedida: it.quantidadePedida,
-        imagemUrl: it.imagemUrl,
-        fornecedorOC: it.fornecedorOC,
-        estoques: Object.fromEntries(
-          Object.entries(it.estoques ?? {}).map(([galpao, ge]) => [
-            galpao,
-            {
-              saldo: ge.deposito.saldo,
-              reservado: ge.deposito.reservado,
-              disponivel: ge.deposito.disponivel,
-              localizacao: ge.localizacao,
-            },
-          ]),
-        ),
-      })),
-    };
-  }, []);
+      itens: mapItens(p),
+    }),
+    [mapItens],
+  );
+
+  const toCardConcluido = useCallback(
+    (p: Pedido): PedidoConcluidoData => ({
+      id: p.id,
+      numero: p.numero,
+      idPedidoEcommerce: p.idPedidoEcommerce,
+      nomeEcommerce: p.nomeEcommerce,
+      cliente: { nome: p.cliente.nome },
+      filialOrigem: p.filialOrigem,
+      filialFulfillment: null,
+      sugestao: p.sugestao,
+      decisaoFinal: p.decisaoFinal ?? null,
+      tipoResolucao: p.tipoResolucao ?? null,
+      operador: p.operador ?? null,
+      processadoEm: p.processadoEm ?? null,
+      criadoEm: p.criadoEm,
+      marcadores: p.marcadores,
+      erro: p.erro,
+      empresaOrigemNome: p.empresaOrigemNome ?? null,
+      encaminhadoDe: p.encaminhado_de ?? null,
+      sugestaoMotivo: p.sugestaoMotivo ?? null,
+      itens: mapItens(p),
+    }),
+    [mapItens],
+  );
 
   // ── Loading/erro consolidado ────────────────────────────────────
   const currentLoading =
@@ -426,6 +461,7 @@ export default function WmsPedidosPage() {
           {tab === "concluidos" && (
             <TabConcluidos
               pedidos={concluidos}
+              toCardConcluido={toCardConcluido}
               onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
             />
           )}
@@ -433,6 +469,7 @@ export default function WmsPedidosPage() {
           {tab === "auto" && (
             <TabConcluidos
               pedidos={autoResolvidos}
+              toCardConcluido={toCardConcluido}
               onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
               ocultarOperador
             />
@@ -464,9 +501,12 @@ function TabPendente({
 }: {
   pedidos: Pedido[];
   toCardPedido: (p: Pedido) => Parameters<typeof PedidoCardWms>[0]["pedido"];
-  onAprovar: (p: Pedido) => void;
+  onAprovar: (p: Pedido, decisao: Decisao) => Promise<void> | void;
   onClickPedido: (id: string) => void;
 }) {
+  // Estado local de loading por pedido (impede aprovações duplas)
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+
   if (pedidos.length === 0) {
     return (
       <div className="wms-empty-block">
@@ -484,36 +524,27 @@ function TabPendente({
         <PedidoCardWms
           key={p.id}
           pedido={toCardPedido(p)}
-          modo="completo"
           onClick={() => onClickPedido(p.id)}
-          acoes={
-            <>
-              <button
-                className="wms-btn wms-btn-ghost wms-btn-sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toast.info("Recusar: implementação pendente");
-                }}
-              >
-                Recusar
-              </button>
-              <button
-                className="wms-btn wms-btn-primary wms-btn-sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (
-                    !confirm(
-                      `Aprovar pedido #${p.numero} com a sugestão ${p.sugestao}?`,
-                    )
-                  )
-                    return;
-                  onAprovar(p);
-                }}
-              >
-                Aprovar
-              </button>
-            </>
-          }
+          interactive={{
+            loading: loadingId === p.id,
+            onApprove: async (decisao) => {
+              if (
+                !window.confirm(
+                  `Aprovar pedido #${p.numero} com a decisão "${decisao}"?`,
+                )
+              )
+                return;
+              setLoadingId(p.id);
+              try {
+                await onAprovar(p, decisao);
+              } finally {
+                setLoadingId(null);
+              }
+            },
+            onReject: () => {
+              toast.info("Recusar: implementação pendente");
+            },
+          }}
         />
       ))}
     </div>
@@ -524,10 +555,12 @@ function TabPendente({
 
 function TabConcluidos({
   pedidos,
+  toCardConcluido,
   onClickPedido,
   ocultarOperador = false,
 }: {
   pedidos: Pedido[];
+  toCardConcluido: (p: Pedido) => PedidoConcluidoData;
   onClickPedido: (id: string) => void;
   ocultarOperador?: boolean;
 }) {
@@ -544,77 +577,15 @@ function TabConcluidos({
     );
   }
   return (
-    <div className="wms-tbl">
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Cliente</th>
-            <th>Marketplace</th>
-            <th>Galpão</th>
-            <th>Decisão</th>
-            {!ocultarOperador && <th>Operador</th>}
-            <th className="wms-tar">Processado</th>
-          </tr>
-        </thead>
-        <tbody>
-          {pedidos.map((p) => {
-            const eAuto = p.tipoResolucao === "auto";
-            return (
-              <tr
-                key={p.id}
-                className="wms-tr-clickable"
-                onClick={() => onClickPedido(p.id)}
-              >
-                <td className="wms-mono">
-                  <a className="wms-link-row">#{p.numero}</a>
-                </td>
-                <td>{p.cliente?.nome}</td>
-                <td>
-                  <span
-                    className="wms-pcard-chip"
-                    title={getMarketplaceName(p.nomeEcommerce)}
-                  >
-                    {getEcommerceAbbr(p.nomeEcommerce)}
-                  </span>
-                </td>
-                <td>
-                  <span className="wms-pcard-chip is-galpao">
-                    {p.filialOrigem}
-                  </span>
-                </td>
-                <td>
-                  <DecisaoLabel
-                    decisao={p.decisaoFinal ?? p.sugestao}
-                    galpaoOrigem={p.filialOrigem}
-                    galpaoFulfillment={null}
-                    compact
-                  />
-                </td>
-                {!ocultarOperador && (
-                  <td
-                    style={
-                      eAuto
-                        ? {
-                            color: "var(--wms-c-info)",
-                            fontWeight: 600,
-                          }
-                        : undefined
-                    }
-                  >
-                    {eAuto ? "Auto" : (p.operador ?? "—")}
-                  </td>
-                )}
-                <td className="wms-tar wms-td-mute" style={{ fontSize: 12 }}>
-                  {p.processadoEm
-                    ? formatRelativeTime(p.processadoEm)
-                    : formatRelativeTime(p.criadoEm)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {pedidos.map((p) => (
+        <PedidoCardConcluidoWms
+          key={p.id}
+          pedido={toCardConcluido(p)}
+          onClick={() => onClickPedido(p.id)}
+          ocultarOperador={ocultarOperador}
+        />
+      ))}
     </div>
   );
 }

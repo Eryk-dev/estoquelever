@@ -321,7 +321,7 @@ Entrou um pedido no ML pedindo <strong>2 unidades</strong>. A separação ainda 
 <div class="header">Histórico</div>
 <table>
 <tr><th>Tipo</th><th>Qtd</th><th>Categoria</th><th>Vence em</th></tr>
-<tr><td><span class="pill pill-r">Reserva</span></td><td class="num">2</td><td>Reserva de pedido</td><td>48 horas</td></tr>
+<tr><td><span class="pill pill-r">Reserva</span></td><td class="num">2</td><td>Reserva de pedido</td><td>30 dias</td></tr>
 </table>
 </div>
 
@@ -339,31 +339,46 @@ Entrou um pedido no ML pedindo <strong>2 unidades</strong>. A separação ainda 
 </div>
 
 <h3>Reservas têm prazo</h3>
-<p>Toda reserva nasce com prazo de 48h. Se nesse período a venda não confirmou, um robô do sistema cancela a reserva automaticamente (cria uma "liberação" — cenário 4). Sem isso, reservas órfãs travariam o estoque pra sempre.</p>
+<p>Reservas de pedido nascem com prazo de <strong>30 dias</strong>. Se nesse período não vier NF, cancelamento ou encaminhamento, o robô de cleanup (rodando todo dia às 3h da manhã) cria automaticamente uma "liberação" — cenário 4. Sem isso, reservas órfãs travariam o estoque pra sempre.</p>
+
+<div class="card tip">
+<strong>Pra reservas que não são de pedido</strong> (ex: bloqueio temporário, reserva de inventário), o padrão é 48h. Diferente porque servem a propósitos diferentes — pedido é planejado pra durar; bloqueio operacional deveria ser curto.
+</div>
 </div>
 </section>
 
 <!-- ============== C4 ============== -->
 <section id="c4">
-<h2>Cenário 4 — Liberação <span class="tag" style="background:#7c3aed;color:white">Reserva cancelada</span></h2>
+<h2>Cenário 4 — Liberação <span class="tag" style="background:#7c3aed;color:white">5 motivos possíveis</span></h2>
 
 <div class="card scenario">
 
 <h3>A situação</h3>
-<p>O cliente cancelou o pedido do cenário 3. As 2 unidades reservadas precisam voltar pra disponível.</p>
+<p>Uma reserva pode ser liberada por 5 motivos diferentes. Em todos, a quantidade reservada cai — mas o motivo registrado é diferente e ajuda quem audita a entender o que aconteceu.</p>
 
-<h4>Linha nova no histórico</h4>
+<h4>Os 5 motivos</h4>
+<table class="compare">
+<tr><th>Motivo</th><th>Quando acontece</th><th>Quem dispara</th></tr>
+<tr><td><strong>NF emitida</strong></td><td>Caminho feliz — operação fechou separação, NF saiu, reserva vira venda</td><td>Worker em background após webhook do Tiny</td></tr>
+<tr><td><strong>Cancelamento</strong></td><td>Cliente desistiu, pedido cancelado antes de separar</td><td>API de cancelamento</td></tr>
+<tr><td><strong>Encaminhamento</strong></td><td>Pedido mudou de galpão — libera no antigo pra recriar no novo</td><td>Operador clicando "encaminhar"</td></tr>
+<tr><td><strong>Ajuste admin</strong></td><td>Pedido travado, admin libera manualmente pra desbloquear</td><td>Botão admin-only</td></tr>
+<tr><td><strong>Expirado</strong></td><td>Passaram 30 dias sem nada acontecer — robô limpa</td><td>Cron 03:00 (cleanup)</td></tr>
+</table>
+
+<h4>Exemplo: cancelamento simples</h4>
+<p>Cliente cancelou o pedido do cenário 3. As 2 unidades reservadas precisam voltar pra disponível.</p>
+
 <div class="ledger-table">
 <div class="header">Histórico</div>
 <table>
-<tr><th>Tipo</th><th>Qtd</th><th>Categoria</th></tr>
-<tr><td><span class="pill pill-l">Liberação</span></td><td class="num">2</td><td>Liberação de reserva</td></tr>
+<tr><th>Tipo</th><th>Qtd</th><th>Categoria</th><th>Cancela a reserva #</th></tr>
+<tr><td><span class="pill pill-l">Liberação</span></td><td class="num">2</td><td>Liberação (cancelamento)</td><td>uuid da R original</td></tr>
 </table>
 </div>
 
-<h4>Depois</h4>
 <div class="ledger-table">
-<div class="header">Resumo</div>
+<div class="header">Resumo depois</div>
 <table>
 <tr><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
 <tr><td class="num">7</td><td class="num">0</td><td class="num">7</td></tr>
@@ -374,9 +389,31 @@ Entrou um pedido no ML pedindo <strong>2 unidades</strong>. A separação ainda 
 <strong>Resultado:</strong> a reserva sumiu do reservado. Mas <em>a linha da reserva original continua no histórico</em> — nunca é apagada. Quem audita vê: "foi reservado às 14h, foi liberado às 16h, motivo: cancelamento".
 </div>
 
+<h3>Cada liberação aponta pra reserva específica</h3>
+<p>Cada linha L guarda o campo "cancela a reserva #" (que é o uuid da R original). <strong>Isso é importante porque permite múltiplos ciclos R→L no mesmo pedido.</strong></p>
+
+<h4>Por que isso importa: encaminhamento</h4>
+<p>Imagine que um pedido foi reservado em CWB, depois encaminhado pra SP. Sequência:</p>
+<ol>
+  <li>R #1 criada em CWB (reserva nasce)</li>
+  <li>L #1 cancela R #1 (motivo: encaminhamento) — reserva libera</li>
+  <li>R #2 criada em SP (reserva nova no destino)</li>
+  <li>Tempo depois, NF emite</li>
+  <li>L #2 cancela R #2 (motivo: NF emitida)</li>
+  <li>S registra a saída real</li>
+</ol>
+
+<p>Como cada L aponta pra <em>R específica</em>, o sistema sabe distinguir: L #1 fechou R #1; L #2 fechou R #2. <strong>Não tem confusão.</strong></p>
+
+<div class="card tip">
+<strong>Idempotência:</strong> se alguém disparar o mesmo cancel duas vezes (clique duplo, retry), o sistema checa se já existe L apontando pra essa R. Se sim, pula — não duplica liberação. Tudo isso por reserva, não por pedido (importante pro caso do encaminhamento).
+</div>
+
 <div class="card warn">
 <strong>O sistema não deixa errar:</strong> se alguém tentar liberar 5 unidades quando só tem 2 reservadas, ele recusa com a mensagem "não dá pra liberar mais do que está reservado".
 </div>
+
+<p>O fluxo completo de cada um dos 5 motivos está em <a href="fluxo-reservas-wms.html">fluxo-reservas-wms.html</a> com diagramas e detalhes.</p>
 </div>
 </section>
 
@@ -406,9 +443,29 @@ Entrou um pedido no ML pedindo <strong>2 unidades</strong>. A separação ainda 
 <strong>Resultado:</strong> as 2 peças saíram do saldo. Ordem das linhas: primeiro libera a reserva, depois registra a saída. Assim a coerência fica limpa.
 </div>
 
+<h3>O "cutover" R→L+S é atômico</h3>
+<p>Quando a NF é emitida, as duas linhas (#2 Liberação e #3 Saída) são criadas <strong>juntas, na mesma operação</strong> pelo worker em background. Não é o operador fazendo 2 passos — é uma única instrução automática que "recolhe a plaquinha e leva a peça embora no mesmo gesto".</p>
+
+<p>O fluxo é:</p>
+<ol>
+  <li>Operador conclui a separação no sistema.</li>
+  <li>Sistema emite NF no Tiny.</li>
+  <li>Tiny manda webhook "NF autorizada".</li>
+  <li>Sistema salva os dados da NF e <strong>enfileira um trabalho</strong>.</li>
+  <li>Worker em background pega o trabalho.</li>
+  <li>Pra cada reserva R do pedido, cria L+S em sequência.</li>
+  <li>Pedido marcado como "estoque lançado".</li>
+</ol>
+
 <div class="card tip">
-<strong>Por que não fazer "reserva vira venda" direto?</strong> Por clareza no histórico. Quem audita vê: "tinha reserva, foi liberada, e teve a venda". Cada passo tem sua linha. Mais fácil de rastrear, mais fácil de corrigir se der ruim.
+<strong>Por que separar em L + S em vez de só baixar tudo?</strong> Por clareza no histórico. Quem audita vê: "tinha reserva, foi liberada (motivo NF emitida), e teve a venda". Cada passo tem sua linha. Mais fácil de rastrear, mais fácil de corrigir se der ruim.
 </div>
+
+<div class="card warn">
+<strong>Detalhe importante:</strong> o webhook da NF <em>não baixa estoque direto</em>. Ele só salva os dados e enfileira. Quem realmente baixa é o worker. Por isso pode ter um pequeno delay (segundos) entre "NF emitida" e "estoque baixado de fato".
+</div>
+
+<p>O fluxo completo com diagramas está em <a href="fluxo-reservas-wms.html">fluxo-reservas-wms.html</a>.</p>
 </div>
 </section>
 
@@ -446,9 +503,40 @@ Entrou um pedido no ML pedindo <strong>2 unidades</strong>. A separação ainda 
 <strong>Resultado:</strong> o saldo voltou pra 10, como se o erro não tivesse acontecido. Mas o histórico mostra <em>as duas linhas</em>. Quem auditar vê: "houve um lançamento errado às 10h, foi corrigido às 11h por fulano". A linha errada nunca some.
 </div>
 
+<h3>Caso importante: cancelar pedido depois que a NF saiu</h3>
+<p>Esse é o uso mais comum do mecanismo de correção no dia-a-dia. Cenário:</p>
+<ol>
+  <li>Pedido foi reservado.</li>
+  <li>Separação fechou, NF emitiu.</li>
+  <li>Reservas viraram saídas (cutover R→L+S do cenário 5).</li>
+  <li>Cliente pediu cancelamento <em>depois</em>.</li>
+</ol>
+
+<p>O estoque já saiu — não dá pra simplesmente "soltar a reserva", porque ela não existe mais. O sistema reverte criando <strong>uma Entrada compensatória pra cada Saída original</strong>, com categoria "Cancelamento de NF":</p>
+
+<div class="ledger-table">
+<div class="header">Histórico do pedido cancelado pós-separação</div>
+<table>
+<tr><th>#</th><th>Tipo</th><th>Qtd</th><th>Categoria</th><th>Corrige linha #</th></tr>
+<tr><td>1</td><td><span class="pill pill-r">Reserva</span></td><td class="num">3</td><td>Reserva de pedido</td><td>—</td></tr>
+<tr><td>2</td><td><span class="pill pill-l">Liberação</span></td><td class="num">3</td><td>Liberação (NF emitida)</td><td>#1</td></tr>
+<tr><td>3</td><td><span class="pill pill-s">Saída</span></td><td class="num">3</td><td>Venda (NF)</td><td>—</td></tr>
+<tr class="estorno"><td>4</td><td><span class="pill pill-e">Entrada</span></td><td class="num">3</td><td>Cancelamento de NF</td><td>#3 (cancela a saída)</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> saldo volta ao estado pré-venda. A NF original continua válida no Tiny (chave, DANFE, número) — só o estoque foi "desfaturado". Sistema levanta uma bandeira (<em>alerta de estoque lançado</em>) pra o operador conferir que a NF foi de fato cancelada com o cliente.
+</div>
+
+<div class="card warn">
+<strong>Por que isso é importante:</strong> antes desse mecanismo, cancelar pedido depois da NF era operação manual e arriscada. Agora é um clique do admin, e o histórico mostra exatamente o que aconteceu. Quem audita vê os 4 lances: reservou, liberou (NF), saiu, cancelou (E compensatória).
+</div>
+
 <h3>O mesmo mecanismo serve pra outras situações</h3>
 <ul>
-  <li><strong>NF cancelada depois de emitida:</strong> a saída vira correção, o saldo volta.</li>
+  <li><strong>Operador biparou peça errada:</strong> a saída vira correção, o saldo volta (exemplo dos cenários acima).</li>
+  <li><strong>Encaminhamento pós-separado:</strong> pedido mudou de galpão depois da NF — sistema cria E pra cada S original, e em seguida cria nova R no galpão destino.</li>
   <li><strong>Empréstimo entre empresas que foi devolvido:</strong> a saída original vira correção, a dívida zera.</li>
   <li><strong>Lançamento retroativo reconciliado:</strong> quando descobrimos que aquela "entrada de emergência" tinha sido feita também pelo fluxo normal, o sistema cria uma correção pra não contar duas vezes.</li>
 </ul>

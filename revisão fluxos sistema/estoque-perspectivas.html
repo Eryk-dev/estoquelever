@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Estoque — As 4 perspectivas de visualização</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });</script>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#18181b; --ink-2:#52525b; --ink-3:#a1a1aa;
+    --line:#e4e4e7; --brand:#0891b2; --brand-2:#164e63;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --info:#2563eb;
+    --p1:#0891b2; --p2:#7c3aed; --p3:#db2777; --p4:#d97706; }
+  *{box-sizing:border-box} body{margin:0;font-family:-apple-system,system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.6}
+  .wrap{max-width:1040px;margin:0 auto;padding:48px 24px 96px}
+  header{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:40px}
+  h1{margin:0 0 8px;font-size:32px;letter-spacing:-.02em} .sub{color:var(--ink-2);font-size:16px}
+  h2{margin:64px 0 16px;font-size:26px;padding-bottom:8px;border-bottom:2px solid var(--brand)}
+  h3{margin:28px 0 8px;font-size:18px;color:var(--brand-2)}
+  h4{margin:20px 0 8px;font-size:15px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+  p,li{font-size:15px} ul{padding-left:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;margin:16px 0}
+  .card.tldr{background:#ecfeff;border-color:#a5f3fc} .card.tldr strong{color:var(--brand-2)}
+  .card.tip{background:#fefce8;border-color:#fde047} .card.warn{background:#fef3c7;border-color:#f59e0b}
+  .t{background:#fafafa;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:16px 0}
+  .t .h{background:#18181b;color:#fff;padding:8px 12px;font-size:12px;
+    text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .t table{width:100%;border-collapse:collapse;margin:0}
+  .t th,.t td{padding:10px 14px;text-align:left;font-size:14px;
+    border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+  .t th{background:#fff;font-weight:600;color:var(--ink-2);font-size:12px;text-transform:uppercase}
+  .t tr:last-child td{border-bottom:none}
+  .t td:last-child,.t th:last-child{border-right:none}
+  .t td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .perspective{display:flex;gap:16px;padding:20px;border-radius:12px;margin:12px 0;
+    border:1px solid var(--line);background:#fff;align-items:flex-start}
+  .perspective .badge{font-weight:800;font-size:20px;width:44px;height:44px;
+    border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0}
+  .perspective.p1 .badge{background:var(--p1)} .perspective.p2 .badge{background:var(--p2)}
+  .perspective.p3 .badge{background:var(--p3)} .perspective.p4 .badge{background:var(--p4)}
+  .perspective .body{flex:1} .perspective h4{margin:0 0 4px;text-transform:none;color:var(--ink);font-size:16px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pill.ok{background:#dcfce7;color:#166534} .pill.warn{background:#fef3c7;color:#92400e}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px;margin:20px 0;text-align:center}
+  .caption{font-size:13px;color:var(--ink-2);margin-top:12px;font-style:italic}
+  .result{margin-top:20px;padding:14px 18px;border-radius:8px;font-size:15px;
+    border-left:4px solid var(--ok);background:#f0fdf4} .result strong{color:var(--ok)}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px 24px;margin-bottom:32px} nav.toc ol{margin:0;padding-left:20px}
+  nav.toc a{color:var(--brand);text-decoration:none}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    color:var(--ink-3);font-size:13px;text-align:center}
+</style>
+</head>
+<body><div class="wrap">
+
+<header>
+<h1>Estoque — as 4 perspectivas</h1>
+<p class="sub">Os mesmos números, agregados de 4 jeitos diferentes pra responder perguntas diferentes.</p>
+</header>
+
+<section id="conceito">
+<h2>A ideia em uma frase</h2>
+<div class="card tldr">
+<p><strong>O sistema guarda estoque numa estrutura 4D: cada posição é única por peça + empresa dona + galpão + localização.</strong> A mesma peça pode estar em 4 posições diferentes (várias empresas, vários galpões). Pra responder "quanto temos de X?" o sistema oferece 4 jeitos de agregar — cada um responde uma pergunta diferente.</p>
+</div>
+
+<h3>Saldo, Reservado e Disponível</h3>
+<table class="t" style="background:#fafafa">
+<tr><th>Campo</th><th>O que é</th></tr>
+<tr><td><strong>Saldo</strong></td><td>Quantidade física na posição</td></tr>
+<tr><td><strong>Reservado</strong></td><td>Parte do saldo que está "travada" pra pedidos em andamento</td></tr>
+<tr><td><strong>Disponível</strong></td><td>Saldo − Reservado. O que ainda pode ser vendido/movimentado</td></tr>
+</table>
+
+<div class="card tip">
+<strong>Regra de ouro:</strong> Disponível = Saldo − Reservado. Calculado automaticamente — não dá pra editar à mão. Garante consistência.
+</div>
+
+<h3>A chave 4D — única no sistema</h3>
+<p>Pra cada combinação <strong>(peça + empresa dona + galpão + localização)</strong>, existe <em>exatamente uma</em> linha de estoque. Não pode haver duas. Isso é regra do sistema, garantida pelo banco.</p>
+
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+    A[Peça PEC-100<br/>NetAir<br/>CWB<br/>CWB-A1-01] --> X[Posição única<br/>Saldo, Reservado, Custo médio]
+    B[Peça PEC-100<br/>NetAir<br/>CWB<br/>CWB-A1-02] --> Y[Posição diferente]
+    C[Peça PEC-100<br/>NetParts<br/>CWB<br/>CWB-A1-01] --> Z[Outra posição<br/>mesma loc física<br/>dono diferente]
+</pre></div>
+
+<p>Note: na mesma localização <code>CWB-A1-01</code>, podem coexistir caixas da NetAir e da NetParts. <strong>Fisicamente estão juntas, mas contábilmente separadas.</strong> Cada uma tem sua linha de estoque.</p>
+
+<h3>As 4 perspectivas</h3>
+
+<div class="perspective p1">
+<div class="badge">1</div>
+<div class="body">
+<h4>Por DONO (empresa)</h4>
+<p><strong>Pergunta:</strong> "Quanto estoque a NetAir tem total dessa peça?"</p>
+<p>Agrega todas as posições da empresa, somando saldo+reservado+disponível. Útil pra: relatórios financeiros, valor patrimonial, prestação de contas por empresa.</p>
+</div>
+</div>
+
+<div class="perspective p2">
+<div class="badge">2</div>
+<div class="body">
+<h4>Por GALPÃO</h4>
+<p><strong>Pergunta:</strong> "Quanto tem dessa peça em CWB no total (de todas as empresas)?"</p>
+<p>Agrega todas as posições do galpão. Útil pra: operação física, planejamento de expedição, capacidade de armazenamento.</p>
+</div>
+</div>
+
+<div class="perspective p3">
+<div class="badge">3</div>
+<div class="body">
+<h4>Por LOCALIZAÇÃO</h4>
+<p><strong>Pergunta:</strong> "Quanto tem na posição CWB-A1-01 (todas as peças, todos os donos)?"</p>
+<p>Mostra "o que cabe nessa prateleira". Útil pra: inventário, replenishment, planejamento de ocupação.</p>
+</div>
+</div>
+
+<div class="perspective p4">
+<div class="badge">4</div>
+<div class="body">
+<h4>Por PRODUTO</h4>
+<p><strong>Pergunta:</strong> "Quanto temos dessa peça no total (somando empresas, galpões e localizações)?"</p>
+<p>Visão consolidada do total operacional. Útil pra: análise de demanda, cobertura, sugestão de compra.</p>
+</div>
+</div>
+
+<h3>Exemplo concreto — a mesma situação vista 4 vezes</h3>
+<p>Imagine que temos PEC-100 em 4 posições diferentes:</p>
+
+<div class="t"><div class="h">Posições atuais</div>
+<table>
+<tr><th>Peça</th><th>Dono</th><th>Galpão</th><th>Localização</th><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
+<tr><td>PEC-100</td><td>NetAir</td><td>CWB</td><td>CWB-A1-01</td><td class="num">10</td><td class="num">2</td><td class="num">8</td></tr>
+<tr><td>PEC-100</td><td>NetAir</td><td>CWB</td><td>CWB-OVER-B1</td><td class="num">20</td><td class="num">0</td><td class="num">20</td></tr>
+<tr><td>PEC-100</td><td>NetAir</td><td>SP</td><td>SP-A1-01</td><td class="num">5</td><td class="num">1</td><td class="num">4</td></tr>
+<tr><td>PEC-100</td><td>NetParts</td><td>CWB</td><td>CWB-A1-01</td><td class="num">8</td><td class="num">0</td><td class="num">8</td></tr>
+</table></div>
+
+<h4>Por dono</h4>
+<div class="t"><table>
+<tr><th>Empresa</th><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
+<tr><td>NetAir</td><td class="num">35</td><td class="num">3</td><td class="num">32</td></tr>
+<tr><td>NetParts</td><td class="num">8</td><td class="num">0</td><td class="num">8</td></tr>
+</table></div>
+
+<h4>Por galpão</h4>
+<div class="t"><table>
+<tr><th>Galpão</th><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
+<tr><td>CWB</td><td class="num">38</td><td class="num">2</td><td class="num">36</td></tr>
+<tr><td>SP</td><td class="num">5</td><td class="num">1</td><td class="num">4</td></tr>
+</table></div>
+
+<h4>Por localização</h4>
+<div class="t"><table>
+<tr><th>Localização</th><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
+<tr><td>CWB-A1-01</td><td class="num">18</td><td class="num">2</td><td class="num">16</td></tr>
+<tr><td>CWB-OVER-B1</td><td class="num">20</td><td class="num">0</td><td class="num">20</td></tr>
+<tr><td>SP-A1-01</td><td class="num">5</td><td class="num">1</td><td class="num">4</td></tr>
+</table></div>
+
+<h4>Por produto (total consolidado)</h4>
+<div class="t"><table>
+<tr><th>Produto</th><th>Saldo total</th><th>Reservado total</th><th>Disponível total</th></tr>
+<tr><td>PEC-100</td><td class="num">43</td><td class="num">3</td><td class="num">40</td></tr>
+</table></div>
+
+<div class="result">
+<strong>Resultado:</strong> os mesmos 43 unidades de PEC-100 aparecem agrupados de 4 jeitos. Cada um responde uma pergunta. Soma sempre dá 43 — não há perda nem duplicação.
+</div>
+
+<h3>Filtros possíveis</h3>
+<p>Cada perspectiva pode ser filtrada antes de agregar:</p>
+<ul>
+<li><strong>Por produto específico:</strong> só PEC-100</li>
+<li><strong>Por empresa:</strong> só NetAir</li>
+<li><strong>Por galpão:</strong> só CWB</li>
+<li><strong>Combinações:</strong> NetAir em CWB</li>
+</ul>
+
+<p>O filtro acontece antes da agregação. Ex: "perspectiva por localização, filtrado por NetAir" mostra só as localizações onde NetAir tem estoque, mesmo que tenha outras empresas ali.</p>
+</section>
+
+<nav class="toc">
+<strong>Cenários (4 no total)</strong>
+<ol>
+<li><a href="#c1">Cenário 1 — Quando usar visão por dono</a></li>
+<li><a href="#c2">Cenário 2 — Quando usar visão por galpão</a></li>
+<li><a href="#c3">Cenário 3 — Quando usar visão por localização</a></li>
+<li><a href="#c4">Cenário 4 — Quando usar visão por produto</a></li>
+</ol>
+</nav>
+
+<section id="c1"><h2>Cenário 1 — Visão por dono</h2>
+<div class="card">
+<h3>Quando faz sentido</h3>
+<ul>
+<li><strong>Relatório financeiro mensal:</strong> "quanto vale o estoque da NetAir?"</li>
+<li><strong>Prestação de contas:</strong> "essa empresa tem X em estoque distribuído onde?"</li>
+<li><strong>Decisão de compra centralizada:</strong> "comprar pra NetAir ou pra NetParts dessa vez?"</li>
+<li><strong>Auditoria fiscal:</strong> "qual o saldo de cada empresa no fim do ano?"</li>
+</ul>
+
+<h3>Exemplo de uso</h3>
+<p>Admin abre a tela de estoque, perspectiva "por dono", filtra empresa NetAir. Vê todas as peças que ela tem, somadas por todas as posições. Pode exportar pra Excel pra prestação fiscal.</p>
+</div></section>
+
+<section id="c2"><h2>Cenário 2 — Visão por galpão</h2>
+<div class="card">
+<h3>Quando faz sentido</h3>
+<ul>
+<li><strong>Planejamento de expedição:</strong> "quantos pedidos saem de CWB hoje?"</li>
+<li><strong>Capacidade física:</strong> "esse galpão está cheio?"</li>
+<li><strong>Transferências:</strong> "vale a pena mover de CWB pra SP?"</li>
+<li><strong>Sintomas operacionais:</strong> "por que CWB tem mais devoluções que SP?"</li>
+</ul>
+
+<h3>Exemplo de uso</h3>
+<p>Gerente operacional abre o galpão CWB. Vê total de saldo (todas as empresas, todas as peças). Compara com a capacidade conhecida do galpão pra ver se há excesso.</p>
+</div></section>
+
+<section id="c3"><h2>Cenário 3 — Visão por localização</h2>
+<div class="card">
+<h3>Quando faz sentido</h3>
+<ul>
+<li><strong>Inventário:</strong> "quantas posições temos com saldo &gt; 0?"</li>
+<li><strong>Replenishment:</strong> "quais picking estão vazios?"</li>
+<li><strong>Investigação:</strong> "essa loc tem várias peças misturadas?"</li>
+<li><strong>Otimização de layout:</strong> "essa prateleira está subutilizada"</li>
+</ul>
+
+<h3>Exemplo de uso</h3>
+<p>Supervisor procura locs vazias antes de fazer um cycle count completo — não precisa contar o que não tem saldo. Outra: identifica locs onde muitas peças diferentes coexistem (talvez precise reorganizar).</p>
+</div></section>
+
+<section id="c4"><h2>Cenário 4 — Visão por produto</h2>
+<div class="card">
+<h3>Quando faz sentido</h3>
+<ul>
+<li><strong>Cobertura/saúde:</strong> "quanto temos no total dessa peça?"</li>
+<li><strong>Sugestão de compra:</strong> "precisa pedir mais?"</li>
+<li><strong>Análise de demanda:</strong> "vendemos quanto, temos quanto, e quanto compramos por mês?"</li>
+<li><strong>Discussão com comercial:</strong> "ML está mostrando 50 unidades, ML está certo?"</li>
+</ul>
+
+<h3>Exemplo de uso</h3>
+<p>Comprador abre a peça PEC-100. Vê total disponível (40 unidades, somadas de tudo). Cruza com cobertura (15 dias). Decide se pede agora ou espera. Sem ter que somar mentalmente as 4 posições.</p>
+</div></section>
+
+<footer>
+Documento explica as 4 perspectivas de visualização de estoque no WMS.
+<br>Complementa <a href="ledger-cenarios.html">ledger-cenarios.html</a> (como cada posição é alterada).
+<br>Atualizado em 2026-05-13.
+</footer>
+
+</div></body></html>

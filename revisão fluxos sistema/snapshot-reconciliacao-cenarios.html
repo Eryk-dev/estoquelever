@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snapshot inicial + Reconciliação</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });</script>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#18181b; --ink-2:#52525b; --ink-3:#a1a1aa;
+    --line:#e4e4e7; --brand:#0891b2; --brand-2:#164e63;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --info:#2563eb; }
+  *{box-sizing:border-box} body{margin:0;font-family:-apple-system,system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.6}
+  .wrap{max-width:1040px;margin:0 auto;padding:48px 24px 96px}
+  header{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:40px}
+  h1{margin:0 0 8px;font-size:32px;letter-spacing:-.02em} .sub{color:var(--ink-2);font-size:16px}
+  h2{margin:64px 0 16px;font-size:26px;padding-bottom:8px;border-bottom:2px solid var(--brand)}
+  h3{margin:28px 0 8px;font-size:18px;color:var(--brand-2)}
+  h4{margin:20px 0 8px;font-size:15px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+  p,li{font-size:15px} ul{padding-left:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;margin:16px 0}
+  .card.tldr{background:#ecfeff;border-color:#a5f3fc} .card.tldr strong{color:var(--brand-2)}
+  .card.tip{background:#fefce8;border-color:#fde047} .card.warn{background:#fef3c7;border-color:#f59e0b}
+  .t{background:#fafafa;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:16px 0}
+  .t .h{background:#18181b;color:#fff;padding:8px 12px;font-size:12px;
+    text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .t table{width:100%;border-collapse:collapse;margin:0}
+  .t th,.t td{padding:10px 14px;text-align:left;font-size:14px;
+    border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+  .t th{background:#fff;font-weight:600;color:var(--ink-2);font-size:12px;text-transform:uppercase}
+  .t tr:last-child td{border-bottom:none}
+  .t td:last-child,.t th:last-child{border-right:none}
+  .t td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pill.ok{background:#dcfce7;color:#166534} .pill.warn{background:#fef3c7;color:#92400e}
+  .pill.bad{background:#fee2e2;color:#991b1b} .pill.info{background:#dbeafe;color:#1e40af}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px;margin:20px 0;text-align:center}
+  .caption{font-size:13px;color:var(--ink-2);margin-top:12px;font-style:italic}
+  .result{margin-top:20px;padding:14px 18px;border-radius:8px;font-size:15px;
+    border-left:4px solid var(--ok);background:#f0fdf4} .result strong{color:var(--ok)}
+  .result.bad{background:#fef2f2;border-left-color:var(--bad)} .result.bad strong{color:var(--bad)}
+  .result.warn{background:#fffbeb;border-left-color:var(--warn)} .result.warn strong{color:var(--warn)}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px 24px;margin-bottom:32px} nav.toc ol{margin:0;padding-left:20px}
+  nav.toc a{color:var(--brand);text-decoration:none}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    color:var(--ink-3);font-size:13px;text-align:center}
+</style>
+</head>
+<body><div class="wrap">
+
+<header>
+<h1>Snapshot inicial + Reconciliação</h1>
+<p class="sub">Como o sistema é "ligado" pela primeira vez carregando estoque do Tiny — e como ele se auto-cura quando algo divergir.</p>
+</header>
+
+<section id="conceito">
+<h2>A ideia em 2 frases</h2>
+<div class="card tldr">
+<p><strong>Snapshot inicial:</strong> quando o WMS sobe pela primeira vez, ele precisa importar o estoque atual do Tiny. Esse processo lê os saldos de cada produto+empresa+galpão no Tiny e cria a primeira entrada no histórico do WMS. É a "fundação" do sistema.</p>
+<br>
+<p><strong>Reconciliação:</strong> ao longo do tempo, o resumo de estoque exibido nas telas pode divergir do histórico (por bug raro, intervenção manual no banco, restore mal feito). A reconciliação detecta a divergência e reconstrói o resumo somando o histórico inteiro.</p>
+</div>
+
+<h3>Snapshot inicial — o "go live"</h3>
+<p>Quando uma empresa começa a usar o WMS, o estoque dela já existe — em vários galpões, várias posições. O sistema precisa "saber" desse estoque antes de processar qualquer venda nova.</p>
+
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+A[Admin clica<br/>Snapshot inicial] --> B[Sistema lê produtos<br/>e saldos do Tiny]
+B --> C[Para cada saldo<br/>encontrado]
+C --> D{Já tem<br/>movimentação<br/>no WMS?}
+D -->|Sim| E[Pula - já foi snapshot antes]
+D -->|Não| F[Cria entrada inicial<br/>categoria 'Inventário inicial']
+F --> G[Saldo do WMS<br/>passa a existir]
+E --> H[Idempotente:<br/>pode rodar várias vezes]
+G --> H
+</pre></div>
+
+<h3>Como funciona o snapshot — passo a passo</h3>
+<ol>
+<li>Admin chama o processo (pela tela ou endpoint).</li>
+<li>Pode rodar em modo "dryRun": só simula, mostra o que <em>seria</em> feito sem fazer.</li>
+<li>Sistema lista todos os produtos cadastrados.</li>
+<li>Pra cada par produto+empresa, consulta o Tiny perguntando "qual o saldo agora?".</li>
+<li>Tiny responde com saldos por depósito (galpão).</li>
+<li>Sistema verifica se já existe movimentação no WMS pra esse par. Se sim, pula (idempotente). Se não, cria uma entrada inicial.</li>
+<li>A entrada é gravada com categoria "Inventário inicial" — fácil de identificar e separar de operações normais.</li>
+</ol>
+
+<h3>Idempotência</h3>
+<p>O snapshot pode ser rodado várias vezes sem efeito colateral. Se já foi rodado antes, ele só processa o que <em>ainda não</em> tinha sido importado (novos produtos cadastrados, novas empresas). Isso é importante porque a migração é gradual: começa com 1 empresa, depois adiciona outra, etc.</p>
+
+<h3>Reconciliação — saúde contínua</h3>
+<p>Depois que o sistema está rodando, há uma rotina de checagem que compara:</p>
+
+<table class="t" style="background:#fafafa">
+<tr><th>Fonte da verdade</th><th>Resumo na tela</th></tr>
+<tr><td>Soma de todas as movimentações do histórico</td><td>Tabela cached que é atualizada a cada movimentação</td></tr>
+</table>
+
+<p>Em condições normais, os dois batem. Quando não batem, é alerta — e o sistema sabe reconstruir o resumo do zero.</p>
+</section>
+
+<nav class="toc">
+<strong>Cenários (5 no total)</strong>
+<ol>
+<li><a href="#c1">Cenário 1 — Snapshot inicial — primeira execução</a></li>
+<li><a href="#c2">Cenário 2 — Snapshot em dryRun (simulação)</a></li>
+<li><a href="#c3">Cenário 3 — Snapshot repetido (idempotência em ação)</a></li>
+<li><a href="#c4">Cenário 4 — Reconciliação detecta divergência</a></li>
+<li><a href="#c5">Cenário 5 — Reconciliação corrige divergência (auto-fix)</a></li>
+</ol>
+</nav>
+
+<section id="c1"><h2>Cenário 1 — Snapshot inicial</h2>
+<div class="card">
+<h3>A situação</h3>
+<p>WMS recém implantado. NetAir tem ~5.000 produtos cadastrados no Tiny, distribuídos em 2 galpões. Total de saldos no Tiny: ~50.000 unidades. Vamos importar tudo.</p>
+
+<h3>O que o admin faz</h3>
+<ol>
+<li>Acessa o endpoint de snapshot (administrativo).</li>
+<li>Confirma a empresa de destino (NetAir).</li>
+<li>Sistema começa a processar.</li>
+<li>Loop: pra cada produto cadastrado, consulta Tiny, cria entradas iniciais.</li>
+<li>Processo demora minutos (depende do volume).</li>
+<li>Ao final, mostra resumo: "X produtos processados, Y entradas criadas".</li>
+</ol>
+
+<h3>Resultado</h3>
+<div class="t"><div class="h">Histórico depois do snapshot</div>
+<table>
+<tr><th>Quantidade</th><th>Categoria</th></tr>
+<tr><td class="num">~5.000 linhas</td><td>Inventário inicial</td></tr>
+</table></div>
+
+<div class="result">
+<strong>Resultado:</strong> WMS passa a "ver" o estoque inteiro da NetAir. A partir desse momento, novas vendas vão funcionar normalmente (descontando do saldo importado). <strong>Foi o "go live".</strong>
+</div>
+
+<div class="card tip">
+<strong>Pra quê serve a categoria "Inventário inicial"?</strong> Pra distinguir movimentações de carga inicial das operacionais. Relatórios "vendas dos últimos 30 dias" precisam excluir essa categoria pra não inflar. Auditoria entende imediatamente que aquela linha não é compra nem venda.
+</div>
+</div></section>
+
+<section id="c2"><h2>Cenário 2 — Snapshot em dryRun</h2>
+<div class="card">
+<h3>A situação</h3>
+<p>Antes de rodar o snapshot de verdade, admin quer ver o que <em>seria</em> feito. Usa modo dryRun.</p>
+
+<h3>Como funciona</h3>
+<ol>
+<li>Admin chama o endpoint com flag <code>dryRun=true</code>.</li>
+<li>Sistema executa todo o processo, <em>menos a gravação</em>.</li>
+<li>Retorna um relatório:
+  <ul>
+    <li>Produtos que seriam importados (e a quantidade de cada)</li>
+    <li>Produtos que seriam pulados (já existem)</li>
+    <li>Erros que foram encontrados (peça não encontrada no Tiny, dados inválidos, etc)</li>
+  </ul>
+</li>
+</ol>
+
+<h3>O admin revisa</h3>
+<div class="t"><div class="h">Relatório dryRun</div>
+<table>
+<tr><th>Status</th><th>Quantidade</th></tr>
+<tr><td>Criaria nova entrada</td><td class="num">4.823</td></tr>
+<tr><td>Pularia (já existe)</td><td class="num">12</td></tr>
+<tr><td>Erro (peça não encontrada no Tiny)</td><td class="num">5</td></tr>
+</table></div>
+
+<p>Admin investiga as 5 com erro. Pode ser:</p>
+<ul>
+<li>Peça desativada no Tiny mas ainda cadastrada no WMS (decisão: ignorar)</li>
+<li>SKU duplicado no Tiny (corrigir lá antes)</li>
+<li>Falha de rede momentânea (retry resolve)</li>
+</ul>
+
+<div class="result">
+<strong>Resultado:</strong> admin tem ciência completa do que vai acontecer. Pode resolver problemas antes de rodar o snapshot de verdade. <strong>Confiança no processo de carga.</strong>
+</div>
+</div></section>
+
+<section id="c3"><h2>Cenário 3 — Snapshot repetido</h2>
+<div class="card">
+<h3>A situação</h3>
+<p>2 meses depois do go-live da NetAir, vamos adicionar a NetParts no WMS. Rodamos o snapshot de novo, agora pra NetParts.</p>
+
+<h3>O que acontece</h3>
+<ol>
+<li>Sistema processa cada par produto+empresa.</li>
+<li><strong>Pares NetAir já têm histórico</strong> — sistema pula todos.</li>
+<li><strong>Pares NetParts são novos</strong> — sistema cria entradas iniciais.</li>
+<li>Saldos atuais da NetAir (do dia-a-dia) ficam intocados. Só NetParts ganha entradas iniciais.</li>
+</ol>
+
+<div class="t"><div class="h">Relatório</div>
+<table>
+<tr><th>Empresa</th><th>Criados</th><th>Pulados</th></tr>
+<tr><td>NetAir</td><td class="num">0</td><td class="num">5.012</td></tr>
+<tr><td>NetParts</td><td class="num">3.847</td><td class="num">0</td></tr>
+</table></div>
+
+<div class="result">
+<strong>Resultado:</strong> NetParts agora também tem estoque no WMS. NetAir permanece como estava — sem dobra de saldos. <strong>Idempotência funcionando como esperado.</strong>
+</div>
+
+<div class="card tip">
+<strong>E se quiser re-importar saldos da NetAir?</strong> Tipo, achou que tinha bug no snapshot original? Tem que primeiro <em>limpar</em> as entradas iniciais existentes (operação manual de administração) e rodar de novo. Pra evitar bagunça acidental, o sistema nunca sobrescreve sozinho.
+</div>
+</div></section>
+
+<section id="c4"><h2>Cenário 4 — Reconciliação detecta</h2>
+<div class="card">
+<h3>A situação</h3>
+<p>Toda madrugada, um robô do sistema roda a reconciliação no modo "só detectar":</p>
+
+<ol>
+<li>Pra cada posição (peça+empresa+galpão+localização), soma o histórico inteiro.</li>
+<li>Compara com o resumo cached.</li>
+<li>Se igual, ok.</li>
+<li>Se diferente, registra alerta com detalhes:
+  <ul>
+    <li>Qual posição</li>
+    <li>Saldo "histórico" (somado)</li>
+    <li>Saldo "cached" (na tabela de resumo)</li>
+    <li>Diferença</li>
+  </ul>
+</li>
+</ol>
+
+<h3>Exemplo de saída</h3>
+<div class="t"><div class="h">Divergências detectadas</div>
+<table>
+<tr><th>Posição</th><th>Histórico soma</th><th>Resumo cached</th><th>Divergência</th></tr>
+<tr><td>NetAir / CWB / CWB-A1-01 / PEC-100</td><td class="num">42</td><td class="num" style="color:#dc2626">40</td><td class="num" style="color:#dc2626">+2</td></tr>
+<tr><td>NetParts / SP / SP-B1-02 / PEC-501</td><td class="num">15</td><td class="num" style="color:#dc2626">16</td><td class="num" style="color:#dc2626">−1</td></tr>
+</table></div>
+
+<div class="result warn">
+<strong>Resultado:</strong> 2 posições divergentes detectadas. <strong>Sistema só alerta — não corrige automaticamente.</strong> O admin (ou time técnico) investiga o que aconteceu. Pode ser bug recente, intervenção manual, etc.
+</div>
+
+<div class="card warn">
+<strong>Por que não corrigir automaticamente?</strong> Porque divergência indica que <em>algo</em> está errado no fluxo. Corrigir sem investigar mascara o problema. Melhor alertar, descobrir a causa raiz, corrigir o fluxo, e só depois aplicar a correção.
+</div>
+</div></section>
+
+<section id="c5"><h2>Cenário 5 — Reconciliação com auto-fix</h2>
+<div class="card">
+<h3>A situação</h3>
+<p>Time técnico investigou as divergências do cenário 4 — concluiu que foi um bug antigo já corrigido. Agora vai aplicar a correção rodando reconciliação em modo "auto-fix".</p>
+
+<h3>Como funciona</h3>
+<ol>
+<li>Admin chama o endpoint com flag <code>fix=true</code>.</li>
+<li>Sistema detecta divergências (igual ao cenário 4).</li>
+<li>Pra cada uma, <strong>reconstrói o resumo</strong> somando o histórico inteiro daquela posição.</li>
+<li>Atualiza o cache com o valor correto.</li>
+<li>Loga aviso com o que foi corrigido.</li>
+</ol>
+
+<h3>Antes e depois</h3>
+<div class="t"><div class="h">Antes do auto-fix</div>
+<table>
+<tr><th>Posição</th><th>Cache</th><th>Histórico</th></tr>
+<tr><td>NetAir / CWB / CWB-A1-01 / PEC-100</td><td class="num" style="color:#dc2626">40</td><td class="num">42</td></tr>
+</table></div>
+
+<div class="t"><div class="h">Depois</div>
+<table>
+<tr><th>Posição</th><th>Cache</th><th>Histórico</th></tr>
+<tr><td>NetAir / CWB / CWB-A1-01 / PEC-100</td><td class="num" style="color:#16a34a">42 ✓</td><td class="num">42</td></tr>
+</table></div>
+
+<div class="result">
+<strong>Resultado:</strong> resumo está alinhado com a fonte da verdade (histórico). O bug que tinha causado a divergência foi corrigido antes — agora não vai voltar a divergir. <strong>O histórico nunca foi tocado</strong> — ele é imutável. Só o resumo é reconstruído.
+</div>
+
+<h3>Por que confiar no histórico e não no cache?</h3>
+<p>Porque o histórico é gravado uma vez e nunca mais alterado. É <em>imutável</em>. O cache é uma otimização (pra não ter que somar tudo a cada leitura). Se cache e histórico discordam, o histórico ganha — sempre.</p>
+
+<div class="card tip">
+<strong>Periodicidade ideal:</strong>
+<ul>
+<li><strong>Detecção (sem fix):</strong> diária. Alerta se houver divergência.</li>
+<li><strong>Auto-fix:</strong> mensal ou sob demanda. Só após investigar a causa.</li>
+</ul>
+</div>
+</div></section>
+
+<footer>
+Documento explica snapshot inicial e reconciliação no WMS.
+<br>Complementa <a href="ledger-cenarios.html">ledger-cenarios.html</a> (princípio "histórico é fonte da verdade").
+<br>Atualizado em 2026-05-13.
+</footer>
+
+</div></body></html>

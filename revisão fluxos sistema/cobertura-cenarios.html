@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cobertura de estoque — Saúde do estoque por peça</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });</script>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#18181b; --ink-2:#52525b; --ink-3:#a1a1aa;
+    --line:#e4e4e7; --brand:#0891b2; --brand-2:#164e63;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --info:#2563eb; }
+  *{box-sizing:border-box} body{margin:0;font-family:-apple-system,system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.6}
+  .wrap{max-width:1040px;margin:0 auto;padding:48px 24px 96px}
+  header{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:40px}
+  h1{margin:0 0 8px;font-size:32px;letter-spacing:-.02em} .sub{color:var(--ink-2);font-size:16px}
+  h2{margin:64px 0 16px;font-size:26px;padding-bottom:8px;border-bottom:2px solid var(--brand)}
+  h2 .tag{display:inline-block;font-size:12px;background:var(--brand);color:#fff;
+    padding:3px 10px;border-radius:4px;margin-left:12px;vertical-align:middle}
+  h2 .tag.bad{background:var(--bad)} h2 .tag.warn{background:var(--warn)} h2 .tag.ok{background:var(--ok)}
+  h3{margin:28px 0 8px;font-size:18px;color:var(--brand-2)}
+  h4{margin:20px 0 8px;font-size:15px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+  p,li{font-size:15px} ul{padding-left:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;margin:16px 0}
+  .card.tldr{background:#ecfeff;border-color:#a5f3fc} .card.tldr strong{color:var(--brand-2)}
+  .card.scenario{padding:28px} .card.tip{background:#fefce8;border-color:#fde047}
+  .card.warn{background:#fef3c7;border-color:#f59e0b}
+  .order-box{background:#f0f9ff;border-left:4px solid var(--info);padding:12px 16px;
+    margin:16px 0;border-radius:4px;font-size:14px} .order-box strong{color:var(--info)}
+  .t{background:#fafafa;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:16px 0}
+  .t .h{background:#18181b;color:#fff;padding:8px 12px;font-size:12px;
+    text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .t table{width:100%;border-collapse:collapse;margin:0}
+  .t th,.t td{padding:10px 14px;text-align:left;font-size:14px;
+    border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+  .t th{background:#fff;font-weight:600;color:var(--ink-2);font-size:12px;text-transform:uppercase}
+  .t tr:last-child td{border-bottom:none}
+  .t td:last-child,.t th:last-child{border-right:none}
+  .t td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .status-cell{font-weight:700;text-align:center}
+  .status-ok{background:#dcfce7;color:#166534}
+  .status-warn{background:#fef3c7;color:#92400e}
+  .status-bad{background:#fee2e2;color:#991b1b}
+  .status-risk{background:#ffe4e6;color:#881337}
+  .status-zero{background:#f4f4f5;color:#52525b}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pill.ok{background:#dcfce7;color:#166534} .pill.warn{background:#fef3c7;color:#92400e}
+  .pill.bad{background:#fee2e2;color:#991b1b} .pill.info{background:#dbeafe;color:#1e40af}
+  .pill.risk{background:#ffe4e6;color:#881337} .pill.zero{background:#f4f4f5;color:#52525b}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px;margin:20px 0;text-align:center}
+  .caption{font-size:13px;color:var(--ink-2);margin-top:12px;font-style:italic}
+  .result{margin-top:20px;padding:14px 18px;border-radius:8px;font-size:15px;
+    border-left:4px solid var(--ok);background:#f0fdf4} .result strong{color:var(--ok)}
+  .result.bad{background:#fef2f2;border-left-color:var(--bad)} .result.bad strong{color:var(--bad)}
+  .result.warn{background:#fffbeb;border-left-color:var(--warn)} .result.warn strong{color:var(--warn)}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px 24px;margin-bottom:32px} nav.toc ol{margin:0;padding-left:20px}
+  nav.toc a{color:var(--brand);text-decoration:none} nav.toc a:hover{text-decoration:underline}
+  nav.toc li{margin:4px 0}
+  table.cmp{width:100%;border-collapse:collapse;margin:24px 0;font-size:14px}
+  table.cmp th,table.cmp td{padding:12px 14px;border:1px solid var(--line);text-align:left}
+  table.cmp th{background:#18181b;color:#fff;font-weight:600}
+  table.cmp tr:nth-child(even) td{background:#fafafa}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    color:var(--ink-3);font-size:13px;text-align:center}
+</style>
+</head>
+<body><div class="wrap">
+
+<header>
+<h1>Cobertura de estoque</h1>
+<p class="sub">Pra cada peça, "quantos dias o estoque atual ainda dura, considerando o ritmo de venda?". Status críticos pra o comprador agir.</p>
+</header>
+
+<section id="conceito">
+<h2>A ideia em uma frase</h2>
+<div class="card tldr">
+<p><strong>Cobertura responde: "essa peça vai durar quanto tempo?"</strong>. Cruza o saldo atual com o ritmo de venda dos últimos 30 dias e o tempo de entrega do fornecedor. Se o estoque acaba <em>antes</em> do fornecedor reabastecer, é alerta. Se sobra muito, é desperdício de capital.</p>
+</div>
+
+<h3>O cálculo</h3>
+<table class="cmp">
+<tr><th>Valor</th><th>De onde vem</th></tr>
+<tr><td><strong>Disponível total</strong></td><td>Soma do saldo disponível em todos os galpões (ou filtrado por galpão)</td></tr>
+<tr><td><strong>Giro diário</strong></td><td>Vendas dos últimos 30 dias ÷ 30. "Vendemos quanto por dia em média"</td></tr>
+<tr><td><strong>Dias de cobertura</strong></td><td>Disponível ÷ giro diário. "O estoque dura quantos dias se o ritmo continuar"</td></tr>
+<tr><td><strong>Tempo de entrega</strong></td><td>Médio do fornecedor preferencial. "Quanto demora pra chegar peça nova"</td></tr>
+</table>
+
+<h3>Os 5 status</h3>
+
+<div class="t"><div class="h">Classificação</div>
+<table>
+<tr><th>Status</th><th>Significado</th><th>Critério</th></tr>
+<tr><td class="status-cell status-ok">OK</td><td>Estoque saudável</td><td>Cobertura ≥ 2× o tempo de entrega</td></tr>
+<tr><td class="status-cell status-warn">Atenção</td><td>Acabando — precisa pedir logo</td><td>Cobertura entre 1× e 2× o tempo de entrega</td></tr>
+<tr><td class="status-cell status-bad">Crítico</td><td>Vai acabar antes de chegar reposição</td><td>Cobertura &lt; 1× o tempo de entrega</td></tr>
+<tr><td class="status-cell status-risk">Risco lead time</td><td>Fornecedor demora demais — incerteza alta</td><td>Tempo de entrega ≥ X dias (configurável)</td></tr>
+<tr><td class="status-cell status-zero">Sem giro</td><td>Não vendeu nada nos últimos 30 dias</td><td>Giro = 0; cobertura "infinita" (mas dinheiro parado)</td></tr>
+</table></div>
+
+<h3>Atualização</h3>
+<p>O cálculo de cobertura é pesado: precisa cruzar várias tabelas (estoque, ledger 30 dias, fornecedores). Por isso o sistema mantém uma <strong>tabela de resumo</strong> que é atualizada periodicamente (cron diário) ou sob demanda (botão "atualizar" no painel).</p>
+
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+A[Cron diário] --> B[Refresh cobertura]
+C[Usuário clica<br/>atualizar agora] --> B
+B --> D[Cruza estoque + giro 30d + fornecedor]
+D --> E[Classifica cada peça por status]
+E --> F[Painel mostra]
+</pre></div>
+
+<p>Em geral, a tabela é atualizada de madrugada. Quando o usuário entra no painel, vê dados de algumas horas atrás — suficiente pra decisão tática. Pra ver "agora" precisa clicar em atualizar.</p>
+</section>
+
+<nav class="toc">
+<strong>Cenários (5 no total)</strong>
+<ol>
+<li><a href="#c1">Cenário 1 — Peça OK (cobertura confortável)</a></li>
+<li><a href="#c2">Cenário 2 — Atenção (precisa pedir logo)</a></li>
+<li><a href="#c3">Cenário 3 — Crítico (vai estourar antes da reposição)</a></li>
+<li><a href="#c4">Cenário 4 — Risco de lead time (fornecedor demora demais)</a></li>
+<li><a href="#c5">Cenário 5 — Sem giro (dinheiro parado)</a></li>
+</ol>
+</nav>
+
+<section id="c1"><h2>Cenário 1 — Peça OK <span class="tag ok">Saudável</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<div class="t"><div class="h">PEC-100</div>
+<table>
+<tr><th>Disponível total</th><th>Vendas 30d</th><th>Giro diário</th><th>Tempo entrega</th></tr>
+<tr><td class="num">200</td><td class="num">60</td><td class="num">2/dia</td><td class="num">10 dias</td></tr>
+</table></div>
+
+<h3>Cálculo</h3>
+<ul>
+<li>Cobertura: 200 ÷ 2 = <strong>100 dias</strong></li>
+<li>100 / 10 = 10× o tempo de entrega → muito acima do limite 2×</li>
+<li>Status: <span class="pill ok">OK</span></li>
+</ul>
+
+<div class="result">
+<strong>Resultado:</strong> peça saudável. Cobertura confortável. Comprador <strong>não precisa fazer nada</strong> com essa peça hoje. Pode focar em peças críticas.
+</div>
+
+<div class="card tip">
+<strong>Cobertura altíssima não é necessariamente boa.</strong> 100 dias significa muito capital parado. Em peças baratas, é tranquilo. Em peças caras, pode indicar excesso. Outro painel (não esse) ajuda a identificar excessos.
+</div>
+</div></section>
+
+<section id="c2"><h2>Cenário 2 — Atenção <span class="tag warn">Precisa pedir logo</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<div class="t"><div class="h">PEC-200</div>
+<table>
+<tr><th>Disponível</th><th>Vendas 30d</th><th>Giro diário</th><th>Tempo entrega</th></tr>
+<tr><td class="num">30</td><td class="num">60</td><td class="num">2/dia</td><td class="num">10 dias</td></tr>
+</table></div>
+
+<h3>Cálculo</h3>
+<ul>
+<li>Cobertura: 30 ÷ 2 = <strong>15 dias</strong></li>
+<li>15 / 10 = 1,5× o tempo de entrega → entre 1× e 2× (faixa de atenção)</li>
+<li>Status: <span class="pill warn">Atenção</span></li>
+</ul>
+
+<div class="result warn">
+<strong>Resultado:</strong> a peça vai durar 15 dias e o fornecedor demora 10. Margem de 5 dias. <strong>É hora de pedir, antes de virar crítico.</strong> Comprador identifica essa peça no painel e prioriza o pedido.
+</div>
+
+<div class="card tip">
+<strong>Por que 2× e não 1,5×?</strong> Pra absorver imprevisto. Lead time é o tempo médio — pode atrasar. Vendas podem acelerar. Manter 2× cria buffer.
+</div>
+</div></section>
+
+<section id="c3"><h2>Cenário 3 — Crítico <span class="tag bad">Vai estourar</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<div class="t"><div class="h">PEC-300</div>
+<table>
+<tr><th>Disponível</th><th>Vendas 30d</th><th>Giro diário</th><th>Tempo entrega</th></tr>
+<tr><td class="num">10</td><td class="num">60</td><td class="num">2/dia</td><td class="num">10 dias</td></tr>
+</table></div>
+
+<h3>Cálculo</h3>
+<ul>
+<li>Cobertura: 10 ÷ 2 = <strong>5 dias</strong></li>
+<li>5 / 10 = 0,5× o tempo de entrega → menor que 1× (crítico)</li>
+<li>Status: <span class="pill bad">Crítico</span></li>
+</ul>
+
+<div class="result bad">
+<strong>Resultado:</strong> a peça acaba em 5 dias e o fornecedor demora 10. <strong>Vai ter ruptura de 5 dias.</strong> Comprador precisa agir <em>agora</em>: pedir entrega expressa, pedir empréstimo de parceira, ou aceitar a falta.
+</div>
+
+<h3>Indicadores adicionais que aparecem no painel</h3>
+<ul>
+<li>Dias estimados de ruptura (5)</li>
+<li>Quantidade que faltará no período (60 × 5/30 = 10 unidades)</li>
+<li>Valor financeiro perdido (10 × preço de venda)</li>
+<li>Pedidos pendentes que vão pegar essa peça</li>
+</ul>
+</div></section>
+
+<section id="c4"><h2>Cenário 4 — Risco de lead time <span class="tag bad">Fornecedor demora demais</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<div class="t"><div class="h">PEC-RARO</div>
+<table>
+<tr><th>Disponível</th><th>Vendas 30d</th><th>Giro diário</th><th>Tempo entrega</th></tr>
+<tr><td class="num">5</td><td class="num">3</td><td class="num">0,1/dia</td><td class="num">45 dias</td></tr>
+</table></div>
+
+<h3>Cálculo</h3>
+<ul>
+<li>Cobertura: 5 ÷ 0,1 = <strong>50 dias</strong></li>
+<li>50 / 45 = 1,1× — parece atenção, mas...</li>
+<li>Tempo de entrega ≥ 45 dias é alto demais — qualquer pico de venda esvazia antes de chegar</li>
+<li>Status: <span class="pill risk">Risco lead time</span></li>
+</ul>
+
+<div class="result warn">
+<strong>Resultado:</strong> mesmo com cobertura aparentemente OK, o fornecedor demora muito. Se vender 2 peças num dia, a cobertura cai pra 30 dias — e fornecedor leva 45. <strong>Imprevisibilidade alta.</strong> Comprador deveria avaliar fornecedor alternativo ou aumentar estoque mínimo.
+</div>
+
+<div class="card tip">
+<strong>Lead time longo é típico de:</strong> peças importadas, peças sob encomenda, peças de fornecedor com baixa eficiência logística. Não dá pra eliminar — só pra gerenciar com estoque maior ou múltiplos fornecedores.
+</div>
+</div></section>
+
+<section id="c5"><h2>Cenário 5 — Sem giro <span class="tag" style="background:#52525b;color:white">Capital parado</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<div class="t"><div class="h">PEC-MORTA</div>
+<table>
+<tr><th>Disponível</th><th>Vendas 30d</th><th>Giro diário</th><th>Tempo entrega</th></tr>
+<tr><td class="num">50</td><td class="num">0</td><td class="num">0/dia</td><td class="num">10 dias</td></tr>
+</table></div>
+
+<h3>Cálculo</h3>
+<ul>
+<li>Giro: 0 vendas em 30 dias</li>
+<li>Cobertura: infinita (não dá pra dividir por 0)</li>
+<li>Status: <span class="pill zero">Sem giro</span></li>
+</ul>
+
+<div class="result">
+<strong>Resultado:</strong> ninguém comprou nos últimos 30 dias. <strong>50 unidades de capital parado.</strong> Comprador deve avaliar:
+<ul>
+<li>Foi um sazonal que vai voltar?</li>
+<li>Peça obsoleta — vender com desconto, doar?</li>
+<li>Bug no cadastro (peça não está ativa no ML)?</li>
+<li>Mudança de fornecedor que tornou essa SKU caduca?</li>
+</ul>
+</div>
+
+<div class="card tip">
+<strong>Sem giro ≠ ruim necessariamente.</strong> Peças muito raras (vendem 1 vez por ano) podem ficar 30 dias sem giro mas serem essenciais. O painel é alerta — decisão final é humana. Em geral, "sem giro" há vários meses é sinal pra ação (liquidação, descontinuação).
+</div>
+
+<h3>Ações comuns sobre peças sem giro</h3>
+<ul>
+<li><strong>Promoção:</strong> baixar preço pra acelerar saída</li>
+<li><strong>Transferência:</strong> mover pra galpão onde gira melhor</li>
+<li><strong>Desativar:</strong> tirar do ML mas manter estoque pra reposição interna</li>
+<li><strong>Devolver fornecedor:</strong> se ainda houver acordo</li>
+<li><strong>Doação/descarte:</strong> última opção</li>
+</ul>
+</div></section>
+
+<footer>
+Documento explica o módulo de cobertura de estoque.
+<br>Complementa <a href="fornecedores-cenarios.html">fornecedores-cenarios.html</a> (tempo de entrega usado no cálculo).
+<br>Atualizado em 2026-05-13.
+</footer>
+
+</div></body></html>

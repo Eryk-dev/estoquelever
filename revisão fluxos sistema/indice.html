@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WMS — Revisão completa dos fluxos</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#18181b; --ink-2:#52525b; --ink-3:#a1a1aa;
+    --line:#e4e4e7; --brand:#0891b2; --brand-2:#164e63;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --info:#2563eb; }
+  *{box-sizing:border-box} body{margin:0;font-family:-apple-system,system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.6}
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 24px 96px}
+  header{margin-bottom:48px}
+  h1{margin:0 0 12px;font-size:38px;letter-spacing:-.02em}
+  .sub{color:var(--ink-2);font-size:18px;max-width:720px}
+  h2{margin:56px 0 16px;font-size:24px;letter-spacing:-.01em;
+    padding-bottom:10px;border-bottom:2px solid var(--brand)}
+  h3{margin:24px 0 8px;font-size:17px;color:var(--brand-2)}
+  p{font-size:15px;color:var(--ink)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;margin:16px 0}
+  .card.tldr{background:#ecfeff;border-color:#a5f3fc} .card.tldr strong{color:var(--brand-2)}
+  .group{margin:32px 0}
+  .group-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+  .group-header .ico{font-size:24px;width:48px;height:48px;border-radius:10px;
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700}
+  .group-header h2{margin:0;border:none;padding:0;font-size:22px}
+  .group-header p{margin:0;color:var(--ink-2);font-size:14px}
+  .doc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:12px}
+  .doc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;
+    text-decoration:none;color:var(--ink);transition:all .15s;display:block}
+  .doc:hover{border-color:var(--brand);transform:translateY(-1px);
+    box-shadow:0 4px 12px rgba(8,145,178,.1)}
+  .doc h3{margin:0 0 6px;color:var(--brand-2);font-size:16px}
+  .doc p{margin:0;font-size:13px;color:var(--ink-2);line-height:1.5}
+  .doc .tags{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap}
+  .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f4f4f5;color:var(--ink-2);font-weight:600}
+  .doc.featured{background:linear-gradient(135deg,#ecfeff,#fff);border-color:#a5f3fc}
+
+  .map{background:#fff;border:1px solid var(--line);border-radius:14px;padding:28px;margin:32px 0}
+  .map-section{margin-bottom:24px}
+  .map-section h4{margin:0 0 8px;font-size:14px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+  .map-section ul{margin:0;padding-left:20px}
+  .map-section li{margin:4px 0;font-size:14px}
+  .map-section a{color:var(--brand);text-decoration:none}
+  .map-section a:hover{text-decoration:underline}
+
+  .ico-foundation{background:#0891b2}
+  .ico-operacao{background:#7c3aed}
+  .ico-roteamento{background:#16a34a}
+  .ico-inventario{background:#db2777}
+  .ico-comercial{background:#d97706}
+  .ico-analise{background:#2563eb}
+  .ico-admin{background:#52525b}
+
+  footer{margin-top:80px;padding-top:24px;border-top:1px solid var(--line);
+    color:var(--ink-3);font-size:13px;text-align:center}
+</style>
+</head>
+<body><div class="wrap">
+
+<header>
+<h1>WMS — Revisão completa dos fluxos</h1>
+<p class="sub">14 documentos cobrindo todos os módulos do sistema novo, em linguagem simples. Cada documento explora os cenários possíveis de um módulo, com diagramas e exemplos práticos.</p>
+</header>
+
+<div class="card tldr">
+<p><strong>Como usar este índice:</strong> os documentos estão agrupados por área de negócio. Comece pelos <em>fundamentos</em> (histórico de movimentações + 4 perspectivas de estoque) pra entender o "como o sistema pensa". Depois mergulhe nos módulos específicos conforme a necessidade.</p>
+</div>
+
+<!-- ============== FUNDAMENTOS ============== -->
+<div class="group">
+<div class="group-header">
+<div class="ico ico-foundation">⚙</div>
+<div>
+<h2>Fundamentos</h2>
+<p>Como o sistema registra e estrutura o estoque.</p>
+</div>
+</div>
+
+<div class="doc-grid">
+<a class="doc featured" href="ledger-cenarios.html">
+<h3>Histórico de movimentações</h3>
+<p>Como cada mudança de estoque vira uma linha imutável no histórico. Os 4 tipos (entrada, saída, reserva, liberação), correção sem apagar, validações automáticas, concorrência segura.</p>
+<div class="tags"><span class="tag">9 cenários</span><span class="tag">fundamento</span></div>
+</a>
+
+<a class="doc featured" href="estoque-perspectivas.html">
+<h3>Estoque — as 4 perspectivas</h3>
+<p>Mesmos números agregados por dono, galpão, localização ou produto. Cada perspectiva responde perguntas diferentes (financeiro, operacional, inventário, demanda).</p>
+<div class="tags"><span class="tag">4 cenários</span><span class="tag">fundamento</span></div>
+</a>
+
+<a class="doc" href="catalogo-cenarios.html">
+<h3>Catálogo — produtos, localizações e kits</h3>
+<p>Os 3 cadastros fundamentais: peças (com sincronização do Tiny), localizações (com tipos e zonas), e kits (produtos virtuais montados na venda).</p>
+<div class="tags"><span class="tag">6 cenários</span><span class="tag">cadastro</span></div>
+</a>
+</div>
+</div>
+
+<!-- ============== MOVIMENTAÇÃO ============== -->
+<div class="group">
+<div class="group-header">
+<div class="ico ico-operacao">📦</div>
+<div>
+<h2>Movimentação operacional</h2>
+<p>O que o operador faz no dia-a-dia: receber, transferir, repor, ajustar.</p>
+</div>
+</div>
+
+<div class="doc-grid">
+<a class="doc" href="movimentacoes-cenarios.html">
+<h3>Movimentações operacionais</h3>
+<p>5 operações cotidianas: receber mercadoria (com sugestão de localização e custo médio), transferir entre galpões, repor o picking, ajuste manual, lançamento retroativo com reconciliação.</p>
+<div class="tags"><span class="tag">10 cenários</span><span class="tag">operação</span></div>
+</a>
+</div>
+</div>
+
+<!-- ============== ROTEAMENTO ============== -->
+<div class="group">
+<div class="group-header">
+<div class="ico ico-roteamento">🧭</div>
+<div>
+<h2>Roteamento de pedidos</h2>
+<p>Como o sistema decide de onde sai cada pedido — e como minimiza penalização do ML.</p>
+</div>
+</div>
+
+<div class="doc-grid">
+<a class="doc featured" href="roteamento-cenarios.html">
+<h3>Roteamento de pedidos</h3>
+<p>Como o sistema escolhe entre próprio, swap, empréstimo ou compra. Geo-priority, hierarquia de decisão, fragmentação. 10 cenários cobrindo tudo, do ideal ao pior caso.</p>
+<div class="tags"><span class="tag">10 cenários</span><span class="tag">core</span></div>
+</a>
+
+<a class="doc" href="swap-cenarios.html">
+<h3>Swap — Todos os cenários</h3>
+<p>Troca contábil entre empresas sem mexer fisicamente. 8 cenários incluindo fragmentação multi-partners, swap salvando preferencial, casos onde swap é impossível.</p>
+<div class="tags"><span class="tag">8 cenários</span><span class="tag">contábil</span></div>
+</a>
+
+<a class="doc" href="emprestimos-cenarios.html">
+<h3>Empréstimos entre empresas</h3>
+<p>Quando uma empresa empresta estoque pra outra cobrir um pedido. Matriz N×N de regras, limites por produto, saldos devedores líquidos, quitação por devolução.</p>
+<div class="tags"><span class="tag">6 cenários</span><span class="tag">contábil</span></div>
+</a>
+
+<a class="doc" href="fluxo-reservas-wms.html">
+<h3>Fluxo de reservas</h3>
+<p>Como o sistema "trava" estoque pra pedidos, a expiração de 48h, e como reservas viram vendas confirmadas.</p>
+<div class="tags"><span class="tag">reservas</span><span class="tag">core</span></div>
+</a>
+</div>
+</div>
+
+<!-- ============== INVENTÁRIO ============== -->
+<div class="group">
+<div class="group-header">
+<div class="ico ico-inventario">📋</div>
+<div>
+<h2>Inventário</h2>
+<p>Cycle count com vários operadores em paralelo, divergências e auditoria.</p>
+</div>
+</div>
+
+<div class="doc-grid">
+<a class="doc featured" href="inventario-cenarios.html">
+<h3>Inventário — pull queue + slots</h3>
+<p>3 tipos (inteligente / manual / completo), 2 modos (blind / aberto), slots OP1-OP5, smart routing pra evitar colisão entre operadores, encerrar parcial.</p>
+<div class="tags"><span class="tag">11 cenários</span><span class="tag">complexo</span></div>
+</a>
+
+<a class="doc" href="divergencias-cenarios.html">
+<h3>Divergências de inventário</h3>
+<p>Visão do supervisor: como o sistema classifica divergências (auto-aprovada vs pendente), aprovar/rejeitar manualmente, aplicar a sessão.</p>
+<div class="tags"><span class="tag">6 cenários</span><span class="tag">supervisor</span></div>
+</a>
+</div>
+</div>
+
+<!-- ============== EXCEÇÕES & COMERCIAL ============== -->
+<div class="group">
+<div class="group-header">
+<div class="ico ico-comercial">↩</div>
+<div>
+<h2>Exceções e fluxos comerciais</h2>
+<p>Devoluções, fornecedores, cobertura de estoque.</p>
+</div>
+</div>
+
+<div class="doc-grid">
+<a class="doc" href="devolucoes-cenarios.html">
+<h3>Devoluções de cliente</h3>
+<p>Classificação A/B/C/D (íntegro, avariado, garantia, troca SKU). Cada classe gera lançamentos diferentes. Devolução de empréstimo quita dívida.</p>
+<div class="tags"><span class="tag">5 cenários</span><span class="tag">exceção</span></div>
+</a>
+
+<a class="doc" href="fornecedores-cenarios.html">
+<h3>Fornecedores</h3>
+<p>Cadastro de fornecedores, tempo de entrega em 2 níveis (default e por produto), preferencial, auto-cadastro em massa pelo mapeamento legado.</p>
+<div class="tags"><span class="tag">5 cenários</span><span class="tag">cadastro</span></div>
+</a>
+
+<a class="doc" href="cobertura-cenarios.html">
+<h3>Cobertura de estoque</h3>
+<p>"Essa peça vai durar quantos dias?" Cruza saldo, giro e lead time pra classificar em ok / atenção / crítico / risco / sem giro.</p>
+<div class="tags"><span class="tag">5 cenários</span><span class="tag">analítico</span></div>
+</a>
+</div>
+</div>
+
+<!-- ============== ADMINISTRATIVO ============== -->
+<div class="group">
+<div class="group-header">
+<div class="ico ico-admin">🛠</div>
+<div>
+<h2>Administração</h2>
+<p>Operações de setup inicial e manutenção do sistema.</p>
+</div>
+</div>
+
+<div class="doc-grid">
+<a class="doc" href="snapshot-reconciliacao-cenarios.html">
+<h3>Snapshot inicial + Reconciliação</h3>
+<p>Carga inicial do estoque do Tiny pro WMS (idempotente, dryRun). Reconciliação automática que detecta e corrige divergências entre histórico e resumo.</p>
+<div class="tags"><span class="tag">5 cenários</span><span class="tag">setup</span></div>
+</a>
+
+<a class="doc" href="plano-explicacao.html">
+<h3>Plano de implementação</h3>
+<p>Documento de planejamento original do projeto WMS.</p>
+<div class="tags"><span class="tag">planejamento</span></div>
+</a>
+</div>
+</div>
+
+<!-- ============== MAPA CRUZADO ============== -->
+<div class="map">
+<h2 style="border:none;padding:0;margin-top:0">Mapa cruzado por pergunta</h2>
+<p>"Quero entender..."</p>
+
+<div class="map-section">
+<h4>Como o estoque é registrado e por que nada se perde</h4>
+<ul>
+<li><a href="ledger-cenarios.html">Histórico de movimentações</a> — os 4 tipos, validações, concorrência</li>
+<li><a href="estoque-perspectivas.html">Estoque — 4 perspectivas</a> — chave 4D, saldo/reservado/disponível</li>
+</ul>
+</div>
+
+<div class="map-section">
+<h4>O que acontece quando um pedido entra</h4>
+<ul>
+<li><a href="roteamento-cenarios.html">Roteamento</a> — escolha de galpão e estratégia</li>
+<li><a href="swap-cenarios.html">Swap</a> — quando troca contábil é possível</li>
+<li><a href="emprestimos-cenarios.html">Empréstimos</a> — quando vira dívida</li>
+<li><a href="fluxo-reservas-wms.html">Reservas</a> — como trava estoque pro pedido</li>
+</ul>
+</div>
+
+<div class="map-section">
+<h4>O que o operador faz no dia-a-dia</h4>
+<ul>
+<li><a href="movimentacoes-cenarios.html">Movimentações operacionais</a> — receber, transferir, repor, ajustar</li>
+<li><a href="inventario-cenarios.html">Inventário</a> — cycle count com vários operadores</li>
+<li><a href="devolucoes-cenarios.html">Devoluções</a> — classificar peça que voltou</li>
+</ul>
+</div>
+
+<div class="map-section">
+<h4>O que o supervisor/admin precisa saber</h4>
+<ul>
+<li><a href="divergencias-cenarios.html">Divergências</a> — aprovar/rejeitar/aplicar correções</li>
+<li><a href="cobertura-cenarios.html">Cobertura</a> — peças em alerta</li>
+<li><a href="fornecedores-cenarios.html">Fornecedores</a> — cadastros e tempo de entrega</li>
+<li><a href="snapshot-reconciliacao-cenarios.html">Snapshot + Reconciliação</a> — manutenção do sistema</li>
+</ul>
+</div>
+
+<div class="map-section">
+<h4>Como o sistema é estruturado</h4>
+<ul>
+<li><a href="catalogo-cenarios.html">Catálogo</a> — produtos, localizações, kits</li>
+<li><a href="estoque-perspectivas.html">Perspectivas</a> — chave 4D do estoque</li>
+</ul>
+</div>
+</div>
+
+<footer>
+14 documentos cobrindo o sistema WMS completo, em linguagem operacional simples.
+<br>Gerados a partir do código em <code>src/lib/wms/*.ts</code> validado em staging (projeto Supabase <code>ehbxpbeijofxtsbezwxd</code>).
+<br>Atualizado em 2026-05-13.
+</footer>
+
+</div></body></html>

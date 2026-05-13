@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Divergências de inventário — Visão do supervisor</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });</script>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#18181b; --ink-2:#52525b; --ink-3:#a1a1aa;
+    --line:#e4e4e7; --brand:#0891b2; --brand-2:#164e63;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --info:#2563eb; }
+  *{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.6}
+  .wrap{max-width:1040px;margin:0 auto;padding:48px 24px 96px}
+  header{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:40px}
+  h1{margin:0 0 8px;font-size:32px;letter-spacing:-.02em} .sub{color:var(--ink-2);font-size:16px}
+  h2{margin:64px 0 16px;font-size:26px;padding-bottom:8px;border-bottom:2px solid var(--brand)}
+  h2 .tag{display:inline-block;font-size:12px;background:var(--brand);color:#fff;
+    padding:3px 10px;border-radius:4px;margin-left:12px;vertical-align:middle}
+  h2 .tag.bad{background:var(--bad)} h2 .tag.warn{background:var(--warn)} h2 .tag.ok{background:var(--ok)}
+  h3{margin:28px 0 8px;font-size:18px;color:var(--brand-2)}
+  h4{margin:20px 0 8px;font-size:15px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+  p,li{font-size:15px} ul{padding-left:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;margin:16px 0}
+  .card.tldr{background:#ecfeff;border-color:#a5f3fc} .card.tldr strong{color:var(--brand-2)}
+  .card.scenario{padding:28px} .card.tip{background:#fefce8;border-color:#fde047}
+  .card.warn{background:#fef3c7;border-color:#f59e0b}
+  .order-box{background:#f0f9ff;border-left:4px solid var(--info);padding:12px 16px;
+    margin:16px 0;border-radius:4px;font-size:14px} .order-box strong{color:var(--info)}
+  .t{background:#fafafa;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:16px 0}
+  .t .h{background:#18181b;color:#fff;padding:8px 12px;font-size:12px;
+    text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .t table{width:100%;border-collapse:collapse;margin:0}
+  .t th,.t td{padding:10px 14px;text-align:left;font-size:14px;
+    border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+  .t th{background:#fff;font-weight:600;color:var(--ink-2);font-size:12px;text-transform:uppercase}
+  .t tr:last-child td{border-bottom:none}
+  .t td:last-child,.t th:last-child{border-right:none}
+  .t td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .t td.delta-plus{background:#dcfce7;color:var(--ok);font-weight:700}
+  .t td.delta-minus{background:#fee2e2;color:var(--bad);font-weight:700}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pill.ok{background:#dcfce7;color:#166534} .pill.warn{background:#fef3c7;color:#92400e}
+  .pill.bad{background:#fee2e2;color:#991b1b} .pill.info{background:#dbeafe;color:#1e40af}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px;margin:20px 0;text-align:center}
+  .caption{font-size:13px;color:var(--ink-2);margin-top:12px;font-style:italic}
+  .result{margin-top:20px;padding:14px 18px;border-radius:8px;font-size:15px;
+    border-left:4px solid var(--ok);background:#f0fdf4} .result strong{color:var(--ok)}
+  .result.bad{background:#fef2f2;border-left-color:var(--bad)} .result.bad strong{color:var(--bad)}
+  .result.warn{background:#fffbeb;border-left-color:var(--warn)} .result.warn strong{color:var(--warn)}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px 24px;margin-bottom:32px} nav.toc ol{margin:0;padding-left:20px}
+  nav.toc a{color:var(--brand);text-decoration:none} nav.toc a:hover{text-decoration:underline}
+  nav.toc li{margin:4px 0}
+  table.cmp{width:100%;border-collapse:collapse;margin:24px 0;font-size:14px}
+  table.cmp th,table.cmp td{padding:12px 14px;border:1px solid var(--line);text-align:left}
+  table.cmp th{background:#18181b;color:#fff;font-weight:600}
+  table.cmp tr:nth-child(even) td{background:#fafafa}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    color:var(--ink-3);font-size:13px;text-align:center}
+</style>
+</head>
+<body><div class="wrap">
+
+<header>
+<h1>Divergências de inventário</h1>
+<p class="sub">A perspectiva do supervisor — como revisar, aprovar, rejeitar e aplicar as diferenças encontradas no cycle count.</p>
+</header>
+
+<section id="conceito">
+<h2>A ideia em uma frase</h2>
+<div class="card tldr">
+<p><strong>Quando os operadores terminam de contar, o sistema compara cada posição com o saldo registrado.</strong> Onde bate, ótimo. Onde não bate, é uma <em>divergência</em>. O supervisor revisa cada uma e decide: aprovar (corrige o estoque), rejeitar (ignora, sistema estava certo) ou aprovar com nota (corrige mas guarda explicação).</p>
+</div>
+
+<h3>Como o sistema calcula</h3>
+<p>Pra cada posição da sessão de inventário:</p>
+<ol>
+  <li>Soma todas as contagens dos operadores naquela posição (vários podem ter contado a mesma peça).</li>
+  <li>Compara com o saldo do sistema.</li>
+  <li>Calcula <em>delta</em>: contado menos sistema. Pode ser positivo (sobrou), negativo (faltou), ou zero (bate).</li>
+  <li>Calcula <em>delta percentual</em>: |delta| / saldo do sistema × 100.</li>
+  <li>Calcula <em>valor financeiro</em>: delta × custo médio. Diz "quanto a divergência vale em R$".</li>
+  <li>Classifica como auto-aprovada ou pendente, conforme as regras da sessão.</li>
+</ol>
+
+<h3>As 2 regras de classificação</h3>
+<div class="card tip">
+<p><strong>Auto-aprovada:</strong> a divergência é pequena o suficiente pra não exigir revisão.</p>
+<p><strong>Pendente:</strong> precisa do supervisor decidir.</p>
+</div>
+
+<table class="cmp">
+<tr><th>Regra</th><th>Configurada na sessão</th><th>Quando "passa"</th></tr>
+<tr><td>Tolerância percentual</td><td>Padrão 2%</td><td>delta% ≤ 2%</td></tr>
+<tr><td>Tolerância mínima absoluta</td><td>Padrão 0</td><td>|delta| ≤ tolerância</td></tr>
+<tr><td>Valor financeiro</td><td>Padrão R$ 1.000</td><td>|delta × custo| ≤ limite</td></tr>
+</table>
+
+<p>Pra ser <strong>auto-aprovada</strong>, a divergência precisa passar nas <em>duas</em> condições (tolerância E valor). Se falha em qualquer uma, vira pendente.</p>
+
+<h3>Os 4 status possíveis de cada divergência</h3>
+<table class="cmp">
+<tr><th>Status</th><th>O que significa</th><th>O que acontece ao aplicar</th></tr>
+<tr><td><span class="pill ok">aprovada</span></td><td>Pré-aprovada por estar dentro da tolerância, ou aprovada manualmente pelo supervisor</td><td>Gera entrada/saída no histórico</td></tr>
+<tr><td><span class="pill warn">pendente</span></td><td>Aguardando decisão do supervisor</td><td>Bloqueia aplicação da sessão inteira</td></tr>
+<tr><td><span class="pill bad">rejeitada</span></td><td>Supervisor decidiu "ignorar" — sistema estava certo</td><td>Nada acontece — sistema permanece como está</td></tr>
+<tr><td><span class="pill info">aplicada</span></td><td>Já virou movimentação no histórico</td><td>—</td></tr>
+</table>
+</section>
+
+<nav class="toc">
+<strong>Cenários (6 no total)</strong>
+<ol>
+<li><a href="#c1">Cenário 1 — Tudo bate (sessão sem divergência)</a></li>
+<li><a href="#c2">Cenário 2 — Divergência auto-aprovada</a></li>
+<li><a href="#c3">Cenário 3 — Supervisor aprova divergência grande</a></li>
+<li><a href="#c4">Cenário 4 — Supervisor rejeita (operador errou)</a></li>
+<li><a href="#c5">Cenário 5 — Tentar aplicar com pendências (sistema bloqueia)</a></li>
+<li><a href="#c6">Cenário 6 — Aplicar a sessão (movimentações geradas)</a></li>
+</ol>
+</nav>
+
+<section id="c1"><h2>Cenário 1 — Tudo bate <span class="tag ok">Caso ideal</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Sessão com 30 posições. Operadores contaram tudo. Quando o sistema processa, todas as contagens batem com o saldo. Zero divergências.</p>
+
+<div class="t"><div class="h">Status na tela de revisão</div>
+<table><tr><th>Posição</th><th>Sistema</th><th>Contado</th><th>Delta</th></tr>
+<tr><td>30 posições</td><td colspan="3" style="text-align:center;color:#16a34a;font-weight:600">Tudo igual — nenhuma divergência</td></tr>
+</table></div>
+
+<div class="result">
+<strong>Resultado:</strong> sessão vai direto pra "aprovada". Não tem nada pra revisar. O supervisor só confirma e aplica — nada acontece no estoque porque não há ajuste. <strong>O valor da sessão é a confirmação:</strong> "nosso estoque está alinhado com a realidade nessas 30 posições".
+</div>
+
+<div class="card tip">
+<strong>Histórico:</strong> mesmo sem movimentações geradas, a sessão fica registrada como aplicada. Auditoria vê "essas posições foram contadas nessa data e bateram".
+</div>
+</div></section>
+
+<section id="c2"><h2>Cenário 2 — Auto-aprovada <span class="tag ok">Dentro da tolerância</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>5 posições com diferença pequena. Tolerância da sessão: 2%, valor máximo R$ 1.000.</p>
+
+<div class="t"><div class="h">Divergências da sessão</div>
+<table>
+<tr><th>Posição</th><th>Sistema</th><th>Contado</th><th>Delta</th><th>Delta %</th><th>Valor R$</th><th>Status</th></tr>
+<tr><td>CWB-A1-01</td><td class="num">50</td><td class="num">49</td><td class="num delta-minus">–1</td><td class="num">2%</td><td class="num">–R$ 30</td><td><span class="pill ok">auto-aprovada</span></td></tr>
+<tr><td>CWB-A1-02</td><td class="num">100</td><td class="num">101</td><td class="num delta-plus">+1</td><td class="num">1%</td><td class="num">+R$ 25</td><td><span class="pill ok">auto-aprovada</span></td></tr>
+<tr><td>CWB-A2-03</td><td class="num">200</td><td class="num">198</td><td class="num delta-minus">–2</td><td class="num">1%</td><td class="num">–R$ 80</td><td><span class="pill ok">auto-aprovada</span></td></tr>
+<tr><td>CWB-B1-01</td><td class="num">10</td><td class="num">10</td><td class="num delta-zero">0</td><td class="num">—</td><td class="num">—</td><td>—</td></tr>
+<tr><td>CWB-B1-02</td><td class="num">75</td><td class="num">76</td><td class="num delta-plus">+1</td><td class="num">1,3%</td><td class="num">+R$ 50</td><td><span class="pill ok">auto-aprovada</span></td></tr>
+</table></div>
+
+<h3>O que o supervisor faz</h3>
+<p>Olha a tela, vê que tudo está como auto-aprovada. Clica em <strong>"Aprovar sessão"</strong>. Pronto.</p>
+
+<div class="result">
+<strong>Resultado:</strong> sessão vai pra "aprovada" sem ele precisar clicar em cada uma. Quando aplica, gera 4 pequenas movimentações no histórico (3 saídas e 1 entrada). <strong>Sistema processa em lote.</strong>
+</div>
+
+<div class="card tip">
+<strong>Por que vale auto-aprovar pequenas?</strong> Pequenas diferenças acontecem o tempo todo (peça caiu, alguém recontou rebaixando, peças similares confundidas). Forçar revisão manual de cada uma desperdiça tempo do supervisor sem trazer valor. Os limites garantem que o que <em>importa</em> sempre passa por revisão.
+</div>
+</div></section>
+
+<section id="c3"><h2>Cenário 3 — Aprovação manual de divergência grande <span class="tag warn">Decisão consciente</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Posição CWB-A5-03 com peça cara. Sistema dizia ter 50. Contado: 30. Delta –20 unidades (–40%), valor –R$ 2.000.</p>
+
+<div class="t"><div class="h">Divergência pendente</div>
+<table>
+<tr><th>Posição</th><th>Sistema</th><th>Contado</th><th>Delta</th><th>Delta %</th><th>Valor R$</th></tr>
+<tr><td>CWB-A5-03 / PEC-CARA</td><td class="num">50</td><td class="num">30</td><td class="num delta-minus">–20</td><td class="num">40%</td><td class="num">–R$ 2.000</td></tr>
+</table></div>
+
+<h3>O que o supervisor investiga</h3>
+<ul>
+  <li><strong>Histórico recente da posição:</strong> teve venda, recebimento, transferência recente?</li>
+  <li><strong>Operador:</strong> quem contou? Esse operador tem boa acuracidade histórica?</li>
+  <li><strong>Peças similares:</strong> tem alguma peça parecida na posição vizinha que pode ter sido confundida?</li>
+  <li><strong>Físico:</strong> vale ir até a posição olhar pessoalmente?</li>
+</ul>
+
+<h3>Resultado da investigação: confirma o –20</h3>
+<p>Supervisor foi até CWB-A5-03 e contou de novo: realmente tem só 30 unidades. Alguém andou movimentando essa peça sem registrar. Decide aprovar.</p>
+
+<h4>Ação na tela</h4>
+<ol>
+<li>Clica em "Aprovar".</li>
+<li>Modal opcional: "escrever uma observação?" — supervisor escreve "Confirmei pessoalmente. Investigar fluxo dessa peça com a equipe."</li>
+<li>Confirma.</li>
+</ol>
+
+<div class="t"><div class="h">Após decisão</div>
+<table><tr><th>Posição</th><th>Status</th><th>Nota</th></tr>
+<tr><td>CWB-A5-03 / PEC-CARA</td><td><span class="pill ok">aprovada</span></td><td>Confirmei pessoalmente. Investigar fluxo dessa peça com a equipe.</td></tr>
+</table></div>
+
+<div class="result warn">
+<strong>Resultado:</strong> a divergência fica como aprovada. Quando a sessão for aplicada, vai gerar uma saída de 20 unidades. A nota fica registrada — quem auditar depois entende o porquê. <strong>O sistema não tomou a decisão sozinho — o supervisor deu o aval.</strong>
+</div>
+</div></section>
+
+<section id="c4"><h2>Cenário 4 — Supervisor rejeita <span class="tag bad">Operador errou</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Em CWB-B3-05, sistema dizia ter 10 unidades de PEC-501. Operador contou 0 (não bipou nada da PEC-501). Delta –10 unidades.</p>
+<p>Em CWB-B3-06 (posição ao lado), sistema dizia ter 0 unidades de PEC-501. Mas tem outra divergência: +10 unidades, "apareceu" do nada.</p>
+
+<div class="t"><div class="h">Duas divergências relacionadas</div>
+<table>
+<tr><th>Posição</th><th>Sistema</th><th>Contado</th><th>Delta</th></tr>
+<tr><td>CWB-B3-05 / PEC-501</td><td class="num">10</td><td class="num">0</td><td class="num delta-minus">–10</td></tr>
+<tr><td>CWB-B3-06 / PEC-501</td><td class="num">0</td><td class="num">10</td><td class="num delta-plus">+10</td></tr>
+</table></div>
+
+<h3>O diagnóstico óbvio</h3>
+<p>Operador bipou na posição errada — leu o código de barras da PEC-501 estando em frente à CWB-B3-06 em vez de CWB-B3-05. Erro de localização, não de quantidade.</p>
+
+<h3>O que o supervisor faz</h3>
+<ol>
+  <li>Rejeita as DUAS divergências (sistema estava certo).</li>
+  <li>Cria internamente um lembrete pra revisar a contagem dessa zona na próxima sessão.</li>
+</ol>
+
+<div class="t"><div class="h">Após rejeição</div>
+<table>
+<tr><th>Posição</th><th>Status</th></tr>
+<tr><td>CWB-B3-05 / PEC-501</td><td><span class="pill bad">rejeitada</span></td></tr>
+<tr><td>CWB-B3-06 / PEC-501</td><td><span class="pill bad">rejeitada</span></td></tr>
+</table></div>
+
+<div class="result">
+<strong>Resultado:</strong> nada muda no estoque do sistema (continua 10 em B3-05, 0 em B3-06). Mas o registro fica no histórico de divergências — relatórios mostrarão "esse operador teve 2 divergências rejeitadas nessa sessão" pra acompanhamento de treinamento.
+</div>
+
+<div class="card tip">
+<strong>Rejeitar não é "ignorar erro" — é "decidir que a contagem está errada, não o sistema".</strong> O supervisor precisa ter certeza pra rejeitar. Em caso de dúvida, é melhor aprovar (assumir que a contagem está certa) — porque inventário existe justamente pra catch o que o sistema não vê.
+</div>
+</div></section>
+
+<section id="c5"><h2>Cenário 5 — Tentar aplicar com pendências <span class="tag bad">Bloqueado</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Supervisor revisou a maioria das divergências, mas deixou 3 "pra ver depois". Tenta aplicar a sessão.</p>
+
+<h4>O que acontece</h4>
+<p>Sistema verifica: tem divergências em status "pendente"? Sim, 3. <strong>Bloqueia a aplicação</strong> e mostra mensagem:</p>
+
+<div class="card warn">
+<strong>"Ainda há 3 divergências pendentes. Resolva todas antes de aprovar a sessão."</strong>
+</div>
+
+<h3>Por quê?</h3>
+<p>Porque divergências pendentes representam diferenças que ninguém analisou. Aplicar a sessão sem resolver é equivalente a "decidir não decidir" — o sistema fica num limbo onde algumas posições foram ajustadas e outras não. Confuso pra auditoria, confuso pro próximo operador.</p>
+
+<h3>O que o supervisor precisa fazer</h3>
+<p>Volta na tela de revisão e processa cada uma:</p>
+<ul>
+  <li>Aprovar (com ou sem nota)</li>
+  <li>Rejeitar (decide que sistema estava certo)</li>
+</ul>
+<p>Depois tenta aplicar de novo — agora dá certo.</p>
+
+<div class="result bad">
+<strong>Resultado:</strong> o sistema força o supervisor a tomar decisão consciente em cada caso. Não é possível "fechar parcialmente" — ou todas as divergências têm decisão, ou nada é aplicado.
+</div>
+
+<div class="card tip">
+<strong>Se o supervisor não consegue decidir agora?</strong> Pode "encerrar parcial" (cenário do <a href="inventario-cenarios.html">inventário</a>): considera só as posições já contadas, as não contadas voltam ao normal. Mas, dentro da sessão "em revisão", toda divergência precisa ter destino antes da aplicação.
+</div>
+</div></section>
+
+<section id="c6"><h2>Cenário 6 — Aplicar a sessão <span class="tag ok">Ledger atualizado</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Todas as divergências revisadas — aprovadas (com ou sem nota) ou rejeitadas. Supervisor clica em <strong>"Aplicar sessão"</strong>.</p>
+
+<h3>O que o sistema faz</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+A[Supervisor clica Aplicar] --> B[Lista divergências aprovadas com delta diferente de zero]
+B --> C[Para cada divergência]
+C --> D{Delta positivo<br/>ou negativo?}
+D -->|+| E[Cria entrada<br/>categoria 'Inventário']
+D -->|−| F[Cria saída<br/>categoria 'Inventário']
+E --> G[Marca divergência<br/>como 'aplicada']
+F --> G
+G --> H{Mais divergências?}
+H -->|Sim| C
+H -->|Não| I[Libera locks das posições<br/>posições voltam a venda]
+I --> J[Sessão status: aplicada]
+style J fill:#dcfce7,stroke:#16a34a
+</pre></div>
+
+<h4>Exemplo</h4>
+<div class="t"><div class="h">Movimentações geradas</div>
+<table>
+<tr><th>Posição</th><th>Tipo</th><th>Quantidade</th><th>Categoria</th></tr>
+<tr><td>CWB-A1-01 / PEC-X</td><td><span class="pill bad">Saída</span></td><td class="num">1</td><td>Inventário</td></tr>
+<tr><td>CWB-A1-02 / PEC-Y</td><td><span class="pill ok">Entrada</span></td><td class="num">1</td><td>Inventário</td></tr>
+<tr><td>CWB-A5-03 / PEC-CARA</td><td><span class="pill bad">Saída</span></td><td class="num">20</td><td>Inventário</td></tr>
+</table></div>
+
+<div class="result">
+<strong>Resultado:</strong> saldos ajustados, posições liberadas, sessão fechada. Operadores podem voltar a vender peças daquelas posições. O histórico fica permanente: relatórios futuros podem responder "quantas peças foram corrigidas por inventário no mês de maio?".
+</div>
+
+<h3>Divergências rejeitadas: o que aparece no histórico?</h3>
+<p>Nada. Rejeitar significa "sistema estava certo, não precisa ajustar". Não gera movimentação. <strong>Mas o registro da divergência rejeitada continua na sessão</strong> — pra auditoria saber que aquela posição foi contada e o operador discordou do sistema, mas o supervisor manteve.</p>
+
+<div class="card tip">
+<strong>Relatórios de qualidade que ficam disponíveis depois de aplicar:</strong>
+<ul>
+  <li>Acuracidade da contagem por operador (% das contagens que viraram aprovação)</li>
+  <li>Valor financeiro total ajustado na sessão (positivo ou negativo)</li>
+  <li>Posições que divergiram mais de 1 vez (alvo pra investigação)</li>
+  <li>Tempo médio por posição (operador mais rápido vs mais lento)</li>
+</ul>
+</div>
+</div></section>
+
+<footer>
+Documento explica o fluxo de revisão e aplicação de divergências de inventário.
+<br>Complementa <a href="inventario-cenarios.html">inventario-cenarios.html</a> (como rodar o cycle count).
+<br>Atualizado em 2026-05-13.
+</footer>
+
+</div></body></html>

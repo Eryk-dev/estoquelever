@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Movimentações operacionais — Receber, transferir, ajustar</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });
+</script>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --ink: #18181b; --ink-2: #52525b; --ink-3: #a1a1aa;
+    --line: #e4e4e7; --brand: #0891b2; --brand-2: #164e63;
+    --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --info: #2563eb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink); line-height: 1.6; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 48px 24px 96px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 24px; margin-bottom: 40px; }
+  h1 { margin: 0 0 8px; font-size: 32px; letter-spacing: -0.02em; }
+  .sub { color: var(--ink-2); font-size: 16px; }
+  h2 { margin: 64px 0 16px; font-size: 26px; letter-spacing: -0.01em;
+    padding-bottom: 8px; border-bottom: 2px solid var(--brand); }
+  h2 .tag { display: inline-block; font-size: 12px; background: var(--brand);
+    color: white; padding: 3px 10px; border-radius: 4px; margin-left: 12px;
+    vertical-align: middle; font-weight: 500; letter-spacing: 0; }
+  h2 .tag.bad { background: var(--bad); } h2 .tag.warn { background: var(--warn); } h2 .tag.ok { background: var(--ok); }
+  h3 { margin: 28px 0 8px; font-size: 18px; color: var(--brand-2); }
+  h4 { margin: 20px 0 8px; font-size: 15px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.05em; }
+  p, li { font-size: 15px; color: var(--ink); } ul { padding-left: 22px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 24px; margin: 16px 0; }
+  .card.tldr { background: #ecfeff; border-color: #a5f3fc; }
+  .card.tldr strong { color: var(--brand-2); }
+  .card.scenario { padding: 28px; }
+  .card.tip { background: #fefce8; border-color: #fde047; }
+  .card.warn { background: #fef3c7; border-color: #f59e0b; }
+  .order-box { background: #f0f9ff; border-left: 4px solid var(--info);
+    padding: 12px 16px; margin: 16px 0; border-radius: 4px; font-size: 14px; }
+  .order-box strong { color: var(--info); }
+
+  .stock-table { background: #fafafa; border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden; margin: 16px 0; }
+  .stock-table .header { background: #18181b; color: white; padding: 8px 12px;
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+  .stock-table table { width: 100%; border-collapse: collapse; margin: 0; }
+  .stock-table th, .stock-table td { padding: 10px 14px; text-align: center;
+    font-size: 14px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); }
+  .stock-table th { background: white; font-weight: 600; color: var(--ink-2);
+    font-size: 12px; text-transform: uppercase; }
+  .stock-table th:first-child, .stock-table td:first-child { text-align: left; font-weight: 600; }
+  .stock-table tr:last-child td { border-bottom: none; }
+  .stock-table td:last-child, .stock-table th:last-child { border-right: none; }
+  .stock-table td.zero { color: var(--ink-3); }
+  .stock-table td.has { font-weight: 700; color: var(--ok); }
+  .stock-table td.changed { background: #dcfce7; color: var(--ok); font-weight: 700; }
+  .stock-table td.lost { background: #fee2e2; color: var(--bad); font-weight: 700; }
+  .stock-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .diagram { background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center; }
+  .caption { font-size: 13px; color: var(--ink-2); margin-top: 12px; font-style: italic; }
+  .result { margin-top: 20px; padding: 14px 18px; border-radius: 8px;
+    font-size: 15px; border-left: 4px solid var(--ok); background: #f0fdf4; }
+  .result strong { color: var(--ok); }
+  .result.bad { background: #fef2f2; border-left-color: var(--bad); }
+  .result.bad strong { color: var(--bad); }
+  .result.warn { background: #fffbeb; border-left-color: var(--warn); }
+  .result.warn strong { color: var(--warn); }
+
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; }
+  .pill.ok { background: #dcfce7; color: #166534; }
+  .pill.warn { background: #fef3c7; color: #92400e; }
+  .pill.bad { background: #fee2e2; color: #991b1b; }
+  .pill.info { background: #dbeafe; color: #1e40af; }
+
+  nav.toc { background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 32px; }
+  nav.toc ol { margin: 0; padding-left: 20px; }
+  nav.toc a { color: var(--brand); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  nav.toc li { margin: 4px 0; }
+
+  table.compare { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; }
+  table.compare th, table.compare td { padding: 12px 14px; border: 1px solid var(--line); text-align: left; }
+  table.compare th { background: #18181b; color: white; font-weight: 600; }
+  table.compare tr:nth-child(even) td { background: #fafafa; }
+
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line);
+    color: var(--ink-3); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Movimentações operacionais</h1>
+  <p class="sub">Receber mercadoria, mover entre galpões, repor o picking, ajustar diferenças, registrar entradas atrasadas.</p>
+</header>
+
+<!-- ============== CONCEITO ============== -->
+<section id="conceito">
+<h2>As 5 movimentações do dia-a-dia</h2>
+
+<div class="card tldr">
+<p><strong>Existem 5 operações que o operador faz no estoque sem que tenha um pedido envolvido.</strong> Cada uma tem uma tela dedicada e segue regras específicas, mas todas no fundo viram entradas e saídas no histórico — com categorias diferentes pra dar pra agrupar nos relatórios.</p>
+</div>
+
+<table class="compare">
+<tr><th>Operação</th><th>O que é</th><th>Quando usar</th></tr>
+<tr>
+  <td><strong>Receber</strong></td>
+  <td>Entrada de mercadoria nova</td>
+  <td>Chegou caixa do fornecedor, devolução de cliente, etc</td>
+</tr>
+<tr>
+  <td><strong>Transferir entre galpões</strong></td>
+  <td>Caixa sai de um galpão e vai pra outro</td>
+  <td>Consolidar estoque, abastecer galpão remoto</td>
+</tr>
+<tr>
+  <td><strong>Repor o picking</strong> (replenishment)</td>
+  <td>Move caixa dentro do mesmo galpão</td>
+  <td>Picking esvaziou, descer caixa do overstock</td>
+</tr>
+<tr>
+  <td><strong>Ajuste manual</strong></td>
+  <td>Adiciona ou tira do saldo com motivo escrito</td>
+  <td>Achei 2 peças a mais, ou 1 a menos, sem NF</td>
+</tr>
+<tr>
+  <td><strong>Lançamento retroativo</strong></td>
+  <td>Registra entrada antiga que não tinha sido lançada</td>
+  <td>Emergência operacional, depois reconcilia</td>
+</tr>
+</table>
+
+<h3>O que toda movimentação tem em comum</h3>
+<ul>
+  <li><strong>Vai pro histórico:</strong> linha imutável com tipo, quantidade, antes/depois, quem fez, quando.</li>
+  <li><strong>É validada antes de gravar:</strong> não dá pra fazer saída maior do que o saldo nem mexer em posição que não existe.</li>
+  <li><strong>Pode ter reflexo no custo médio:</strong> entradas com custo informado recalculam o custo médio da posição.</li>
+  <li><strong>É registrada com motivo/categoria:</strong> permite filtrar nos relatórios depois.</li>
+</ul>
+
+<p>Detalhes de como o histórico funciona em <a href="ledger-cenarios.html">ledger-cenarios.html</a>.</p>
+</section>
+
+<!-- ============== TOC ============== -->
+<nav class="toc">
+  <strong>Cenários (10 no total)</strong>
+  <ol>
+    <li><a href="#c1">Cenário 1 — Receber mercadoria pelo módulo Receber</a></li>
+    <li><a href="#c2">Cenário 2 — Receber com sugestão automática de localização</a></li>
+    <li><a href="#c3">Cenário 3 — Receber recalcula o custo médio</a></li>
+    <li><a href="#c4">Cenário 4 — Transferir entre galpões (CWB → SP)</a></li>
+    <li><a href="#c5">Cenário 5 — Repor o picking (overstock → picking)</a></li>
+    <li><a href="#c6">Cenário 6 — Ajuste manual positivo (achei mais)</a></li>
+    <li><a href="#c7">Cenário 7 — Ajuste manual negativo (sumiu uma peça)</a></li>
+    <li><a href="#c8">Cenário 8 — Lançamento retroativo (entrada de emergência)</a></li>
+    <li><a href="#c9">Cenário 9 — Reconciliar retroativo com a NF que apareceu depois</a></li>
+    <li><a href="#c10">Cenário 10 — Receber em data passada (entrada datada)</a></li>
+  </ol>
+</nav>
+
+<!-- ============== C1 ============== -->
+<section id="c1">
+<h2>Cenário 1 — Receber mercadoria <span class="tag ok">Entrada padrão</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Chegou uma caixa do fornecedor com 50 unidades da peça <strong>PEC-100</strong>. A empresa dona é a NetAir, galpão CWB. O operador foi receber.
+</div>
+
+<h3>O que o operador faz</h3>
+<ol>
+  <li>Abre a tela <strong>"Receber"</strong>.</li>
+  <li>Escolhe galpão CWB.</li>
+  <li>Bipa o código de barras da peça → sistema reconhece PEC-100.</li>
+  <li>Informa quantidade: 50.</li>
+  <li>Informa custo unitário: R$ 32,00.</li>
+  <li>Sistema sugere a localização (cenário 2 explica como). Operador aceita ou troca.</li>
+  <li>Confirma.</li>
+</ol>
+
+<h4>O que o sistema grava</h4>
+<div class="stock-table">
+<div class="header">Linha no histórico</div>
+<table>
+<tr><th>Tipo</th><th>Quantidade</th><th>Categoria</th><th>Saldo antes</th><th>Saldo depois</th><th>Custo informado</th></tr>
+<tr><td><span class="pill ok">Entrada</span></td><td class="num">50</td><td>Recebimento</td><td class="num">0</td><td class="num">50</td><td class="num">R$ 32,00</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> a peça aparece como disponível na tela imediatamente. O custo médio dela é gravado como R$ 32. Se houver uma referência de NF, o operador pode informar — fica registrado pra cruzar depois.
+</div>
+
+<div class="card tip">
+<strong>Receber sem NF é normal.</strong> Pode acontecer de receber mercadoria fisicamente antes da NF chegar. Quando a NF do Tiny aparecer depois, o sistema vincula automaticamente pela cruzamento de SKU + data + quantidade. Ou o operador pode editar a movimentação manualmente.
+</div>
+</div>
+</section>
+
+<!-- ============== C2 ============== -->
+<section id="c2">
+<h2>Cenário 2 — Sugestão automática de localização <span class="tag" style="background:#2563eb;color:white">Putaway inteligente</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>O operador escolheu galpão CWB e a peça PEC-100 na tela de Receber. Antes de pedir a localização, o sistema já <em>sugere</em> uma — baseado no que ele já sabe.</p>
+
+<h3>A regra de sugestão</h3>
+<ol>
+  <li><strong>Se a peça já está em alguma localização do galpão</strong> com saldo &gt; 0: sugere essa mesma. Razão: "SKU já está nessa localização". Empilhar mercadoria nova onde já tem a peça é mais limpo.</li>
+  <li><strong>Senão, se o galpão tem uma área de recebimento configurada</strong>: sugere a área de recebimento. Razão: "área de recebimento do galpão". Operador escolhe depois pra onde mover.</li>
+  <li><strong>Senão</strong>: sugere a localização DEFAULT-PICKING (toda configuração padrão tem uma).</li>
+  <li>Se a sugestão prefere picking, ela ganha sobre overstock — operador vê sempre a posição de acesso mais fácil.</li>
+</ol>
+
+<h4>Exemplo prático</h4>
+<table class="compare">
+<tr><th>Situação no galpão CWB</th><th>Sugestão do sistema</th></tr>
+<tr><td>PEC-100 tem 12 em CWB-PICK-A1 (picking) e 5 em CWB-OVER-B2 (overstock)</td><td><strong>CWB-PICK-A1</strong> — "SKU já está nessa localização"</td></tr>
+<tr><td>PEC-100 só está em CWB-OVER-B2</td><td><strong>CWB-OVER-B2</strong> — "SKU já está nessa localização"</td></tr>
+<tr><td>PEC-100 nunca esteve em CWB e o galpão tem REC-01 configurada</td><td><strong>REC-01</strong> — "área de recebimento"</td></tr>
+<tr><td>Nada configurado</td><td><strong>DEFAULT-PICKING</strong></td></tr>
+</table>
+
+<div class="result">
+<strong>Resultado:</strong> o operador chega na tela e a maior parte das vezes só dá <em>confirmar</em>. Quando quiser mudar, abre a lista de localizações do galpão e escolhe outra. <strong>O sistema reduz cliques e erros de digitação.</strong>
+</div>
+
+<div class="card tip">
+<strong>Por que a tela mostra "locais onde o produto já está"?</strong> Pra ajudar o operador em dois casos: (1) quando ele <em>quer</em> empilhar onde já tem; (2) quando ele <em>não quer</em> empilhar e prefere abrir nova posição. Os dois cenários acontecem — a tela mostra o histórico, ele decide.
+</div>
+</div>
+</section>
+
+<!-- ============== C3 ============== -->
+<section id="c3">
+<h2>Cenário 3 — Receber recalcula o custo médio <span class="tag ok">Média ponderada</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Em CWB tem 5 unidades de PEC-100 a R$ 32,00 (custo médio atual). Chega uma nova caixa com 10 unidades a R$ 38,00 (preço subiu).
+</div>
+
+<h3>Como o custo médio é recalculado</h3>
+<p>A regra é a <strong>média ponderada</strong>: cada quantidade pesa proporcionalmente ao seu custo:</p>
+<p><code>custo médio novo = (saldo anterior × custo antigo + qty entrada × custo novo) ÷ (saldo anterior + qty entrada)</code></p>
+<p>No exemplo: <code>(5 × 32 + 10 × 38) ÷ (5 + 10) = (160 + 380) ÷ 15 = 540 ÷ 15 = 36,00</code></p>
+
+<h4>Antes e depois</h4>
+<div class="stock-table">
+<div class="header">Custo médio da PEC-100 em CWB</div>
+<table>
+<tr><th></th><th>Saldo</th><th>Custo médio</th></tr>
+<tr><td>Antes</td><td class="num">5</td><td class="num">R$ 32,00</td></tr>
+<tr><td>Depois</td><td class="num changed">15</td><td class="num changed">R$ 36,00</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> o custo médio sobe de R$ 32 pra R$ 36, porque a maior parte do estoque agora tem custo maior. Esse valor é usado nos relatórios de "valor em estoque" e "margem por peça".
+</div>
+
+<div class="card warn">
+<strong>Se o operador receber sem informar o custo</strong>, o custo médio fica inalterado. Não é obrigatório informar (recebimento sem NF, devolução, transferência interna, etc, podem não ter custo claro). Só quando o operador digita um custo o sistema recalcula.
+</div>
+
+<h3>E em saídas?</h3>
+<p>Saídas <em>não</em> mexem no custo médio. O custo médio fica até a próxima entrada com custo. Isso é proposital: o custo médio é só pra avaliação, não pra contabilidade fiscal.</p>
+</div>
+</section>
+
+<!-- ============== C4 ============== -->
+<section id="c4">
+<h2>Cenário 4 — Transferência entre galpões <span class="tag" style="background:#2563eb;color:white">CWB → SP</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Vamos mandar <strong>20 unidades de PEC-100</strong> de CWB pra SP. A NetAir é dona em ambos. O motoboy/transportadora levou as caixas hoje.
+</div>
+
+<h3>O que o operador faz</h3>
+<ol>
+  <li>Abre <strong>"Transferir entre galpões"</strong>.</li>
+  <li>Escolhe origem: NetAir / CWB / CWB-PICK-A1 (de onde sai).</li>
+  <li>Escolhe destino: NetAir / SP / SP-REC-01 (área de recebimento de SP).</li>
+  <li>Bipa as peças com a quantidade. Confirma.</li>
+</ol>
+
+<h4>O que o sistema grava</h4>
+<div class="stock-table">
+<div class="header">2 linhas no histórico, mesma operação</div>
+<table>
+<tr><th>#</th><th>Tipo</th><th>Galpão</th><th>Localização</th><th>Quantidade</th><th>Categoria</th></tr>
+<tr><td>1</td><td><span class="pill bad">Saída</span></td><td>CWB</td><td>CWB-PICK-A1</td><td class="num">20</td><td>Transferência galpão</td></tr>
+<tr><td>2</td><td><span class="pill ok">Entrada</span></td><td>SP</td><td>SP-REC-01</td><td class="num">20</td><td>Transferência galpão</td></tr>
+</table>
+</div>
+
+<div class="caption">As duas linhas compartilham o mesmo identificador de operação — dá pra rastrear "essa saída deu naquela entrada".</div>
+
+<h3>Antes e depois</h3>
+<div class="stock-table">
+<div class="header">Saldo NetAir / PEC-100</div>
+<table>
+<tr><th></th><th>CWB</th><th>SP</th></tr>
+<tr><td>Antes</td><td class="num">50</td><td class="num">0</td></tr>
+<tr><td>Depois</td><td class="num lost">30</td><td class="num changed">20</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> a empresa (NetAir) continua sendo a dona — só o galpão mudou. O total dela não mexeu (30 + 20 = 50). Pra fins contábeis, é a mesma coisa de antes; só de fins operacionais o estoque mudou de lugar.
+</div>
+
+<div class="card warn">
+<strong>O sistema não permite origem = destino.</strong> Pra mover dentro do mesmo galpão, é replenishment (cenário 5).
+</div>
+
+<h3>Variação: transferência com chegada atrasada</h3>
+<p>E se a caixa saiu de CWB hoje mas só chega em SP daqui 3 dias? O sistema hoje registra os dois lançamentos no mesmo momento. Em produção, o operador de SP pode registrar a "entrada" quando a caixa chegar de fato, em vez de no envio. Há flexibilidade — não é forçada a simultaneidade.</p>
+</div>
+</section>
+
+<!-- ============== C5 ============== -->
+<section id="c5">
+<h2>Cenário 5 — Repor o picking <span class="tag ok">Replenishment</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+O picking <strong>CWB-PICK-A1</strong> da peça PEC-100 esvaziou. Tem 5 caixas em <strong>CWB-OVER-B2</strong> (overstock, em altura). O operador desce uma caixa de 30 unidades pro picking.
+</div>
+
+<h3>O que o operador faz</h3>
+<ol>
+  <li>Abre <strong>"Repor / Replenishment"</strong>.</li>
+  <li>Escolhe galpão CWB.</li>
+  <li>Origem: CWB-OVER-B2.</li>
+  <li>Destino: CWB-PICK-A1.</li>
+  <li>Bipa as peças e quantidade. Confirma.</li>
+</ol>
+
+<h4>O que o sistema grava</h4>
+<div class="stock-table">
+<div class="header">Histórico</div>
+<table>
+<tr><th>Tipo</th><th>Localização</th><th>Quantidade</th><th>Categoria</th></tr>
+<tr><td><span class="pill bad">Saída</span></td><td>CWB-OVER-B2</td><td class="num">30</td><td>Movimentação interna</td></tr>
+<tr><td><span class="pill ok">Entrada</span></td><td>CWB-PICK-A1</td><td class="num">30</td><td>Movimentação interna</td></tr>
+</table>
+</div>
+
+<h4>Antes e depois</h4>
+<div class="stock-table">
+<div class="header">Saldo PEC-100 em CWB</div>
+<table>
+<tr><th>Localização</th><th>Antes</th><th>Depois</th></tr>
+<tr><td>CWB-PICK-A1 (picking)</td><td class="num">0</td><td class="num changed">30</td></tr>
+<tr><td>CWB-OVER-B2 (overstock)</td><td class="num">150</td><td class="num lost">120</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> o saldo total no galpão continua 150. Só a localização mudou. A separação volta a funcionar normalmente — pega do picking, fácil acesso. O overstock segura mais 4 caixas pra próximas reposições.
+</div>
+
+<div class="card tip">
+<strong>Diferença pra transferência entre galpões:</strong> aqui é dentro do mesmo galpão, então não tem caminhão, não tem risco em trânsito. É operação rápida (minutos) que o operador faz quando vê o picking baixo.
+</div>
+
+<h3>Detalhe importante: o sistema não permite origem = destino</h3>
+<p>Se o operador tentar mover "CWB-PICK-A1 pra CWB-PICK-A1", o sistema recusa com a mensagem "origem e destino não podem ser a mesma localização". Operação inútil, evita lançamento bobo.</p>
+
+<h3>Quando o sistema sugere reposição automática?</h3>
+<p><strong>Hoje, não sugere — a decisão é do operador.</strong> Em versão futura, o sistema pode alertar quando picking ficou abaixo de N unidades. Por enquanto, depende de observação humana ou da própria separação reclamando que o picking tá vazio.</p>
+</div>
+</section>
+
+<!-- ============== C6 ============== -->
+<section id="c6">
+<h2>Cenário 6 — Ajuste manual positivo <span class="tag warn">"Achei 2 a mais"</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Durante a separação, o operador percebeu que tem 7 peças de PEC-200 numa caixa que o sistema diz que só tem 5. Sobrou 2 — provavelmente foi mal contado num recebimento antigo. Ele faz um ajuste positivo.
+</div>
+
+<h3>O que o operador faz</h3>
+<ol>
+  <li>Abre <strong>"Ajuste manual"</strong>.</li>
+  <li>Escolhe a posição: PEC-200 / NetAir / CWB / CWB-PICK-A3.</li>
+  <li>Direção: entrada.</li>
+  <li>Quantidade: 2.</li>
+  <li>Motivo (obrigatório): "Achei 2 a mais ao bipar, peças estavam sem registro".</li>
+  <li>Confirma.</li>
+</ol>
+
+<h4>Histórico</h4>
+<div class="stock-table">
+<div class="header">Linha gravada</div>
+<table>
+<tr><th>Tipo</th><th>Quantidade</th><th>Categoria</th><th>Motivo</th></tr>
+<tr><td><span class="pill ok">Entrada</span></td><td class="num">2</td><td>Ajuste manual</td><td>"Achei 2 a mais ao bipar..."</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> saldo sobe de 5 pra 7. O motivo fica registrado pra auditoria. Se acontecer com frequência na mesma posição, o gerente vê pelo relatório e investiga (recebimento sistematicamente mal feito? Roubo?).
+</div>
+
+<div class="card warn">
+<strong>Motivo é obrigatório — mínimo 3 caracteres.</strong> O sistema recusa "ok", ".", " ". Tem que escrever uma justificativa real. Pra dar trabalho de fazer ajuste à toa e forçar o operador a refletir antes de mexer.
+</div>
+</div>
+</section>
+
+<!-- ============== C7 ============== -->
+<section id="c7">
+<h2>Cenário 7 — Ajuste manual negativo <span class="tag warn">"Sumiu uma peça"</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+O sistema diz que tem 10 peças de PEC-300 em CWB-PICK-A5. O operador foi separar e achou só 9. Uma sumiu — provavelmente caiu atrás da estante. Faz ajuste negativo.
+</div>
+
+<h3>O que o operador faz</h3>
+<ol>
+  <li>Abre <strong>"Ajuste manual"</strong>.</li>
+  <li>Posição: PEC-300 / NetAir / CWB / CWB-PICK-A5.</li>
+  <li>Direção: saída.</li>
+  <li>Quantidade: 1.</li>
+  <li>Motivo: "Sumida na contagem — investigar perda."</li>
+  <li>Confirma.</li>
+</ol>
+
+<h4>Histórico</h4>
+<div class="stock-table">
+<div class="header">Linha gravada</div>
+<table>
+<tr><th>Tipo</th><th>Quantidade</th><th>Categoria</th><th>Motivo</th></tr>
+<tr><td><span class="pill bad">Saída</span></td><td class="num">1</td><td>Ajuste manual</td><td>"Sumida na contagem..."</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> saldo cai de 10 pra 9, alinhando o sistema com a realidade. <strong>Mas a linha fica no histórico</strong> — gerente vê "quanta perda tivemos esse mês".
+</div>
+
+<div class="card tip">
+<strong>Em vez de ajuste manual frequente, o ideal é fazer cycle count.</strong> O ajuste manual é pra situação pontual no meio da separação. Se o operador percebe diferenças sistematicamente, o supervisor abre uma sessão de inventário pra recontar a posição (ou a zona inteira). Detalhes em <a href="inventario-cenarios.html">inventario-cenarios.html</a>.
+</div>
+
+<h3>E quando o saldo é menor que o ajuste pedido?</h3>
+<p>Se o operador tenta tirar 5 quando o saldo é 3, o sistema recusa: "saldo insuficiente". Operador precisa primeiro investigar o que aconteceu antes de ajustar.</p>
+</div>
+</section>
+
+<!-- ============== C8 ============== -->
+<section id="c8">
+<h2>Cenário 8 — Lançamento retroativo <span class="tag warn">Emergência operacional</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+A NetAir mandou um motoboy pegar 5 unidades de PEC-400 emprestado da NetParts em SP às 8h da manhã. Mas o operador esqueceu de lançar — só foi perceber às 14h. Quando lança às 14h, o sistema deixa registrar com a data correta do passado.
+</div>
+
+<h3>O que o operador faz</h3>
+<ol>
+  <li>Abre <strong>"Lançamento retroativo"</strong>.</li>
+  <li>Posição: PEC-400 / NetAir / SP / SP-REC-01.</li>
+  <li>Quantidade: 5.</li>
+  <li>Data do evento: "ontem 08:00" (passada).</li>
+  <li>Fornecedor (opcional): NetParts.</li>
+  <li>Motivo (obrigatório): "Recebimento de empréstimo NetParts que não foi lançado na hora".</li>
+  <li>Confirma.</li>
+</ol>
+
+<h4>Histórico</h4>
+<div class="stock-table">
+<div class="header">Linha gravada</div>
+<table>
+<tr><th>Tipo</th><th>Quantidade</th><th>Categoria</th><th>Data registrada</th><th>Motivo</th></tr>
+<tr><td><span class="pill ok">Entrada</span></td><td class="num">5</td><td>Lançamento retroativo</td><td>ontem 08:00</td><td>"Recebimento de empréstimo..."</td></tr>
+</table>
+</div>
+
+<div class="result warn">
+<strong>Resultado:</strong> o saldo é ajustado imediatamente — mas a data do histórico mostra que isso "aconteceu de fato" ontem. Pra fins de auditoria e relatórios, é a data certa que importa.
+</div>
+
+<h3>A pegadinha: lançamento retroativo é provisório</h3>
+<p>Quando o operador faz um lançamento retroativo, o sistema marca ele como <strong>"pendente de reconciliação"</strong>. Por quê? Porque quase sempre essa entrada tem uma NF correspondente que vai aparecer depois. Quando a NF chegar e for processada pelo fluxo normal, vai gerar <em>outra</em> entrada — e aí o estoque vai contar 2x.</p>
+
+<p>Pra evitar isso, existe um passo de reconciliação: o operador (ou supervisor) cruza o retroativo com a NF e cancela um dos dois lançamentos. Detalhes no próximo cenário.</p>
+</div>
+</section>
+
+<!-- ============== C9 ============== -->
+<section id="c9">
+<h2>Cenário 9 — Reconciliar retroativo com a NF <span class="tag ok">Evita dobra de contagem</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>Cenário 8: operador lançou retroativo de 5 unidades ontem. Hoje a NF da NetParts chegou no Tiny → webhook → o sistema processou e fez <em>outra</em> entrada de 5 unidades. Agora o saldo está duplicado: 10 em vez de 5.</p>
+
+<h3>Como o sistema mostra que está duplicado</h3>
+<p>Tem uma tela <strong>"Retroativos pendentes"</strong> que lista todos os lançamentos retroativos que ainda não foram reconciliados. O supervisor abre, vê o de ontem, e tem 2 opções:</p>
+<ol>
+  <li>Marcar como reconciliado com a NF Y (que apareceu depois). O sistema cancela o retroativo e mantém só a entrada da NF.</li>
+  <li>Marcar como "fica" (em alguns casos raros o retroativo é genuíno e não veio NF associada).</li>
+</ol>
+
+<h3>O que acontece quando reconcilia</h3>
+<div class="stock-table">
+<div class="header">Histórico depois da reconciliação</div>
+<table>
+<tr><th>#</th><th>Tipo</th><th>Qtd</th><th>Categoria</th><th>Status</th></tr>
+<tr><td>1</td><td><span class="pill ok">Entrada</span></td><td class="num">5</td><td>Lançamento retroativo</td><td><span class="pill bad">Cancelado</span></td></tr>
+<tr><td>2</td><td><span class="pill bad">Saída</span></td><td class="num">5</td><td>Correção (estorno do #1)</td><td>—</td></tr>
+<tr><td>3</td><td><span class="pill ok">Entrada</span></td><td class="num">5</td><td>NF de devolução</td><td>—</td></tr>
+</table>
+
+<div class="result">
+<strong>Resultado:</strong> saldo volta pra 5 (o correto). O histórico mostra "houve um retroativo, foi cancelado por reconciliação, e a NF efetivou a entrada". Auditoria limpa, sem dobra de contagem.
+</div>
+
+<div class="card tip">
+<strong>Por que não simplesmente apagar o retroativo?</strong> Princípio do sistema: nada se apaga. Tudo vai pro histórico. Quando precisa "remover", cria uma correção. Quem audita vê sempre as duas pontas — o que foi lançado e o que foi corrigido.
+</div>
+</div>
+</section>
+
+<!-- ============== C10 ============== -->
+<section id="c10">
+<h2>Cenário 10 — Receber com data passada <span class="tag ok">Sem fluxo separado</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>Operador percebeu que esqueceu de lançar uma entrada de 3 dias atrás. Em vez de usar o módulo "Lançamento retroativo" (que é mais formal, exige motivo, marca como pendente de reconciliação), ele pode usar o módulo "Receber" comum e <em>escolher a data</em>.</p>
+
+<h3>Como funciona</h3>
+<ol>
+  <li>Abre <strong>"Receber"</strong> normal.</li>
+  <li>Preenche tudo (peça, qty, custo, localização).</li>
+  <li>Antes de confirmar, abre o campo opcional <strong>"Data do recebimento"</strong> e seleciona "3 dias atrás 14:00".</li>
+  <li>Pode marcar também a categoria como "Lançamento retroativo" se for emergência (vai pra fila de reconciliação) ou deixar como "Recebimento" normal (não exige reconciliação).</li>
+  <li>Confirma.</li>
+</ol>
+
+<h4>Diferença entre os dois caminhos</h4>
+<table class="compare">
+<tr><th>Tela</th><th>Quando usar</th><th>Vai pra fila de reconciliação?</th></tr>
+<tr><td><strong>Receber</strong> com data passada, categoria "Recebimento"</td><td>Esqueci de lançar, mas tenho a NF em mãos. Não precisa reconciliar — a NF já é o registro definitivo.</td><td>Não</td></tr>
+<tr><td><strong>Receber</strong> com data passada, categoria "Lançamento retroativo"</td><td>Esqueci de lançar e ainda não sei se vai vir NF</td><td>Sim</td></tr>
+<tr><td><strong>Lançamento retroativo</strong> dedicado</td><td>Caso especial: emergência operacional sem NF, motivo formal</td><td>Sim</td></tr>
+</table>
+
+<div class="result">
+<strong>Resultado:</strong> o operador tem flexibilidade pra registrar entradas atrasadas sem ter que aprender uma tela separada. Em 80% dos casos, "Receber" com data passada resolve.
+</div>
+
+<div class="card tip">
+<strong>O sistema sempre grava com a data informada.</strong> Se você informa "ontem 14:00", a linha do histórico tem essa data, não a data de hoje. Importante: relatórios mensais consideram a data do evento, não a data do lançamento.
+</div>
+</div>
+</section>
+
+<!-- ============== APÊNDICE ============== -->
+<section id="apendice">
+<h2>Apêndice — Custo médio na prática</h2>
+
+<p>O cálculo do custo médio é uma média ponderada simples. Quando entra peça nova com custo, a fórmula é:</p>
+
+<div class="card tip">
+<p><strong>custo médio novo = (saldo antigo × custo antigo + qty nova × custo novo) ÷ (saldo total novo)</strong></p>
+</div>
+
+<h3>Exemplo passo a passo</h3>
+<table class="compare">
+<tr><th>Operação</th><th>Saldo</th><th>Custo médio</th></tr>
+<tr><td>Estado inicial</td><td>10</td><td>R$ 20,00</td></tr>
+<tr><td>Entrada de 5 a R$ 25,00 → média de (10×20 + 5×25)/15</td><td>15</td><td>R$ 21,67</td></tr>
+<tr><td>Saída de 3 → custo médio não muda</td><td>12</td><td>R$ 21,67</td></tr>
+<tr><td>Entrada de 8 a R$ 30,00 → média de (12×21,67 + 8×30)/20</td><td>20</td><td>R$ 25,00</td></tr>
+</table>
+
+<p>Note que saída não mexe no custo médio. Pra contabilidade fiscal, existe outro cálculo (preço médio ponderado fiscal), mas isso é responsabilidade do Tiny — o WMS só gerencia o operacional.</p>
+
+<h3>Quando o custo médio é usado</h3>
+<ul>
+  <li>Relatório de "valor em estoque" (saldo × custo médio).</li>
+  <li>Cálculo de margem por peça (preço de venda - custo médio).</li>
+  <li>Apuração de perdas em ajustes negativos ("perdi 1 a R$ 25 = perdi R$ 25").</li>
+  <li>Classificação de fornecedores caros vs baratos pra mesma peça.</li>
+</ul>
+</section>
+
+<footer>
+  Documento explica os fluxos operacionais de receber, transferir, ajustar e lançamento retroativo.
+  <br>Complementa <a href="ledger-cenarios.html">ledger-cenarios.html</a> (como cada movimentação vira histórico).
+  <br>Atualizado em 2026-05-13.
+</footer>
+
+</div>
+</body>
+</html>

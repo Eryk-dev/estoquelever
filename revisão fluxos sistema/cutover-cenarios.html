@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Cutover de reservas — Todos os cenários pós-deploy</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });
+</script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --card: #ffffff;
+    --ink: #18181b;
+    --ink-2: #52525b;
+    --ink-3: #a1a1aa;
+    --line: #e4e4e7;
+    --brand: #0891b2;
+    --brand-2: #164e63;
+    --ok: #16a34a;
+    --warn: #d97706;
+    --bad: #dc2626;
+    --info: #2563eb;
+    --r: #2563eb;
+    --l: #7c3aed;
+    --e: #16a34a;
+    --s: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 48px 24px 96px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 24px; margin-bottom: 40px; }
+  h1 { margin: 0 0 8px; font-size: 32px; letter-spacing: -0.02em; }
+  .sub { color: var(--ink-2); font-size: 16px; }
+  h2 {
+    margin: 64px 0 16px;
+    font-size: 26px;
+    letter-spacing: -0.01em;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--brand);
+  }
+  h2 .tag {
+    display: inline-block;
+    font-size: 12px;
+    background: var(--brand);
+    color: white;
+    padding: 3px 10px;
+    border-radius: 4px;
+    margin-left: 12px;
+    vertical-align: middle;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  h2 .tag.bad { background: var(--bad); }
+  h2 .tag.warn { background: var(--warn); }
+  h2 .tag.ok { background: var(--ok); }
+  h2 .tag.info { background: var(--info); }
+  h3 { margin: 28px 0 8px; font-size: 18px; color: var(--brand-2); }
+  h4 { margin: 20px 0 8px; font-size: 15px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.05em; }
+  p, li { font-size: 15px; color: var(--ink); }
+  ul { padding-left: 22px; }
+  code { background: #f4f4f5; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+  }
+  .card.tldr { background: #ecfeff; border-color: #a5f3fc; }
+  .card.tldr strong { color: var(--brand-2); }
+  .card.scenario { padding: 28px; }
+  .card.tip { background: #fefce8; border-color: #fde047; }
+  .card.warn { background: #fef3c7; border-color: #f59e0b; }
+  .card.rule { background: #f0f9ff; border-color: var(--info); border-left: 4px solid var(--info); }
+
+  .order-box {
+    background: #f0f9ff;
+    border-left: 4px solid var(--info);
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  .order-box strong { color: var(--info); }
+
+  /* Timeline */
+  .timeline {
+    margin: 24px 0;
+    border-left: 2px solid var(--line);
+    padding-left: 24px;
+  }
+  .timeline .step {
+    position: relative;
+    margin-bottom: 18px;
+  }
+  .timeline .step::before {
+    content: "";
+    position: absolute;
+    left: -33px;
+    top: 6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--brand);
+    border: 2px solid white;
+    box-shadow: 0 0 0 2px var(--brand);
+  }
+  .timeline .step.reverse::before { background: var(--warn); box-shadow: 0 0 0 2px var(--warn); }
+  .timeline .step.error::before { background: var(--bad); box-shadow: 0 0 0 2px var(--bad); }
+  .timeline .step .when { font-weight: 600; color: var(--brand-2); font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .timeline .step .what { color: var(--ink); }
+
+  /* Ledger table */
+  .ledger {
+    background: #fafafa;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 20px 0;
+  }
+  .ledger .header {
+    background: #18181b;
+    color: white;
+    padding: 8px 12px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+  }
+  .ledger table { width: 100%; border-collapse: collapse; margin: 0; }
+  .ledger th, .ledger td {
+    padding: 9px 12px;
+    text-align: center;
+    font-size: 13px;
+    border-bottom: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+  }
+  .ledger th { background: white; font-weight: 600; color: var(--ink-2); font-size: 11px; text-transform: uppercase; }
+  .ledger th:first-child, .ledger td:first-child { text-align: left; font-weight: 600; }
+  .ledger tr:last-child td { border-bottom: none; }
+  .ledger td:last-child, .ledger th:last-child { border-right: none; }
+  .ledger td.ok-cell { background: #dcfce7; color: #166534; font-weight: 700; }
+  .ledger td.bad-cell { background: #fee2e2; color: #991b1b; font-weight: 700; }
+  .ledger td.warn-cell { background: #fef3c7; color: #92400e; font-weight: 700; }
+  .ledger td.dim { color: var(--ink-3); }
+
+  .diagram {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+    margin: 20px 0;
+    text-align: center;
+  }
+  .caption { font-size: 13px; color: var(--ink-2); margin-top: 12px; font-style: italic; }
+
+  .result {
+    margin-top: 20px;
+    padding: 14px 18px;
+    border-radius: 8px;
+    font-size: 15px;
+    border-left: 4px solid var(--ok);
+    background: #f0fdf4;
+  }
+  .result strong { color: var(--ok); }
+  .result.bad { background: #fef2f2; border-left-color: var(--bad); }
+  .result.bad strong { color: var(--bad); }
+  .result.warn { background: #fffbeb; border-left-color: var(--warn); }
+  .result.warn strong { color: var(--warn); }
+
+  table.compare {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 24px 0;
+    font-size: 14px;
+  }
+  table.compare th, table.compare td {
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    text-align: left;
+  }
+  table.compare th {
+    background: #18181b;
+    color: white;
+    font-weight: 600;
+  }
+  table.compare tr:nth-child(even) td { background: #fafafa; }
+
+  .pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .pill.ok { background: #dcfce7; color: #166534; }
+  .pill.warn { background: #fef3c7; color: #92400e; }
+  .pill.bad { background: #fee2e2; color: #991b1b; }
+  .pill.info { background: #dbeafe; color: #1e40af; }
+
+  /* Movement pills (R, L, E, S) */
+  .mov {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    color: white;
+    font-weight: 700;
+    text-align: center;
+    line-height: 22px;
+    font-size: 12px;
+    font-family: ui-monospace, "JetBrains Mono", monospace;
+    vertical-align: middle;
+  }
+  .mov.r { background: var(--r); }
+  .mov.l { background: var(--l); }
+  .mov.e { background: var(--e); }
+  .mov.s { background: var(--s); }
+
+  /* Status pills */
+  .status {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--line);
+    color: var(--ink-2);
+    font-family: ui-monospace, monospace;
+  }
+  .status.forward { background: #dcfce7; color: #166534; }
+  .status.backward { background: #fef3c7; color: #92400e; }
+  .status.terminal { background: #ddd6fe; color: #5b21b6; }
+
+  nav.toc {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 32px;
+  }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  nav.toc a { color: var(--brand); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  nav.toc li { margin: 4px 0; break-inside: avoid; }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-3);
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .legend-bar {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    background: #fafafa;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin: 16px 0;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+
+  .invariant-box {
+    background: linear-gradient(135deg, #ecfeff 0%, #f0fdf4 100%);
+    border: 2px solid var(--brand);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin: 24px 0;
+    font-size: 16px;
+  }
+  .invariant-box code { background: rgba(255,255,255,0.7); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Cutover de reservas — Todos os cenários após o deploy</h1>
+  <p class="sub">Como cada caminho do sistema vai se comportar depois que a refatoração do cutover R→L+S estiver em produção. Cobre 14 cenários, do feliz ao patológico.</p>
+</header>
+
+<!-- ============== PRINCÍPIOS ============== -->
+<section id="principios">
+<h2>Os princípios da nova arquitetura</h2>
+
+<div class="invariant-box">
+<strong>A regra invariante:</strong><br><br>
+O cutover <span class="mov r">R</span>→<span class="mov l">L</span>+<span class="mov s">S</span> dispara quando, e somente quando:<br>
+<code>status_separacao ∈ {separado, embalado, expedido}</code> &nbsp;<strong>E</strong>&nbsp; <code>nota_fiscal_id IS NOT NULL</code> &nbsp;<strong>E</strong>&nbsp; <code>estoque_lancado = false</code>.<br><br>
+Quem chegar por último no encontro de "status forward" + "NF existente" dispara. Quem sair desse conjunto com <code>estoque_lancado=true</code> reverte.
+</div>
+
+<h3>Vocabulário visual</h3>
+<div class="legend-bar">
+  <span><span class="mov r">R</span> &nbsp;Reserva — pendurou plaquinha no estoque</span>
+  <span><span class="mov l">L</span> &nbsp;Liberação — tirou plaquinha</span>
+  <span><span class="mov s">S</span> &nbsp;Saída — peça saiu da prateleira</span>
+  <span><span class="mov e">E</span> &nbsp;Entrada — peça voltou pra prateleira</span>
+</div>
+<div class="legend-bar">
+  <span><span class="status">aguardando_*</span> &nbsp;estado "antes" do cutover</span>
+  <span><span class="status forward">separado/embalado/expedido</span> &nbsp;conjunto "forward"</span>
+  <span><span class="status backward">desfazer/voltar</span> &nbsp;reversão</span>
+</div>
+
+<h3>Os 2 helpers idempotentes (novo arquivo <code>src/lib/wms/cutover.ts</code>)</h3>
+<table class="compare">
+<tr><th>Função</th><th>Quando dispara</th><th>O que faz</th></tr>
+<tr>
+  <td><code>dispararCutoverSePronto(pedidoId)</code></td>
+  <td>status entra em <span class="status forward">separado/embalado/expedido</span> com NF existente</td>
+  <td>Enfileira job <code>lancar_estoque_pos_nf</code>. Worker emite <span class="mov l">L</span>+<span class="mov s">S</span> e marca <code>estoque_lancado=true</code>.</td>
+</tr>
+<tr>
+  <td><code>reverterCutoverSeRetrocedeu(pedidoId, novoStatus)</code></td>
+  <td>status sai do conjunto forward COM <code>estoque_lancado=true</code></td>
+  <td>Estorna <span class="mov s">S</span> via <span class="mov e">E</span> compensatória, recria <span class="mov r">R</span> nas mesmas quádruplas, marca <code>estoque_lancado=false</code>.</td>
+</tr>
+</table>
+
+<h3>Diagrama de estados com gatilhos</h3>
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    P[pendente] --> AC[aguardando_compra]
+    P --> ANF[aguardando_nf]
+    AC --> ANF
+    AC --> ASEP[aguardando_separacao]
+    ANF --> ASEP
+    ASEP --> EMS[em_separacao]
+    EMS --> SEP[SEPARADO]
+    AC --> SEP
+    AC --> EMB[EMBALADO]
+    SEP --> EMB
+    EMB --> EXP[EXPEDIDO]
+
+    SEP -.disparar.-> CUT((R→L+S))
+    EMB -.disparar.-> CUT
+    EXP -.disparar.-> CUT
+
+    EMB -. desfazer-bip .-> EMS
+    EXP -. voltar-etapa .-> ASEP
+    EMB -. voltar-etapa .-> ASEP
+    EMS -. desfazer-bip .-> ASEP
+
+    EMS -.reverter.-> REV((S→E + recria R))
+    ASEP -.reverter.-> REV
+
+    style CUT fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+    style REV fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style SEP fill:#dbeafe,stroke:#2563eb
+    style EMB fill:#dbeafe,stroke:#2563eb
+    style EXP fill:#dbeafe,stroke:#2563eb
+</pre>
+<div class="caption">Setas sólidas: transição normal de status. Setas pontilhadas: reversão. Círculos verdes/amarelos: ponto de chamada dos helpers.</div>
+</div>
+
+<div class="card rule">
+<strong>Pré-requisito de TODOS os cenários:</strong> sistema rodando com <code>WMS_AS_SOURCE=true</code>. Em modo Tiny legado, o comportamento atual continua intacto (cutover no webhook da NF). A refatoração é gateada por essa flag.
+</div>
+</section>
+
+<!-- ============== TOC ============== -->
+<nav class="toc">
+  <strong>Cenários (14 no total)</strong>
+  <ol>
+    <li><a href="#c1">Pedido normal — caminho feliz</a></li>
+    <li><a href="#c2">Concluir-OC puro (sem compra)</a></li>
+    <li><a href="#c3">OC com compra mix (parcial)</a></li>
+    <li><a href="#c4">Embalagem direta OC (skip separado)</a></li>
+    <li><a href="#c5">Desfazer-bip pós-embalado (reversal)</a></li>
+    <li><a href="#c6">Admin voltar-etapa backward</a></li>
+    <li><a href="#c7">Encaminhar antes do cutover</a></li>
+    <li><a href="#c8">Cancel antes do cutover</a></li>
+    <li><a href="#c9">Cancel depois do cutover</a></li>
+    <li><a href="#c10">NF webhook chegando tarde</a></li>
+    <li><a href="#c11">Cycle count durante separação</a></li>
+    <li><a href="#c12">Reserva expirando (TTL 30d)</a></li>
+    <li><a href="#c13">Race: 2 operadores concluindo</a></li>
+    <li><a href="#c14">Falha + retry do worker</a></li>
+  </ol>
+</nav>
+
+<!-- ============== CENÁRIO 1 — PEDIDO NORMAL ============== -->
+<section id="c1">
+<h2>Cenário 1 — Pedido normal (caminho feliz) <span class="tag ok">95% dos pedidos</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido:</strong> 5 unidades de <code>PEC-001</code>. NetAir CWB. Rota: própria. NF emite na aprovação, operador separa fisicamente, conclui.
+</div>
+
+<h4>Sequência de eventos</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0s — webhook do pedido</div><div class="what">Sistema cria <span class="mov r">R</span> de 5un. Status: <span class="status">aguardando_aprovacao</span>.</div></div>
+<div class="step"><div class="when">T+30s — aprovação automática</div><div class="what">Enfileira <code>lancar_estoque</code>. Worker gera NF stub, salva <code>nota_fiscal_id</code>. Status: <span class="status">aguardando_separacao</span>.<br><strong>Cutover NÃO dispara</strong> porque status não está no conjunto forward.</div></div>
+<div class="step"><div class="when">T+10min — operador inicia separação</div><div class="what">Status: <span class="status">em_separacao</span>. Bipa cada item. Saldo intacto, reserva intacta.</div></div>
+<div class="step"><div class="when">T+15min — operador conclui</div><div class="what">Endpoint <code>/separacao/concluir</code> muda status pra <span class="status forward">separado</span>. <strong>Chama <code>dispararCutoverSePronto</code></strong>: status forward + NF existe → enfileira pos_nf. Worker emite <span class="mov l">L</span>+<span class="mov s">S</span>, marca <code>estoque_lancado=true</code>.</div></div>
+<div class="step"><div class="when">T+16min — embalagem</div><div class="what">Operador embala. Status: <span class="status forward">embalado</span>. <code>dispararCutoverSePronto</code> chamado de novo (idempotente — pula porque <code>estoque_lancado=true</code>).</div></div>
+<div class="step"><div class="when">T+20min — expedição</div><div class="what">Status: <span class="status forward">expedido</span>. Mesma idempotência protege.</div></div>
+</div>
+
+<h4>Estado do ledger ao longo do tempo</h4>
+<div class="ledger">
+<div class="header">LEDGER — PEC-001 NetAir CWB</div>
+<table>
+<tr><th>Momento</th><th>Saldo</th><th>Reservado</th><th>Disponível</th><th>Físico esperado</th><th>OK?</th></tr>
+<tr><td>Antes do pedido</td><td>10</td><td class="dim">0</td><td>10</td><td>10</td><td class="ok-cell">✓</td></tr>
+<tr><td>R criada</td><td>10</td><td class="warn-cell">5</td><td>5</td><td>10</td><td class="ok-cell">✓</td></tr>
+<tr><td>Aguardando separação</td><td>10</td><td class="warn-cell">5</td><td>5</td><td>10</td><td class="ok-cell">✓</td></tr>
+<tr><td>Em separação</td><td>10</td><td class="warn-cell">5</td><td>5</td><td>10</td><td class="ok-cell">✓</td></tr>
+<tr><td><strong>Concluiu → cutover</strong></td><td class="ok-cell">5</td><td class="dim">0</td><td>5</td><td>5</td><td class="ok-cell">✓</td></tr>
+<tr><td>Embalado / Expedido</td><td class="ok-cell">5</td><td class="dim">0</td><td>5</td><td>5</td><td class="ok-cell">✓</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> 3 movimentações no ledger (<span class="mov r">R</span>, <span class="mov l">L</span>, <span class="mov s">S</span>), todas com rastreabilidade via <code>estorno_de</code>. Físico e sistema batendo em todos os momentos. Cycle count pode rodar a qualquer hora sem detectar divergência fantasma.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 2 — CONCLUIR-OC PURO ============== -->
+<section id="c2">
+<h2>Cenário 2 — Concluir-OC puro <span class="tag info">NF gera depois do separado</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido OC:</strong> 3 unidades de <code>PEC-002</code>. Aguardando validação dos itens (encontrei/esgotado). Operador valida tudo como "encontrei". Pedido pula direto pra separado SEM ter tido NF antes.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0 — pedido OC entrou</div><div class="what">Itens marcados como <code>compra_status='oc_pendente'</code>. Status: <span class="status">aguardando_compra</span>. <strong>Sem reserva ainda</strong> (OC não reserva — peça nem está na prateleira da empresa).</div></div>
+<div class="step"><div class="when">T+1h — compra chegou, foi recebida</div><div class="what">Estoque entra (<span class="mov e">E</span>) na empresa de origem.</div></div>
+<div class="step"><div class="when">T+1h05 — operador valida</div><div class="what">Endpoint <code>/separacao/concluir-oc</code> muda status pra <span class="status forward">separado</span> + enfileira <code>lancar_estoque</code>.<br><strong>Chama <code>dispararCutoverSePronto</code></strong>: status forward ✓, mas NF AINDA NÃO existe → skip (loga "aguardando NF").</div></div>
+<div class="step"><div class="when">T+1h05 + 3s — worker processa <code>lancar_estoque</code></div><div class="what">Gera NF, salva <code>nota_fiscal_id</code>. <strong>Worker chama <code>dispararCutoverSePronto</code> no final</strong>: status já é <span class="status forward">separado</span> + NF agora existe → enfileira pos_nf. Worker emite <span class="mov r">R</span> implícita + <span class="mov l">L</span> + <span class="mov s">S</span>.</div></div>
+</div>
+
+<div class="card tip">
+<strong>O detalhe:</strong> nesse fluxo, a <span class="mov r">R</span> nasce e morre quase ao mesmo tempo. Tecnicamente o RPC <code>wms_inserir_movimentacao</code> exige uma R antes de uma L. O <code>executarEstoquePosNfWms</code> cria a R no momento e em seguida converte. Conceito: a peça já está na prateleira (recebida) e está saindo agora.
+</div>
+
+<h4>Ledger</h4>
+<div class="ledger">
+<div class="header">LEDGER — PEC-002 NetAir CWB</div>
+<table>
+<tr><th>Momento</th><th>Saldo</th><th>Reservado</th><th>Disponível</th><th>Físico</th><th>OK?</th></tr>
+<tr><td>Antes</td><td class="dim">0</td><td class="dim">0</td><td>0</td><td>0</td><td class="ok-cell">✓</td></tr>
+<tr><td>Compra recebida (E)</td><td class="ok-cell">3</td><td class="dim">0</td><td>3</td><td>3</td><td class="ok-cell">✓</td></tr>
+<tr><td>Validou OC → separado</td><td>3</td><td class="dim">0</td><td>3</td><td>3</td><td class="ok-cell">✓</td></tr>
+<tr><td>NF gerou + cutover</td><td class="ok-cell">0</td><td class="dim">0</td><td>0</td><td>0</td><td class="ok-cell">✓</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> em pedidos OC puros, a "interseção forward + NF" acontece no executor, não no concluir-oc. <code>dispararCutoverSePronto</code> é chamado dos dois lugares — só dispara onde a regra está satisfeita.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 3 — OC COM COMPRA MIX ============== -->
+<section id="c3">
+<h2>Cenário 3 — OC com compra mix <span class="tag info">Parcial → separação normal</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido:</strong> 3 itens diferentes. 2 itens têm estoque (vira <span class="mov r">R</span> normal). 1 item precisa comprar (vai pra OC, sem reserva). Pedido fica <span class="status">aguardando_compra</span>.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0 — pedido entra</div><div class="what">2 reservas <span class="mov r">R</span> criadas pros itens disponíveis. 3º item: aguardando OC.</div></div>
+<div class="step"><div class="when">T+1d — compra do 3º item chega</div><div class="what"><code>compras-release</code> entra: gera NF (item 3 + os 2 anteriores), muda pedido pra <span class="status">aguardando_separacao</span>, enfileira <code>lancar_estoque</code>.</div></div>
+<div class="step"><div class="when">T+1d + 2s — worker gera NF</div><div class="what"><code>dispararCutoverSePronto</code> chamado: status ainda é <span class="status">aguardando_separacao</span> (não forward) → skip.</div></div>
+<div class="step"><div class="when">T+1d + 5min — operador bipa todos</div><div class="what">Bipa os 2 originais + 1 da compra. Concluir → <span class="status forward">separado</span>. <code>dispararCutoverSePronto</code>: forward + NF → cutover dispara pros 2 itens originais. Item 3 também sai (R nasce-e-morre como no cenário 2).</div></div>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> o pedido mistura R "viva por dias" (itens originais) com R "instantânea" (item OC). O cutover trata todas as reservas do pedido de uma vez — não importa quando nasceram.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 4 — EMBALAGEM DIRETA OC ============== -->
+<section id="c4">
+<h2>Cenário 4 — Embalagem direta OC (skip separado) <span class="tag warn">Status pula etapa</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido OC pequeno:</strong> operador resolve embalar direto sem passar pela tela de separação. Vai em "embalagem", bipa itens (via <code>/bipar-embalagem-oc</code> ou <code>/confirmar-item-embalagem</code>) e o status pula de <span class="status">aguardando_compra</span> direto pra <span class="status forward">embalado</span>.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0 — pedido OC após compra recebida</div><div class="what">Status: <span class="status">aguardando_compra</span>. Sem reservas (OC não reserva).</div></div>
+<div class="step"><div class="when">T+1min — operador bipa último item em embalagem</div><div class="what">Endpoint detecta pedido completo, muda status pra <span class="status forward">embalado</span> + enfileira <code>lancar_estoque</code>.<br><strong>Chama <code>dispararCutoverSePronto</code></strong>: status forward ✓, NF ainda não → skip.</div></div>
+<div class="step"><div class="when">T+1min + 2s — worker gera NF</div><div class="what">Worker chama <code>dispararCutoverSePronto</code>: status <span class="status forward">embalado</span> (está no conjunto!) + NF agora existe → enfileira pos_nf. Cutover acontece.</div></div>
+<div class="step"><div class="when">T+1min + 3s — etiqueta imprime</div><div class="what">Em paralelo, <code>imprimirEtiquetaDireta</code> roda. ZPL já cacheado ou baixado.</div></div>
+</div>
+
+<div class="card tip">
+<strong>Por que isso funciona:</strong> o conjunto forward é <code>{separado, embalado, expedido}</code> — não exige passar por <code>separado</code> especificamente. Qualquer um dos três satisfaz a regra. O fluxo OC direto pode "pular" separado sem quebrar a invariante.
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> o pedido finaliza fisicamente (operador embalou) e o ledger se ajusta em segundos. Etiqueta imprime independente do cutover (eventos paralelos). Cycle count consistente.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 5 — DESFAZER-BIP POS-EMBALADO ============== -->
+<section id="c5">
+<h2>Cenário 5 — Desfazer-bip pós-embalado <span class="tag warn">Reversal automática</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido já embalado:</strong> operador percebe que bipou item errado, usa <code>/desfazer-bip</code>. Status reverte de <span class="status forward">embalado</span> pra <span class="status">em_separacao</span>. Mas o cutover JÁ FOI: existe <span class="mov s">S</span> no ledger.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0 — pedido em embalado</div><div class="what">Cutover já rodou. Saldo baixou. <code>estoque_lancado=true</code>.</div></div>
+<div class="step reverse"><div class="when">T+5min — operador desfaz bip</div><div class="what">Endpoint detecta retrocesso de status. <strong>Chama <code>reverterCutoverSeRetrocedeu</code></strong> antes de mudar status:<ol><li>Lê movimentações <span class="mov s">S</span> do pedido</li><li>Cria <span class="mov e">E</span> compensatória pra cada <span class="mov s">S</span> (com <code>estorno_de=S.id</code>)</li><li>Lê movimentações <span class="mov r">R</span> originais (já liberadas mas no ledger)</li><li>Cria nova <span class="mov r">R</span> na mesma quádrupla, com novo TTL de 30d</li><li>Marca <code>estoque_lancado=false</code></li></ol>Depois muda status pra <span class="status">em_separacao</span>.</div></div>
+</div>
+
+<h4>Ledger antes/depois da reversão</h4>
+<div class="ledger">
+<div class="header">LEDGER — antes da reversão</div>
+<table>
+<tr><th>Mov</th><th>Tipo</th><th>Qty</th><th>origem_tipo</th><th>estorno_de</th></tr>
+<tr><td>m1</td><td><span class="mov r">R</span></td><td>5</td><td>reserva_pedido</td><td class="dim">null</td></tr>
+<tr><td>m2</td><td><span class="mov l">L</span></td><td>5</td><td>liberacao_reserva</td><td>m1</td></tr>
+<tr><td>m3</td><td><span class="mov s">S</span></td><td>5</td><td>nf_venda</td><td class="dim">null</td></tr>
+</table>
+</div>
+<div class="ledger">
+<div class="header">LEDGER — após reversão</div>
+<table>
+<tr><th>Mov</th><th>Tipo</th><th>Qty</th><th>origem_tipo</th><th>estorno_de</th></tr>
+<tr><td>m1</td><td><span class="mov r">R</span></td><td>5</td><td>reserva_pedido</td><td class="dim">null</td></tr>
+<tr><td>m2</td><td><span class="mov l">L</span></td><td>5</td><td>liberacao_reserva</td><td>m1</td></tr>
+<tr><td>m3</td><td><span class="mov s">S</span></td><td>5</td><td>nf_venda</td><td class="dim">null</td></tr>
+<tr><td>m4</td><td><span class="mov e">E</span></td><td>5</td><td>cancelamento_nf</td><td>m3</td></tr>
+<tr><td>m5</td><td><span class="mov r">R</span></td><td>5</td><td>reserva_pedido</td><td class="dim">null (nova)</td></tr>
+</table>
+</div>
+
+<div class="card warn">
+<strong>Edge: se outro pedido consumiu o estoque liberado.</strong> Entre o cutover e o desfazer, outro pedido pode ter pego o saldo. Quando tentar recriar a <span class="mov r">R</span> nova, <code>reservarAtomico</code> falha por saldo insuficiente. Sistema:
+<ul>
+<li>Mantém a reversão das <span class="mov s">S</span> (estoque volta, ledger íntegro)</li>
+<li>Marca pedido com <code>status_alerta='reserva_recriacao_falhou'</code></li>
+<li>Operador vê alerta e investiga (provavelmente precisa encaminhar pra outro galpão ou OC)</li>
+</ul>
+</div>
+
+<div class="result warn">
+<strong>Resultado:</strong> pedido volta de fato pra fluxo de separação. Saldo e reservado batem com o físico em todos os passos. Ledger preserva trilha de auditoria — dá pra ver exatamente o que aconteceu.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 6 — ADMIN VOLTAR-ETAPA ============== -->
+<section id="c6">
+<h2>Cenário 6 — Admin voltar-etapa backward <span class="tag warn">Reset profundo</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido em expedido:</strong> descobriu-se erro grave (etiqueta errada, destinatário trocado). Admin usa <code>/separacao/voltar-etapa</code> pra mover de <span class="status forward">expedido</span> direto pra <span class="status">aguardando_separacao</span>.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0 — pedido em expedido</div><div class="what">Cutover rodou há tempos. <code>estoque_lancado=true</code>. Etiqueta impressa.</div></div>
+<div class="step reverse"><div class="when">T+1h — admin executa voltar-etapa</div><div class="what">Endpoint detecta retrocesso GRANDE (3 níveis pra trás). <strong>Chama <code>reverterCutoverSeRetrocedeu</code></strong>: estorna S, recria R. Marca <code>estoque_lancado=false</code>. Limpa <code>separacao_iniciada_em</code>, <code>separacao_concluida_em</code>, <code>embalagem_concluida_em</code>. Status: <span class="status">aguardando_separacao</span>.</div></div>
+<div class="step reverse"><div class="when">T+1h + 1s — fluxo retoma</div><div class="what">Pedido volta pra fila do operador. NF continua existente (não cancela NF fiscal). Etiqueta pode ser reimpressa.</div></div>
+</div>
+
+<div class="card tip">
+<strong>NF não é cancelada automaticamente.</strong> Voltar-etapa é operação de processo interno — o "papel da NF" continua válido fiscalmente. Se a NF realmente precisa ser cancelada, é fluxo separado (cancel webhook do Tiny).
+</div>
+
+<div class="result warn">
+<strong>Resultado:</strong> reset profundo controlado por admin. Ledger conta a história inteira: <span class="mov r">R</span>→<span class="mov l">L</span>→<span class="mov s">S</span>→<span class="mov e">E</span>→<span class="mov r">R</span>'. Cinco linhas de auditoria.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 7 — ENCAMINHAR PRÉ-CUTOVER ============== -->
+<section id="c7">
+<h2>Cenário 7 — Encaminhar antes do cutover <span class="tag ok">Caminho leve</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido em aguardando_separacao:</strong> CWB descobre que não vai conseguir despachar a tempo. Pede pra SP separar. Cutover ainda não rodou (status não é forward).
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0 — operador clica encaminhar pra SP</div><div class="what">Endpoint <code>/separacao/encaminhar</code> chama:<ol><li><code>liberarReserva({motivo: 'encaminhamento'})</code>: cria <span class="mov l">L</span> pra cada <span class="mov r">R</span> em CWB</li><li><code>recriarReservasNoGalpao({galpao_destino: SP})</code>: procura saldo em SP, cria <span class="mov r">R</span> nova</li><li>Reseta pedido pra <span class="status">pendente</span> com sugestão="transferencia"</li></ol>NF preservada. Etiqueta limpa pra reprintar.</div></div>
+</div>
+
+<div class="card tip">
+<strong>Por que não chama <code>reverterCutoverSeRetrocedeu</code>?</strong> Porque <code>estoque_lancado=false</code> — não tem <span class="mov s">S</span> pra estornar. O encaminhar já usa diretamente os helpers de baixo nível (<code>liberarReserva</code> + <code>recriarReservasNoGalpao</code>). A função de reversal só age se houver cutover pra desfazer.
+</div>
+
+<h4>Ledger</h4>
+<div class="ledger">
+<div class="header">LEDGER — após encaminhar</div>
+<table>
+<tr><th>Mov</th><th>Tipo</th><th>Galpão</th><th>origem_tipo</th><th>estorno_de</th></tr>
+<tr><td>m1</td><td><span class="mov r">R</span></td><td>CWB</td><td>reserva_pedido</td><td class="dim">null</td></tr>
+<tr><td>m2</td><td><span class="mov l">L</span></td><td>CWB</td><td>liberacao_reserva</td><td>m1</td></tr>
+<tr><td>m3</td><td><span class="mov r">R</span></td><td>SP</td><td>reserva_pedido</td><td class="dim">null (nova)</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> nada muda do comportamento atual — encaminhar pré-cutover já funciona perfeito. A refatoração não toca esse caminho.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 8 — CANCEL PRÉ-CUTOVER ============== -->
+<section id="c8">
+<h2>Cenário 8 — Cancel antes do cutover <span class="tag ok">Só libera R</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido em aguardando_separacao:</strong> cliente cancelou no marketplace. Webhook de cancelamento chega do Tiny. <code>estoque_lancado=false</code>, então só tem <span class="mov r">R</span> pra liberar.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0 — webhook cancel chega</div><div class="what">Webhook handler vê <code>codigoSituacao='cancelado'</code>. Como <code>existingOrder.estoque_lancado=false</code>:<br>→ chama <code>liberarReserva({motivo: 'cancelamento'})</code><br>→ cria <span class="mov l">L</span> pra cada <span class="mov r">R</span> ativa<br>→ marca pedido <code>status='cancelado'</code>, <code>status_separacao=null</code></div></div>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> 1 <span class="mov r">R</span> + 1 <span class="mov l">L</span> no ledger. Saldo intacto. Disponível volta. Outro pedido pode pegar esse estoque imediatamente.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 9 — CANCEL PÓS-CUTOVER ============== -->
+<section id="c9">
+<h2>Cenário 9 — Cancel depois do cutover <span class="tag warn">Estorna S + alerta</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido em embalado:</strong> cliente cancelou tarde (raro mas acontece — chargeback, fraude). Cutover já rodou. Existe <span class="mov s">S</span> no ledger.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step error"><div class="when">T+0 — webhook cancel chega</div><div class="what">Como <code>existingOrder.estoque_lancado=true</code>:<br>→ chama <code>estornarSaidasPedido({motivo: 'cancelamento'})</code><br>→ cria <span class="mov e">E</span> compensatória pra cada <span class="mov s">S</span> existente<br>→ marca <code>compra_estoque_lancado_alerta=true</code> no pedido<br>→ marca <code>status='cancelado'</code></div></div>
+</div>
+
+<div class="card warn">
+<strong>Diferença importante: NÃO recria R.</strong> Cancelar é diferente de "voltar etapa". Quando cancela, o pedido morre. Estoque volta pra "disponível geral" — qualquer outro pedido pode pegar. Não tem reserva pra recriar.<br><br>
+A bandeira <code>compra_estoque_lancado_alerta</code> avisa o operador: "estoque foi 'desfaturado' — verifique se a NF foi cancelada fiscalmente no Tiny."
+</div>
+
+<h4>Ledger</h4>
+<div class="ledger">
+<div class="header">LEDGER — após cancel pós-cutover</div>
+<table>
+<tr><th>Mov</th><th>Tipo</th><th>Qty</th><th>origem_tipo</th><th>estorno_de</th></tr>
+<tr><td>m1</td><td><span class="mov r">R</span></td><td>5</td><td>reserva_pedido</td><td class="dim">null</td></tr>
+<tr><td>m2</td><td><span class="mov l">L</span></td><td>5</td><td>liberacao_reserva</td><td>m1</td></tr>
+<tr><td>m3</td><td><span class="mov s">S</span></td><td>5</td><td>nf_venda</td><td class="dim">null</td></tr>
+<tr><td>m4</td><td><span class="mov e">E</span></td><td>5</td><td>cancelamento_nf</td><td>m3</td></tr>
+</table>
+</div>
+
+<div class="result warn">
+<strong>Resultado:</strong> saldo final = saldo inicial (E compensou S). Reservado = 0. Operador vê alerta visual no pedido cancelado pra verificar a NF.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 10 — NF WEBHOOK CHEGANDO TARDE ============== -->
+<section id="c10">
+<h2>Cenário 10 — NF webhook chegando tarde <span class="tag info">Race entre concluir e webhook</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido com NF demorada:</strong> em modo Tiny→WMS migrado, a NF do Tiny demora minutos pra autorizar. O operador é rápido — bipa tudo e termina ANTES do webhook da NF chegar. <code>nota_fiscal_id=null</code> no momento do concluir.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0 — operador conclui antes da NF</div><div class="what">Status: <span class="status forward">separado</span>. <code>dispararCutoverSePronto</code> chamado: forward ✓, mas NF ausente → skip + loga "aguardando NF".</div></div>
+<div class="step"><div class="when">T+30s — NF webhook chega</div><div class="what"><code>nf-webhook-handler</code> salva <code>nota_fiscal_id</code>. Em modo WMS, NÃO enfileira pos_nf direto (refatoração removeu isso). Em vez disso, <strong>chama <code>dispararCutoverSePronto</code> no final</strong>: status é <span class="status forward">separado</span> ✓, NF agora existe ✓ → enfileira pos_nf. Cutover dispara.</div></div>
+</div>
+
+<div class="card tip">
+<strong>Simetria perfeita:</strong> tanto faz a ordem em que os eventos chegam — quem completar a interseção dispara. Nenhum evento "perde a janela".
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> race condition tratado naturalmente pela arquitetura. Sem locks complexos, sem semáforos. A invariante é a verdade — verificar a invariante em cada ponto de chamada resolve.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 11 — CYCLE COUNT ============== -->
+<section id="c11">
+<h2>Cenário 11 — Cycle count durante a operação <span class="tag ok">O problema original resolvido</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Inventário rodando:</strong> 5 operadores fazendo cycle count em paralelo enquanto separação rola na operação. Pedidos em vários estados (em separacao, embalando, expedindo). Cycle count vai contar uma localização que tem <code>SKU-X</code> com 12 unidades físicas.
+</div>
+
+<h4>Estados dos pedidos que usam SKU-X nessa localização</h4>
+<div class="ledger">
+<div class="header">SNAPSHOT DURANTE CYCLE COUNT</div>
+<table>
+<tr><th>Pedido</th><th>Status</th><th>Qty na reserva</th><th>Cutover rodou?</th></tr>
+<tr><td>#101</td><td><span class="status">aguardando_separacao</span></td><td>3</td><td class="bad-cell">não</td></tr>
+<tr><td>#102</td><td><span class="status">em_separacao</span></td><td>2</td><td class="bad-cell">não</td></tr>
+<tr><td>#103</td><td><span class="status forward">separado</span></td><td>4</td><td class="ok-cell">sim</td></tr>
+<tr><td>#104</td><td><span class="status forward">embalado</span></td><td>1</td><td class="ok-cell">sim</td></tr>
+</table>
+</div>
+
+<h4>Estado do ledger pra SKU-X nessa localização</h4>
+<div class="ledger">
+<div class="header">LEDGER — SKU-X @ rua-3-prateleira-2</div>
+<table>
+<tr><th></th><th>Sistema</th><th>Físico esperado</th><th>OK?</th></tr>
+<tr><td>Saldo</td><td>12 - 4 - 1 = <strong>7</strong></td><td>12 - 4 - 1 = <strong>7</strong> <small>(pedidos 103 e 104 já saíram)</small></td><td class="ok-cell">✓</td></tr>
+<tr><td>Reservado</td><td>3 + 2 = <strong>5</strong></td><td>—</td><td class="ok-cell">✓</td></tr>
+<tr><td>Disponível</td><td>7 - 5 = <strong>2</strong></td><td>—</td><td class="ok-cell">✓</td></tr>
+</table>
+</div>
+
+<h4>O operador conta fisicamente: 7 unidades</h4>
+<p>(Os pedidos #103 e #104 já levaram as 5 unidades — peça saiu da prateleira quando concluiu/embalou). Os pedidos #101 e #102 ainda estão "com plaquinha" nas 5 que sobraram.</p>
+
+<div class="result">
+<strong>Resultado:</strong> sistema diz 7, físico diz 7. <strong>Zero divergência fantasma.</strong> Esse é o problema que a refatoração resolveu — antes, sistema diria <code>7</code> mas físico mostraria <code>9</code> (porque pedidos #101 e #102 ainda não tinham fisicamente saído da prateleira mas o saldo já tinha sido baixado pela NF antiga).
+</div>
+
+<div class="card tldr">
+<strong>A garantia:</strong> em qualquer momento do dia, físico = saldo (com pedidos forward já saídos). Reservado é o "porvir" — peças com plaquinha de outros pedidos. Disponível é o que pode entrar em novo pedido. Sempre coerente.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 12 — TTL EXPIRANDO ============== -->
+<section id="c12">
+<h2>Cenário 12 — Reserva expirando (TTL 30 dias) <span class="tag warn">Cleanup automático</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido travado:</strong> chegou há 32 dias, NF emitida, ficou em <span class="status">aguardando_separacao</span>. Ninguém separou (perdeu de vista, sumiu da fila visual). Cron de cleanup roda às 3h AM.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0 — pedido entrou há 32 dias</div><div class="what"><span class="mov r">R</span> criada com <code>expira_em = pedido + 30d</code>. Hoje já expirou há 2 dias.</div></div>
+<div class="step"><div class="when">T+32d, 3:00 AM — cron dispara</div><div class="what">Endpoint <code>/api/wms/reservas/cleanup</code> chamado pelo Vercel cron. Função <code>cleanupReservasExpiradas</code>:<ol><li>Busca <span class="mov r">R</span> com <code>expira_em &lt; now()</code></li><li>Pra cada uma: checa se já tem <span class="mov l">L</span> apontando (pula se sim)</li><li>Cria <span class="mov l">L</span> com motivo "expirado"</li><li>Marca pedido <code>status_alerta='reserva_expirada'</code></li></ol></div></div>
+<div class="step"><div class="when">T+32d, manhã — operador entra</div><div class="what">Vê pedido com alerta visual vermelho. Sabe que precisa investigar: a NF ainda existe no Tiny, mas a reserva sumiu. Decide: cancelar fiscalmente ou criar nova R via admin.</div></div>
+</div>
+
+<div class="card warn">
+<strong>Importante:</strong> uma reserva expirando significa que o sistema "abriu mão" do estoque depois de 30 dias sem ação. É <em>sintoma</em> de problema operacional — pedido foi esquecido. O cleanup é a rede de segurança final pra impedir vazamento de reserva indefinidamente. Nunca deveria acontecer em operação saudável.
+</div>
+
+<div class="result warn">
+<strong>Resultado:</strong> estoque é liberado pra outros pedidos. Pedido fica com alerta. NF fiscal continua existindo no Tiny (precisa ser tratada manualmente se for cancelar).
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 13 — RACE 2 OPERADORES ============== -->
+<section id="c13">
+<h2>Cenário 13 — Race: 2 operadores concluindo o mesmo pedido <span class="tag ok">CAS atômico</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido em em_separacao:</strong> 2 operadores em terminais diferentes terminam de bipar tudo ao mesmo tempo. Ambos clicam "concluir" no mesmo instante. Ambas requisições chegam no servidor em paralelo.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step"><div class="when">T+0ms — operador A clica concluir</div><div class="what">Endpoint executa <code>UPDATE siso_pedidos SET status_separacao='separado' WHERE id=X <strong>AND status_separacao='em_separacao'</strong></code>. <span class="pill ok">SUCCESS</span> (1 linha atualizada).</div></div>
+<div class="step error"><div class="when">T+0ms — operador B clica concluir</div><div class="what">Mesma query, mesma condição. Mas o estado já é "separado" agora. <span class="pill bad">0 linhas atualizadas</span> — o CAS protegeu.</div></div>
+<div class="step"><div class="when">T+50ms — A continua, B retorna pendente</div><div class="what">A: <code>dispararCutoverSePronto</code> enfileira pos_nf.<br>B: pedido aparece em <code>pendentes</code> no response → frontend mostra "já foi concluído".<br>Mesmo se B tentasse chamar <code>dispararCutoverSePronto</code> também, seria idempotente — o worker checa <code>estoque_lancado</code> e pula.</div></div>
+</div>
+
+<div class="card tip">
+<strong>Defesa em camadas:</strong>
+<ol>
+<li><strong>CAS no UPDATE</strong> — só um operador "ganha" a transição de status</li>
+<li><strong>Idempotência via <code>estoque_lancado</code></strong> — pos_nf duplicado vira no-op</li>
+<li><strong>Idempotência via <code>estorno_de</code></strong> — mesmo se 2 jobs pos_nf rodarem, cada R só vira L+S uma vez</li>
+</ol>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> uma só conversão R→L+S. Ledger íntegro. Frontend do operador B mostra mensagem clara ("já concluído por outro"). Sem corrupção, sem duplicação.
+</div>
+
+</div>
+</section>
+
+<!-- ============== CENÁRIO 14 — FALHA + RETRY ============== -->
+<section id="c14">
+<h2>Cenário 14 — Falha no worker no meio do cutover <span class="tag ok">Retry seguro</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+<strong>Pedido com 3 itens:</strong> worker processa o pos_nf, converte item 1 (cria <span class="mov l">L</span>+<span class="mov s">S</span>), converte item 2 (cria <span class="mov l">L</span>+<span class="mov s">S</span>), e no item 3 o banco timeout. Worker lança erro. Job fica em <code>siso_fila_execucao</code> com <code>tentativas</code> incrementado.
+</div>
+
+<h4>Sequência</h4>
+<div class="timeline">
+<div class="step error"><div class="when">T+0 — primeira tentativa</div><div class="what">Worker pega job. Loop itera reservas:<ul><li>R1 → cria L1+S1 ✓</li><li>R2 → cria L2+S2 ✓</li><li>R3 → <span class="pill bad">timeout</span></li></ul>Worker joga exceção. <strong>NÃO marca <code>estoque_lancado=true</code></strong> (só marca se TODAS converterem).</div></div>
+<div class="step"><div class="when">T+30s — backoff exponencial dispara retry</div><div class="what">Worker pega o job de novo. Loop itera reservas:<ul><li>R1 → checa se tem L apontando pra R1 (<code>estorno_de=R1.id</code>): SIM → pula</li><li>R2 → checa se tem L: SIM → pula</li><li>R3 → checa: NÃO → tenta criar L3+S3 ✓</li></ul>Marca <code>estoque_lancado=true</code>.</div></div>
+</div>
+
+<h4>Ledger ao longo do retry</h4>
+<div class="ledger">
+<div class="header">LEDGER — após 1ª tentativa (falhou)</div>
+<table>
+<tr><th>Mov</th><th>Tipo</th><th>estorno_de</th></tr>
+<tr><td>R1</td><td><span class="mov r">R</span></td><td class="dim">null</td></tr>
+<tr><td>R2</td><td><span class="mov r">R</span></td><td class="dim">null</td></tr>
+<tr><td>R3</td><td><span class="mov r">R</span></td><td class="dim">null</td></tr>
+<tr><td>L1</td><td><span class="mov l">L</span></td><td>R1</td></tr>
+<tr><td>S1</td><td><span class="mov s">S</span></td><td class="dim">—</td></tr>
+<tr><td>L2</td><td><span class="mov l">L</span></td><td>R2</td></tr>
+<tr><td>S2</td><td><span class="mov s">S</span></td><td class="dim">—</td></tr>
+</table>
+</div>
+<div class="ledger">
+<div class="header">LEDGER — após retry (sucesso)</div>
+<table>
+<tr><th>Mov</th><th>Tipo</th><th>estorno_de</th></tr>
+<tr><td>...</td><td colspan="2">(mantém L1, S1, L2, S2)</td></tr>
+<tr><td>L3</td><td><span class="mov l">L</span></td><td>R3</td></tr>
+<tr><td>S3</td><td><span class="mov s">S</span></td><td class="dim">—</td></tr>
+</table>
+</div>
+
+<div class="card tip">
+<strong>O segredo:</strong> a checagem de idempotência é feita por <span class="mov r">R</span> individual via <code>estorno_de</code>. Não dá pra criar duas <span class="mov l">L</span>'s apontando pra mesma <span class="mov r">R</span>. O retry pode rodar 100 vezes que cada R vira L+S exatamente uma vez.
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> recuperação automática. Sem necessidade de intervenção manual. Ledger íntegro mesmo após falha parcial.
+</div>
+
+</div>
+</section>
+
+<!-- ============== RESUMO ============== -->
+<section id="resumo">
+<h2>Resumo: a invariante em ação <span class="tag info">Cobertura completa</span></h2>
+
+<table class="compare">
+<tr><th>#</th><th>Cenário</th><th>Cutover dispara</th><th>Reversão dispara</th><th>Ledger íntegro</th></tr>
+<tr><td>1</td><td>Pedido normal</td><td>concluir</td><td>—</td><td><span class="pill ok">✓</span></td></tr>
+<tr><td>2</td><td>Concluir-OC puro</td><td>executor após NF</td><td>—</td><td><span class="pill ok">✓</span></td></tr>
+<tr><td>3</td><td>OC + compra mix</td><td>concluir</td><td>—</td><td><span class="pill ok">✓</span></td></tr>
+<tr><td>4</td><td>Embalagem direta OC</td><td>executor após NF (status=embalado)</td><td>—</td><td><span class="pill ok">✓</span></td></tr>
+<tr><td>5</td><td>Desfazer-bip pós-embalado</td><td>—</td><td>desfazer-bip</td><td><span class="pill ok">✓</span></td></tr>
+<tr><td>6</td><td>Voltar-etapa admin</td><td>—</td><td>voltar-etapa</td><td><span class="pill ok">✓</span></td></tr>
+<tr><td>7</td><td>Encaminhar pré-cutover</td><td>(nada — pré-cutover)</td><td>—</td><td><span class="pill ok">✓</span></td></tr>
+<tr><td>8</td><td>Cancel pré-cutover</td><td>—</td><td>—</td><td><span class="pill ok">✓</span></td></tr>
+<tr><td>9</td><td>Cancel pós-cutover</td><td>—</td><td>cancel webhook (estorna)</td><td><span class="pill ok">✓</span> + alerta</td></tr>
+<tr><td>10</td><td>NF webhook tardio</td><td>nf-webhook</td><td>—</td><td><span class="pill ok">✓</span></td></tr>
+<tr><td>11</td><td>Cycle count</td><td>(N/A — validação)</td><td>—</td><td><span class="pill ok">✓ físico = sistema</span></td></tr>
+<tr><td>12</td><td>TTL expirando</td><td>—</td><td>cleanup cron</td><td><span class="pill warn">⚠ alerta</span></td></tr>
+<tr><td>13</td><td>Race 2 operadores</td><td>concluir (do vencedor)</td><td>—</td><td><span class="pill ok">✓</span></td></tr>
+<tr><td>14</td><td>Falha + retry</td><td>worker retry</td><td>—</td><td><span class="pill ok">✓</span></td></tr>
+</table>
+
+<h3>Pontos onde a invariante é aplicada</h3>
+<div class="card rule">
+<strong>Toda transição de status na separação chama um dos 2 helpers:</strong>
+<ul>
+<li><code>dispararCutoverSePronto</code> em: <code>concluir</code>, <code>concluir-oc</code>, <code>confirmar-item-embalagem</code>, <code>bipar-embalagem-oc</code>, <code>voltar-etapa</code> (forward), <code>retry-etiqueta</code>, <code>nf-webhook-handler</code>, <code>execution-worker</code> (após NF)</li>
+<li><code>reverterCutoverSeRetrocedeu</code> em: <code>desfazer-bip</code>, <code>voltar-etapa</code> (backward)</li>
+</ul>
+Os helpers checam a invariante e fazem ou não fazem. <strong>Chamar onde não precisa é seguro</strong> (no-op por idempotência).
+</div>
+
+<h3>Garantias do sistema pós-deploy</h3>
+<ol>
+<li><strong>Físico ↔ Sistema sempre consistente</strong> em qualquer ponto do dia (cycle count seguro)</li>
+<li><strong>Rastreabilidade total</strong> via <code>estorno_de</code> — toda mov tem uma história</li>
+<li><strong>Idempotência em todo ponto crítico</strong> — retry e duplicação são seguros</li>
+<li><strong>Reversão automática</strong> em desfazer-bip e voltar-etapa</li>
+<li><strong>Race conditions tratadas</strong> via CAS atômico no UPDATE</li>
+<li><strong>Modo Tiny legado intacto</strong> — refatoração gateada por <code>WMS_AS_SOURCE</code></li>
+</ol>
+</section>
+
+<footer>
+  Baseado em <code>src/lib/wms/cutover.ts</code> (a criar), <code>src/lib/wms/reservas.ts</code>, <code>src/lib/execution-worker-wms.ts</code> e endpoints de separação · Planejado em 2026-05-13
+</footer>
+
+</div>
+</body>
+</html>

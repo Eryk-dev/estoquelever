@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Devoluções — Classificação A/B/C/D</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });</script>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#18181b; --ink-2:#52525b; --ink-3:#a1a1aa;
+    --line:#e4e4e7; --brand:#0891b2; --brand-2:#164e63;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --info:#2563eb;
+    --a:#16a34a; --b:#d97706; --c:#2563eb; --d:#7c3aed; }
+  *{box-sizing:border-box} body{margin:0;font-family:-apple-system,system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.6}
+  .wrap{max-width:1040px;margin:0 auto;padding:48px 24px 96px}
+  header{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:40px}
+  h1{margin:0 0 8px;font-size:32px;letter-spacing:-.02em} .sub{color:var(--ink-2);font-size:16px}
+  h2{margin:64px 0 16px;font-size:26px;padding-bottom:8px;border-bottom:2px solid var(--brand)}
+  h2 .tag{display:inline-block;font-size:12px;background:var(--brand);color:#fff;
+    padding:3px 10px;border-radius:4px;margin-left:12px;vertical-align:middle}
+  h2 .tag.bad{background:var(--bad)} h2 .tag.warn{background:var(--warn)} h2 .tag.ok{background:var(--ok)}
+  h3{margin:28px 0 8px;font-size:18px;color:var(--brand-2)}
+  h4{margin:20px 0 8px;font-size:15px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+  p,li{font-size:15px} ul{padding-left:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;margin:16px 0}
+  .card.tldr{background:#ecfeff;border-color:#a5f3fc} .card.tldr strong{color:var(--brand-2)}
+  .card.scenario{padding:28px} .card.tip{background:#fefce8;border-color:#fde047}
+  .card.warn{background:#fef3c7;border-color:#f59e0b}
+  .order-box{background:#f0f9ff;border-left:4px solid var(--info);padding:12px 16px;
+    margin:16px 0;border-radius:4px;font-size:14px} .order-box strong{color:var(--info)}
+  .t{background:#fafafa;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:16px 0}
+  .t .h{background:#18181b;color:#fff;padding:8px 12px;font-size:12px;
+    text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .t table{width:100%;border-collapse:collapse;margin:0}
+  .t th,.t td{padding:10px 14px;text-align:left;font-size:14px;
+    border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+  .t th{background:#fff;font-weight:600;color:var(--ink-2);font-size:12px;text-transform:uppercase}
+  .t tr:last-child td{border-bottom:none}
+  .t td:last-child,.t th:last-child{border-right:none}
+  .t td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pill.ok{background:#dcfce7;color:#166534} .pill.warn{background:#fef3c7;color:#92400e}
+  .pill.bad{background:#fee2e2;color:#991b1b} .pill.info{background:#dbeafe;color:#1e40af}
+  .class-card{display:flex;gap:16px;padding:20px;border-radius:12px;margin:12px 0;
+    border:1px solid var(--line);background:#fff;align-items:flex-start}
+  .class-card .badge{font-weight:800;font-size:22px;width:48px;height:48px;
+    border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0}
+  .class-card.a .badge{background:var(--a)} .class-card.b .badge{background:var(--b)}
+  .class-card.c .badge{background:var(--c)} .class-card.d .badge{background:var(--d)}
+  .class-card .body{flex:1}
+  .class-card h4{margin:0 0 4px;text-transform:none;color:var(--ink);font-size:17px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px;margin:20px 0;text-align:center}
+  .caption{font-size:13px;color:var(--ink-2);margin-top:12px;font-style:italic}
+  .result{margin-top:20px;padding:14px 18px;border-radius:8px;font-size:15px;
+    border-left:4px solid var(--ok);background:#f0fdf4} .result strong{color:var(--ok)}
+  .result.bad{background:#fef2f2;border-left-color:var(--bad)} .result.bad strong{color:var(--bad)}
+  .result.warn{background:#fffbeb;border-left-color:var(--warn)} .result.warn strong{color:var(--warn)}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px 24px;margin-bottom:32px} nav.toc ol{margin:0;padding-left:20px}
+  nav.toc a{color:var(--brand);text-decoration:none} nav.toc a:hover{text-decoration:underline}
+  nav.toc li{margin:4px 0}
+  table.cmp{width:100%;border-collapse:collapse;margin:24px 0;font-size:14px}
+  table.cmp th,table.cmp td{padding:12px 14px;border:1px solid var(--line);text-align:left}
+  table.cmp th{background:#18181b;color:#fff;font-weight:600}
+  table.cmp tr:nth-child(even) td{background:#fafafa}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    color:var(--ink-3);font-size:13px;text-align:center}
+</style>
+</head>
+<body><div class="wrap">
+
+<header>
+<h1>Devoluções de cliente</h1>
+<p class="sub">Como o sistema lida com peça que volta — 4 classificações conforme o estado da peça.</p>
+</header>
+
+<section id="conceito">
+<h2>A ideia em uma frase</h2>
+<div class="card tldr">
+<p><strong>Quando o cliente devolve uma peça, a NF de devolução cai no nosso sistema via webhook do Tiny — mas a peça não vira estoque automaticamente.</strong> Ela fica numa <em>fila de pendentes</em>, esperando alguém abrir a caixa e classificar fisicamente. Conforme a classificação, o destino da peça é diferente: volta pra estoque vendável, vai pra quarentena, vai pro fornecedor, etc.</p>
+</div>
+
+<h3>As 4 classificações</h3>
+
+<div class="class-card a">
+<div class="badge">A</div>
+<div class="body">
+<h4>Íntegro</h4>
+<p>A peça voltou em perfeito estado. Pode ser revendida sem ressalva. <strong>Volta pro estoque vendável.</strong> Recalcula custo médio (usando o custo original da venda).</p>
+</div>
+</div>
+
+<div class="class-card b">
+<div class="badge">B</div>
+<div class="body">
+<h4>Avariado</h4>
+<p>A peça voltou com avaria — riscada, amassada, embalagem violada. Não pode ser vendida como nova. <strong>Vai pra área de quarentena</strong> (localização tipo quarentena no galpão). Decisão posterior: aceitar perda, reparar, vender com desconto.</p>
+</div>
+</div>
+
+<div class="class-card c">
+<div class="badge">C</div>
+<div class="body">
+<h4>Garantia</h4>
+<p>Peça defeituosa de fábrica. Vai voltar pro fornecedor. <strong>Entra e sai do estoque na mesma operação</strong> — o saldo não muda, mas o ledger registra o ciclo de RMA (Return Material Authorization). Pra acompanhar reembolso/troca com o fornecedor.</p>
+</div>
+</div>
+
+<div class="class-card d">
+<div class="badge">D</div>
+<div class="body">
+<h4>Troca de SKU</h4>
+<p>Cliente devolveu uma peça pra trocar por outra. <strong>Entra como íntegra</strong> (a peça devolvida volta pro estoque). A peça nova já foi enviada por outra movimentação — o ledger registra as duas pontas separadamente, identificadas pelo mesmo pedido de origem.</p>
+</div>
+</div>
+
+<h3>Visão geral do fluxo</h3>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+A[Cliente devolve peça] --> B[Tiny gera NF de devolução]
+B --> C[Webhook chega no sistema]
+C --> D[Sistema cria registro pendente<br/>na fila de devoluções]
+D --> E[Operador abre a caixa<br/>e avalia a peça]
+E --> F{Estado<br/>físico?}
+F -->|Íntegro| G[A - volta pra estoque]
+F -->|Avariado| H[B - vai pra quarentena]
+F -->|Defeito de fábrica| I[C - vai pro fornecedor RMA]
+F -->|Troca SKU| J[D - volta pra estoque + reflete na nova venda]
+G --> K[Custo médio recalculado]
+H --> L[Saldo em quarentena<br/>fora da venda]
+I --> M[Ciclo RMA aberto]
+J --> K
+style G fill:#dcfce7,stroke:#16a34a
+style H fill:#fef3c7,stroke:#d97706
+style I fill:#dbeafe,stroke:#2563eb
+style J fill:#ede9fe,stroke:#7c3aed
+</pre></div>
+
+<h3>Quem é a "dona" da peça devolvida?</h3>
+<p>Depende de quem foi a dona contábil na venda original:</p>
+<ul>
+  <li><strong>Venda própria:</strong> peça volta pra mesma empresa que vendeu.</li>
+  <li><strong>Venda via swap:</strong> peça volta pra empresa que foi <em>contabilmente</em> dona depois do swap.</li>
+  <li><strong>Venda via empréstimo:</strong> peça volta pra empresa <em>credora</em> (que emprestou). E mais: a dívida pode ser <strong>quitada</strong> com a devolução.</li>
+</ul>
+
+<p>O sistema rastreia automaticamente a movimentação original (pela NF de venda) e identifica quem deve receber a peça de volta.</p>
+</section>
+
+<nav class="toc">
+<strong>Cenários (5 no total)</strong>
+<ol>
+<li><a href="#c1">Cenário 1 — Devolução íntegra (Classe A) volta pra estoque</a></li>
+<li><a href="#c2">Cenário 2 — Avariada (Classe B) vai pra quarentena</a></li>
+<li><a href="#c3">Cenário 3 — Garantia (Classe C) vai pro fornecedor</a></li>
+<li><a href="#c4">Cenário 4 — Troca de SKU (Classe D)</a></li>
+<li><a href="#c5">Cenário 5 — Devolução de venda que foi empréstimo (quita dívida)</a></li>
+</ol>
+</nav>
+
+<section id="c1"><h2>Cenário 1 — Íntegra <span class="tag ok">Classe A</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<div class="order-box">
+Cliente devolveu 1 unidade de PEC-100 da NF #50000 (venda da NetAir há 15 dias). Operador abriu a caixa — peça nova, lacre intacto, sem riscos.
+</div>
+
+<h3>O operador classifica</h3>
+<ol>
+<li>Abre a fila de devoluções pendentes.</li>
+<li>Localiza a devolução da NF #50000.</li>
+<li>Classifica como <strong>A — Íntegro</strong>.</li>
+<li>Informa galpão de destino: CWB.</li>
+<li>Localização: CWB-PICK-A1 (onde a peça normalmente fica).</li>
+<li>Confirma.</li>
+</ol>
+
+<h4>O que o sistema grava</h4>
+<div class="t"><div class="h">Histórico</div>
+<table>
+<tr><th>Tipo</th><th>Qtd</th><th>Dona</th><th>Localização</th><th>Categoria</th></tr>
+<tr><td><span class="pill ok">Entrada</span></td><td class="num">1</td><td>NetAir</td><td>CWB-PICK-A1</td><td>Devolução cliente (íntegra)</td></tr>
+</table></div>
+
+<h3>Custo médio recalculado</h3>
+<p>O sistema busca a NF original de venda — qual era o custo unitário gravado nela? Suponha R$ 32. Usa esse custo no recálculo do custo médio da posição.</p>
+
+<div class="result">
+<strong>Resultado:</strong> 1 unidade de volta no estoque vendável. Custo médio recalculado. <strong>Cliente perdeu, ganhamos uma peça nova de volta.</strong>
+</div>
+</div></section>
+
+<section id="c2"><h2>Cenário 2 — Avariada <span class="tag warn">Classe B</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Cliente devolveu 1 unidade. Operador abriu — caixa rasgada, peça riscada nas laterais.</p>
+
+<h3>O operador classifica como B</h3>
+
+<h4>O que o sistema faz</h4>
+<p>São <strong>3 movimentações</strong>:</p>
+<div class="t"><div class="h">Histórico</div>
+<table>
+<tr><th>#</th><th>Tipo</th><th>Qtd</th><th>Localização</th><th>Categoria</th></tr>
+<tr><td>1</td><td><span class="pill ok">Entrada</span></td><td class="num">1</td><td>CWB-PICK-A1 (loc original)</td><td>Devolução cliente (avariada)</td></tr>
+<tr><td>2</td><td><span class="pill bad">Saída</span></td><td class="num">1</td><td>CWB-PICK-A1</td><td>Transferência localização</td></tr>
+<tr><td>3</td><td><span class="pill ok">Entrada</span></td><td class="num">1</td><td>CWB-QUARENTENA</td><td>Transferência localização</td></tr>
+</table></div>
+
+<p>Linha 1 reconhece a devolução. Linhas 2 e 3 movem a peça pra área de quarentena (uma localização especial do galpão, tipo "quarentena", fora do estoque vendável).</p>
+
+<div class="result warn">
+<strong>Resultado:</strong> a peça avariada está fora da venda automática. Fica em quarentena até alguém (gerente ou operador) decidir o destino: vender com desconto, doar, descartar, ou tentar reparar. <strong>Quarentena é "limbo" — não vende, mas existe.</strong>
+</div>
+
+<div class="card warn">
+<strong>E se o galpão não tem área de quarentena configurada?</strong> O sistema faz um ajuste manual de saída (saldo cai imediatamente). A peça vira "perda" diretamente. Cenário raro — galpões em produção devem ter quarentena configurada.
+</div>
+</div></section>
+
+<section id="c3"><h2>Cenário 3 — Garantia <span class="tag" style="background:var(--info);color:white">Classe C</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Cliente devolveu peça que veio com defeito de fábrica (laudo técnico anexo). Vamos enviar pro fornecedor solicitar troca ou reembolso.</p>
+
+<h3>O operador classifica como C</h3>
+
+<h4>Sequência no histórico</h4>
+<div class="t"><div class="h">Histórico</div>
+<table>
+<tr><th>#</th><th>Tipo</th><th>Qtd</th><th>Categoria</th></tr>
+<tr><td>1</td><td><span class="pill ok">Entrada</span></td><td class="num">1</td><td>Devolução cliente</td></tr>
+<tr><td>2</td><td><span class="pill bad">Saída</span></td><td class="num">1</td><td>Devolução fornecedor (RMA)</td></tr>
+</table></div>
+
+<p>As duas movimentações são <em>quase</em> simultâneas — entra e sai. Saldo líquido: zero (a peça nunca esteve disponível pra venda). <strong>Mas o histórico mostra que ela existiu</strong> e foi pro fornecedor.</p>
+
+<div class="result">
+<strong>Resultado:</strong> ciclo de RMA aberto. O comprador recebe alerta que tem RMA pendente. Quando o fornecedor enviar peça nova (reembolso em estoque), entra como recebimento normal. Se enviar dinheiro, fica como "perda" da peça defeituosa mas sem impacto operacional adicional.
+</div>
+
+<div class="card tip">
+<strong>Por que entrar e sair? Não bastaria não entrar?</strong> Porque o ledger é o registro completo. Pra rastrear "essa peça defeituosa veio do cliente X e foi pro fornecedor Y em tal data", precisamos dos dois lançamentos. Auditoria e contabilidade exigem.
+</div>
+</div></section>
+
+<section id="c4"><h2>Cenário 4 — Troca de SKU <span class="tag" style="background:#7c3aed;color:white">Classe D</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Cliente comprou PEC-100 mas pediu mesmo modelo em cor diferente: PEC-101. A NetAir enviou PEC-101 antes (operação separada) e agora recebe PEC-100 de volta.</p>
+
+<h3>O operador classifica como D</h3>
+
+<h4>O que acontece</h4>
+<div class="t"><div class="h">Histórico (parte da troca)</div>
+<table>
+<tr><th>Tipo</th><th>Peça</th><th>Qtd</th><th>Categoria</th></tr>
+<tr><td><span class="pill ok">Entrada</span></td><td>PEC-100 (devolvida)</td><td class="num">1</td><td>Devolução (troca SKU)</td></tr>
+</table></div>
+
+<p>A peça PEC-100 volta pra estoque. <strong>A saída da PEC-101 já foi registrada antes</strong> em outra operação (saída comum de venda).</p>
+
+<p>O elo entre as duas movimentações é o <em>pedido original</em> — o sistema sabe que essas duas movs pertencem à mesma operação comercial.</p>
+
+<div class="result">
+<strong>Resultado:</strong> PEC-100 volta pra estoque vendável. PEC-101 já saiu pro cliente. Saldo líquido da operação: cliente ficou com PEC-101, estoque ganhou PEC-100. <strong>Cliente é o intermediário — a troca aconteceu fisicamente pela operação dele.</strong>
+</div>
+
+<div class="card tip">
+<strong>Diferença pra "troca de SKU na separação":</strong> existe outro fluxo onde o operador da separação troca uma peça por equivalente <em>antes</em> de mandar (cliente pediu A, mas A está esgotado, mandamos B equivalente). Isso é dentro do mesmo pedido, sem devolução. A "Classe D" aqui é diferente — é cliente devolvendo pra trocar depois.
+</div>
+</div></section>
+
+<section id="c5"><h2>Cenário 5 — Devolução de venda que foi empréstimo <span class="tag ok">Quita dívida</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Há 10 dias, a NetAir vendeu 1 unidade via empréstimo (a peça era da NetParts). Cliente devolveu hoje.</p>
+
+<h3>O sistema rastreia a origem</h3>
+<ol>
+<li>Pela NF de devolução, identifica a NF de venda original.</li>
+<li>Pela NF de venda, identifica a movimentação (saída categoria "Empréstimo").</li>
+<li>Vê o campo "devedora_id" preenchido — sabe que foi empréstimo.</li>
+<li>Identifica que a dona contábil da peça era <strong>NetParts</strong> (a credora).</li>
+<li>Quando o operador classificar a devolução, a peça volta pra NetParts (não pra NetAir).</li>
+</ol>
+
+<h3>Resultado: dívida quitada</h3>
+<div class="t"><div class="h">Saldo devedor antes e depois</div>
+<table>
+<tr><th></th><th>Saldo</th></tr>
+<tr><td>NetParts ← NetAir / PEC-100 (antes)</td><td class="num" style="color:#92400e;font-weight:600">+1</td></tr>
+<tr><td>Devolução íntegra (entrada da peça)</td><td>—</td></tr>
+<tr><td>NetParts ← NetAir / PEC-100 (depois)</td><td class="num" style="color:#16a34a;font-weight:600">0 ✓</td></tr>
+</table></div>
+
+<div class="result">
+<strong>Resultado:</strong> a peça volta pra NetParts (que era dona). A dívida que NetAir tinha com NetParts pela peça é zerada automaticamente, porque a peça voltou intacta. <strong>Devolução é a forma mais natural de quitar um empréstimo.</strong>
+</div>
+
+<div class="card tip">
+<strong>E se a peça volta avariada (Classe B)?</strong> A dívida <em>não</em> é quitada automaticamente — porque NetAir devia uma peça íntegra, e está devolvendo uma quebrada. A NetParts pode "aceitar" a quitação informalmente, ou exigir que NetAir entregue uma peça nova depois. Decisão comercial; sistema só registra os fatos.
+</div>
+</div></section>
+
+<footer>
+Documento explica o fluxo de devoluções no WMS.
+<br>Complementa <a href="ledger-cenarios.html">ledger-cenarios.html</a> (categorias de movimentação).
+<br>Atualizado em 2026-05-13.
+</footer>
+
+</div></body></html>

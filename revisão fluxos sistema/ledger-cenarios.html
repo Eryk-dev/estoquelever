@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Histórico de movimentações — Como o estoque é registrado</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });
+</script>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --ink: #18181b; --ink-2: #52525b; --ink-3: #a1a1aa;
+    --line: #e4e4e7; --brand: #0891b2; --brand-2: #164e63;
+    --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --info: #2563eb;
+    --r: #2563eb; --l: #7c3aed; --e: #16a34a; --s: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink); line-height: 1.6; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 48px 24px 96px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 24px; margin-bottom: 40px; }
+  h1 { margin: 0 0 8px; font-size: 32px; letter-spacing: -0.02em; }
+  .sub { color: var(--ink-2); font-size: 16px; }
+  h2 { margin: 64px 0 16px; font-size: 26px; letter-spacing: -0.01em;
+    padding-bottom: 8px; border-bottom: 2px solid var(--brand); }
+  h2 .tag { display: inline-block; font-size: 12px; background: var(--brand);
+    color: white; padding: 3px 10px; border-radius: 4px; margin-left: 12px;
+    vertical-align: middle; font-weight: 500; letter-spacing: 0; }
+  h2 .tag.bad { background: var(--bad); } h2 .tag.warn { background: var(--warn); } h2 .tag.ok { background: var(--ok); }
+  h3 { margin: 28px 0 8px; font-size: 18px; color: var(--brand-2); }
+  h4 { margin: 20px 0 8px; font-size: 15px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.05em; }
+  p, li { font-size: 15px; color: var(--ink); }
+  ul { padding-left: 22px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 24px; margin: 16px 0; }
+  .card.tldr { background: #ecfeff; border-color: #a5f3fc; }
+  .card.tldr strong { color: var(--brand-2); }
+  .card.scenario { padding: 28px; }
+  .card.tip { background: #fefce8; border-color: #fde047; }
+  .card.warn { background: #fef3c7; border-color: #f59e0b; }
+  .order-box { background: #f0f9ff; border-left: 4px solid var(--info);
+    padding: 12px 16px; margin: 16px 0; border-radius: 4px; font-size: 14px; }
+  .order-box strong { color: var(--info); }
+
+  .ledger-table { background: #fafafa; border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden; margin: 16px 0; }
+  .ledger-table .header { background: #18181b; color: white; padding: 8px 12px;
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+  .ledger-table table { width: 100%; border-collapse: collapse; margin: 0; }
+  .ledger-table th, .ledger-table td { padding: 10px 12px; text-align: left;
+    font-size: 14px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); }
+  .ledger-table th { background: white; font-weight: 600; color: var(--ink-2);
+    font-size: 12px; text-transform: uppercase; }
+  .ledger-table tr:last-child td { border-bottom: none; }
+  .ledger-table td:last-child, .ledger-table th:last-child { border-right: none; }
+  .ledger-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .ledger-table tr.estorno { background: #fef2f2; }
+  .ledger-table tr.estornada td { text-decoration: line-through; color: var(--ink-3); }
+
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; }
+  .pill-e { background: #dcfce7; color: var(--e); }
+  .pill-s { background: #fee2e2; color: var(--s); }
+  .pill-r { background: #dbeafe; color: var(--r); }
+  .pill-l { background: #ede9fe; color: var(--l); }
+  .pill.ok { background: #dcfce7; color: #166534; }
+  .pill.warn { background: #fef3c7; color: #92400e; }
+  .pill.bad { background: #fee2e2; color: #991b1b; }
+  .pill.info { background: #dbeafe; color: #1e40af; }
+
+  .diagram { background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center; }
+  .caption { font-size: 13px; color: var(--ink-2); margin-top: 12px; font-style: italic; }
+  .result { margin-top: 20px; padding: 14px 18px; border-radius: 8px;
+    font-size: 15px; border-left: 4px solid var(--ok); background: #f0fdf4; }
+  .result strong { color: var(--ok); }
+  .result.bad { background: #fef2f2; border-left-color: var(--bad); }
+  .result.bad strong { color: var(--bad); }
+  .result.warn { background: #fffbeb; border-left-color: var(--warn); }
+  .result.warn strong { color: var(--warn); }
+
+  nav.toc { background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 32px; }
+  nav.toc ol { margin: 0; padding-left: 20px; }
+  nav.toc a { color: var(--brand); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  nav.toc li { margin: 4px 0; }
+
+  table.compare { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; }
+  table.compare th, table.compare td { padding: 12px 14px;
+    border: 1px solid var(--line); text-align: left; }
+  table.compare th { background: #18181b; color: white; font-weight: 600; }
+  table.compare tr:nth-child(even) td { background: #fafafa; }
+
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line);
+    color: var(--ink-3); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Histórico de movimentações</h1>
+  <p class="sub">Como o sistema registra tudo que acontece com o estoque — e por que isso garante que nada se perca.</p>
+</header>
+
+<!-- ============== CONCEITO ============== -->
+<section id="conceito">
+<h2>A ideia em uma frase</h2>
+
+<div class="card tldr">
+<p><strong>Toda vez que algo muda no estoque, o sistema escreve uma linha no histórico — e essa linha nunca pode ser apagada.</strong> O número que você vê na tela ("temos 7 peças") é um <em>resumo</em> que pode ser reconstruído a qualquer momento somando o histórico. Se o resumo der errado por algum motivo, o sistema sabe corrigir sozinho.</p>
+</div>
+
+<h3>Por que registrar tudo?</h3>
+<ul>
+  <li><strong>Auditoria total:</strong> dá pra ver o estoque de qualquer dia do passado. "Quantas peças tinha na quinta-feira às 16h?" — basta somar o histórico até aquele momento.</li>
+  <li><strong>Nada some:</strong> mesmo erros ficam registrados. Quando alguém erra, o sistema <em>não apaga</em> — escreve outra linha que cancela a anterior. Quem auditar vê os dois.</li>
+  <li><strong>Recuperação:</strong> se o resumo na tela ficar bugado, dá pra refazer ele somando o histórico do zero.</li>
+  <li><strong>Sem dois pedidos pegando a mesma peça:</strong> quando dois pedidos chegam ao mesmo tempo querendo a última unidade, um ganha e o outro recebe erro claro. Sem "fantasma" de estoque.</li>
+</ul>
+
+<h3>As 4 coisas que podem acontecer no estoque</h3>
+<table class="compare">
+<tr><th>O que aconteceu</th><th>Efeito</th><th>Exemplo</th></tr>
+<tr>
+  <td><span class="pill pill-e">Entrada</span></td>
+  <td>Saldo cresce — chegou peça nova</td>
+  <td>Recebemos do fornecedor, devolução de cliente, ajuste positivo</td>
+</tr>
+<tr>
+  <td><span class="pill pill-s">Saída</span></td>
+  <td>Saldo cai — peça foi embora</td>
+  <td>Venda saiu, devolvemos pro fornecedor, ajuste negativo</td>
+</tr>
+<tr>
+  <td><span class="pill pill-r">Reserva</span></td>
+  <td>Saldo continua igual, mas "trava" uma parte pra um pedido</td>
+  <td>Pedido entrou no ML, a separação ainda não pegou</td>
+</tr>
+<tr>
+  <td><span class="pill pill-l">Liberação</span></td>
+  <td>Cancela uma reserva — a peça volta a ficar disponível</td>
+  <td>Pedido foi cancelado, reserva passou do prazo</td>
+</tr>
+</table>
+
+<div class="card tip">
+<strong>A regra que o sistema sempre garante:</strong> não dá pra reservar peça que não tem. Se o saldo é 5 e tentamos reservar 10, o sistema recusa com mensagem clara.
+</div>
+
+<h3>Como cada movimentação é registrada</h3>
+<p>Cada linha do histórico guarda:</p>
+<ul>
+  <li><strong>O que aconteceu</strong> (entrada, saída, reserva, liberação)</li>
+  <li><strong>Quanto:</strong> a quantidade</li>
+  <li><strong>Quem é o dono:</strong> qual empresa</li>
+  <li><strong>Onde:</strong> galpão e localização</li>
+  <li><strong>Saldo antes e depois:</strong> os dois números, pra dar pra auditar</li>
+  <li><strong>De onde veio:</strong> categoria (recebimento, venda, ajuste, inventário, etc) — pra agrupar nos relatórios</li>
+  <li><strong>Quem fez:</strong> o usuário responsável</li>
+  <li><strong>Quando:</strong> data e hora</li>
+</ul>
+
+<h3>Visão geral do que acontece quando o sistema vai gravar</h3>
+<div class="diagram">
+<pre class="mermaid">
+flowchart TD
+    A[Alguém aciona uma operação<br/>recebimento, venda, ajuste, etc] --> B[Sistema verifica:<br/>essa operação é válida?]
+    B -->|Não| F1[Recusa com mensagem clara<br/>'saldo insuficiente', etc]
+    B -->|Sim| C[Trava temporariamente a posição<br/>pra ninguém mexer junto]
+    C --> D[Re-verifica com o saldo travado<br/>cinto e suspensórios]
+    D -->|falha| F2[Recusa]
+    D -->|ok| G[Escreve a linha no histórico]
+    G --> H[Atualiza o resumo na tela]
+    H --> I[Libera a trava — tudo de uma vez só]
+    style F1 fill:#fee2e2,stroke:#dc2626
+    style F2 fill:#fee2e2,stroke:#dc2626
+    style I fill:#dcfce7,stroke:#16a34a
+</pre>
+<div class="caption">Tudo acontece como uma transação única: ou tudo grava certo, ou nada grava. Não tem meio termo. Se a luz cai no meio, o banco rebobina sozinho.</div>
+</div>
+</section>
+
+<!-- ============== TOC ============== -->
+<nav class="toc">
+  <strong>Cenários (9 no total)</strong>
+  <ol>
+    <li><a href="#c1">Cenário 1 — Recebimento de mercadoria</a></li>
+    <li><a href="#c2">Cenário 2 — Venda (saída de peça)</a></li>
+    <li><a href="#c3">Cenário 3 — Reserva (pedido entra, separação ainda não pegou)</a></li>
+    <li><a href="#c4">Cenário 4 — Liberação (pedido cancelado ou reserva venceu)</a></li>
+    <li><a href="#c5">Cenário 5 — Pedido confirmado (reserva vira venda)</a></li>
+    <li><a href="#c6">Cenário 6 — Operador errou: como corrigir sem apagar</a></li>
+    <li><a href="#c7">Cenário 7 — Dois pedidos ao mesmo tempo na última peça</a></li>
+    <li><a href="#c8">Cenário 8 — Operação inválida sendo recusada</a></li>
+    <li><a href="#c9">Cenário 9 — Resumo na tela divergente do histórico</a></li>
+  </ol>
+</nav>
+
+<!-- ============== C1 ============== -->
+<section id="c1">
+<h2>Cenário 1 — Recebimento de mercadoria <span class="tag ok">Entrada</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Chegaram <strong>10 unidades</strong> da peça <strong>PEC-001</strong> no recebimento do galpão <strong>CWB</strong>, donas da <strong>NetAir</strong>. Custo: R$ 50 por unidade.
+</div>
+
+<h4>Como estava antes</h4>
+<div class="ledger-table">
+<div class="header">Resumo atual</div>
+<table>
+<tr><th>Peça</th><th>Empresa</th><th>Galpão</th><th>Localização</th><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
+<tr><td>PEC-001</td><td>NetAir</td><td>CWB</td><td>REC-01</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+</table>
+</div>
+
+<h4>O que o operador faz</h4>
+<p>Abre a tela de "Receber", escolhe galpão CWB, peça PEC-001, quantidade 10, custo R$ 50, localização REC-01, e confirma.</p>
+
+<h4>O que vai pro histórico</h4>
+<div class="ledger-table">
+<div class="header">Histórico — linha nova</div>
+<table>
+<tr><th>Tipo</th><th>Qtd</th><th>Saldo antes</th><th>Saldo depois</th><th>Categoria</th></tr>
+<tr><td><span class="pill pill-e">Entrada</span></td><td class="num">10</td><td class="num">0</td><td class="num">10</td><td>Recebimento</td></tr>
+</table>
+</div>
+
+<h4>Resumo depois</h4>
+<div class="ledger-table">
+<div class="header">Resumo atualizado</div>
+<table>
+<tr><th>Peça</th><th>Saldo</th><th>Reservado</th><th>Disponível</th><th>Custo médio</th></tr>
+<tr><td>PEC-001</td><td class="num">10</td><td class="num">0</td><td class="num">10</td><td class="num">R$ 50,00</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> uma linha registrada no histórico + resumo atualizado, de uma vez só. Se o servidor cair no meio, nada fica pela metade.
+</div>
+
+<h3>Custo médio</h3>
+<p>Como essa entrada tem custo informado, o sistema recalcula o custo médio da peça. Se já tinha estoque antes (digamos, 5 a R$ 40), o custo médio fica ponderado pela quantidade. Aqui, como o saldo anterior era zero, o custo médio fica em R$ 50.</p>
+</div>
+</section>
+
+<!-- ============== C2 ============== -->
+<section id="c2">
+<h2>Cenário 2 — Venda (saída de peça) <span class="tag bad">Saída</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+A NetAir vendeu 3 peças de PEC-001 no ML. O Tiny gerou a NF e mandou pro nosso sistema baixar o estoque.
+</div>
+
+<h4>Antes</h4>
+<div class="ledger-table">
+<div class="header">Resumo</div>
+<table>
+<tr><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
+<tr><td class="num">10</td><td class="num">0</td><td class="num">10</td></tr>
+</table>
+</div>
+
+<h4>Linha nova no histórico</h4>
+<div class="ledger-table">
+<div class="header">Histórico</div>
+<table>
+<tr><th>Tipo</th><th>Qtd</th><th>Saldo antes</th><th>Saldo depois</th><th>Categoria</th><th>NF</th></tr>
+<tr><td><span class="pill pill-s">Saída</span></td><td class="num">3</td><td class="num">10</td><td class="num">7</td><td>Venda</td><td class="num">123456</td></tr>
+</table>
+</div>
+
+<h4>Depois</h4>
+<div class="ledger-table">
+<div class="header">Resumo</div>
+<table>
+<tr><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
+<tr><td class="num">7</td><td class="num">0</td><td class="num">7</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> saldo caiu pra 7. A linha guarda o número da NF — se precisar rastrear depois ("essa saída foi de qual venda?"), o sistema mostra.
+</div>
+
+<h3>"Quanto a gente tinha logo antes dessa venda?"</h3>
+<p>Resposta: 10. A própria linha guarda o "saldo antes" (10). Não precisa fazer conta — o histórico já registra. <strong>Auditoria temporal de graça.</strong></p>
+</div>
+</section>
+
+<!-- ============== C3 ============== -->
+<section id="c3">
+<h2>Cenário 3 — Reserva <span class="tag" style="background:#2563eb;color:white">Pedido entrou</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Entrou um pedido no ML pedindo <strong>2 unidades</strong>. A separação ainda não foi buscar a peça — mas o sistema precisa "travar" 2 das 7 unidades, pra outro pedido concorrente não tentar usar.
+</div>
+
+<h4>Antes</h4>
+<div class="ledger-table">
+<div class="header">Resumo</div>
+<table>
+<tr><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
+<tr><td class="num">7</td><td class="num">0</td><td class="num">7</td></tr>
+</table>
+</div>
+
+<h4>O que vai pro histórico</h4>
+<div class="ledger-table">
+<div class="header">Histórico</div>
+<table>
+<tr><th>Tipo</th><th>Qtd</th><th>Categoria</th><th>Vence em</th></tr>
+<tr><td><span class="pill pill-r">Reserva</span></td><td class="num">2</td><td>Reserva de pedido</td><td>48 horas</td></tr>
+</table>
+</div>
+
+<h4>Depois</h4>
+<div class="ledger-table">
+<div class="header">Resumo</div>
+<table>
+<tr><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
+<tr><td class="num">7</td><td class="num">2</td><td class="num">5</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> o saldo continua 7 (a peça ainda tá fisicamente lá!) mas o reservado subiu pra 2. O disponível, que é o saldo menos o reservado, cai pra 5 sozinho. Pedidos concorrentes vão ver só 5 disponíveis.
+</div>
+
+<h3>Reservas têm prazo</h3>
+<p>Toda reserva nasce com prazo de 48h. Se nesse período a venda não confirmou, um robô do sistema cancela a reserva automaticamente (cria uma "liberação" — cenário 4). Sem isso, reservas órfãs travariam o estoque pra sempre.</p>
+</div>
+</section>
+
+<!-- ============== C4 ============== -->
+<section id="c4">
+<h2>Cenário 4 — Liberação <span class="tag" style="background:#7c3aed;color:white">Reserva cancelada</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>O cliente cancelou o pedido do cenário 3. As 2 unidades reservadas precisam voltar pra disponível.</p>
+
+<h4>Linha nova no histórico</h4>
+<div class="ledger-table">
+<div class="header">Histórico</div>
+<table>
+<tr><th>Tipo</th><th>Qtd</th><th>Categoria</th></tr>
+<tr><td><span class="pill pill-l">Liberação</span></td><td class="num">2</td><td>Liberação de reserva</td></tr>
+</table>
+</div>
+
+<h4>Depois</h4>
+<div class="ledger-table">
+<div class="header">Resumo</div>
+<table>
+<tr><th>Saldo</th><th>Reservado</th><th>Disponível</th></tr>
+<tr><td class="num">7</td><td class="num">0</td><td class="num">7</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> a reserva sumiu do reservado. Mas <em>a linha da reserva original continua no histórico</em> — nunca é apagada. Quem audita vê: "foi reservado às 14h, foi liberado às 16h, motivo: cancelamento".
+</div>
+
+<div class="card warn">
+<strong>O sistema não deixa errar:</strong> se alguém tentar liberar 5 unidades quando só tem 2 reservadas, ele recusa com a mensagem "não dá pra liberar mais do que está reservado".
+</div>
+</div>
+</section>
+
+<!-- ============== C5 ============== -->
+<section id="c5">
+<h2>Cenário 5 — Reserva confirmada <span class="tag ok">Fluxo completo de venda</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>Pedido entrou (cenário 3, reservou 2 unidades). A separação biparou tudo, a NF saiu, o motoboy levou. Agora a peça tem que sair do saldo de verdade.</p>
+
+<h4>Sequência cronológica no histórico</h4>
+<div class="ledger-table">
+<div class="header">Histórico — em ordem do tempo</div>
+<table>
+<tr><th>#</th><th>Tipo</th><th>Qtd</th><th>Saldo antes</th><th>Saldo depois</th><th>Categoria</th></tr>
+<tr><td>1</td><td><span class="pill pill-r">Reserva</span></td><td class="num">2</td><td class="num">7</td><td class="num">7</td><td>Reserva de pedido</td></tr>
+<tr><td>2</td><td><span class="pill pill-l">Liberação</span></td><td class="num">2</td><td class="num">7</td><td class="num">7</td><td>Liberação ao confirmar</td></tr>
+<tr><td>3</td><td><span class="pill pill-s">Saída</span></td><td class="num">2</td><td class="num">7</td><td class="num">5</td><td>Venda (NF)</td></tr>
+</table>
+</div>
+
+<div class="caption">As 3 linhas pertencem ao mesmo pedido — o sistema guarda esse vínculo, dá pra rastrear "essa reserva virou essa venda".</div>
+
+<div class="result">
+<strong>Resultado:</strong> as 2 peças saíram do saldo. Ordem das linhas: primeiro libera a reserva, depois registra a saída. Assim a coerência fica limpa.
+</div>
+
+<div class="card tip">
+<strong>Por que não fazer "reserva vira venda" direto?</strong> Por clareza no histórico. Quem audita vê: "tinha reserva, foi liberada, e teve a venda". Cada passo tem sua linha. Mais fácil de rastrear, mais fácil de corrigir se der ruim.
+</div>
+</div>
+</section>
+
+<!-- ============== C6 ============== -->
+<section id="c6">
+<h2>Cenário 6 — Corrigir um erro do operador <span class="tag warn">Sem apagar nada</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>Um operador biparou a peça errada e fechou a operação: o sistema registrou uma saída de 5 unidades de PEC-001, quando deveria ter sido PEC-002. Como corrigir?</p>
+
+<h4>A regra: nunca apaga, sempre adiciona uma correção</h4>
+<p>O sistema cria uma <em>nova linha</em> com sinal oposto, marcada como correção da linha errada:</p>
+
+<div class="ledger-table">
+<div class="header">Histórico</div>
+<table>
+<tr><th>#</th><th>Tipo</th><th>Qtd</th><th>Saldo antes</th><th>Saldo depois</th><th>Categoria</th><th>Corrige linha #</th></tr>
+<tr class="estornada"><td>1</td><td><span class="pill pill-s">Saída</span></td><td class="num">5</td><td class="num">10</td><td class="num">5</td><td>Venda</td><td>—</td></tr>
+<tr class="estorno"><td>2</td><td><span class="pill pill-e">Entrada</span></td><td class="num">5</td><td class="num">5</td><td class="num">10</td><td>Correção</td><td>#1</td></tr>
+</table>
+</div>
+
+<h4>Resumo depois — volta ao estado anterior ao erro</h4>
+<div class="ledger-table">
+<div class="header">Resumo</div>
+<table>
+<tr><th>Saldo</th><th>Reservado</th></tr>
+<tr><td class="num">10</td><td class="num">0</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> o saldo voltou pra 10, como se o erro não tivesse acontecido. Mas o histórico mostra <em>as duas linhas</em>. Quem auditar vê: "houve um lançamento errado às 10h, foi corrigido às 11h por fulano". A linha errada nunca some.
+</div>
+
+<h3>O mesmo mecanismo serve pra outras situações</h3>
+<ul>
+  <li><strong>NF cancelada depois de emitida:</strong> a saída vira correção, o saldo volta.</li>
+  <li><strong>Empréstimo entre empresas que foi devolvido:</strong> a saída original vira correção, a dívida zera.</li>
+  <li><strong>Lançamento retroativo reconciliado:</strong> quando descobrimos que aquela "entrada de emergência" tinha sido feita também pelo fluxo normal, o sistema cria uma correção pra não contar duas vezes.</li>
+</ul>
+</div>
+</section>
+
+<!-- ============== C7 ============== -->
+<section id="c7">
+<h2>Cenário 7 — Dois pedidos ao mesmo tempo <span class="tag" style="background:#2563eb;color:white">Última peça em disputa</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>Tem só <strong>1 unidade</strong> de PEC-001 no estoque. Dois pedidos chegam <em>na mesma fração de segundo</em> querendo reservar essa unidade.</p>
+
+<h4>Sem proteção — o que <em>poderia</em> acontecer</h4>
+<div class="card warn">
+<p>Os dois pedidos leem "saldo=1, disponível=1, ok pra reservar", os dois reservam. O sistema fica com reservado=2 e saldo=1 — vendeu peça que não existe. <strong>O cliente compra um fantasma.</strong></p>
+</div>
+
+<h4>Com proteção — o que de fato acontece</h4>
+<div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant P1 as Pedido A
+    participant S as Sistema
+    participant P2 as Pedido B
+    P1->>S: Quero reservar 1 unidade
+    P2->>S: Quero reservar 1 unidade
+    Note over S: Pedido A chegou primeiro<br/>trava a posição
+    P2->>S: (aguardando A terminar)
+    S->>P1: ✅ Reserva confirmada<br/>(saldo=1, reservado=1)
+    Note over S: Trava liberada
+    S->>P2: ❌ Não dá — saldo=1<br/>já tem 1 reservado
+</pre>
+<div class="caption">Pedido A ganha. Pedido B recebe erro claro e pode ser roteado pra outro galpão.</div>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> apenas 1 pedido reserva. O outro recebe erro entendível ("já reservado") e segue pra rota alternativa — outro galpão, outra empresa, ou no pior dos casos vira OC pra comprar.
+</div>
+
+<div class="card tip">
+<strong>Por que não fazer fila?</strong> A "trava" dura milissegundos. Quando o segundo pedido encosta, o primeiro já gravou. Sistema responde rápido pros dois — pro vencedor, com sucesso; pro perdedor, com motivo claro pra tentar outro caminho.
+</div>
+</div>
+</section>
+
+<!-- ============== C8 ============== -->
+<section id="c8">
+<h2>Cenário 8 — Operações que o sistema sempre recusa <span class="tag bad">Proteções</span></h2>
+
+<div class="card scenario">
+
+<p>Existem 3 situações que o sistema <em>jamais</em> deixa acontecer. Não importa se vem da tela, do webhook, ou de uma API externa — todas passam pelas mesmas barreiras.</p>
+
+<h3>Recusa 1 — Vender mais do que tem</h3>
+<table class="compare">
+<tr><th>Situação</th><th>Tentativa</th><th>Resposta</th></tr>
+<tr>
+  <td>Saldo: 5</td>
+  <td>Tentar saída de 10</td>
+  <td><span class="pill bad">Recusa</span> "saldo insuficiente: tem 5, tentou tirar 10"</td>
+</tr>
+</table>
+
+<h3>Recusa 2 — Liberar mais do que está reservado</h3>
+<table class="compare">
+<tr><th>Situação</th><th>Tentativa</th><th>Resposta</th></tr>
+<tr>
+  <td>Saldo: 10, Reservado: 2</td>
+  <td>Liberar 5 (mais que os 2 reservados)</td>
+  <td><span class="pill bad">Recusa</span> "não dá pra liberar mais do que está reservado"</td>
+</tr>
+</table>
+
+<h3>Recusa 3 — Reservar peça que não existe</h3>
+<table class="compare">
+<tr><th>Situação</th><th>Tentativa</th><th>Resposta</th></tr>
+<tr>
+  <td>Saldo: 10, Reservado: 8</td>
+  <td>Reservar +5 (ficaria 13 reservados pra 10 de saldo)</td>
+  <td><span class="pill bad">Recusa</span> "reservado ficaria maior que o saldo"</td>
+</tr>
+<tr>
+  <td>Saldo: 10, Reservado: 8</td>
+  <td>Saída de 5 (saldo cairia pra 5 com 8 reservados)</td>
+  <td><span class="pill bad">Recusa</span> "essa saída quebraria reservas já feitas"</td>
+</tr>
+</table>
+
+<div class="result warn">
+<strong>Resultado:</strong> qualquer operação inválida é recusada <em>antes</em> de gravar qualquer coisa. A mensagem é específica — quem usa entende exatamente o que deu errado e como ajustar.
+</div>
+
+<h3>Por que a checagem é dupla?</h3>
+<p>O sistema valida duas vezes propositalmente:</p>
+<ul>
+  <li><strong>Primeira checagem:</strong> na hora da tela, instantâneo. Se o operador tenta tirar 100 e só tem 5, ele recebe o aviso <em>já</em>, sem ir ao servidor.</li>
+  <li><strong>Segunda checagem:</strong> no banco, com a posição travada. Protege contra "race": entre o operador clicar e o sistema gravar, outra pessoa pode ter mexido. Só a segunda checagem garante 100%.</li>
+</ul>
+</div>
+</section>
+
+<!-- ============== C9 ============== -->
+<section id="c9">
+<h2>Cenário 9 — Resumo divergente do histórico <span class="tag warn">Auto-correção</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>Por algum motivo raro (bug antigo já corrigido, alguém mexeu no banco direto, restore mal feito), o número que aparece no resumo do estoque está diferente do que o histórico diz. Como descobrir e arrumar?</p>
+
+<h4>Como detectar</h4>
+<div class="ledger-table">
+<div class="header">O que o histórico soma pra essa peça/posição</div>
+<table>
+<tr><th>Cálculo</th><th>Valor</th></tr>
+<tr><td>Soma de todas as entradas, menos saídas</td><td class="num">42</td></tr>
+<tr><td>Soma de reservas, menos liberações</td><td class="num">3</td></tr>
+</table>
+</div>
+<div class="ledger-table">
+<div class="header">O que o resumo está mostrando (errado!)</div>
+<table>
+<tr><th>Saldo</th><th>Reservado</th></tr>
+<tr><td class="num" style="color:#dc2626">40</td><td class="num">3</td></tr>
+</table>
+</div>
+
+<p>O sistema faz uma varredura periódica que compara: pra cada posição (peça + empresa + galpão + localização), ele soma o histórico e compara com o resumo. Quando dá diferente, registra alerta.</p>
+
+<h3>Como corrigir</h3>
+<p>Tem um endpoint que roda no modo "diagnóstico" (só detecta) ou "auto-correção" (refaz o resumo somando o histórico do zero):</p>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    A[Robô agendado roda<br/>'detectar divergências'] --> B{Tem divergência?}
+    B -->|Não| D[Loga: sistema saudável]
+    B -->|Sim| E[Pra cada posição divergente]
+    E --> F[Soma o histórico inteiro<br/>daquela posição]
+    F --> G[Atualiza o resumo com<br/>o valor correto]
+    G --> H[Loga aviso com o que<br/>foi corrigido]
+    style D fill:#dcfce7
+    style H fill:#fef3c7
+</pre>
+<div class="caption">O histórico é a fonte de verdade. O resumo pode ser destruído e refeito a qualquer momento sem perder informação.</div>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> o sistema se auto-cura. Em produção, o modo "só detectar" roda toda madrugada — se houver divergência, alerta. O modo "auto-correção" roda menos frequente, só quando confirmado que a causa do erro original já foi resolvida.
+</div>
+
+<div class="card warn">
+<strong>Por que não auto-corrigir sempre?</strong> Porque divergência geralmente indica que alguma coisa quebrou — auto-corrigir mascara o problema. Melhor alertar primeiro, investigar a causa, corrigir o bug, e só depois reconciliar.
+</div>
+</div>
+</section>
+
+<!-- ============== APÊNDICE ============== -->
+<section id="apendice">
+<h2>Categorias de movimentação</h2>
+
+<p>Toda linha do histórico carrega uma <em>categoria</em>, pra responder "de onde veio essa mudança de estoque?". Permite agrupar nos relatórios e investigar.</p>
+
+<table class="compare">
+<tr><th>Categoria</th><th>Quando aparece</th></tr>
+<tr><td>Recebimento</td><td>Quando o operador recebe mercadoria pelo módulo "Receber"</td></tr>
+<tr><td>Lançamento retroativo</td><td>Registro de emergência pra peça que entrou antes do sistema saber. Depois é reconciliado.</td></tr>
+<tr><td>Venda (NF)</td><td>Webhook do Tiny avisa que saiu uma NF de venda</td></tr>
+<tr><td>Devolução de cliente (íntegra)</td><td>Cliente devolveu peça boa — volta pra estoque vendável</td></tr>
+<tr><td>Devolução avariada</td><td>Cliente devolveu peça quebrada — vai pra área de quarentena, não vende mais</td></tr>
+<tr><td>Devolução ao fornecedor</td><td>Devolvemos peça defeituosa pro fornecedor</td></tr>
+<tr><td>Transferência entre galpões</td><td>Caixa saiu de CWB e chegou em SP (mesma empresa, galpões diferentes)</td></tr>
+<tr><td>Replenishment</td><td>Caixa moveu dentro do mesmo galpão (overstock → picking, por ex.)</td></tr>
+<tr><td>Empréstimo entre empresas</td><td>Uma empresa "empresta" estoque pra outra — cria dívida</td></tr>
+<tr><td>Reserva de pedido</td><td>Pedido entrou, peça travada pra ele</td></tr>
+<tr><td>Liberação de reserva</td><td>Reserva vencida ou cancelada — peça libera</td></tr>
+<tr><td>Troca de SKU na separação</td><td>Operador trocou peça similar durante a separação (cliente pediu A, mandou B equivalente)</td></tr>
+<tr><td>Ajuste manual</td><td>Operador ajustou com motivo escrito ("achei 2 a mais no estoque")</td></tr>
+<tr><td>Inventário</td><td>Cycle count detectou diferença e supervisor aprovou a correção</td></tr>
+<tr><td>Inventário inicial</td><td>Carga inicial quando o WMS subiu (a partir do estoque que o Tiny tinha)</td></tr>
+<tr><td>Correção</td><td>Estorno de movimentação errada — aponta pra linha original</td></tr>
+<tr><td>NF cancelada</td><td>Tiny avisou que cancelou uma NF — estorna a saída</td></tr>
+<tr><td>Swap</td><td>Troca de dono contábil entre empresas, sem mexer fisicamente</td></tr>
+</table>
+
+<h3>Por que separar em categorias?</h3>
+<p>Pra responder perguntas como:</p>
+<ul>
+  <li>"Quanto a gente vendeu nos últimos 30 dias dessa peça?" — soma das saídas categoria "Venda".</li>
+  <li>"Quantos ajustes manuais tivemos no galpão CWB em maio?" — filtra categoria "Ajuste manual" + galpão.</li>
+  <li>"Quanto estoque tá em quarentena por avaria?" — filtra entradas categoria "Devolução avariada" que ainda não saíram.</li>
+</ul>
+</section>
+
+<footer>
+  Documento explica os fluxos de gravação do estoque no sistema WMS.
+  <br>Atualizado em 2026-05-13.
+</footer>
+
+</div>
+</body>
+</html>

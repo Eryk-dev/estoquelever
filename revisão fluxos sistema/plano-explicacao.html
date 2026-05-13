@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Unificação WMS — Explicação dos 4 Planos</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });
+</script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --card: #ffffff;
+    --ink: #18181b;
+    --ink-2: #52525b;
+    --ink-3: #a1a1aa;
+    --line: #e4e4e7;
+    --brand: #0891b2;
+    --brand-2: #164e63;
+    --ok: #16a34a;
+    --warn: #d97706;
+    --bad: #dc2626;
+    --info: #2563eb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 48px 24px 96px; }
+  header {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 24px;
+    margin-bottom: 40px;
+  }
+  h1 {
+    margin: 0 0 8px;
+    font-size: 32px;
+    letter-spacing: -0.02em;
+  }
+  .sub {
+    color: var(--ink-2);
+    font-size: 16px;
+  }
+  h2 {
+    margin: 56px 0 8px;
+    font-size: 24px;
+    letter-spacing: -0.01em;
+  }
+  h2 .badge {
+    display: inline-block;
+    font-size: 12px;
+    background: var(--ok);
+    color: white;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-left: 8px;
+    vertical-align: middle;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  h2 .badge.staging { background: var(--warn); }
+  h3 {
+    margin: 32px 0 8px;
+    font-size: 18px;
+    color: var(--brand-2);
+  }
+  p, li { font-size: 15px; color: var(--ink); }
+  ul { padding-left: 22px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+  }
+  .card.tldr {
+    background: #ecfeff;
+    border-color: #a5f3fc;
+  }
+  .card.tldr strong { color: var(--brand-2); }
+  .diagram {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 24px 0;
+    text-align: center;
+    overflow-x: auto;
+  }
+  .diagram .caption {
+    font-size: 13px;
+    color: var(--ink-2);
+    margin-top: 12px;
+    font-style: italic;
+  }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin: 16px 0;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .legend span::before {
+    content: "■";
+    margin-right: 6px;
+  }
+  .legend .ok::before { color: var(--ok); }
+  .legend .info::before { color: var(--info); }
+  .legend .warn::before { color: var(--warn); }
+  .legend .bad::before { color: var(--bad); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  th {
+    background: #fafafa;
+    font-weight: 600;
+    color: var(--ink-2);
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .pill.ok { background: #dcfce7; color: #166534; }
+  .pill.warn { background: #fef3c7; color: #92400e; }
+  .pill.info { background: #dbeafe; color: #1e40af; }
+  .pill.bad { background: #fee2e2; color: #991b1b; }
+  nav.toc {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 32px;
+  }
+  nav.toc ol { margin: 0; padding-left: 20px; }
+  nav.toc a { color: var(--brand); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-3);
+    font-size: 13px;
+    text-align: center;
+  }
+  .quote {
+    border-left: 3px solid var(--brand);
+    padding: 4px 16px;
+    margin: 16px 0;
+    color: var(--ink-2);
+    font-size: 14px;
+    background: #f0fdfa;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Unificação WMS — O que foi feito</h1>
+  <p class="sub">Uma explicação simples dos 4 planos do projeto, sem código, focada em fluxos.</p>
+</header>
+
+<nav class="toc">
+  <strong>Mapa</strong>
+  <ol>
+    <li><a href="#intro">A grande ideia</a></li>
+    <li><a href="#plano1">Plano 1 — Telas unificadas</a></li>
+    <li><a href="#plano2">Plano 2 — WMS vira a fonte da verdade</a></li>
+    <li><a href="#plano3">Plano 3 — Reservas de estoque</a></li>
+    <li><a href="#plano4">Plano 4 — Swap automático</a></li>
+    <li><a href="#roadmap">O que ainda falta</a></li>
+  </ol>
+</nav>
+
+<section id="intro">
+<h2>A grande ideia</h2>
+
+<div class="card tldr">
+<p><strong>Antes:</strong> o estoque vivia no Tiny ERP. O sistema lia, escrevia e dependia do Tiny pra tudo.</p>
+<p><strong>Depois:</strong> o WMS interno vira o "dono" do estoque. O Tiny continua sendo usado pra emitir notas fiscais, mas quem manda no saldo somos nós.</p>
+<p><strong>O caminho:</strong> 4 planos sequenciais. Plano 1 reúne todas as telas em um lugar só. Plano 2 troca de fonte da verdade. Plano 3 muda a forma como o estoque é "segurado" pra um pedido. Plano 4 inventa um truque contábil pra evitar transferências físicas inúteis.</p>
+</div>
+
+<h3>Os 3 conceitos que aparecem em todos os planos</h3>
+<table>
+<tr><th>Conceito</th><th>O que significa</th></tr>
+<tr><td><strong>Galpão</strong></td><td>O lugar físico (CWB ou SP). É o que o operador enxerga e usa pra trabalhar.</td></tr>
+<tr><td><strong>Empresa (dona)</strong></td><td>Quem é a "dona contábil" do estoque (NetAir, NetParts). Importa pra nota fiscal, mas o operador <em>nunca</em> vê.</td></tr>
+<tr><td><strong>Reserva</strong></td><td>Um "selo" no estoque dizendo "esse item já tem dono, é desse pedido aqui". O saldo total não muda, mas o disponível cai.</td></tr>
+</table>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    A[Pedido cai no sistema] --> B{Tem estoque<br/>do mesmo galpão?}
+    B -->|Sim| C[Próprio — auto-aprovado]
+    B -->|Não, tem em outro galpão| D[Transferência — operador decide]
+    B -->|Não, ninguém tem| E[OC — vai pra compras]
+    C --> F[Separação → Embalagem → Expedido]
+    D --> F
+    E --> G[Compras → Recebimento] --> F
+    style C fill:#dcfce7,stroke:#16a34a
+    style D fill:#fef3c7,stroke:#d97706
+    style E fill:#fee2e2,stroke:#dc2626
+</pre>
+<div class="caption">Os 3 caminhos que um pedido pode tomar. Toda a complexidade dos 4 planos é pra fazer isso funcionar bem.</div>
+</div>
+</section>
+
+<!-- ============== PLANO 1 ============== -->
+<section id="plano1">
+<h2>Plano 1 — Todas as telas debaixo de <code>/wms</code> <span class="badge">Entregue</span></h2>
+
+<div class="card tldr">
+<strong>O que mudou:</strong> antes, cada parte do sistema tinha sua própria "casa" (<code>/siso</code>, <code>/separacao</code>, <code>/compras</code>, etc.) com visuais diferentes. Agora tudo vive em <code>/wms/*</code> com o mesmo design.
+</div>
+
+<h3>O que o usuário vê de diferente</h3>
+<ul>
+  <li><strong>Uma sidebar só</strong>, organizada em 5 grupos: Vendas, Visibilidade, Operações, Inventário, Cadastros.</li>
+  <li><strong>Um filtro de galpão no topo</strong> que vale pra todas as telas (escolheu CWB? só vê CWB em tudo).</li>
+  <li><strong>O operador nunca vê empresa</strong> em telas de saída (separação, transferência, etc.). Vê só galpão.</li>
+  <li><strong>Pílulas de estoque</strong> coloridas (verde/amarelo/vermelho) por galpão em vez do dropdown velho de decisão.</li>
+  <li>O sistema antigo (<code>/siso</code>, <code>/separacao</code>, <code>/compras</code>) continua rodando intocado — migração gradual.</li>
+</ul>
+
+<h3>Novas telas (8)</h3>
+<table>
+<tr><th>Rota</th><th>Pra que serve</th></tr>
+<tr><td><code>/wms/pedidos</code></td><td>Lista universal de pedidos — 4 abas (Pendente, Concluídos, Auto-aprovados, Expedidos).</td></tr>
+<tr><td><code>/wms/pedidos/[id]</code></td><td>Detalhe do pedido — itens, timeline, observações, ações de admin.</td></tr>
+<tr><td><code>/wms/separacao</code></td><td>6 abas por status, com multi-seleção e ações em lote.</td></tr>
+<tr><td><code>/wms/separacao/checklist</code></td><td>Wave picking (bipagem em massa) com seção âmbar pra itens de OC.</td></tr>
+<tr><td><code>/wms/separacao/embalagem</code></td><td>Conferência item a item na hora de embalar.</td></tr>
+<tr><td><code>/wms/compras</code></td><td>3 abas (Comprar / Receber / Histórico) agrupadas por fornecedor.</td></tr>
+<tr><td><code>/wms/cross</code> e <code>/wms/cross/[sku]</code></td><td>Busca universal de produto (SKU, OEM, nome) + edição.</td></tr>
+</table>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart TB
+    subgraph WMS["/wms — Sistema unificado"]
+      direction LR
+      V[Vendas: Pedidos<br/>Separação<br/>Compras]
+      VI[Visibilidade: Estoque<br/>Ledger<br/>Cobertura]
+      O[Operações: Receber<br/>Transferir<br/>Replenishment<br/>Inventário]
+      C[Cadastros: Produtos<br/>Localizações<br/>Cross<br/>Fornecedores]
+    end
+
+    L1["/siso (legado)"]
+    L2["/separacao (legado)"]
+    L3["/compras (legado)"]
+    L4["/pedidos (legado)"]
+
+    L1 -.migração gradual.-> V
+    L2 -.migração gradual.-> V
+    L3 -.migração gradual.-> V
+    L4 -.migração gradual.-> V
+
+    style WMS fill:#ecfeff,stroke:#0891b2
+    style L1 fill:#fafafa,stroke:#a1a1aa
+    style L2 fill:#fafafa,stroke:#a1a1aa
+    style L3 fill:#fafafa,stroke:#a1a1aa
+    style L4 fill:#fafafa,stroke:#a1a1aa
+</pre>
+<div class="caption">As telas antigas continuam funcionando. As novas são equivalentes mas com visual unificado.</div>
+</div>
+</section>
+
+<!-- ============== PLANO 2 ============== -->
+<section id="plano2">
+<h2>Plano 2 — WMS vira a fonte da verdade <span class="badge staging">Em staging</span></h2>
+
+<div class="card tldr">
+<strong>O que mudou:</strong> em vez de perguntar ao Tiny "quanto eu tenho desse produto?", agora a gente pergunta pro WMS interno. Em vez de avisar o Tiny "saí com 5 unidades", a gente registra direto no WMS. <em>Só está ligado em ambiente de testes (staging). Produção continua com o Tiny mandando.</em>
+</div>
+
+<h3>A chave: duas "chaves" que ligam ou desligam</h3>
+<table>
+<tr><th>Chave</th><th>Quando ligada</th></tr>
+<tr><td><code>TINY_DISABLED</code></td><td>Toda chamada pro Tiny vira "faz de conta" (resposta falsa local). Útil pra testar sem mexer no Tiny real.</td></tr>
+<tr><td><code>WMS_AS_SOURCE</code></td><td>Toda leitura e escrita de estoque passa pelo WMS interno, não pelo Tiny.</td></tr>
+</table>
+<p>Em produção, ambas estão desligadas — nada mudou no dia a dia. Em staging, ambas estão ligadas e o sistema roda 100% sem o Tiny.</p>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    subgraph Antes["Antes (e produção hoje)"]
+      direction TB
+      P1[Pedido chega] --> T1[Pergunta estoque<br/>pro Tiny]
+      T1 --> D1[Sistema decide]
+      D1 --> S1[Operador separa]
+      S1 --> T2[Avisa Tiny:<br/>saí com X]
+    end
+
+    subgraph Depois["Depois (staging)"]
+      direction TB
+      P2[Pedido chega] --> W1[Pergunta estoque<br/>pro WMS]
+      W1 --> D2[Sistema decide]
+      D2 --> S2[Operador separa]
+      S2 --> W2[Registra no WMS:<br/>reserva → saída]
+    end
+
+    style Antes fill:#fef3c7,stroke:#d97706
+    style Depois fill:#dcfce7,stroke:#16a34a
+</pre>
+<div class="caption">Mesmo fluxo, mas a fonte da verdade muda. O Tiny vira opcional.</div>
+</div>
+
+<h3>Como foi testado</h3>
+<p>Foi criado um conjunto de <strong>15 cenários simulados</strong> que rodam de uma vez:</p>
+<ul>
+  <li>Pedidos comuns (auto-aprovação por estoque próprio)</li>
+  <li>Pedidos que viram transferência</li>
+  <li>Pedidos que viram OC (compra)</li>
+  <li>Cancelamentos antes da separação</li>
+  <li>Cancelamentos depois da separação</li>
+  <li>Pedidos parciais</li>
+</ul>
+<p><strong>Resultado:</strong> 15 de 15 cenários passaram. Saldos antes/depois batem certinho. Zero chamada pro Tiny real.</p>
+</section>
+
+<!-- ============== PLANO 3 ============== -->
+<section id="plano3">
+<h2>Plano 3 — Reservas de estoque <span class="badge staging">Em staging</span></h2>
+
+<div class="card tldr">
+<strong>O que mudou:</strong> antes, o sistema só "tirava do estoque" quando emitia a nota fiscal. Isso causava problemas: 2 pedidos podiam reservar mentalmente a mesma peça. Agora, no momento que o pedido entra, o estoque já fica <em>reservado</em> pra ele. Vira saída de verdade só quando o operador termina a separação.
+</div>
+
+<h3>O ciclo de vida da reserva</h3>
+<div class="legend">
+  <span class="info">Reserva criada</span>
+  <span class="warn">Reserva persiste</span>
+  <span class="ok">Vira saída</span>
+  <span class="bad">Reserva liberada (cancelamento)</span>
+</div>
+
+<div class="diagram">
+<pre class="mermaid">
+stateDiagram-v2
+    [*] --> Pendente: Pedido chega
+    Pendente: Pendente<br/>(reserva criada)
+    Pendente --> AguardandoSeparacao: Aprovado
+    AguardandoSeparacao: Aguardando separação<br/>(reserva persiste)
+    AguardandoSeparacao --> EmSeparacao: Operador inicia
+    EmSeparacao: Em separação<br/>(reserva persiste)
+    EmSeparacao --> Separado: Operador termina
+    Separado: Separado<br/>(reserva → saída real)
+    Separado --> Embalado
+    Embalado --> Expedido
+    Expedido --> [*]
+
+    Pendente --> Cancelado1: Cancelou cedo
+    AguardandoSeparacao --> Cancelado1: Cancelou cedo
+    EmSeparacao --> Cancelado1: Cancelou cedo
+    Cancelado1: Cancelado<br/>(reserva liberada)
+
+    Separado --> Cancelado2: Cancelou tarde
+    Embalado --> Cancelado2: Cancelou tarde
+    Cancelado2: Cancelado<br/>(estorno completo)
+</pre>
+<div class="caption">O ciclo de vida do pedido com reservas. A grande mudança é o momento em que o estoque "sai de verdade".</div>
+</div>
+
+<h3>O caso especial: OC (compra)</h3>
+<p>Quando um pedido precisa de um item que ninguém tem, ele vira <strong>OC</strong> (ordem de compra). O comprador compra do fornecedor e, quando a mercadoria chega:</p>
+<ul>
+  <li><strong>Entrada</strong> no estoque (o saldo sobe)</li>
+  <li><strong>Reserva</strong> automática pro pedido original (o disponível continua zero)</li>
+  <li>Tudo numa única transação — não tem janela onde outro pedido poderia "roubar" essa peça.</li>
+</ul>
+
+<div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant P as Pedido
+    participant S as Sistema
+    participant E as Estoque
+    participant C as Comprador
+    participant F as Fornecedor
+
+    P->>S: Pedido entra
+    S->>E: Tenho estoque?
+    E-->>S: Não
+    S->>C: Vira OC
+    C->>F: Compra
+    F->>C: Entrega
+    C->>S: Recebi 10 unidades
+    S->>E: +10 saldo + 10 reservado pro pedido original
+    Note over E: Saldo=10, Reservado=10, Disponível=0
+    S->>P: Pode separar!
+</pre>
+<div class="caption">Recebimento de OC: entrada e reserva acontecem juntas, "amarrando" o estoque ao pedido que pediu.</div>
+</div>
+
+<h3>O que cada situação faz com a reserva</h3>
+<table>
+<tr><th>Situação</th><th>O que acontece</th></tr>
+<tr><td>Pedido cancelado <strong>antes</strong> de separar</td><td>Reserva é liberada. Estoque volta a ficar disponível pra outros pedidos.</td></tr>
+<tr><td>Pedido cancelado <strong>depois</strong> de separar/embalar</td><td>Já saiu de verdade. Sistema faz uma entrada compensatória pra devolver. Acende um alerta pro admin verificar.</td></tr>
+<tr><td>Pedido <strong>encaminhado</strong> pra outro galpão</td><td>Reserva no galpão antigo é liberada e uma nova é criada no galpão novo.</td></tr>
+<tr><td>Admin precisa <strong>liberar manualmente</strong> uma reserva</td><td>Existe um endpoint de override (uso raro, com log).</td></tr>
+<tr><td>Reservas "esquecidas"</td><td>Um robô passa todo dia às 3h da manhã limpando reservas expiradas.</td></tr>
+</table>
+</section>
+
+<!-- ============== PLANO 4 ============== -->
+<section id="plano4">
+<h2>Plano 4 — Swap automático <span class="badge staging">Em staging</span></h2>
+
+<div class="card tldr">
+<strong>O que mudou:</strong> esse é o truque mais inteligente. Imagine que a NetAir vendeu uma peça que está fisicamente em CWB, mas a NetAir prefere mandar de CWB também. Tudo certo. Mas e se a peça estivesse em SP? Antes: transferência física CWB→SP, caro e demorado. Agora: o sistema "troca" donos contábilmente — a NetParts (que tinha peça em CWB) vira a dona daquela peça, e a NetAir vira dona da peça que estava em SP. <strong>Nada se move fisicamente.</strong> Só os papéis mudam.
+</div>
+
+<div class="quote">
+"Swap é a forma de evitar transferência física quando dá pra resolver só na contabilidade."
+</div>
+
+<h3>Como funciona o swap, passo a passo</h3>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    subgraph Antes["ANTES do swap"]
+      direction TB
+      A1["NetAir<br/>em SP: 5 peças"]
+      A2["NetParts<br/>em CWB: 5 peças"]
+    end
+
+    subgraph Depois["DEPOIS do swap"]
+      direction TB
+      B1["NetAir<br/>em CWB: 5 peças"]
+      B2["NetParts<br/>em SP: 5 peças"]
+    end
+
+    Antes -->|swap contábil| Depois
+
+    style Antes fill:#fef3c7,stroke:#d97706
+    style Depois fill:#dcfce7,stroke:#16a34a
+</pre>
+<div class="caption">As peças continuam exatamente onde estavam. Só mudou o "nome no crachá". A NetAir agora pode enviar de CWB (que é seu galpão preferido) sem mover nada.</div>
+</div>
+
+<h3>Quando o sistema tenta swap</h3>
+<div class="diagram">
+<pre class="mermaid">
+flowchart TD
+    P[Pedido da NetAir<br/>precisa de 5 unidades em CWB] --> Q1{NetAir tem<br/>5+ em CWB?}
+    Q1 -->|Sim| R1[Próprio: reserva direta]
+    Q1 -->|Não| Q2{Existe swap<br/>possível?<br/>NetAir em outro galpão<br/>+ outra empresa em CWB}
+    Q2 -->|Sim, cobre 100%| R2[Faz swap<br/>+ reserva direta]
+    Q2 -->|Não cobre tudo| Q3{Outra empresa tem<br/>em CWB?}
+    Q3 -->|Sim| R3[Empréstimo:<br/>NetParts empresta pra NetAir]
+    Q3 -->|Não| Q4{Outro galpão<br/>tem fisicamente?}
+    Q4 -->|Sim| R4[Transferência<br/>física necessária]
+    Q4 -->|Não| R5[OC: vai comprar]
+
+    style R1 fill:#dcfce7,stroke:#16a34a
+    style R2 fill:#dcfce7,stroke:#16a34a
+    style R3 fill:#fef3c7,stroke:#d97706
+    style R4 fill:#fef3c7,stroke:#d97706
+    style R5 fill:#fee2e2,stroke:#dc2626
+</pre>
+<div class="caption">A árvore de decisão completa. O swap aparece <em>antes</em> da transferência física — só usa o caminho físico quando não tem jeito.</div>
+</div>
+
+<h3>Por que swap é melhor que empréstimo</h3>
+<table>
+<tr><th></th><th>Empréstimo</th><th>Swap</th></tr>
+<tr><td>Movimentação física</td><td>Nenhuma</td><td>Nenhuma</td></tr>
+<tr><td>Cria dívida entre empresas?</td><td><span class="pill bad">Sim</span> (NetParts fica devendo pra NetAir)</td><td><span class="pill ok">Não</span> (troca limpa, sem saldo devedor)</td></tr>
+<tr><td>Afeta acerto contábil futuro?</td><td>Sim, precisa quitar</td><td>Não, fechado na hora</td></tr>
+<tr><td>Operador vê?</td><td>Não</td><td>Não</td></tr>
+</table>
+
+<p>Por isso o algoritmo tenta swap <em>antes</em> de empréstimo: é mais limpo contábilmente, sem deixar dívida acumulada entre as empresas.</p>
+
+<h3>O que foi testado</h3>
+<ul>
+  <li><strong>Swap perfeito:</strong> NetAir vende em CWB, tem em SP; NetParts tem em CWB. Troca os dois lados, cobre 100%.</li>
+  <li><strong>Swap multi-itens:</strong> mesmo pedido, vários SKUs diferentes precisando de swap. Tudo numa transação.</li>
+  <li>6 testes unitários + 2 cenários end-to-end. Todos passaram.</li>
+</ul>
+</section>
+
+<!-- ============== ROADMAP ============== -->
+<section id="roadmap">
+<h2>O que ainda falta (próximos passos)</h2>
+
+<div class="card">
+<h3>Bugs ativos</h3>
+<ul>
+  <li><span class="pill bad">Alta</span> Abas com contador zero não permitem clicar (devem permitir).</li>
+  <li><span class="pill bad">Alta</span> Falta botão "Embalar direto" na aba Aguardando OC (existe no legado).</li>
+  <li><span class="pill warn">Média</span> Alguns avisos de React Compiler em arquivos antigos.</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>WMS-6 — A virada de produção</h3>
+<p>Os Planos 2, 3 e 4 estão prontos <strong>em staging</strong>. Pra colocar em produção, falta o <strong>WMS-6</strong> (cutover real). O runbook já existe. Quando o usuário decidir:</p>
+<ol>
+  <li>Aplica as migrations em produção</li>
+  <li>Liga <code>WMS_AS_SOURCE=true</code> no ambiente da Vercel</li>
+  <li>Monitora divergências entre WMS e Tiny por algumas horas</li>
+  <li>Remove o código legado de inventário e transferências</li>
+</ol>
+<p><strong>Bom saber:</strong> diferente do plano original, não precisa ser "big bang" — dá pra ligar só a fonte da verdade WMS mantendo o Tiny rodando em paralelo pra emitir NF.</p>
+</div>
+
+<div class="diagram">
+<pre class="mermaid">
+gantt
+    title Linha do tempo da unificação
+    dateFormat YYYY-MM-DD
+    section Planos
+    Plano 1 — Telas unificadas    :done, p1, 2026-05-01, 7d
+    Plano 2 — WMS source (staging) :done, p2, 2026-05-08, 5d
+    Plano 3 — Reservas             :done, p3, 2026-05-10, 3d
+    Plano 4 — Swap                 :done, p4, 2026-05-12, 2d
+    section Próximo
+    Bugs ativos                    :active, b1, 2026-05-13, 3d
+    WMS-6 — Cutover de produção    :crit, p6, after b1, 5d
+</pre>
+<div class="caption">Onde estamos hoje: 4 planos entregues em staging. Falta limpar bugs e fazer o cutover de produção.</div>
+</div>
+</section>
+
+<footer>
+  Gerado a partir de <code>plano.md</code> + <code>CLAUDE.md</code> + arquivos do projeto · 2026-05-13
+</footer>
+
+</div>
+</body>
+</html>

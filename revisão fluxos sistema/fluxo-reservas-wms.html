@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fluxo de Reservas — WMS</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --surface-alt: #f4f4f5;
+    --border: #e4e4e7;
+    --ink: #18181b;
+    --ink-soft: #52525b;
+    --ink-mute: #a1a1aa;
+    --accent: #2563eb;
+    --r: #2563eb;     /* reserva — azul */
+    --l: #7c3aed;     /* liberação — roxo */
+    --e: #16a34a;     /* entrada — verde */
+    --s: #dc2626;     /* saída — vermelho */
+    --warn: #d97706;
+    --good: #16a34a;
+    --bad: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+    font-size: 16px;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 48px 24px 96px; }
+  header { margin-bottom: 48px; }
+  h1 {
+    font-size: 38px;
+    line-height: 1.15;
+    margin: 0 0 12px;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+  }
+  .tagline { color: var(--ink-soft); font-size: 18px; margin: 0; max-width: 640px; }
+  .meta { color: var(--ink-mute); font-size: 13px; margin-top: 16px; }
+  h2 {
+    font-size: 26px;
+    margin: 64px 0 16px;
+    letter-spacing: -0.01em;
+    border-top: 1px solid var(--border);
+    padding-top: 32px;
+  }
+  h3 { font-size: 20px; margin: 32px 0 12px; }
+  p { margin: 12px 0; }
+  .lead { font-size: 17px; color: var(--ink-soft); }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 28px;
+    margin: 20px 0;
+  }
+  .card-warn { border-left: 4px solid var(--warn); background: #fffbeb; }
+  .card-good { border-left: 4px solid var(--good); background: #f0fdf4; }
+  .card-bad { border-left: 4px solid var(--bad); background: #fef2f2; }
+
+  .mermaid {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+    margin: 24px 0;
+    text-align: center;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+  }
+  .pill-r { background: #dbeafe; color: var(--r); }
+  .pill-l { background: #ede9fe; color: var(--l); }
+  .pill-e { background: #dcfce7; color: var(--e); }
+  .pill-s { background: #fee2e2; color: var(--s); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .mini {
+    background: var(--surface-alt);
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-size: 14.5px;
+  }
+  .mini strong { display: block; margin-bottom: 4px; font-size: 13px; color: var(--ink-mute); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    font-size: 14.5px;
+  }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--surface-alt); font-weight: 600; font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  code { background: var(--surface-alt); padding: 1px 6px; border-radius: 4px; font-size: 0.9em; font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 24px;
+    margin-bottom: 32px;
+  }
+  .toc ol { margin: 8px 0 0; padding-left: 22px; }
+  .toc li { margin: 4px 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .step-num {
+    background: var(--ink);
+    color: white;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .step-body { flex: 1; padding-top: 2px; }
+  .step-body strong { display: block; margin-bottom: 4px; }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0 24px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .legend-dot { width: 14px; height: 14px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Fluxo de reservas no WMS</h1>
+  <p class="tagline">Como o sistema "tranca" estoque do momento que o pedido chega até o estoque sair pra valer — com todos os caminhos possíveis no meio.</p>
+  <p class="meta">Documento gerado a partir do código-fonte (não do plano.md) · 2026-05-13</p>
+</header>
+
+<div class="toc">
+  <strong>O que tem aqui</strong>
+  <ol>
+    <li><a href="#conceito">O que é uma reserva, na prática</a></li>
+    <li><a href="#vocabulario">Vocabulário básico (E, S, R, L)</a></li>
+    <li><a href="#caminho1">Caminho 1 — Pedido chega: reserva nasce</a></li>
+    <li><a href="#caminho2">Caminho 2 — NF emitida: reserva vira venda</a></li>
+    <li><a href="#caminho3">Caminho 3 — Encaminhar: reserva muda de galpão</a></li>
+    <li><a href="#caminho4">Caminho 4 — Admin libera: pedido travado</a></li>
+    <li><a href="#caminho5">Caminho 5 — Cleanup automático: reserva expirou</a></li>
+    <li><a href="#panorama">Panorama: os 4 ciclos de vida possíveis</a></li>
+    <li><a href="#detalhes">Detalhes importantes que ninguém conta</a></li>
+  </ol>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="conceito">1. O que é uma reserva, na prática</h2>
+
+<p class="lead">Imagina a prateleira do galpão. Cada produto tem uma quantidade física parada ali. Quando um pedido chega no sistema, ele não pega a peça da prateleira na hora — ele <strong>pendura uma plaquinha "reservado pro pedido X"</strong> em cima da quantidade que vai precisar.</p>
+
+<div class="card">
+<p>A peça <strong>continua fisicamente na prateleira</strong>, mas o sistema sabe que ela "tem dono". Outro pedido que entrar não vai ver essa quantidade como livre.</p>
+<p>A reserva fica pendurada até uma de duas coisas acontecer:</p>
+<ul>
+  <li><strong>NF é emitida</strong> → a peça é "vendida" de fato. Reserva sai, saída entra.</li>
+  <li><strong>Algo cancela</strong> → a plaquinha cai, peça volta a estar livre.</li>
+</ul>
+</div>
+
+<h3>A conta do estoque</h3>
+
+<p>Cada posição no galpão tem três números:</p>
+
+<div class="grid-2">
+  <div class="mini"><strong>Saldo</strong>O que tem fisicamente na prateleira. Só muda quando entra (compra) ou sai (venda) coisa.</div>
+  <div class="mini"><strong>Reservado</strong>Quanto desse saldo está "com plaquinha" pra outros pedidos. Sobe quando reserva, desce quando libera.</div>
+</div>
+<div class="mini" style="margin-top:16px"><strong>Disponível</strong>Saldo − Reservado. É o que o roteador enxerga como livre pra novos pedidos. Calculado automaticamente pelo banco.</div>
+
+<p style="color:var(--ink-soft); font-size:14.5px; margin-top:16px"><em>Regra de ferro do banco: Reservado nunca pode passar do Saldo. Se tentar reservar mais do que existe, dá erro e o pedido fica avisando o operador.</em></p>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="vocabulario">2. Os 4 tipos de movimento no livro-razão</h2>
+
+<p>O sistema guarda <strong>todo movimento de estoque num livro-razão imutável</strong> (tabela <code>siso_movimentacoes</code>). Cada linha tem um tipo:</p>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-dot" style="background:var(--e)"></span><span class="pill pill-e">E</span> Entrada — chegou produto</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--s)"></span><span class="pill pill-s">S</span> Saída — produto saiu</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--r)"></span><span class="pill pill-r">R</span> Reserva — plaquinha foi pendurada</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--l)"></span><span class="pill pill-l">L</span> Liberação — plaquinha caiu</div>
+</div>
+
+<table>
+  <thead><tr><th>Tipo</th><th>Saldo</th><th>Reservado</th><th>Quando acontece</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill pill-e">E</span></td><td>+ qty</td><td>—</td><td>Recebimento, devolução, estorno de saída</td></tr>
+    <tr><td><span class="pill pill-s">S</span></td><td>− qty</td><td>—</td><td>NF de venda emitida, perda</td></tr>
+    <tr><td><span class="pill pill-r">R</span></td><td>—</td><td>+ qty</td><td>Pedido chegou, alocou estoque</td></tr>
+    <tr><td><span class="pill pill-l">L</span></td><td>—</td><td>− qty</td><td>NF emitiu (junto com S), pedido cancelado, expirou, encaminhou</td></tr>
+  </tbody>
+</table>
+
+<p>Nada nunca é editado ou apagado. Quando uma reserva precisa "sumir", o sistema escreve uma <span class="pill pill-l">L</span> que aponta pra <span class="pill pill-r">R</span> original via campo <code>estorno_de</code>. É como cancelar um cheque escrevendo "cancelado" embaixo — o cheque original fica lá.</p>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="caminho1">3. Caminho 1 — Pedido chega: reserva nasce</h2>
+
+<p class="lead">Esse é o ponto de partida. Marketplace manda pedido pro Tiny, Tiny dispara webhook pro sistema, e em segundos a reserva já está pendurada.</p>
+
+<div class="mermaid">
+flowchart TD
+    A[Pedido entra no marketplace] --> B[Tiny ERP manda webhook]
+    B --> C{Processador WMS<br/>do webhook}
+    C --> D[Roteador escolhe<br/>onde pegar estoque]
+    D --> E{Tem swap?<br/>troca dono pra<br/>otimizar}
+    E -- sim --> F[Executa swap<br/>permuta saldo entre empresas]
+    E -- não --> G
+    F --> G[Para cada item:<br/>cria movimento R]
+    G --> H[Banco trava a linha<br/>e soma no reservado]
+    H --> I[Pedido sai aguardando aprovação<br/>ou aprovado automaticamente]
+
+    style G fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    style H fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+</div>
+
+<div class="card">
+<strong>O que importa saber:</strong>
+<div class="step">
+  <div class="step-num">1</div>
+  <div class="step-body"><strong>A reserva é por item, não por pedido.</strong> Um pedido com 5 itens diferentes vira 5 movimentos <span class="pill pill-r">R</span> no livro.</div>
+</div>
+<div class="step">
+  <div class="step-num">2</div>
+  <div class="step-body"><strong>Cada reserva vale 30 dias.</strong> Tem um relógio interno (<code>expira_em</code>) que conta. Se ninguém emitir NF nesse prazo, o cleanup automático derruba ela.</div>
+</div>
+<div class="step">
+  <div class="step-num">3</div>
+  <div class="step-body"><strong>Pedido de compra (OC) não reserva nada.</strong> Só pedidos com decisão "própria" ou "empréstimo" criam reservas — OC vai esperar a compra chegar primeiro.</div>
+</div>
+<div class="step">
+  <div class="step-num">4</div>
+  <div class="step-body"><strong>Se falhar a reserva, o pedido é salvo do mesmo jeito.</strong> O operador vê o aviso e decide o que fazer (geralmente é estoque insuficiente).</div>
+</div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="caminho2">4. Caminho 2 — NF emitida: reserva vira venda</h2>
+
+<p class="lead">Esse é o caminho feliz, o que acontece em 95% dos pedidos. A operação separa, fatura, e a reserva vira saída de verdade.</p>
+
+<div class="mermaid">
+flowchart TD
+    A[Operador termina separação] --> B[Sistema emite NF no Tiny]
+    B --> C[Tiny manda webhook<br/>nota fiscal autorizada]
+    C --> D[NF webhook handler:<br/>salva chave + DANFE]
+    D --> E[Transita pedido pra<br/>aguardando separação<br/>ou direto pra fatura]
+    E --> F[Enfileira tarefa<br/>lancar_estoque_pos_nf]
+    F --> G[Worker pega a tarefa]
+    G --> H{Para cada reserva R<br/>do pedido}
+    H --> I[Cria L apontando pra R<br/>baixa o reservado]
+    H --> J[Cria S de venda<br/>baixa o saldo]
+    I --> K[Pedido marcado<br/>estoque lançado]
+    J --> K
+
+    style I fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    style J fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+</div>
+
+<div class="card card-good">
+<strong>O truque do "cutover":</strong> pra cada reserva existente, o sistema escreve <strong>dois movimentos juntos</strong> — uma <span class="pill pill-l">L</span> que zera a plaquinha e uma <span class="pill pill-s">S</span> que tira a peça da prateleira. As duas coisas viram efeito ao mesmo tempo. É como recolher a plaquinha e levar a peça embora no mesmo gesto.
+</div>
+
+<h3>Por que separar em L + S em vez de só baixar tudo?</h3>
+
+<p>Pra <strong>rastreabilidade</strong>. Se algum dia precisar entender o que aconteceu com o pedido X, o livro-razão conta a história inteira:</p>
+<ul>
+  <li>Linha 1: <span class="pill pill-r">R</span> — em 01/jan reservei 3 unidades pro pedido X</li>
+  <li>Linha 2: <span class="pill pill-l">L</span> — em 03/jan liberei essa reserva (motivo: virou venda)</li>
+  <li>Linha 3: <span class="pill pill-s">S</span> — em 03/jan saí com 3 unidades pra NF do pedido X</li>
+</ul>
+
+<p>Se baixasse direto, ia parecer que a reserva "sumiu" sem explicação.</p>
+
+<div class="card card-warn">
+<strong>Detalhe que pega muita gente:</strong> o webhook da NF <em>não toca em reserva direto</em>. Ele só salva os dados da nota e <em>enfileira um trabalho</em>. Quem realmente faz o R→L+S é o worker, rodando em background. Isso quer dizer: pode ter um delay de segundos entre "NF emitida" e "estoque baixado de fato".
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="caminho3">5. Caminho 3 — Encaminhar: reserva muda de galpão</h2>
+
+<p class="lead">Pedido chegou em CWB mas decidiu-se mandar pra SP separar. O sistema precisa "soltar" o estoque que estava reservado em CWB e tentar reservar de novo em SP.</p>
+
+<div class="mermaid">
+flowchart TD
+    A[Operador clica encaminhar pra SP] --> B{Pedido já tinha<br/>estoque lançado?}
+    B -- sim --> C[Estorna saídas:<br/>cria E pra cada S existente]
+    B -- não --> D
+    C --> D[Libera reservas no galpão antigo:<br/>cria L pra cada R existente]
+    D --> E[Procura saldo no galpão novo<br/>preferindo a empresa vendedora]
+    E --> F{Achou estoque<br/>suficiente?}
+    F -- sim --> G[Cria R nova no galpão destino]
+    F -- não --> H[Loga falha mas não bloqueia<br/>operador vê alerta]
+    G --> I[Reseta pedido pra pendente<br/>operação SP vê pra aprovar]
+    H --> I
+
+    style C fill:#dcfce7,stroke:#16a34a,color:#14532d
+    style D fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    style G fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+</div>
+
+<div class="card">
+<strong>Por que esse fluxo é delicado:</strong>
+<div class="step">
+  <div class="step-num">1</div>
+  <div class="step-body"><strong>Se a NF já foi emitida</strong>, a peça já saiu do saldo. O encaminhar tem que "fazer ela voltar" criando uma entrada (<span class="pill pill-e">E</span>) que cancela a saída — e só depois libera a reserva original.</div>
+</div>
+<div class="step">
+  <div class="step-num">2</div>
+  <div class="step-body"><strong>A NF continua válida</strong>. Encaminhar não cancela a nota fiscal — chave de acesso, DANFE e número da nota ficam com o pedido. Só muda quem vai separar.</div>
+</div>
+<div class="step">
+  <div class="step-num">3</div>
+  <div class="step-body"><strong>Pode falhar a reserva no destino</strong> e o sistema não trava. Só registra "falhei em recriar reserva no galpão X" — operador vê e resolve.</div>
+</div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="caminho4">6. Caminho 4 — Admin libera: pedido travado</h2>
+
+<p class="lead">Cenário de exceção. Pedido travou em algum estado e está segurando estoque que outro pedido precisaria. Só admin pode usar.</p>
+
+<div class="mermaid">
+flowchart TD
+    A[Admin abre o pedido] --> B[Clica botão liberar reserva]
+    B --> C{Estoque já<br/>foi lançado?}
+    C -- sim --> D[Estorna todas as saídas<br/>cria E pra cada S]
+    C -- não --> E
+    D --> E[Libera todas as reservas<br/>cria L pra cada R]
+    E --> F[Reseta pedido pra pendente]
+    F --> G[Limpa decisão, operador,<br/>flags de separação e fatura]
+    G --> H[Pedido volta pra fila<br/>pra ser roteado de novo]
+
+    style D fill:#dcfce7,stroke:#16a34a,color:#14532d
+    style E fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+</div>
+
+<div class="card card-warn">
+<strong>Quando usar:</strong>
+<ul style="margin: 8px 0 0">
+  <li>Cliente pediu mudança no pedido e o sistema travou no meio do processo</li>
+  <li>Reserva fantasma segurando estoque que aparece "indisponível" mas o operador sabe que tem</li>
+  <li>Pedido em "executando" que não avança há horas e precisa ser reiniciado do zero</li>
+</ul>
+</div>
+
+<p>Diferença pro encaminhar: aqui o pedido volta a <strong>ser pendente sem decisão</strong> — o roteador vai escolher de novo onde pegar estoque (talvez no mesmo galpão, talvez em outro). NF, etiquetas e tracking ficam preservados.</p>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="caminho5">7. Caminho 5 — Cleanup automático: reserva expirou</h2>
+
+<p class="lead">Toda noite às 3h da manhã, um job varre o banco procurando reservas velhas que ninguém finalizou. Solta elas pra liberar o estoque.</p>
+
+<div class="mermaid">
+flowchart TD
+    A[Cron 03:00 todo dia] --> B[Chama endpoint<br/>de cleanup]
+    B --> C[Busca movs R com<br/>expira_em no passado]
+    C --> D{Para cada R<br/>expirada}
+    D --> E{Já tem L<br/>apontando pra ela?}
+    E -- sim --> F[Pula — já foi liberada]
+    E -- não --> G[Cria L motivo expirado]
+    G --> H[Marca pedido<br/>status alerta reserva expirada]
+    H --> I[Operador vê alerta<br/>e investiga]
+    F --> J[Próxima reserva]
+    I --> J
+
+    style G fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    style H fill:#fffbeb,stroke:#d97706,color:#78350f
+</div>
+
+<div class="card card-bad">
+<strong>Atenção:</strong> uma reserva expirando é <em>sintoma de alguma coisa errada</em>. O TTL é de 30 dias — se chegou nisso, é porque o pedido ficou parado muito tempo sem NF, sem cancelamento, sem encaminhamento. Vale investigar.
+</div>
+
+<h3>Por que existe TTL?</h3>
+<p>Pra proteger contra "vazamento de reserva". Se um pedido travar e ninguém perceber, sem TTL ele ia segurar estoque pra sempre. O TTL é a rede de segurança final.</p>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="panorama">8. Panorama: os 4 ciclos de vida possíveis</h2>
+
+<p class="lead">Toda reserva no banco vai cair em uma dessas 4 histórias. Não tem outra.</p>
+
+<div class="mermaid">
+flowchart LR
+    R[Reserva criada] --> A[Caminho feliz<br/>NF emitida]
+    R --> B[Encaminhada<br/>pra outro galpão]
+    R --> C[Admin liberou<br/>manualmente]
+    R --> D[Expirou após 30 dias]
+
+    A --> A1[L motivo NF emitida<br/>+ S de venda]
+    B --> B1[L motivo encaminhamento<br/>+ R nova no destino]
+    C --> C1[L motivo ajuste admin<br/>+ pedido volta pra pendente]
+    D --> D1[L motivo expirado<br/>+ pedido marcado com alerta]
+
+    style A fill:#dcfce7,stroke:#16a34a
+    style B fill:#dbeafe,stroke:#2563eb
+    style C fill:#fffbeb,stroke:#d97706
+    style D fill:#fee2e2,stroke:#dc2626
+</div>
+
+<table>
+  <thead><tr><th>Caminho</th><th>O que dispara</th><th>Quem executa</th><th>Frequência</th></tr></thead>
+  <tbody>
+    <tr><td>NF emitida</td><td>Webhook NF do Tiny</td><td>Worker em background</td><td>~95% dos pedidos</td></tr>
+    <tr><td>Encaminhamento</td><td>Operador clica encaminhar</td><td>API de encaminhar</td><td>Quando muda galpão</td></tr>
+    <tr><td>Admin libera</td><td>Admin clica botão</td><td>Endpoint admin-only</td><td>Excepcional</td></tr>
+    <tr><td>Expirou</td><td>Cron 03:00</td><td>Job de cleanup</td><td>Idealmente zero</td></tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 id="detalhes">9. Detalhes importantes que ninguém conta</h2>
+
+<h3>Idempotência: rodar duas vezes não duplica</h3>
+<p>Cada <span class="pill pill-l">L</span> grava de onde veio (<code>estorno_de</code> aponta pra <span class="pill pill-r">R</span> original). Antes de liberar, o código checa se já existe uma <span class="pill pill-l">L</span> pra essa <span class="pill pill-r">R</span>. Se sim, pula. Por isso pode dar "retry" sem medo.</p>
+
+<h3>Swap não toca em reserva</h3>
+<p>Swap (a otimização contábil que troca quem é dono do produto antes de reservar) cria movimentos internos do tipo <span class="pill pill-e">E</span>/<span class="pill pill-s">S</span> entre empresas. Quando chega no passo de criar a <span class="pill pill-r">R</span>, o saldo já está com a empresa certa.</p>
+
+<h3>Trava pessimista no banco</h3>
+<p>Toda criação ou alteração de reserva passa por uma função no banco que primeiro <em>tranca a linha de estoque</em> (lock pessimista). Isso garante que dois pedidos chegando ao mesmo tempo não vão "ver" o mesmo saldo e reservar em dobro. Um espera o outro.</p>
+
+<h3>O default é 48h mas pedido usa 30 dias</h3>
+<p>A função genérica de criar reserva tem TTL padrão de 48 horas. Mas o webhook de pedido <em>sobrescreve</em> e passa 30 dias (720 horas). 48h é pensado pra coisas tipo reserva de inventário ou bloqueio temporário, não pedido.</p>
+
+<h3>OC: o caminho que não cria reserva</h3>
+<p>Quando o roteador decide que precisa comprar (OC), nenhuma reserva é criada. Faz sentido: você não pode reservar algo que ainda não está na prateleira. A reserva só nasce <em>depois</em> que a compra chega e o pedido é re-roteado.</p>
+
+<h3>Modo Tiny x Modo WMS</h3>
+<p>Hoje o sistema roda em duas modalidades, controladas por uma flag (<code>WMS_AS_SOURCE</code>):</p>
+<ul>
+  <li><strong>Tiny clássico:</strong> reserva é só "no papel" do WMS. A saída real continua sendo registrada no Tiny via API. Usado em produção até o cutover.</li>
+  <li><strong>WMS_AS_SOURCE:</strong> o WMS é a fonte da verdade. R→L+S acontece tudo no banco do projeto. Tiny não é consultado. Está em validação em staging.</li>
+</ul>
+
+<h3>O alerta de "estoque lançado"</h3>
+<p>Tem um caso edge meio assustador: pedido completou separação, NF foi emitida (<span class="pill pill-s">S</span> registrado), e depois disso alguém quer cancelar/encaminhar. O sistema lida — cria <span class="pill pill-e">E</span> compensatória pra cada <span class="pill pill-s">S</span>, depois <span class="pill pill-l">L</span> pra cada <span class="pill pill-r">R</span> — mas <strong>levanta uma bandeira</strong> (<code>compra_estoque_lancado_alerta</code>) pro operador saber que o estoque foi "desfaturado" e investigar se a NF foi cancelada corretamente.</p>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<h2 style="border:none; margin-top:64px">Resumo em uma linha</h2>
+
+<div class="card card-good" style="font-size:17px">
+A reserva é uma <strong>plaquinha temporária</strong> que o sistema pendura no estoque assim que um pedido chega. Ela vive até a NF ser emitida (vira venda), até o pedido ser encaminhado pra outro galpão (muda de lugar), até um admin liberar manualmente (desbloqueio), ou até 30 dias se passarem sem nada acontecer (cleanup). Tudo fica registrado no livro-razão, nada é apagado, e dá pra entender o ciclo de vida de qualquer reserva olhando o histórico.
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      primaryColor: '#ffffff',
+      primaryTextColor: '#18181b',
+      primaryBorderColor: '#a1a1aa',
+      lineColor: '#71717a',
+      secondaryColor: '#f4f4f5',
+      tertiaryColor: '#fafaf9',
+      fontFamily: '-apple-system, BlinkMacSystemFont, system-ui, sans-serif'
+    },
+    flowchart: { curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

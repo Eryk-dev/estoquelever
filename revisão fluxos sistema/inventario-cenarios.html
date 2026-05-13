@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inventário — Como o cycle count funciona</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });
+</script>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --ink: #18181b; --ink-2: #52525b; --ink-3: #a1a1aa;
+    --line: #e4e4e7; --brand: #0891b2; --brand-2: #164e63;
+    --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --info: #2563eb;
+    --op1: #0891b2; --op2: #7c3aed; --op3: #db2777; --op4: #d97706; --op5: #16a34a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink); line-height: 1.6; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 48px 24px 96px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 24px; margin-bottom: 40px; }
+  h1 { margin: 0 0 8px; font-size: 32px; letter-spacing: -0.02em; }
+  .sub { color: var(--ink-2); font-size: 16px; }
+  h2 { margin: 64px 0 16px; font-size: 26px; letter-spacing: -0.01em;
+    padding-bottom: 8px; border-bottom: 2px solid var(--brand); }
+  h2 .tag { display: inline-block; font-size: 12px; background: var(--brand);
+    color: white; padding: 3px 10px; border-radius: 4px; margin-left: 12px;
+    vertical-align: middle; font-weight: 500; letter-spacing: 0; }
+  h2 .tag.bad { background: var(--bad); } h2 .tag.warn { background: var(--warn); } h2 .tag.ok { background: var(--ok); }
+  h3 { margin: 28px 0 8px; font-size: 18px; color: var(--brand-2); }
+  h4 { margin: 20px 0 8px; font-size: 15px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.05em; }
+  p, li { font-size: 15px; color: var(--ink); } ul { padding-left: 22px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 24px; margin: 16px 0; }
+  .card.tldr { background: #ecfeff; border-color: #a5f3fc; }
+  .card.tldr strong { color: var(--brand-2); }
+  .card.scenario { padding: 28px; }
+  .card.tip { background: #fefce8; border-color: #fde047; }
+  .card.warn { background: #fef3c7; border-color: #f59e0b; }
+  .order-box { background: #f0f9ff; border-left: 4px solid var(--info);
+    padding: 12px 16px; margin: 16px 0; border-radius: 4px; font-size: 14px; }
+  .order-box strong { color: var(--info); }
+
+  .stock-table { background: #fafafa; border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden; margin: 16px 0; }
+  .stock-table .header { background: #18181b; color: white; padding: 8px 12px;
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+  .stock-table table { width: 100%; border-collapse: collapse; margin: 0; }
+  .stock-table th, .stock-table td { padding: 10px 14px; text-align: left;
+    font-size: 14px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); }
+  .stock-table th { background: white; font-weight: 600; color: var(--ink-2);
+    font-size: 12px; text-transform: uppercase; }
+  .stock-table tr:last-child td { border-bottom: none; }
+  .stock-table td:last-child, .stock-table th:last-child { border-right: none; }
+  .stock-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .stock-table td.delta-plus { background: #dcfce7; color: var(--ok); font-weight: 700; }
+  .stock-table td.delta-minus { background: #fee2e2; color: var(--bad); font-weight: 700; }
+  .stock-table td.delta-zero { color: var(--ink-3); }
+
+  .op { display: inline-block; padding: 2px 8px; border-radius: 6px;
+    font-size: 12px; font-weight: 700; color: white; }
+  .op-1 { background: var(--op1); } .op-2 { background: var(--op2); }
+  .op-3 { background: var(--op3); } .op-4 { background: var(--op4); }
+  .op-5 { background: var(--op5); }
+
+  .diagram { background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center; }
+  .caption { font-size: 13px; color: var(--ink-2); margin-top: 12px; font-style: italic; }
+  .result { margin-top: 20px; padding: 14px 18px; border-radius: 8px;
+    font-size: 15px; border-left: 4px solid var(--ok); background: #f0fdf4; }
+  .result strong { color: var(--ok); }
+  .result.bad { background: #fef2f2; border-left-color: var(--bad); }
+  .result.bad strong { color: var(--bad); }
+  .result.warn { background: #fffbeb; border-left-color: var(--warn); }
+  .result.warn strong { color: var(--warn); }
+
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; }
+  .pill.ok { background: #dcfce7; color: #166534; }
+  .pill.warn { background: #fef3c7; color: #92400e; }
+  .pill.bad { background: #fee2e2; color: #991b1b; }
+  .pill.info { background: #dbeafe; color: #1e40af; }
+
+  nav.toc { background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 32px; }
+  nav.toc ol { margin: 0; padding-left: 20px; }
+  nav.toc a { color: var(--brand); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  nav.toc li { margin: 4px 0; }
+
+  table.compare { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; }
+  table.compare th, table.compare td { padding: 12px 14px; border: 1px solid var(--line); text-align: left; }
+  table.compare th { background: #18181b; color: white; font-weight: 600; }
+  table.compare tr:nth-child(even) td { background: #fafafa; }
+
+  .status-bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+  .status-bar .step { flex: 1; min-width: 110px; padding: 10px;
+    border: 1px solid var(--line); border-radius: 8px;
+    text-align: center; background: white; font-size: 13px; }
+  .status-bar .step.active { background: var(--brand); color: white; border-color: var(--brand); }
+  .status-bar .step.done { background: #f0fdf4; border-color: var(--ok); color: var(--ok); }
+
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line);
+    color: var(--ink-3); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Inventário (cycle count)</h1>
+  <p class="sub">Como o sistema organiza a contagem física com vários operadores trabalhando em paralelo, sem colisão e sem operador ocioso.</p>
+</header>
+
+<!-- ============== CONCEITO ============== -->
+<section id="conceito">
+<h2>A ideia em uma frase</h2>
+
+<div class="card tldr">
+<p><strong>Inventário é contar fisicamente as peças e comparar com o que o sistema diz.</strong> Quando bate, ótimo — o sistema confirma que está saudável. Quando não bate (e quase sempre tem diferença), o sistema registra a divergência, o supervisor decide se aprova a correção, e o ledger é ajustado.</p>
+</div>
+
+<h3>Por que contar com frequência?</h3>
+<ul>
+  <li><strong>Catch early:</strong> peças somem ou aparecem — quanto mais cedo a gente sabe, mais fácil rastrear o que aconteceu.</li>
+  <li><strong>Confiança no estoque:</strong> se o sistema bate com a realidade, a separação confia no que tá ali. Quando não bate, vira frustração e operador começa a "achar" em vez de seguir o sistema.</li>
+  <li><strong>Atender auditoria fiscal:</strong> tem que ter histórico de contagens regulares.</li>
+  <li><strong>Identificar locs problemáticas:</strong> se uma posição diverge sempre, tem algo errado no fluxo (recebimento mal feito, roubo, peça similar sendo confundida).</li>
+</ul>
+
+<h3>Os 3 tipos de inventário</h3>
+<table class="compare">
+<tr><th>Tipo</th><th>Quando usar</th><th>Como o sistema escolhe as locs</th></tr>
+<tr>
+  <td><strong>Cycle count inteligente</strong></td>
+  <td>Rotina semanal — confiabilidade contínua</td>
+  <td>Sistema sugere: peças mais vendidas + locs com divergência recente + locs há muito sem contagem</td>
+</tr>
+<tr>
+  <td><strong>Cycle count manual</strong></td>
+  <td>Supervisor quer focar em uma área específica</td>
+  <td>Supervisor escolhe a dedo as posições</td>
+</tr>
+<tr>
+  <td><strong>Inventário completo</strong></td>
+  <td>Balanço anual, mudança grande de operação</td>
+  <td>Todas as posições do galpão (ou filtrado por empresa dona)</td>
+</tr>
+</table>
+
+<h3>Os 2 modos de contagem</h3>
+<table class="compare">
+<tr><th>Modo</th><th>O que o operador vê</th><th>Quando usar</th></tr>
+<tr>
+  <td><strong>Blind</strong> (padrão)</td>
+  <td>Apenas a localização. Não vê quais peças deveriam estar lá nem a quantidade esperada.</td>
+  <td>Padrão pra evitar viés. O operador conta o que vê, não o que "deveria" ver.</td>
+</tr>
+<tr>
+  <td><strong>Aberto</strong></td>
+  <td>Lista das peças que deveriam estar lá, com saldo esperado.</td>
+  <td>Treinamento, ou quando o objetivo é confirmar visualmente (peças grandes/escassas).</td>
+</tr>
+</table>
+
+<div class="card warn">
+<strong>Por que o padrão é blind?</strong> Porque quando o operador vê o número esperado, a tendência é "confirmar" mesmo quando algo parece estranho. Contagem cega força o operador a contar de verdade — divergências aparecem.
+</div>
+
+<h3>Slots de operador (OP1 até OP5)</h3>
+<p>Quando o supervisor inicia a sessão, ela tem até <strong>5 slots</strong> de operadores. Cada operador no chão pega um terminal handheld, escolhe um slot livre, e passa a "puxar" posições.</p>
+
+<div class="status-bar">
+  <div class="step"><span class="op op-1">OP1</span><br>livre</div>
+  <div class="step"><span class="op op-2">OP2</span><br>livre</div>
+  <div class="step"><span class="op op-3">OP3</span><br>livre</div>
+  <div class="step"><span class="op op-4">OP4</span><br>livre</div>
+  <div class="step"><span class="op op-5">OP5</span><br>livre</div>
+</div>
+
+<p>Funcionam como "vagas" — o supervisor configura quantos vai usar (1 a 5). Operadores podem entrar e sair ao longo da sessão. Não precisa terminar tudo: se um sai (bateu o horário), o pool fica disponível pros outros continuarem.</p>
+
+<h3>"Pull queue" — operadores puxam o trabalho</h3>
+<p>O sistema <em>não</em> divide as posições antes de começar e mandar cada operador pra um lado fixo. Em vez disso, todas as posições ficam num pool comum, e quando o operador termina uma, ele pede a "próxima" e o sistema dá a melhor opção pra ele.</p>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    A[Operador termina<br/>uma localização] --> B[Clica<br/>'próxima localização']
+    B --> C[Sistema decide<br/>qual loc dar]
+    C --> D{Tem loc no<br/>bucket dele?}
+    D -->|Sim| E[Dá uma do bucket dele]
+    D -->|Não| F{Tem loc na<br/>mesma zona que<br/>ele tava?}
+    F -->|Sim| G[Dá essa pra ele<br/>continuar pertinho]
+    F -->|Não| H{Tem loc numa<br/>zona livre?}
+    H -->|Sim| I[Dá essa pra evitar<br/>colisão com outro op]
+    H -->|Não| J[Dá a próxima<br/>em ordem alfabética]
+    E --> K[Operador vai contar]
+    G --> K
+    I --> K
+    J --> K
+    K --> A
+    style E fill:#dcfce7
+    style G fill:#dcfce7
+    style I fill:#fefce8
+    style J fill:#fef3c7
+</pre>
+<div class="caption">A regra final: nunca dois operadores na mesma zona ao mesmo tempo (evita esbarrar), mas operador termina uma zona inteira antes de migrar (evita andar mil quilômetros).</div>
+</div>
+
+<h3>Status da sessão — o ciclo de vida</h3>
+<div class="status-bar">
+  <div class="step done">Planejada<br><small>supervisor escolheu locs</small></div>
+  <div class="step done">Em andamento<br><small>operadores contando</small></div>
+  <div class="step active">Revisão<br><small>computou divergências</small></div>
+  <div class="step">Aprovada<br><small>supervisor revisou tudo</small></div>
+  <div class="step">Aplicada<br><small>ajustes foram pro estoque</small></div>
+</div>
+</section>
+
+<!-- ============== TOC ============== -->
+<nav class="toc">
+  <strong>Cenários (11 no total)</strong>
+  <ol>
+    <li><a href="#c1">Cenário 1 — Cycle count inteligente (sistema sugere 30 locs)</a></li>
+    <li><a href="#c2">Cenário 2 — Cycle count manual com distribuição soft entre 3 operadores</a></li>
+    <li><a href="#c3">Cenário 3 — Inventário completo do galpão inteiro</a></li>
+    <li><a href="#c4">Cenário 4 — Modo blind: operador conta sem saber o esperado</a></li>
+    <li><a href="#c5">Cenário 5 — Modo aberto: operador confere uma lista esperada</a></li>
+    <li><a href="#c6">Cenário 6 — Smart routing em ação (4 operadores, sem colisão)</a></li>
+    <li><a href="#c7">Cenário 7 — Operador foi embora no meio (encerrar parcial)</a></li>
+    <li><a href="#c8">Cenário 8 — Divergência dentro da tolerância (auto-aprovada)</a></li>
+    <li><a href="#c9">Cenário 9 — Divergência grande precisa supervisor revisar</a></li>
+    <li><a href="#c10">Cenário 10 — Peça que sumiu (ninguém bipou, sistema dizia que tinha)</a></li>
+    <li><a href="#c11">Cenário 11 — Aplicar a sessão (divergências viram entradas/saídas)</a></li>
+  </ol>
+</nav>
+
+<!-- ============== C1 ============== -->
+<section id="c1">
+<h2>Cenário 1 — Cycle count inteligente <span class="tag ok">Rotina semanal</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Supervisor abre a tela de inventário toda terça-feira de manhã. Clica em <strong>"Cycle inteligente"</strong>, escolhe galpão CWB, e o sistema sugere 30 localizações pra contar hoje.
+</div>
+
+<h3>Como o sistema escolhe as 30 locs</h3>
+<p>Mistura 3 critérios pra maximizar o valor da contagem:</p>
+<table class="compare">
+<tr><th>Critério</th><th>Peso</th><th>Por quê</th></tr>
+<tr><td>Peças curva A (mais vendidas)</td><td>50% (~15 locs)</td><td>Mais valor financeiro em jogo, mais movimentação = mais chance de erro</td></tr>
+<tr><td>Locs com divergência aplicada nos últimos 60 dias</td><td>30% (~9 locs)</td><td>Loc que já errou antes tende a errar de novo — vale re-verificar</td></tr>
+<tr><td>Locs sem contagem há 30+ dias (ou nunca contadas)</td><td>20% (~6 locs)</td><td>Cobertura — garante que nenhuma posição fica "esquecida" pra sempre</td></tr>
+</table>
+
+<p>Cada loc só aparece em uma das 3 categorias (sem dedupe). Se uma loc é curva A E divergente recente, ela conta como curva A (peso maior).</p>
+
+<h3>O que o supervisor vê na tela</h3>
+<p>Lista das 30 locs com 3 colunas:</p>
+<ul>
+  <li><strong>Código da localização</strong> (ex: CWB-A1-01)</li>
+  <li><strong>Motivo</strong> (curva A / divergente recente / sem contagem recente)</li>
+  <li><strong>Score</strong> (peso interno — quanto mais alto, mais "necessário" contar)</li>
+</ul>
+
+<p>O supervisor pode editar a lista antes de criar: tirar locs, adicionar manualmente, etc. Quando confirma, a sessão fica em status "planejada".</p>
+
+<div class="result">
+<strong>Resultado:</strong> sessão criada com 30 locs pré-selecionadas. Os operadores podem começar a contar imediatamente (eles entram nos slots, sistema auto-inicia a sessão).
+</div>
+
+<div class="card tip">
+<strong>O tamanho do pool é configurável.</strong> Padrão 30, mas o supervisor pode pedir 20 (dia leve) ou 50 (turno cheio). Tamanho ideal: o que dá pra contar em ~3-4 horas com a quantidade de operadores que vai ter.
+</div>
+</div>
+</section>
+
+<!-- ============== C2 ============== -->
+<section id="c2">
+<h2>Cenário 2 — Cycle count manual com 3 operadores <span class="tag ok">Distribuição soft</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Supervisor sabe que a zona <strong>A</strong> tá com problema. Vai abrir um cycle manual focado em A, e tem 3 operadores disponíveis. Sabe que se cada um pegar 1/3 das locs, terminam mais rápido.
+</div>
+
+<h3>O que o supervisor faz</h3>
+<ol>
+  <li>Abre <strong>"Cycle count manual"</strong>.</li>
+  <li>Escolhe 60 locs da zona A da tela do mapa.</li>
+  <li>Configura <strong>número de operadores: 3</strong>.</li>
+  <li>Confirma.</li>
+</ol>
+
+<h3>O sistema distribui automaticamente</h3>
+<p>O sistema usa um algoritmo "greedy LPT" (Longest Processing Time First) pra balancear: vai distribuindo as locs entre os 3 slots tentando deixar carga parecida, mantendo locs da mesma zona/corredor agrupadas pro mesmo operador.</p>
+
+<div class="stock-table">
+<div class="header">Distribuição inicial (soft)</div>
+<table>
+<tr><th>Slot</th><th>Locs pré-atribuídas</th><th>Zona</th></tr>
+<tr><td><span class="op op-1">OP1</span></td><td class="num">20</td><td>A1, A2 (corredor 1)</td></tr>
+<tr><td><span class="op op-2">OP2</span></td><td class="num">20</td><td>A3, A4 (corredor 2)</td></tr>
+<tr><td><span class="op op-3">OP3</span></td><td class="num">20</td><td>A5, A6 (corredor 3)</td></tr>
+</table>
+</div>
+
+<h3>"Soft" porque os buckets se misturam quando esvaziam</h3>
+<p>Suponha que o OP1 termina o bucket dele primeiro (era mais rápido ou as peças eram menores). Em vez de ficar ocioso, ele pede "próxima loc" e o sistema dá uma do bucket do OP2 ou OP3 — o que estiver mais perto da última loc dele. <strong>Sem operador parado, sem trocar de zona desnecessariamente.</strong></p>
+
+<div class="result">
+<strong>Resultado:</strong> os 3 operadores trabalham em paralelo, cada um na zona dele, até que os buckets sejam balanceados. No final, quem termina puxa do bucket do colega — mas sempre escolhendo a loc mais próxima da onde ele estava, pra minimizar deslocamento.
+</div>
+
+<div class="card tip">
+<strong>Por que pré-atribuir e não jogar tudo num pool comum?</strong> Pré-atribuir mantém operadores em zonas distintas durante a maior parte do trabalho, reduzindo deslocamento. Mas se a divisão ficar desigual no meio (alguém atrasou, alguém é mais rápido), o pool comum entra como fallback pra não deixar ninguém esperando.
+</div>
+</div>
+</section>
+
+<!-- ============== C3 ============== -->
+<section id="c3">
+<h2>Cenário 3 — Inventário completo do galpão <span class="tag warn">Operação grande</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Final de ano. Vai-se fazer balanço completo do galpão CWB pra fechar o ano fiscal. <strong>Todas as 800 locs precisam ser contadas.</strong>
+</div>
+
+<h3>O que o supervisor faz</h3>
+<ol>
+  <li>Abre <strong>"Inventário completo"</strong>.</li>
+  <li>Escolhe galpão CWB.</li>
+  <li>Filtra por empresa dona? Sim — só locs da NetAir. (Ou deixa em branco pra incluir todas as empresas.)</li>
+  <li>Modo: <strong>blind</strong>.</li>
+  <li>Operadores: 5 (todos disponíveis).</li>
+  <li>Confirma.</li>
+</ol>
+
+<h3>O que o sistema faz</h3>
+<ul>
+  <li>Cria a sessão com as 800 locs (filtradas: tipo picking + overstock; ignora REC e EXP).</li>
+  <li>Sessão fica em "planejada" até o primeiro operador entrar num slot.</li>
+  <li>O pool é gigante — operadores trabalham em paralelo o dia inteiro.</li>
+  <li>Smart routing distribui sem precisar de pré-atribuição.</li>
+</ul>
+
+<div class="result">
+<strong>Resultado:</strong> com 5 operadores e ~160 locs/operador (média), em 6-8h é possível terminar o galpão. No final, o supervisor revisa as divergências e aplica.
+</div>
+
+<div class="card warn">
+<strong>Durante um inventário completo, todas as locs ficam bloqueadas pra venda.</strong> O roteador não usa nada dessas locs no período. <em>Não é trivial</em> — em geral, faz-se inventário completo num horário de baixa atividade (final de semana, feriado, fora do horário ML).
+</div>
+</div>
+</section>
+
+<!-- ============== C4 ============== -->
+<section id="c4">
+<h2>Cenário 4 — Modo blind <span class="tag ok">Padrão recomendado</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>OP2 puxou a próxima loc — <strong>CWB-B3-04</strong>. Foi até lá com o handheld.</p>
+
+<h4>O que aparece na tela do handheld (modo blind)</h4>
+<div class="stock-table">
+<div class="header">Tela do handheld</div>
+<table>
+<tr><th>Campo</th><th>Conteúdo</th></tr>
+<tr><td>Localização</td><td><strong>CWB-B3-04</strong></td></tr>
+<tr><td>Zona</td><td>B3</td></tr>
+<tr><td>Tipo</td><td>picking</td></tr>
+<tr><td>O que esperar lá</td><td><em>(não mostra)</em></td></tr>
+</table>
+</div>
+
+<h3>O operador conta sem viés</h3>
+<ol>
+  <li>Olha a posição. Identifica as peças visualmente.</li>
+  <li>Bipa o código de barras de cada peça e informa a quantidade. Pode bipar várias peças diferentes.</li>
+  <li>Se uma peça não tem código (sem etiqueta), informa SKU manualmente.</li>
+  <li>Quando termina a posição, clica em "Finalizar".</li>
+</ol>
+
+<h4>Bipes registrados</h4>
+<div class="stock-table">
+<div class="header">Contagens em CWB-B3-04 por OP2</div>
+<table>
+<tr><th>Peça</th><th>Qtd contada</th></tr>
+<tr><td>PEC-501</td><td class="num">8</td></tr>
+<tr><td>PEC-502</td><td class="num">2</td></tr>
+<tr><td>PEC-503</td><td class="num">5</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> OP2 contou 3 peças diferentes na posição. <em>Ele não sabia</em> que o sistema dizia ter 9 unidades de PEC-501 (em vez de 8). Por isso ele bipou o que viu — e a divergência (–1 unidade) aparece sozinha quando o supervisor processar.
+</div>
+
+<div class="card tip">
+<strong>Quando o operador bipa errado?</strong> Ex.: bipou PEC-505 quando deveria ter sido PEC-501 (peças parecidas). No modo blind, o operador não recebe alerta na hora. A divergência aparece depois: o sistema vai dizer "PEC-501 deveria ter 9 e tem 8; PEC-505 deveria ter 0 e tem 1". Supervisor identifica o erro óbvio e rejeita as duas divergências.
+</div>
+</div>
+</section>
+
+<!-- ============== C5 ============== -->
+<section id="c5">
+<h2>Cenário 5 — Modo aberto <span class="tag warn">Confirmação visual</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>O supervisor configurou a sessão em modo <strong>aberto</strong> — porque é uma área de peças raras e caras, e quer que o operador confirme visualmente, com risco mínimo.</p>
+
+<h4>O que aparece na tela do handheld (modo aberto)</h4>
+<div class="stock-table">
+<div class="header">Tela do handheld — CWB-B3-04</div>
+<table>
+<tr><th>Peça esperada</th><th>Saldo esperado</th><th>Imagem</th></tr>
+<tr><td>PEC-501 (Filtro de óleo TS-X)</td><td class="num">9</td><td>📷 [imagem]</td></tr>
+<tr><td>PEC-502 (Junta motor)</td><td class="num">2</td><td>📷 [imagem]</td></tr>
+<tr><td>PEC-503 (Sensor MAP)</td><td class="num">5</td><td>📷 [imagem]</td></tr>
+</table>
+</div>
+
+<h3>O operador confirma</h3>
+<ol>
+  <li>Vê a lista e a imagem de cada peça.</li>
+  <li>Bate os olhos na posição: "ok, vejo o filtro de óleo, parece que tem 9 mesmo".</li>
+  <li>Bipa cada peça pra confirmar (o sistema valida que ele bipou o SKU correto).</li>
+  <li>Se vê algo diferente, bipa mesmo — divergência será gerada.</li>
+</ol>
+
+<div class="result warn">
+<strong>Resultado:</strong> o operador conta com referência visual. <em>Mais rápido, menos chance de erro de identificação, mas mais chance de viés</em> (operador pode confirmar mesmo quando algo parece estranho). É o trade-off.
+</div>
+
+<h3>Quando usar aberto vs blind?</h3>
+<table class="compare">
+<tr><th>Aberto</th><th>Blind</th></tr>
+<tr><td>Treinamento de operador novo</td><td>Operador experiente</td></tr>
+<tr><td>Peças caras / críticas (baixa tolerância a erro)</td><td>Peças comuns / alto volume</td></tr>
+<tr><td>Quando há muitas peças parecidas (confusão fácil)</td><td>Quando peças são distintas</td></tr>
+<tr><td>Quando o objetivo é validar, não descobrir erro</td><td>Quando o objetivo é descobrir erro</td></tr>
+</table>
+</div>
+</section>
+
+<!-- ============== C6 ============== -->
+<section id="c6">
+<h2>Cenário 6 — Smart routing em ação <span class="tag" style="background:#2563eb;color:white">4 operadores, sem colisão</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Sessão tem 80 locs distribuídas em 4 zonas (A, B, C, D). 4 operadores entraram. Como o sistema decide quem pega o quê?
+</div>
+
+<h3>Passo a passo</h3>
+<div class="status-bar">
+  <div class="step active"><span class="op op-1">OP1</span><br>livre, sem histórico</div>
+  <div class="step active"><span class="op op-2">OP2</span><br>livre, sem histórico</div>
+  <div class="step active"><span class="op op-3">OP3</span><br>livre, sem histórico</div>
+  <div class="step active"><span class="op op-4">OP4</span><br>livre, sem histórico</div>
+</div>
+
+<ol>
+  <li><strong>OP1 pede a primeira loc:</strong> sistema dá CWB-A1-01 (ordem alfabética). OP1 vai pra zona A.</li>
+  <li><strong>OP2 pede:</strong> zona A já tem OP1. Sistema procura zona livre — dá CWB-B1-01. OP2 vai pra zona B.</li>
+  <li><strong>OP3 pede:</strong> A e B ocupadas. Dá CWB-C1-01. OP3 vai pra zona C.</li>
+  <li><strong>OP4 pede:</strong> A, B, C ocupadas. Dá CWB-D1-01. OP4 vai pra zona D.</li>
+  <li><strong>OP1 termina A1-01, pede próxima:</strong> sistema prefere continuidade — dá CWB-A1-02. OP1 continua na zona A.</li>
+  <li><strong>OP1 termina toda zona A1 (20 locs), pede próxima:</strong> zona A1 esgotou. Sistema dá uma da zona A2 (mesma "letra raiz", continuidade). Se A2 não existe, vai pra outra zona livre.</li>
+</ol>
+
+<h3>Visualização</h3>
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    subgraph A[Zona A]
+        A1[CWB-A1-01]
+        A2[CWB-A1-02]
+        A3[CWB-A2-01]
+    end
+    subgraph B[Zona B]
+        B1[CWB-B1-01]
+        B2[CWB-B1-02]
+    end
+    subgraph C[Zona C]
+        C1[CWB-C1-01]
+    end
+    subgraph D[Zona D]
+        D1[CWB-D1-01]
+    end
+    OP1[OP1] --> A1
+    A1 -.->|continuidade| OP1
+    OP1 -.-> A2
+    A2 -.-> OP1
+    OP1 -.-> A3
+    OP2[OP2] -.->|outra zona livre| B1
+    OP3[OP3] -.->|outra zona livre| C1
+    OP4[OP4] -.->|outra zona livre| D1
+    style A fill:#dbeafe
+    style B fill:#dcfce7
+    style C fill:#fef3c7
+    style D fill:#fee2e2
+</pre>
+<div class="caption">Cada operador "vive" numa zona. Quando termina, prefere continuar na mesma. Quando esgota, vai pra outra livre.</div>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> os 4 operadores trabalham em paralelo, em zonas distintas (sem esbarrar) e sem trocar de zona desnecessariamente (sem andar mil quilômetros). O sistema decide tudo isso sozinho — operador só clica em "próxima loc".
+</div>
+
+<div class="card tip">
+<strong>Regras de prioridade do sistema, em ordem:</strong>
+<ol>
+<li>Bucket atribuído ao slot do operador (cycle manual)</li>
+<li>Continuidade — mesma zona da última loc dele</li>
+<li>Anti-colisão — zona que nenhum outro operador está</li>
+<li>Ordem alfabética — fallback final</li>
+</ol>
+</div>
+</div>
+</section>
+
+<!-- ============== C7 ============== -->
+<section id="c7">
+<h2>Cenário 7 — Operador foi embora no meio <span class="tag warn">Encerrar parcial</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Sessão com 100 locs. 4 operadores começaram às 8h. Às 17h só 60 locs foram contadas — bateu o horário. <strong>O que fazer?</strong>
+</div>
+
+<h3>2 opções no botão "encerrar"</h3>
+<table class="compare">
+<tr><th>Opção</th><th>O que acontece</th><th>Quando usar</th></tr>
+<tr>
+  <td><strong>Encerrar parcial</strong></td>
+  <td>Considera só as 60 locs contadas. Gera divergências só pra essas. As outras 40 ficam intocadas — saldo do sistema mantido.</td>
+  <td>"Tá bom até aqui, vamos aplicar o que fizemos hoje e seguir"</td>
+</tr>
+<tr>
+  <td><strong>Cancelar sessão inteira</strong></td>
+  <td>Joga tudo fora. Nenhuma divergência registrada. Locs voltam ao estado original (não bloqueadas).</td>
+  <td>"O trabalho não foi bom o suficiente, vamos refazer"</td>
+</tr>
+</table>
+
+<h3>Encerrar parcial passo a passo</h3>
+<ol>
+  <li>Supervisor clica em "Encerrar parcial".</li>
+  <li>Modal pergunta: "Confirmar? 40 locs ficarão sem contagem nessa sessão."</li>
+  <li>Confirma.</li>
+  <li>Sistema processa: pega só as 60 locs com status "contada" e gera divergências.</li>
+  <li>As 40 locs pendentes mantém o status "pendente" e são liberadas (sai o lock).</li>
+  <li>Sessão vai pra "revisão".</li>
+</ol>
+
+<div class="result warn">
+<strong>Resultado:</strong> as 60 locs contadas viram divergências pra aprovação. As 40 não-contadas voltam ao "normal" — a venda pode usar elas novamente. O supervisor pode criar uma nova sessão amanhã pra cobrir as que faltaram.
+</div>
+
+<div class="card warn">
+<strong>Atenção:</strong> "encerrar parcial" não significa que as locs não contadas estão "ok". Elas só não foram contadas nessa sessão. Se o supervisor quer cobertura completa, precisa criar nova sessão pra elas — ou esperar a sugestão inteligente puxá-las quando estiverem "sem contagem há 30+ dias".
+</div>
+</div>
+</section>
+
+<!-- ============== C8 ============== -->
+<section id="c8">
+<h2>Cenário 8 — Divergência pequena (auto-aprovada) <span class="tag ok">Dentro da tolerância</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Sistema dizia ter 100 unidades de PEC-700 em CWB-A1-05. Operador contou 99. Divergência de –1 unidade (–1%).
+</div>
+
+<h3>Tolerância configurada na sessão</h3>
+<table class="compare">
+<tr><th>Parâmetro</th><th>Valor</th></tr>
+<tr><td>Tolerância percentual</td><td>2%</td></tr>
+<tr><td>Tolerância mínima em qty</td><td>0</td></tr>
+<tr><td>Aprovação manual acima de</td><td>R$ 1.000,00 (valor financeiro)</td></tr>
+</table>
+
+<h3>Como o sistema classifica</h3>
+<ul>
+  <li>Delta absoluto: 1 unidade</li>
+  <li>Delta percentual: 1% (1 de 100)</li>
+  <li>1% ≤ 2% (tolerância) ✓</li>
+  <li>Custo médio: R$ 30. Valor financeiro: 1 × R$ 30 = R$ 30</li>
+  <li>R$ 30 ≤ R$ 1.000 (acima do valor) ✓</li>
+  <li>Conclusão: <strong>auto-aprovada</strong></li>
+</ul>
+
+<h4>Linha de divergência gerada</h4>
+<div class="stock-table">
+<div class="header">Divergências da sessão</div>
+<table>
+<tr><th>Posição</th><th>Sistema</th><th>Contado</th><th>Delta</th><th>Valor</th><th>Status</th></tr>
+<tr><td>CWB-A1-05 / PEC-700</td><td class="num">100</td><td class="num">99</td><td class="num delta-minus">–1</td><td class="num">–R$ 30,00</td><td><span class="pill ok">aprovada</span></td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> a divergência fica registrada, mas pré-aprovada. Quando o supervisor aprova a sessão, ela já passa direto pra "aprovada" sem ele precisar clicar em cada uma. Pequenas perdas/sobras são esperadas — o sistema processa em lote.
+</div>
+
+<div class="card tip">
+<strong>Por que tolerância existe?</strong> Porque na operação real, divergências pequenas são inevitáveis (peça caiu, foi rebipada, contou com a peça do vizinho). Auto-aprovar pequenos deltas economiza tempo do supervisor pra focar nos grandes — que são os que importam.
+</div>
+</div>
+</section>
+
+<!-- ============== C9 ============== -->
+<section id="c9">
+<h2>Cenário 9 — Divergência grande precisa revisão <span class="tag bad">Acima da tolerância</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+Sistema dizia ter 50 unidades de PEC-CARA. Operador contou 30. Divergência de –20 unidades, –40%. Custo médio R$ 100. Perda financeira: R$ 2.000.
+</div>
+
+<h3>Por que precisa revisão</h3>
+<ul>
+  <li>Delta %: 40% > 2% (tolerância) ✗</li>
+  <li>Valor: R$ 2.000 > R$ 1.000 (limite de aprovação) ✗</li>
+  <li>Conclusão: <strong>pendente</strong> — supervisor precisa decidir</li>
+</ul>
+
+<h3>O que o supervisor vê na tela de revisão</h3>
+<div class="stock-table">
+<div class="header">Divergências pendentes</div>
+<table>
+<tr><th>Posição</th><th>Sistema</th><th>Contado</th><th>Delta</th><th>Valor</th><th>Ações</th></tr>
+<tr><td>CWB-A1-05 / PEC-CARA</td><td class="num">50</td><td class="num">30</td><td class="num delta-minus">–20 (–40%)</td><td class="num">–R$ 2.000,00</td><td>Aprovar / Rejeitar</td></tr>
+</table>
+</div>
+
+<h3>3 caminhos pro supervisor</h3>
+<table class="compare">
+<tr><th>Ação</th><th>O que faz</th></tr>
+<tr>
+  <td><strong>Aprovar</strong></td>
+  <td>"Conferi, contagem está certa." Divergência vai pra status aprovada. Quando aplicar a sessão, gera saída de 20 unidades.</td>
+</tr>
+<tr>
+  <td><strong>Rejeitar</strong></td>
+  <td>"Operador errou, vou ignorar essa." Divergência fica como rejeitada. Quando aplicar, nada acontece pra essa posição.</td>
+</tr>
+<tr>
+  <td><strong>Aprovar com nota</strong></td>
+  <td>Aprova mas escreve um motivo ("provavelmente perda histórica não lançada"). Útil pra rastreamento.</td>
+</tr>
+</table>
+
+<div class="result warn">
+<strong>Resultado:</strong> divergências grandes obrigam ato consciente do supervisor. O sistema <em>não</em> aplica nada sem que ele decida o que fazer com cada caso acima do limite.
+</div>
+
+<div class="card warn">
+<strong>Não tem recontagem mid-flow.</strong> Se o supervisor quer ter certeza, ele pode rejeitar e criar uma nova sessão focada só naquela posição. Mas dentro da mesma sessão, o operador conta uma vez. Decisão de design: simplicidade operacional.
+</div>
+</div>
+</section>
+
+<!-- ============== C10 ============== -->
+<section id="c10">
+<h2>Cenário 10 — Peça que sumiu <span class="tag bad">Saldo &gt; 0, ninguém bipou</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<div class="order-box">
+O sistema dizia ter <strong>5 unidades de PEC-X em CWB-B2-03</strong>. O operador foi contar a posição inteira, bipou todas as peças que viu — mas a PEC-X nem entrou na lista (nenhuma estava lá).
+</div>
+
+<h3>Como o sistema detecta</h3>
+<p>Quando processa as divergências, o sistema verifica todas as posições da sessão e procura: "tem peças com saldo &gt; 0 no sistema que ninguém bipou?". Se sim, registra como divergência com quantidade contada = 0.</p>
+
+<h4>Divergência gerada</h4>
+<div class="stock-table">
+<div class="header">Divergência detectada automaticamente</div>
+<table>
+<tr><th>Posição</th><th>Sistema</th><th>Contado</th><th>Delta</th><th>Status</th></tr>
+<tr><td>CWB-B2-03 / PEC-X</td><td class="num">5</td><td class="num">0</td><td class="num delta-minus">–5 (–100%)</td><td><span class="pill bad">pendente</span></td></tr>
+</table>
+</div>
+
+<div class="result bad">
+<strong>Resultado:</strong> a peça "sumiu". Pode ser de fato perda física (roubo, peça caiu atrás da estante) ou bug na contagem (operador esqueceu de bipar). Supervisor investiga antes de aprovar a saída.
+</div>
+
+<div class="card tip">
+<strong>Esse é o cenário que mais ajuda a descobrir furto.</strong> Quando uma posição diverge sistematicamente "menos do que sistema diz" em várias contagens, é sinal de que tem alguma coisa errada na operação (recebimento mal feito, roubo interno, peças parecidas sendo trocadas). Os relatórios consolidam isso.
+</div>
+
+<h3>E quando o operador bipou peça que o sistema não esperava?</h3>
+<p>Acontece o oposto: o sistema dizia ter 0 unidades de PEC-Y na posição, e o operador bipou 3. Divergência: <strong>+3 unidades</strong>. Status: pendente (variação grande, mesmo em valor absoluto). Pode ser que a PEC-Y tenha sido mal recebida (foi pra essa loc sem registro) ou que o operador tá bipando peça errada.</p>
+</div>
+</section>
+
+<!-- ============== C11 ============== -->
+<section id="c11">
+<h2>Cenário 11 — Aplicar a sessão <span class="tag ok">Divergências viram ledger</span></h2>
+
+<div class="card scenario">
+
+<h3>A situação</h3>
+<p>Sessão foi aprovada pelo supervisor. Todas as divergências estão como "aprovada" ou "rejeitada" (nenhuma pendente). Agora é só clicar em "Aplicar" pra mexer no estoque.</p>
+
+<h3>O que o sistema faz</h3>
+<ol>
+  <li>Pega todas as divergências com status "aprovada" e delta ≠ 0.</li>
+  <li>Pra cada uma, cria uma movimentação no histórico:
+    <ul>
+      <li>Delta positivo (+5) → entrada de 5</li>
+      <li>Delta negativo (–3) → saída de 3</li>
+    </ul>
+  </li>
+  <li>Categoria das movimentações: "Inventário".</li>
+  <li>Vincula cada movimentação à divergência (rastreabilidade).</li>
+  <li>Libera os locks das posições (voltam a ficar disponíveis pra venda).</li>
+  <li>Status da sessão: "Aplicada".</li>
+</ol>
+
+<h4>Movimentações geradas</h4>
+<div class="stock-table">
+<div class="header">Linhas no histórico</div>
+<table>
+<tr><th>#</th><th>Tipo</th><th>Quantidade</th><th>Posição</th><th>Categoria</th></tr>
+<tr><td>1</td><td><span class="pill bad">Saída</span></td><td class="num">1</td><td>CWB-A1-05 / PEC-700</td><td>Inventário</td></tr>
+<tr><td>2</td><td><span class="pill bad">Saída</span></td><td class="num">20</td><td>CWB-A1-05 / PEC-CARA</td><td>Inventário</td></tr>
+<tr><td>3</td><td><span class="pill bad">Saída</span></td><td class="num">5</td><td>CWB-B2-03 / PEC-X</td><td>Inventário</td></tr>
+<tr><td>4</td><td><span class="pill ok">Entrada</span></td><td class="num">3</td><td>CWB-B2-03 / PEC-Y</td><td>Inventário</td></tr>
+</table>
+</div>
+
+<div class="result">
+<strong>Resultado:</strong> o saldo do sistema bate com a realidade. Locs liberadas voltam a funcionar pra venda. Sessão fechada — em poucas horas, o sistema "se reconciliou" com o estoque real.
+</div>
+
+<div class="card tip">
+<strong>O histórico nunca é apagado.</strong> Mesmo que essa "saída de inventário" seja embaraçosa (perdemos 20 peças caras!), ela fica registrada. Quando o gerente revisar relatórios mensais, vai ver quantas peças foram corrigidas — e em quais posições. Indicador valioso de saúde operacional.
+</div>
+</div>
+</section>
+
+<!-- ============== APÊNDICE ============== -->
+<section id="apendice">
+<h2>Métricas que o sistema disponibiliza</h2>
+
+<table class="compare">
+<tr><th>Métrica</th><th>O que mede</th><th>Como usar</th></tr>
+<tr>
+  <td><strong>Acuracidade do operador (30 dias)</strong></td>
+  <td>% de contagens do operador que bateram com o sistema (não geraram divergência)</td>
+  <td>Identificar quem precisa de treinamento extra; reconhecer quem é confiável</td>
+</tr>
+<tr>
+  <td><strong>Locs com erro recorrente</strong></td>
+  <td>Posições que geraram divergência mais de N vezes</td>
+  <td>Indica problema operacional (recebimento mal feito, peças parecidas, fluxo errado)</td>
+</tr>
+<tr>
+  <td><strong>Velocidade média</strong></td>
+  <td>Locs/hora por operador</td>
+  <td>Planejar duração de sessões; identificar gargalos</td>
+</tr>
+<tr>
+  <td><strong>Cobertura</strong></td>
+  <td>% das locs contadas nos últimos N dias</td>
+  <td>Garantir que nenhuma loc fique "esquecida"; gerar próximo cycle</td>
+</tr>
+<tr>
+  <td><strong>Valor de divergência aplicada</strong></td>
+  <td>Soma R$ das saídas de inventário no mês</td>
+  <td>Indicador financeiro de perdas operacionais</td>
+</tr>
+</table>
+
+<h3>Tela do supervisor em tempo real</h3>
+<p>Durante a sessão, o supervisor abre uma tela live que mostra:</p>
+<ul>
+  <li>Os 5 slots de operador com status (ativo / pausado / fora)</li>
+  <li>Quantas locs cada operador contou no dia</li>
+  <li>Velocidade média (locs/hora) do grupo</li>
+  <li>Últimos 10 bipes (qual operador, qual peça, qual posição, qual hora)</li>
+  <li>Mapa de calor das zonas (qual está sendo contada agora)</li>
+  <li>% de progresso da sessão</li>
+</ul>
+
+<p>Permite intervir em tempo real ("OP3 está muito devagar, ver se precisa ajuda" ou "Zona D ainda não foi tocada, alocar OP que terminou").</p>
+</section>
+
+<footer>
+  Documento explica o módulo de inventário (cycle count) do WMS.
+  <br>Complementa <a href="ledger-cenarios.html">ledger-cenarios.html</a> (como as movimentações de inventário viram histórico).
+  <br>Próximo na sequência: divergencias-cenarios.html (foco em como o supervisor revisa).
+  <br>Atualizado em 2026-05-13.
+</footer>
+
+</div>
+</body>
+</html>

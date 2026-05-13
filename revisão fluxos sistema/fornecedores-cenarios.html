@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fornecedores — Cadastro e relação com produtos</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { curve: 'basis' } });</script>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#18181b; --ink-2:#52525b; --ink-3:#a1a1aa;
+    --line:#e4e4e7; --brand:#0891b2; --brand-2:#164e63;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --info:#2563eb; }
+  *{box-sizing:border-box} body{margin:0;font-family:-apple-system,system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.6}
+  .wrap{max-width:1040px;margin:0 auto;padding:48px 24px 96px}
+  header{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:40px}
+  h1{margin:0 0 8px;font-size:32px;letter-spacing:-.02em} .sub{color:var(--ink-2);font-size:16px}
+  h2{margin:64px 0 16px;font-size:26px;padding-bottom:8px;border-bottom:2px solid var(--brand)}
+  h2 .tag{display:inline-block;font-size:12px;background:var(--brand);color:#fff;
+    padding:3px 10px;border-radius:4px;margin-left:12px;vertical-align:middle}
+  h2 .tag.bad{background:var(--bad)} h2 .tag.warn{background:var(--warn)} h2 .tag.ok{background:var(--ok)}
+  h3{margin:28px 0 8px;font-size:18px;color:var(--brand-2)}
+  h4{margin:20px 0 8px;font-size:15px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+  p,li{font-size:15px} ul{padding-left:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;margin:16px 0}
+  .card.tldr{background:#ecfeff;border-color:#a5f3fc} .card.tldr strong{color:var(--brand-2)}
+  .card.scenario{padding:28px} .card.tip{background:#fefce8;border-color:#fde047}
+  .card.warn{background:#fef3c7;border-color:#f59e0b}
+  .order-box{background:#f0f9ff;border-left:4px solid var(--info);padding:12px 16px;
+    margin:16px 0;border-radius:4px;font-size:14px} .order-box strong{color:var(--info)}
+  .t{background:#fafafa;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:16px 0}
+  .t .h{background:#18181b;color:#fff;padding:8px 12px;font-size:12px;
+    text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .t table{width:100%;border-collapse:collapse;margin:0}
+  .t th,.t td{padding:10px 14px;text-align:left;font-size:14px;
+    border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+  .t th{background:#fff;font-weight:600;color:var(--ink-2);font-size:12px;text-transform:uppercase}
+  .t tr:last-child td{border-bottom:none}
+  .t td:last-child,.t th:last-child{border-right:none}
+  .t td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pill.ok{background:#dcfce7;color:#166534} .pill.warn{background:#fef3c7;color:#92400e}
+  .pill.bad{background:#fee2e2;color:#991b1b} .pill.info{background:#dbeafe;color:#1e40af}
+  .pill.pref{background:#fbbf24;color:#78350f}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px;margin:20px 0;text-align:center}
+  .caption{font-size:13px;color:var(--ink-2);margin-top:12px;font-style:italic}
+  .result{margin-top:20px;padding:14px 18px;border-radius:8px;font-size:15px;
+    border-left:4px solid var(--ok);background:#f0fdf4} .result strong{color:var(--ok)}
+  .result.bad{background:#fef2f2;border-left-color:var(--bad)} .result.bad strong{color:var(--bad)}
+  .result.warn{background:#fffbeb;border-left-color:var(--warn)} .result.warn strong{color:var(--warn)}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:20px 24px;margin-bottom:32px} nav.toc ol{margin:0;padding-left:20px}
+  nav.toc a{color:var(--brand);text-decoration:none} nav.toc a:hover{text-decoration:underline}
+  nav.toc li{margin:4px 0}
+  table.cmp{width:100%;border-collapse:collapse;margin:24px 0;font-size:14px}
+  table.cmp th,table.cmp td{padding:12px 14px;border:1px solid var(--line);text-align:left}
+  table.cmp th{background:#18181b;color:#fff;font-weight:600}
+  table.cmp tr:nth-child(even) td{background:#fafafa}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);
+    color:var(--ink-3);font-size:13px;text-align:center}
+</style>
+</head>
+<body><div class="wrap">
+
+<header>
+<h1>Fornecedores</h1>
+<p class="sub">Cadastro de fornecedores, tempo de entrega, e como cada peça é vinculada ao fornecedor preferencial.</p>
+</header>
+
+<section id="conceito">
+<h2>A ideia em uma frase</h2>
+<div class="card tldr">
+<p><strong>Pra cada peça que vendemos, o sistema sabe (ou deveria saber) de qual fornecedor comprar.</strong> Quando um pedido vira OC, o sistema consulta o fornecedor preferencial e o tempo de entrega — informação que vai pra fila do comprador e pra dashboards de cobertura.</p>
+</div>
+
+<h3>Os 3 conceitos</h3>
+<table class="cmp">
+<tr><th>Conceito</th><th>O que é</th></tr>
+<tr><td><strong>Fornecedor</strong></td><td>Cadastro de empresa fornecedora (nome, CNPJ, prefixo de SKU, tempo médio de entrega)</td></tr>
+<tr><td><strong>Relação produto↔fornecedor</strong></td><td>Liga uma peça a um fornecedor específico, com custo e tempo de entrega pra <em>essa</em> peça (pode diferir do default do fornecedor)</td></tr>
+<tr><td><strong>Fornecedor preferencial</strong></td><td>Quando uma peça tem múltiplos fornecedores, um é marcado como preferencial — esse é o que o sistema sugere primeiro</td></tr>
+</table>
+
+<h3>Tempo de entrega — 3 valores</h3>
+<p>Cada relação produto↔fornecedor guarda 3 estimativas:</p>
+<table class="cmp">
+<tr><th>Campo</th><th>O que representa</th></tr>
+<tr><td>Mínimo</td><td>"No melhor cenário, chega em X dias" (entrega expressa, estoque do fornecedor)</td></tr>
+<tr><td>Médio</td><td>"Em média, chega em X dias" (usado por padrão pra previsões)</td></tr>
+<tr><td>Máximo</td><td>"No pior cenário, X dias" (atraso, problema logístico)</td></tr>
+</table>
+
+<p>Esses valores aparecem em vários lugares: cobertura de estoque (calcula "se o estoque vai durar até a próxima reposição"), no painel do comprador (priorização) e nos relatórios de saúde do fornecimento.</p>
+
+<h3>Por que o tempo está em 2 níveis (fornecedor e produto)?</h3>
+<p>Porque o tempo pode variar por peça:</p>
+<ul>
+  <li>Fornecedor Tiger entrega em geral em 5 dias.</li>
+  <li>Mas a peça específica TG-9001 é cara e personalizada — leva 15 dias.</li>
+</ul>
+
+<p>Solução: o <strong>fornecedor</strong> tem um tempo default (5/7/10 dias min/medio/max). Quando uma peça é vinculada sem informar tempo próprio, herda esse default. Mas pode ser sobrescrito pela peça específica (15/20/30).</p>
+
+<h3>Auto-cadastro a partir do mapeamento legado</h3>
+<p>O sistema SISO antigo tem um mapeamento "prefixo de SKU → fornecedor" (códigos como TG, MQ, L0, KT etc, cada um aponta pra um fornecedor). O WMS aproveita esse mapeamento:</p>
+
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+A[Admin clica<br/>'Auto-cadastrar fornecedores'] --> B[Lê mapeamento legado<br/>prefixo SKU → fornecedor]
+B --> C[Para cada prefixo único]
+C --> D{Já existe<br/>fornecedor com<br/>esse nome?}
+D -->|Não| E[Cria fornecedor<br/>com prefixo+default]
+D -->|Sim| F[Atualiza prefixo<br/>se vazio]
+E --> G[Idempotente: pode rodar várias vezes]
+F --> G
+</pre></div>
+
+<p>O resultado é uma lista inicial de ~11 fornecedores cadastrados sem trabalho manual. Detalhes específicos (CNPJ, condições) podem ser preenchidos depois.</p>
+</section>
+
+<nav class="toc">
+<strong>Cenários (5 no total)</strong>
+<ol>
+<li><a href="#c1">Cenário 1 — Cadastrar fornecedor novo</a></li>
+<li><a href="#c2">Cenário 2 — Vincular peça a fornecedor (com herança de tempo)</a></li>
+<li><a href="#c3">Cenário 3 — Peça com 2 fornecedores e um preferencial</a></li>
+<li><a href="#c4">Cenário 4 — Auto-cadastro em massa</a></li>
+<li><a href="#c5">Cenário 5 — Trocar fornecedor preferencial</a></li>
+</ol>
+</nav>
+
+<section id="c1"><h2>Cenário 1 — Cadastrar fornecedor novo <span class="tag ok">Manual</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Começamos a comprar de uma nova fábrica: <strong>NovoForn</strong>. CNPJ informado. Prefixo de SKU dele será "NF". Tempo médio de entrega: 10 dias.</p>
+
+<h3>O que o admin faz</h3>
+<ol>
+<li>Abre <strong>"Fornecedores"</strong>.</li>
+<li>Clica em "Novo".</li>
+<li>Preenche:
+  <ul>
+    <li>Nome: NovoForn</li>
+    <li>CNPJ: 12.345.678/0001-99</li>
+    <li>Prefixo SKU: NF</li>
+    <li>Tempo entrega: min 7 / médio 10 / máx 15</li>
+    <li>Observações: "Fornecedor aprovado em maio/26 pelo time comercial"</li>
+  </ul>
+</li>
+<li>Salva.</li>
+</ol>
+
+<div class="t"><div class="h">Cadastro</div>
+<table>
+<tr><th>Nome</th><th>CNPJ</th><th>Prefixo</th><th>Min</th><th>Médio</th><th>Máx</th><th>Status</th></tr>
+<tr><td>NovoForn</td><td>12.345.678/0001-99</td><td>NF</td><td class="num">7</td><td class="num">10</td><td class="num">15</td><td><span class="pill ok">ativo</span></td></tr>
+</table></div>
+
+<div class="result">
+<strong>Resultado:</strong> fornecedor cadastrado. <strong>Ainda não está vinculado a nenhuma peça</strong> — esse é o próximo passo. Sem vínculos, o fornecedor aparece em listas mas não é usado pelo roteamento de OC.
+</div>
+</div></section>
+
+<section id="c2"><h2>Cenário 2 — Vincular peça com herança de tempo <span class="tag ok">Reuso</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Peça <strong>NF-1001</strong> (recém-cadastrada) vai ser comprada do NovoForn. Tempo médio é o padrão do fornecedor.</p>
+
+<h3>O que o admin faz</h3>
+<ol>
+<li>Abre detalhe da peça NF-1001.</li>
+<li>Aba "Fornecedores" → "Vincular".</li>
+<li>Escolhe NovoForn.</li>
+<li><strong>Tempo de entrega:</strong> não preenche (deixa em branco).</li>
+<li>Marca como <span class="pill pref">preferencial</span>.</li>
+<li>Salva.</li>
+</ol>
+
+<h3>Herança automática</h3>
+<p>O sistema percebe que o tempo está em branco. Consulta o fornecedor (NovoForn) e herda 7/10/15.</p>
+
+<div class="t"><div class="h">Relação criada</div>
+<table>
+<tr><th>Produto</th><th>Fornecedor</th><th>Min</th><th>Médio</th><th>Máx</th><th>Preferencial</th></tr>
+<tr><td>NF-1001</td><td>NovoForn</td><td class="num">7</td><td class="num">10</td><td class="num">15</td><td><span class="pill pref">★</span></td></tr>
+</table></div>
+
+<div class="result">
+<strong>Resultado:</strong> relação criada com os valores default do fornecedor. <strong>Não precisa redigitar.</strong> Se a peça específica for diferente, dá pra editar depois.
+</div>
+
+<div class="card tip">
+<strong>Quando o admin <em>informa</em> um tempo específico?</strong> Quando a peça é exceção: produzida sob encomenda (longa), expressa (curta), importada (longa), etc. Aí o tempo do produto sobrescreve o do fornecedor.
+</div>
+</div></section>
+
+<section id="c3"><h2>Cenário 3 — 2 fornecedores, 1 preferencial <span class="tag warn">Escolha de origem</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>A peça <strong>PEC-XXX</strong> é vendida por 2 fornecedores: <strong>Tiger</strong> (custo R$ 30, entrega 5 dias) e <strong>Multiqualita</strong> (custo R$ 28, entrega 12 dias).</p>
+
+<h3>Como o admin organiza</h3>
+<p>Cria 2 vínculos pra mesma peça. Marca Tiger como preferencial (mais rápido, mais confiável).</p>
+
+<div class="t"><div class="h">Vínculos da peça PEC-XXX</div>
+<table>
+<tr><th>Fornecedor</th><th>Custo</th><th>Entrega</th><th>Preferencial</th></tr>
+<tr><td>Tiger</td><td class="num">R$ 30</td><td class="num">5d</td><td><span class="pill pref">★</span></td></tr>
+<tr><td>Multiqualita</td><td class="num">R$ 28</td><td class="num">12d</td><td>—</td></tr>
+</table></div>
+
+<h3>Como o sistema usa</h3>
+<p>Quando um pedido vira OC pra PEC-XXX:</p>
+<ul>
+  <li>O painel do comprador mostra o Tiger primeiro (preferencial).</li>
+  <li>Multiqualita aparece como alternativa.</li>
+  <li>Cobertura de estoque calcula com tempo do Tiger (5d).</li>
+  <li>Se Tiger estiver com problema (falta de estoque, prazo dilatado), o comprador escolhe Multiqualita manualmente.</li>
+</ul>
+
+<div class="result">
+<strong>Resultado:</strong> a peça nunca fica "sem fornecedor" mesmo se um faltar — sempre tem alternativa cadastrada. O preferencial é a primeira escolha, mas não a única.
+</div>
+
+<div class="card tip">
+<strong>Só pode ter UM preferencial.</strong> Se o admin marca outro como preferencial, o anterior desmarca automaticamente. Garantia de unicidade.
+</div>
+</div></section>
+
+<section id="c4"><h2>Cenário 4 — Auto-cadastro em massa <span class="tag ok">Setup inicial</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>WMS recém subiu. O sistema SISO antigo tem ~11 fornecedores mapeados via prefixo de SKU. <strong>Vamos importar todos de uma vez.</strong></p>
+
+<h3>O que o admin faz</h3>
+<ol>
+<li>Abre <strong>"Fornecedores"</strong>.</li>
+<li>Clica em <strong>"Auto-cadastrar a partir do mapeamento legado"</strong>.</li>
+<li>Confirma.</li>
+</ol>
+
+<h3>O que o sistema faz</h3>
+<p>Lê o mapeamento legado:</p>
+
+<div class="t"><div class="h">Mapeamento legado prefixo → fornecedor</div>
+<table>
+<tr><th>Prefixo SKU</th><th>Fornecedor</th></tr>
+<tr><td>19</td><td>Diversos</td></tr>
+<tr><td>EW, TG</td><td>Tiger</td></tr>
+<tr><td>LD</td><td>LDRU</td></tr>
+<tr><td>L0</td><td>LEFS</td></tr>
+<tr><td>(6 dígitos numéricos)</td><td>ACA</td></tr>
+<tr><td>GB, GE, GS, GI</td><td>GAUSS</td></tr>
+<tr><td>MK, M0, B0</td><td>MRMK</td></tr>
+<tr><td>CAK, CS</td><td>Delphi</td></tr>
+<tr><td>KT</td><td>Kintop</td></tr>
+<tr><td>MQ, APX, WDC, AT, ...</td><td>Multiqualita</td></tr>
+</table></div>
+
+<p>Pra cada fornecedor único:</p>
+<ul>
+  <li>Se já existe no cadastro, atualiza o prefixo se estava vazio.</li>
+  <li>Se não existe, cria com o prefixo + nome.</li>
+</ul>
+
+<div class="result">
+<strong>Resultado:</strong> ~11 fornecedores cadastrados de uma vez. Cada um já tem prefixo de SKU correto. <strong>Operação idempotente</strong> — dá pra rodar de novo sem duplicar.
+</div>
+
+<div class="card tip">
+<strong>Trabalho que sobra:</strong> preencher CNPJ, contato, condições de pagamento e tempo de entrega pra cada fornecedor. Cada admin/comprador faz manualmente conforme prioriza.
+</div>
+</div></section>
+
+<section id="c5"><h2>Cenário 5 — Trocar preferencial <span class="tag warn">Decisão comercial</span></h2>
+<div class="card scenario">
+<h3>A situação</h3>
+<p>Tiger estava como preferencial pra PEC-XXX. Mas nos últimos meses Tiger atrasou várias entregas. Multiqualita virou mais confiável. <strong>Vamos trocar o preferencial.</strong></p>
+
+<h3>O que o admin faz</h3>
+<ol>
+<li>Abre detalhe da peça PEC-XXX.</li>
+<li>Aba "Fornecedores".</li>
+<li>Clica em "Marcar como preferencial" na linha da Multiqualita.</li>
+</ol>
+
+<h3>O sistema faz a troca atomicamente</h3>
+<ul>
+<li>Desmarca o preferencial atual (Tiger).</li>
+<li>Marca o novo (Multiqualita).</li>
+<li>Mantém os outros campos inalterados.</li>
+</ul>
+
+<div class="t"><div class="h">Antes e depois</div>
+<table>
+<tr><th>Fornecedor</th><th>Antes</th><th>Depois</th></tr>
+<tr><td>Tiger</td><td><span class="pill pref">★ preferencial</span></td><td>—</td></tr>
+<tr><td>Multiqualita</td><td>—</td><td><span class="pill pref">★ preferencial</span></td></tr>
+</table></div>
+
+<div class="result warn">
+<strong>Resultado:</strong> a partir de agora, novos OCs pra PEC-XXX vão sugerir Multiqualita primeiro. Tiger continua cadastrado e disponível como alternativa. <strong>Decisão reversível</strong> — se Tiger melhorar, dá pra voltar.
+</div>
+
+<div class="card warn">
+<strong>OCs pendentes não são automaticamente trocados.</strong> Se já tem uma OC aberta pra Tiger pra PEC-XXX, ela continua. A troca afeta só novos OCs criados depois.
+</div>
+</div></section>
+
+<footer>
+Documento explica o cadastro e gerenciamento de fornecedores no WMS.
+<br>Complementa <a href="cobertura-cenarios.html">cobertura-cenarios.html</a> (uso do tempo de entrega).
+<br>Atualizado em 2026-05-13.
+</footer>
+
+</div></body></html>

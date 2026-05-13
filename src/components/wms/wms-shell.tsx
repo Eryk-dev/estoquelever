@@ -110,6 +110,19 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    id: "insights",
+    label: "Insights",
+    itens: [
+      { href: "/wms/insights", icon: "sparkle", label: "Hub" },
+      { href: "/wms/insights/pessoas", icon: "handshake", label: "Pessoas" },
+      { href: "/wms/insights/fluxo", icon: "arrows", label: "Fluxo" },
+      { href: "/wms/insights/estoque", icon: "gauge", label: "Estoque" },
+      { href: "/wms/insights/financeiro", icon: "building", label: "Financeiro" },
+      { href: "/wms/insights/devolucoes", icon: "rotate", label: "Devoluções" },
+      { href: "/wms/insights/regras", icon: "sliders", label: "Regras" },
+    ],
+  },
+  {
     id: "cadastros",
     label: "Cadastros",
     itens: [

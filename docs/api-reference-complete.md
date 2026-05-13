@@ -4685,6 +4685,51 @@ Cria localização.
 
 **Response 201:** Localizacao.
 
+### POST /api/wms/localizacoes/lote
+
+Cria localizações em lote a partir do produto cartesiano de dois eixos numéricos.
+
+**Auth:** `requireAuth` (qualquer usuário logado).
+
+**Request body:**
+```json
+{
+  "galpao_id": "uuid",
+  "prefixo": "A",
+  "h_inicio": 1, "h_fim": 10,
+  "v_inicio": 1, "v_fim": 10,
+  "tipo": "picking",
+  "preview": false
+}
+```
+
+- `prefixo` 1–8 chars `[A-Z0-9]`.
+- Ranges inteiros ≥ 1, `inicio ≤ fim`.
+- Total máximo 5000 localizações por chamada (proteção contra digitação errada).
+- Padding por eixo: `max(2, len(str(fim)))` — ex: 1–10 vira `01..10`, 1–100 vira `001..100`.
+- `tipo` opcional, default `picking`.
+- `preview: true` calcula contagem + duplicatas e amostra **sem inserir**.
+
+**Response 200:**
+```json
+{
+  "total": 100,
+  "criadas": 77,
+  "ja_existiam": 23,
+  "amostra": {
+    "primeiras": ["A-01-01", "A-01-02", "A-01-03", "A-01-04", "A-01-05"],
+    "ultimas":   ["A-10-06", "A-10-07", "A-10-08", "A-10-09", "A-10-10"]
+  }
+}
+```
+
+Se `total ≤ 10`: `amostra.primeiras` = lista completa, `amostra.ultimas` = `[]`.
+`criadas + ja_existiam` sempre = `total`.
+
+**Side effects (quando `preview:false`):** bulk `INSERT ... ON CONFLICT (galpao_id,codigo) DO NOTHING` em `siso_localizacoes`. Idempotente — rodar o mesmo lote 2x não duplica nada.
+
+**Erros 400:** prefixo inválido, range invertido, total acima do limite, valores não-inteiros.
+
 ### PATCH /api/wms/localizacoes/[id]
 
 Atualiza campos da localização.

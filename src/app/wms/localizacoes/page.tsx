@@ -21,13 +21,39 @@ const TIPOS: TipoLocalizacao[] = [
   "quarentena",
 ];
 
+type Modo = "individual" | "lote";
+
+type LoteForm = {
+  prefixo: string;
+  h_inicio: number;
+  h_fim: number;
+  v_inicio: number;
+  v_fim: number;
+  tipo: TipoLocalizacao;
+};
+
+type LoteResponse = {
+  total: number;
+  criadas: number;
+  ja_existiam: number;
+  amostra: { primeiras: string[]; ultimas: string[] };
+};
+
+const LOTE_DEFAULT: LoteForm = {
+  prefixo: "",
+  h_inicio: 1,
+  h_fim: 10,
+  v_inicio: 1,
+  v_fim: 10,
+  tipo: "picking",
+};
+
 export default function LocalizacoesPage() {
   const queryClient = useQueryClient();
-  // Galpão vem só da sidebar (auth-context). Quando é "Todos" (null),
-  // pedimos pro usuário escolher — a página gerencia locs de um galpão por vez.
   const { activeGalpaoId } = useAuth();
   const galpaoId = activeGalpaoId ?? "";
   const [showForm, setShowForm] = useState(false);
+  const [modo, setModo] = useState<Modo>("individual");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 100;
   const [novo, setNovo] = useState({
@@ -35,9 +61,9 @@ export default function LocalizacoesPage() {
     descricao: "",
     tipo: "picking" as TipoLocalizacao,
   });
+  const [lote, setLote] = useState<LoteForm>(LOTE_DEFAULT);
+  const [preview, setPreview] = useState<LoteResponse | null>(null);
 
-  // Reseta a página ao trocar de galpão (evita ficar em página vazia
-  // se o novo galpão tem menos localizações).
   useEffect(() => {
     setPage(1);
   }, [activeGalpaoId]);
@@ -67,6 +93,61 @@ export default function LocalizacoesPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const fecharForm = () => {
+    setShowForm(false);
+    setPreview(null);
+    setLote(LOTE_DEFAULT);
+    setModo("individual");
+  };
+
+  const visualizar = useMutation({
+    mutationFn: () =>
+      wmsApi<LoteResponse>("/api/wms/localizacoes/lote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          galpao_id: galpaoId,
+          prefixo: lote.prefixo.toUpperCase(),
+          h_inicio: lote.h_inicio,
+          h_fim: lote.h_fim,
+          v_inicio: lote.v_inicio,
+          v_fim: lote.v_fim,
+          tipo: lote.tipo,
+          preview: true,
+        }),
+      }),
+    onSuccess: (data) => setPreview(data),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const criarLote = useMutation({
+    mutationFn: () =>
+      wmsApi<LoteResponse>("/api/wms/localizacoes/lote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          galpao_id: galpaoId,
+          prefixo: lote.prefixo.toUpperCase(),
+          h_inicio: lote.h_inicio,
+          h_fim: lote.h_fim,
+          v_inicio: lote.v_inicio,
+          v_fim: lote.v_fim,
+          tipo: lote.tipo,
+          preview: false,
+        }),
+      }),
+    onSuccess: (data) => {
+      toast.success(
+        `Criadas ${data.criadas}${
+          data.ja_existiam > 0 ? ` (${data.ja_existiam} já existiam)` : ""
+        }`,
+      );
+      fecharForm();
+      queryClient.invalidateQueries({ queryKey: ["wms-locs", galpaoId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const rows = useMemo(
     () => locsQuery.data?.rows ?? [],
     [locsQuery.data],
@@ -75,6 +156,13 @@ export default function LocalizacoesPage() {
     () => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [rows, page],
   );
+
+  const loteValido =
+    lote.prefixo.trim() !== "" &&
+    lote.h_inicio >= 1 &&
+    lote.h_fim >= lote.h_inicio &&
+    lote.v_inicio >= 1 &&
+    lote.v_fim >= lote.v_inicio;
 
   return (
     <>
@@ -86,7 +174,10 @@ export default function LocalizacoesPage() {
           type="button"
           className="wms-btn wms-btn-primary"
           disabled={!galpaoId}
-          onClick={() => setShowForm((s) => !s)}
+          onClick={() => {
+            if (showForm) fecharForm();
+            else setShowForm(true);
+          }}
         >
           <Icon name="plus" size={12} />
           Nova localização
@@ -113,70 +204,398 @@ export default function LocalizacoesPage() {
             marginBottom: 16,
           }}
         >
-          <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
-            Nova localização
-          </h3>
-          <div className="wms-row-3">
-            <Field label="Código" required>
-              <input
-                className="wms-input wms-mono"
-                value={novo.codigo}
-                onChange={(e) => setNovo({ ...novo, codigo: e.target.value })}
-                placeholder="A-12-03"
-              />
-            </Field>
-            <Field label="Descrição" hint="opcional">
-              <input
-                className="wms-input"
-                value={novo.descricao}
-                onChange={(e) =>
-                  setNovo({ ...novo, descricao: e.target.value })
-                }
-                placeholder="Rua A, Coluna 12, Nível 03"
-              />
-            </Field>
-            <Field label="Tipo" required>
-              <select
-                className="wms-select"
-                value={novo.tipo}
-                onChange={(e) =>
-                  setNovo({ ...novo, tipo: e.target.value as TipoLocalizacao })
-                }
+          {/* Toggle modo */}
+          {!preview && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+              <button
+                type="button"
+                className={`wms-btn ${
+                  modo === "individual" ? "wms-btn-primary" : "wms-btn-ghost"
+                }`}
+                onClick={() => setModo("individual")}
               >
-                {TIPOS.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: 8,
-              paddingTop: 12,
-              borderTop: "1px solid var(--wms-c-border)",
-            }}
-          >
-            <button
-              type="button"
-              className="wms-btn wms-btn-ghost"
-              onClick={() => setShowForm(false)}
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              className="wms-btn wms-btn-primary"
-              disabled={!novo.codigo || criar.isPending}
-              onClick={() => criar.mutate()}
-            >
-              <Icon name="check" size={11} />
-              {criar.isPending ? "Criando…" : "Criar"}
-            </button>
-          </div>
+                Individual
+              </button>
+              <button
+                type="button"
+                className={`wms-btn ${
+                  modo === "lote" ? "wms-btn-primary" : "wms-btn-ghost"
+                }`}
+                onClick={() => setModo("lote")}
+              >
+                Em lote
+              </button>
+            </div>
+          )}
+
+          {/* Modo individual */}
+          {modo === "individual" && (
+            <>
+              <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
+                Nova localização
+              </h3>
+              <div className="wms-row-3">
+                <Field label="Código" required>
+                  <input
+                    className="wms-input wms-mono"
+                    value={novo.codigo}
+                    onChange={(e) =>
+                      setNovo({ ...novo, codigo: e.target.value })
+                    }
+                    placeholder="A-12-03"
+                  />
+                </Field>
+                <Field label="Descrição" hint="opcional">
+                  <input
+                    className="wms-input"
+                    value={novo.descricao}
+                    onChange={(e) =>
+                      setNovo({ ...novo, descricao: e.target.value })
+                    }
+                    placeholder="Rua A, Coluna 12, Nível 03"
+                  />
+                </Field>
+                <Field label="Tipo" required>
+                  <select
+                    className="wms-select"
+                    value={novo.tipo}
+                    onChange={(e) =>
+                      setNovo({
+                        ...novo,
+                        tipo: e.target.value as TipoLocalizacao,
+                      })
+                    }
+                  >
+                    {TIPOS.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: 8,
+                  paddingTop: 12,
+                  borderTop: "1px solid var(--wms-c-border)",
+                  marginTop: 12,
+                }}
+              >
+                <button
+                  type="button"
+                  className="wms-btn wms-btn-ghost"
+                  onClick={fecharForm}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="wms-btn wms-btn-primary"
+                  disabled={!novo.codigo || criar.isPending}
+                  onClick={() => criar.mutate()}
+                >
+                  <Icon name="check" size={11} />
+                  {criar.isPending ? "Criando…" : "Criar"}
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Modo lote — form */}
+          {modo === "lote" && !preview && (
+            <>
+              <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
+                Cadastro em lote
+              </h3>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--wms-c-fg-3)",
+                  marginBottom: 12,
+                }}
+              >
+                Gera todas as combinações horizontal × vertical com o prefixo.
+                Ex: A com horizontal 1–10 e vertical 1–10 → A-01-01 até A-10-10
+                (100 localizações). Códigos que já existem são pulados.
+              </div>
+              <div className="wms-row-3" style={{ marginBottom: 10 }}>
+                <Field label="Prefixo" required>
+                  <input
+                    className="wms-input wms-mono"
+                    value={lote.prefixo}
+                    onChange={(e) =>
+                      setLote({
+                        ...lote,
+                        prefixo: e.target.value.toUpperCase().slice(0, 8),
+                      })
+                    }
+                    placeholder="A"
+                    maxLength={8}
+                  />
+                </Field>
+                <Field label="Tipo" required>
+                  <select
+                    className="wms-select"
+                    value={lote.tipo}
+                    onChange={(e) =>
+                      setLote({
+                        ...lote,
+                        tipo: e.target.value as TipoLocalizacao,
+                      })
+                    }
+                  >
+                    {TIPOS.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <div />
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "100px 1fr 1fr",
+                  gap: 10,
+                  alignItems: "end",
+                  marginBottom: 6,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--wms-c-fg-2)",
+                    paddingBottom: 8,
+                  }}
+                >
+                  Horizontal
+                </div>
+                <Field label="Início" required>
+                  <input
+                    type="number"
+                    className="wms-input wms-mono"
+                    min={1}
+                    value={lote.h_inicio}
+                    onChange={(e) =>
+                      setLote({
+                        ...lote,
+                        h_inicio: Number(e.target.value) || 1,
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Fim" required>
+                  <input
+                    type="number"
+                    className="wms-input wms-mono"
+                    min={1}
+                    value={lote.h_fim}
+                    onChange={(e) =>
+                      setLote({
+                        ...lote,
+                        h_fim: Number(e.target.value) || 1,
+                      })
+                    }
+                  />
+                </Field>
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "100px 1fr 1fr",
+                  gap: 10,
+                  alignItems: "end",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--wms-c-fg-2)",
+                    paddingBottom: 8,
+                  }}
+                >
+                  Vertical
+                </div>
+                <Field label="Início" required>
+                  <input
+                    type="number"
+                    className="wms-input wms-mono"
+                    min={1}
+                    value={lote.v_inicio}
+                    onChange={(e) =>
+                      setLote({
+                        ...lote,
+                        v_inicio: Number(e.target.value) || 1,
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Fim" required>
+                  <input
+                    type="number"
+                    className="wms-input wms-mono"
+                    min={1}
+                    value={lote.v_fim}
+                    onChange={(e) =>
+                      setLote({
+                        ...lote,
+                        v_fim: Number(e.target.value) || 1,
+                      })
+                    }
+                  />
+                </Field>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: 8,
+                  paddingTop: 12,
+                  borderTop: "1px solid var(--wms-c-border)",
+                  marginTop: 14,
+                }}
+              >
+                <button
+                  type="button"
+                  className="wms-btn wms-btn-ghost"
+                  onClick={fecharForm}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="wms-btn wms-btn-primary"
+                  disabled={!loteValido || visualizar.isPending}
+                  onClick={() => visualizar.mutate()}
+                >
+                  {visualizar.isPending ? "Calculando…" : "Visualizar"}
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Modo lote — preview */}
+          {modo === "lote" && preview && (
+            <>
+              <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
+                Confirmação do lote
+              </h3>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 24,
+                  flexWrap: "wrap",
+                  marginBottom: 14,
+                  fontSize: 14,
+                }}
+              >
+                <div>
+                  <div
+                    style={{ fontSize: 11, color: "var(--wms-c-fg-3)" }}
+                  >
+                    Total no range
+                  </div>
+                  <div style={{ fontWeight: 600 }}>{preview.total}</div>
+                </div>
+                <div>
+                  <div
+                    style={{ fontSize: 11, color: "var(--wms-c-fg-3)" }}
+                  >
+                    Serão criadas
+                  </div>
+                  <div style={{ fontWeight: 600 }}>{preview.criadas}</div>
+                </div>
+                <div>
+                  <div
+                    style={{ fontSize: 11, color: "var(--wms-c-fg-3)" }}
+                  >
+                    Já existem (puladas)
+                  </div>
+                  <div style={{ fontWeight: 600 }}>{preview.ja_existiam}</div>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 10 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--wms-c-fg-3)",
+                    marginBottom: 4,
+                  }}
+                >
+                  {preview.amostra.ultimas.length === 0
+                    ? "Códigos"
+                    : "Primeiros"}
+                </div>
+                <div
+                  className="wms-mono"
+                  style={{ fontSize: 13, color: "var(--wms-c-fg-2)" }}
+                >
+                  {preview.amostra.primeiras.join(", ")}
+                </div>
+              </div>
+
+              {preview.amostra.ultimas.length > 0 && (
+                <div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "var(--wms-c-fg-3)",
+                      marginBottom: 4,
+                    }}
+                  >
+                    Últimos
+                  </div>
+                  <div
+                    className="wms-mono"
+                    style={{ fontSize: 13, color: "var(--wms-c-fg-2)" }}
+                  >
+                    {preview.amostra.ultimas.join(", ")}
+                  </div>
+                </div>
+              )}
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: 8,
+                  paddingTop: 14,
+                  borderTop: "1px solid var(--wms-c-border)",
+                  marginTop: 14,
+                }}
+              >
+                <button
+                  type="button"
+                  className="wms-btn wms-btn-ghost"
+                  onClick={() => setPreview(null)}
+                >
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  className="wms-btn wms-btn-primary"
+                  disabled={preview.criadas === 0 || criarLote.isPending}
+                  onClick={() => criarLote.mutate()}
+                >
+                  <Icon name="check" size={11} />
+                  {criarLote.isPending
+                    ? "Criando…"
+                    : preview.criadas === 0
+                      ? "Nada a criar"
+                      : `Criar ${preview.criadas}`}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

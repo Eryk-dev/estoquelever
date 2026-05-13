@@ -1,6 +1,71 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import type { Localizacao, TipoLocalizacao } from "./types";
 
+export const LOTE_MAX_TOTAL = 5000;
+const PREFIXO_REGEX = /^[A-Z0-9]{1,8}$/;
+
+export type LoteCodigosInput = {
+  prefixo: string;
+  h_inicio: number;
+  h_fim: number;
+  v_inicio: number;
+  v_fim: number;
+  separador?: string;
+};
+
+export type LoteCodigosResult = {
+  codigos: string[];
+  total: number;
+};
+
+function isInteiroPositivo(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n >= 1;
+}
+
+export function gerarCodigosLote(input: LoteCodigosInput): LoteCodigosResult {
+  const { prefixo, h_inicio, h_fim, v_inicio, v_fim } = input;
+  const separador = input.separador ?? "-";
+
+  if (!prefixo || prefixo.trim() === "") {
+    throw new Error("prefixo é obrigatório");
+  }
+  if (!PREFIXO_REGEX.test(prefixo)) {
+    throw new Error(
+      "prefixo deve ter entre 1 e 8 caracteres alfanuméricos maiúsculos",
+    );
+  }
+  if (
+    !isInteiroPositivo(h_inicio) ||
+    !isInteiroPositivo(h_fim) ||
+    !isInteiroPositivo(v_inicio) ||
+    !isInteiroPositivo(v_fim)
+  ) {
+    throw new Error("valores devem ser inteiros positivos");
+  }
+  if (h_inicio > h_fim || v_inicio > v_fim) {
+    throw new Error("início não pode ser maior que fim");
+  }
+
+  const total = (h_fim - h_inicio + 1) * (v_fim - v_inicio + 1);
+  if (total > LOTE_MAX_TOTAL) {
+    throw new Error(`lote excede ${LOTE_MAX_TOTAL} localizações (atual: ${total})`);
+  }
+
+  const hPad = Math.max(2, String(h_fim).length);
+  const vPad = Math.max(2, String(v_fim).length);
+
+  const codigos: string[] = [];
+  for (let h = h_inicio; h <= h_fim; h++) {
+    const hStr = String(h).padStart(hPad, "0");
+    for (let v = v_inicio; v <= v_fim; v++) {
+      const vStr = String(v).padStart(vPad, "0");
+      codigos.push(`${prefixo}${separador}${hStr}${separador}${vStr}`);
+    }
+  }
+
+  return { codigos, total };
+}
+
 export async function listarLocalizacoes(galpaoId?: string): Promise<Localizacao[]> {
   const sb = createServiceClient();
   let q = sb.from("siso_localizacoes").select("*").eq("ativo", true).order("codigo");

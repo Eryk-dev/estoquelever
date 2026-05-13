@@ -379,6 +379,9 @@ wms/  (subset of src/)
     devolucoes.ts                  # Classificação A/B/C/D (íntegro/avariado/garantia/troca_sku) com recálculo de custo médio
     cobertura.ts                   # Service de cobertura por giro (lê siso_cobertura_estoque)
     dashboard-geral.ts             # Agrega contadores cross-módulo pra dashboard principal
+    guarda.ts                      # Lógica de put-away. Cria/lista/inicia/confirma/cancela pendencias; resolverLocRecebimento auto-cria loc tipo=recebimento por galpão; confirmar dispara replenishment_intra + transferência do custo médio pra loc destino
+    zpl-produto.ts                 # Geração de ZPL pra etiqueta de produto (PW800, 2-por-folha pareadas, gap no meio igual a gerarZplPequena de endereço). expandirPorQty replica N vezes por unidade
+    etiqueta-produto-service.ts    # Compõe ZPL + resolverImpressoraProduto + envia ao PrintNode. Fire-and-forget no recebimento (recebimento ok mesmo se PrintNode falha)
   src/hooks/
     use-inventario-realtime.ts     # Subscreve channel inventario:{id} (Supabase Realtime); retorna contagens + locs + operadores ao vivo
   src/app/wms/
@@ -387,7 +390,9 @@ wms/  (subset of src/)
     localizacoes/page.tsx          # Configurar localizações por galpão
     estoque/page.tsx               # Saldos em 4 perspectivas
     ledger/page.tsx                # Histórico imutável de movimentações
-    receber/page.tsx               # Recebimento de estoque com sugestão de putaway
+    receber/page.tsx               # Etapa 1/2 — registro do que chegou no dock (loc=RECEBIMENTO). Sem decisão de loc final, sem plano de guarda — cria pendências em siso_wms_pendencias_guarda. Checkbox "imprimir etiquetas ao confirmar" dispara o maço via /api/wms/guarda/imprimir-lote.
+    guarda/page.tsx                # Etapa 2/2 — fila de pendências de put-away (filtros: ativas/guardadas/canceladas, galpão, busca SKU). Refetch 30s.
+    guarda/[id]/page.tsx           # Tablet de guarda — imprime etiqueta (2-por-folha pareada), bipa QR da loc destino, confirma. Suporta guarda parcial (qty<qty_pendente deixa pendência aberta) e cancelamento com motivo.
     transferir/page.tsx            # Transferência inter-galpão (origem→destino)
     replenishment/page.tsx         # Replenishment intra-galpão (mover entre localizações no mesmo galpão)
     ajuste/page.tsx                # Ajuste manual com motivo (entrada ou saída)
@@ -413,7 +418,14 @@ wms/  (subset of src/)
     ledger/route.ts                # GET com filtros (produto/empresa/galpao/origem_tipo/desde/ate)
     snapshot-inicial/route.ts      # POST (admin only, idempotente, ?dryRun=true)
     reconciliacao/route.ts         # GET (worker-secret, cron-friendly, ?fix=true)
-    receber/route.ts               # POST receber estoque + GET sugestão de putaway
+    receber/route.ts               # POST receber estoque (resolve loc=RECEBIMENTO + cria 1 pendência por linha; retorna pendencia_ids) + GET sugestão de putaway
+    guarda/route.ts                                          # GET — lista pendências de guarda (filtros: galpao_id, empresa_dona_id, status CSV, q, limit)
+    guarda/[id]/route.ts                                     # GET — detalhe da pendência + sugestão de loc destino + locs com saldo do mesmo SKU
+    guarda/[id]/iniciar/route.ts                             # POST — marca status='em_guarda' (idempotente)
+    guarda/[id]/confirmar/route.ts                           # POST { qty, localizacao_destino_id } — mov par S+E (replenishment_intra) RECEBIMENTO→loc destino; suporta guarda parcial
+    guarda/[id]/cancelar/route.ts                            # POST { motivo } — cancela sem mover estoque (saída física é fluxo separado)
+    guarda/[id]/imprimir/route.ts                            # POST { qty?, localizacao_codigo? } — imprime etiqueta de produto (1 por unidade, 2-por-folha)
+    guarda/imprimir-lote/route.ts                            # POST { pendencia_ids } — imprime maço inteiro de etiquetas; usado pelo recebimento ao confirmar lote
     transferir-galpao/route.ts     # POST transferência inter-galpão (par S+E com origem_id)
     replenishment/route.ts         # POST replenishment intra-galpão
     ajuste/route.ts                # POST ajuste manual com motivo
@@ -532,6 +544,16 @@ Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger at
 | Table | Purpose |
 |---|---|
 | `siso_devolucoes_pendentes` | Fila de NFs de entrada esperando classificação física. UNIQUE parcial em nota_fiscal_id e chave_acesso_nf (dedup webhook re-entregue). Status: aguardando_classificacao→classificada→aplicada\|cancelada. |
+
+### WMS Tables (Recebimento em 2 etapas — 2026-05-14)
+
+| Table | Purpose |
+|---|---|
+| `siso_wms_pendencias_guarda` | Fila de pendências de put-away. 1 linha por linha de recebimento (preserva NF/lote). `qty_pendente = qty_inicial - qty_guardada` GENERATED. Status: pendente → em_guarda → guardada\|cancelada. Indexada por (galpao_id, status, criada_em). Trigger atualiza `atualizada_em`. CHECK garante coerência (guardada exige qty_guardada=qty_inicial+guardada_em). |
+
+Ajustes em `siso_galpoes` + `siso_usuarios`: ADD `printnode_printer_id_produto bigint` + `printnode_printer_nome_produto text` — impressora dedicada pra etiqueta de produto, com fallback pra impressora de envio se vazia.
+
+Loc auto-criada: a migration semeia 1 `siso_localizacoes` tipo='recebimento' (`codigo='RECEBIMENTO'`) por galpão ativo se não existir uma.
 
 **Materialized view `siso_cobertura_estoque`**: agrega disponivel + giro 30d + lead time fornecedor preferencial → `status_cobertura` (ok\|atencao\|critico\|lead_time_risco\|sem_giro). Refresh via `wms_refresh_cobertura()`.
 
@@ -742,6 +764,7 @@ Failure to update documentation means the next developer or LLM will work with s
 
 - **WMS Plano 4 v2 (Inventário pull queue + slots) — implementado em staging, 2026-05-12.** Mudança fundamental: pool compartilhado em vez de divisão estática. Operadores assumem slots OP1-OP5 dinâmicos e puxam próxima loc sob demanda via RPC `wms_inventario_proxima_loc` com smart routing (bucket próprio > continuidade > anti-colisão por zona > ordem alfabética). Sugestão inteligente via RPC `wms_inventario_sugerir` (mix 50% curva A + 30% divergentes recentes + 20% sem contagem 30d+) — roda sob demanda quando supervisor abre "Cycle Inteligente". 3 tipos de sessão: Inteligente / Manual / Completo. Modo aberto|blind (default blind). Sem recontagem mid-flow — divergências aparecem no relatório do supervisor após encerrar. Tela handheld redesenhada: slot picker → botão gigante "PRÓXIMA LOC" → confirmar (QR ou manual) → bipar produtos → finalizar → loop → resumo final. **Cycle count manual com distribuição soft** (2026-05-12): supervisor escolhe quantos operadores (1-5), algoritmo greedy LPT por zona pré-atribui locs a slots; operador puxa do bucket próprio primeiro, mas pode pegar de buckets de colegas quando esvaziar (evita operador ocioso). Encerrar parcial: supervisor pode encerrar antes do pool esgotar — modal escolhe entre subir parcial (só locs contadas viram diverg) ou cancelar tudo. Migrations: `supabase/migrations/20260512_wms_inventario_rewrite.sql` + `20260512_wms_inventario_slot_atribuido.sql`.
 - **WMS Plano 5 (Exceções + dashboards) — implementado, validado em staging. Encerra Fase 0.** Devoluções classificadas A/B/C/D com recálculo de custo médio + transferência pra QUARENTENA + RMA. Troca SKU na separação (2 movs com mesma origem_id) com validação Cross opcional. Webhook NF detecta devolução (best-effort). Materialized view `siso_cobertura_estoque` com status crítico/atenção/lead_time_risco/ok/sem_giro. Dashboard geral (4 cards, refresh 30s). Shell e home reorganizados em 4 grupos. Plano: `docs/superpowers/plans/2026-06-05-wms-5-excecoes-dashboards.md`. Checklist Fase 0: `docs/superpowers/plans/wms-fase0-checklist.md`. **Próximo: Plano 6 (cutover big bang).**
+- **WMS Recebimento em 2 etapas (Recebimento + Guarda) — implementado em staging, 2026-05-14.** Quebra o recebimento em duas fases pra alinhar com o fluxo físico: dock RECEBIMENTO (chega caminhão, registra qty) → guarda no tablet (imprime etiqueta, bipa QR da loc destino, confirma). 1 pendência em `siso_wms_pendencias_guarda` por linha de recebimento. Suporta guarda parcial (qty<qty_pendente fica aberta) + cancelamento com motivo. Etiqueta de produto em ZPL pareado 2-por-folha (`gerarZplProduto` em `src/lib/wms/zpl-produto.ts`), N etiquetas por unidade. Impressora dedicada de produto (`printnode_printer_id_produto`) com fallback automático pra impressora de envio se não configurada. Migration: `supabase/migrations/20260514_wms_guarda_pendencias.sql`. APIs: `/api/wms/guarda` (lista + detalhe + iniciar/confirmar/cancelar/imprimir + imprimir-lote bulk).
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)

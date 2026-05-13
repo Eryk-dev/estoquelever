@@ -211,6 +211,51 @@ export function PrintNodeSection({
     }
   }
 
+  async function handleGalpaoPrinterProdutoChange(galpaoId: string, printerId: number | null) {
+    const printer = printers.find((p) => p.id === printerId);
+    setSavingId(`galpao-produto-${galpaoId}`);
+    try {
+      const res = await fetch(`/api/admin/galpoes/${galpaoId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          printnode_printer_id_produto: printerId,
+          printnode_printer_nome_produto: printer?.name ?? null,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      toast.success("Impressora de produto atualizada");
+      onRefresh();
+    } catch {
+      toast.error("Erro ao salvar impressora de produto");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function handleUsuarioPrinterProdutoChange(usuarioId: string, printerId: number | null) {
+    const printer = printers.find((p) => p.id === printerId);
+    setSavingId(`user-produto-${usuarioId}`);
+    try {
+      const res = await fetch("/api/admin/usuarios", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: usuarioId,
+          printnode_printer_id_produto: printerId,
+          printnode_printer_nome_produto: printer?.name ?? null,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      toast.success("Impressora de produto do usuário atualizada");
+      onRefresh();
+    } catch {
+      toast.error("Erro ao salvar impressora de produto");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   const hasPrinters = printers.length > 0;
   const galpoesWithoutPrinter = galpoes.filter(
     (g) => g.ativo && !g.printnode_printer_id,
@@ -346,7 +391,7 @@ export function PrintNodeSection({
           </div>
         )}
 
-        {/* Galpão printers */}
+        {/* Galpão printers — envio + produto */}
         {hasPrinters && (
           <div>
             <p className="mb-2 text-xs font-medium text-ink-muted">
@@ -358,33 +403,68 @@ export function PrintNodeSection({
                 .map((galpao) => (
                   <div
                     key={galpao.id}
-                    className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3"
+                    className="space-y-1.5 rounded-lg border border-line bg-surface px-3 py-2"
                   >
-                    <span className="w-16 shrink-0 text-xs font-semibold text-ink">
+                    <span className="block text-xs font-semibold text-ink">
                       {galpao.nome}
                     </span>
-                    <select
-                      value={galpao.printnode_printer_id ?? ""}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        handleGalpaoPrinterChange(
-                          galpao.id,
-                          val ? Number(val) : null,
-                        );
-                      }}
-                      disabled={savingId === `galpao-${galpao.id}`}
-                      className="flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-ink outline-none disabled:opacity-50"
-                    >
-                      <option value="">Nenhuma</option>
-                      {printers.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} ({p.computer})
-                        </option>
-                      ))}
-                    </select>
-                    {savingId === `galpao-${galpao.id}` && (
-                      <Loader2 className="h-3 w-3 animate-spin text-ink-faint" />
-                    )}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
+                      <span className="w-20 shrink-0 text-[11px] text-ink-muted">
+                        Envio
+                      </span>
+                      <select
+                        value={galpao.printnode_printer_id ?? ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          handleGalpaoPrinterChange(
+                            galpao.id,
+                            val ? Number(val) : null,
+                          );
+                        }}
+                        disabled={savingId === `galpao-${galpao.id}`}
+                        className="flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink outline-none disabled:opacity-50"
+                      >
+                        <option value="">Nenhuma</option>
+                        {printers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.computer})
+                          </option>
+                        ))}
+                      </select>
+                      {savingId === `galpao-${galpao.id}` && (
+                        <Loader2 className="h-3 w-3 animate-spin text-ink-faint" />
+                      )}
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
+                      <span
+                        className="w-20 shrink-0 text-[11px] text-ink-muted"
+                        title="Etiqueta de recebimento (loc, SKU). Cai pra impressora de envio se vazio."
+                      >
+                        Produto
+                      </span>
+                      <select
+                        value={galpao.printnode_printer_id_produto ?? ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          handleGalpaoPrinterProdutoChange(
+                            galpao.id,
+                            val ? Number(val) : null,
+                          );
+                        }}
+                        disabled={savingId === `galpao-produto-${galpao.id}`}
+                        className="flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink outline-none disabled:opacity-50"
+                      >
+                        <option value="">Mesma de envio (fallback)</option>
+                        {printers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.computer})
+                          </option>
+                        ))}
+                      </select>
+                      {savingId === `galpao-produto-${galpao.id}` && (
+                        <Loader2 className="h-3 w-3 animate-spin text-ink-faint" />
+                      )}
+                    </div>
                   </div>
                 ))}
             </div>
@@ -403,7 +483,7 @@ export function PrintNodeSection({
           </div>
         )}
 
-        {/* User overrides */}
+        {/* User overrides — envio + produto */}
         {hasPrinters && usuarios.length > 0 && (
           <div>
             <p className="mb-2 text-xs font-medium text-ink-muted">
@@ -411,32 +491,67 @@ export function PrintNodeSection({
             </p>
             <div className="space-y-2">
               {usuarios.map((u) => (
-                <div key={u.id} className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
-                  <span className="w-24 shrink-0 truncate text-xs text-ink">
+                <div
+                  key={u.id}
+                  className="space-y-1.5 rounded-lg border border-line bg-surface px-3 py-2"
+                >
+                  <span className="block truncate text-xs text-ink">
                     {u.nome}
                   </span>
-                  <select
-                    value={u.printnode_printer_id ?? ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      handleUsuarioPrinterChange(
-                        u.id,
-                        val ? Number(val) : null,
-                      );
-                    }}
-                    disabled={savingId === `user-${u.id}`}
-                    className="flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-ink outline-none disabled:opacity-50"
-                  >
-                    <option value="">Nenhuma (usa padrão do galpão)</option>
-                    {printers.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.computer})
-                      </option>
-                    ))}
-                  </select>
-                  {savingId === `user-${u.id}` && (
-                    <Loader2 className="h-3 w-3 animate-spin text-ink-faint" />
-                  )}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
+                    <span className="w-20 shrink-0 text-[11px] text-ink-muted">
+                      Envio
+                    </span>
+                    <select
+                      value={u.printnode_printer_id ?? ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        handleUsuarioPrinterChange(
+                          u.id,
+                          val ? Number(val) : null,
+                        );
+                      }}
+                      disabled={savingId === `user-${u.id}`}
+                      className="flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink outline-none disabled:opacity-50"
+                    >
+                      <option value="">Nenhuma (usa padrão do galpão)</option>
+                      {printers.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.computer})
+                        </option>
+                      ))}
+                    </select>
+                    {savingId === `user-${u.id}` && (
+                      <Loader2 className="h-3 w-3 animate-spin text-ink-faint" />
+                    )}
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
+                    <span className="w-20 shrink-0 text-[11px] text-ink-muted">
+                      Produto
+                    </span>
+                    <select
+                      value={u.printnode_printer_id_produto ?? ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        handleUsuarioPrinterProdutoChange(
+                          u.id,
+                          val ? Number(val) : null,
+                        );
+                      }}
+                      disabled={savingId === `user-produto-${u.id}`}
+                      className="flex-1 rounded-lg border border-line bg-paper px-3 py-1.5 text-sm text-ink outline-none disabled:opacity-50"
+                    >
+                      <option value="">Nenhuma (usa padrão do galpão)</option>
+                      {printers.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.computer})
+                        </option>
+                      ))}
+                    </select>
+                    {savingId === `user-produto-${u.id}` && (
+                      <Loader2 className="h-3 w-3 animate-spin text-ink-faint" />
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

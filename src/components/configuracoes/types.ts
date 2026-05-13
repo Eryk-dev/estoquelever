@@ -49,6 +49,8 @@ export interface GalpaoHierarquia {
   ativo: boolean;
   printnode_printer_id: number | null;
   printnode_printer_nome: string | null;
+  printnode_printer_id_produto: number | null;
+  printnode_printer_nome_produto: string | null;
   siso_empresas: EmpresaHierarquia[];
 }
 
@@ -58,6 +60,8 @@ export interface UsuarioPrintNode {
   cargo: string;
   printnode_printer_id: number | null;
   printnode_printer_nome: string | null;
+  printnode_printer_id_produto: number | null;
+  printnode_printer_nome_produto: string | null;
 }
 
 export interface GrupoInfo {

@@ -75,6 +75,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
 - For "nota_fiscal" webhooks: delegates to `handleNfWebhook` (fire-and-forget)
 - For "atualizacao_pedido" / "inclusao_pedido":
   - If `codigoSituacao = "cancelado"`: cancels order, cleans up compras items, marks execution job as cancelled
+    - **WMS Plano 3:** se `estoque_lancado=false` (pré-separado), chama `liberarReserva` (L com estorno_de=R.id) — release as reservas do ledger
+    - **WMS Plano 3:** se `estoque_lancado=true` (pós-separado), chama `estornarSaidasPedido` (E com origem=cancelamento_nf, estorno_de=S.id) e seta `compra_estoque_lancado_alerta=true` pra alerta UI
   - If `codigoSituacao = "aprovado"`: enqueues `processWebhook` (fire-and-forget) which fetches order, enriches stock across all empresas in grupo, calculates suggestion, saves to DB
 - Returns 200 immediately (async processing)
 
@@ -507,6 +509,48 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Side Effects:**
 - Inserts to `siso_pedido_observacoes`
 - Logs on error
+
+---
+
+### POST /api/pedidos/[id]/liberar-reserva
+
+**File:** `src/app/api/pedidos/[id]/liberar-reserva/route.ts`
+
+**Purpose:** Admin-only override que libera todas as reservas WMS do pedido e o reseta pra pendente. Quando estoque já foi lançado (cutover R→S rodou), lança entradas compensatórias (E) antes pra zerar a posição.
+
+**Auth:** X-Session-Id (required) + `cargos.includes("admin")`
+
+**Request Body (opcional):**
+```json
+{ "motivo": "string" }
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "pedido_id": "string",
+  "reservas_liberadas": 2,
+  "saidas_revertidas": 0,
+  "alerta_estoque_lancado": false
+}
+```
+
+**Response (403):** `{ "error": "Apenas admin pode liberar reservas manualmente" }`
+**Response (404):** `{ "error": "Pedido não encontrado" }`
+**Response (400):** `{ "error": "Pedido cancelado — use webhook de cancel pra liberar" }`
+
+**Business Logic:**
+- Se `estoque_lancado=true`: chama `estornarSaidasPedido` (E com origem=cancelamento_nf, estorno_de=S.id) e seta `compra_estoque_lancado_alerta=true`
+- Sempre chama `liberarReserva` (L com origem=liberacao_reserva, estorno_de=R.id, motivo=ajuste_admin)
+- Reseta pedido pra pendente (decisao_final, status_separacao, estoque_lancado limpos; NF/etiquetas preservadas)
+- Reset item-level (separacao_marcado, quantidade_bipada, estoque_saida_lancada)
+- Registra evento `status_revertido` com detalhes em siso_pedido_historico
+
+**Side Effects:**
+- Insere L (e opcionalmente E) em `siso_movimentacoes`
+- UPDATE em `siso_pedidos` e `siso_pedido_itens`
+- INSERT em `siso_pedido_historico`
 
 ---
 
@@ -1482,6 +1526,12 @@ This is the **authoritative, comprehensive reference** for every API route in th
 - `decisao_final = "propria"`: calls `estornarEstoque()` on origin empresa via Tiny API
 - `decisao_final = "transferencia"`: reverses `movimentarEstoque()` (entry instead of exit) for each item where `estoque_saida_lancada = true`, using `empresa_deducao_id` and `produto_id_na_empresa`
 - `decisao_final = "oc"` or null: no stock to reverse
+
+**WMS Plano 3 — Reservas (quando `WMS_AS_SOURCE=true`):**
+- Se `estoque_lancado=true`: chama `estornarSaidasPedido` (E com origem=cancelamento_nf, estorno_de=S.id) — gera entradas compensatórias no galpão antigo
+- Sempre chama `liberarReserva` (motivo=encaminhamento) — libera R movs no galpão antigo
+- Chama `recriarReservasNoGalpao` — varre `siso_estoque` no galpão destino, prefere a empresa origem, e cria novas R via `reservarAtomico` (TTL 30 dias)
+- Falhas individuais (sem estoque no destino) são logadas mas não bloqueiam o encaminhar — operador pode resolver via re-aprovação manual
 
 **Reset Fields on `siso_pedidos`:**
 - `status` → `"pendente"`, `sugestao` → `"transferencia"`, `encaminhado_de` → origin galpão name
@@ -2576,6 +2626,7 @@ OR
 - For each SKU, fetches all items with compra_status = "comprado"
 - Distributes received quantity across items by order aging (oldest first)
 - Marks items as "recebido" when fully received
+- **WMS Plano 3:** quando `WMS_AS_SOURCE=true`, chama `receberOcAtomico` por alocação — RPC `wms_receber_oc_atomico` lança E (compra_manual) + R (reserva_pedido) atômicos no ledger. Localização default vem do putaway helper (overstock/recebimento)
 - Checks each affected pedido: if all compra items are resolved (recebido, indisponivel, cancelado), releases pedido
 - Released pedidos transition to:
   - "separado" if NF already arrived
@@ -2587,6 +2638,7 @@ OR
 - Updates `siso_pedido_itens.compra_quantidade_recebida`, `compra_status`
 - Updates `siso_pedidos.status`, `status_separacao`
 - Inserts to `siso_fila_execucao` (priority jobs)
+- **WMS:** Insere E + R em `siso_movimentacoes` via `wms_receber_oc_atomico` (quando flag ativa)
 - Logs to `siso_logs`
 
 ---
@@ -4689,9 +4741,9 @@ Todas as operações orquestram chamadas a `wms_inserir_movimentacao` (RPC com l
 
 ### POST /api/wms/receber
 
-Registra entrada de estoque por compra/recebimento manual.
+Registra entrada de estoque (etapa 1 de 2). Sempre grava na localização tipo='recebimento' do galpão (auto-criada se necessário) e cria 1 pendência em `siso_wms_pendencias_guarda` por linha — a guarda física (decidir loc final + bipar QR + imprimir etiquetas) acontece em `/api/wms/guarda/*`.
 
-**Auth:** Session.
+**Auth:** Session + acesso de armazém (operador/admin).
 
 **Request body:**
 ```json
@@ -4699,23 +4751,86 @@ Registra entrada de estoque por compra/recebimento manual.
   "empresa_dona_id": "uuid",
   "galpao_id": "uuid",
   "nf_referencia": "string?",
+  "origem_tipo": "compra_manual | nf_compra | nf_devolucao_cliente | lancamento_retroativo",
+  "observacoes": "string?",
+  "data_recebimento": "ISO timestamp? (se no passado, vira lancamento_retroativo)",
   "itens": [
-    { "produto_id": "uuid", "qty": 50, "custo_unitario": 10.5, "localizacao_id": "uuid" }
+    { "produto_id": "uuid", "qty": 50, "custo_unitario": 10.5 }
   ]
 }
 ```
 
-**Side effects:** 1 mov `compra_manual` (E) por item. Se `custo_unitario` informado, recalcula `custo_medio` (média ponderada) na linha de `siso_estoque`.
+> `localizacao_id` por item foi removido — sempre vai pra loc tipo='recebimento'. Body antigo é aceito (campo ignorado).
 
-**Response 200:** `{ ok: true }`.
+**Side effects:** 1 mov `compra_manual` (ou `origem_tipo` informado) tipo `E` por item, na loc RECEBIMENTO. Se `custo_unitario` informado, recalcula `custo_medio` na quádrupla. 1 linha em `siso_wms_pendencias_guarda` por item com `qty_inicial=qty`, `status='pendente'`, FK ao `mov_entrada_id`.
+
+**Response 200:** `{ ok: true, pendencia_ids: ["uuid", ...], localizacao_recebimento_id: "uuid" }`. Use `pendencia_ids` pra disparar `/api/wms/guarda/imprimir-lote` (impressão do maço pré-guarda).
 
 ### GET /api/wms/receber
 
-Sugere localização de putaway. Heurística: SKU já com saldo no galpão → essa localização (prefere picking); senão tipo='recebimento'; fallback DEFAULT-PICKING.
+Sugere localização de putaway. Heurística: SKU já com saldo no galpão → essa localização (prefere picking); senão tipo='recebimento'; fallback DEFAULT-PICKING. No fluxo 2 etapas a sugestão é só informativa no recebimento; a decisão final é feita em `/wms/guarda`.
 
 **Query params:** `produto_id`, `empresa_id`, `galpao_id` (todos obrigatórios).
 
-**Response 200:** `{ localizacao_id, codigo?, razao }`.
+**Response 200:** `{ localizacao_id, codigo?, razao, locaisExistentes }`.
+
+---
+
+### Guarda (put-away — etapa 2/2)
+
+Fila consumida no tablet. Operador imprime etiquetas → cola nas peças → leva pra loc destino → bipa o QR → confirma. Mov de guarda usa `origem_tipo='transferencia_localizacao'` (replenishment_intra) saindo de RECEBIMENTO. Custo médio da loc origem é propagado pra loc destino via `recalcularCustoMedio`.
+
+#### GET /api/wms/guarda
+
+Lista pendências. **Query:** `galpao_id?`, `empresa_dona_id?`, `status=pendente,em_guarda` (CSV, default ativas), `q?`, `limit=200`.
+
+**Response 200:** `{ rows: PendenciaJoined[] }` com produto/empresa/galpao/localizacao_origem populados.
+
+#### GET /api/wms/guarda/[id]
+
+Detalhe de uma pendência + sugestão de loc destino (filtrada — não sugere voltar pra RECEBIMENTO) + lista de locs onde o SKU já tem saldo (atalhos de UI).
+
+**Response 200:** `{ pendencia, sugestao: { localizacao_id, codigo?, razao } | null, locais_existentes: [...] }`.
+
+#### POST /api/wms/guarda/[id]/iniciar
+
+Idempotente. Marca `status='em_guarda'`, registra `iniciada_em/por`. Disparado automaticamente quando a tela tablet abre (não é necessário chamar manualmente).
+
+**Auth:** acesso de armazém. **Response 200:** `{ ok: true, pendencia }`. **400** se status terminal.
+
+#### POST /api/wms/guarda/[id]/confirmar
+
+Confirma a guarda (parcial ou total). Faz mov par S+E (RECEBIMENTO → loc destino) via `replenishmentIntraGalpao`. Se `qty == qty_pendente` zera, vira `guardada` e fixa `guardada_em`. Senão fica `pendente` com saldo, próxima iteração zera.
+
+**Body:** `{ qty: number>0, localizacao_destino_id: "uuid" }`.
+
+**Validação:** `qty <= qty_pendente`; loc destino existe + ativa + mesmo galpão + ≠ loc origem.
+
+**Response 200:** `{ ok: true, pendencia, origem_id, totalmente_guardada: boolean }`. **400** em validação falha; **500** em erro de DB.
+
+#### POST /api/wms/guarda/[id]/cancelar
+
+Tira a pendência da fila sem mover estoque (peça continua em RECEBIMENTO; saída física é fluxo separado — ajuste manual ou devolução fornecedor).
+
+**Body:** `{ motivo: string (≥3 chars) }`.
+
+**Response 200:** `{ ok: true, pendencia }`.
+
+#### POST /api/wms/guarda/[id]/imprimir
+
+Imprime N etiquetas (1 por unidade) pra essa pendência. Não muda status — reimprimir é seguro.
+
+**Body:** `{ qty?: number, localizacao_codigo?: string }`. `qty` default = `qty_pendente` (clampado). `localizacao_codigo` default = melhor candidato de destino (loc com saldo>0 do mesmo SKU exceto RECEBIMENTO) ou `—`.
+
+**Response 200:** `{ ok: true, jobId, totalEtiquetas, totalFolhas, printerId, printerNome, fallbackEnvelope }`. **502** se PrintNode falha.
+
+#### POST /api/wms/guarda/imprimir-lote
+
+Imprime o maço inteiro pra uma lista de pendências (bulk). Usado pelo frontend de recebimento ao confirmar lote.
+
+**Body:** `{ pendencia_ids: string[] }`. Todas precisam ser do mesmo galpão; canceladas/zeradas são puladas (volta em `ignorados[]`).
+
+**Response 200:** `{ ok: true, ignorados, jobId, totalEtiquetas, totalFolhas, fallbackEnvelope, ... }`.
 
 ### POST /api/wms/transferir-galpao
 

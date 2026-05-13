@@ -11,7 +11,10 @@ export async function GET() {
   const { data: galpoes, error } = await supabase
     .from("siso_galpoes")
     .select(`
-      id, nome, descricao, ativo, printnode_printer_id, printnode_printer_nome, criado_em, atualizado_em,
+      id, nome, descricao, ativo, cidade, estado, pais,
+      printnode_printer_id, printnode_printer_nome,
+      printnode_printer_id_produto, printnode_printer_nome_produto,
+      criado_em, atualizado_em,
       siso_empresas (
         id, nome, cnpj, ativo, criado_em, atualizado_em,
         siso_grupo_empresas (
@@ -75,16 +78,30 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { nome, descricao } = body;
+  const { nome, descricao, cidade, estado, pais } = body;
 
   if (!nome?.trim()) {
     return NextResponse.json({ error: "Nome é obrigatório" }, { status: 400 });
   }
 
+  const estadoNorm = typeof estado === "string" ? estado.trim().toUpperCase() : null;
+  if (estadoNorm && !/^[A-Z]{2}$/.test(estadoNorm)) {
+    return NextResponse.json(
+      { error: "Estado deve ter 2 letras (ex: PR, SP)" },
+      { status: 400 },
+    );
+  }
+
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("siso_galpoes")
-    .insert({ nome: nome.trim(), descricao: descricao?.trim() || null })
+    .insert({
+      nome: nome.trim(),
+      descricao: descricao?.trim() || null,
+      cidade: typeof cidade === "string" ? cidade.trim() || null : null,
+      estado: estadoNorm || null,
+      pais: typeof pais === "string" && pais.trim() ? pais.trim().toUpperCase() : "BR",
+    })
     .select("id, nome")
     .single();
 

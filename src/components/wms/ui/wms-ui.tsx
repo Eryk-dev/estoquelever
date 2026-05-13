@@ -350,7 +350,9 @@ export type StatusKey =
   | "planejada"
   | "revisao"
   | "aprovada"
-  | "cancelada";
+  | "cancelada"
+  | "em_guarda"
+  | "guardada";
 
 const STATUS_MAP: Record<StatusKey, { label: string; cls: string }> = {
   ok: { label: "OK", cls: "ok" },
@@ -372,6 +374,9 @@ const STATUS_MAP: Record<StatusKey, { label: string; cls: string }> = {
   // Outros contextos
   pendente: { label: "Pendente", cls: "warn" },
   reconciliado: { label: "Reconciliado", cls: "ok" },
+  // Guarda (put-away)
+  em_guarda: { label: "Em guarda", cls: "info" },
+  guardada: { label: "Guardada", cls: "ok" },
 };
 
 export function StatusBadge({

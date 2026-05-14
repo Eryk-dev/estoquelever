@@ -34,7 +34,8 @@ export type EventoPedido =
   | "embalagem_direta_concluida"
   | "oc_item_encontrado"
   | "oc_item_desfazer_encontrado"
-  | "oc_item_confirmado";
+  | "oc_item_confirmado"
+  | "mini_swap_executado";
 
 /**
  * Record a single event in the order history.

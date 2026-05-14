@@ -262,9 +262,12 @@ function ItemRowV2({
             {item.sku}
           </span>
           <CrossPopoverButton sku={item.sku} variant="icon" />
-          {item.fornecedorOC && (
-            <span className="wms-oc-tag">
-              <Icon name="tag" size={9} /> OC · {item.fornecedorOC}
+          {isOC && item.fornecedorOC && (
+            <span
+              className="wms-pcard-chip"
+              title={`Fornecedor sugerido: ${item.fornecedorOC}`}
+            >
+              {item.fornecedorOC}
             </span>
           )}
         </div>
@@ -278,19 +281,14 @@ function ItemRowV2({
 
         <div className="wms-pcard-item-v2-stk">
           {isOC || semEstoqueLugar ? (
-            <>
-              <span className="wms-oc-tag">
-                <Icon name="tag" size={9} /> OC
-              </span>
-              {Object.entries(item.estoques)
-                .filter(([, e]) => e.localizacao)
-                .map(([g, e]) => (
-                  <span key={g} className="wms-pcard-loc" title="Localização">
-                    <Icon name="pin" size={9} />
-                    {g}: {e.localizacao}
-                  </span>
-                ))}
-            </>
+            Object.entries(item.estoques)
+              .filter(([, e]) => e.localizacao)
+              .map(([g, e]) => (
+                <span key={g} className="wms-pcard-loc" title="Localização">
+                  <Icon name="pin" size={9} />
+                  {g}: {e.localizacao}
+                </span>
+              ))
           ) : loc ? (
             <span className="wms-pcard-loc" title="Localização">
               <Icon name="pin" size={9} />
@@ -400,6 +398,8 @@ function PedidoCardWms({ pedido, onClick, interactive }: PedidoCardWmsProps) {
             <span className="wms-pcard-cliente" title={cliente.nome}>
               {cliente.nome}
             </span>
+          </div>
+          <div className="wms-pcard-h-right">
             {empresaOrigemNome && (
               <span className="wms-pcard-chip" title="Empresa de origem">
                 {empresaOrigemNome}
@@ -422,6 +422,7 @@ function PedidoCardWms({ pedido, onClick, interactive }: PedidoCardWmsProps) {
                   color: "var(--wms-c-info)",
                   borderColor: "var(--wms-c-info-bd)",
                 }}
+                title={`Encaminhado de ${encaminhadoDe}`}
               >
                 <Icon name="arrows" size={9} />
                 Enc. {encaminhadoDe}
@@ -431,8 +432,6 @@ function PedidoCardWms({ pedido, onClick, interactive }: PedidoCardWmsProps) {
         </header>
 
         <div className="wms-pcard-meta-row">
-          <span>{getMarketplaceName(nomeEcommerce)}</span>
-          <span className="wms-pcard-meta-dot" aria-hidden />
           <span>{formatRelativeTime(criadoEm)}</span>
         </div>
 
@@ -456,6 +455,7 @@ function PedidoCardWms({ pedido, onClick, interactive }: PedidoCardWmsProps) {
                 decisao={decisao}
                 galpaoOrigem={filialOrigem}
                 galpaoFulfillment={galpaoFulfillment}
+                plain
               />
               <button
                 type="button"

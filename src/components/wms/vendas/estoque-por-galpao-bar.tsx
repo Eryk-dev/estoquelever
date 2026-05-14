@@ -37,6 +37,22 @@ interface DecisaoLabelProps {
   galpaoFulfillment?: string | null;
   /** Mostrar versão compacta (sem texto longo, só ícone+galpão) */
   compact?: boolean;
+  /**
+   * Variante "plain": sem fundo/borda, apenas ícone + texto colorido.
+   * Usar em footers de card e linhas compactas onde a tarja lateral já
+   * comunica a decisão e o chip preenchido vira ruído visual.
+   */
+  plain?: boolean;
+  /**
+   * Plano 4 — detalhes de swap pra tooltip (debug/transparência).
+   * Quando presente, mostra "Vai swappar X unidades com Empresa Y" no title.
+   * Operador continua vendo só galpão.
+   */
+  swapDetalhes?: Array<{
+    qty: number;
+    empresa_par_nome: string;
+    galpao_par_nome: string;
+  }>;
 }
 
 interface ReservaIndicatorProps {
@@ -126,14 +142,35 @@ function EstoquePorGalpaoBar(props: EstoquePorGalpaoBarProps) {
 }
 
 function DecisaoLabel(props: DecisaoLabelProps) {
-  const { decisao, galpaoOrigem, galpaoFulfillment, compact } = props;
-  const className = `wms-dec-label is-${decisao}`;
+  const { decisao, galpaoOrigem, galpaoFulfillment, compact, plain, swapDetalhes } = props;
+  const className = [
+    "wms-dec-label",
+    `is-${decisao}`,
+    plain ? "is-plain" : "",
+    plain && compact ? "is-compact" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  // Tooltip de swap (Plano 4) — montado quando há swapDetalhes
+  const swapTitle =
+    swapDetalhes && swapDetalhes.length > 0
+      ? swapDetalhes
+          .map(
+            (s) =>
+              `Vai swappar ${s.qty} unidade${s.qty === 1 ? "" : "s"} com ${s.empresa_par_nome} (espelho em ${s.galpao_par_nome})`,
+          )
+          .join("\n")
+      : undefined;
 
   if (decisao === "propria") {
     return (
-      <span className={className}>
+      <span className={className} title={swapTitle}>
         <span className="wms-dec-arrow">↑</span>
         {compact ? galpaoOrigem : `Sai daqui (${galpaoOrigem})`}
+        {swapDetalhes && swapDetalhes.length > 0 ? (
+          <span className="wms-dec-badge" aria-label="swap">⇄</span>
+        ) : null}
       </span>
     );
   }
@@ -141,7 +178,7 @@ function DecisaoLabel(props: DecisaoLabelProps) {
   if (decisao === "transferencia") {
     const from = galpaoFulfillment ?? "?";
     return (
-      <span className={className}>
+      <span className={className} title={swapTitle}>
         {from} <span className="wms-dec-arrow">→</span> {galpaoOrigem}
       </span>
     );

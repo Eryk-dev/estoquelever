@@ -1659,6 +1659,18 @@
 .wms-dec-label.is-transferencia { background: var(--wms-c-info-bg);   color: var(--wms-c-info);   border-color: var(--wms-c-info-bd); }
 .wms-dec-label.is-oc            { background: var(--wms-c-warn-bg);   color: var(--wms-c-warn);   border-color: var(--wms-c-warn-bd); }
 
+/* Variante "plain" — sem fundo/borda. Usada em footers e linhas compactas
+   onde a tarja lateral + tipografia já comunicam a decisão. */
+.wms-dec-label.is-plain {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+  font-weight: 600;
+  font-size: 13px;
+}
+.wms-dec-label.is-plain .wms-dec-arrow { font-size: 14px; line-height: 1; }
+.wms-dec-label.is-plain.is-compact { font-size: 12px; font-weight: 600; }
+
 /* ============================================================
    Vendas — tabs grossas de status_separacao (Decisão D7)
    Preserva paradigma legado, reestilizado no DNA WMS
@@ -2145,16 +2157,55 @@
 .wms-pcard-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   padding: 12px 14px;
   flex: 1;
   min-width: 0;
 }
 
-.wms-pcard-meta-row {
+/* Header v2 — uma linha: número + EC + cliente (flex), cluster de chips à direita.
+   Wrap-friendly pra telas estreitas. */
+.wms-pcard-wrap .wms-pcard-h {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.wms-pcard-wrap .wms-pcard-h-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+.wms-pcard-h-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.wms-pcard-wrap .wms-pcard-cliente {
+  font-size: 13px;
+  color: var(--wms-c-fg-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wms-pcard-wrap .wms-pcard-num {
+  flex-shrink: 0;
+}
+
+.wms-pcard-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--wms-c-mute);
   flex-wrap: wrap;
@@ -2491,6 +2542,12 @@
 .wms-pcard-compact-arrow {
   color: var(--wms-c-mute-2);
   display: inline-flex;
+  flex-shrink: 0;
+}
+.wms-pcard-compact-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   flex-shrink: 0;
 }
 .wms-pcard-compact-resolutor {

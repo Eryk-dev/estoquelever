@@ -103,19 +103,21 @@ function PedidoCardConcluidoWms({
             {pedido.cliente.nome}
           </span>
 
-          <span
-            className="wms-pcard-chip"
-            title={getMarketplaceName(pedido.nomeEcommerce)}
-          >
-            {getEcommerceAbbr(pedido.nomeEcommerce)}
-          </span>
-
-          <span className={galpaoChipClass(pedido.filialOrigem)}>
-            {pedido.filialOrigem}
-          </span>
-
-          <span className="wms-pcard-compact-arrow" aria-hidden>
-            <Icon name="arrow-right" size={10} />
+          <span className="wms-pcard-compact-chips">
+            {pedido.empresaOrigemNome && (
+              <span className="wms-pcard-chip" title="Empresa de origem">
+                {pedido.empresaOrigemNome}
+              </span>
+            )}
+            <span
+              className="wms-pcard-chip"
+              title={getMarketplaceName(pedido.nomeEcommerce)}
+            >
+              {getEcommerceAbbr(pedido.nomeEcommerce)}
+            </span>
+            <span className={galpaoChipClass(pedido.filialOrigem)}>
+              {pedido.filialOrigem}
+            </span>
           </span>
 
           <DecisaoLabel
@@ -123,13 +125,15 @@ function PedidoCardConcluidoWms({
             galpaoOrigem={pedido.filialOrigem}
             galpaoFulfillment={galpaoFulfillment}
             compact
+            plain
           />
 
           <span
             style={{
-              color: "var(--wms-c-mute)",
+              color: "var(--wms-c-ok)",
               display: "inline-flex",
               alignItems: "center",
+              flexShrink: 0,
             }}
             aria-label="Concluído"
             title="Concluído"

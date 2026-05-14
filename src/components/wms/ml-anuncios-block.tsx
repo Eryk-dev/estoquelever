@@ -30,10 +30,19 @@ interface Anuncio {
   listing_type_id: string | null;
 }
 
+interface ContaSummary {
+  conexao_id: string;
+  nickname: string;
+  total: number;
+  ativos: number;
+  erro: string | null;
+}
+
 interface ApiResp {
   anuncios: Anuncio[];
   contas_consultadas: number;
   contas_com_erro: Array<{ conexao_id: string; nickname: string; erro: string }>;
+  contas: ContaSummary[];
 }
 
 function statusLabel(status: string | null): {
@@ -113,43 +122,29 @@ export function MlAnunciosBlock({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sku]);
 
-  const total = data?.anuncios.length ?? 0;
-  const ativosCount =
-    data?.anuncios.filter((a) => a.status === "active").length ?? 0;
-
-  // Estado visual do indicador no botão (mesmo colapsado)
-  // - loading: cinza neutro
-  // - tem anúncio ativo: verde
-  // - tem anúncio mas nenhum ativo: amarelo
-  // - nenhum anúncio: vermelho
-  // - erro ou sem contas: cinza
+  // Badge único pros estados sem dado/erro/loading/sem-contas; quando tem
+  // dado, renderiza 1 chip por conta (ver loop abaixo).
   let statusBadge: { cls: string; text: string } | null = null;
   if (loading || refreshing) {
     statusBadge = { cls: "wms-badge-mute", text: "consultando…" };
   } else if (error) {
     statusBadge = { cls: "wms-badge-mute", text: "erro" };
-  } else if (data) {
-    if (data.contas_consultadas === 0) {
-      statusBadge = { cls: "wms-badge-mute", text: "sem contas" };
-    } else if (ativosCount > 0) {
-      statusBadge = {
-        cls: "wms-badge-ok",
-        text: `${ativosCount} ativo${ativosCount > 1 ? "s" : ""}`,
-      };
-    } else if (total > 0) {
-      statusBadge = {
+  } else if (data && data.contas_consultadas === 0) {
+    statusBadge = { cls: "wms-badge-mute", text: "sem contas" };
+  }
+
+  // Resumo por conta — verde se tem ativo, amarelo se só inativo, vermelho
+  // se 0, cinza se erro
+  function contaChip(c: ContaSummary): { cls: string; text: string } {
+    if (c.erro) return { cls: "wms-badge-mute", text: `${c.nickname} (erro)` };
+    if (c.ativos > 0)
+      return { cls: "wms-badge-ok", text: `${c.nickname} (${c.ativos})` };
+    if (c.total > 0)
+      return {
         cls: "wms-badge-warn",
-        text: `${total} inativo${total > 1 ? "s" : ""}`,
+        text: `${c.nickname} (${c.total} inativo${c.total > 1 ? "s" : ""})`,
       };
-    } else if (
-      data.contas_com_erro.length > 0 &&
-      data.contas_com_erro.length === data.contas_consultadas
-    ) {
-      // todas as contas erraram → erro de auth, não "sem anúncio"
-      statusBadge = { cls: "wms-badge-mute", text: "erro auth" };
-    } else {
-      statusBadge = { cls: "wms-badge-danger", text: "sem anúncio" };
-    }
+    return { cls: "wms-badge-danger", text: `${c.nickname} (0)` };
   }
 
   return (
@@ -186,6 +181,20 @@ export function MlAnunciosBlock({
             {statusBadge.text}
           </span>
         )}
+        {!statusBadge &&
+          data?.contas.map((c) => {
+            const chip = contaChip(c);
+            return (
+              <span
+                key={c.conexao_id}
+                className={`wms-badge ${chip.cls}`}
+                style={{ fontSize: 10 }}
+                title={c.erro ?? undefined}
+              >
+                {chip.text}
+              </span>
+            );
+          })}
       </button>
 
       {open && (

@@ -129,10 +129,22 @@ export async function getAnunciosPorSku(
   anuncios: AnuncioMl[];
   contas_consultadas: number;
   contas_com_erro: Array<{ conexao_id: string; nickname: string; erro: string }>;
+  contas: Array<{
+    conexao_id: string;
+    nickname: string;
+    total: number;
+    ativos: number;
+    erro: string | null;
+  }>;
 }> {
   const skuNorm = sku.trim();
   if (!skuNorm) {
-    return { anuncios: [], contas_consultadas: 0, contas_com_erro: [] };
+    return {
+      anuncios: [],
+      contas_consultadas: 0,
+      contas_com_erro: [],
+      contas: [],
+    };
   }
 
   let conns = await listActiveConnections();
@@ -194,9 +206,25 @@ export async function getAnunciosPorSku(
     return a.conta_nickname.localeCompare(b.conta_nickname);
   });
 
+  // Resumo por conta — usado pelo bloco do recebimento pra mostrar
+  // 1 chip por conta (nickname + contagem + cor) sem precisar expandir.
+  const contas = conns.map((c) => {
+    const anuncios = flat.filter((a) => a.conexao_id === c.id);
+    const ativos = anuncios.filter((a) => a.status === "active").length;
+    const erro = erros.find((e) => e.conexao_id === c.id);
+    return {
+      conexao_id: c.id,
+      nickname: c.nickname,
+      total: anuncios.length,
+      ativos,
+      erro: erro?.erro ?? null,
+    };
+  });
+
   return {
     anuncios: flat,
     contas_consultadas: conns.length,
     contas_com_erro: erros,
+    contas,
   };
 }

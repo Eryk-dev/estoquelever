@@ -11,6 +11,8 @@ export async function GET(req: NextRequest) {
   try {
     const ativoParam = sp.get("ativo");
     const incluirKits = sp.get("incluir_kits_por_componente");
+    const ehKitParam = sp.get("eh_kit");
+    const semSincronia = sp.get("sem_sincronia");
     const result = await listarProdutos({
       q: sp.get("q") ?? undefined,
       ativo: ativoParam === "false" ? false : ativoParam === "true" ? true : undefined,
@@ -18,6 +20,14 @@ export async function GET(req: NextRequest) {
       offset: sp.get("offset") ? Number(sp.get("offset")) : 0,
       incluir_kits_por_componente:
         incluirKits === "true" || incluirKits === "1",
+      eh_kit:
+        ehKitParam === "true"
+          ? true
+          : ehKitParam === "false"
+            ? false
+            : undefined,
+      sincronizado_apos: sp.get("sincronizado_apos") ?? undefined,
+      sem_sincronia: semSincronia === "true" || semSincronia === "1",
     });
     return NextResponse.json(result);
   } catch (e) {

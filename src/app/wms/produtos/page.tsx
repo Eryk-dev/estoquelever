@@ -14,8 +14,13 @@ import { ProdutoDrawer } from "@/components/wms/produto-drawer";
 import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import type { Produto } from "@/lib/wms/types";
 
+type TipoFiltro = "todos" | "kit" | "simples";
+type SincFiltro = "tudo" | "24h" | "7d" | "30d" | "sem";
+
 export default function ProdutosPage() {
   const [q, setQ] = useState("");
+  const [tipoFiltro, setTipoFiltro] = useState<TipoFiltro>("todos");
+  const [sincFiltro, setSincFiltro] = useState<SincFiltro>("tudo");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 100;
   const [lightbox, setLightbox] = useState<{
@@ -32,6 +37,16 @@ export default function ProdutosPage() {
   // vazia após buscar termo com poucos resultados).
   const handleSearchChange = (value: string) => {
     setQ(value);
+    setPage(1);
+  };
+
+  const handleTipoChange = (value: TipoFiltro) => {
+    setTipoFiltro(value);
+    setPage(1);
+  };
+
+  const handleSincChange = (value: SincFiltro) => {
+    setSincFiltro(value);
     setPage(1);
   };
 
@@ -56,13 +71,28 @@ export default function ProdutosPage() {
   }, [router, searchParams]);
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["wms-produtos", q, page],
-    queryFn: () =>
-      wmsApi<{ rows: Produto[]; total: number; kits_por_componente?: number }>(
-        `/api/wms/produtos?q=${encodeURIComponent(q)}&limit=${PAGE_SIZE}&offset=${
-          (page - 1) * PAGE_SIZE
-        }&incluir_kits_por_componente=${q ? "true" : "false"}`,
-      ),
+    queryKey: ["wms-produtos", q, page, tipoFiltro, sincFiltro],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.set("q", q);
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String((page - 1) * PAGE_SIZE));
+      params.set("incluir_kits_por_componente", q ? "true" : "false");
+      if (tipoFiltro === "kit") params.set("eh_kit", "true");
+      else if (tipoFiltro === "simples") params.set("eh_kit", "false");
+      if (sincFiltro === "sem") {
+        params.set("sem_sincronia", "true");
+      } else if (sincFiltro !== "tudo") {
+        const horas = sincFiltro === "24h" ? 24 : sincFiltro === "7d" ? 24 * 7 : 24 * 30;
+        const desde = new Date(Date.now() - horas * 3600 * 1000).toISOString();
+        params.set("sincronizado_apos", desde);
+      }
+      return wmsApi<{
+        rows: Produto[];
+        total: number;
+        kits_por_componente?: number;
+      }>(`/api/wms/produtos?${params.toString()}`);
+    },
   });
 
   const sync = useMutation({
@@ -94,7 +124,7 @@ export default function ProdutosPage() {
           <input
             value={q}
             onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder="SKU, descrição ou GTIN…"
+            placeholder="SKU, descrição, GTIN, localização ou cód. fornecedor…"
           />
           {q && (
             <button
@@ -105,6 +135,28 @@ export default function ProdutosPage() {
             </button>
           )}
         </div>
+        <select
+          className="wms-select"
+          value={tipoFiltro}
+          onChange={(e) => handleTipoChange(e.target.value as TipoFiltro)}
+          style={{ width: 170 }}
+        >
+          <option value="todos">Tipo: todos</option>
+          <option value="kit">Kits</option>
+          <option value="simples">Produtos simples</option>
+        </select>
+        <select
+          className="wms-select"
+          value={sincFiltro}
+          onChange={(e) => handleSincChange(e.target.value as SincFiltro)}
+          style={{ width: 200 }}
+        >
+          <option value="tudo">Sincronização: tudo</option>
+          <option value="24h">Últimas 24h</option>
+          <option value="7d">Últimos 7 dias</option>
+          <option value="30d">Últimos 30 dias</option>
+          <option value="sem">Sem sincronia</option>
+        </select>
       </div>
 
       {isLoading && (
@@ -119,11 +171,13 @@ export default function ProdutosPage() {
       {!isLoading && rows.length === 0 && (
         <div className="wms-empty-block">
           <h3>
-            {q ? "Nenhum produto encontrado" : "Nenhum produto cadastrado"}
+            {q || tipoFiltro !== "todos" || sincFiltro !== "tudo"
+              ? "Nenhum produto encontrado"
+              : "Nenhum produto cadastrado"}
           </h3>
           <p>
-            {q
-              ? `Tente outra busca por SKU, descrição ou GTIN.`
+            {q || tipoFiltro !== "todos" || sincFiltro !== "tudo"
+              ? "Tente afrouxar os filtros ou a busca."
               : "Sincronize com o Tiny para popular o catálogo."}
           </p>
         </div>

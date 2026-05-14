@@ -11,22 +11,72 @@ export async function listarProdutos(
     /** Quando true, anexa ao final da lista kits cujos componentes
      *  casam com `q` mas que não apareceram nos resultados diretos. */
     incluir_kits_por_componente?: boolean;
+    /** Filtra por kit (true), produto simples (false) ou ambos (undefined). */
+    eh_kit?: boolean;
+    /** ISO timestamp — retorna apenas produtos sincronizados após esta data
+     *  (ou nunca sincronizados quando `sem_sincronia=true`). */
+    sincronizado_apos?: string;
+    /** Retorna apenas produtos sem sincronização. Mutuamente exclusivo com
+     *  `sincronizado_apos`. */
+    sem_sincronia?: boolean;
   } = {},
 ): Promise<{ rows: Produto[]; total: number; kits_por_componente?: number }> {
   const sb = createServiceClient();
   const limit = filtros.limit ?? 50;
   const offset = filtros.offset ?? 0;
+
+  // Pré-resolve IDs adicionais quando q também pode bater com código de
+  // fornecedor ou código de localização (cross-table search).
+  let extraIds: Set<string> | null = null;
+  if (filtros.q && filtros.q.trim().length > 0) {
+    const term = filtros.q.trim();
+    const ids = new Set<string>();
+    // codigo_fornecedor (siso_produto_fornecedores)
+    const { data: forRows } = await sb
+      .from("siso_produto_fornecedores")
+      .select("produto_id")
+      .ilike("codigo_fornecedor", `%${term}%`)
+      .limit(500);
+    for (const r of (forRows ?? []) as Array<{ produto_id: string }>) {
+      ids.add(r.produto_id);
+    }
+    // localizacao codigo (siso_estoque join siso_localizacoes)
+    const { data: estRows } = await sb
+      .from("siso_estoque")
+      .select("produto_id, localizacao:siso_localizacoes!inner(codigo)")
+      .ilike("localizacao.codigo", `%${term}%`)
+      .gt("saldo", 0)
+      .limit(500);
+    for (const r of (estRows ?? []) as Array<{ produto_id: string }>) {
+      ids.add(r.produto_id);
+    }
+    if (ids.size > 0) extraIds = ids;
+  }
+
   let q = sb
     .from("siso_produtos")
     .select("*", { count: "exact" })
     .order("sku", { ascending: true })
     .range(offset, offset + limit - 1);
   if (filtros.q) {
-    q = q.or(
-      `sku.ilike.%${filtros.q}%,descricao.ilike.%${filtros.q}%,gtin.eq.${filtros.q}`,
-    );
+    const term = filtros.q.trim();
+    const orClauses = [
+      `sku.ilike.%${term}%`,
+      `descricao.ilike.%${term}%`,
+      `gtin.eq.${term}`,
+    ];
+    if (extraIds && extraIds.size > 0) {
+      orClauses.push(`id.in.(${[...extraIds].join(",")})`);
+    }
+    q = q.or(orClauses.join(","));
   }
   if (filtros.ativo !== undefined) q = q.eq("ativo", filtros.ativo);
+  if (filtros.eh_kit !== undefined) q = q.eq("eh_kit", filtros.eh_kit);
+  if (filtros.sem_sincronia) {
+    q = q.is("sincronizado_em", null);
+  } else if (filtros.sincronizado_apos) {
+    q = q.gte("sincronizado_em", filtros.sincronizado_apos);
+  }
   const { data, error, count } = await q;
   if (error) throw error;
   const rows = (data ?? []) as Produto[];

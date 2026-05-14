@@ -12,11 +12,7 @@
  * chamar a API ML novamente.
  */
 import { createServiceClient } from "./supabase-server";
-import {
-  searchSellerItemsBySku,
-  getMlItemsDetails,
-  type MlItem,
-} from "./ml-api";
+import { searchAndMatchItemsBySku, type MlItem } from "./ml-api";
 import { logger } from "./logger";
 
 export interface AnuncioMl {
@@ -157,8 +153,11 @@ export async function getAnunciosPorSku(
             return cached.map((a) => ({ ...a, conta_nickname: c.nickname }));
           }
         }
-        const ids = await searchSellerItemsBySku(c.id, c.ml_user_id, skuNorm);
-        const items = ids.length > 0 ? await getMlItemsDetails(c.id, ids) : [];
+        const items = await searchAndMatchItemsBySku(
+          c.id,
+          c.ml_user_id,
+          skuNorm,
+        );
         await persistCache(c.id, skuNorm, items);
         return items.map<AnuncioMl>((it) => ({
           conexao_id: c.id,

@@ -24,6 +24,33 @@ export interface MlItemSearchResp {
   results: string[]; // array de MLB ids
 }
 
+export interface MlAttribute {
+  id: string;
+  name?: string;
+  value_name?: string | null;
+  value_id?: string | null;
+  values?: Array<{
+    id?: string | null;
+    name?: string | null;
+    struct?: unknown;
+  }>;
+}
+
+export interface MlVariation {
+  id: number | string;
+  seller_custom_field?: string | null;
+  attributes?: MlAttribute[];
+  attribute_combinations?: Array<{
+    id: string;
+    name?: string;
+    value_name?: string | null;
+  }>;
+  available_quantity?: number;
+  sold_quantity?: number;
+  price?: number;
+  picture_ids?: string[];
+}
+
 export interface MlItem {
   id: string;
   title: string;
@@ -36,7 +63,8 @@ export interface MlItem {
   thumbnail?: string;
   listing_type_id?: string;
   seller_custom_field?: string | null;
-  attributes?: Array<{ id: string; name: string; value_name: string | null }>;
+  attributes?: MlAttribute[];
+  variations?: MlVariation[];
 }
 
 // ─── Fetch genérico com auto-refresh em 401 ─────────────────────────
@@ -82,10 +110,16 @@ export function getMlUserMe(connectionId: string): Promise<MlUserMe> {
 
 /**
  * Busca anúncios por SKU usando os 2 caminhos suportados pelo ML:
- *   1. seller_custom_field (SKU livre no anúncio)
- *   2. seller_sku (atributo padronizado SELLER_SKU)
+ *   1. ?sku=… (seller_custom_field do item)
+ *   2. ?seller_sku=… (atributo padronizado SELLER_SKU do item)
  *
- * Retorna a união (dedupe) de MLB ids encontrados.
+ * Os dois endpoints buscam apenas no nível ITEM — não enxergam SKUs que
+ * vivem só dentro de `variations[]`. Por isso o filtro final por SKU é
+ * feito em `searchAndMatchItemsBySku()` aplicando match também nas
+ * variações do item baixado.
+ *
+ * Pagina via offset até esgotar (limit=100/page, máx 1000 resultados —
+ * limite do endpoint público do ML).
  */
 export async function searchSellerItemsBySku(
   connectionId: string,
@@ -93,37 +127,106 @@ export async function searchSellerItemsBySku(
   sku: string,
 ): Promise<string[]> {
   const enc = encodeURIComponent(sku);
-  const [byCustomField, bySellerSku] = await Promise.allSettled([
-    mlFetch<MlItemSearchResp>(
-      connectionId,
-      `/users/${sellerId}/items/search?sku=${enc}&limit=50`,
-    ),
-    mlFetch<MlItemSearchResp>(
-      connectionId,
-      `/users/${sellerId}/items/search?seller_sku=${enc}&limit=50`,
-    ),
-  ]);
-
   const ids = new Set<string>();
-  if (byCustomField.status === "fulfilled") {
-    byCustomField.value.results.forEach((id) => ids.add(id));
-  } else {
-    logger.warn("ml-api", "search by sku falhou", {
-      connectionId,
-      sku,
-      err: String(byCustomField.reason),
-    });
+
+  async function paginate(param: "sku" | "seller_sku"): Promise<void> {
+    const LIMIT = 100;
+    let offset = 0;
+    while (offset < 1000) {
+      let page: MlItemSearchResp;
+      try {
+        page = await mlFetch<MlItemSearchResp>(
+          connectionId,
+          `/users/${sellerId}/items/search?${param}=${enc}&limit=${LIMIT}&offset=${offset}`,
+        );
+      } catch (err) {
+        logger.warn("ml-api", `search by ${param} falhou`, {
+          connectionId,
+          sku,
+          offset,
+          err: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+      page.results.forEach((id) => ids.add(id));
+      const total = page.paging?.total ?? 0;
+      offset += LIMIT;
+      if (offset >= total || page.results.length === 0) return;
+    }
   }
-  if (bySellerSku.status === "fulfilled") {
-    bySellerSku.value.results.forEach((id) => ids.add(id));
-  } else {
-    logger.warn("ml-api", "search by seller_sku falhou", {
-      connectionId,
-      sku,
-      err: String(bySellerSku.reason),
-    });
-  }
+
+  await Promise.all([paginate("sku"), paginate("seller_sku")]);
   return Array.from(ids);
+}
+
+// ─── SKU extraction helpers (espelho do Levercopy/item_copier.py) ───
+
+function readSellerSkuFromAttrs(attrs?: MlAttribute[]): string | null {
+  if (!attrs) return null;
+  for (const a of attrs) {
+    if (a.id !== "SELLER_SKU") continue;
+    if (a.value_name && a.value_name.trim()) return a.value_name.trim();
+    if (a.value_id && String(a.value_id).trim()) return String(a.value_id).trim();
+    if (Array.isArray(a.values)) {
+      for (const v of a.values) {
+        if (v?.name && String(v.name).trim()) return String(v.name).trim();
+        if (v?.id && String(v.id).trim()) return String(v.id).trim();
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Coleta TODOS os SKUs que aparecem num MlItem — top-level + variações.
+ * Usado pra confirmar match no nível da aplicação, depois que o search
+ * do ML devolveu o item.
+ */
+export function collectAllSkusFromItem(item: MlItem): string[] {
+  const out = new Set<string>();
+  if (item.seller_custom_field && item.seller_custom_field.trim()) {
+    out.add(item.seller_custom_field.trim());
+  }
+  const top = readSellerSkuFromAttrs(item.attributes);
+  if (top) out.add(top);
+  for (const v of item.variations ?? []) {
+    if (v.seller_custom_field && v.seller_custom_field.trim()) {
+      out.add(v.seller_custom_field.trim());
+    }
+    const fromAttr = readSellerSkuFromAttrs(v.attributes);
+    if (fromAttr) out.add(fromAttr);
+  }
+  return Array.from(out);
+}
+
+/**
+ * Faz match case-insensitive de SKUs (trim aplicado).
+ */
+export function skusMatch(a: string, b: string): boolean {
+  return a.trim().toLocaleUpperCase() === b.trim().toLocaleUpperCase();
+}
+
+/**
+ * Pipeline completa: busca MLB ids por SKU, baixa detalhes (incluindo
+ * variações) e filtra deixando só anúncios que TÊM o SKU buscado em
+ * qualquer um dos 4 lugares onde o ML guarda SKU (item-top, item-attr,
+ * variation-top, variation-attr).
+ *
+ * Isso fecha o gap do search nativo do ML, que não procura dentro de
+ * `variations[]` — é o motivo principal de SKUs de variação sumirem
+ * com o approach simples de 2 endpoints.
+ */
+export async function searchAndMatchItemsBySku(
+  connectionId: string,
+  sellerId: number,
+  sku: string,
+): Promise<MlItem[]> {
+  const ids = await searchSellerItemsBySku(connectionId, sellerId, sku);
+  if (ids.length === 0) return [];
+  const items = await getMlItemsDetails(connectionId, ids);
+  return items.filter((it) =>
+    collectAllSkusFromItem(it).some((s) => skusMatch(s, sku)),
+  );
 }
 
 /**
@@ -142,7 +245,8 @@ export async function getMlItemsDetails(
     const slice = itemIds.slice(i, i + 20);
     const attributes =
       "id,title,price,currency_id,status,permalink,available_quantity," +
-      "sold_quantity,thumbnail,listing_type_id,seller_custom_field,attributes";
+      "sold_quantity,thumbnail,listing_type_id,seller_custom_field,attributes," +
+      "variations";
     const resp = await mlFetch<
       Array<{ code: number; body: MlItem }>
     >(

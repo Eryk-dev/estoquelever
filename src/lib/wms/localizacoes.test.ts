@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { gerarCodigosLote, LOTE_MAX_TOTAL } from "./localizacoes";
 
 describe("gerarCodigosLote", () => {
-  it("caso canônico A-01-01 .. A-10-10 = 100 códigos", () => {
+  it("caso canônico A-01-1 .. A-10-10 = 100 códigos", () => {
     const r = gerarCodigosLote({
       prefixo: "A",
       h_inicio: 1,
@@ -25,16 +25,16 @@ describe("gerarCodigosLote", () => {
       v_fim: 3,
     });
     expect(r.codigos).toEqual([
-      "A-01-01",
-      "A-01-02",
-      "A-01-03",
-      "A-02-01",
-      "A-02-02",
-      "A-02-03",
+      "A-01-1",
+      "A-01-2",
+      "A-01-3",
+      "A-02-1",
+      "A-02-2",
+      "A-02-3",
     ]);
   });
 
-  it("padding mínimo de 2 sempre", () => {
+  it("prédio padded 2-dígitos, andar sem padding até 9", () => {
     const r = gerarCodigosLote({
       prefixo: "A",
       h_inicio: 1,
@@ -42,11 +42,11 @@ describe("gerarCodigosLote", () => {
       v_inicio: 1,
       v_fim: 5,
     });
-    expect(r.codigos[0]).toBe("A-01-01");
-    expect(r.codigos[r.codigos.length - 1]).toBe("A-05-05");
+    expect(r.codigos[0]).toBe("A-01-1");
+    expect(r.codigos[r.codigos.length - 1]).toBe("A-05-5");
   });
 
-  it("padding cresce quando fim > 99", () => {
+  it("prédio padding cresce quando fim > 99", () => {
     const r = gerarCodigosLote({
       prefixo: "A",
       h_inicio: 1,
@@ -54,12 +54,12 @@ describe("gerarCodigosLote", () => {
       v_inicio: 1,
       v_fim: 5,
     });
-    expect(r.codigos[0]).toBe("A-001-01");
-    expect(r.codigos[r.codigos.length - 1]).toBe("A-100-05");
+    expect(r.codigos[0]).toBe("A-001-1");
+    expect(r.codigos[r.codigos.length - 1]).toBe("A-100-5");
     expect(r.total).toBe(500);
   });
 
-  it("padding independente por eixo", () => {
+  it("andar > 9 vira 2 dígitos naturalmente", () => {
     const r = gerarCodigosLote({
       prefixo: "B",
       h_inicio: 1,
@@ -80,7 +80,7 @@ describe("gerarCodigosLote", () => {
       v_fim: 3,
     });
     expect(r.total).toBe(1);
-    expect(r.codigos).toEqual(["A-05-03"]);
+    expect(r.codigos).toEqual(["A-05-3"]);
   });
 
   it("separador customizável", () => {
@@ -92,7 +92,7 @@ describe("gerarCodigosLote", () => {
       v_fim: 1,
       separador: ".",
     });
-    expect(r.codigos[0]).toBe("A.01.01");
+    expect(r.codigos[0]).toBe("A.01.1");
   });
 
   it("rejeita início > fim", () => {

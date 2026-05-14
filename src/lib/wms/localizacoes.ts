@@ -52,7 +52,7 @@ export function gerarCodigosLote(input: LoteCodigosInput): LoteCodigosResult {
   }
 
   const hPad = Math.max(2, String(h_fim).length);
-  const vPad = Math.max(2, String(v_fim).length);
+  const vPad = String(v_fim).length;
 
   const codigos: string[] = [];
   for (let h = h_inicio; h <= h_fim; h++) {

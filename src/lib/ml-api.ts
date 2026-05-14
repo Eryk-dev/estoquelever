@@ -74,7 +74,9 @@ async function mlFetch<T>(
   path: string,
   init?: RequestInit & { retried?: boolean },
 ): Promise<T> {
-  const token = await getValidMlToken(connectionId);
+  const token = await getValidMlToken(connectionId, {
+    forceRefresh: init?.retried === true,
+  });
   const headers = new Headers(init?.headers);
   headers.set("Authorization", `Bearer ${token}`);
   headers.set("Accept", "application/json");
@@ -82,15 +84,14 @@ async function mlFetch<T>(
   const url = path.startsWith("http") ? path : `${ML_API_BASE}${path}`;
   const res = await fetch(url, { ...init, headers });
 
-  // 401 → 1 retry (em caso de expiração no meio do voo)
+  // 401 → 1 retry passando forceRefresh pra getValidMlToken (que cuida do
+  // single-flight + claim de lease). Não mexemos mais direto em expires_at
+  // — isso criava refresh duplicado sob concorrência.
   if (res.status === 401 && !init?.retried) {
-    logger.info("ml-api", "401 — forçando refresh + retry", { connectionId, path });
-    // força refresh setando expires_at no passado
-    const { createServiceClient } = await import("./supabase-server");
-    await createServiceClient()
-      .from("siso_ml_connections")
-      .update({ token_expires_at: new Date(Date.now() - 1000).toISOString() })
-      .eq("id", connectionId);
+    logger.info("ml-api", "401 — forçando refresh + retry", {
+      connectionId,
+      path,
+    });
     return mlFetch<T>(connectionId, path, { ...init, retried: true });
   }
 

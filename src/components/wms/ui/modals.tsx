@@ -14,6 +14,7 @@ import { Icon, Modal, Field, fmtNum, useAutoFocus } from "./wms-ui";
 import { wmsApi } from "@/lib/wms/api-client";
 import { sisoFetch } from "@/lib/auth-context";
 import type { Produto, Localizacao, TipoLocalizacao } from "@/lib/wms/types";
+import { MlAnunciosBlock } from "@/components/wms/ml-anuncios-block";
 
 // ──────────────────────────────────────────────────────────────────
 // Empresa / Galpão queries — leves, com cache de 5min
@@ -631,6 +632,8 @@ export function ReceberModal({
       <Field label="Produto" required>
         <ProdutoCombo value={pid} onChange={setPid} autoFocus={!seed?.produto} />
       </Field>
+
+      {pid && <MlAnunciosBlock sku={pid.sku} />}
 
       <div className="wms-row-2">
         <Field label="Quantidade" required>

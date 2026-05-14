@@ -176,10 +176,12 @@ function DecisaoLabel(props: DecisaoLabelProps) {
   }
 
   if (decisao === "transferencia") {
-    const from = galpaoFulfillment ?? "?";
+    // Leitura: "pedido em ORIGEM precisa de FONTE" — origem do pedido aponta
+    // pra fonte do estoque. É a perspectiva do operador que recebeu o pedido.
+    const fonte = galpaoFulfillment ?? "?";
     return (
       <span className={className} title={swapTitle}>
-        {from} <span className="wms-dec-arrow">→</span> {galpaoOrigem}
+        {galpaoOrigem} <span className="wms-dec-arrow">→</span> {fonte}
       </span>
     );
   }

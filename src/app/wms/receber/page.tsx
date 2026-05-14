@@ -20,6 +20,7 @@ import {
 } from "@/components/wms/ui/modals";
 import { useWmsModals } from "@/components/wms/wms-shell";
 import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
+import { MlAnunciosBlock } from "@/components/wms/ml-anuncios-block";
 import type { Produto } from "@/lib/wms/types";
 
 type Tab = "individual" | "lote";
@@ -907,6 +908,10 @@ function ItemLoteRow({
             }}
           />
         </div>
+      )}
+
+      {item.produto && (
+        <MlAnunciosBlock sku={item.produto.sku} />
       )}
     </div>
   );

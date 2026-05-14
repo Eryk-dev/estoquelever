@@ -105,20 +105,46 @@ export function MlAnunciosBlock({
     [sku],
   );
 
-  // Quando expandir pela primeira vez, busca
-  useEffect(() => {
-    if (open && !data && !loading) load(false);
-  }, [open, data, loading, load]);
-
-  // Reset ao trocar de SKU
+  // Reset + auto-fetch ao trocar de SKU (mesmo colapsado, pro indicador colorido)
   useEffect(() => {
     setData(null);
     setError(null);
+    if (sku) load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sku]);
 
   const total = data?.anuncios.length ?? 0;
   const ativosCount =
     data?.anuncios.filter((a) => a.status === "active").length ?? 0;
+
+  // Estado visual do indicador no botão (mesmo colapsado)
+  // - loading: cinza neutro
+  // - tem anúncio ativo: verde
+  // - tem anúncio mas nenhum ativo: amarelo
+  // - nenhum anúncio: vermelho
+  // - erro ou sem contas: cinza
+  let statusBadge: { cls: string; text: string } | null = null;
+  if (loading || refreshing) {
+    statusBadge = { cls: "wms-badge-mute", text: "consultando…" };
+  } else if (error) {
+    statusBadge = { cls: "wms-badge-mute", text: "erro" };
+  } else if (data) {
+    if (data.contas_consultadas === 0) {
+      statusBadge = { cls: "wms-badge-mute", text: "sem contas" };
+    } else if (ativosCount > 0) {
+      statusBadge = {
+        cls: "wms-badge-ok",
+        text: `${ativosCount} ativo${ativosCount > 1 ? "s" : ""}`,
+      };
+    } else if (total > 0) {
+      statusBadge = {
+        cls: "wms-badge-warn",
+        text: `${total} inativo${total > 1 ? "s" : ""}`,
+      };
+    } else {
+      statusBadge = { cls: "wms-badge-danger", text: "sem anúncio" };
+    }
+  }
 
   return (
     <div
@@ -146,15 +172,13 @@ export function MlAnunciosBlock({
       >
         <Icon name={open ? "chevron-d" : "chevron-r"} size={10} />
         Anúncios ML
-        {open && data && (
-          <>
-            <span className="wms-td-mute">·</span>
-            <span className={total === 0 ? "wms-td-mute" : ""}>
-              {total === 0
-                ? "nenhum"
-                : `${total} anúncio${total > 1 ? "s" : ""} · ${ativosCount} ativo${ativosCount !== 1 ? "s" : ""}`}
-            </span>
-          </>
+        {statusBadge && (
+          <span
+            className={`wms-badge ${statusBadge.cls}`}
+            style={{ fontSize: 10 }}
+          >
+            {statusBadge.text}
+          </span>
         )}
       </button>
 

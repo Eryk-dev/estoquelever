@@ -2,6 +2,11 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { buscarKitsContendoQuery } from "./kits";
 import type { Produto } from "./types";
 
+export type ProdutoOrdem =
+  | "sku_asc"
+  | "sincronizado_desc"
+  | "sincronizado_asc";
+
 export async function listarProdutos(
   filtros: {
     q?: string;
@@ -13,17 +18,14 @@ export async function listarProdutos(
     incluir_kits_por_componente?: boolean;
     /** Filtra por kit (true), produto simples (false) ou ambos (undefined). */
     eh_kit?: boolean;
-    /** ISO timestamp — retorna apenas produtos sincronizados após esta data
-     *  (ou nunca sincronizados quando `sem_sincronia=true`). */
-    sincronizado_apos?: string;
-    /** Retorna apenas produtos sem sincronização. Mutuamente exclusivo com
-     *  `sincronizado_apos`. */
-    sem_sincronia?: boolean;
+    /** Ordenação. Default: sku_asc. */
+    ordem?: ProdutoOrdem;
   } = {},
 ): Promise<{ rows: Produto[]; total: number; kits_por_componente?: number }> {
   const sb = createServiceClient();
   const limit = filtros.limit ?? 50;
   const offset = filtros.offset ?? 0;
+  const ordem = filtros.ordem ?? "sku_asc";
 
   // Pré-resolve IDs adicionais quando q também pode bater com código de
   // fornecedor ou código de localização (cross-table search).
@@ -56,8 +58,18 @@ export async function listarProdutos(
   let q = sb
     .from("siso_produtos")
     .select("*", { count: "exact" })
-    .order("sku", { ascending: true })
     .range(offset, offset + limit - 1);
+  if (ordem === "sincronizado_desc") {
+    q = q
+      .order("sincronizado_em", { ascending: false, nullsFirst: false })
+      .order("sku", { ascending: true });
+  } else if (ordem === "sincronizado_asc") {
+    q = q
+      .order("sincronizado_em", { ascending: true, nullsFirst: false })
+      .order("sku", { ascending: true });
+  } else {
+    q = q.order("sku", { ascending: true });
+  }
   if (filtros.q) {
     const term = filtros.q.trim();
     const orClauses = [
@@ -72,11 +84,6 @@ export async function listarProdutos(
   }
   if (filtros.ativo !== undefined) q = q.eq("ativo", filtros.ativo);
   if (filtros.eh_kit !== undefined) q = q.eq("eh_kit", filtros.eh_kit);
-  if (filtros.sem_sincronia) {
-    q = q.is("sincronizado_em", null);
-  } else if (filtros.sincronizado_apos) {
-    q = q.gte("sincronizado_em", filtros.sincronizado_apos);
-  }
   const { data, error, count } = await q;
   if (error) throw error;
   const rows = (data ?? []) as Produto[];

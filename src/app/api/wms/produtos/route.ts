@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listarProdutos, criarProduto } from "@/lib/wms/produtos";
+import {
+  listarProdutos,
+  criarProduto,
+  type ProdutoOrdem,
+} from "@/lib/wms/produtos";
 import { requireAuth, requireAdmin } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
@@ -12,7 +16,13 @@ export async function GET(req: NextRequest) {
     const ativoParam = sp.get("ativo");
     const incluirKits = sp.get("incluir_kits_por_componente");
     const ehKitParam = sp.get("eh_kit");
-    const semSincronia = sp.get("sem_sincronia");
+    const ordemParam = sp.get("ordem");
+    const ordem: ProdutoOrdem | undefined =
+      ordemParam === "sincronizado_desc" ||
+      ordemParam === "sincronizado_asc" ||
+      ordemParam === "sku_asc"
+        ? ordemParam
+        : undefined;
     const result = await listarProdutos({
       q: sp.get("q") ?? undefined,
       ativo: ativoParam === "false" ? false : ativoParam === "true" ? true : undefined,
@@ -26,8 +36,7 @@ export async function GET(req: NextRequest) {
           : ehKitParam === "false"
             ? false
             : undefined,
-      sincronizado_apos: sp.get("sincronizado_apos") ?? undefined,
-      sem_sincronia: semSincronia === "true" || semSincronia === "1",
+      ordem,
     });
     return NextResponse.json(result);
   } catch (e) {

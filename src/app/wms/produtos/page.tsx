@@ -15,12 +15,12 @@ import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import type { Produto } from "@/lib/wms/types";
 
 type TipoFiltro = "todos" | "kit" | "simples";
-type SincFiltro = "tudo" | "24h" | "7d" | "30d" | "sem";
+type OrdemProdutos = "sku_asc" | "sincronizado_desc" | "sincronizado_asc";
 
 export default function ProdutosPage() {
   const [q, setQ] = useState("");
   const [tipoFiltro, setTipoFiltro] = useState<TipoFiltro>("todos");
-  const [sincFiltro, setSincFiltro] = useState<SincFiltro>("tudo");
+  const [ordem, setOrdem] = useState<OrdemProdutos>("sku_asc");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 100;
   const [lightbox, setLightbox] = useState<{
@@ -45,8 +45,8 @@ export default function ProdutosPage() {
     setPage(1);
   };
 
-  const handleSincChange = (value: SincFiltro) => {
-    setSincFiltro(value);
+  const handleOrdemChange = (value: OrdemProdutos) => {
+    setOrdem(value);
     setPage(1);
   };
 
@@ -71,7 +71,7 @@ export default function ProdutosPage() {
   }, [router, searchParams]);
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["wms-produtos", q, page, tipoFiltro, sincFiltro],
+    queryKey: ["wms-produtos", q, page, tipoFiltro, ordem],
     queryFn: () => {
       const params = new URLSearchParams();
       params.set("q", q);
@@ -80,13 +80,7 @@ export default function ProdutosPage() {
       params.set("incluir_kits_por_componente", q ? "true" : "false");
       if (tipoFiltro === "kit") params.set("eh_kit", "true");
       else if (tipoFiltro === "simples") params.set("eh_kit", "false");
-      if (sincFiltro === "sem") {
-        params.set("sem_sincronia", "true");
-      } else if (sincFiltro !== "tudo") {
-        const horas = sincFiltro === "24h" ? 24 : sincFiltro === "7d" ? 24 * 7 : 24 * 30;
-        const desde = new Date(Date.now() - horas * 3600 * 1000).toISOString();
-        params.set("sincronizado_apos", desde);
-      }
+      if (ordem !== "sku_asc") params.set("ordem", ordem);
       return wmsApi<{
         rows: Produto[];
         total: number;
@@ -147,15 +141,13 @@ export default function ProdutosPage() {
         </select>
         <select
           className="wms-select"
-          value={sincFiltro}
-          onChange={(e) => handleSincChange(e.target.value as SincFiltro)}
-          style={{ width: 200 }}
+          value={ordem}
+          onChange={(e) => handleOrdemChange(e.target.value as OrdemProdutos)}
+          style={{ width: 230 }}
         >
-          <option value="tudo">Sincronização: tudo</option>
-          <option value="24h">Últimas 24h</option>
-          <option value="7d">Últimos 7 dias</option>
-          <option value="30d">Últimos 30 dias</option>
-          <option value="sem">Sem sincronia</option>
+          <option value="sku_asc">Ordenar: SKU (A→Z)</option>
+          <option value="sincronizado_desc">Atualização: mais recente</option>
+          <option value="sincronizado_asc">Atualização: mais antigo</option>
         </select>
       </div>
 
@@ -171,12 +163,12 @@ export default function ProdutosPage() {
       {!isLoading && rows.length === 0 && (
         <div className="wms-empty-block">
           <h3>
-            {q || tipoFiltro !== "todos" || sincFiltro !== "tudo"
+            {q || tipoFiltro !== "todos"
               ? "Nenhum produto encontrado"
               : "Nenhum produto cadastrado"}
           </h3>
           <p>
-            {q || tipoFiltro !== "todos" || sincFiltro !== "tudo"
+            {q || tipoFiltro !== "todos"
               ? "Tente afrouxar os filtros ou a busca."
               : "Sincronize com o Tiny para popular o catálogo."}
           </p>

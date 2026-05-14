@@ -49,7 +49,7 @@ export async function getEmpresaByCnpj(
       id,
       nome,
       galpao_id,
-      siso_galpoes!inner ( id, nome ),
+      siso_galpoes!siso_empresas_galpao_id_fkey!inner ( id, nome ),
       siso_grupo_empresas ( grupo_id, siso_grupos ( id, nome ) )
     `)
     .eq("cnpj", clean)
@@ -103,7 +103,7 @@ export async function getEmpresaById(
       nome,
       cnpj,
       galpao_id,
-      siso_galpoes!inner ( id, nome ),
+      siso_galpoes!siso_empresas_galpao_id_fkey!inner ( id, nome ),
       siso_grupo_empresas ( grupo_id, siso_grupos ( id, nome ) )
     `)
     .eq("id", empresaId)

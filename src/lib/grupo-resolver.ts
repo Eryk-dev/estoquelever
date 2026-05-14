@@ -42,7 +42,7 @@ export async function getEmpresasDoGrupo(
       empresa_id,
       siso_empresas!inner (
         id, nome, ativo,
-        siso_galpoes!inner ( id, nome )
+        siso_galpoes!siso_empresas_galpao_id_fkey!inner ( id, nome )
       )
     `)
     .eq("grupo_id", grupoId)

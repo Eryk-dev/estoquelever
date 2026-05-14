@@ -25,7 +25,7 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
       .in("pedido_id", pedidoIds),
     supabase
       .from("siso_pedido_item_estoques")
-      .select("pedido_id, produto_id, empresa_id, deposito_id, deposito_nome, saldo, reservado, disponivel, localizacao, siso_empresas!inner(galpao_id, siso_galpoes!inner(nome))")
+      .select("pedido_id, produto_id, empresa_id, deposito_id, deposito_nome, saldo, reservado, disponivel, localizacao, siso_empresas!inner(galpao_id, siso_galpoes!siso_empresas_galpao_id_fkey!inner(nome))")
       .in("pedido_id", pedidoIds),
   ]);
 

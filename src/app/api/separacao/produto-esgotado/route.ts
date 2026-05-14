@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
     const { data: estoqueOutros } = await supabase
       .from("siso_pedido_item_estoques")
       .select(
-        "empresa_id, saldo, siso_empresas!inner(galpao_id, siso_galpoes!inner(id, nome))",
+        "empresa_id, saldo, siso_empresas!inner(galpao_id, siso_galpoes!siso_empresas_galpao_id_fkey!inner(id, nome))",
       )
       .in("pedido_id", affectedPedidoIds)
       .in("produto_id", produtoIds);

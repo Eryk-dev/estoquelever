@@ -65,7 +65,7 @@ export async function POST(request: Request) {
     // 2. Find the empresa in the target galpão
     const { data: empresa } = await supabase
       .from("siso_empresas")
-      .select("id, nome, galpao_id, siso_galpoes!inner(nome)")
+      .select("id, nome, galpao_id, siso_galpoes!siso_empresas_galpao_id_fkey!inner(nome)")
       .eq("siso_galpoes.nome", galpao)
       .eq("ativo", true)
       .limit(1)

@@ -20,16 +20,26 @@ export const ML_API_BASE = "https://api.mercadolibre.com";
 
 // ─── Build authorize URL ────────────────────────────────────────────
 
+/**
+ * Scope `offline_access` é OBRIGATÓRIO pra o ML devolver refresh_token —
+ * sem ele, o token de acesso dura só 6h e a conexão morre quando expira.
+ * `read` + `write` cobrem todos os endpoints (consulta de items + futura
+ * atualização de estoque/preço).
+ */
+export const ML_DEFAULT_SCOPE = "offline_access read write";
+
 export function buildMlAuthorizeUrl(params: {
   clientId: string;
   redirectUri: string;
   state: string;
+  scope?: string;
 }): string {
   const url = new URL(ML_AUTHORIZE_URL);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", params.clientId);
   url.searchParams.set("redirect_uri", params.redirectUri);
   url.searchParams.set("state", params.state);
+  url.searchParams.set("scope", params.scope ?? ML_DEFAULT_SCOPE);
   return url.toString();
 }
 

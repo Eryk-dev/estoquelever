@@ -141,6 +141,12 @@ export function MlAnunciosBlock({
         cls: "wms-badge-warn",
         text: `${total} inativo${total > 1 ? "s" : ""}`,
       };
+    } else if (
+      data.contas_com_erro.length > 0 &&
+      data.contas_com_erro.length === data.contas_consultadas
+    ) {
+      // todas as contas erraram → erro de auth, não "sem anúncio"
+      statusBadge = { cls: "wms-badge-mute", text: "erro auth" };
     } else {
       statusBadge = { cls: "wms-badge-danger", text: "sem anúncio" };
     }

@@ -87,6 +87,11 @@ const EVENTO_CONFIG: Record<
     icon: AlertCircle,
     color: "text-red-500",
   },
+  mini_swap_executado: {
+    label: "Mini-swap executado",
+    icon: PackageSearch,
+    color: "text-blue-500",
+  },
   cancelado: {
     label: "Cancelado",
     icon: XCircle,

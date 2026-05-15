@@ -1,5 +1,5 @@
 import type {
-  EstadoEstoqueSku, Demanda, PlanoMiniSwap, PlanoDemanda,
+  EstadoEstoqueSku, Demanda, PlanoMiniSwap,
   OperacaoSwap, OperacaoEmprestimo,
 } from "./mini-swap-types";
 import { createServiceClient } from "@/lib/supabase-server";

@@ -27,7 +27,9 @@ export function planejarMiniSwap(input: PlanejarInput): PlanoMiniSwap {
       continue;
     }
     const locsPicadora = estadoSku.linhas.filter(
-      (l) => l.empresa_dona_id === demanda.empresa_picadora_id && l.saldo > 0,
+      (l) =>
+        l.empresa_dona_id === demanda.empresa_picadora_id &&
+        l.saldo - l.reservado > 0,
     );
     if (locsPicadora.length <= 1) {
       plano.demandas_skipadas.push({ produto_id: demanda.produto_id, motivo: "ja_consolidado" });
@@ -36,11 +38,16 @@ export function planejarMiniSwap(input: PlanejarInput): PlanoMiniSwap {
     // ─── Encontrar contrapartida F: empresa com mais saldo em alguma loc do galpão ───
     type Candidata = { loc_id: string; loc_codigo: string; empresa_id: string; saldo: number };
     const candidatas: Candidata[] = estadoSku.linhas
-      .filter((l) => l.empresa_dona_id !== demanda.empresa_picadora_id && l.saldo > 0)
-      .map((l) => ({ loc_id: l.localizacao_id, loc_codigo: l.localizacao_codigo, empresa_id: l.empresa_dona_id, saldo: l.saldo }))
+      .filter((l) => l.empresa_dona_id !== demanda.empresa_picadora_id && l.saldo - l.reservado > 0)
+      .map((l) => ({
+        loc_id: l.localizacao_id,
+        loc_codigo: l.localizacao_codigo,
+        empresa_id: l.empresa_dona_id,
+        saldo: l.saldo - l.reservado, // disponível
+      }))
       .sort((a, b) => b.saldo - a.saldo);
 
-    const saldoPicadoraOutras = locsPicadora.reduce((s, l) => s + l.saldo, 0);
+    const saldoPicadoraOutras = locsPicadora.reduce((s, l) => s + (l.saldo - l.reservado), 0);
 
     let escolhida: { loc_id: string; loc_codigo: string; F: string; qty_swap: number; qty_emp: number } | null = null;
     for (const cand of candidatas) {
@@ -68,9 +75,10 @@ export function planejarMiniSwap(input: PlanejarInput): PlanoMiniSwap {
     for (let i = 0; i < locsPicadora.length; i++) {
       const linha = locsPicadora[i];
       const isUltima = i === locsPicadora.length - 1;
+      const dispLinha = linha.saldo - linha.reservado;
       const qtyDessaLoc = isUltima
         ? restante
-        : Math.min(linha.saldo, Math.floor((escolhida!.qty_swap * linha.saldo) / saldoPicadoraOutras));
+        : Math.min(dispLinha, Math.floor((escolhida!.qty_swap * dispLinha) / saldoPicadoraOutras));
       if (qtyDessaLoc <= 0) continue;
       // Op: picadora saída na loc origem → F entrada na loc origem
       swaps.push({

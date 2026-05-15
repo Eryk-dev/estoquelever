@@ -4,6 +4,8 @@ import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
 
+import { executarMiniSwap } from "@/lib/wms/mini-swap";
+
 import type { ProdutoConsolidado } from "@/types";
 
 /**
@@ -128,6 +130,52 @@ export async function POST(request: NextRequest) {
         );
       }
     }
+
+    // ─── NOVO: mini-swap intra-galpão (opt-in por galpão) ───
+    if (session.galpaoId) {
+      try {
+        const { data: cfg } = await supabase
+          .from("siso_wms_mini_swap_config")
+          .select("ativo")
+          .eq("galpao_id", session.galpaoId)
+          .maybeSingle();
+
+        if (cfg?.ativo) {
+          const resultado = await executarMiniSwap({
+            pedido_ids,
+            galpao_id: session.galpaoId,
+            usuario_id: session.id,
+          });
+
+          if (resultado.ok && resultado.plano.demandas_planejadas.length > 0) {
+            registrarEventos(
+              pedido_ids.map((pid) => ({
+                pedidoId: pid,
+                evento: "mini_swap_executado" as const,
+                usuarioId: operador_id,
+                usuarioNome: session.nome,
+                detalhes: {
+                  demandas: resultado.plano.demandas_planejadas.map((d) => ({
+                    produto_id: d.produto_id,
+                    loc_destino_codigo: d.loc_destino_codigo,
+                    qty_swap: d.qty_swap,
+                    qty_emprestimo: d.qty_emprestimo,
+                  })),
+                },
+              })),
+            ).catch(() => {});
+          }
+        }
+      } catch (err) {
+        logger.error("separacao-iniciar.mini-swap", "Falha não-fatal — wave segue sem otimização", {
+          error: err instanceof Error ? err.message : String(err),
+          pedido_ids,
+          galpao_id: session.galpaoId,
+        });
+        // Continua o fluxo — wave NUNCA trava por mini-swap
+      }
+    }
+    // ─── FIM mini-swap ───
 
     // 3. Call RPC to get consolidated product list for wave picking
     const { data: produtos, error: rpcError } = await supabase.rpc(

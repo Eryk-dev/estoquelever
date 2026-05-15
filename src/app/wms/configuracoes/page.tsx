@@ -75,6 +75,14 @@ export default function WmsConfiguracoesPage() {
           <Icon name="sliders" size={12} />
           Conexões &amp; impressoras
         </Link>
+        <Link
+          href="/wms/configuracoes/otimizacoes"
+          className="wms-btn wms-btn-ghost"
+          title="Mini-swap, cycle count e outras otimizações WMS"
+        >
+          <Icon name="sparkle" size={12} />
+          Otimizações
+        </Link>
       </PageHeader>
 
       <div className="wms-stab" role="tablist" style={{ marginBottom: 16 }}>

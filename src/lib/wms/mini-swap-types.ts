@@ -37,7 +37,7 @@ export interface Demanda {
 /** Uma operação de swap par S+E entre 2 empresas em 1 loc. */
 export interface OperacaoSwap {
   loc_id: string;
-  empresa_origem_id: string;  // perde qty
+  empresa_origem_id: string; // perde qty
   empresa_destino_id: string; // ganha qty
   qty: number;
 }

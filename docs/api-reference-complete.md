@@ -948,6 +948,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 - Updates `siso_pedidos.status_separacao`, `separacao_operador_id`, `separacao_iniciada_em`
 - Inserts to `siso_pedido_historico`
 - Fire-and-forget: calls `preCriarAgrupamentosEmLote` (creates agrupamentos in Tiny, downloads ZPL)
+- Após transição para `em_separacao`, chama `executarMiniSwap()` se mini-swap estiver ativo no galpão da operadora (graceful — falha silenciosa se RPC falhar). Registra evento `mini_swap_executado` no histórico do pedido se aplicável.
 - Logs to `siso_logs`
 
 **Rate Limiting:** None
@@ -5160,6 +5161,105 @@ Agrega contadores cross-módulo numa resposta única (refetch 30s no client).
   "emprestimos": { "paresComSaldo": 1 }
 }
 ```
+
+---
+
+## WMS — Mini-Swap Intra-Galpão
+
+### GET /api/wms/mini-swap/config
+
+**File:** `src/app/api/wms/mini-swap/config/route.ts`
+
+**Purpose:** Lista configuração de mini-swap por galpão (toggle ativo/inativo).
+
+**Auth:** X-Session-Id (required)
+
+**Response (200):**
+```json
+[
+  {
+    "galpao_id": "string",
+    "galpao_nome": "string",
+    "ativo": true,
+    "atualizado_em": "2026-05-14T00:00:00Z",
+    "atualizado_por_nome": "string | null"
+  }
+]
+```
+
+**Side Effects:** None
+
+---
+
+### PATCH /api/wms/mini-swap/config/[galpaoId]
+
+**File:** `src/app/api/wms/mini-swap/config/[galpaoId]/route.ts`
+
+**Purpose:** Toggle ativo/inativo do mini-swap para um galpão específico. Admin only.
+
+**Auth:** X-Session-Id (required, cargo=admin)
+
+**Request Body:**
+```json
+{
+  "ativo": true
+}
+```
+
+**Response (200):**
+```json
+{ "ok": true }
+```
+
+**Response (403):**
+```json
+{ "error": "acesso negado" }
+```
+
+**Side Effects:**
+- Upsert em `siso_wms_mini_swap_config` (galpao_id, ativo, atualizado_em, atualizado_por)
+
+---
+
+### POST /api/wms/mini-swap/simular
+
+**File:** `src/app/api/wms/mini-swap/simular/route.ts`
+
+**Purpose:** Dry-run do mini-swap: calcula o plano de consolidação de estoque intra-galpão sem aplicar nenhuma movimentação no banco.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:**
+```json
+{
+  "pedido_ids": ["string"],
+  "galpao_id": "string"
+}
+```
+
+**Response (200):**
+```json
+{
+  "plano": {
+    "demandas": [
+      {
+        "produto_id": "string",
+        "sku": "string",
+        "qty_necessaria": 10,
+        "movimentacoes": []
+      }
+    ],
+    "total_swaps": 2,
+    "total_emprestimos": 1
+  }
+}
+```
+
+**Side Effects:** None (pure computation, no DB writes)
+
+**Notes:**
+- Útil para debugging e para a UI de "Otimizações" mostrar preview antes de confirmar
+- O algoritmo `planejarMiniSwap()` é idêntico ao usado em produção
 
 ---
 

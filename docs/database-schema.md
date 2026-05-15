@@ -705,6 +705,53 @@ pendente ──iniciar──> em_guarda ──confirmar (parcial)──> pendent
 
 ---
 
+## WMS — Mini-Swap Intra-Galpão
+
+### siso_wms_mini_swap_config
+
+**Purpose:** Toggle on/off do mini-swap intra-galpão por galpão. Criada em 2026-05-14 junto com `src/lib/wms/mini-swap.ts`.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `galpao_id` | uuid | NO | | PK + FK → `siso_galpoes(id)` ON DELETE CASCADE |
+| `ativo` | boolean | NO | true | Mini-swap habilitado para este galpão |
+| `atualizado_em` | timestamptz | NO | now() | Última atualização |
+| `atualizado_por` | uuid | YES | FK → `siso_usuarios(id)` | Usuário que alterou |
+
+**Primary Key:** `galpao_id`
+
+**Foreign Keys:** `galpao_id` → `siso_galpoes(id)`, `atualizado_por` → `siso_usuarios(id)`
+
+**Seed:** 1 row por galpão ativo, todos com `ativo=true`.
+
+**Notes:**
+- Lida por `executarMiniSwap()` antes de cada wave picking (via `POST /api/separacao/iniciar`)
+- Toggle via `PATCH /api/wms/mini-swap/config/[galpaoId]` (admin only)
+
+### RPC `wms_executar_mini_swap`
+
+```sql
+wms_executar_mini_swap(
+  p_plano   jsonb,       -- PlanoMiniSwap serializado (output de planejarMiniSwap)
+  p_pedido_ids uuid[],   -- IDs dos pedidos da wave
+  p_galpao_id  uuid,     -- Galpão onde o mini-swap ocorre
+  p_usuario_id uuid DEFAULT NULL
+) RETURNS jsonb
+```
+
+**Purpose:** Aplica o plano pré-computado pelo TypeScript de forma atômica.
+
+**Behavior:**
+- Lock pessimista via `SELECT FOR UPDATE` em `siso_estoque` do galpão para os SKUs do plano
+- Cancela reservas existentes dos pedidos (mov tipo='L' — liberação)
+- Executa swaps (par S+E via `wms_inserir_movimentacao` com origem_tipo='swap')
+- Recria reservas (mov tipo='R') já na nova posição consolidada
+- Retorna jsonb array dos planos executados com IDs das movimentações geradas
+
+**Atomicity:** Toda a operação ocorre numa única transação Postgres. Falha em qualquer mov reverte tudo.
+
+---
+
 ## Infrastructure Tables
 
 ### siso_logs
@@ -1444,6 +1491,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-05-12 | `20260512_wms_receber_oc_atomico.sql` | **WMS Plano 3:** RPC `wms_receber_oc_atomico(p_produto, p_dona, p_galpao, p_localizacao, p_qty, p_pedido, p_ttl_horas, p_custo_unitario, p_usuario, p_observacoes) RETURNS TABLE(mov_entrada_id uuid, mov_reserva_id uuid)` — entrada + reserva atômicas no recebimento de OC. Delega a `wms_inserir_movimentacao` duas vezes na mesma transação (atomicidade garantida pelo Postgres) |
 | 2026-05-13 | `20260513_wms_swap.sql` | **WMS Plano 4:** adiciona `'swap'` ao CHECK constraint `siso_movimentacoes_origem_tipo_check`. RPC `wms_executar_swap(p_produto, p_empresa_a, p_empresa_b, p_galpao_a, p_galpao_b, p_localizacao_a, p_localizacao_b, p_qty, p_pedido, p_usuario, p_observacoes) RETURNS TABLE(4 mov uuids)` — 4 movs (S+E em galpao_a, S+E em galpao_b) numa transação trocando dona entre 2 galpões. Saldo total por empresa preservado, sem saldo devedor (vs empréstimo). |
 | 2026-05-14 | `20260514_wms_guarda_pendencias.sql` | **Recebimento em 2 etapas:** cria `siso_wms_pendencias_guarda` (fila de put-away), adiciona `printnode_printer_id_produto`/`printnode_printer_nome_produto` em `siso_galpoes` e `siso_usuarios` (impressora dedicada pra etiqueta de produto, com fallback pra impressora de envio), auto-cria 1 `siso_localizacoes` tipo='recebimento' (codigo='RECEBIMENTO') por galpão ativo que não tenha. Trigger `trg_pendencias_guarda_touch` atualiza `atualizada_em` a cada UPDATE. |
+| 2026-05-14 | `20260514_wms_mini_swap*.sql` | **Mini-Swap Intra-Galpão:** cria `siso_wms_mini_swap_config` (toggle por galpão, seed `ativo=true` para todos os galpões ativos) + RPC `wms_executar_mini_swap` (aplica plano sob lock pessimista: libera reservas → executa swaps → recria reservas, tudo atômico). |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging
@@ -1456,6 +1504,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 8. **Phase 8 (May 12 — Plano 3):** Reservas residuais — cancel libera/estorna, OC recebimento atômico, encaminhar move reservas, admin override liberar-reserva, cron cleanup
 9. **Phase 9 (May 13 — Plano 4):** Fulfillment com swap — origem_tipo 'swap', RPC `wms_executar_swap`, rotearPedido tenta swap entre direta e empréstimo, webhook executa swaps antes das reservas, DecisaoLabel ganha tooltip swap
 10. **Phase 10 (May 14 — Recebimento em 2 etapas):** dock RECEBIMENTO + tabela `siso_wms_pendencias_guarda` + impressora dedicada de etiqueta de produto. `/wms/receber` registra entradas na loc tipo='recebimento' (auto-criada por galpão) e cria pendências; `/wms/guarda` (tablet) consome a fila com bipe de QR + impressão 2-por-folha + replenishment_intra pra loc destino.
+11. **Phase 11 (May 14 — Mini-Swap Intra-Galpão):** antes de iniciar wave picking, consolida estoque das empresas no mesmo galpão via swap (zero dívida) + empréstimo. `siso_wms_mini_swap_config` + RPC `wms_executar_mini_swap`. Toggle por galpão. Graceful failure.
 
 ---
 

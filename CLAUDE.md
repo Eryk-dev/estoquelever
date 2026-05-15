@@ -382,6 +382,8 @@ wms/  (subset of src/)
     guarda.ts                      # Lógica de put-away. Cria/lista/inicia/confirma/cancela pendencias; resolverLocRecebimento auto-cria loc tipo=recebimento por galpão; confirmar dispara replenishment_intra + transferência do custo médio pra loc destino
     zpl-produto.ts                 # Geração de ZPL pra etiqueta de produto (PW800, 2-por-folha pareadas, gap no meio igual a gerarZplPequena de endereço). expandirPorQty replica N vezes por unidade
     etiqueta-produto-service.ts    # Compõe ZPL + resolverImpressoraProduto + envia ao PrintNode. Fire-and-forget no recebimento (recebimento ok mesmo se PrintNode falha)
+    mini-swap-types.ts            # Tipos do mini-swap intra-galpão (SaldoLinha, Demanda, PlanoMiniSwap…)
+    mini-swap.ts                  # Algoritmo puro `planejarMiniSwap()` + orchestrator `executarMiniSwap()`
   src/hooks/
     use-inventario-realtime.ts     # Subscreve channel inventario:{id} (Supabase Realtime); retorna contagens + locs + operadores ao vivo
   src/app/wms/
@@ -402,6 +404,7 @@ wms/  (subset of src/)
     emprestimos/page.tsx           # APENAS saldos devedores (read-only). Criar/editar regras vive em /wms/configuracoes (aba Empréstimos & Swaps).
     configuracoes/page.tsx                   # WMS settings — 3 abas: Galpões / Empresas / Empréstimos & Swaps. Empresas têm 0..N galpões preferenciais (multi-select), substituindo o vínculo 1:1 antigo. Grupos & Tiers do SISO legacy NÃO aparecem aqui.
     configuracoes/conexoes/page.tsx          # Sub-page WMS-styled: Webhook Tiny URL + OAuth2 por empresa (client_id/secret, autorizar, depósito) + PrintNode (API key, impressoras por galpão e override por usuário). Acessível só via /wms/configuracoes (link "Conexões & impressoras"). Substitui o link antigo pra /configuracoes legacy.
+    configuracoes/otimizacoes/page.tsx       # Toggle mini-swap por galpão (admin)
     inventario/page.tsx            # Lista sessões + modal de criação com 3 tipos (Inteligente/Manual/Completo). Modo aberto|blind (default blind).
     inventario/[id]/page.tsx       # Painel realtime do supervisor — 5 slots de operador ao vivo + KPIs + velocidade média + últimos bipes + ações
     inventario/[id]/contar/page.tsx          # Tela handheld do operador: slot-picker → botão "PEGAR PRÓXIMA LOC" → confirmar loc (QR ou manual) → bipar produtos → finalizar → loop. Resumo final ao esvaziar pool.
@@ -466,6 +469,9 @@ wms/  (subset of src/)
     devolucoes/route.ts + [id]/classificar/route.ts        # GET fila pendente + POST classificação
     cobertura/route.ts + cobertura/refresh/route.ts        # GET (filtros) + GET refresh worker secret
     dashboard-geral/route.ts                               # GET — agrega 7 contadores
+    mini-swap/config/route.ts                # GET — lista config por galpão
+    mini-swap/config/[galpaoId]/route.ts     # PATCH — toggle ativo (admin)
+    mini-swap/simular/route.ts               # POST — dry-run, planeja sem aplicar
   src/components/wms/
     wms-shell.tsx                  # Navegação superior do módulo WMS (10 atalhos)
     saldo-perspectiva-tabs.tsx     # Tabs entre as 4 perspectivas de saldo
@@ -558,6 +564,12 @@ Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger at
 | Table | Purpose |
 |---|---|
 | `siso_wms_pendencias_guarda` | Fila de pendências de put-away. 1 linha por linha de recebimento (preserva NF/lote). `qty_pendente = qty_inicial - qty_guardada` GENERATED. Status: pendente → em_guarda → guardada\|cancelada. Indexada por (galpao_id, status, criada_em). Trigger atualiza `atualizada_em`. CHECK garante coerência (guardada exige qty_guardada=qty_inicial+guardada_em). |
+
+### WMS Tables (Mini-Swap Intra-Galpão — 2026-05-14)
+
+| Table | Purpose |
+|---|---|
+| `siso_wms_mini_swap_config` | Toggle on/off do mini-swap intra-galpão por galpão. PK galpao_id. |
 
 Ajustes em `siso_galpoes` + `siso_usuarios`: ADD `printnode_printer_id_produto bigint` + `printnode_printer_nome_produto text` — impressora dedicada pra etiqueta de produto, com fallback pra impressora de envio se vazia.
 
@@ -783,6 +795,7 @@ Failure to update documentation means the next developer or LLM will work with s
 - **WMS Inventário · Claim hierárquico (rua > prédio > buffer > colisão) — implementado em staging, 2026-05-13.** Substitui o slot_atribuido / LPT / smart routing por zonas. Modelo: endereço = rua-prédio-andar (3 segmentos do código); operador "reivindica" uma unidade (rua livre → prédio com buffer ≥1 → prédio sem buffer → colisão controlada no último prédio com max 2 ops + distância vertical máxima) e desce nela até esgotar. Auto-degrade: quando 2º op é forçado a entrar numa rua claimed por colega, o claim do colega cai pra 'predio'. Buffer físico (≥1 prédio de gap entre ops na mesma rua) vale sempre, nos 3 tipos de sessão. Sem `slot_atribuido` — distribuição 100% dinâmica via RPC `wms_inventario_proxima_loc` reescrita. Schema: 4 colunas claim_* em `siso_inventario_operadores` + trigger limpa claim em sairSlot. Frontend mostra "rua A ↓", "prédio A-03 ↓" ou "prédio A-03 ↑ (compartilhando)" no painel do supervisor e na tela do operador. Migration: `supabase/migrations/20260513_wms_inventario_claim_hierarquico.sql`.
 - **WMS Plano 5 (Exceções + dashboards) — implementado, validado em staging. Encerra Fase 0.** Devoluções classificadas A/B/C/D com recálculo de custo médio + transferência pra QUARENTENA + RMA. Troca SKU na separação (2 movs com mesma origem_id) com validação Cross opcional. Webhook NF detecta devolução (best-effort). Materialized view `siso_cobertura_estoque` com status crítico/atenção/lead_time_risco/ok/sem_giro. Dashboard geral (4 cards, refresh 30s). Shell e home reorganizados em 4 grupos. Plano: `docs/superpowers/plans/2026-06-05-wms-5-excecoes-dashboards.md`. Checklist Fase 0: `docs/superpowers/plans/wms-fase0-checklist.md`. **Próximo: Plano 6 (cutover big bang).**
 - **WMS Recebimento em 2 etapas (Recebimento + Guarda) — implementado em staging, 2026-05-14.** Quebra o recebimento em duas fases pra alinhar com o fluxo físico: dock RECEBIMENTO (chega caminhão, registra qty) → guarda no tablet (imprime etiqueta, bipa QR da loc destino, confirma). 1 pendência em `siso_wms_pendencias_guarda` por linha de recebimento. Suporta guarda parcial (qty<qty_pendente fica aberta) + cancelamento com motivo. Etiqueta de produto em ZPL pareado 2-por-folha (`gerarZplProduto` em `src/lib/wms/zpl-produto.ts`), N etiquetas por unidade. Impressora dedicada de produto (`printnode_printer_id_produto`) com fallback automático pra impressora de envio se não configurada. Migration: `supabase/migrations/20260514_wms_guarda_pendencias.sql`. APIs: `/api/wms/guarda` (lista + detalhe + iniciar/confirmar/cancelar/imprimir + imprimir-lote bulk).
+- **WMS Mini-Swap Intra-Galpão — implementado em staging, 2026-05-14.** Antes de iniciar wave de picking, consolida estoque das empresas no mesmo galpão em 1 loc canônica via swap (zero dívida) + empréstimo (limitado ao planejado pelo roteamento). Algoritmo puro em `src/lib/wms/mini-swap.ts` + RPC `wms_executar_mini_swap` aplica plano sob lock pessimista. Toggle on/off por galpão em `/wms/configuracoes/otimizacoes`. Graceful: qualquer falha → wave segue sem otimização. Foundation pra cycle count oportunista (próximo). Migration: `supabase/migrations/20260514_wms_mini_swap*.sql`. Spec: `docs/superpowers/specs/2026-05-14-mini-swap-intra-galpao-design.md`.
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)

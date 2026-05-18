@@ -247,14 +247,63 @@ export async function POST(request: NextRequest) {
     const fornecedorInfo = getFornecedorBySku(sku);
     const now = new Date().toISOString();
 
+    // Re-fetch matching items with quantidade_pega pra calcular residual.
+    // Sem isso, o OC seria criado pela qty pedida total — mas se uma realocação
+    // já pegou parte do item (quantidade_pega>0 no item ou nas realocs picadas),
+    // o residual real é menor. Pedir a qty total causaria compra duplicada.
+    const { data: itemsComPega } = await supabase
+      .from("siso_pedido_itens")
+      .select("id, quantidade_pedida, quantidade_pega")
+      .in("id", itemIds);
+    const itemsPegaMap = new Map<number, { qPedida: number; qPega: number }>();
+    for (const it of itemsComPega ?? []) {
+      itemsPegaMap.set(it.id as number, {
+        qPedida: Number(it.quantidade_pedida ?? 0),
+        qPega: Number(it.quantidade_pega ?? 0),
+      });
+    }
+
+    // Itens que efetivamente serão marcados pra compra (residual > 0)
+    const itemsParaOC: Array<{ id: number; residual: number }> = [];
+
     // Update matching items: mark for purchase with the real missing quantity.
     for (const item of matchingItems) {
+      // Soma qty_pega das realocações já picadas pra este item (modo realoc preserva
+      // quantidade_pega no item, mas em alguns paths a qty fica só nas realocs).
+      const { data: realocsPicadas } = await supabase
+        .from("siso_pedido_item_realocacoes")
+        .select("quantidade_pega")
+        .eq("pedido_item_id", item.id)
+        .in("status", ["picado", "picado_parcial"]);
+
+      const qtyPegaRealocs = (realocsPicadas ?? []).reduce(
+        (s, r) => s + (Number(r.quantidade_pega) || 0),
+        0,
+      );
+      const itemInfo = itemsPegaMap.get(item.id as number);
+      const qtyPegaItem = itemInfo?.qPega ?? 0;
+      const qtyPedida = itemInfo?.qPedida ?? Number(item.quantidade_pedida ?? 0);
+      const qtyPegaTotal = qtyPegaItem + qtyPegaRealocs;
+      const residual = Math.max(0, qtyPedida - qtyPegaTotal);
+
+      if (residual === 0) {
+        // Nada a comprar — pula este item (já 100% coberto por realocs)
+        logger.info("produto-esgotado", "item já coberto por realocação, sem residual a comprar", {
+          sku,
+          itemId: item.id,
+          qtyPedida,
+          qtyPegaItem,
+          qtyPegaRealocs,
+        });
+        continue;
+      }
+
       const { error: updateItemsErr } = await supabase
         .from("siso_pedido_itens")
         .update({
           compra_status: "aguardando_compra",
           fornecedor_oc: fornecedorInfo.fornecedor,
-          compra_quantidade_solicitada: Number(item.quantidade_pedida ?? 0),
+          compra_quantidade_solicitada: residual,
           compra_solicitada_em: now,
         })
         .eq("id", item.id);
@@ -269,6 +318,22 @@ export async function POST(request: NextRequest) {
           { status: 500 },
         );
       }
+
+      itemsParaOC.push({ id: item.id as number, residual });
+    }
+
+    // Se nenhum item tem residual a comprar (tudo já coberto por realocação),
+    // não cria OC nem move pedidos pra aguardando_compra — apenas retorna.
+    if (itemsParaOC.length === 0) {
+      logger.info("produto-esgotado", "SKU esgotado mas tudo coberto por realocação — sem OC", {
+        sku,
+        itens_afetados: itemIds.length,
+      });
+      return NextResponse.json({
+        pedidos_afetados: affectedPedidoIds.length,
+        itens_afetados: 0,
+        ordem_compra_id: null,
+      });
     }
 
     // Reset separation state on ALL items of affected pedidos
@@ -376,10 +441,12 @@ export async function POST(request: NextRequest) {
         }
 
         if (ordemCompraId) {
+          // Vincula apenas itens com residual a comprar (não os 100% cobertos por realoc).
+          const itemsParaOCIds = itemsParaOC.map((i) => i.id);
           const { error: linkError } = await supabase
             .from("siso_pedido_itens")
             .update({ ordem_compra_id: ordemCompraId })
-            .in("id", itemIds);
+            .in("id", itemsParaOCIds);
 
           if (linkError) {
             logger.warn("produto-esgotado", "Erro ao vincular itens a OC", {
@@ -404,13 +471,13 @@ export async function POST(request: NextRequest) {
       sku,
       fornecedor,
       pedidos_afetados: affectedPedidoIds.length,
-      itens_afetados: itemIds.length,
+      itens_afetados: itemsParaOC.length,
       ordem_compra_id: ordemCompraId,
     });
 
     return NextResponse.json({
       pedidos_afetados: affectedPedidoIds.length,
-      itens_afetados: itemIds.length,
+      itens_afetados: itemsParaOC.length,
       ordem_compra_id: ordemCompraId,
     });
   } catch (err) {

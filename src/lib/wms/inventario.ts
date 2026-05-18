@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao } from "./ledger";
 import type { TipoMov } from "./types";
+import { reconciliarTemporal } from "./inventario-reconciliacao";
 
 export type TipoSessao = "cycle_count" | "completo";
 export type ModoContagem = "aberto" | "blind";
@@ -522,195 +523,182 @@ export async function computarDivergencias(
 ): Promise<void> {
   const sb = createServiceClient();
   const parcial = opts.parcial === true;
+  const cutoff_em = new Date().toISOString();
 
-  // Em modo parcial, só consideramos locs finalizadas (contada|aprovada).
-  // As pendentes/em_contagem são puladas — contagens órfãs delas não viram diverg.
-  let locsConsideradasIds: string[] | null = null;
-  if (parcial) {
-    const { data: locsFinalizadas } = await sb
-      .from("siso_inventario_localizacoes")
-      .select("localizacao_id")
-      .eq("sessao_id", sessaoId)
-      .in("status", ["contada", "aprovada"]);
-    locsConsideradasIds = (
-      (locsFinalizadas ?? []) as Array<{ localizacao_id: string }>
-    ).map((l) => l.localizacao_id);
-    if (locsConsideradasIds.length === 0) {
-      // Nada pra processar — só avança o status pra revisao e fecha slots
-      await sb
-        .from("siso_inventario_sessoes")
-        .update({
-          status: "revisao",
-          finalizada_em: new Date().toISOString(),
-        })
-        .eq("id", sessaoId);
-      await sb
-        .from("siso_inventario_operadores")
-        .update({ finalizado_em: new Date().toISOString() })
-        .eq("sessao_id", sessaoId)
-        .is("finalizado_em", null);
-      return;
-    }
-  }
-
-  let contagensQuery = sb
-    .from("siso_inventario_contagens")
-    .select("localizacao_id, produto_id, empresa_dona_id, qty_contada")
+  // 1. Carrega locs da sessão (filtrando por modo parcial)
+  const locsQuery = sb
+    .from("siso_inventario_localizacoes")
+    .select("localizacao_id, status, contagem_finalizada_em")
     .eq("sessao_id", sessaoId);
-  if (locsConsideradasIds) {
-    contagensQuery = contagensQuery.in("localizacao_id", locsConsideradasIds);
-  }
-  const { data: contagens } = await contagensQuery;
 
-  type ContagemRow = {
+  const { data: locsSessao } = parcial
+    ? await locsQuery.in("status", ["contada", "aprovada"])
+    : await locsQuery;
+
+  const locsRows = (locsSessao ?? []) as Array<{
+    localizacao_id: string;
+    status: string;
+    contagem_finalizada_em: string | null;
+  }>;
+
+  // Em parcial sem locs → só fecha sessão
+  if (parcial && locsRows.length === 0) {
+    await sb
+      .from("siso_inventario_sessoes")
+      .update({ status: "revisao", finalizada_em: new Date().toISOString() })
+      .eq("id", sessaoId);
+    await sb
+      .from("siso_inventario_operadores")
+      .update({ finalizado_em: new Date().toISOString() })
+      .eq("sessao_id", sessaoId)
+      .is("finalizado_em", null);
+    return;
+  }
+
+  const locIds = locsRows.map((l) => l.localizacao_id);
+  const locsVisitadas = locsRows
+    .filter((l) => l.contagem_finalizada_em !== null)
+    .map((l) => ({
+      localizacao_id: l.localizacao_id,
+      contagem_finalizada_em: l.contagem_finalizada_em as string,
+    }));
+
+  // 2. Contagens
+  const { data: contagensRaw } = await sb
+    .from("siso_inventario_contagens")
+    .select("localizacao_id, produto_id, empresa_dona_id, qty_contada, criado_em")
+    .eq("sessao_id", sessaoId);
+
+  const contagens = ((contagensRaw ?? []) as Array<{
     localizacao_id: string;
     produto_id: string;
     empresa_dona_id: string;
     qty_contada: number;
-  };
+    criado_em: string;
+  }>).map((c) => ({
+    localizacao_id: c.localizacao_id,
+    produto_id: c.produto_id,
+    empresa_dona_id: c.empresa_dona_id,
+    qty_contada: Number(c.qty_contada),
+    contado_em: c.criado_em,
+  }));
 
-  // Agrega: soma qty por quádrupla (vários operadores podem ter contado a mesma)
-  const agregado = new Map<
-    string,
-    {
-      localizacao_id: string;
-      produto_id: string;
-      empresa_dona_id: string;
-      qty: number;
-    }
-  >();
-  for (const c of (contagens ?? []) as ContagemRow[]) {
-    const k = `${c.localizacao_id}|${c.produto_id}|${c.empresa_dona_id}`;
-    const cur = agregado.get(k);
-    if (cur) {
-      cur.qty += Number(c.qty_contada);
-    } else {
-      agregado.set(k, {
-        localizacao_id: c.localizacao_id,
-        produto_id: c.produto_id,
-        empresa_dona_id: c.empresa_dona_id,
-        qty: Number(c.qty_contada),
-      });
-    }
-  }
-
-  // Detecta locs com saldo > 0 que ninguém bipou — geram divergência (qty=0).
-  // Em modo parcial, só considera locs finalizadas (já filtradas em locsConsideradasIds).
-  let locIds: string[];
-  if (locsConsideradasIds) {
-    locIds = locsConsideradasIds;
-  } else {
-    const { data: locsSessao } = await sb
-      .from("siso_inventario_localizacoes")
-      .select("localizacao_id")
-      .eq("sessao_id", sessaoId);
-    locIds = ((locsSessao ?? []) as Array<{ localizacao_id: string }>).map(
-      (l) => l.localizacao_id,
-    );
-  }
-
-  if (locIds.length > 0) {
-    let estoqueQuery = sb
-      .from("siso_estoque")
-      .select("produto_id, empresa_dona_id, localizacao_id, saldo")
-      .in("localizacao_id", locIds)
-      .gt("saldo", 0);
-
-    const { data: sessao } = await sb
-      .from("siso_inventario_sessoes")
-      .select("empresa_dona_id")
-      .eq("id", sessaoId)
-      .single();
-    const empresaDona = (sessao as { empresa_dona_id: string | null } | null)
-      ?.empresa_dona_id;
-    if (empresaDona) {
-      estoqueQuery = estoqueQuery.eq("empresa_dona_id", empresaDona);
-    }
-    const { data: estoque } = await estoqueQuery;
-    type EstoqueRow = {
-      produto_id: string;
-      empresa_dona_id: string;
-      localizacao_id: string;
-      saldo: number;
-    };
-    for (const e of (estoque ?? []) as EstoqueRow[]) {
-      const k = `${e.localizacao_id}|${e.produto_id}|${e.empresa_dona_id}`;
-      if (!agregado.has(k)) {
-        // Ninguém bipou esse SKU/dona/loc → conta como qty=0 (sumiu)
-        agregado.set(k, {
-          localizacao_id: e.localizacao_id,
-          produto_id: e.produto_id,
-          empresa_dona_id: e.empresa_dona_id,
-          qty: 0,
-        });
-      }
-    }
-  }
-
+  // 3. Saldos atuais (filtra por empresa_dona da sessão se houver)
   const { data: sessao } = await sb
     .from("siso_inventario_sessoes")
-    .select("tolerancia_pct, tolerancia_qty_min, exige_aprovacao_acima_valor")
+    .select("empresa_dona_id, tolerancia_pct, tolerancia_qty_min, exige_aprovacao_acima_valor")
     .eq("id", sessaoId)
     .single();
   const s = sessao as {
+    empresa_dona_id: string | null;
     tolerancia_pct: number;
     tolerancia_qty_min: number;
     exige_aprovacao_acima_valor: number | null;
   } | null;
 
-  for (const v of agregado.values()) {
-    const { data: estoque } = await sb
-      .from("siso_estoque")
-      .select("saldo, custo_medio")
+  let saldoQuery = sb
+    .from("siso_estoque")
+    .select("produto_id, empresa_dona_id, localizacao_id, saldo, custo_medio")
+    .in("localizacao_id", locIds.length > 0 ? locIds : ["00000000-0000-0000-0000-000000000000"])
+    .gt("saldo", 0);
+  if (s?.empresa_dona_id) {
+    saldoQuery = saldoQuery.eq("empresa_dona_id", s.empresa_dona_id);
+  }
+  const { data: saldosRaw } = await saldoQuery;
+  const saldos_atuais = ((saldosRaw ?? []) as Array<{
+    produto_id: string;
+    empresa_dona_id: string;
+    localizacao_id: string;
+    saldo: number;
+    custo_medio: number;
+  }>).map((r) => ({
+    localizacao_id: r.localizacao_id,
+    produto_id: r.produto_id,
+    empresa_dona_id: r.empresa_dona_id,
+    saldo: Number(r.saldo),
+    custo_medio: Number(r.custo_medio),
+  }));
+
+  // 4. Movs ledger nas locs da sessão, criadas após a contagem mais antiga
+  //    e até cutoff. Reduz volume — não precisa varrer tudo.
+  const minContado = contagens.length > 0
+    ? contagens.map((c) => c.contado_em).sort()[0]
+    : null;
+  const dataLimiteInferior = minContado ?? cutoff_em; // se sem contagens, query vazia
+  let movs: Array<{
+    id: string;
+    localizacao_id: string;
+    produto_id: string;
+    empresa_dona_id: string;
+    criado_em: string;
+    saldo_anterior: number;
+    saldo_posterior: number;
+    origem_tipo: string;
+    origem_id: string | null;
+    estorno_de: string | null;
+  }> = [];
+  if (locIds.length > 0 && minContado) {
+    const { data: movsRaw } = await sb
+      .from("siso_movimentacoes")
+      .select("id, localizacao_id, produto_id, empresa_dona_id, criado_em, saldo_anterior, saldo_posterior, origem_tipo, origem_id, estorno_de")
+      .in("localizacao_id", locIds)
+      .gte("criado_em", dataLimiteInferior)
+      .lte("criado_em", cutoff_em);
+    movs = ((movsRaw ?? []) as typeof movs).map((m) => ({
+      ...m,
+      saldo_anterior: Number(m.saldo_anterior),
+      saldo_posterior: Number(m.saldo_posterior),
+    }));
+  }
+
+  // 5. Função pura
+  const divergencias = reconciliarTemporal({
+    sessao_id: sessaoId,
+    cutoff_em,
+    contagens,
+    locs_visitadas: locsVisitadas,
+    saldos_atuais,
+    movs,
+  });
+
+  // 6. Persiste divergências aplicando tolerância
+  // Primeiro, limpa divergências não-aplicadas pra essas quádruplas (re-run)
+  for (const d of divergencias) {
+    await sb
+      .from("siso_inventario_divergencias")
+      .delete()
       .match({
-        produto_id: v.produto_id,
-        empresa_dona_id: v.empresa_dona_id,
-        localizacao_id: v.localizacao_id,
+        sessao_id: sessaoId,
+        localizacao_id: d.localizacao_id,
+        produto_id: d.produto_id,
+        empresa_dona_id: d.empresa_dona_id,
       })
-      .maybeSingle();
-    const e = estoque as { saldo: number; custo_medio: number } | null;
-    const saldo_sistema = Number(e?.saldo ?? 0);
-    const delta = v.qty - saldo_sistema;
+      .neq("status", "aplicada");
+  }
 
-    // delta === 0 não é divergência — pula. Se existia uma linha
-    // anterior (re-run), remove pra não poluir a UI.
-    if (delta === 0) {
-      await sb
-        .from("siso_inventario_divergencias")
-        .delete()
-        .match({
-          sessao_id: sessaoId,
-          localizacao_id: v.localizacao_id,
-          produto_id: v.produto_id,
-          empresa_dona_id: v.empresa_dona_id,
-        })
-        .neq("status", "aplicada");
-      continue;
-    }
-
+  for (const d of divergencias) {
     const delta_pct =
-      saldo_sistema === 0 ? null : Math.abs((delta / saldo_sistema) * 100);
-    const valor_financeiro = Number(e?.custo_medio ?? 0) * delta;
-
+      d.saldo_esperado === 0 ? null : Math.abs((d.delta / d.saldo_esperado) * 100);
     const dentroTol =
       (s?.tolerancia_pct ?? 0) > 0 && delta_pct !== null
         ? delta_pct <= s!.tolerancia_pct
-        : Math.abs(delta) <= (s?.tolerancia_qty_min ?? 0);
+        : Math.abs(d.delta) <= (s?.tolerancia_qty_min ?? 0);
     const acimaValor =
       s?.exige_aprovacao_acima_valor != null &&
-      Math.abs(valor_financeiro) > Number(s.exige_aprovacao_acima_valor);
+      Math.abs(d.valor_financeiro) > Number(s.exige_aprovacao_acima_valor);
     const status: "aprovada" | "pendente" =
       dentroTol && !acimaValor ? "aprovada" : "pendente";
 
     await sb.from("siso_inventario_divergencias").upsert(
       {
         sessao_id: sessaoId,
-        localizacao_id: v.localizacao_id,
-        produto_id: v.produto_id,
-        empresa_dona_id: v.empresa_dona_id,
-        saldo_sistema,
-        qty_contada_final: v.qty,
-        valor_financeiro,
+        localizacao_id: d.localizacao_id,
+        produto_id: d.produto_id,
+        empresa_dona_id: d.empresa_dona_id,
+        // NOTA: saldo_sistema agora guarda o saldo_esperado_no_bipe (reconciliação temporal) — nome mantido por compat
+        saldo_sistema: d.saldo_esperado,
+        qty_contada_final: d.qty_contada_final,
+        valor_financeiro: d.valor_financeiro,
         status,
       },
       { onConflict: "sessao_id,localizacao_id,produto_id,empresa_dona_id" },
@@ -722,7 +710,6 @@ export async function computarDivergencias(
     .update({ status: "revisao", finalizada_em: new Date().toISOString() })
     .eq("id", sessaoId);
 
-  // Fecha slots dos operadores ainda ativos
   await sb
     .from("siso_inventario_operadores")
     .update({ finalizado_em: new Date().toISOString() })

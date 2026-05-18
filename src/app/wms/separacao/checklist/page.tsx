@@ -615,10 +615,12 @@ export default function WmsChecklistPage() {
           `${data.realocacoes?.length ?? 0} loc(s) encontrada(s): ${locs}`,
         );
       } else if (data.status === "sem_cobertura") {
-        // Task 8: disparar modal encaminhar/OC automaticamente aqui
-        toast.warning("Sem cobertura no galpão — abrindo opções…", {
-          duration: 4000,
-        });
+        // Cascade falhou — abre modal de encaminhar/OC automaticamente.
+        // O modal usa o componente EsgotadoModal existente, alimentado por handleEsgotadoPreview.
+        setParcialModal(null);
+        queryClient.invalidateQueries({ queryKey });
+        await handleEsgotadoPreview(parcialModal.sku);
+        return;
       } else if (data.status === "aguardando_supervisor") {
         toast.warning("Sem cobertura — pedido voltou pro painel SISO", {
           duration: 6000,

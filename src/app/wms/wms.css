@@ -2622,30 +2622,34 @@
 }
 
 /* ============================================================
-   Responsivo — Sidebar (rail no tablet, drawer no mobile)
+   Responsivo — Sidebar (rail + hambúrguer que empurra o conteúdo)
    ============================================================ */
 
-/* Topbar + backdrop ficam ocultos no desktop */
-.wms-topbar { display: none; }
-.wms-sb-backdrop { display: none; }
+/* Brand container no header da sidebar — desktop mostra só o logo (N + labels) */
+.wms-sb-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wms-sb-toggle { display: none; }
+.wms-sb-logo-text { display: block; }
 
-/* Estilos compartilhados entre tablet e mobile (≤1280px) */
+/* Tablet + mobile (≤1280px) — rail por padrão, expande empurrando conteúdo.
+   Cobre iPad mini/Air/Pro 11" em landscape (até 1194px) e celulares. */
 @media (max-width: 1280px) {
-  .wms-topbar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: 48px;
-    padding: 0 12px;
-    background: var(--wms-c-panel);
-    border-bottom: 1px solid var(--wms-c-border);
-    position: sticky;
-    top: 0;
-    z-index: 40;
+  .wms-app {
+    grid-template-columns: 56px 1fr;
+    transition: grid-template-columns .2s ease;
   }
-  .wms-topbar-burger {
+  .wms-app.is-sidebar-open { grid-template-columns: 240px 1fr; }
+  .wms-view { padding: 20px 20px 64px; }
+
+  /* Substitui o "N" pelo hambúrguer no header */
+  .wms-sb-logo-mark { display: none; }
+  .wms-sb-toggle {
     width: 36px;
     height: 36px;
+    flex-shrink: 0;
     display: grid;
     place-items: center;
     background: transparent;
@@ -2655,53 +2659,15 @@
     cursor: pointer;
     padding: 0;
   }
-  .wms-topbar-burger:hover { background: var(--wms-c-panel-2); }
-  .wms-topbar-logo {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--wms-c-fg);
+  .wms-sb-toggle:hover {
+    background: var(--wms-c-panel-2);
+    border-color: var(--wms-c-border-2);
   }
-  .wms-topbar-logo-mark {
-    width: 24px;
-    height: 24px;
-    border-radius: var(--wms-r-1);
-    background: var(--wms-c-fg);
-    color: var(--wms-c-bg);
-    display: grid;
-    place-items: center;
-    font-weight: 700;
-    font-size: 12px;
-    letter-spacing: -0.02em;
-  }
-  .wms-sb-backdrop {
-    display: block;
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, .45);
-    z-index: 55;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity .18s ease;
-  }
-  .wms-sb-backdrop.is-open {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
-
-/* Tablet (641–1280px) — sidebar fica como rail; expande pra overlay quando .is-open.
-   Cobre iPad mini/Air/Pro 11" em landscape (até 1194px) com folga. */
-@media (min-width: 641px) and (max-width: 1280px) {
-  .wms-app { grid-template-columns: 56px 1fr; }
-  .wms-view { padding: 20px 20px 64px; }
 
   /* Compact rail — aplicado SÓ quando a sidebar NÃO está aberta */
   .wms-sb:not(.is-open) .wms-sb-hd { padding: 12px 6px 10px; gap: 8px; }
-  .wms-sb:not(.is-open) .wms-sb-logo { gap: 0; justify-content: center; padding: 4px 0 6px; }
-  .wms-sb:not(.is-open) .wms-sb-logo > div:not(.wms-sb-logo-mark) { display: none; }
+  .wms-sb:not(.is-open) .wms-sb-brand { justify-content: center; }
+  .wms-sb:not(.is-open) .wms-sb-logo { display: none; }
   .wms-sb:not(.is-open) .wms-sb-cmd { padding: 6px; justify-content: center; }
   .wms-sb:not(.is-open) .wms-sb-cmd > span,
   .wms-sb:not(.is-open) .wms-sb-cmd kbd { display: none; }
@@ -2723,34 +2689,4 @@
   .wms-sb:not(.is-open) .wms-sb-ft { padding: 10px 6px; }
   .wms-sb:not(.is-open) .wms-sb-user { justify-content: center; gap: 0; }
   .wms-sb:not(.is-open) .wms-sb-user > div:not(.wms-sb-avatar) { display: none; }
-
-  /* Expanded overlay — quando o usuário aperta o hambúrguer no tablet */
-  .wms-sb.is-open {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    width: 240px;
-    z-index: 60;
-    box-shadow: 4px 0 16px rgba(0, 0, 0, .18);
-  }
-}
-
-/* Mobile (≤640px) — sidebar fica escondida; drawer slide-in via hambúrguer */
-@media (max-width: 640px) {
-  .wms-app { grid-template-columns: 1fr; }
-  .wms-view { padding: 14px 14px 64px; }
-
-  .wms-sb {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    width: 260px;
-    transform: translateX(-100%);
-    transition: transform .18s ease;
-    z-index: 60;
-    box-shadow: 4px 0 16px rgba(0, 0, 0, .18);
-  }
-  .wms-sb.is-open { transform: translateX(0); }
 }

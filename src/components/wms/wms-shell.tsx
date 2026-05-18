@@ -168,6 +168,7 @@ function Sidebar({
   userName,
   userRole,
   isOpen,
+  onToggle,
   onNavigate,
 }: {
   pathname: string;
@@ -176,18 +177,40 @@ function Sidebar({
   userName: string;
   userRole: string;
   isOpen: boolean;
+  onToggle: () => void;
   onNavigate: () => void;
 }) {
   return (
     <aside className={`wms-sb ${isOpen ? "is-open" : ""}`}>
       <div className="wms-sb-hd">
-        <Link href="/wms" className="wms-sb-logo" onClick={onNavigate}>
-          <div className="wms-sb-logo-mark">N</div>
-          <div>
-            <div className="wms-sb-logo-name">NetAir WMS</div>
-            <div className="wms-sb-logo-org">SISO</div>
-          </div>
-        </Link>
+        <div className="wms-sb-brand">
+          <button
+            type="button"
+            className="wms-sb-toggle"
+            aria-label={isOpen ? "Recolher menu" : "Abrir menu"}
+            onClick={onToggle}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 18 18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              aria-hidden
+            >
+              <path d="M3 5h12M3 9h12M3 13h12" />
+            </svg>
+          </button>
+          <Link href="/wms" className="wms-sb-logo" onClick={onNavigate}>
+            <div className="wms-sb-logo-mark">N</div>
+            <div className="wms-sb-logo-text">
+              <div className="wms-sb-logo-name">NetAir WMS</div>
+              <div className="wms-sb-logo-org">SISO</div>
+            </div>
+          </Link>
+        </div>
         <SidebarGalpaoSwitcher />
         <button className="wms-sb-cmd" onClick={onCmdK}>
           <Icon name="search" size={12} />
@@ -230,35 +253,6 @@ function Sidebar({
   );
 }
 
-function MobileTopbar({ onOpen }: { onOpen: () => void }) {
-  return (
-    <header className="wms-topbar">
-      <button
-        type="button"
-        className="wms-topbar-burger"
-        aria-label="Abrir menu"
-        onClick={onOpen}
-      >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 18 18"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          aria-hidden
-        >
-          <path d="M3 5h12M3 9h12M3 13h12" />
-        </svg>
-      </button>
-      <Link href="/wms" className="wms-topbar-logo">
-        <span className="wms-topbar-logo-mark">N</span>
-        <span>NetAir WMS</span>
-      </Link>
-    </header>
-  );
-}
 
 // ──────────────────────────────────────────────────────────────────
 // CommandK
@@ -551,7 +545,7 @@ export function WmsShell({ children }: { children: ReactNode }) {
   return (
     <ModalContext.Provider value={ctxValue}>
       <div className="wms-root">
-        <div className="wms-app">
+        <div className={`wms-app ${sidebarOpen ? "is-sidebar-open" : ""}`}>
           <Sidebar
             pathname={pathname}
             onCmdK={() => setCkOpen(true)}
@@ -559,15 +553,10 @@ export function WmsShell({ children }: { children: ReactNode }) {
             userName={user.nome}
             userRole={role}
             isOpen={sidebarOpen}
+            onToggle={() => setSidebarOpen((o) => !o)}
             onNavigate={() => setSidebarOpen(false)}
           />
-          <div
-            className={`wms-sb-backdrop ${sidebarOpen ? "is-open" : ""}`}
-            onClick={() => setSidebarOpen(false)}
-            aria-hidden
-          />
           <div className="wms-main">
-            <MobileTopbar onOpen={() => setSidebarOpen(true)} />
             <div className="wms-view">{children}</div>
           </div>
 

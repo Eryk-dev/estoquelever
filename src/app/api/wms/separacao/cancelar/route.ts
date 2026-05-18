@@ -49,26 +49,54 @@ export async function POST(request: NextRequest) {
       .select("id, mov_saida_id, mov_ajuste_loc_zerou_id, separacao_parcial")
       .in("pedido_id", pedido_ids);
 
-    // Estorna mov_saida (NÃO estorna mov_ajuste_loc_zerou_id por design — reflete descoberta física)
+    const itemIds = (itensComMovs ?? []).map((i) => i.id);
+
+    // Estorna mov_saida via tabela ponte (dedupe por mov_id pra evitar double-estorno
+    // quando a mesma mov foi rateada entre N items do mesmo pedido).
+    // mov_ajuste_loc_zerou NÃO é estornado por design (reflete descoberta física).
+    const { data: links } = itemIds.length > 0
+      ? await supabase
+          .from("siso_pedido_item_mov_links")
+          .select("mov_id, tipo_link, qty, pedido_item_id")
+          .in("pedido_item_id", itemIds)
+      : { data: [] };
+
+    const movsSaidaSet = new Set<string>();
+    for (const l of links ?? []) {
+      if (l.tipo_link === "saida") movsSaidaSet.add(l.mov_id as string);
+    }
+    // Fallback legacy: items sem links mas com mov_saida_id (criados pré-fix-pack)
     for (const it of itensComMovs ?? []) {
-      if (it.mov_saida_id) {
-        try {
-          await estornarMovimentacao({
-            mov_id: it.mov_saida_id,
-            usuario_id: session.id,
-            observacoes: "Cancelar separação — estorno automático",
-          });
-        } catch (e) {
+      if (it.mov_saida_id) movsSaidaSet.add(it.mov_saida_id as string);
+    }
+
+    for (const movId of movsSaidaSet) {
+      try {
+        await estornarMovimentacao({
+          mov_id: movId,
+          usuario_id: session.id,
+          observacoes: "Cancelar separação — estorno automático",
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!msg.includes("ja foi estornada")) {
           logger.warn("separacao-cancelar", "Estorno mov_saida falhou", {
-            mov_id: it.mov_saida_id,
-            error: e instanceof Error ? e.message : String(e),
+            mov_id: movId,
+            error: msg,
           });
         }
       }
     }
 
+    // Apaga links do(s) item(s) (estornados acima + ajuste_loc_zerou)
+    if (itemIds.length > 0) {
+      await supabase
+        .from("siso_pedido_item_mov_links")
+        .delete()
+        .in("pedido_item_id", itemIds);
+    }
+
     // Realocações: estorna picadas, cancela aguardando_picking e demais
-    const itemIds = (itensComMovs ?? []).map((i) => i.id);
     const { data: realocs } = itemIds.length > 0
       ? await supabase
           .from("siso_pedido_item_realocacoes")
@@ -76,11 +104,12 @@ export async function POST(request: NextRequest) {
           .in("pedido_item_id", itemIds)
       : { data: [] };
 
-    // Estorna mov_saida_id de realocações 'picado' E 'picado_parcial'.
+    // Estorna mov_saida_id de realocações 'picado' E 'picado_parcial' que NÃO
+    // foram estornadas via tabela ponte acima (fallback legacy pra realocs antigos).
     // mov_ajuste_loc_zerou_id da realoc NÃO é estornada (mesmo design do item: reflete descoberta física).
     for (const r of realocs ?? []) {
       const precisaEstornar = r.status === "picado" || r.status === "picado_parcial";
-      if (precisaEstornar && r.mov_saida_id) {
+      if (precisaEstornar && r.mov_saida_id && !movsSaidaSet.has(r.mov_saida_id)) {
         try {
           await estornarMovimentacao({
             mov_id: r.mov_saida_id,
@@ -88,11 +117,14 @@ export async function POST(request: NextRequest) {
             observacoes: `Cancelar separação — estorno realocação ${r.status}`,
           });
         } catch (e) {
-          logger.warn("separacao-cancelar", "Estorno realocação falhou", {
-            realocacao_id: r.id,
-            status: r.status,
-            error: e instanceof Error ? e.message : String(e),
-          });
+          const msg = e instanceof Error ? e.message : String(e);
+          if (!msg.includes("ja foi estornada")) {
+            logger.warn("separacao-cancelar", "Estorno realocação falhou", {
+              realocacao_id: r.id,
+              status: r.status,
+              error: msg,
+            });
+          }
         }
       }
     }

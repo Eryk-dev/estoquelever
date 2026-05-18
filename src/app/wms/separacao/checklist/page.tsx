@@ -1141,15 +1141,18 @@ function ItemRow({
       </div>
       <div
         className="wms-tar"
-        style={{ display: "flex", flexDirection: "column", gap: 4 }}
+        style={{ display: "flex", flexDirection: "row", gap: 6, alignItems: "center" }}
       >
         {!done && !isParcial && (
           <button
             type="button"
-            className="wms-btn wms-btn-sm wms-btn-ghost"
+            className="wms-btn wms-btn-ghost"
             onClick={onParcial}
             title={`Pegar parcialmente: ${produto.sku}`}
-            style={{ color: "var(--wms-c-warn, #b45309)" }}
+            style={{
+              color: "var(--wms-c-warn, #b45309)",
+              borderColor: "var(--wms-c-warn, #b45309)",
+            }}
           >
             Parcial
           </button>
@@ -1157,7 +1160,7 @@ function ItemRow({
         {!done && (
           <button
             type="button"
-            className="wms-btn wms-btn-sm wms-btn-ghost"
+            className="wms-btn wms-btn-ghost"
             onClick={onEsgotado}
             title={`Marcar ${produto.sku} como esgotado`}
           >

@@ -1060,8 +1060,12 @@ function ItemRow({
   onParcial: () => void;
 }) {
   const done = produto.all_marcado;
+  const multi = produto.quantidade_total > 1;
   return (
-    <div className={`wms-hand-item${done ? " is-done" : ""}`}>
+    <div
+      className={`wms-hand-item${done ? " is-done" : ""}`}
+      style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 56px 170px" }}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -1135,13 +1139,17 @@ function ItemRow({
       </div>
       <div
         className="wms-mono wms-tar"
-        style={{ fontWeight: 700, fontSize: 16 }}
+        style={{
+          fontWeight: 700,
+          fontSize: multi ? 22 : 16,
+          color: multi ? "#0d9488" : undefined,
+        }}
       >
         {produto.quantidade_total}
       </div>
       <div
         className="wms-tar"
-        style={{ display: "flex", flexDirection: "row", gap: 6, alignItems: "center" }}
+        style={{ display: "flex", flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "flex-end" }}
       >
         {!done && !isParcial && (
           <button
@@ -1187,8 +1195,12 @@ function ItemRowOC({
   onDesfazer: () => void;
 }) {
   const done = produto.all_marcado;
+  const multi = produto.quantidade_total > 1;
   return (
-    <div className={`wms-hand-item is-oc${done ? " is-done" : ""}`}>
+    <div
+      className={`wms-hand-item is-oc${done ? " is-done" : ""}`}
+      style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 56px 170px" }}
+    >
       <div
         className="wms-hand-item-check"
         style={{ cursor: "default" }}
@@ -1250,13 +1262,17 @@ function ItemRowOC({
       </div>
       <div
         className="wms-mono wms-tar"
-        style={{ fontWeight: 700, fontSize: 16 }}
+        style={{
+          fontWeight: 700,
+          fontSize: multi ? 22 : 16,
+          color: multi ? "#0d9488" : undefined,
+        }}
       >
         {produto.quantidade_total}
       </div>
       <div
         className="wms-tar"
-        style={{ display: "flex", flexDirection: "column", gap: 4 }}
+        style={{ display: "flex", flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "flex-end" }}
       >
         {done ? (
           <button

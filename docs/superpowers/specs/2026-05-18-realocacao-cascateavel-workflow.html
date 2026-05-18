@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow — Realocação cascateável no picking</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #fafaf9;
+    --card: #ffffff;
+    --ink: #18181b;
+    --ink-2: #3f3f46;
+    --muted: #71717a;
+    --line: #e4e4e7;
+    --line-strong: #d4d4d8;
+
+    --ok: #10b981;
+    --ok-bg: #ecfdf5;
+    --ok-border: #a7f3d0;
+
+    --warn: #d97706;
+    --warn-bg: #fffbeb;
+    --warn-border: #fcd34d;
+
+    --bad: #dc2626;
+    --bad-bg: #fef2f2;
+    --bad-border: #fecaca;
+
+    --info: #0ea5e9;
+    --info-bg: #f0f9ff;
+    --info-border: #bae6fd;
+
+    --accent: #6366f1;
+    --accent-bg: #eef2ff;
+  }
+  html { font-size: 16px; }
+  body {
+    font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 56px 32px 96px; }
+  .topbar {
+    font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 500;
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 36px;
+  }
+  h1 {
+    font-weight: 700; font-size: 40px; letter-spacing: -0.02em;
+    line-height: 1.1; margin-bottom: 12px;
+  }
+  .lead {
+    font-size: 18px; color: var(--ink-2); max-width: 720px;
+    margin-bottom: 48px;
+  }
+  h2 {
+    font-weight: 600; font-size: 26px; letter-spacing: -0.01em;
+    margin: 56px 0 16px; display: flex; align-items: baseline; gap: 12px;
+  }
+  h2 .num {
+    font-size: 13px; color: var(--muted); font-weight: 500;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  h3 {
+    font-weight: 600; font-size: 18px; margin: 28px 0 10px;
+    color: var(--ink);
+  }
+  p { color: var(--ink-2); margin-bottom: 12px; }
+  strong { color: var(--ink); font-weight: 600; }
+  code, .mono {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.88em;
+    background: #f4f4f5; padding: 1px 6px; border-radius: 4px;
+    color: var(--ink);
+  }
+
+  /* ─── Cards ─── */
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 24px;
+  }
+  .card + .card { margin-top: 16px; }
+
+  /* ─── TL;DR box ─── */
+  .tldr {
+    background: var(--accent-bg);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    padding: 20px 24px; border-radius: 8px;
+    margin-bottom: 40px;
+  }
+  .tldr h3 {
+    margin: 0 0 8px; font-size: 13px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent);
+  }
+  .tldr p { margin: 0; color: var(--ink); font-size: 15px; }
+
+  /* ─── Antes/Depois ─── */
+  .compare {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    margin-top: 16px;
+  }
+  .compare .card { padding: 20px; }
+  .compare .card.before {
+    border-color: var(--bad-border); background: var(--bad-bg);
+  }
+  .compare .card.after {
+    border-color: var(--ok-border); background: var(--ok-bg);
+  }
+  .compare h3 { font-size: 14px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .compare .before h3 { color: var(--bad); }
+  .compare .after h3 { color: var(--ok); }
+  .compare ul { list-style: none; padding: 0; }
+  .compare li {
+    font-size: 13.5px; color: var(--ink-2); padding: 4px 0;
+    display: flex; gap: 8px; align-items: flex-start;
+  }
+  .compare li::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; opacity: 0.4;
+    margin-top: 9px; flex-shrink: 0;
+  }
+
+  /* ─── Steps ─── */
+  .steps { display: flex; flex-direction: column; gap: 0; margin: 24px 0; }
+  .step {
+    display: grid;
+    grid-template-columns: 60px 1fr;
+    gap: 24px;
+    padding: 24px 0;
+    border-bottom: 1px dashed var(--line);
+  }
+  .step:last-child { border-bottom: none; }
+  .step-num {
+    width: 48px; height: 48px; border-radius: 50%;
+    background: var(--ink); color: var(--card);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 18px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .step-num.ok { background: var(--ok); }
+  .step-num.warn { background: var(--warn); }
+  .step-num.bad { background: var(--bad); }
+  .step-num.info { background: var(--info); }
+  .step h4 {
+    font-size: 17px; font-weight: 600; margin-bottom: 6px;
+    color: var(--ink);
+  }
+  .step p { font-size: 14.5px; margin-bottom: 8px; }
+
+  /* ─── Picking card mockup ─── */
+  .pick-line {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 18px; display: grid;
+    grid-template-columns: 32px 1fr auto auto;
+    gap: 14px; align-items: center;
+    background: var(--card); margin: 10px 0;
+  }
+  .pick-line.realoc-active {
+    border-color: var(--warn-border); background: var(--warn-bg);
+  }
+  .pick-line.realoc-picado {
+    border-color: var(--ok-border); background: var(--ok-bg);
+    opacity: 0.95;
+  }
+  .pick-line.realoc-cancel {
+    border-color: var(--line-strong); background: #f4f4f5;
+    opacity: 0.7;
+  }
+  .pick-check {
+    width: 24px; height: 24px; border-radius: 6px;
+    border: 1.5px solid var(--line-strong); background: var(--card);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .pick-check.done {
+    border-color: var(--ok); background: var(--ok); color: white;
+    font-size: 14px; font-weight: 700;
+  }
+  .pick-sku {
+    font-family: 'JetBrains Mono', monospace; font-weight: 600;
+    font-size: 13.5px;
+  }
+  .pick-meta {
+    font-size: 11.5px; color: var(--muted); margin-top: 2px;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+  .pick-loc {
+    background: #fef3c7; color: #92400e; padding: 1px 6px;
+    border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-weight: 500;
+  }
+  .pick-qty {
+    font-family: 'JetBrains Mono', monospace; font-weight: 700;
+    font-size: 18px;
+  }
+  .pick-actions { display: flex; gap: 6px; }
+  .pick-btn {
+    border: 1px solid var(--line-strong); background: var(--card);
+    color: var(--ink-2); padding: 4px 10px; border-radius: 6px;
+    font-family: inherit; font-size: 12px; font-weight: 500;
+    cursor: pointer;
+  }
+  .pick-btn.warn {
+    color: var(--warn); border-color: var(--warn);
+  }
+  .badge {
+    font-size: 10px; font-weight: 600; padding: 2px 7px;
+    border-radius: 4px; letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn-border); }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok-border); }
+  .badge-muted { background: #f4f4f5; color: var(--muted); border: 1px solid var(--line); }
+  .badge-info { background: var(--info-bg); color: var(--info); border: 1px solid var(--info-border); }
+
+  /* ─── Modal mockup ─── */
+  .modal-mock {
+    background: var(--card); border: 1px solid var(--line-strong);
+    border-radius: 14px; padding: 22px; max-width: 380px;
+    box-shadow: 0 10px 30px -10px rgba(0,0,0,0.15);
+    margin: 16px auto;
+  }
+  .modal-mock h4 { font-size: 16px; margin-bottom: 4px; }
+  .modal-mock .modal-sub { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+  .modal-mock .modal-q { font-size: 13px; margin-bottom: 12px; }
+  .modal-mock .modal-qty {
+    display: flex; align-items: center; justify-content: center;
+    gap: 10px; margin-bottom: 12px;
+  }
+  .modal-mock .qty-btn {
+    width: 36px; height: 36px; border-radius: 10px;
+    background: #f4f4f5; border: none; font-size: 18px;
+    cursor: pointer;
+  }
+  .modal-mock .qty-display {
+    width: 80px; height: 50px;
+    border: 1px solid var(--line-strong); border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace; font-size: 26px; font-weight: 700;
+  }
+  .modal-mock .qty-caption { text-align: center; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .modal-mock .modal-check {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; background: #f4f4f5; border-radius: 10px;
+    font-size: 13px; margin-bottom: 14px;
+  }
+  .modal-mock .check-box {
+    width: 16px; height: 16px; border: 1.5px solid var(--line-strong);
+    border-radius: 4px; flex-shrink: 0;
+  }
+  .modal-mock .check-box.on { background: var(--warn); border-color: var(--warn); color: white; }
+  .modal-mock .modal-cta {
+    background: var(--warn); color: white; padding: 11px;
+    border-radius: 10px; text-align: center; font-weight: 600;
+    font-size: 13.5px;
+  }
+
+  /* ─── Flow diagram ─── */
+  .flow {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 24px; overflow-x: auto;
+  }
+  .flow svg { width: 100%; height: auto; min-width: 700px; max-width: 100%; display: block; }
+
+  /* ─── Scenario container ─── */
+  .scenario {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 28px; margin-top: 16px;
+  }
+  .scenario-head {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 8px;
+  }
+  .scenario-tag {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 3px 10px; border-radius: 4px;
+  }
+  .scenario-tag.green { background: var(--ok-bg); color: var(--ok); }
+  .scenario-tag.amber { background: var(--warn-bg); color: var(--warn); }
+  .scenario-tag.red { background: var(--bad-bg); color: var(--bad); }
+  .scenario h3 { font-size: 19px; margin: 0; }
+  .scenario .sit {
+    font-size: 14.5px; color: var(--ink-2); margin-bottom: 20px;
+    padding-bottom: 16px; border-bottom: 1px solid var(--line);
+  }
+  .scenario .sit strong { color: var(--ink); }
+
+  .ascii-box {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    background: #fafaf9; border: 1px solid var(--line);
+    border-radius: 8px; padding: 16px; color: var(--ink-2);
+    line-height: 1.4; white-space: pre; overflow-x: auto;
+  }
+
+  /* ─── Footer ─── */
+  .footer {
+    margin-top: 96px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px;
+    display: flex; justify-content: space-between;
+  }
+
+  @media (max-width: 720px) {
+    .compare { grid-template-columns: 1fr; }
+    h1 { font-size: 30px; }
+    .wrap { padding: 32px 20px 64px; }
+    .pick-line { grid-template-columns: 28px 1fr; }
+    .pick-line .pick-qty, .pick-line .pick-actions { grid-column: 2; justify-self: end; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <span>WMS · Workflow Review</span>
+    <span>2026-05-18</span>
+  </div>
+
+  <h1>Realocação cascateável<br>no picking de separação</h1>
+  <p class="lead">
+    Quando o operador pica e a localização sugerida zerou ou não tem tudo, o sistema deve seguir oferecendo a próxima loc sem travar — e o operador deve poder reportar "parcial" em qualquer loc, não só na primeira.
+  </p>
+
+  <div class="tldr">
+    <h3>Resumo em uma frase</h3>
+    <p>
+      Toda loc sugerida pro picking — original ou realocada — passa a se comportar igual: operador pode marcar como bipada, dar parcial, ou dizer que estava zerada. Sempre que sobrar saldo a pegar, o sistema busca a próxima loc dentro do galpão automaticamente, até cobrir tudo (ou mandar pro supervisor / abrir OC se não tiver coberta).
+    </p>
+  </div>
+
+  <!-- ──────────────────────────────────────────────────────────── -->
+  <h2><span class="num">§1</span> O que está quebrado hoje</h2>
+
+  <p>Hoje a primeira loc sugerida ao operador tem dois botões: <code>Parcial</code> (modal de quantidade) e <code>Esgotado</code> (modal de encaminhar/OC). Quando o operador dá parcial, o sistema oferece uma <strong>loc alternativa</strong> — mas essa loc alternativa <strong>não tem os mesmos botões</strong>.</p>
+
+  <div class="compare">
+    <div class="card before">
+      <h3>Hoje · Comportamento da loc alternativa</h3>
+      <ul>
+        <li>Aparece como uma linha menor com só um checkbox</li>
+        <li>Operador não consegue dar parcial nem dizer que zerou</li>
+        <li>Se o operador bipa o checkbox, sai pela quantidade cheia sugerida — sem confirmar o que realmente pegou</li>
+        <li>Se a loc estiver zerada e o operador "cancela" a realocação, o saldo pendente <strong>volta a contar pra loc original</strong> e ele não consegue avançar</li>
+        <li>O fluxo trava — operador precisa chamar supervisor</li>
+      </ul>
+    </div>
+    <div class="card after">
+      <h3>Proposta · Comportamento da loc alternativa</h3>
+      <ul>
+        <li>Aparece como uma linha igual à do item normal</li>
+        <li>Tem botão <strong>Parcial</strong> (idêntico ao do item normal)</li>
+        <li>Modal de parcial cobre os três casos: peguei tudo, peguei menos, ou loc zerada (qty = 0)</li>
+        <li>Se sobrou saldo a pegar, sistema sugere a <strong>próxima</strong> loc do galpão automaticamente</li>
+        <li>Operador segue picando até zerar a quantidade ou o galpão esgotar</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ──────────────────────────────────────────────────────────── -->
+  <h2><span class="num">§2</span> Unificando "Parcial" e "Esgotado"</h2>
+
+  <p>
+    O botão <code>Esgotado</code> de hoje (que abre um modal "encaminhar pra outro galpão / criar OC") deixa de existir como ação direta na linha. <strong>Fica só o botão <code>Parcial</code>.</strong>
+  </p>
+
+  <p>
+    O modal já existente do parcial cobre tudo: o operador escolhe quantos pegou (0 a N) e marca "loc zerou" se for o caso. <code>qty = 0</code> + <code>loc zerou</code> = o que antes era esgotado.
+  </p>
+
+  <p>
+    Quando o sistema esgota todas as opções dentro do galpão sem cobrir a quantidade, <strong>aí sim</strong> ele abre o modal de "encaminhar pra outro galpão / criar OC" automaticamente — como último recurso, não como ação de primeira mão.
+  </p>
+
+  <div class="modal-mock">
+    <h4 style="font-family:'JetBrains Mono',monospace">19SCP123</h4>
+    <div class="modal-sub">Loc: A1-02</div>
+    <div class="modal-q">Quantas unidades você conseguiu pegar?</div>
+    <div class="modal-qty">
+      <button class="qty-btn">−</button>
+      <div class="qty-display">2</div>
+      <button class="qty-btn">+</button>
+    </div>
+    <div class="qty-caption">de <strong>5</strong> esperadas</div>
+    <div class="modal-check">
+      <div class="check-box on">✓</div>
+      <div>Esta loc zerou (não tem mais)</div>
+    </div>
+    <div class="modal-cta">Confirmar</div>
+  </div>
+  <p style="text-align:center; font-size:12.5px; color:var(--muted); margin-top:-8px">
+    Modal único — qualquer combinação de "peguei tudo / peguei menos / loc zerou" passa por aqui.
+  </p>
+
+  <!-- ──────────────────────────────────────────────────────────── -->
+  <h2><span class="num">§3</span> Fluxo do cascade</h2>
+
+  <p>O loop que acontece toda vez que o operador confirma um parcial:</p>
+
+  <div class="flow">
+    <svg viewBox="0 0 900 480" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#3f3f46"/>
+        </marker>
+        <marker id="arrowOk" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#10b981"/>
+        </marker>
+        <marker id="arrowBad" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#dc2626"/>
+        </marker>
+      </defs>
+
+      <!-- ─── 1. Operador dá parcial ─── -->
+      <rect x="320" y="20" width="260" height="60" rx="12" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.5"/>
+      <text x="450" y="46" text-anchor="middle" font-family="Outfit" font-size="14" font-weight="600" fill="#18181b">Operador confirma "Parcial"</text>
+      <text x="450" y="65" text-anchor="middle" font-family="Outfit" font-size="12" fill="#71717a">qty pega · loc zerou (sim/não)</text>
+
+      <!-- arrow down -->
+      <line x1="450" y1="80" x2="450" y2="115" stroke="#3f3f46" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+      <!-- ─── 2. Registra mov no ledger ─── -->
+      <rect x="320" y="120" width="260" height="56" rx="12" fill="#ffffff" stroke="#d4d4d8" stroke-width="1.5"/>
+      <text x="450" y="144" text-anchor="middle" font-family="Outfit" font-size="14" font-weight="600" fill="#18181b">Sistema registra o que saiu</text>
+      <text x="450" y="162" text-anchor="middle" font-family="Outfit" font-size="12" fill="#71717a">baixa de estoque · ajuste se loc zerou</text>
+
+      <line x1="450" y1="176" x2="450" y2="210" stroke="#3f3f46" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+      <!-- ─── 3. Sobrou? ─── -->
+      <polygon points="450,215 580,260 450,305 320,260" fill="#eef2ff" stroke="#6366f1" stroke-width="1.5"/>
+      <text x="450" y="255" text-anchor="middle" font-family="Outfit" font-size="13" font-weight="600" fill="#18181b">Ainda falta</text>
+      <text x="450" y="272" text-anchor="middle" font-family="Outfit" font-size="13" font-weight="600" fill="#18181b">pegar quantidade?</text>
+
+      <!-- não — vai pra "completo" -->
+      <line x1="580" y1="260" x2="780" y2="260" stroke="#10b981" stroke-width="1.5" marker-end="url(#arrowOk)"/>
+      <text x="680" y="252" text-anchor="middle" font-family="Outfit" font-size="11" fill="#10b981" font-weight="600">não</text>
+
+      <rect x="780" y="234" width="100" height="52" rx="10" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1.5"/>
+      <text x="830" y="258" text-anchor="middle" font-family="Outfit" font-size="13" font-weight="600" fill="#10b981">Item</text>
+      <text x="830" y="274" text-anchor="middle" font-family="Outfit" font-size="13" font-weight="600" fill="#10b981">completo</text>
+
+      <!-- sim — vai pra buscar próxima -->
+      <line x1="450" y1="305" x2="450" y2="340" stroke="#3f3f46" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="465" y="325" font-family="Outfit" font-size="11" fill="#3f3f46" font-weight="600">sim</text>
+
+      <!-- ─── 4. Busca próxima loc ─── -->
+      <rect x="290" y="345" width="320" height="60" rx="12" fill="#ffffff" stroke="#d4d4d8" stroke-width="1.5"/>
+      <text x="450" y="370" text-anchor="middle" font-family="Outfit" font-size="14" font-weight="600" fill="#18181b">Sistema busca a próxima loc do galpão</text>
+      <text x="450" y="388" text-anchor="middle" font-family="Outfit" font-size="11.5" fill="#71717a">excluindo todas as locs já tentadas neste item</text>
+
+      <!-- decisão final -->
+      <line x1="290" y1="375" x2="180" y2="375" stroke="#10b981" stroke-width="1.5" marker-end="url(#arrowOk)"/>
+      <text x="240" y="368" text-anchor="middle" font-family="Outfit" font-size="11" fill="#10b981" font-weight="600">achou</text>
+
+      <rect x="40" y="345" width="140" height="60" rx="12" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1.5"/>
+      <text x="110" y="370" text-anchor="middle" font-family="Outfit" font-size="13" font-weight="600" fill="#10b981">Nova realocação</text>
+      <text x="110" y="388" text-anchor="middle" font-family="Outfit" font-size="11.5" fill="#10b981">aparece no checklist</text>
+
+      <line x1="610" y1="375" x2="720" y2="375" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arrowBad)"/>
+      <text x="665" y="368" text-anchor="middle" font-family="Outfit" font-size="11" fill="#dc2626" font-weight="600">galpão sem coberta</text>
+
+      <rect x="720" y="345" width="160" height="60" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5"/>
+      <text x="800" y="370" text-anchor="middle" font-family="Outfit" font-size="13" font-weight="600" fill="#dc2626">Abre modal</text>
+      <text x="800" y="388" text-anchor="middle" font-family="Outfit" font-size="11.5" fill="#dc2626">Encaminhar / OC</text>
+
+      <!-- loop arrow -->
+      <path d="M 110 405 Q 110 450 320 450 Q 450 450 450 425 L 450 405" stroke="#3f3f46" stroke-width="1.5" stroke-dasharray="4 4" fill="none" marker-end="url(#arrow)"/>
+      <text x="280" y="465" text-anchor="middle" font-family="Outfit" font-size="11" fill="#71717a" font-style="italic">o operador pode dar parcial de novo nesta loc → o loop continua</text>
+    </svg>
+  </div>
+
+  <!-- ──────────────────────────────────────────────────────────── -->
+  <h2><span class="num">§4</span> Cenários — passo a passo</h2>
+
+  <!-- Cenário 1 -->
+  <div class="scenario">
+    <div class="scenario-head">
+      <span class="scenario-tag green">Cenário A</span>
+      <h3>Parcial simples — cascade encontra outra loc no mesmo galpão</h3>
+    </div>
+    <p class="sit">
+      Pedido pede <strong>5 unidades</strong> de <code>19SCP123</code> da empresa NetAir, sugerido loc <code>A1-02</code> (sistema diz 5). Operador chega lá e tem só 2 — loc zerou.
+    </p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num warn">1</div>
+        <div>
+          <h4>Operador clica em "Parcial"</h4>
+          <p>Modal abre. Ele digita <strong>2</strong> e marca <strong>"loc zerou"</strong>. Confirma.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div>
+          <h4>Sistema dá baixa do que saiu</h4>
+          <p>Registra que saíram <strong>2 unidades</strong> da <code>A1-02</code>. Como o operador disse que a loc zerou, ajusta o saldo da <code>A1-02</code> pra zero (sumiram 3 unidades "fantasma").</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num info">3</div>
+        <div>
+          <h4>Sistema procura outra loc com o produto</h4>
+          <p>Faltam <strong>3 unidades</strong>. Ele varre o galpão excluindo a <code>A1-02</code>. Acha <strong>3 unidades</strong> na <code>B2-15</code> da mesma empresa.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num ok">4</div>
+        <div>
+          <h4>Nova linha aparece no checklist</h4>
+          <p>Uma linha amarela "Realocada" aparece logo abaixo, indicando: pegar <strong>3</strong> na <code>B2-15</code>. Tem os mesmos botões — Parcial, ou checkbox de bipar normal.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num ok">5</div>
+        <div>
+          <h4>Operador vai até B2-15, pega 3, bipa</h4>
+          <p>Linha marca como <strong>Picado</strong>. Item original aparece com badge "Parcial 5/5" (2 da A1-02 + 3 da B2-15). Está completo.</p>
+        </div>
+      </div>
+    </div>
+
+    <h4 style="margin-top: 24px">Como fica visualmente</h4>
+    <div class="pick-line realoc-cancel">
+      <div class="pick-check done">✓</div>
+      <div>
+        <div class="pick-sku">19SCP123 <span class="badge badge-warn">Parcial 2/5</span></div>
+        <div class="pick-meta"><span class="pick-loc">A1-02</span> · pedido NetAir</div>
+      </div>
+      <div class="pick-qty">5</div>
+      <div></div>
+    </div>
+    <div class="pick-line realoc-picado">
+      <div class="pick-check done">✓</div>
+      <div>
+        <div class="pick-sku">19SCP123 <span class="badge badge-ok">Picado</span> <span class="badge badge-warn">Realocada</span></div>
+        <div class="pick-meta"><span class="pick-loc">B2-15</span> ← de A1-02</div>
+      </div>
+      <div class="pick-qty">3</div>
+      <div></div>
+    </div>
+  </div>
+
+  <!-- Cenário 2 -->
+  <div class="scenario">
+    <div class="scenario-head">
+      <span class="scenario-tag amber">Cenário B</span>
+      <h3>Cascade duplo — a realocação também dá parcial</h3>
+    </div>
+    <p class="sit">
+      Mesmo pedido (5 unidades). Sistema sugeriu <code>A1-02</code> (achou 2). Realocação manda pra <code>B2-15</code> (dizia 3). Operador chega lá e só tem <strong>1</strong>.
+    </p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num warn">1</div>
+        <div>
+          <h4>Operador clica "Parcial" na linha da realocação B2-15</h4>
+          <p>É o mesmo botão e o mesmo modal do item normal. Ele coloca <strong>1</strong>, marca "loc zerou".</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div>
+          <h4>Sistema dá baixa de 1 e busca de novo</h4>
+          <p>Faltam <strong>2 unidades</strong>. Procura excluindo A1-02 <strong>e</strong> B2-15. Acha 2 unidades na loc <code>C4-08</code> da empresa NetParts (do mesmo grupo).</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num info">3</div>
+        <div>
+          <h4>Nova realocação cria — agora é empréstimo</h4>
+          <p>Linha "Realocada" + badge "Empréstimo" aparece no checklist. Operador vai lá, pega as 2, marca como bipado.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num ok">4</div>
+        <div>
+          <h4>Item original fica completo</h4>
+          <p>Total pego: 2 (A1-02) + 1 (B2-15) + 2 (C4-08) = 5. Sistema registra que NetAir <strong>deve 2 unidades</strong> pra NetParts (controle de empréstimo entre empresas do grupo segue normal).</p>
+        </div>
+      </div>
+    </div>
+
+    <h4 style="margin-top: 24px">Histórico inline (todas as tentativas visíveis)</h4>
+    <div class="pick-line realoc-cancel">
+      <div class="pick-check done">✓</div>
+      <div>
+        <div class="pick-sku">19SCP123 <span class="badge badge-warn">Parcial 2/5</span></div>
+        <div class="pick-meta"><span class="pick-loc">A1-02</span> · zerou</div>
+      </div>
+      <div class="pick-qty">5</div>
+      <div></div>
+    </div>
+    <div class="pick-line realoc-cancel">
+      <div class="pick-check done">✓</div>
+      <div>
+        <div class="pick-sku">19SCP123 <span class="badge badge-muted">Picado 1/3</span> <span class="badge badge-warn">Realocada</span></div>
+        <div class="pick-meta"><span class="pick-loc">B2-15</span> ← de A1-02 · zerou</div>
+      </div>
+      <div class="pick-qty">3</div>
+      <div></div>
+    </div>
+    <div class="pick-line realoc-picado">
+      <div class="pick-check done">✓</div>
+      <div>
+        <div class="pick-sku">19SCP123 <span class="badge badge-ok">Picado</span> <span class="badge badge-warn">Realocada</span> <span class="badge badge-info">Empréstimo</span></div>
+        <div class="pick-meta"><span class="pick-loc">C4-08</span> ← de B2-15 · NetParts</div>
+      </div>
+      <div class="pick-qty">2</div>
+      <div></div>
+    </div>
+  </div>
+
+  <!-- Cenário 3 -->
+  <div class="scenario">
+    <div class="scenario-head">
+      <span class="scenario-tag red">Cenário C</span>
+      <h3>Galpão sem cobertura — sistema abre modal de "encaminhar / OC"</h3>
+    </div>
+    <p class="sit">
+      Pedido pede <strong>5 unidades</strong>. <code>A1-02</code> tinha 2 e zerou. Sistema procurou no resto do galpão (CWB inteiro) e <strong>não achou nenhuma loc com o produto</strong>.
+    </p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num warn">1</div>
+        <div>
+          <h4>Operador confirma o parcial (2 unidades, loc zerou)</h4>
+          <p>Sistema baixa as 2 e busca o residual (3 unidades).</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num bad">2</div>
+        <div>
+          <h4>Busca volta sem nada</h4>
+          <p>Nenhuma outra loc do galpão tem o produto. Não dá pra criar realocação.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num info">3</div>
+        <div>
+          <h4>Modal "Encaminhar / OC" abre automaticamente</h4>
+          <p>É o mesmo modal que existe hoje, mas <strong>agora aparece como consequência</strong> — não como botão direto. Sistema mostra: "Galpão SP tem 5 unidades — encaminhar?" ou "Criar OC pelo fornecedor".</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num ok">4</div>
+        <div>
+          <h4>Operador decide (ou manda pro supervisor)</h4>
+          <p>Se encaminhar → o pedido sai do wave atual e vai pra SP. Se OC → o pedido vai pra fila de compras. Se fechar o modal sem decidir → pedido fica em "Pendente realocação" pro supervisor olhar depois.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ──────────────────────────────────────────────────────────── -->
+  <h2><span class="num">§5</span> Regras importantes</h2>
+
+  <div class="card">
+    <ul style="list-style:none; padding:0">
+      <li style="padding:12px 0; border-bottom:1px solid var(--line); display:flex; gap:14px;">
+        <span style="font-family:'JetBrains Mono',monospace; color:var(--accent); font-weight:600; min-width:24px">01</span>
+        <div>
+          <strong>Cada loc só é sugerida uma vez por item.</strong>
+          <div style="font-size:13.5px; color:var(--muted); margin-top:2px">Toda vez que o sistema busca a próxima loc, ele exclui a loc original e todas as locs de realocação anteriores deste item — não importa se foram picadas ou canceladas.</div>
+        </div>
+      </li>
+      <li style="padding:12px 0; border-bottom:1px solid var(--line); display:flex; gap:14px;">
+        <span style="font-family:'JetBrains Mono',monospace; color:var(--accent); font-weight:600; min-width:24px">02</span>
+        <div>
+          <strong>Empresa do pedido vem primeiro.</strong>
+          <div style="font-size:13.5px; color:var(--muted); margin-top:2px">A busca prioriza locs da empresa que recebeu o pedido. Só cai pra empréstimo (loc de outra empresa do mesmo grupo) se não tem na própria. Vale igual pra cada nova realocação do cascade.</div>
+        </div>
+      </li>
+      <li style="padding:12px 0; border-bottom:1px solid var(--line); display:flex; gap:14px;">
+        <span style="font-family:'JetBrains Mono',monospace; color:var(--accent); font-weight:600; min-width:24px">03</span>
+        <div>
+          <strong>O histórico de tentativas fica visível.</strong>
+          <div style="font-size:13.5px; color:var(--muted); margin-top:2px">Operador vê a sequência inline no checklist: A1-02 (parcial 2/5, zerou) → B2-15 (picado 1/3, zerou) → C4-08 (picado 2/2). Linhas finalizadas ficam mais apagadas mas continuam visíveis.</div>
+        </div>
+      </li>
+      <li style="padding:12px 0; border-bottom:1px solid var(--line); display:flex; gap:14px;">
+        <span style="font-family:'JetBrains Mono',monospace; color:var(--accent); font-weight:600; min-width:24px">04</span>
+        <div>
+          <strong>"Esgotado" deixa de ser botão.</strong>
+          <div style="font-size:13.5px; color:var(--muted); margin-top:2px">Esgotado vira o caso particular de "Parcial com qty=0 + loc zerou". O modal de "encaminhar / OC" continua existindo, mas só aparece quando o galpão esgota cobertura — não como ação manual do operador.</div>
+        </div>
+      </li>
+      <li style="padding:12px 0; display:flex; gap:14px;">
+        <span style="font-family:'JetBrains Mono',monospace; color:var(--accent); font-weight:600; min-width:24px">05</span>
+        <div>
+          <strong>Tudo que sai do estoque é registrado.</strong>
+          <div style="font-size:13.5px; color:var(--muted); margin-top:2px">Cada parcial gera um registro do que saiu fisicamente. Os ajustes de "loc zerou" (saldo fantasma que sumiu) também ficam registrados separadamente. Empréstimos entre empresas do grupo continuam sendo contabilizados no controle de dívida.</div>
+        </div>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ──────────────────────────────────────────────────────────── -->
+  <h2><span class="num">§6</span> O que muda na tela do operador</h2>
+
+  <p>Antes (estado atual):</p>
+  <div class="pick-line">
+    <div class="pick-check"></div>
+    <div>
+      <div class="pick-sku">19SCP123</div>
+      <div class="pick-meta"><span class="pick-loc">A1-02</span> · saldo 5</div>
+    </div>
+    <div class="pick-qty">5</div>
+    <div class="pick-actions">
+      <button class="pick-btn warn">Parcial</button>
+      <button class="pick-btn">Esgotado</button>
+    </div>
+  </div>
+  <p style="margin-top: 8px; font-size: 13px; color: var(--muted)">Dois botões: Parcial e Esgotado. Após dar parcial, a loc alternativa aparece sem ações.</p>
+
+  <p style="margin-top: 24px">Depois (proposta):</p>
+  <div class="pick-line">
+    <div class="pick-check"></div>
+    <div>
+      <div class="pick-sku">19SCP123</div>
+      <div class="pick-meta"><span class="pick-loc">A1-02</span> · saldo 5</div>
+    </div>
+    <div class="pick-qty">5</div>
+    <div class="pick-actions">
+      <button class="pick-btn warn">Parcial</button>
+    </div>
+  </div>
+  <div class="pick-line realoc-active">
+    <div class="pick-check"></div>
+    <div>
+      <div class="pick-sku">19SCP123 <span class="badge badge-warn">Realocada</span></div>
+      <div class="pick-meta"><span class="pick-loc">B2-15</span> ← de A1-02</div>
+    </div>
+    <div class="pick-qty">3</div>
+    <div class="pick-actions">
+      <button class="pick-btn warn">Parcial</button>
+    </div>
+  </div>
+  <p style="margin-top: 8px; font-size: 13px; color: var(--muted)">Um botão único, em qualquer loc — original ou realocada. Esgotado vira caso particular do parcial (qty=0 + loc zerou).</p>
+
+  <!-- ──────────────────────────────────────────────────────────── -->
+  <h2><span class="num">§7</span> O que NÃO muda</h2>
+  <div class="card">
+    <ul style="list-style:none; padding:0; font-size:14.5px; color:var(--ink-2)">
+      <li style="padding:6px 0">→ Wave picking, ordem de picking, ordenação por localização.</li>
+      <li style="padding:6px 0">→ Comportamento do bipe de SKU/GTIN (operador segue bipando produto na loc sugerida).</li>
+      <li style="padding:6px 0">→ Fluxo de OC, embalagem, expedição (downstream do picking).</li>
+      <li style="padding:6px 0">→ Itens OC (botões "Encontrei" / "Esgotado" da seção de OC seguem como hoje).</li>
+      <li style="padding:6px 0">→ Comportamento do checkbox simples na linha — bipar = picar tudo. Continua valendo.</li>
+    </ul>
+  </div>
+
+  <div class="footer">
+    <span>WMS · SISO · Realocação cascateável</span>
+    <span>2026-05-18</span>
+  </div>
+</div>
+</body>
+</html>

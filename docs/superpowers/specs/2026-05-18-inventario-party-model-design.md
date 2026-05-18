@@ -16,15 +16,16 @@ Hoje o módulo de inventário trata operadores como **5 slots fixos** (`OP1..OP5
 - `siso_inventario_sessoes.num_operadores smallint DEFAULT 5` — supervisor configurava (1..5) ao criar.
 - Tela handheld (`/wms/inventario/[id]/contar`) apresenta um **SlotPicker**: operador precisa escolher um número de slot livre antes de começar.
 - Painel do supervisor (`/wms/inventario/[id]`) renderiza uma grade fixa OP1..OP{num_operadores} — slots vazios aparecem como placeholders.
-- RPC `wms_inventario_proxima_loc` referencia `v_meu_slot` em 2 lugares (lê do operador + prioriza `slot_atribuido` da loc).
+- RPC `wms_inventario_proxima_loc` (versão `20260513_wms_inventario_claim_hierarquico.sql`) **já não usa `slot`** internamente — opera por `usuario_id`. Mensagem de erro ainda menciona "slot ativo".
+- `siso_inventario_localizacoes.slot_atribuido` **já foi dropada** em `20260513_wms_inventario_claim_hierarquico.sql` (era do modelo bucketing curto-lived). Reforça que `slot` em operadores virou puramente UI.
 
 ### Problemas
 
 1. **Identidade artificial:** "OP3" não é a Maria — é uma cadeira numerada. Se Maria sai e Carlos entra no mesmo número, fica confuso ("OP3 contou 12 locs" — quem contou?). A identidade real é o usuário, não o slot.
-2. **Cap rígido:** sessão grande com 7 operadores disponíveis trava nos 5 slots por DB. Não há razão de negócio pra isso — é resquício do modelo antigo de bucketing (`slot_atribuido`), que já foi desativado pelo commit `a0b0063` quando o seletor "Operadores esperados" foi removido do modal de criação.
-3. **Fricção no handheld:** SlotPicker é uma tela a mais (1 clique extra + cognição "qual slot?"). Inútil agora que slot é irrelevante.
-4. **`num_operadores` é ornamental:** após `a0b0063`, vira só limitador visual sem propósito — coluna morta com semântica perdida.
-5. **`slot_atribuido` em locs é dead-code:** nunca mais é setada; ocupa lugar no schema e na RPC.
+2. **Cap rígido:** sessão grande com 7 operadores disponíveis trava nos 5 slots por DB. Não há razão de negócio pra isso — é resquício do modelo antigo de bucketing, abandonado em `20260513`.
+3. **Fricção no handheld:** SlotPicker é uma tela a mais (1 clique extra + cognição "qual slot?"). Inútil agora que slot é irrelevante pro algoritmo de roteamento.
+4. **`num_operadores` é ornamental:** após o commit `a0b0063` (que removeu seletor "Operadores esperados" do modal), vira só limitador visual sem propósito — coluna morta com semântica perdida.
+5. **Mensagem de erro confusa:** RPC ainda diz "não está em nenhum slot ativo" quando user não está na sessão — terminologia velha.
 
 ### Mental model alvo: party de jogo online
 
@@ -94,8 +95,6 @@ BEGIN;
 ALTER TABLE siso_inventario_operadores
   DROP CONSTRAINT IF EXISTS siso_inventario_operadores_slot_check;
 
--- O UNIQUE(sessao_id, slot) é criado como CONSTRAINT no rewrite.sql.
--- Nome esperado segue padrão automatic do Postgres pra colunas com UNIQUE.
 ALTER TABLE siso_inventario_operadores
   DROP CONSTRAINT IF EXISTS siso_inventario_operadores_sessao_id_slot_key;
 
@@ -113,19 +112,7 @@ ALTER TABLE siso_inventario_sessoes
   DROP COLUMN IF EXISTS num_operadores;
 
 -- ───────────────────────────────────────────────────────────────────────
--- 3. Drop: slot_atribuido em localizações (dead-code desde a0b0063)
--- ───────────────────────────────────────────────────────────────────────
-
-DROP INDEX IF EXISTS idx_inv_locs_slot_atribuido;
-
-ALTER TABLE siso_inventario_localizacoes
-  DROP CONSTRAINT IF EXISTS siso_inventario_localizacoes_slot_atribuido_check;
-
-ALTER TABLE siso_inventario_localizacoes
-  DROP COLUMN IF EXISTS slot_atribuido;
-
--- ───────────────────────────────────────────────────────────────────────
--- 4. Add: ultima_reentrada_em pra auditar reentradas na party
+-- 3. Add: ultima_reentrada_em pra auditar reentradas na party
 -- ───────────────────────────────────────────────────────────────────────
 
 ALTER TABLE siso_inventario_operadores
@@ -135,6 +122,9 @@ ALTER TABLE siso_inventario_operadores
 -- já existe (idx uq_inv_op_user_ativo do rewrite.sql) e continua sendo a
 -- única defesa contra duplicação ativa. Reentrada atualiza a linha
 -- existente (vide service), nunca insere outra.
+
+-- NOTA: siso_inventario_localizacoes.slot_atribuido já foi dropada em
+-- 20260513_wms_inventario_claim_hierarquico.sql — não há nada a fazer aqui.
 
 COMMIT;
 ```
@@ -166,41 +156,32 @@ Como o ambiente é staging e foi explicitado no `wms_inventario_rewrite.sql` que
 
 ## 4. RPC `wms_inventario_proxima_loc`
 
-Migration reescreve a função (versão atual está em `20260512_wms_inventario_slot_atribuido.sql`). Mudanças:
+Versão atual está em `20260513_wms_inventario_claim_hierarquico.sql`. Internamente **já não usa `slot`** — opera por `usuario_id`. A única mudança necessária é cosmética: trocar a mensagem de erro pra refletir a terminologia "party".
 
-### Remove
+### Mudança
 
-1. Declaração `v_meu_slot smallint`.
-2. Query `SELECT slot INTO v_meu_slot FROM siso_inventario_operadores WHERE …`.
-3. Prioridade "0. Bucket próprio" (`CASE WHEN inv_loc.slot_atribuido = v_meu_slot THEN 0 ELSE 1 END`).
-
-### Substitui
-
-A validação de presença vira simples e a mensagem de erro fica mais clara:
-
+Linha atual:
 ```sql
-IF NOT EXISTS (
-  SELECT 1 FROM siso_inventario_operadores
-  WHERE sessao_id = p_sessao
-    AND usuario_id = p_user
-    AND finalizado_em IS NULL
-) THEN
-  RAISE EXCEPTION 'usuário não está na party desta sessão';
-END IF;
+RAISE EXCEPTION 'usuário não está em nenhum slot ativo desta sessão';
 ```
+
+Vira:
+```sql
+RAISE EXCEPTION 'usuário não está na party desta sessão';
+```
+
+A migration `20260518` faz `CREATE OR REPLACE FUNCTION wms_inventario_proxima_loc(...)` com o corpo da versão claim_hierarquico e só essa string trocada. Como `CREATE OR REPLACE` substitui inteira, o arquivo da migration tem que reproduzir o corpo completo da função (não há `ALTER FUNCTION` que mude só uma string).
 
 ### Mantém intocado
 
-- Prioridade 1: continuidade (mesma zona da última loc do user)
-- Prioridade 2: anti-colisão (preferir zona não ocupada por outro op ativo)
-- Prioridade 3: alfabético por código
-- Lock atômico `FOR UPDATE OF inv_loc SKIP LOCKED`
-- Algoritmo de claim hierárquico (rua > prédio > buffer > colisão) — já é por `usuario_id`, não depende de `slot`
-- Payload (`inv_loc_id`, `loc_id`, `codigo`, `tipo`, `zona`, `modo`, `esperados`, `claim_tipo`, `claim_codigo`, `claim_direcao`)
+- Validação de presença via `siso_inventario_operadores` (já é por `usuario_id`).
+- Algoritmo de claim hierárquico (rua > prédio > buffer > colisão).
+- Lock atômico `FOR UPDATE OF inv_loc SKIP LOCKED`.
+- Payload (`inv_loc_id`, `loc_id`, `codigo`, `tipo`, `zona`, `modo`, `esperados`, `claim_tipo`, `claim_codigo`, `claim_direcao`).
 
 ### Resultado
 
-Função fica ~30 linhas mais curta. Não há mudança de comportamento observável quando há 1..N operadores; sem `slot_atribuido` sendo setada hoje, o "bucket próprio" já era no-op de fato.
+Comportamento idêntico. Só a mensagem de erro fica mais consistente com o resto do código novo.
 
 ---
 

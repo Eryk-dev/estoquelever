@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inventário · Modelo Party — Fluxo</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+
+  .stepper { counter-reset: step; margin: 24px 0; }
+  .stepper-item { position: relative; padding: 16px 16px 16px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 12px 0; }
+  .scenario-title { font-weight: 600; margin-bottom: 6px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--muted); }
+  .scenario-flow strong { color: var(--text); }
+
+  /* ─── Mockups ─── */
+  .mockup-row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 24px 0; }
+  @media (max-width: 760px) { .mockup-row { grid-template-columns: 1fr; } }
+  .mockup-col { display: flex; flex-direction: column; gap: 8px; }
+  .mockup-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .mockup-label.before { color: var(--red); }
+  .mockup-label.after { color: var(--green); }
+
+  .device { background: var(--zinc-900); border-radius: 18px; padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+  .device-handheld { max-width: 320px; }
+  .device-supervisor { max-width: 100%; }
+  .device-screen { background: var(--surface); border-radius: 10px; padding: 16px; min-height: 280px; font-size: 13px; }
+
+  .mock-header { font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--zinc-900); }
+  .mock-sub { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+
+  .slot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(85px, 1fr)); gap: 8px; }
+  .slot-card { border: 1.5px dashed var(--zinc-200); border-radius: 8px; padding: 8px 10px; min-height: 78px; font-size: 11px; line-height: 1.35; display: flex; flex-direction: column; gap: 2px; }
+  .slot-card.busy { border-style: solid; background: var(--zinc-50); }
+  .slot-card.you { border-color: var(--accent); background: #eff6ff; }
+  .slot-num { font-weight: 700; font-size: 13px; color: var(--zinc-900); }
+  .slot-name { font-weight: 600; color: var(--zinc-800); }
+  .slot-meta { color: var(--muted); font-size: 10.5px; }
+  .slot-empty { color: var(--muted); font-style: italic; font-size: 10.5px; margin-top: auto; }
+
+  .btn-mock { display: inline-block; padding: 8px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: default; user-select: none; }
+  .btn-primary { background: var(--zinc-900); color: white; }
+  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--zinc-800); }
+  .btn-danger-ghost { background: transparent; border: 1px solid var(--red); color: var(--red); }
+
+  .standby-center { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px 8px; text-align: center; }
+  .standby-circle { width: 64px; height: 64px; border-radius: 50%; background: var(--green-bg); color: var(--green); display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 700; }
+  .standby-name { font-weight: 700; font-size: 16px; }
+  .standby-counter { color: var(--muted); font-size: 12.5px; }
+  .standby-retomado { display: inline-block; padding: 2px 8px; border-radius: 10px; background: var(--cyan-bg); color: #155e75; font-size: 10.5px; font-weight: 600; }
+
+  .party-strip { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .party-chip { background: var(--zinc-100); padding: 4px 10px; border-radius: 14px; font-size: 11px; color: var(--zinc-800); display: inline-flex; align-items: center; gap: 4px; }
+  .party-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+
+  .supervisor-empty { text-align: center; padding: 40px 12px; color: var(--muted); font-style: italic; font-size: 13px; border: 1.5px dashed var(--zinc-200); border-radius: 8px; }
+
+  .timeline-grid { display: grid; grid-template-columns: 1fr; gap: 18px; margin: 24px 0; }
+  .timeline-step { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .timeline-step-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--zinc-50); border-bottom: 1px solid var(--border); }
+  .timeline-time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); background: var(--surface); padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); }
+  .timeline-step-title { font-weight: 600; font-size: 14px; flex: 1; }
+  .timeline-step-body { padding: 14px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Inventário · Modelo Party</h1>
+  <p class="subtitle">Sessão de contagem vira uma "party" — operadores entram e saem livremente, sem cadeira numerada.</p>
+  <p class="meta">Validação de fluxo · 2026-05-18 · linguagem de negócio (sem detalhe técnico)</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#mockups">Mockups das telas (antes vs depois)</a></li>
+    <li><a href="#fluxo">Fluxo principal</a></li>
+    <li><a href="#exemplo">Exemplo passo-a-passo</a></li>
+    <li><a href="#estados">Estados e transições</a></li>
+    <li><a href="#cenarios">Cenários alternativos</a></li>
+  </ol>
+</div>
+
+<h2 id="resumo">1. Resumo</h2>
+<p>Hoje, antes de começar a contar, o operador precisa escolher um <em>número de cadeira</em> (OP1, OP2, OP3…) — e a sessão só aceita 5 cadeiras. Vamos trocar isso por um modelo de <strong>party</strong>, como em jogo online: o operador entra direto, com o nome dele, e a tela do supervisor mostra quem está dentro como uma <em>lista viva</em> que cresce conforme gente entra e encolhe quando alguém sai. Não tem limite rígido de quantos podem trabalhar juntos. Se a Maria sair pra almoçar e voltar depois, ela retoma de onde parou — as 12 contagens que ela já tinha feito continuam no nome dela.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Pra que serve</div>
+  Tirar fricção do operador (1 clique a menos pra entrar), permitir mais de 5 pessoas contando ao mesmo tempo em sessões grandes, e amarrar contagem à pessoa real em vez de uma cadeira numerada.
+</div>
+
+<h2 id="mockups">2. Mockups das telas (antes vs depois)</h2>
+
+<h3>2.1 Tela do operador (handheld) — quando ele acabou de abrir a sessão</h3>
+<p>Antes: precisa escolher uma cadeira livre. Depois: entra direto, com o nome dele.</p>
+
+<div class="mockup-row">
+  <div class="mockup-col">
+    <span class="mockup-label before">Antes</span>
+    <div class="device device-handheld">
+      <div class="device-screen">
+        <div class="mock-header">Quem é você?</div>
+        <div class="mock-sub">Escolha um slot livre. Você e até 4 colegas podem contar ao mesmo tempo.</div>
+        <div class="slot-grid">
+          <div class="slot-card busy">
+            <div class="slot-num">OP1</div>
+            <div class="slot-name">Maria</div>
+            <div class="slot-meta">12 loc(s)</div>
+          </div>
+          <div class="slot-card">
+            <div class="slot-num">OP2</div>
+            <div class="slot-empty">livre — toque pra entrar</div>
+          </div>
+          <div class="slot-card busy">
+            <div class="slot-num">OP3</div>
+            <div class="slot-name">João</div>
+            <div class="slot-meta">8 loc(s)</div>
+          </div>
+          <div class="slot-card">
+            <div class="slot-num">OP4</div>
+            <div class="slot-empty">livre — toque pra entrar</div>
+          </div>
+          <div class="slot-card">
+            <div class="slot-num">OP5</div>
+            <div class="slot-empty">livre — toque pra entrar</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup-col">
+    <span class="mockup-label after">Depois</span>
+    <div class="device device-handheld">
+      <div class="device-screen">
+        <div class="standby-center">
+          <div class="standby-circle">C</div>
+          <div>
+            <div class="standby-name">Bem-vindo à party, Carlos</div>
+            <div class="standby-counter">0 loc(s) contada(s) — começando agora</div>
+          </div>
+          <div class="btn-mock btn-primary">PRÓXIMA LOC</div>
+          <div style="font-size: 11.5px; color: var(--muted);">Também na party:</div>
+          <div class="party-strip">
+            <span class="party-chip"><span class="dot"></span>Maria · 12</span>
+            <span class="party-chip"><span class="dot"></span>João · 8</span>
+          </div>
+          <div class="btn-mock btn-danger-ghost" style="margin-top: 16px;">Sair da party</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>2.2 Tela do operador — quando ele volta depois de ter saído</h3>
+<p>A Maria saiu pra almoçar. Quando ela reabre o app, a tela mostra que ela <strong>retomou</strong> e as 12 contagens dela continuam.</p>
+
+<div class="mockup-row">
+  <div class="mockup-col">
+    <span class="mockup-label before">Antes</span>
+    <div class="device device-handheld">
+      <div class="device-screen">
+        <div class="mock-header">Quem é você?</div>
+        <div class="mock-sub">Escolha um slot livre. (Maria saiu e seu slot OP1 está livre — mas é só um número, dá pra entrar em qualquer um.)</div>
+        <div class="slot-grid">
+          <div class="slot-card">
+            <div class="slot-num">OP1</div>
+            <div class="slot-empty">livre — toque pra entrar</div>
+          </div>
+          <div class="slot-card">
+            <div class="slot-num">OP2</div>
+            <div class="slot-empty">livre — toque pra entrar</div>
+          </div>
+          <div class="slot-card busy">
+            <div class="slot-num">OP3</div>
+            <div class="slot-name">João</div>
+            <div class="slot-meta">8 loc(s)</div>
+          </div>
+          <div class="slot-card busy">
+            <div class="slot-num">OP4</div>
+            <div class="slot-name">Carlos</div>
+            <div class="slot-meta">3 loc(s)</div>
+          </div>
+          <div class="slot-card">
+            <div class="slot-num">OP5</div>
+            <div class="slot-empty">livre — toque pra entrar</div>
+          </div>
+        </div>
+        <div style="margin-top: 12px; font-size: 11px; color: var(--red);">⚠ Se a Maria entrar em OP2 (sua cadeira de antes era OP1), a tela mostra "0 loc(s)" porque o histórico estava amarrado ao número, não ao nome.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup-col">
+    <span class="mockup-label after">Depois</span>
+    <div class="device device-handheld">
+      <div class="device-screen">
+        <div class="standby-center">
+          <div class="standby-circle">M</div>
+          <div>
+            <div class="standby-name">Bem-vinda de volta, Maria</div>
+            <div class="standby-counter">12 loc(s) contada(s) — continuando</div>
+            <span class="standby-retomado">↻ retomado</span>
+          </div>
+          <div class="btn-mock btn-primary">PRÓXIMA LOC</div>
+          <div style="font-size: 11.5px; color: var(--muted);">Também na party:</div>
+          <div class="party-strip">
+            <span class="party-chip"><span class="dot"></span>João · 8</span>
+            <span class="party-chip"><span class="dot"></span>Carlos · 3</span>
+          </div>
+          <div class="btn-mock btn-danger-ghost" style="margin-top: 16px;">Sair da party</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>2.3 Tela do supervisor — visão ao vivo da party</h3>
+<p>Antes: 5 cadeiras fixas, mesmo se só 2 estão ocupadas. Depois: lista viva — só aparece quem está dentro.</p>
+
+<div class="mockup-row">
+  <div class="mockup-col">
+    <span class="mockup-label before">Antes</span>
+    <div class="device device-supervisor">
+      <div class="device-screen">
+        <div class="mock-header">Slots de operador · 5 configurados</div>
+        <div class="mock-sub">Painel ao vivo. Slots vazios aparecem como placeholder mesmo sem ninguém dentro.</div>
+        <div class="slot-grid" style="grid-template-columns: repeat(5, 1fr);">
+          <div class="slot-card busy">
+            <div class="slot-num">OP1</div>
+            <div class="slot-name">Maria</div>
+            <div class="slot-meta">12 loc · 8 loc/h</div>
+            <div class="slot-meta" style="color: var(--accent);">rua A ↓</div>
+          </div>
+          <div class="slot-card">
+            <div class="slot-num">OP2</div>
+            <div class="slot-empty">livre</div>
+          </div>
+          <div class="slot-card busy">
+            <div class="slot-num">OP3</div>
+            <div class="slot-name">João</div>
+            <div class="slot-meta">8 loc · 6 loc/h</div>
+            <div class="slot-meta" style="color: var(--accent);">rua C ↓</div>
+          </div>
+          <div class="slot-card">
+            <div class="slot-num">OP4</div>
+            <div class="slot-empty">livre</div>
+          </div>
+          <div class="slot-card">
+            <div class="slot-num">OP5</div>
+            <div class="slot-empty">livre</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup-row">
+  <div class="mockup-col">
+    <span class="mockup-label after">Depois</span>
+    <div class="device device-supervisor">
+      <div class="device-screen">
+        <div class="mock-header">Na party · 4 operadores</div>
+        <div class="mock-sub">Lista cresce conforme entram, encolhe quando saem. Sem limite rígido.</div>
+        <div class="slot-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));">
+          <div class="slot-card busy">
+            <div class="slot-name">Maria</div>
+            <div class="slot-meta">12 loc · 8 loc/h</div>
+            <div class="slot-meta" style="color: var(--accent);">rua A ↓</div>
+            <div class="slot-meta">↻ voltou às 14h32</div>
+          </div>
+          <div class="slot-card busy">
+            <div class="slot-name">João</div>
+            <div class="slot-meta">8 loc · 6 loc/h</div>
+            <div class="slot-meta" style="color: var(--accent);">rua C ↓</div>
+          </div>
+          <div class="slot-card busy">
+            <div class="slot-name">Carlos</div>
+            <div class="slot-meta">3 loc · 5 loc/h</div>
+            <div class="slot-meta" style="color: var(--accent);">prédio E-02 ↓</div>
+          </div>
+          <div class="slot-card busy">
+            <div class="slot-name">Beatriz</div>
+            <div class="slot-meta">1 loc · acabou de entrar</div>
+            <div class="slot-meta" style="color: var(--muted);">aguardando próxima</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>2.4 Tela do supervisor — party vazia</h3>
+<p>Quando a sessão acabou de ser criada e ninguém entrou ainda.</p>
+
+<div class="mockup-row">
+  <div class="mockup-col">
+    <span class="mockup-label before">Antes</span>
+    <div class="device device-supervisor">
+      <div class="device-screen">
+        <div class="mock-header">Slots de operador · 5 configurados</div>
+        <div class="slot-grid" style="grid-template-columns: repeat(5, 1fr);">
+          <div class="slot-card"><div class="slot-num">OP1</div><div class="slot-empty">livre</div></div>
+          <div class="slot-card"><div class="slot-num">OP2</div><div class="slot-empty">livre</div></div>
+          <div class="slot-card"><div class="slot-num">OP3</div><div class="slot-empty">livre</div></div>
+          <div class="slot-card"><div class="slot-num">OP4</div><div class="slot-empty">livre</div></div>
+          <div class="slot-card"><div class="slot-num">OP5</div><div class="slot-empty">livre</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup-col">
+    <span class="mockup-label after">Depois</span>
+    <div class="device device-supervisor">
+      <div class="device-screen">
+        <div class="mock-header">Na party</div>
+        <div class="supervisor-empty">
+          Ninguém na party ainda.<br/>Aguardando o primeiro operador entrar.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2 id="fluxo">3. Fluxo principal</h2>
+<p>Como uma sessão de inventário evolui do "vazio" até o "encerrado", focando em quem está na party.</p>
+
+<div class="diagram">
+  <div class="diagram-title">Vida da party · do início ao fim da sessão</div>
+  <pre class="mermaid">
+flowchart TD
+    A[Supervisor cria sessão<br/>Pool de 80 localizações] --> B[Party vazia<br/>aguardando primeiro operador]
+    B --> C[Maria abre o app<br/>entra direto na party]
+    C --> D[Maria conta locs<br/>contador sobe: 1, 2, 3...]
+    D --> E{Outro operador<br/>chega?}
+    E -->|Sim| F[João entra na party<br/>2 pessoas trabalhando]
+    E -->|Não| D
+    F --> G[Os dois contam em paralelo<br/>cada um numa rua diferente]
+    G --> H{Operador sai<br/>almoço/banheiro?}
+    H -->|Sim| I[Card desaparece<br/>contagem fica salva no nome dele]
+    I --> J{Volta?}
+    J -->|Sim| K[Entra de novo<br/>retoma contagem onde parou]
+    J -->|Não| L[Cleanup libera as locs<br/>que ele tava bipando]
+    H -->|Não| G
+    K --> G
+    L --> M{Pool esgotou?}
+    G --> M
+    M -->|Sim| N[Supervisor encerra<br/>analisa divergências]
+    M -->|Não| G
+
+    style C fill:#dcfce7
+    style F fill:#dcfce7
+    style K fill:#cffafe
+    style L fill:#fef3c7
+    style N fill:#dbeafe
+  </pre>
+</div>
+
+<h2 id="exemplo">4. Exemplo passo-a-passo</h2>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  Sessão de inventário criada às 14h00 com pool de 80 localizações no galpão CWB. Três operadores vão participar ao longo da tarde, em momentos diferentes.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>14h00 — Supervisor cria a sessão</strong>
+    <p>Supervisor monta a sessão "Cycle Inteligente · CWB · Sex 18/05" com 80 locs sugeridas. Status: aguardando primeiro operador. Tela do supervisor mostra "Ninguém na party ainda".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h05 — Maria entra</strong>
+    <p>Maria abre o app no handheld dela. Tela pula direto pra "Bem-vinda à party, Maria · 0 loc(s) contada(s)" — sem precisar escolher cadeira. Sessão automaticamente sai de "planejada" pra "em andamento". Supervisor vê 1 card aparecer: "Maria · 0 loc".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h05 → 14h45 — Maria conta 12 locs</strong>
+    <p>Maria toca "Próxima loc", o sistema sugere uma loc da rua A pra ela. Ela bipa, finaliza, pega próxima, sempre na rua A (continuidade). Supervisor vê o card dela ao vivo: "Maria · 12 loc · 18 loc/h · rua A ↓".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h47 — João entra</strong>
+    <p>João abre o app dele. Tela mostra "Bem-vindo à party, João" e também lista "Já na party: Maria · 12". Supervisor agora vê 2 cards lado a lado, sem placeholders vazios entre eles.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h47 → 15h30 — João pega rua C</strong>
+    <p>Sistema dá pra João uma loc da rua C (rua livre, longe da Maria pra evitar colisão). Card dele no supervisor: "João · 8 loc · 11 loc/h · rua C ↓".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>15h32 — Maria sai pro almoço</strong>
+    <p>Maria toca "Sair da party". Card dela desaparece da tela do supervisor. As 12 contagens dela ficam salvas — não somem. Loc que ela estava bipando (mas não tinha finalizado) fica livre depois do cleanup automático.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>15h45 — Carlos entra</strong>
+    <p>Carlos chega. Abre app. Vira o 2º na party (com João). Sistema dá pra ele uma loc do prédio E-02 (longe do João, anti-colisão). Card aparece: "Carlos · 1 loc · acabou de entrar".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>16h20 — Maria volta do almoço</strong>
+    <p>Maria reabre o app. Tela mostra "Bem-vinda de volta, Maria · 12 loc(s) contada(s) — continuando" com um selo "↻ retomado" pisando por uns segundos. Card dela ressurge no supervisor: "Maria · 12 loc · ↻ voltou às 16h20". Ela toca "Próxima loc" — sistema sugere uma loc próxima da rua A onde ela parou.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>16h25 — Beatriz entra</strong>
+    <p>Quarta pessoa entra (modelo antigo não aceitaria mais que 5, agora aceita N). Supervisor vê 4 cards: Maria, João, Carlos, Beatriz. Lista cresceu — sem placeholders, sem reorganização forçada.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>17h40 — Pool esgotou</strong>
+    <p>Última loc finalizada. Próximo toque em "Próxima loc" de qualquer um deles cai numa tela "Pool vazio — boa! Você terminou tudo". Cards continuam visíveis no painel até saírem, mas com indicador "aguardando".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>17h45 — Supervisor encerra sessão</strong>
+    <p>Supervisor toca "Encerrar". Sessão vai pra status "em revisão". Os 4 operadores são finalizados automaticamente (cards saem). Tela passa a mostrar lista de divergências.</p>
+  </div>
+</div>
+
+<h2 id="estados">5. Estados e transições</h2>
+<p>O <strong>operador</strong> (presença na party) passa pelos seguintes estados:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-neutral">fora da party</span></td>
+      <td>Pessoa nunca entrou nessa sessão, ou já entrou e saiu há tempos e o registro nem existe.</td>
+      <td>Estado inicial — antes da primeira entrada.</td>
+      <td>Operador toca "Entrar" (na prática: abre o app na sessão).</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">ativo</span></td>
+      <td>Operador está na party agora. Aparece no card do supervisor. Pode pedir próxima loc.</td>
+      <td>Primeira entrada na sessão, ou reentrada após ter saído.</td>
+      <td>Operador toca "Sair da party", ou supervisor encerra a sessão (saída forçada).</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">saiu (com histórico)</span></td>
+      <td>Pessoa entrou em algum momento, contou X locs, e saiu. Histórico fica salvo no nome dela. Card não aparece, mas as contagens dela continuam no relatório.</td>
+      <td>Operador toca "Sair", ou supervisor encerra sessão.</td>
+      <td>Reentrada na mesma sessão — vira "ativo" de novo, com o mesmo contador (não zera).</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">retomado</span></td>
+      <td>Variação visual do "ativo": indica que a pessoa acabou de voltar pra party. Selo "↻ retomado" aparece por uns segundos no handheld e card mostra "voltou às HH:MM".</td>
+      <td>Reentrada de quem já tinha estado na sessão antes.</td>
+      <td>Selo some após uns 5 segundos. O operador continua "ativo" normalmente.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">cleanup</span></td>
+      <td>Operador sumiu sem clicar "Sair" (fechou o app, bateu bateria). Loc que ele tava bipando fica travada até cleanup automático liberar.</td>
+      <td>Sem atividade por muito tempo (rotina interna detecta inatividade).</td>
+      <td>Cleanup libera locs pra outros operadores; presença vira "saiu (com histórico)".</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="cenarios">6. Cenários alternativos</h2>
+<p>Situações fora do caminho feliz e como o sistema responde:</p>
+
+<div class="scenario">
+  <div class="scenario-title">Maria acidentalmente abre o app duas vezes (handheld + tablet)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Maria abre a sessão no handheld dela e, por engano, abre também no tablet emprestado.<br/>
+    <strong>O que o sistema faz:</strong> Reconhece que é o mesmo usuário. Não cria dois cards. Apenas atualiza o timestamp "última ação" — Maria continua sendo uma única participante da party.<br/>
+    <strong>O usuário vê:</strong> Ambos os aparelhos mostram a mesma tela "Bem-vinda à party, Maria · 12 loc". Se ela bipar no tablet, o handheld atualiza por realtime.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">7 operadores querem trabalhar ao mesmo tempo numa sessão grande</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Galpão grande, supervisor escalou 7 pessoas pra um inventário completo de fim de mês.<br/>
+    <strong>O que o sistema faz:</strong> Aceita os 7 sem reclamar — não há limite rígido. Cada um vira um card na tela do supervisor. O roteamento das locs continua distribuindo por anti-colisão (cada um numa rua diferente).<br/>
+    <strong>O usuário vê:</strong> Supervisor vê 7 cards organizados em grid. Nenhum vê mensagem "Slot ocupado, tente outro".
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">João some no meio de uma contagem (bateu bateria do handheld)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> João estava no meio da contagem da loc C-04-02. Handheld dele desligou de repente.<br/>
+    <strong>O que o sistema faz:</strong> Card do João continua visível no painel por algum tempo (sem atividade nova). Depois do tempo de tolerância, o cleanup automático libera a loc C-04-02 pra outros operadores e marca o João como "saiu". A contagem dele anterior (8 locs finalizadas) fica preservada.<br/>
+    <strong>O usuário vê:</strong> Supervisor nota o card do João parado, e depois ele desaparece. Outro operador pode acabar pegando a C-04-02 pra contar do zero.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Maria volta do almoço mas a sessão já foi encerrada</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Supervisor decidiu encerrar parcial às 16h. Maria volta às 16h20 sem saber.<br/>
+    <strong>O que o sistema faz:</strong> Bloqueia a reentrada e mostra mensagem clara. A sessão não permite mais entradas porque já está em revisão.<br/>
+    <strong>O usuário vê:</strong> Maria abre o app e vê "Esta sessão já foi encerrada às 16h. Suas 12 contagens estão salvas". Sem opção de "entrar de novo".
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Supervisor encerra com 3 operadores ainda ativos</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Maria, João e Carlos estão contando. Supervisor decide encerrar parcial às 17h.<br/>
+    <strong>O que o sistema faz:</strong> Marca os 3 como "saídos" automaticamente. Locs que eles estavam bipando ficam liberadas. Contagens finalizadas viram divergência se houver diferença com o sistema.<br/>
+    <strong>O usuário vê:</strong> Os 3 handhelds recebem aviso "A sessão foi encerrada pelo supervisor. Suas X contagens foram salvas". Tela volta pra lista de sessões.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Ninguém entrou na sessão por 2 horas</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Supervisor criou sessão de manhã e ninguém apareceu pra contar.<br/>
+    <strong>O que o sistema faz:</strong> Sessão fica em "planejada" indefinidamente — não inicia sozinha sem o primeiro operador entrar. Supervisor pode cancelar a sessão se ela não for usada.<br/>
+    <strong>O usuário vê:</strong> Painel mostra a sessão na lista "Aguardando início · ninguém entrou ainda". Botão "Cancelar sessão" disponível.
+  </div>
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

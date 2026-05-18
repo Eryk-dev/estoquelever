@@ -204,10 +204,29 @@
 }
 
 .wms-sb-ft {
+  position: relative;
   border-top: 1px solid var(--wms-c-border);
   padding: 12px 14px;
 }
-.wms-sb-user { display: flex; align-items: center; gap: 10px; }
+.wms-sb-user {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.wms-sb-user:hover { background: var(--wms-c-panel-2); }
+.wms-sb-user:focus-visible {
+  outline: 2px solid var(--wms-c-fg);
+  outline-offset: 1px;
+}
+.wms-sb-user-info { min-width: 0; }
 .wms-sb-avatar {
   width: 28px; height: 28px;
   background: var(--wms-c-fg);
@@ -215,9 +234,36 @@
   border-radius: 50%;
   display: grid; place-items: center;
   font-size: 11px; font-weight: 600;
+  flex-shrink: 0;
 }
 .wms-sb-user-name { font-size: 13px; font-weight: 500; }
 .wms-sb-user-role { font-size: 11px; color: var(--wms-c-mute); }
+
+.wms-sb-user-menu {
+  position: absolute;
+  bottom: calc(100% - 4px);
+  left: 10px;
+  right: 10px;
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  z-index: 50;
+}
+.wms-sb-user-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--wms-c-fg);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.wms-sb-user-menu-item:hover { background: var(--wms-c-panel-2); }
 
 /* ============================================================
    Page header

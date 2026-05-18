@@ -12,7 +12,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { Loader2, LogOut } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
@@ -169,6 +169,7 @@ function Sidebar({
   userRole,
   isOpen,
   onToggle,
+  onLogout,
 }: {
   pathname: string;
   onCmdK: () => void;
@@ -177,7 +178,29 @@ function Sidebar({
   userRole: string;
   isOpen: boolean;
   onToggle: () => void;
+  onLogout: () => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("mousedown", handleClick);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [menuOpen]);
+
   return (
     <aside className={`wms-sb ${isOpen ? "is-open" : ""}`}>
       <div className="wms-sb-hd">
@@ -237,14 +260,35 @@ function Sidebar({
           </div>
         ))}
       </nav>
-      <div className="wms-sb-ft">
-        <div className="wms-sb-user">
+      <div className="wms-sb-ft" ref={menuRef}>
+        {menuOpen && (
+          <div className="wms-sb-user-menu" role="menu">
+            <button
+              type="button"
+              className="wms-sb-user-menu-item"
+              onClick={() => {
+                setMenuOpen(false);
+                onLogout();
+              }}
+            >
+              <LogOut size={14} />
+              <span>Sair</span>
+            </button>
+          </div>
+        )}
+        <button
+          type="button"
+          className="wms-sb-user"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((o) => !o)}
+        >
           <div className="wms-sb-avatar">{userInitials}</div>
-          <div>
+          <div className="wms-sb-user-info">
             <div className="wms-sb-user-name">{userName}</div>
             <div className="wms-sb-user-role">{userRole}</div>
           </div>
-        </div>
+        </button>
       </div>
     </aside>
   );
@@ -453,7 +497,7 @@ function CommandKInner({
 export function WmsShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "/wms";
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, loading, logout } = useAuth();
 
   const [ckOpen, setCkOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -555,6 +599,10 @@ export function WmsShell({ children }: { children: ReactNode }) {
             userRole={role}
             isOpen={sidebarOpen}
             onToggle={() => setSidebarOpen((o) => !o)}
+            onLogout={() => {
+              logout();
+              router.replace("/login");
+            }}
           />
           <div className="wms-main">
             <div className="wms-view">{children}</div>

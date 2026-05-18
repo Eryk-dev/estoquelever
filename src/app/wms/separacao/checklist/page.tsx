@@ -828,7 +828,6 @@ export default function WmsChecklistPage() {
                     isParcial={isParcial}
                     parcialItem={parcialItem}
                     onToggle={() => handleToggle(p)}
-                    onEsgotado={() => handleEsgotadoPreview(p.sku)}
                     onParcial={() =>
                       setParcialModal({
                         itemId: firstItemId,
@@ -1049,14 +1048,12 @@ function ItemRow({
   isParcial,
   parcialItem,
   onToggle,
-  onEsgotado,
   onParcial,
 }: {
   produto: ConsolidatedProduct;
   isParcial: boolean;
   parcialItem: ChecklistItem | undefined;
   onToggle: () => void;
-  onEsgotado: () => void;
   onParcial: () => void;
 }) {
   const done = produto.all_marcado;
@@ -1163,16 +1160,6 @@ function ItemRow({
             }}
           >
             Parcial
-          </button>
-        )}
-        {!done && (
-          <button
-            type="button"
-            className="wms-btn wms-btn-ghost"
-            onClick={onEsgotado}
-            title={`Marcar ${produto.sku} como esgotado`}
-          >
-            Esgotado
           </button>
         )}
       </div>

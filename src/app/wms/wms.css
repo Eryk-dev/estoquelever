@@ -2629,8 +2629,9 @@
 .wms-topbar { display: none; }
 .wms-sb-backdrop { display: none; }
 
-/* Tablet (641–1024px) — encolhe sidebar pra rail de ícones */
-@media (min-width: 641px) and (max-width: 1024px) {
+/* Tablet (641–1280px) — encolhe sidebar pra rail de ícones.
+   Cobre iPad mini/Air/Pro 11" em landscape (até 1194px) com folga. */
+@media (min-width: 641px) and (max-width: 1280px) {
   .wms-app { grid-template-columns: 56px 1fr; }
   .wms-view { padding: 20px 20px 64px; }
 

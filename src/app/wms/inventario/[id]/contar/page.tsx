@@ -7,6 +7,7 @@ import { wmsApi } from "@/lib/wms/api-client";
 import { useInventarioRealtime } from "@/hooks/use-inventario-realtime";
 import { Icon, PageHeader, fmtNum } from "@/components/wms/ui/wms-ui";
 import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
+import { LocVaziaModal } from "@/components/wms/inventario/loc-vazia-modal";
 import { useAuth } from "@/lib/auth-context";
 import type {
   ProximaLocOutput,
@@ -65,6 +66,7 @@ export default function ContarPage({
     minutos: number;
   } | null>(null);
   const [entrouEm, setEntrouEm] = useState<number | null>(null);
+  const [modalVazia, setModalVazia] = useState(false);
   const [lightbox, setLightbox] = useState<{
     imagens: string[];
     sku: string;
@@ -475,7 +477,13 @@ export default function ContarPage({
           scanRef={scanRef}
           onScan={handleScan}
           onConfirmar={() => setEtapa("counting")}
-          onFinalizar={() => finalizarLoc.mutate()}
+          onFinalizar={() => {
+            if (contagens.length === 0) {
+              setModalVazia(true);
+            } else {
+              finalizarLoc.mutate();
+            }
+          }}
           finalizando={finalizarLoc.isPending}
           onAdicionarSku={(sku, qty) =>
             registrarContagemPorSku(sku, qty, "absoluto")
@@ -505,6 +513,18 @@ export default function ContarPage({
           sku={lightbox.sku}
           descricao={lightbox.descricao}
           onClose={() => setLightbox(null)}
+        />
+      )}
+
+      {modalVazia && locAtual && locAtual.codigo && (
+        <LocVaziaModal
+          locCodigo={locAtual.codigo}
+          loading={finalizarLoc.isPending}
+          onConfirmar={() => {
+            setModalVazia(false);
+            finalizarLoc.mutate();
+          }}
+          onCancelar={() => setModalVazia(false)}
         />
       )}
     </>

@@ -594,7 +594,7 @@ export default function WmsChecklistPage() {
     setParcialModal((prev) => (prev ? { ...prev, loading: true } : null));
     try {
       const body = parcialModal.isRealocacao
-        ? { realocacao_id: parcialModal.itemIds[0], quantidade_pega: qtyPega, loc_zerou: locZerou }
+        ? { realocacao_ids: parcialModal.itemIds, quantidade_pega: qtyPega, loc_zerou: locZerou }
         : { pedido_item_ids: parcialModal.itemIds, quantidade_pega: qtyPega, loc_zerou: locZerou };
 
       const res = await sisoFetch("/api/wms/separacao/parcial", {

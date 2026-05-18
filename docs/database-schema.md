@@ -307,7 +307,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - Picked via `POST /api/wms/separacao/marcar-realocacao` (creates WMS movement, fluxo simples) ou via `POST /api/wms/separacao/parcial` modo realocação (parcial com cascade)
 - Cancelled via `DELETE /api/wms/separacao/realocacao/[id]` (no movement — nothing was picked)
 - All rows cancelled automatically when parent item is desfazer-parcial'd or onda is cancelled
-- `checklist-items` endpoint returns only `aguardando_picking` rows in `item.realocacoes[]`
+- `checklist-items` endpoint returns realocações em **todos os status** em `item.realocacoes[]` — UI exibe ativas como interativas e terminais como histórico (read-only com badges semânticos)
 - Spec: `docs/superpowers/specs/2026-05-18-realocacao-cascateavel-design.md`
 
 ---

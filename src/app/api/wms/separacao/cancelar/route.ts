@@ -76,17 +76,21 @@ export async function POST(request: NextRequest) {
           .in("pedido_item_id", itemIds)
       : { data: [] };
 
+    // Estorna mov_saida_id de realocações 'picado' E 'picado_parcial'.
+    // mov_ajuste_loc_zerou_id da realoc NÃO é estornada (mesmo design do item: reflete descoberta física).
     for (const r of realocs ?? []) {
-      if (r.status === "picado" && r.mov_saida_id) {
+      const precisaEstornar = r.status === "picado" || r.status === "picado_parcial";
+      if (precisaEstornar && r.mov_saida_id) {
         try {
           await estornarMovimentacao({
             mov_id: r.mov_saida_id,
             usuario_id: session.id,
-            observacoes: "Cancelar separação — estorno realocação picada",
+            observacoes: `Cancelar separação — estorno realocação ${r.status}`,
           });
         } catch (e) {
           logger.warn("separacao-cancelar", "Estorno realocação falhou", {
             realocacao_id: r.id,
+            status: r.status,
             error: e instanceof Error ? e.message : String(e),
           });
         }

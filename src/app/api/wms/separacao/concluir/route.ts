@@ -56,6 +56,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Coleta pedidos com realocações ainda em aguardando_picking — bloqueiam concluir.
+    // Sem isso, um item parcial (separacao_marcado=true) com cascade pendente passaria
+    // direto pra 'separado' sem o residual ter sido pego.
+    const itemIds = (items ?? []).map((i) => i.id);
+    const pedidosComRealocPendente = new Set<string>();
+    if (itemIds.length > 0) {
+      const { data: realocsPend } = await supabase
+        .from("siso_pedido_item_realocacoes")
+        .select("pedido_item_id, siso_pedido_itens!inner(pedido_id)")
+        .in("pedido_item_id", itemIds)
+        .eq("status", "aguardando_picking");
+      for (const r of realocsPend ?? []) {
+        const pid = (r.siso_pedido_itens as unknown as { pedido_id: string })
+          .pedido_id;
+        if (pid) pedidosComRealocPendente.add(pid);
+      }
+    }
+
     // Group items by pedido_id
     const itemsByPedido = new Map<
       string,
@@ -77,6 +95,13 @@ export async function POST(request: NextRequest) {
     for (const pid of pedido_ids) {
       const pedidoItems = itemsByPedido.get(pid);
       if (!pedidoItems || pedidoItems.length === 0) {
+        pendentes.push(pid);
+        continue;
+      }
+
+      // Pedido com realocação pendente sempre fica como pendente — o residual ainda
+      // precisa ser pego, mesmo que separacao_marcado já esteja true nos itens.
+      if (pedidosComRealocPendente.has(pid)) {
         pendentes.push(pid);
         continue;
       }

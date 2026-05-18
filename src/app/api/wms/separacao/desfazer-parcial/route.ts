@@ -57,10 +57,16 @@ export async function POST(request: NextRequest) {
       .select("id, status")
       .eq("pedido_item_id", item.id);
 
-    const algumaPicada = (realocs ?? []).some((r) => r.status === "picado");
+    // Bloqueia também 'picado_parcial' — a realocação foi parcialmente pega
+    // (mov S já registrada) e teve cascade, então estornar só o item deixa
+    // o ledger inconsistente. Operador precisa cancelar a separação inteira
+    // pra reverter o cascade.
+    const algumaPicada = (realocs ?? []).some(
+      (r) => r.status === "picado" || r.status === "picado_parcial",
+    );
     if (algumaPicada) {
       return NextResponse.json(
-        { error: "não pode desfazer — alguma realocação já foi picada" },
+        { error: "não pode desfazer — alguma realocação já foi picada (total ou parcial)" },
         { status: 409 },
       );
     }

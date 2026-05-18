@@ -22,7 +22,7 @@ import type {
   TinyConnection,
   DepositoOption,
   UsuarioPrintNode,
-} from "@/components/configuracoes/types";
+} from "@/components/wms/configuracoes-types";
 
 interface GalpaoConexao {
   id: string;
@@ -57,9 +57,9 @@ function ConexoesContent() {
   const fetchAll = useCallback(async () => {
     try {
       const [connRes, galpRes, userRes] = await Promise.all([
-        sisoFetch("/api/tiny/connections"),
-        sisoFetch("/api/admin/galpoes"),
-        sisoFetch("/api/admin/usuarios"),
+        sisoFetch("/api/wms/tiny/connections"),
+        sisoFetch("/api/wms/admin/galpoes"),
+        sisoFetch("/api/wms/admin/usuarios"),
       ]);
       const [connData, galpData, userData] = await Promise.all([
         connRes.json(),
@@ -273,7 +273,7 @@ function ConnectionRow({
     }
     setSaving(true);
     try {
-      const r = await sisoFetch("/api/tiny/connections", {
+      const r = await sisoFetch("/api/wms/tiny/connections", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -299,7 +299,7 @@ function ConnectionRow({
   }
 
   function authorize() {
-    window.location.href = `/api/tiny/oauth?connectionId=${connection.id}`;
+    window.location.href = `/api/wms/tiny/oauth?connectionId=${connection.id}`;
   }
 
   async function testConn() {
@@ -309,7 +309,7 @@ function ConnectionRow({
     }
     setTesting(true);
     try {
-      const r = await sisoFetch("/api/tiny/test-connection", {
+      const r = await sisoFetch("/api/wms/tiny/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ connectionId: connection.id }),
@@ -543,7 +543,7 @@ function DepositoSelector({
     setError(null);
     try {
       const r = await sisoFetch(
-        `/api/tiny/deposits?connectionId=${connection.id}`,
+        `/api/wms/tiny/deposits?connectionId=${connection.id}`,
       );
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -573,7 +573,7 @@ function DepositoSelector({
     if (!chosen) return;
     setSaving(true);
     try {
-      const r = await sisoFetch("/api/tiny/connections", {
+      const r = await sisoFetch("/api/wms/tiny/connections", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -738,7 +738,7 @@ function PrintNodeCard({
   const fetchKeyStatus = useCallback(async () => {
     if (!user) return;
     try {
-      const r = await sisoFetch("/api/admin/printnode/api-key", {
+      const r = await sisoFetch("/api/wms/admin/printnode/api-key", {
         headers: { "x-siso-user-id": user.id },
       });
       if (r.ok) {
@@ -761,7 +761,7 @@ function PrintNodeCard({
     if (!apiKeyInput.trim() || !user) return;
     setSavingKey(true);
     try {
-      const r = await sisoFetch("/api/admin/printnode/api-key", {
+      const r = await sisoFetch("/api/wms/admin/printnode/api-key", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -793,7 +793,7 @@ function PrintNodeCard({
     if (!user) return;
     if (!confirm("Remover a API Key do PrintNode?")) return;
     try {
-      await sisoFetch("/api/admin/printnode/api-key", {
+      await sisoFetch("/api/wms/admin/printnode/api-key", {
         method: "DELETE",
         headers: { "x-siso-user-id": user.id },
       });
@@ -812,7 +812,7 @@ function PrintNodeCard({
     setTesting(true);
     setConnStatus(null);
     try {
-      const r = await sisoFetch("/api/admin/printnode/test", {
+      const r = await sisoFetch("/api/wms/admin/printnode/test", {
         method: "POST",
         headers: { "x-siso-user-id": user.id },
       });
@@ -837,7 +837,7 @@ function PrintNodeCard({
     if (!user) return;
     setLoadingPrinters(true);
     try {
-      const r = await sisoFetch("/api/admin/printnode/printers", {
+      const r = await sisoFetch("/api/wms/admin/printnode/printers", {
         headers: { "x-siso-user-id": user.id },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -857,7 +857,7 @@ function PrintNodeCard({
   ) {
     setSavingId(key);
     try {
-      const r = await sisoFetch(`/api/admin/galpoes/${galpaoId}`, {
+      const r = await sisoFetch(`/api/wms/admin/galpoes/${galpaoId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -875,7 +875,7 @@ function PrintNodeCard({
   async function patchUsuario(key: string, body: Record<string, unknown>) {
     setSavingId(key);
     try {
-      const r = await sisoFetch("/api/admin/usuarios", {
+      const r = await sisoFetch("/api/wms/admin/usuarios", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -1227,7 +1227,7 @@ function MercadoLivreCard() {
   const fetchApp = useCallback(async () => {
     setLoadingApp(true);
     try {
-      const r = await sisoFetch("/api/ml/app");
+      const r = await sisoFetch("/api/wms/ml/app");
       const data = (await r.json()) as MlAppStatus;
       setApp(data);
     } catch {
@@ -1240,7 +1240,7 @@ function MercadoLivreCard() {
   const fetchConnections = useCallback(async () => {
     setLoadingConns(true);
     try {
-      const r = await sisoFetch("/api/ml/connections");
+      const r = await sisoFetch("/api/wms/ml/connections");
       const data = await r.json();
       setConnections(Array.isArray(data) ? data : []);
     } catch {
@@ -1329,7 +1329,7 @@ function MlAppSection({
     }
     setSaving(true);
     try {
-      const r = await sisoFetch("/api/ml/app", {
+      const r = await sisoFetch("/api/wms/ml/app", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1487,7 +1487,7 @@ function MlConnectionsSection({
       toast.error("Configure o App ML antes de conectar uma conta");
       return;
     }
-    window.location.href = "/api/ml/oauth";
+    window.location.href = "/api/wms/ml/oauth";
   }
 
   return (
@@ -1554,7 +1554,7 @@ function MlConnectionRow({
   async function test() {
     setTesting(true);
     try {
-      const r = await sisoFetch(`/api/ml/connections/${conn.id}/test`, {
+      const r = await sisoFetch(`/api/wms/ml/connections/${conn.id}/test`, {
         method: "POST",
       });
       const j = await r.json();
@@ -1571,7 +1571,7 @@ function MlConnectionRow({
   async function toggleAtivo() {
     setBusy(true);
     try {
-      const r = await sisoFetch("/api/ml/connections", {
+      const r = await sisoFetch("/api/wms/ml/connections", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: conn.id, ativo: !conn.ativo }),
@@ -1590,7 +1590,7 @@ function MlConnectionRow({
     if (!confirm(`Remover conexão com ${conn.nickname}?`)) return;
     setBusy(true);
     try {
-      const r = await sisoFetch(`/api/ml/connections/${conn.id}`, {
+      const r = await sisoFetch(`/api/wms/ml/connections/${conn.id}`, {
         method: "DELETE",
       });
       if (!r.ok) throw new Error();
@@ -1604,7 +1604,7 @@ function MlConnectionRow({
   }
 
   function reauthorize() {
-    window.location.href = "/api/ml/oauth";
+    window.location.href = "/api/wms/ml/oauth";
   }
 
   const statusBadge = !conn.is_authorized

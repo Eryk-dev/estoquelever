@@ -143,21 +143,21 @@ export default function WmsComprasPage() {
 
   const comprarQuery = useQuery<ComprarResponse>({
     queryKey: ["wms-compras", "comprar"],
-    queryFn: () => wmsApi<ComprarResponse>("/api/compras?tab=comprar"),
+    queryFn: () => wmsApi<ComprarResponse>("/api/wms/compras?tab=comprar"),
     enabled: tab === "comprar",
     refetchInterval: 30_000,
   });
 
   const receberQuery = useQuery<ReceberResponse>({
     queryKey: ["wms-compras", "receber"],
-    queryFn: () => wmsApi<ReceberResponse>("/api/compras?tab=receber"),
+    queryFn: () => wmsApi<ReceberResponse>("/api/wms/compras?tab=receber"),
     enabled: tab === "receber",
     refetchInterval: 30_000,
   });
 
   const historicoQuery = useQuery<HistoricoResponse>({
     queryKey: ["wms-compras", "historico"],
-    queryFn: () => wmsApi<HistoricoResponse>("/api/compras?tab=historico"),
+    queryFn: () => wmsApi<HistoricoResponse>("/api/wms/compras?tab=historico"),
     enabled: tab === "historico",
     refetchInterval: 60_000,
   });
@@ -311,7 +311,7 @@ function TabComprar({
   // mutations
   const comprarMut = useMutation({
     mutationFn: async (itens: { sku: string; quantidade_comprada: number }[]) => {
-      const r = await sisoFetch("/api/compras/comprar", {
+      const r = await sisoFetch("/api/wms/compras/comprar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ itens }),
@@ -336,7 +336,7 @@ function TabComprar({
 
   const trocarSkuMut = useMutation({
     mutationFn: async (vars: { item_ids: string[]; novo_sku: string }) => {
-      const r = await sisoFetch("/api/compras/trocar-sku", {
+      const r = await sisoFetch("/api/wms/compras/trocar-sku", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(vars),
@@ -356,7 +356,7 @@ function TabComprar({
   const indisponivelMut = useMutation({
     mutationFn: async (itemId: string) => {
       const r = await sisoFetch(
-        `/api/compras/itens/${itemId}/indisponivel`,
+        `/api/wms/compras/itens/${itemId}/indisponivel`,
         { method: "POST" },
       );
       if (!r.ok) {
@@ -374,7 +374,7 @@ function TabComprar({
   const cancelamentoMut = useMutation({
     mutationFn: async (vars: { itemId: string; motivo: string }) => {
       const r = await sisoFetch(
-        `/api/compras/itens/${vars.itemId}/cancelamento`,
+        `/api/wms/compras/itens/${vars.itemId}/cancelamento`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -398,7 +398,7 @@ function TabComprar({
     mutationFn: async (itemId: string) => {
       setPendingExcId(itemId);
       const r = await sisoFetch(
-        `/api/compras/itens/${itemId}/cancelamento/confirmar`,
+        `/api/wms/compras/itens/${itemId}/cancelamento/confirmar`,
         { method: "POST" },
       );
       if (!r.ok) {
@@ -421,7 +421,7 @@ function TabComprar({
     mutationFn: async (itemId: string) => {
       setPendingExcId(itemId);
       const r = await sisoFetch(
-        `/api/compras/itens/${itemId}/equivalente/confirmar`,
+        `/api/wms/compras/itens/${itemId}/equivalente/confirmar`,
         { method: "POST" },
       );
       if (!r.ok) {
@@ -444,7 +444,7 @@ function TabComprar({
     mutationFn: async (itemId: string) => {
       setPendingExcId(itemId);
       const r = await sisoFetch(
-        `/api/compras/itens/${itemId}/devolver`,
+        `/api/wms/compras/itens/${itemId}/devolver`,
         { method: "POST" },
       );
       if (!r.ok) {
@@ -912,7 +912,7 @@ function TabReceber({
 
   const receberMut = useMutation({
     mutationFn: async (itens: { sku: string; quantidade_recebida: number }[]) => {
-      const r = await sisoFetch("/api/compras/receber", {
+      const r = await sisoFetch("/api/wms/compras/receber", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ itens }),

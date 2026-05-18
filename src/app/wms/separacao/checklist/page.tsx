@@ -12,7 +12,7 @@ import {
 import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { naturalLocCompare } from "@/lib/domain-helpers";
-import { ParcialModal } from "@/components/separacao/parcial-modal";
+import { ParcialModal } from "@/components/wms/separacao/parcial-modal";
 
 // ──────────────────────────────────────────────────────────────────
 // Types
@@ -190,7 +190,7 @@ export default function WmsChecklistPage() {
     if (iniciarRef.current) return;
     if (pedidoIds.length === 0 || !user) return;
     iniciarRef.current = true;
-    sisoFetch("/api/separacao/iniciar", {
+    sisoFetch("/api/wms/separacao/iniciar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pedido_ids: pedidoIds, operador_id: user.id }),
@@ -208,7 +208,7 @@ export default function WmsChecklistPage() {
   const { data, isLoading } = useQuery({
     queryKey,
     queryFn: async () => {
-      const url = `/api/separacao/checklist-items?pedidos=${pedidoIds.join(",")}${
+      const url = `/api/wms/separacao/checklist-items?pedidos=${pedidoIds.join(",")}${
         modo ? `&modo=${modo}` : ""
       }`;
       const r = await sisoFetch(url);
@@ -248,7 +248,7 @@ export default function WmsChecklistPage() {
 
   const bipMutation = useMutation({
     mutationFn: async (codigo: string) => {
-      const r = await sisoFetch("/api/separacao/bipar-checklist", {
+      const r = await sisoFetch("/api/wms/separacao/bipar-checklist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sku: codigo, pedido_ids: pedidoIds }),
@@ -281,7 +281,7 @@ export default function WmsChecklistPage() {
     }) => {
       const results = await Promise.all(
         produto.item_ids.map((id) =>
-          sisoFetch("/api/separacao/marcar-item", {
+          sisoFetch("/api/wms/separacao/marcar-item", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ pedido_item_id: id, marcado }),
@@ -296,8 +296,8 @@ export default function WmsChecklistPage() {
     mutationFn: async () => {
       const endpoint =
         modo === "pick-oc"
-          ? "/api/separacao/concluir-oc"
-          : "/api/separacao/concluir";
+          ? "/api/wms/separacao/concluir-oc"
+          : "/api/wms/separacao/concluir";
       const r = await sisoFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -317,7 +317,7 @@ export default function WmsChecklistPage() {
 
   const reiniciarMutation = useMutation({
     mutationFn: async () => {
-      const r = await sisoFetch("/api/separacao/reiniciar", {
+      const r = await sisoFetch("/api/wms/separacao/reiniciar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -334,7 +334,7 @@ export default function WmsChecklistPage() {
 
   const cancelarMutation = useMutation({
     mutationFn: async () => {
-      const r = await sisoFetch("/api/separacao/cancelar", {
+      const r = await sisoFetch("/api/wms/separacao/cancelar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pedido_ids: pedidoIds }),
@@ -406,7 +406,7 @@ export default function WmsChecklistPage() {
 
   async function handleEsgotadoPreview(sku: string) {
     try {
-      const r = await sisoFetch("/api/separacao/produto-esgotado", {
+      const r = await sisoFetch("/api/wms/separacao/produto-esgotado", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sku }),
@@ -437,7 +437,7 @@ export default function WmsChecklistPage() {
     try {
       const payload: Record<string, string> = { sku, acao };
       if (galpao_destino_id) payload.galpao_destino_id = galpao_destino_id;
-      const r = await sisoFetch("/api/separacao/produto-esgotado", {
+      const r = await sisoFetch("/api/wms/separacao/produto-esgotado", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -481,7 +481,7 @@ export default function WmsChecklistPage() {
         return;
       }
       // 1) atualiza localização do produto
-      const rLoc = await sisoFetch("/api/separacao/localizacao", {
+      const rLoc = await sisoFetch("/api/wms/separacao/localizacao", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -500,7 +500,7 @@ export default function WmsChecklistPage() {
 
       // 2) valida OC item (endpoint legado — TODO Plano 3: criar reserva atômica
       //    em wms_inserir_movimentacao com origem_tipo=reserva_pedido_encontrei)
-      const rVal = await sisoFetch("/api/separacao/validar-oc-item", {
+      const rVal = await sisoFetch("/api/wms/separacao/validar-oc-item", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -539,7 +539,7 @@ export default function WmsChecklistPage() {
 
   async function handleOcEsgotado(produto: ConsolidatedProduct) {
     try {
-      const r = await sisoFetch("/api/separacao/validar-oc-item", {
+      const r = await sisoFetch("/api/wms/separacao/validar-oc-item", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -561,7 +561,7 @@ export default function WmsChecklistPage() {
 
   async function handleOcDesfazer(produto: ConsolidatedProduct) {
     try {
-      const r = await sisoFetch("/api/separacao/validar-oc-item", {
+      const r = await sisoFetch("/api/wms/separacao/validar-oc-item", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -585,7 +585,7 @@ export default function WmsChecklistPage() {
     if (!parcialModal) return;
     setParcialModal((prev) => (prev ? { ...prev, loading: true } : null));
     try {
-      const res = await sisoFetch("/api/separacao/parcial", {
+      const res = await sisoFetch("/api/wms/separacao/parcial", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -625,7 +625,7 @@ export default function WmsChecklistPage() {
   // Handle marcar realocação
   async function handleMarcarRealocacao(realocacaoId: string) {
     try {
-      const res = await sisoFetch("/api/separacao/marcar-realocacao", {
+      const res = await sisoFetch("/api/wms/separacao/marcar-realocacao", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ realocacao_id: realocacaoId }),

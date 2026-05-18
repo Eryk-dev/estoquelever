@@ -12,7 +12,14 @@ export function ScanContagem({
 }) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (autoFocus) ref.current?.focus();
+    if (!autoFocus) return;
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 767px)").matches
+    ) {
+      return;
+    }
+    ref.current?.focus();
   }, [autoFocus]);
   return (
     <input

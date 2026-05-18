@@ -3,7 +3,7 @@
 import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/wms/ui/wms-ui";
-import { CrossPopoverButton } from "@/components/cross/cross-popover-button";
+import { CrossPopoverButton } from "@/components/wms/cross/cross-popover-button";
 import {
   getEcommerceAbbr,
   getMarketplaceName,

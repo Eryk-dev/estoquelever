@@ -220,7 +220,7 @@ export function AbaFuncionarios({
 
   const funcionariosQuery = useQuery({
     queryKey: ["wms-cfg-funcionarios"],
-    queryFn: () => wmsApi<Funcionario[]>("/api/admin/usuarios"),
+    queryFn: () => wmsApi<Funcionario[]>("/api/wms/admin/usuarios"),
   });
 
   const funcionarios = funcionariosQuery.data ?? [];
@@ -369,7 +369,7 @@ function NovoFuncionarioForm({
 
   const criar = useMutation({
     mutationFn: () =>
-      wmsApi("/api/admin/usuarios", {
+      wmsApi("/api/wms/admin/usuarios", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -521,7 +521,7 @@ function LinhaFuncionario({
 
   const salvar = useMutation({
     mutationFn: () =>
-      wmsApi("/api/admin/usuarios", {
+      wmsApi("/api/wms/admin/usuarios", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -540,7 +540,7 @@ function LinhaFuncionario({
 
   const toggleAtivo = useMutation({
     mutationFn: () =>
-      wmsApi("/api/admin/usuarios", {
+      wmsApi("/api/wms/admin/usuarios", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -559,7 +559,7 @@ function LinhaFuncionario({
 
   const excluir = useMutation({
     mutationFn: () =>
-      wmsApi(`/api/admin/usuarios?id=${funcionario.id}`, {
+      wmsApi(`/api/wms/admin/usuarios?id=${funcionario.id}`, {
         method: "DELETE",
       }),
     onSuccess: () => {

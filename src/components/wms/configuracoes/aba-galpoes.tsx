@@ -44,7 +44,7 @@ export function AbaGalpoes({
   const criar = useMutation({
     mutationFn: () =>
       wmsApi<{ id: string; nome: string; admins_vinculados: number; admins_erro: string | null }>(
-        "/api/admin/galpoes",
+        "/api/wms/admin/galpoes",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -272,7 +272,7 @@ function LinhaGalpao({
 
   const salvar = useMutation({
     mutationFn: () =>
-      wmsApi(`/api/admin/galpoes/${galpao.id}`, {
+      wmsApi(`/api/wms/admin/galpoes/${galpao.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

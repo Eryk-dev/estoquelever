@@ -695,10 +695,27 @@ function pageWindow(current: number, total: number): (number | "…")[] {
 export function useAutoFocus<T extends HTMLElement>(active: boolean) {
   const ref = useRef<T | null>(null);
   useEffect(() => {
-    if (active) {
-      const id = setTimeout(() => ref.current?.focus(), 30);
-      return () => clearTimeout(id);
-    }
+    if (!active) return;
+    if (isMobileViewport()) return;
+    const id = setTimeout(() => ref.current?.focus(), 30);
+    return () => clearTimeout(id);
   }, [active]);
   return ref;
+}
+
+export function useAutoFocusRef<T extends HTMLElement>(
+  ref: React.RefObject<T | null>,
+  active: boolean = true,
+) {
+  useEffect(() => {
+    if (!active) return;
+    if (isMobileViewport()) return;
+    const id = setTimeout(() => ref.current?.focus(), 30);
+    return () => clearTimeout(id);
+  }, [ref, active]);
+}
+
+function isMobileViewport(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(max-width: 767px)").matches;
 }

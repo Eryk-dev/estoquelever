@@ -28,13 +28,13 @@ export default function WmsConfiguracoesPage() {
 
   const galpoesQuery = useQuery({
     queryKey: ["wms-cfg-galpoes"],
-    queryFn: () => wmsApi<GalpaoHierarquiaWms[]>("/api/admin/galpoes"),
+    queryFn: () => wmsApi<GalpaoHierarquiaWms[]>("/api/wms/admin/galpoes"),
   });
 
   const funcionariosCountQuery = useQuery({
     queryKey: ["wms-cfg-funcionarios"],
     queryFn: () =>
-      wmsApi<{ id: string }[]>("/api/admin/usuarios"),
+      wmsApi<{ id: string }[]>("/api/wms/admin/usuarios"),
     enabled: isAdmin,
   });
 

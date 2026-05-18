@@ -55,7 +55,7 @@ export function QuadruplaPicker({
           nome: string;
           siso_empresas?: Array<{ id: string; nome: string; ativo?: boolean }>;
         }>
-      >("/api/admin/galpoes");
+      >("/api/wms/admin/galpoes");
       return raw.map<GalpaoRow>((g) => ({
         id: g.id,
         nome: g.nome,

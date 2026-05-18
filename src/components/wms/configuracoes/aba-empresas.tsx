@@ -104,7 +104,7 @@ export function AbaEmpresas({
 
   const criar = useMutation({
     mutationFn: () =>
-      wmsApi("/api/admin/empresas", {
+      wmsApi("/api/wms/admin/empresas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -372,7 +372,7 @@ function LinhaEmpresa({
 
   const salvar = useMutation({
     mutationFn: () =>
-      wmsApi(`/api/admin/empresas/${empresa.id}`, {
+      wmsApi(`/api/wms/admin/empresas/${empresa.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

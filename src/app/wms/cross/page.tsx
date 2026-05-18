@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { sisoFetch } from "@/lib/auth-context";
-import { PageHeader, Icon } from "@/components/wms/ui/wms-ui";
+import { PageHeader, Icon, useAutoFocusRef } from "@/components/wms/ui/wms-ui";
 
 type TipoBusca = "auto" | "sku" | "oem" | "nome";
 
@@ -37,6 +37,8 @@ export default function WmsCrossPage() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [tipo, setTipo] = useState<TipoBusca>("auto");
+  const inputRef = useRef<HTMLInputElement>(null);
+  useAutoFocusRef(inputRef);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -47,7 +49,7 @@ export default function WmsCrossPage() {
     queryKey: ["wms-cross-search", debouncedQuery, tipo],
     queryFn: async () => {
       const r = await sisoFetch(
-        `/api/cross/search?q=${encodeURIComponent(debouncedQuery)}&tipo=${tipo}`,
+        `/api/wms/cross/search?q=${encodeURIComponent(debouncedQuery)}&tipo=${tipo}`,
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
@@ -67,10 +69,10 @@ export default function WmsCrossPage() {
       <div className="wms-search-wrap" style={{ maxWidth: 640 }}>
         <Icon name="search" size={14} />
         <input
+          ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Buscar SKU, OEM ou nome do produto..."
-          autoFocus
         />
         {query && (
           <button

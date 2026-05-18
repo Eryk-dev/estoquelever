@@ -191,7 +191,7 @@ export default function WmsPedidoDetalhePage() {
   const query = useQuery({
     queryKey: ["wms-pedido-detalhe", id],
     queryFn: async () => {
-      const r = await sisoFetch(`/api/pedidos/${id}/detalhe`);
+      const r = await sisoFetch(`/api/wms/pedidos/${id}/detalhe`);
       if (r.status === 404) {
         const err = new Error("not_found");
         (err as Error & { status?: number }).status = 404;
@@ -208,7 +208,7 @@ export default function WmsPedidoDetalhePage() {
 
   const reimprimir = useMutation({
     mutationFn: async () => {
-      const r = await sisoFetch("/api/separacao/reimprimir", {
+      const r = await sisoFetch("/api/wms/separacao/reimprimir", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pedido_id: id }),
@@ -236,7 +236,7 @@ export default function WmsPedidoDetalhePage() {
 
   const reprocessar = useMutation({
     mutationFn: async () => {
-      const r = await sisoFetch("/api/webhook/reprocessar", {
+      const r = await sisoFetch("/api/wms/webhook/reprocessar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pedidoId: id }),
@@ -259,7 +259,7 @@ export default function WmsPedidoDetalhePage() {
 
   const forcarPendente = useMutation({
     mutationFn: async () => {
-      const r = await sisoFetch(`/api/separacao/${id}/forcar-pendente`, {
+      const r = await sisoFetch(`/api/wms/separacao/${id}/forcar-pendente`, {
         method: "PATCH",
       });
       const body = await r.json().catch(() => ({}));
@@ -798,7 +798,7 @@ function TabObservacoes({
   const mutation = useMutation({
     mutationFn: async (text: string) => {
       if (!user) throw new Error("Sessão inválida");
-      const r = await sisoFetch(`/api/pedidos/${pedidoId}/observacoes`, {
+      const r = await sisoFetch(`/api/wms/pedidos/${pedidoId}/observacoes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

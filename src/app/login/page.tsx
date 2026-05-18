@@ -19,7 +19,7 @@ export default function LoginPage() {
   // Redirect if already logged in
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace("/");
+      router.replace("/wms");
     }
   }, [user, authLoading, router]);
 
@@ -42,7 +42,7 @@ export default function LoginPage() {
 
     if (result.ok) {
       toast.success(`Bem-vindo, ${nome.trim()}!`);
-      router.replace("/");
+      router.replace("/wms");
     } else {
       setErro(result.erro ?? "Erro ao fazer login");
       setPin("");

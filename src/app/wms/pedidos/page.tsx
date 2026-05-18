@@ -130,7 +130,7 @@ export default function WmsPedidosPage() {
   const pedidosQuery = useQuery({
     queryKey: ["wms-pedidos"],
     queryFn: async () => {
-      const r = await sisoFetch(`/api/pedidos`);
+      const r = await sisoFetch(`/api/wms/pedidos`);
       if (!r.ok) {
         const b = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error || `HTTP ${r.status}`);
@@ -151,7 +151,7 @@ export default function WmsPedidosPage() {
         limit: "50",
       });
       if (buscaParam) qs.set("busca", buscaParam);
-      const r = await sisoFetch(`/api/pedidos/tracking?${qs.toString()}`);
+      const r = await sisoFetch(`/api/wms/pedidos/tracking?${qs.toString()}`);
       if (!r.ok) {
         const b = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error || `HTTP ${r.status}`);
@@ -254,7 +254,7 @@ export default function WmsPedidosPage() {
         return;
       }
       try {
-        const r = await sisoFetch(`/api/pedidos/aprovar`, {
+        const r = await sisoFetch(`/api/wms/pedidos/aprovar`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -280,7 +280,7 @@ export default function WmsPedidosPage() {
   // ── Reimprimir etiqueta (expedidos tab) ─────────────────────────
   const reimprimirEtiqueta = useCallback(async (pedidoId: string) => {
     try {
-      const r = await sisoFetch(`/api/separacao/reimprimir`, {
+      const r = await sisoFetch(`/api/wms/separacao/reimprimir`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pedido_id: pedidoId }),

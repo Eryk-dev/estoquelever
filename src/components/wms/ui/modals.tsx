@@ -37,7 +37,7 @@ export function useGalpoes() {
   return useQuery({
     queryKey: ["wms-modal-galpoes"],
     queryFn: async () => {
-      const r = await sisoFetch("/api/admin/galpoes");
+      const r = await sisoFetch("/api/wms/admin/galpoes");
       if (!r.ok) throw new Error("falha ao listar galpões");
       const json = (await r.json()) as Array<{
         id: string;

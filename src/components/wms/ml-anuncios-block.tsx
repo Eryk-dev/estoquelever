@@ -94,7 +94,7 @@ export function MlAnunciosBlock({
       else setLoading(true);
       setError(null);
       try {
-        const url = `/api/ml/anuncios?sku=${encodeURIComponent(sku)}${
+        const url = `/api/wms/ml/anuncios?sku=${encodeURIComponent(sku)}${
           forceRefresh ? "&refresh=1" : ""
         }`;
         const r = await sisoFetch(url);

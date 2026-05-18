@@ -22,7 +22,7 @@ import {
 } from "@/components/wms/ui/wms-ui";
 import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
 import { naturalLocCompare } from "@/lib/domain-helpers";
-import type { SeparacaoPedido } from "@/components/separacao/separacao-card";
+import type { SeparacaoPedido } from "@/components/wms/separacao/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -105,7 +105,7 @@ function WmsEmbalagemPage() {
       const statusList =
         modo === "embalagem-oc" ? "aguardando_compra,separado" : "separado";
       const r = await sisoFetch(
-        `/api/separacao?status_separacao=${statusList}`,
+        `/api/wms/separacao?status_separacao=${statusList}`,
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const json = (await r.json()) as { pedidos?: SeparacaoPedido[] };
@@ -125,7 +125,7 @@ function WmsEmbalagemPage() {
   const itemsQuery = useQuery<{ items: PedidoItem[] }>({
     queryKey: itemsQueryKey,
     queryFn: async () => {
-      const url = `/api/separacao/checklist-items?pedidos=${pedidoIds.join(
+      const url = `/api/wms/separacao/checklist-items?pedidos=${pedidoIds.join(
         ",",
       )}${modo ? `&modo=${modo}` : ""}`;
       const r = await sisoFetch(url);
@@ -183,8 +183,8 @@ function WmsEmbalagemPage() {
       mutationFn: async (sku: string) => {
         const endpoint =
           modo === "embalagem-oc"
-            ? "/api/separacao/bipar-embalagem-oc"
-            : "/api/separacao/bipar-embalagem";
+            ? "/api/wms/separacao/bipar-embalagem-oc"
+            : "/api/wms/separacao/bipar-embalagem";
         const body =
           modo === "embalagem-oc"
             ? { sku, pedido_ids: pedidoIds, quantidade: scanQty }
@@ -278,7 +278,7 @@ function WmsEmbalagemPage() {
     { item: PedidoItem; delta: number }
   >({
     mutationFn: async ({ item, delta }) => {
-      const r = await sisoFetch("/api/separacao/confirmar-item-embalagem", {
+      const r = await sisoFetch("/api/wms/separacao/confirmar-item-embalagem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -352,7 +352,7 @@ function WmsEmbalagemPage() {
     string
   >({
     mutationFn: async (pedidoId) => {
-      const r = await sisoFetch("/api/separacao/reimprimir", {
+      const r = await sisoFetch("/api/wms/separacao/reimprimir", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pedido_id: pedidoId }),
@@ -379,7 +379,7 @@ function WmsEmbalagemPage() {
         (id) => !completedIdsRef.current.has(id),
       );
       if (activeIds.length === 0) return;
-      const r = await sisoFetch("/api/separacao/reiniciar", {
+      const r = await sisoFetch("/api/wms/separacao/reiniciar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

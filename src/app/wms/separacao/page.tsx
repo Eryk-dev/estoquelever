@@ -350,7 +350,7 @@ export default function WmsSeparacaoPage() {
         sort,
       ],
       queryFn: async () => {
-        const r = await sisoFetch(`/api/separacao?${queryString}`);
+        const r = await sisoFetch(`/api/wms/separacao?${queryString}`);
         if (!r.ok) {
           const b = (await r.json().catch(() => ({}))) as { error?: string };
           throw new Error(b.error || `HTTP ${r.status}`);
@@ -363,7 +363,7 @@ export default function WmsSeparacaoPage() {
   const tagsQuery = useQuery<{ tags: string[] }>({
     queryKey: ["wms-separacao-tags"],
     queryFn: async () => {
-      const r = await sisoFetch("/api/separacao/tags");
+      const r = await sisoFetch("/api/wms/separacao/tags");
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },
@@ -453,7 +453,7 @@ export default function WmsSeparacaoPage() {
   const iniciarMut = useMutation({
     mutationFn: async (ids: string[]) => {
       if (!user) throw new Error("Sessão expirada");
-      await sisoFetch("/api/separacao/iniciar", {
+      await sisoFetch("/api/wms/separacao/iniciar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pedido_ids: ids, operador_id: user.id }),
@@ -464,7 +464,7 @@ export default function WmsSeparacaoPage() {
 
   const forcarPendenteMut = useMutation({
     mutationFn: async (ids: string[]) => {
-      const r = await sisoFetch("/api/separacao/forcar-pendente", {
+      const r = await sisoFetch("/api/wms/separacao/forcar-pendente", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pedido_ids: ids }),
@@ -497,7 +497,7 @@ export default function WmsSeparacaoPage() {
 
   const moverEtapaMut = useMutation({
     mutationFn: async (args: { ids: string[]; novo_status: StatusServer }) => {
-      const r = await sisoFetch("/api/separacao/voltar-etapa", {
+      const r = await sisoFetch("/api/wms/separacao/voltar-etapa", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -521,7 +521,7 @@ export default function WmsSeparacaoPage() {
 
   const retryEtiquetaMut = useMutation({
     mutationFn: async (ids: string[]) => {
-      const r = await sisoFetch("/api/separacao/retry-etiqueta", {
+      const r = await sisoFetch("/api/wms/separacao/retry-etiqueta", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pedido_ids: ids }),
@@ -552,7 +552,7 @@ export default function WmsSeparacaoPage() {
     mutationFn: async (ids: string[]) => {
       const results = await Promise.allSettled(
         ids.map(async (id) => {
-          const r = await sisoFetch("/api/separacao/reimprimir", {
+          const r = await sisoFetch("/api/wms/separacao/reimprimir", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ pedido_id: id }),
@@ -577,7 +577,7 @@ export default function WmsSeparacaoPage() {
 
   const addTagMut = useMutation({
     mutationFn: async (args: { ids: string[]; tag: string }) => {
-      const r = await sisoFetch("/api/separacao/tags", {
+      const r = await sisoFetch("/api/wms/separacao/tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -600,7 +600,7 @@ export default function WmsSeparacaoPage() {
 
   const removeTagMut = useMutation({
     mutationFn: async (args: { ids: string[]; tag: string }) => {
-      const r = await sisoFetch("/api/separacao/tags", {
+      const r = await sisoFetch("/api/wms/separacao/tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -623,7 +623,7 @@ export default function WmsSeparacaoPage() {
 
   const encaminharMut = useMutation({
     mutationFn: async (args: { pedido_id: string; galpao_destino_id: string }) => {
-      const r = await sisoFetch("/api/separacao/encaminhar", {
+      const r = await sisoFetch("/api/wms/separacao/encaminhar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1904,7 +1904,7 @@ function PedidoExpansaoPanel({ pedido }: { pedido: SeparacaoPedido }) {
     queryFn: async () => {
       const qs = new URLSearchParams({ pedidos: pedido.id });
       if (isPickOC) qs.set("modo", "pick-oc");
-      const r = await sisoFetch(`/api/separacao/checklist-items?${qs.toString()}`);
+      const r = await sisoFetch(`/api/wms/separacao/checklist-items?${qs.toString()}`);
       if (!r.ok) {
         const b = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error || `HTTP ${r.status}`);

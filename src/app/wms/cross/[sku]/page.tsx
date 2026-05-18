@@ -53,7 +53,7 @@ export default function WmsCrossDetalhePage() {
   useEffect(() => {
     if (force && sku) {
       sisoFetch(
-        `/api/cross/produtos/${encodeURIComponent(sku)}/refetch`,
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/refetch`,
         { method: "POST" },
       )
         .then(() =>
@@ -70,7 +70,7 @@ export default function WmsCrossDetalhePage() {
     queryKey: ["wms-cross-detalhe", sku],
     queryFn: async () => {
       const r = await sisoFetch(
-        `/api/cross/produtos/${encodeURIComponent(sku)}`,
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}`,
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
@@ -84,7 +84,7 @@ export default function WmsCrossDetalhePage() {
     queryKey: ["wms-cross-estoque", sku],
     queryFn: async () => {
       const r = await sisoFetch(
-        `/api/cross/produtos/${encodeURIComponent(sku)}/estoque`,
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/estoque`,
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
@@ -95,7 +95,7 @@ export default function WmsCrossDetalhePage() {
   const refetchTinyMut = useMutation({
     mutationFn: async () => {
       const r = await sisoFetch(
-        `/api/cross/produtos/${encodeURIComponent(sku)}/refetch`,
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/refetch`,
         { method: "POST" },
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -116,7 +116,7 @@ export default function WmsCrossDetalhePage() {
   const addOemMut = useMutation({
     mutationFn: async (codigo: string) => {
       const r = await sisoFetch(
-        `/api/cross/produtos/${encodeURIComponent(sku)}/oems`,
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/oems`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -140,7 +140,7 @@ export default function WmsCrossDetalhePage() {
   const removeOemMut = useMutation({
     mutationFn: async (codigo: string) => {
       const r = await sisoFetch(
-        `/api/cross/produtos/${encodeURIComponent(sku)}/oems/${encodeURIComponent(codigo)}`,
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/oems/${encodeURIComponent(codigo)}`,
         { method: "DELETE" },
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -163,7 +163,7 @@ export default function WmsCrossDetalhePage() {
       motorizacao?: string;
     }) => {
       const r = await sisoFetch(
-        `/api/cross/produtos/${encodeURIComponent(sku)}/veiculos`,
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/veiculos`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -184,7 +184,7 @@ export default function WmsCrossDetalhePage() {
   const removeVeicMut = useMutation({
     mutationFn: async (id: string) => {
       const r = await sisoFetch(
-        `/api/cross/produtos/${encodeURIComponent(sku)}/veiculos/${encodeURIComponent(id)}`,
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/veiculos/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);

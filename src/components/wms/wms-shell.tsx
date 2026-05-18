@@ -169,7 +169,6 @@ function Sidebar({
   userRole,
   isOpen,
   onToggle,
-  onNavigate,
 }: {
   pathname: string;
   onCmdK: () => void;
@@ -178,7 +177,6 @@ function Sidebar({
   userRole: string;
   isOpen: boolean;
   onToggle: () => void;
-  onNavigate: () => void;
 }) {
   return (
     <aside className={`wms-sb ${isOpen ? "is-open" : ""}`}>
@@ -203,7 +201,7 @@ function Sidebar({
               <path d="M3 5h12M3 9h12M3 13h12" />
             </svg>
           </button>
-          <Link href="/wms" className="wms-sb-logo" onClick={onNavigate}>
+          <Link href="/wms" className="wms-sb-logo">
             <div className="wms-sb-logo-mark">N</div>
             <div className="wms-sb-logo-text">
               <div className="wms-sb-logo-name">NetAir WMS</div>
@@ -229,7 +227,6 @@ function Sidebar({
                   key={n.href}
                   href={n.href}
                   className={`wms-sb-item ${active ? "is-active" : ""}`}
-                  onClick={onNavigate}
                 >
                   <Icon name={n.icon} />
                   <span>{n.label}</span>
@@ -465,20 +462,24 @@ export function WmsShell({ children }: { children: ReactNode }) {
     seed?: ModalSeed;
   } | null>(null);
 
-  // Fecha a drawer ao trocar de rota
+  // Hidrata do localStorage no mount (a decisão do operador persiste entre rotas e reloads)
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSidebarOpen(false);
-  }, [pathname]);
+    try {
+      const saved = window.localStorage.getItem("wms-sidebar-open");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (saved === "1") setSidebarOpen(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
-  // ESC fecha drawer mobile
+  // Persiste sempre que muda
   useEffect(() => {
-    if (!sidebarOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSidebarOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    try {
+      window.localStorage.setItem("wms-sidebar-open", sidebarOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
   }, [sidebarOpen]);
 
   const openModal = useCallback(
@@ -554,7 +555,6 @@ export function WmsShell({ children }: { children: ReactNode }) {
             userRole={role}
             isOpen={sidebarOpen}
             onToggle={() => setSidebarOpen((o) => !o)}
-            onNavigate={() => setSidebarOpen(false)}
           />
           <div className="wms-main">
             <div className="wms-view">{children}</div>

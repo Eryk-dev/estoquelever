@@ -2625,52 +2625,12 @@
    Responsivo — Sidebar (rail no tablet, drawer no mobile)
    ============================================================ */
 
-/* Topbar mobile + backdrop: ficam ocultos no desktop */
+/* Topbar + backdrop ficam ocultos no desktop */
 .wms-topbar { display: none; }
 .wms-sb-backdrop { display: none; }
 
-/* Tablet (641–1280px) — encolhe sidebar pra rail de ícones.
-   Cobre iPad mini/Air/Pro 11" em landscape (até 1194px) com folga. */
-@media (min-width: 641px) and (max-width: 1280px) {
-  .wms-app { grid-template-columns: 56px 1fr; }
-  .wms-view { padding: 20px 20px 64px; }
-
-  .wms-sb-hd { padding: 12px 6px 10px; gap: 8px; }
-  .wms-sb-logo { gap: 0; justify-content: center; padding: 4px 0 6px; }
-  .wms-sb-logo > div:not(.wms-sb-logo-mark) { display: none; }
-
-  .wms-sb-cmd { padding: 6px; justify-content: center; }
-  .wms-sb-cmd > span,
-  .wms-sb-cmd kbd { display: none; }
-
-  .wms-sb-gs-btn { padding: 6px; justify-content: center; }
-  .wms-sb-gs-lbl,
-  .wms-sb-gs-caret { display: none; }
-  /* popover do switcher passa a abrir pra direita pra não cortar */
-  .wms-sb-gs-pop {
-    left: calc(100% + 6px);
-    right: auto;
-    top: 0;
-    min-width: 200px;
-  }
-
-  .wms-sb-nav { padding: 10px 4px; }
-  .wms-sb-sect-lbl { display: none; }
-  .wms-sb-sect { gap: 2px; }
-  .wms-sb-item { justify-content: center; padding: 8px 6px; }
-  .wms-sb-item > span,
-  .wms-sb-badge { display: none; }
-
-  .wms-sb-ft { padding: 10px 6px; }
-  .wms-sb-user { justify-content: center; gap: 0; }
-  .wms-sb-user > div:not(.wms-sb-avatar) { display: none; }
-}
-
-/* Mobile (≤640px) — sidebar vira drawer com hambúrguer */
-@media (max-width: 640px) {
-  .wms-app { grid-template-columns: 1fr; }
-  .wms-view { padding: 14px 14px 64px; }
-
+/* Estilos compartilhados entre tablet e mobile (≤1280px) */
+@media (max-width: 1280px) {
   .wms-topbar {
     display: flex;
     align-items: center;
@@ -2716,20 +2676,6 @@
     font-size: 12px;
     letter-spacing: -0.02em;
   }
-
-  .wms-sb {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    width: 260px;
-    transform: translateX(-100%);
-    transition: transform .18s ease;
-    z-index: 60;
-    box-shadow: 4px 0 16px rgba(0, 0, 0, .18);
-  }
-  .wms-sb.is-open { transform: translateX(0); }
-
   .wms-sb-backdrop {
     display: block;
     position: fixed;
@@ -2744,4 +2690,67 @@
     opacity: 1;
     pointer-events: auto;
   }
+}
+
+/* Tablet (641–1280px) — sidebar fica como rail; expande pra overlay quando .is-open.
+   Cobre iPad mini/Air/Pro 11" em landscape (até 1194px) com folga. */
+@media (min-width: 641px) and (max-width: 1280px) {
+  .wms-app { grid-template-columns: 56px 1fr; }
+  .wms-view { padding: 20px 20px 64px; }
+
+  /* Compact rail — aplicado SÓ quando a sidebar NÃO está aberta */
+  .wms-sb:not(.is-open) .wms-sb-hd { padding: 12px 6px 10px; gap: 8px; }
+  .wms-sb:not(.is-open) .wms-sb-logo { gap: 0; justify-content: center; padding: 4px 0 6px; }
+  .wms-sb:not(.is-open) .wms-sb-logo > div:not(.wms-sb-logo-mark) { display: none; }
+  .wms-sb:not(.is-open) .wms-sb-cmd { padding: 6px; justify-content: center; }
+  .wms-sb:not(.is-open) .wms-sb-cmd > span,
+  .wms-sb:not(.is-open) .wms-sb-cmd kbd { display: none; }
+  .wms-sb:not(.is-open) .wms-sb-gs-btn { padding: 6px; justify-content: center; }
+  .wms-sb:not(.is-open) .wms-sb-gs-lbl,
+  .wms-sb:not(.is-open) .wms-sb-gs-caret { display: none; }
+  .wms-sb:not(.is-open) .wms-sb-gs-pop {
+    left: calc(100% + 6px);
+    right: auto;
+    top: 0;
+    min-width: 200px;
+  }
+  .wms-sb:not(.is-open) .wms-sb-nav { padding: 10px 4px; }
+  .wms-sb:not(.is-open) .wms-sb-sect-lbl { display: none; }
+  .wms-sb:not(.is-open) .wms-sb-sect { gap: 2px; }
+  .wms-sb:not(.is-open) .wms-sb-item { justify-content: center; padding: 8px 6px; }
+  .wms-sb:not(.is-open) .wms-sb-item > span,
+  .wms-sb:not(.is-open) .wms-sb-badge { display: none; }
+  .wms-sb:not(.is-open) .wms-sb-ft { padding: 10px 6px; }
+  .wms-sb:not(.is-open) .wms-sb-user { justify-content: center; gap: 0; }
+  .wms-sb:not(.is-open) .wms-sb-user > div:not(.wms-sb-avatar) { display: none; }
+
+  /* Expanded overlay — quando o usuário aperta o hambúrguer no tablet */
+  .wms-sb.is-open {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 240px;
+    z-index: 60;
+    box-shadow: 4px 0 16px rgba(0, 0, 0, .18);
+  }
+}
+
+/* Mobile (≤640px) — sidebar fica escondida; drawer slide-in via hambúrguer */
+@media (max-width: 640px) {
+  .wms-app { grid-template-columns: 1fr; }
+  .wms-view { padding: 14px 14px 64px; }
+
+  .wms-sb {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    transform: translateX(-100%);
+    transition: transform .18s ease;
+    z-index: 60;
+    box-shadow: 4px 0 16px rgba(0, 0, 0, .18);
+  }
+  .wms-sb.is-open { transform: translateX(0); }
 }

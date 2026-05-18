@@ -4,7 +4,7 @@ import { logger } from "@/lib/logger";
 export const COMPRAS_ALLOWED_CARGOS = ["admin", "comprador"] as const;
 
 /** Fields to null when resetting an item's compra exception/equivalente/cancelamento state */
-export function buildCompraFieldReset(): Record<string, null> {
+export function buildCompraFieldReset(): Record<string, null | false> {
   return {
     compra_equivalente_sku: null,
     compra_equivalente_descricao: null,
@@ -20,6 +20,15 @@ export function buildCompraFieldReset(): Record<string, null> {
     compra_cancelamento_solicitado_por: null,
     compra_cancelado_em: null,
     compra_cancelado_por: null,
+    // M6 — limpa estado parcial ao trocar SKU equivalente ou resetar exceção,
+    // pra evitar "sujeira" de picking anterior em item que volta pro fluxo.
+    quantidade_pega: null,
+    separacao_parcial: false,
+    parcial_motivo: null,
+    parcial_em: null,
+    parcial_por: null,
+    mov_saida_id: null,
+    mov_ajuste_loc_zerou_id: null,
   };
 }
 

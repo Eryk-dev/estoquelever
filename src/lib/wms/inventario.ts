@@ -188,8 +188,23 @@ export async function iniciarSessao(
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Slots de operador (OP1..OP5)
+// Party de operadores (modelo dinâmico — substitui slots numerados)
 // ─────────────────────────────────────────────────────────────────────
+
+export type AcaoEntradaParty =
+  | { tipo: "no-op" }
+  | { tipo: "reativar"; id: string }
+  | { tipo: "criar" };
+
+/** Decide o que fazer quando um usuário tenta entrar na party. Função
+ *  pura — não toca DB. Permite testar a lógica de reentrada sem mock. */
+export function decidirAcaoEntrada(
+  existente: { id: string; finalizado_em: string | null } | null,
+): AcaoEntradaParty {
+  if (!existente) return { tipo: "criar" };
+  if (existente.finalizado_em === null) return { tipo: "no-op" };
+  return { tipo: "reativar", id: existente.id };
+}
 
 export async function entrarSlot(
   sessaoId: string,

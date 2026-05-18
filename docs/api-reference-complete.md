@@ -4825,16 +4825,28 @@ Cron-friendly. **Auth:** `x-worker-secret`. Insere mov L pra reservas com `expir
 Lista sessões. Query: `status`, `galpao_id`.
 
 ### POST /api/wms/inventario
-Cria sessão (v2 — pool compartilhado com slots dinâmicos OP1..OP5).
+Cria sessão (v2 — pool compartilhado + party dinâmica de operadores, sem cap rígido).
 
-**Body:** `{ tipo: 'cycle_count'|'completo', galpao_id, nome?, empresa_dona_id?, modo_contagem?: 'blind'|'aberto', tolerancia_pct?, tolerancia_qty_min?, exige_aprovacao_acima_valor?, observacoes?, localizacoes: [{ localizacao_id, motivo?, slot_atribuido? }] }`.
+**Body:** `{ tipo: 'cycle_count'|'completo', galpao_id, nome?, empresa_dona_id?, modo_contagem?: 'blind'|'aberto', tolerancia_pct?, tolerancia_qty_min?, exige_aprovacao_acima_valor?, observacoes?, localizacoes: [{ localizacao_id, motivo? }] }`.
 
 Defaults: blind, 2%, R$1000.
 
-**`slot_atribuido` (1..5 ou NULL):** distribuição soft entre operadores no cycle count manual. Quando setado, o RPC `wms_inventario_proxima_loc` prioriza essa loc pro operador que está no slot correspondente; quando o bucket próprio esvazia, o operador cai naturalmente nas regras de continuidade/anti-colisão e pode puxar de buckets de colegas. Sessões sem `slot_atribuido` (NULL em todas as locs) usam pull queue puro (comportamento v2 original).
-
 ### GET /api/wms/inventario/[id]
-Detalhe consolidado: `{ sessao, operadores, localizacoes, contagens, divergencias }` (5 queries paralelas). `localizacoes[].slot_atribuido` retorna o bucket de cada loc (NULL = pool comum).
+Detalhe consolidado: `{ sessao, operadores, localizacoes, contagens, divergencias }` (5 queries paralelas).
+
+### POST /api/wms/inventario/[id]/party
+Operador entra na party. **Auth:** `requireWarehouseAccess`. Body vazio.
+
+Auto-inicia a sessão se `status='planejada'`. Idempotente — re-chamar pro mesmo usuário é no-op (retorna `retomado=false`). Quando o usuário já tinha um registro (após `sairParty` prévia), reativa: zera `finalizado_em`, seta `ultima_reentrada_em`, preserva `locs_contadas` (retorna `retomado=true`).
+
+**Response 200:** `{ ok: true, retomado: boolean }`.
+
+### DELETE /api/wms/inventario/[id]/party
+Operador sai da party. **Auth:** `requireWarehouseAccess`. Body vazio.
+
+Marca o operador como `finalizado_em=now()`. Não cancela contagens já feitas. Locs em `em_contagem` ficam até o cleanup cron liberar.
+
+**Response 200:** `{ ok: true }`.
 
 ### PATCH /api/wms/inventario/[id]
 Update genérico de campos da sessão.

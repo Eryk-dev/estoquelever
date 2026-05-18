@@ -69,6 +69,55 @@ export interface DivergenciaCalculada {
   valor_financeiro: number;
 }
 
-export function reconciliarTemporal(_input: ReconciliarInput): DivergenciaCalculada[] {
-  return [];
+export function reconciliarTemporal(input: ReconciliarInput): DivergenciaCalculada[] {
+  const result: DivergenciaCalculada[] = [];
+
+  // Agrega contagens por quádrupla
+  const agregado = new Map<string, { loc: string; prod: string; dona: string; qty: number; t_ref: string }>();
+  for (const c of input.contagens) {
+    const k = `${c.localizacao_id}|${c.produto_id}|${c.empresa_dona_id}`;
+    const cur = agregado.get(k);
+    if (cur) {
+      cur.qty += c.qty_contada;
+      if (c.contado_em > cur.t_ref) cur.t_ref = c.contado_em;
+    } else {
+      agregado.set(k, {
+        loc: c.localizacao_id,
+        prod: c.produto_id,
+        dona: c.empresa_dona_id,
+        qty: c.qty_contada,
+        t_ref: c.contado_em,
+      });
+    }
+  }
+
+  const saldoMap = new Map<string, { saldo: number; custo: number }>();
+  for (const s of input.saldos_atuais) {
+    saldoMap.set(`${s.localizacao_id}|${s.produto_id}|${s.empresa_dona_id}`, {
+      saldo: s.saldo,
+      custo: s.custo_medio,
+    });
+  }
+
+  for (const v of agregado.values()) {
+    const k = `${v.loc}|${v.prod}|${v.dona}`;
+    const s = saldoMap.get(k);
+    const saldo_atual = s?.saldo ?? 0;
+    const custo = s?.custo ?? 0;
+    const saldo_esperado = saldo_atual; // placeholder — task 1.3 traz a lógica temporal
+
+    const delta = v.qty - saldo_esperado;
+    if (delta === 0) continue;
+    result.push({
+      localizacao_id: v.loc,
+      produto_id: v.prod,
+      empresa_dona_id: v.dona,
+      saldo_esperado,
+      qty_contada_final: v.qty,
+      delta,
+      valor_financeiro: custo * delta,
+    });
+  }
+
+  return result;
 }

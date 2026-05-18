@@ -71,9 +71,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Estorna movs via tabela ponte:
-    // - mov com 1 único link → full estorno
-    // - mov compartilhada (N links) → estorno parcial proporcional via RPC
+    // Estorna movs via tabela ponte sempre via RPC parcial.
+    //
+    // Por que SEMPRE usar estorno parcial (mesmo quando só sobrou 1 link)?
+    // Quando uma mov S é compartilhada por wave (consolidação multi-item),
+    // o primeiro desfazer cria um estorno parcial. No segundo desfazer só
+    // sobra 1 link, mas a mov já tem um estorno parcial registrado — chamar
+    // `estornarMovimentacao` (full estorno) falharia com "mov X já foi
+    // estornada". A RPC `wms_estornar_parcial_movimentacao` valida via
+    // `qty_estornada + p_qty > quantidade` (strict `>`), então o exact-fit
+    // final (e.g., qty_estornada=5 + qty=5 = quantidade=10 → 10 > 10 = false
+    // → permitido) passa naturalmente.
     const { data: links } = await supabase
       .from("siso_pedido_item_mov_links")
       .select("id, mov_id, qty, tipo_link")
@@ -83,25 +91,12 @@ export async function POST(request: NextRequest) {
     let totalEstornado = 0;
 
     for (const link of links ?? []) {
-      const { count } = await supabase
-        .from("siso_pedido_item_mov_links")
-        .select("id", { count: "exact", head: true })
-        .eq("mov_id", link.mov_id);
-
-      if (count === 1) {
-        await estornarMovimentacao({
-          mov_id: link.mov_id as string,
-          usuario_id: session.id,
-          observacoes: "Desfazer parcial — operador (link único)",
-        });
-      } else {
-        await supabase.rpc("wms_estornar_parcial_movimentacao", {
-          p_mov_id: link.mov_id,
-          p_qty: link.qty,
-          p_usuario_id: session.id,
-          p_observacoes: "Desfazer parcial — operador (estorno parcial)",
-        });
-      }
+      await supabase.rpc("wms_estornar_parcial_movimentacao", {
+        p_mov_id: link.mov_id,
+        p_qty: link.qty,
+        p_usuario_id: session.id,
+        p_observacoes: "Desfazer parcial — operador",
+      });
 
       await supabase
         .from("siso_pedido_item_mov_links")

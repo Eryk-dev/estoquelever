@@ -233,6 +233,14 @@ export async function estornarMovimentacao(input: {
     .maybeSingle();
   if (existente) throw new Error(`mov ${input.mov_id} já foi estornada (estorno id=${existente.id})`);
 
+  // Defense-in-depth: full estorno exige qty_estornada=0. Estorno parcial prévio
+  // bloqueia o full — use wms_estornar_parcial_movimentacao pro residual.
+  if (Number(original.qty_estornada ?? 0) > 0) {
+    throw new Error(
+      `mov ${input.mov_id} tem qty_estornada=${original.qty_estornada} (>0). Use wms_estornar_parcial_movimentacao para estornar o residual.`,
+    );
+  }
+
   const tipoMap: Record<string, TipoMov> = { E: "S", S: "E", R: "L", L: "R" };
   const tipoInverso = tipoMap[original.tipo as string];
   if (!tipoInverso)

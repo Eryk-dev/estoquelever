@@ -40,6 +40,7 @@ export type EventoPedido =
   | "realocacao_picada"
   | "realocacao_parcial"
   | "realocacao_cancelada"
+  | "realocacao_cancelada_chain"
   | "realocacao_sem_cobertura_galpao"
   | "realocacao_sem_cobertura_cascade"
   | "realocacao_parcial_cascade"

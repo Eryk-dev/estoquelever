@@ -28,6 +28,19 @@ async function getDepositoIdByEmpresa(empresaId: string): Promise<number | null>
   return data?.deposito_id ?? null;
 }
 
+/** Agregado por galpão — dinâmico, sem hardcode de CWB/SP. */
+export interface CompraEquivalenteGalpaoEstoque {
+  galpao_id: string;
+  galpao_nome: string;
+  saldo: number;
+  reservado: number;
+  disponivel: number;
+  deposito_id: number | null;
+  deposito_nome: string | null;
+  localizacao: string | null;
+  atende: boolean;
+}
+
 export interface EquivalentSyncResult {
   produtoIdOrigem: number;
   produtoIdSuporte: number | null;
@@ -36,20 +49,8 @@ export interface EquivalentSyncResult {
   fornecedor: string | null;
   imagemUrl: string | null;
   gtin: string | null;
-  cwbAtende: boolean;
-  spAtende: boolean;
-  estoqueCwbDepositoId: number | null;
-  estoqueCwbDepositoNome: string | null;
-  estoqueCwbSaldo: number;
-  estoqueCwbReservado: number;
-  estoqueCwbDisponivel: number;
-  estoqueSpDepositoId: number | null;
-  estoqueSpDepositoNome: string | null;
-  estoqueSpSaldo: number;
-  estoqueSpReservado: number;
-  estoqueSpDisponivel: number;
-  localizacaoCwb: string | null;
-  localizacaoSp: string | null;
+  /** Mapa dinâmico keyed por nome do galpão (UPPER). */
+  estoques: Record<string, CompraEquivalenteGalpaoEstoque>;
   estoquesPorEmpresa: Array<{
     empresa_id: string;
     produto_id: number;
@@ -59,6 +60,7 @@ export interface EquivalentSyncResult {
     reservado: number;
     disponivel: number;
     localizacao: string | null;
+    galpao_id: string;
     galpao_nome: string;
   }>;
 }
@@ -69,8 +71,11 @@ export async function carregarDadosEquivalentePorSku(params: {
   galpaoOrigemId: string;
   galpaoOrigemNome: string;
   sku: string;
+  /** Quantidade mínima pra considerar `atende=true`. Default 1. */
+  qtdMinimaAtende?: number;
 }): Promise<EquivalentSyncResult> {
   const { empresaOrigemId, grupoId, galpaoOrigemId, galpaoOrigemNome, sku } = params;
+  const qtdMinimaAtende = params.qtdMinimaAtende ?? 1;
 
   const empresasDoGrupo = grupoId
     ? await getEmpresasDoGrupo(grupoId)
@@ -85,6 +90,13 @@ export async function carregarDadosEquivalentePorSku(params: {
         galpaoNome: galpaoOrigemNome,
         tier: 1,
       }];
+
+  // Galpões ativos (caso o pedido não tenha cobertura em todos do grupo, ainda incluímos no payload com zero).
+  const supabase = createServiceClient();
+  const { data: galpoesAtivos } = await supabase
+    .from("siso_galpoes")
+    .select("id, nome")
+    .eq("ativo", true);
 
   const { token: origemToken } = await getValidTokenByEmpresa(empresaOrigemId);
   const produtoOrigem = await runWithEmpresa(empresaOrigemId, () =>
@@ -155,6 +167,7 @@ export async function carregarDadosEquivalentePorSku(params: {
       reservado,
       disponivel,
       localizacao: estoque.localizacao ?? null,
+      galpao_id: empresa.galpaoId,
       galpao_nome: empresa.galpaoNome,
     });
   }
@@ -162,7 +175,7 @@ export async function carregarDadosEquivalentePorSku(params: {
   const porGalpao = agregarEstoquePorGalpao(
     estoquesPorEmpresa.map((estoque) => ({
       empresaId: estoque.empresa_id,
-      galpaoId: empresasParaConsultar.find((empresa) => empresa.empresaId === estoque.empresa_id)?.galpaoId ?? galpaoOrigemId,
+      galpaoId: estoque.galpao_id,
       galpaoNome: estoque.galpao_nome,
       disponivel: estoque.disponivel,
       saldo: estoque.saldo,
@@ -172,30 +185,38 @@ export async function carregarDadosEquivalentePorSku(params: {
     })),
   );
 
-  let cwb = { disponivel: 0, saldo: 0, reservado: 0 };
-  let sp = { disponivel: 0, saldo: 0, reservado: 0 };
-  let cwbDepositoId: number | null = null;
-  let cwbDepositoNome: string | null = null;
-  let cwbLocalizacao: string | null = null;
-  let spDepositoId: number | null = null;
-  let spDepositoNome: string | null = null;
-  let spLocalizacao: string | null = null;
+  const estoques: Record<string, CompraEquivalenteGalpaoEstoque> = {};
 
-  for (const [, agregado] of porGalpao) {
-    if (agregado.galpaoNome === "CWB") {
-      cwb = agregado;
-      const estoque = estoquesPorEmpresa.find((item) => item.galpao_nome === "CWB");
-      cwbDepositoId = estoque?.deposito_id ?? null;
-      cwbDepositoNome = estoque?.deposito_nome ?? null;
-      cwbLocalizacao = estoque?.localizacao ?? null;
-    }
-    if (agregado.galpaoNome === "SP") {
-      sp = agregado;
-      const estoque = estoquesPorEmpresa.find((item) => item.galpao_nome === "SP");
-      spDepositoId = estoque?.deposito_id ?? null;
-      spDepositoNome = estoque?.deposito_nome ?? null;
-      spLocalizacao = estoque?.localizacao ?? null;
-    }
+  // Inicializa com todos os galpões ativos zerados pra UI render previsível.
+  for (const g of galpoesAtivos ?? []) {
+    const key = (g.nome as string).toUpperCase();
+    estoques[key] = {
+      galpao_id: g.id as string,
+      galpao_nome: g.nome as string,
+      saldo: 0,
+      reservado: 0,
+      disponivel: 0,
+      deposito_id: null,
+      deposito_nome: null,
+      localizacao: null,
+      atende: false,
+    };
+  }
+
+  for (const [galpaoId, agregado] of porGalpao) {
+    const key = agregado.galpaoNome.toUpperCase();
+    const estoque = estoquesPorEmpresa.find((item) => item.galpao_id === galpaoId);
+    estoques[key] = {
+      galpao_id: galpaoId,
+      galpao_nome: agregado.galpaoNome,
+      saldo: agregado.saldo,
+      reservado: agregado.reservado,
+      disponivel: agregado.disponivel,
+      deposito_id: estoque?.deposito_id ?? null,
+      deposito_nome: estoque?.deposito_nome ?? null,
+      localizacao: estoque?.localizacao ?? null,
+      atende: agregado.disponivel >= qtdMinimaAtende,
+    };
   }
 
   const fornecedor = getFornecedorBySku(sku);
@@ -208,20 +229,7 @@ export async function carregarDadosEquivalentePorSku(params: {
     fornecedor: fornecedor.fornecedor,
     imagemUrl: detalheOrigem.imagemUrl,
     gtin: detalheOrigem.gtin,
-    cwbAtende: cwb.disponivel > 0,
-    spAtende: sp.disponivel > 0,
-    estoqueCwbDepositoId: cwbDepositoId,
-    estoqueCwbDepositoNome: cwbDepositoNome,
-    estoqueCwbSaldo: cwb.saldo,
-    estoqueCwbReservado: cwb.reservado,
-    estoqueCwbDisponivel: cwb.disponivel,
-    estoqueSpDepositoId: spDepositoId,
-    estoqueSpDepositoNome: spDepositoNome,
-    estoqueSpSaldo: sp.saldo,
-    estoqueSpReservado: sp.reservado,
-    estoqueSpDisponivel: sp.disponivel,
-    localizacaoCwb: cwbLocalizacao,
-    localizacaoSp: spLocalizacao,
+    estoques,
     estoquesPorEmpresa,
   };
 }

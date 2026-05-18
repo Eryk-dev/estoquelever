@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getSessionUser } from "@/lib/session";
 
 /**
  * GET /api/separacao/checklist-items?pedidos=id1,id2,id3
@@ -11,6 +12,11 @@ import { logger } from "@/lib/logger";
  * the empresa that originally received the order.
  */
 export async function GET(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const pedidosParam = searchParams.get("pedidos");
 

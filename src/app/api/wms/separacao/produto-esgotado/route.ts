@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
+import { getSessionUser } from "@/lib/session";
 
 /**
  * POST /api/separacao/produto-esgotado
@@ -22,6 +23,11 @@ import { getFornecedorBySku } from "@/lib/sku-fornecedor";
  *    Returns: { pedidos_afetados, itens_afetados, galpao_destino_nome }
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
+  }
+
   const body = await request.json().catch(() => null);
   const sku = body?.sku;
   const acao: string | undefined = body?.acao;

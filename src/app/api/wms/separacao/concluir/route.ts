@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
 import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/agrupamento-service";
 import { dispararCutoverSePronto } from "@/lib/wms/cutover";
+import { getSessionUser } from "@/lib/session";
 
 
 /**
@@ -16,6 +17,11 @@ import { dispararCutoverSePronto } from "@/lib/wms/cutover";
  * Returns: { separados: string[], pendentes: string[] }
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
+  }
+
   const body = await request.json().catch(() => null);
   if (
     !body?.pedido_ids ||
@@ -209,6 +215,8 @@ export async function POST(request: NextRequest) {
         aguardandoCompra.map((pid) => ({
           pedidoId: pid,
           evento: "separacao_aguardando_compra" as const,
+          usuarioId: session.id,
+          usuarioNome: session.nome,
         })),
       ).catch(() => {});
     }
@@ -219,6 +227,8 @@ export async function POST(request: NextRequest) {
         separados.map((pid) => ({
           pedidoId: pid,
           evento: "separacao_concluida" as const,
+          usuarioId: session.id,
+          usuarioNome: session.nome,
         })),
       ).catch(() => {});
 

@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { estornarMovimentacao } from "@/lib/wms/ledger";
+import { registrarEventos } from "@/lib/historico-service";
 
 /**
  * POST /api/separacao/cancelar
@@ -255,6 +256,22 @@ export async function POST(request: NextRequest) {
       aguardando_compra: compraIds,
       aguardando_separacao: nonCompraIds,
     });
+
+    // Registra evento de cancelamento por pedido (fire-and-forget)
+    const movsEstornadas = [...movsSaidaSet];
+    const realocsCanceladas = (realocs ?? []).length;
+    await registrarEventos(
+      pedido_ids.map((pid) => ({
+        pedidoId: pid,
+        evento: "separacao_cancelada" as const,
+        usuarioId: session.id,
+        detalhes: {
+          item_ids: itemIds,
+          realocs_canceladas: realocsCanceladas,
+          movs_estornadas: movsEstornadas,
+        },
+      })),
+    );
 
     return NextResponse.json({ ok: true, pedido_ids });
   } catch (err) {

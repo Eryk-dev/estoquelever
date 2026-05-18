@@ -45,7 +45,8 @@ export type EventoPedido =
   | "realocacao_sem_cobertura_cascade"
   | "realocacao_parcial_cascade"
   | "parcial_desfeito"
-  | "separacao_resetada";
+  | "separacao_resetada"
+  | "separacao_cancelada";
 
 /**
  * Record a single event in the order history.

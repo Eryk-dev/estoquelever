@@ -415,6 +415,10 @@ async function processarParcialRealocacao(
     if (!pedido) {
       return NextResponse.json({ error: "pedido não encontrado" }, { status: 404 });
     }
+    if (!pedido.empresa_origem_id) {
+      return NextResponse.json({ error: "pedido sem empresa de origem" }, { status: 400 });
+    }
+    const empresaOrigemPedido = pedido.empresa_origem_id;
 
     // 3. Resolve produto WMS (na empresa dona da realoc — pode ser empréstimo)
     const produtoWmsId = await resolverProdutoWms(
@@ -579,12 +583,7 @@ async function processarParcialRealocacao(
     }
 
     // 10. Cascade — busca próxima loc no galpão, excluindo todas já tentadas neste item
-
-    // Empresa origem do pedido (não da realoc — cascade prioriza empresa original)
-    const empresaOrigemPedido = pedido.empresa_origem_id;
-    if (!empresaOrigemPedido) {
-      return NextResponse.json({ error: "pedido sem empresa de origem" }, { status: 400 });
-    }
+    // (empresaOrigemPedido já validado no Step 2 — cascade prioriza empresa original)
 
     // Coleta todas as locs já tentadas neste item (qualquer status)
     const { data: todasRealoc } = await supabase
@@ -686,13 +685,17 @@ async function processarParcialRealocacao(
       usuarioId: session.id,
     });
 
+    const codigoPorLoc = new Map(
+      resolver.realocacoes.map((r) => [r.localizacao_id, r.localizacao_codigo]),
+    );
+
     return NextResponse.json({
       status: "realocado",
-      realocacoes: (criadas ?? []).map((c, i) => ({
+      realocacoes: (criadas ?? []).map((c) => ({
         id: c.id,
         empresa_dona_id: c.empresa_dona_id,
         localizacao_id: c.localizacao_id,
-        localizacao_codigo: resolver.realocacoes[i].localizacao_codigo,
+        localizacao_codigo: codigoPorLoc.get(c.localizacao_id as string) ?? null,
         quantidade: c.quantidade,
         is_emprestimo: c.is_emprestimo,
       })),

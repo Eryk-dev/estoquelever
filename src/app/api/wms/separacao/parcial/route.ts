@@ -856,6 +856,77 @@ async function processarParcialRealocacao(
 
     const nowIso = new Date().toISOString();
 
+    // 8a. Popula tabela ponte siso_pedido_item_mov_links — 1 linha por realoc com qty>0
+    //     pra mov de saída (rateada). Ajuste loc_zerou (não rateado) vai no primeiro
+    //     beneficiário com qty>0 (fallback: primeiro update se ninguém pegou nada).
+    if (movSaidaId) {
+      const linksRealoc: Array<{
+        pedido_item_id: number;
+        realocacao_id: string;
+        mov_id: string;
+        qty: number;
+        tipo_link: "saida";
+      }> = [];
+
+      for (const u of updates) {
+        if (u.qty_para_esta > 0) {
+          linksRealoc.push({
+            pedido_item_id: Number(u.realoc.pedido_item_id),
+            realocacao_id: u.realoc.id,
+            mov_id: movSaidaId,
+            qty: u.qty_para_esta,
+            tipo_link: "saida",
+          });
+        }
+      }
+
+      if (linksRealoc.length > 0) {
+        const { error: linkErr } = await supabase
+          .from("siso_pedido_item_mov_links")
+          .insert(linksRealoc);
+        if (linkErr) {
+          logger.logError({
+            error: linkErr,
+            source: "separacao-parcial-realoc",
+            message: "Falhou criar links",
+            category: "database",
+            requestPath: "/api/wms/separacao/parcial",
+            requestMethod: "POST",
+            metadata: { movSaidaId, linksRealoc },
+          });
+          return NextResponse.json({ error: "erro persistindo links" }, { status: 500 });
+        }
+      }
+    }
+
+    if (movAjusteId && loc_zerou) {
+      const delta = saldoWms - quantidade_pega;
+      if (delta > 0) {
+        const primeiraComQty = updates.find((u) => u.qty_para_esta > 0) ?? updates[0];
+        const { error: linkAjErr } = await supabase
+          .from("siso_pedido_item_mov_links")
+          .insert({
+            pedido_item_id: Number(primeiraComQty.realoc.pedido_item_id),
+            realocacao_id: primeiraComQty.realoc.id,
+            mov_id: movAjusteId,
+            qty: delta,
+            tipo_link: "ajuste_loc_zerou",
+          });
+        if (linkAjErr) {
+          logger.logError({
+            error: linkAjErr,
+            source: "separacao-parcial-realoc",
+            message: "Falhou criar link de ajuste",
+            category: "database",
+            requestPath: "/api/wms/separacao/parcial",
+            requestMethod: "POST",
+            metadata: { movAjusteId, delta },
+          });
+          return NextResponse.json({ error: "erro persistindo links" }, { status: 500 });
+        }
+      }
+    }
+
     // 9. Update cada realocação + acumula no item pai
     for (let i = 0; i < updates.length; i++) {
       const u = updates[i];
@@ -881,7 +952,10 @@ async function processarParcialRealocacao(
           parcial_por: isParcialEsta ? session.id : null,
           picado_em: isCompletoEsta ? nowIso : null,
           picado_por: isCompletoEsta ? session.id : null,
-          mov_saida_id: ehBeneficiario ? movSaidaId : null,
+          // Legacy field: mov_saida vinculada a TODAS as realocs beneficiadas (qty > 0).
+          // Tabela ponte (criada acima) é a fonte de verdade pra rateamento.
+          mov_saida_id: qty_para_esta > 0 ? movSaidaId : null,
+          // mov_ajuste é da loc — fica só na primeira beneficiária (não rateado)
           mov_ajuste_loc_zerou_id: ehBeneficiario ? movAjusteId : null,
         })
         .eq("id", realoc.id);

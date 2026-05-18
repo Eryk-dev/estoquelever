@@ -313,3 +313,19 @@ describe("reconciliarTemporal — loc visitada vazia", () => {
     ]);
   });
 });
+
+describe("reconciliarTemporal — loc não visitada", () => {
+  it("loc sem entry em locs_visitadas + sem contagens → sempre ignorada", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: "2026-05-18T13:30:00.000Z",
+      contagens: [],
+      locs_visitadas: [], // nenhuma loc finalizada
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 99, custo_medio: 10 },
+      ],
+      movs: [],
+    });
+    expect(out).toEqual([]);
+  });
+});

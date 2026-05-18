@@ -167,17 +167,21 @@ function Sidebar({
   userInitials,
   userName,
   userRole,
+  isOpen,
+  onNavigate,
 }: {
   pathname: string;
   onCmdK: () => void;
   userInitials: string;
   userName: string;
   userRole: string;
+  isOpen: boolean;
+  onNavigate: () => void;
 }) {
   return (
-    <aside className="wms-sb">
+    <aside className={`wms-sb ${isOpen ? "is-open" : ""}`}>
       <div className="wms-sb-hd">
-        <Link href="/wms" className="wms-sb-logo">
+        <Link href="/wms" className="wms-sb-logo" onClick={onNavigate}>
           <div className="wms-sb-logo-mark">N</div>
           <div>
             <div className="wms-sb-logo-name">NetAir WMS</div>
@@ -202,6 +206,7 @@ function Sidebar({
                   key={n.href}
                   href={n.href}
                   className={`wms-sb-item ${active ? "is-active" : ""}`}
+                  onClick={onNavigate}
                 >
                   <Icon name={n.icon} />
                   <span>{n.label}</span>
@@ -222,6 +227,36 @@ function Sidebar({
         </div>
       </div>
     </aside>
+  );
+}
+
+function MobileTopbar({ onOpen }: { onOpen: () => void }) {
+  return (
+    <header className="wms-topbar">
+      <button
+        type="button"
+        className="wms-topbar-burger"
+        aria-label="Abrir menu"
+        onClick={onOpen}
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 18 18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          aria-hidden
+        >
+          <path d="M3 5h12M3 9h12M3 13h12" />
+        </svg>
+      </button>
+      <Link href="/wms" className="wms-topbar-logo">
+        <span className="wms-topbar-logo-mark">N</span>
+        <span>NetAir WMS</span>
+      </Link>
+    </header>
   );
 }
 
@@ -430,10 +465,27 @@ export function WmsShell({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
 
   const [ckOpen, setCkOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [modal, setModal] = useState<{
     kind: Exclude<ModalKind, null>;
     seed?: ModalSeed;
   } | null>(null);
+
+  // Fecha a drawer ao trocar de rota
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSidebarOpen(false);
+  }, [pathname]);
+
+  // ESC fecha drawer mobile
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sidebarOpen]);
 
   const openModal = useCallback(
     (kind: Exclude<ModalKind, null>, seed?: ModalSeed) => {
@@ -506,8 +558,16 @@ export function WmsShell({ children }: { children: ReactNode }) {
             userInitials={initials}
             userName={user.nome}
             userRole={role}
+            isOpen={sidebarOpen}
+            onNavigate={() => setSidebarOpen(false)}
+          />
+          <div
+            className={`wms-sb-backdrop ${sidebarOpen ? "is-open" : ""}`}
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden
           />
           <div className="wms-main">
+            <MobileTopbar onOpen={() => setSidebarOpen(true)} />
             <div className="wms-view">{children}</div>
           </div>
 

@@ -76,6 +76,7 @@ export async function GET(request: NextRequest) {
       em_separacao: 0,
       separado: 0,
       embalado: 0,
+      pendente_realocacao: 0,
     };
     return NextResponse.json({
       counts: emptyCounts,
@@ -253,6 +254,7 @@ export async function GET(request: NextRequest) {
       em_separacao: countResults[4].count ?? 0,
       separado: countResults[5].count ?? 0,
       embalado: countResults[6].count ?? 0,
+      pendente_realocacao: 0,
     };
 
     // 3. Fetch item stats for progress display (separation + packing counts)

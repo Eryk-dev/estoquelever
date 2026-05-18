@@ -109,6 +109,8 @@ export interface Pedido {
   compra_estoque_lancado_alerta?: boolean;
   /** Galpão name the order was forwarded from (manual encaminhar) */
   encaminhado_de?: string | null;
+  /** Separation/packing flow status */
+  status_separacao?: StatusSeparacao | null;
 }
 
 // ─── Separacao / Embalagem ──────────────────────────────────────────────────
@@ -121,7 +123,8 @@ export type StatusSeparacao =
   | "aguardando_separacao"
   | "em_separacao"
   | "separado"
-  | "embalado";
+  | "embalado"
+  | "pendente_realocacao";
 
 /** Consolidated product for wave picking */
 export interface ProdutoConsolidado {
@@ -160,6 +163,7 @@ export interface SeparacaoCounts {
   em_separacao: number;
   separado: number;
   embalado: number;
+  pendente_realocacao: number;
 }
 
 /** A row from siso_pedido_itens */

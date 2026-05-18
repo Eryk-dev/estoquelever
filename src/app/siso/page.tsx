@@ -41,8 +41,11 @@ export default function DashboardPage() {
   });
 
   // Split into categories
+  // Include pendente_realocacao orders (status=concluido but need operator attention)
   const pendentes = useMemo(
-    () => allPedidos.filter((p) => p.status === "pendente"),
+    () => allPedidos.filter(
+      (p) => p.status === "pendente" || p.status_separacao === "pendente_realocacao",
+    ),
     [allPedidos],
   );
   const concluidos = useMemo(
@@ -212,7 +215,7 @@ export default function DashboardPage() {
                 {todosFiltrados.length} pedido{todosFiltrados.length !== 1 ? "s" : ""}
               </p>
               {todosFiltrados.map((pedido) => (
-                pedido.status === "pendente" ? (
+                (pedido.status === "pendente" || pedido.status_separacao === "pendente_realocacao") ? (
                   <PedidoCard
                     key={pedido.id}
                     pedido={pedido}

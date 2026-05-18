@@ -91,6 +91,7 @@ const EMPTY_COUNTS: SeparacaoCounts = {
   em_separacao: 0,
   separado: 0,
   embalado: 0,
+  pendente_realocacao: 0,
 };
 
 const SORT_OPTIONS = [

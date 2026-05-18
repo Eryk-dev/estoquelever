@@ -138,6 +138,7 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
       erro: p.erro ?? undefined,
       criadoEm: p.criado_em ?? "",
       encaminhado_de: p.encaminhado_de ?? null,
+      status_separacao: p.status_separacao ?? null,
     };
   });
 }
@@ -177,9 +178,10 @@ export async function GET(request: Request) {
   }
 
   // No status filter: fetch ALL active orders (pendente/executando/erro) +
+  // orders awaiting reallocation (pendente_realocacao — status=concluido but need operator) +
   // recent concluido/cancelado. This prevents the limit from hiding pending orders.
   const activeStatuses = ["pendente", "executando", "erro"];
-  const [activeResult, recentResult] = await Promise.all([
+  const [activeResult, realocacaoResult, recentResult] = await Promise.all([
     supabase
       .from("siso_pedidos")
       .select("*, siso_empresas(nome)")
@@ -188,13 +190,31 @@ export async function GET(request: Request) {
     supabase
       .from("siso_pedidos")
       .select("*, siso_empresas(nome)")
+      .eq("status_separacao", "pendente_realocacao")
+      .order("criado_em", { ascending: false }),
+    supabase
+      .from("siso_pedidos")
+      .select("*, siso_empresas(nome)")
       .not("status", "in", `(${activeStatuses.join(",")})`)
+      .neq("status_separacao", "pendente_realocacao")
       .order("criado_em", { ascending: false })
       .limit(150),
   ]);
 
-  const error = activeResult.error || recentResult.error;
-  const pedidos = [...(activeResult.data ?? []), ...(recentResult.data ?? [])];
+  const error = activeResult.error || realocacaoResult.error || recentResult.error;
+  // Deduplicate: realocacao orders might also appear in active (e.g. if status=pendente)
+  const seen = new Set<string>();
+  const pedidos: typeof activeResult.data = [];
+  for (const p of [
+    ...(activeResult.data ?? []),
+    ...(realocacaoResult.data ?? []),
+    ...(recentResult.data ?? []),
+  ]) {
+    if (p && !seen.has(p.id)) {
+      seen.add(p.id);
+      pedidos.push(p);
+    }
+  }
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

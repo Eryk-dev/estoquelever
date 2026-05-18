@@ -753,6 +753,13 @@ export function PedidoCard({ pedido, onAprovar, onStockUpdated }: PedidoCardProp
               Encaminhado de {pedido.encaminhado_de}
             </span>
           )}
+
+          {/* Realocação badge — short pick sem cobertura, aguardando supervisor */}
+          {pedido.status_separacao === "pendente_realocacao" && (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">
+              Realocação
+            </span>
+          )}
         </header>
 
         {/* ── DIVIDER ──────────────────────────────────────────────────────── */}

@@ -599,63 +599,11 @@ async function processarParcialItem(
       });
     }
 
-    // loc_zerou=true: monta exclusion list (loc original + todas as realocs
-    // anteriores dos items envolvidos)
-    const itemIdsResiduais = itemsResiduais.map((u) => Number(u.item.id));
-    const { data: realocsExistentes } = await supabase
-      .from("siso_pedido_item_realocacoes")
-      .select("localizacao_id")
-      .in("pedido_item_id", itemIdsResiduais);
-
-    const localizacoes_excluir = Array.from(
-      new Set([
-        locOriginalId,
-        ...((realocsExistentes ?? []).map((r) => r.localizacao_id as string)),
-      ]),
-    );
-
-    // Roda cascade UMA vez pro total residual agregado, distribui as
-    // realocações encontradas entre os items residuais (first-come-first-served).
-    const totalResidual = itemsResiduais.reduce((s, u) => s + u.qty_residual, 0);
-
-    const resolver = await resolverRealocacao({
-      produto_id: produtoWmsId,
-      empresa_origem_id: empresaOrigemId,
-      galpao_id: galpaoId,
-      localizacoes_excluir,
-      qty_residual: totalResidual,
-    });
-
-    if (resolver.status === "sem_cobertura") {
-      // Marca todos os pedidos com items residuais como pendente_realocacao
-      const pedidoIdsResiduais = [
-        ...new Set(itemsResiduais.map((u) => u.pedido_id)),
-      ];
-      await supabase
-        .from("siso_pedidos")
-        .update({ status_separacao: "pendente_realocacao" })
-        .in("id", pedidoIdsResiduais);
-
-      for (const u of itemsResiduais) {
-        await registrarEvento({
-          pedidoId: u.pedido_id,
-          evento: "realocacao_sem_cobertura_galpao",
-          detalhes: {
-            item_id: u.item.id,
-            sku: u.item.sku,
-            qty_residual: u.qty_residual,
-          },
-          usuarioId: session.id,
-        });
-      }
-
-      return NextResponse.json({
-        status: "aguardando_supervisor",
-        motivo: "sem_cobertura_total",
-      });
-    }
-
-    // Distribui as realocações encontradas entre items residuais (FCFS)
+    // I8: agrupa items residuais por empresa_origem_id pra evitar atribuição
+    // de empresa errada quando wave junta items de empresas distintas. Hoje
+    // a validação upstream já barra multi-empresa em modo item; o grupamento
+    // aqui é defesa-em-profundidade + paralelo com modo realoc (que SÓ aceita
+    // multi-empresa).
     type LinhaInsert = {
       pedido_item_id: number;
       empresa_dona_id: string;
@@ -667,40 +615,143 @@ async function processarParcialItem(
       motivo: string;
       criado_por: string;
     };
-    const linhasInsert: LinhaInsert[] = [];
-    let idxItemResid = 0;
-    let restanteItemAtual = itemsResiduais[0]?.qty_residual ?? 0;
 
-    for (const r of resolver.realocacoes) {
-      let qtyDessaReal = r.quantidade;
-      while (qtyDessaReal > 0 && idxItemResid < itemsResiduais.length) {
-        const u = itemsResiduais[idxItemResid];
-        const slice = Math.min(qtyDessaReal, restanteItemAtual);
-        if (slice > 0) {
-          linhasInsert.push({
-            pedido_item_id: Number(u.item.id),
-            empresa_dona_id: r.empresa_dona_id,
-            galpao_id: galpaoId,
-            localizacao_id: r.localizacao_id,
-            quantidade: slice,
-            is_emprestimo: r.is_emprestimo,
-            empresa_devedora_id: r.empresa_devedora_id,
-            motivo: "loc_zerou",
-            criado_por: session.id,
+    const porEmpresa = new Map<string, typeof itemsResiduais>();
+    for (const u of itemsResiduais) {
+      const pedido = pedidos.find((p) => p.id === u.pedido_id);
+      const empOrigem = pedido?.empresa_origem_id as string | undefined;
+      if (!empOrigem) continue;
+      if (!porEmpresa.has(empOrigem)) porEmpresa.set(empOrigem, []);
+      porEmpresa.get(empOrigem)!.push(u);
+    }
+
+    const linhasInsertTotais: LinhaInsert[] = [];
+    let semCoberturaParcial = false;
+    const codigoPorLocAll = new Map<string, string | null>();
+
+    for (const [empOrigem, grupo] of porEmpresa) {
+      const totalResidualGrupo = grupo.reduce((s, u) => s + u.qty_residual, 0);
+
+      // Locs originais do grupo (mapeadas pela empresa origem)
+      const itemIdsGrupo = grupo.map((u) => Number(u.item.id));
+      const pedidoIdsGrupo = [...new Set(grupo.map((u) => u.pedido_id))];
+      const { data: estoquesLeg } = await supabase
+        .from("siso_pedido_item_estoques")
+        .select("localizacao, produto_id, pedido_id")
+        .in("pedido_id", pedidoIdsGrupo)
+        .eq("empresa_id", empOrigem);
+
+      const locsOriginais = new Set<string>();
+      for (const e of estoquesLeg ?? []) {
+        const locId = await resolverLocalizacaoWms(galpaoId, e.localizacao);
+        if (locId) locsOriginais.add(locId);
+      }
+      // Loc original calculada upstream também entra (caso o item residual
+      // venha de um pedido cujo registro em pedido_item_estoques esteja
+      // ausente, fallback é a do primeiro item).
+      if (locOriginalId) locsOriginais.add(locOriginalId);
+
+      // Todas as realocs já tentadas em items desse grupo
+      const { data: rls } = await supabase
+        .from("siso_pedido_item_realocacoes")
+        .select("localizacao_id")
+        .in("pedido_item_id", itemIdsGrupo);
+
+      const excluir = Array.from(
+        new Set([
+          ...locsOriginais,
+          ...((rls ?? []).map((r) => r.localizacao_id as string)),
+        ]),
+      );
+
+      const produtoWmsGrupo = await resolverProdutoWms(
+        empOrigem,
+        String(grupo[0].item.produto_id),
+      );
+
+      const resolver = await resolverRealocacao({
+        produto_id: produtoWmsGrupo,
+        empresa_origem_id: empOrigem,
+        galpao_id: galpaoId,
+        localizacoes_excluir: excluir,
+        qty_residual: totalResidualGrupo,
+      });
+
+      if (resolver.status === "sem_cobertura") {
+        semCoberturaParcial = true;
+        // Marca os pedidos desse grupo como pendente_realocacao
+        await supabase
+          .from("siso_pedidos")
+          .update({ status_separacao: "pendente_realocacao" })
+          .in("id", pedidoIdsGrupo);
+
+        for (const u of grupo) {
+          await registrarEvento({
+            pedidoId: u.pedido_id,
+            evento: "realocacao_sem_cobertura_galpao",
+            detalhes: {
+              item_id: u.item.id,
+              sku: u.item.sku,
+              qty_residual: u.qty_residual,
+              empresa_origem_id: empOrigem,
+            },
+            usuarioId: session.id,
           });
-          qtyDessaReal -= slice;
-          restanteItemAtual -= slice;
         }
-        if (restanteItemAtual === 0) {
-          idxItemResid++;
-          restanteItemAtual = itemsResiduais[idxItemResid]?.qty_residual ?? 0;
+        continue;
+      }
+
+      // Distribui as realocações desse grupo entre items dele (FCFS)
+      let idxItemResid = 0;
+      let restanteItemAtual = grupo[0]?.qty_residual ?? 0;
+      for (const r of resolver.realocacoes) {
+        codigoPorLocAll.set(r.localizacao_id, r.localizacao_codigo);
+        let qtyDessaReal = r.quantidade;
+        while (qtyDessaReal > 0 && idxItemResid < grupo.length) {
+          const u = grupo[idxItemResid];
+          const slice = Math.min(qtyDessaReal, restanteItemAtual);
+          if (slice > 0) {
+            linhasInsertTotais.push({
+              pedido_item_id: Number(u.item.id),
+              empresa_dona_id: r.empresa_dona_id,
+              galpao_id: galpaoId,
+              localizacao_id: r.localizacao_id,
+              quantidade: slice,
+              is_emprestimo: r.is_emprestimo,
+              empresa_devedora_id: r.empresa_devedora_id,
+              motivo: "loc_zerou",
+              criado_por: session.id,
+            });
+            qtyDessaReal -= slice;
+            restanteItemAtual -= slice;
+          }
+          if (restanteItemAtual === 0) {
+            idxItemResid++;
+            restanteItemAtual = grupo[idxItemResid]?.qty_residual ?? 0;
+          }
         }
       }
     }
 
+    // Se ninguém achou cobertura, mantém semântica antiga (aguardando_supervisor)
+    if (semCoberturaParcial && linhasInsertTotais.length === 0) {
+      return NextResponse.json({
+        status: "aguardando_supervisor",
+        motivo: "sem_cobertura_total",
+      });
+    }
+
+    if (linhasInsertTotais.length === 0) {
+      // Nenhum grupo elegível (porEmpresa vazio — defensivo)
+      return NextResponse.json({
+        status: "aguardando_supervisor",
+        motivo: "sem_grupos_elegiveis",
+      });
+    }
+
     const { data: criadas, error: insErr } = await supabase
       .from("siso_pedido_item_realocacoes")
-      .insert(linhasInsert)
+      .insert(linhasInsertTotais)
       .select("id, pedido_item_id, empresa_dona_id, localizacao_id, quantidade, is_emprestimo");
 
     if (insErr) {
@@ -711,14 +762,10 @@ async function processarParcialItem(
         category: "database",
         requestPath: "/api/wms/separacao/parcial",
         requestMethod: "POST",
-        metadata: { pedido_item_ids: itemIdsResiduais, rows: linhasInsert },
+        metadata: { rows: linhasInsertTotais },
       });
       return NextResponse.json({ error: "erro criando realocações" }, { status: 500 });
     }
-
-    const codigoPorLoc = new Map(
-      resolver.realocacoes.map((r) => [r.localizacao_id, r.localizacao_codigo]),
-    );
 
     return NextResponse.json({
       status: "realocado",
@@ -727,10 +774,11 @@ async function processarParcialItem(
         pedido_item_id: c.pedido_item_id,
         empresa_dona_id: c.empresa_dona_id,
         localizacao_id: c.localizacao_id,
-        localizacao_codigo: codigoPorLoc.get(c.localizacao_id as string) ?? null,
+        localizacao_codigo: codigoPorLocAll.get(c.localizacao_id as string) ?? null,
         quantidade: c.quantidade,
         is_emprestimo: c.is_emprestimo,
       })),
+      sem_cobertura_parcial: semCoberturaParcial ? true : undefined,
     });
   } catch (err) {
     logger.logError({
@@ -1246,80 +1294,22 @@ async function processarParcialRealocacao(
       return NextResponse.json({ status: "completo" });
     }
 
-    // loc_zerou=true: cascade pra cada item residual (cada um pode estar em pedido diferente)
-    // Agrupa por item.id pra evitar dispatchar cascade duplicado pro mesmo item.
-    const totalResidual = realocsResiduais.reduce((s, u) => s + u.qty_residual, 0);
-
-    // Coleta TODAS as locs já tentadas em qualquer item envolvido
-    const itemIdsRes = [
-      ...new Set(realocsResiduais.map((u) => Number(u.realoc.pedido_item_id))),
-    ];
-    const { data: todasRealoc } = await supabase
-      .from("siso_pedido_item_realocacoes")
-      .select("localizacao_id, pedido_item_id")
-      .in("pedido_item_id", itemIdsRes);
-
-    // Loc original — usa do PRIMEIRO item residual
-    const primeiroResid = realocsResiduais[0];
-    const itemPrimResid = itemById.get(primeiroResid.realoc.pedido_item_id)!;
-    const pedidoPrimResid = pedidoById.get(itemPrimResid.pedido_id)!;
-    const empresaOrigemPrimResid = pedidoPrimResid.empresa_origem_id as string;
-
-    const { data: estoqueLegacy } = await supabase
-      .from("siso_pedido_item_estoques")
-      .select("localizacao")
-      .eq("pedido_id", itemPrimResid.pedido_id)
-      .eq("produto_id", itemPrimResid.produto_id)
-      .eq("empresa_id", empresaOrigemPrimResid)
-      .maybeSingle();
-
-    const locOriginalId = await resolverLocalizacaoWms(
-      galpaoId,
-      estoqueLegacy?.localizacao ?? null,
-    );
-
-    const localizacoes_excluir = Array.from(
-      new Set([
-        locOriginalId,
-        localizacaoId, // a loc atual do cascade (a-02-3) também sai do pool
-        ...((todasRealoc ?? []).map((r) => r.localizacao_id as string)),
-      ]),
-    );
-
-    // Resolve produto na empresa origem do primeiro pedido residual
-    const produtoWmsOrigemId = await resolverProdutoWms(
-      empresaOrigemPrimResid,
-      String(itemPrimResid.produto_id),
-    );
-
-    const resolver = await resolverRealocacao({
-      produto_id: produtoWmsOrigemId,
-      empresa_origem_id: empresaOrigemPrimResid,
-      galpao_id: galpaoId,
-      localizacoes_excluir,
-      qty_residual: totalResidual,
-    });
-
-    if (resolver.status === "sem_cobertura") {
-      for (const u of realocsResiduais) {
-        const item = itemById.get(u.realoc.pedido_item_id)!;
-        const pedido = pedidoById.get(item.pedido_id)!;
-        await registrarEvento({
-          pedidoId: pedido.id,
-          evento: "realocacao_sem_cobertura_cascade",
-          detalhes: {
-            item_id: item.id,
-            realocacao_id: u.realoc.id,
-            sku: item.sku,
-            qty_residual: u.qty_residual,
-          },
-          usuarioId: session.id,
-        });
-      }
-      return NextResponse.json({ status: "sem_cobertura" });
+    // I8: agrupa realocs residuais pela empresa_origem_id do pedido pai do
+    // item da realoc. Items distintos no mesmo wave (mesma loc consolidada)
+    // podem ter empresas origem diferentes — sem grupamento, o cascade
+    // atribuía empresa errada nas novas realocs.
+    type RealocUpdateLocal = typeof realocsResiduais[number];
+    const porEmpresa = new Map<string, RealocUpdateLocal[]>();
+    for (const u of realocsResiduais) {
+      const item = itemById.get(u.realoc.pedido_item_id);
+      if (!item) continue;
+      const pedido = pedidoById.get(item.pedido_id);
+      const empOrigem = pedido?.empresa_origem_id as string | undefined;
+      if (!empOrigem) continue;
+      if (!porEmpresa.has(empOrigem)) porEmpresa.set(empOrigem, []);
+      porEmpresa.get(empOrigem)!.push(u);
     }
 
-    // Distribui realocações encontradas entre realocsResiduais (FCFS pela ordem de items)
     type LinhaInsert = {
       pedido_item_id: number;
       parent_realocacao_id: string;
@@ -1332,42 +1322,132 @@ async function processarParcialRealocacao(
       motivo: string;
       criado_por: string;
     };
-    const linhasInsert: LinhaInsert[] = [];
-    let idxRes = 0;
-    let restanteAtual = realocsResiduais[0]?.qty_residual ?? 0;
 
-    for (const r of resolver.realocacoes) {
-      let qtyDessaReal = r.quantidade;
-      while (qtyDessaReal > 0 && idxRes < realocsResiduais.length) {
-        const u = realocsResiduais[idxRes];
-        const slice = Math.min(qtyDessaReal, restanteAtual);
-        if (slice > 0) {
-          linhasInsert.push({
-            pedido_item_id: Number(u.realoc.pedido_item_id),
-            parent_realocacao_id: u.realoc.id,
-            empresa_dona_id: r.empresa_dona_id,
-            galpao_id: galpaoId,
-            localizacao_id: r.localizacao_id,
-            quantidade: slice,
-            is_emprestimo: r.is_emprestimo,
-            empresa_devedora_id: r.empresa_devedora_id,
-            motivo: loc_zerou ? "cascade_loc_zerou" : "cascade_parcial",
-            criado_por: session.id,
+    const linhasInsertTotais: LinhaInsert[] = [];
+    const codigoPorLocAll = new Map<string, string | null>();
+    let semCoberturaParcial = false;
+    const realocsSemCobertura: RealocUpdateLocal[] = [];
+
+    for (const [empOrigem, grupo] of porEmpresa) {
+      const totalResidualGrupo = grupo.reduce((s, u) => s + u.qty_residual, 0);
+
+      const itemIdsGrupo = [
+        ...new Set(grupo.map((u) => Number(u.realoc.pedido_item_id))),
+      ];
+
+      // Locs originais dos pedidos desse grupo (lookup via siso_pedido_item_estoques)
+      const itemsGrupo = itemIdsGrupo
+        .map((id) => itemById.get(id))
+        .filter((i): i is NonNullable<typeof i> => !!i);
+      const pedidoIdsGrupo = [...new Set(itemsGrupo.map((i) => i.pedido_id))];
+      const { data: estoquesLeg } = await supabase
+        .from("siso_pedido_item_estoques")
+        .select("localizacao, produto_id, pedido_id")
+        .in("pedido_id", pedidoIdsGrupo)
+        .eq("empresa_id", empOrigem);
+
+      const locsOriginais = new Set<string>();
+      for (const e of estoquesLeg ?? []) {
+        const locId = await resolverLocalizacaoWms(galpaoId, e.localizacao);
+        if (locId) locsOriginais.add(locId);
+      }
+      // Loc atual do cascade (já visitada) também entra
+      locsOriginais.add(localizacaoId);
+
+      // Todas as realocs já tentadas em items desse grupo
+      const { data: todasRealoc } = await supabase
+        .from("siso_pedido_item_realocacoes")
+        .select("localizacao_id")
+        .in("pedido_item_id", itemIdsGrupo);
+
+      const excluir = Array.from(
+        new Set([
+          ...locsOriginais,
+          ...((todasRealoc ?? []).map((r) => r.localizacao_id as string)),
+        ]),
+      );
+
+      const produtoWmsGrupo = await resolverProdutoWms(
+        empOrigem,
+        String(itemsGrupo[0].produto_id),
+      );
+
+      const resolver = await resolverRealocacao({
+        produto_id: produtoWmsGrupo,
+        empresa_origem_id: empOrigem,
+        galpao_id: galpaoId,
+        localizacoes_excluir: excluir,
+        qty_residual: totalResidualGrupo,
+      });
+
+      if (resolver.status === "sem_cobertura") {
+        semCoberturaParcial = true;
+        for (const u of grupo) {
+          const item = itemById.get(u.realoc.pedido_item_id)!;
+          const pedido = pedidoById.get(item.pedido_id)!;
+          await registrarEvento({
+            pedidoId: pedido.id,
+            evento: "realocacao_sem_cobertura_cascade",
+            detalhes: {
+              item_id: item.id,
+              realocacao_id: u.realoc.id,
+              sku: item.sku,
+              qty_residual: u.qty_residual,
+              empresa_origem_id: empOrigem,
+            },
+            usuarioId: session.id,
           });
-          qtyDessaReal -= slice;
-          restanteAtual -= slice;
+          realocsSemCobertura.push(u);
         }
-        if (restanteAtual === 0) {
-          idxRes++;
-          restanteAtual = realocsResiduais[idxRes]?.qty_residual ?? 0;
+        continue;
+      }
+
+      // Distribui realocações encontradas entre os realocs residuais desse grupo (FCFS).
+      // parent_realocacao_id = realoc residual atual (mantém a chain).
+      let idxRes = 0;
+      let restanteAtual = grupo[0]?.qty_residual ?? 0;
+      for (const r of resolver.realocacoes) {
+        codigoPorLocAll.set(r.localizacao_id, r.localizacao_codigo);
+        let qtyDessaReal = r.quantidade;
+        while (qtyDessaReal > 0 && idxRes < grupo.length) {
+          const u = grupo[idxRes];
+          const slice = Math.min(qtyDessaReal, restanteAtual);
+          if (slice > 0) {
+            linhasInsertTotais.push({
+              pedido_item_id: Number(u.realoc.pedido_item_id),
+              parent_realocacao_id: u.realoc.id,
+              empresa_dona_id: r.empresa_dona_id,
+              galpao_id: galpaoId,
+              localizacao_id: r.localizacao_id,
+              quantidade: slice,
+              is_emprestimo: r.is_emprestimo,
+              empresa_devedora_id: r.empresa_devedora_id,
+              motivo: loc_zerou ? "cascade_loc_zerou" : "cascade_parcial",
+              criado_por: session.id,
+            });
+            qtyDessaReal -= slice;
+            restanteAtual -= slice;
+          }
+          if (restanteAtual === 0) {
+            idxRes++;
+            restanteAtual = grupo[idxRes]?.qty_residual ?? 0;
+          }
         }
       }
     }
 
+    if (semCoberturaParcial && linhasInsertTotais.length === 0) {
+      return NextResponse.json({ status: "sem_cobertura" });
+    }
+
+    if (linhasInsertTotais.length === 0) {
+      return NextResponse.json({ status: "sem_cobertura" });
+    }
+
     const { data: criadas, error: insErr } = await supabase
       .from("siso_pedido_item_realocacoes")
-      .insert(linhasInsert)
-      .select("id, empresa_dona_id, localizacao_id, quantidade, is_emprestimo");
+      .insert(linhasInsertTotais)
+      .select("id, pedido_item_id, parent_realocacao_id, empresa_dona_id, localizacao_id, quantidade, is_emprestimo");
 
     if (insErr) {
       logger.logError({
@@ -1377,12 +1457,21 @@ async function processarParcialRealocacao(
         category: "database",
         requestPath: "/api/wms/separacao/parcial",
         requestMethod: "POST",
-        metadata: { realocacao_ids: realocIdsList, rows: linhasInsert },
+        metadata: { realocacao_ids: realocIdsList, rows: linhasInsertTotais },
       });
       return NextResponse.json({ error: "erro criando realocações" }, { status: 500 });
     }
 
+    // Conta filhas criadas por parent pra evento cascade
+    const filhasPorParent = new Map<string, number>();
+    for (const c of criadas ?? []) {
+      const parent = c.parent_realocacao_id as string;
+      filhasPorParent.set(parent, (filhasPorParent.get(parent) ?? 0) + 1);
+    }
+
+    const semCobertSet = new Set(realocsSemCobertura.map((u) => u.realoc.id));
     for (const u of realocsResiduais) {
+      if (semCobertSet.has(u.realoc.id)) continue; // já registrou sem_cobertura
       const item = itemById.get(u.realoc.pedido_item_id)!;
       const pedido = pedidoById.get(item.pedido_id)!;
       await registrarEvento({
@@ -1391,19 +1480,12 @@ async function processarParcialRealocacao(
         detalhes: {
           item_id: item.id,
           realocacao_id_origem: u.realoc.id,
-          qtd_novas_realocacoes: criadas?.filter(
-            // Filter by parent in metadata not available — usa count total / N como aproximação
-            () => true,
-          )?.length ?? 0,
+          qtd_novas_realocacoes: filhasPorParent.get(u.realoc.id) ?? 0,
           sku: item.sku,
         },
         usuarioId: session.id,
       });
     }
-
-    const codigoPorLoc = new Map(
-      resolver.realocacoes.map((r) => [r.localizacao_id, r.localizacao_codigo]),
-    );
 
     void empresaOrigemPrimeiroPedido; // mantido pra debug histórico (escopo unificado)
 
@@ -1413,10 +1495,11 @@ async function processarParcialRealocacao(
         id: c.id,
         empresa_dona_id: c.empresa_dona_id,
         localizacao_id: c.localizacao_id,
-        localizacao_codigo: codigoPorLoc.get(c.localizacao_id as string) ?? null,
+        localizacao_codigo: codigoPorLocAll.get(c.localizacao_id as string) ?? null,
         quantidade: c.quantidade,
         is_emprestimo: c.is_emprestimo,
       })),
+      sem_cobertura_parcial: semCoberturaParcial ? true : undefined,
     });
   } catch (err) {
     logger.logError({

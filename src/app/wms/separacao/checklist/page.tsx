@@ -13,6 +13,7 @@ import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { naturalLocCompare } from "@/lib/domain-helpers";
 import { ParcialModal } from "@/components/wms/separacao/parcial-modal";
+import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 
 // ──────────────────────────────────────────────────────────────────
 // Types
@@ -213,6 +214,14 @@ export default function WmsChecklistPage() {
     () => ["wms-sep-checklist", pedidoIds.join(","), modo ?? ""],
     [pedidoIds, modo],
   );
+
+  // ─── Realtime: invalida o checklist quando outros operadores
+  // mudam pedidos do wave ou criam/atualizam realocações ───
+  useRealtimeSeparacao({
+    pedidoIds,
+    queryClient,
+    queryKey,
+  });
 
   const { data, isLoading } = useQuery({
     queryKey,

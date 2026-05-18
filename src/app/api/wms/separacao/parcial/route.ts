@@ -578,8 +578,125 @@ async function processarParcialRealocacao(
       return NextResponse.json({ status: "completo" });
     }
 
-    // 10. Cascade — disparado em Task 4
-    return NextResponse.json({ status: "completo" }); // STUB — substituído em Task 4
+    // 10. Cascade — busca próxima loc no galpão, excluindo todas já tentadas neste item
+
+    // Empresa origem do pedido (não da realoc — cascade prioriza empresa original)
+    const empresaOrigemPedido = pedido.empresa_origem_id;
+    if (!empresaOrigemPedido) {
+      return NextResponse.json({ error: "pedido sem empresa de origem" }, { status: 400 });
+    }
+
+    // Coleta todas as locs já tentadas neste item (qualquer status)
+    const { data: todasRealoc } = await supabase
+      .from("siso_pedido_item_realocacoes")
+      .select("localizacao_id")
+      .eq("pedido_item_id", item.id);
+
+    // Loc original do item — resolver o uuid WMS a partir do código no estoque legacy
+    const { data: estoqueLegacy } = await supabase
+      .from("siso_pedido_item_estoques")
+      .select("localizacao")
+      .eq("pedido_id", item.pedido_id)
+      .eq("produto_id", item.produto_id)
+      .eq("empresa_id", empresaOrigemPedido)
+      .maybeSingle();
+
+    const locOriginalId = await resolverLocalizacaoWms(
+      realoc.galpao_id,
+      estoqueLegacy?.localizacao ?? null,
+    );
+
+    const localizacoes_excluir = Array.from(
+      new Set([
+        locOriginalId,
+        ...(todasRealoc ?? []).map((r) => r.localizacao_id as string),
+      ]),
+    );
+
+    // Resolver produto na empresa origem do pedido (pode diferir do produtoWmsId
+    // quando a realocação atual era empréstimo de outra empresa do grupo)
+    const produtoWmsOrigemId = await resolverProdutoWms(
+      empresaOrigemPedido,
+      String(item.produto_id),
+    );
+
+    const resolver = await resolverRealocacao({
+      produto_id: produtoWmsOrigemId,
+      empresa_origem_id: empresaOrigemPedido,
+      galpao_id: realoc.galpao_id,
+      localizacoes_excluir,
+      qty_residual: qtyResidual,
+    });
+
+    if (resolver.status === "sem_cobertura") {
+      await registrarEvento({
+        pedidoId: pedido.id,
+        evento: "realocacao_sem_cobertura_cascade",
+        detalhes: {
+          item_id: item.id,
+          realocacao_id: realoc.id,
+          sku: item.sku,
+          qty_residual: qtyResidual,
+        },
+        usuarioId: session.id,
+      });
+      return NextResponse.json({ status: "sem_cobertura" });
+    }
+
+    const rows = resolver.realocacoes.map((r) => ({
+      pedido_item_id: item.id,
+      parent_realocacao_id: realoc.id,
+      empresa_dona_id: r.empresa_dona_id,
+      galpao_id: realoc.galpao_id,
+      localizacao_id: r.localizacao_id,
+      quantidade: r.quantidade,
+      is_emprestimo: r.is_emprestimo,
+      empresa_devedora_id: r.empresa_devedora_id,
+      motivo: loc_zerou ? "cascade_loc_zerou" : "cascade_parcial",
+      criado_por: session.id,
+    }));
+
+    const { data: criadas, error: insErr } = await supabase
+      .from("siso_pedido_item_realocacoes")
+      .insert(rows)
+      .select("id, empresa_dona_id, localizacao_id, quantidade, is_emprestimo");
+
+    if (insErr) {
+      logger.logError({
+        error: insErr,
+        source: "separacao-parcial-realoc",
+        message: "Falhou criar realocações no cascade",
+        category: "database",
+        requestPath: "/api/wms/separacao/parcial",
+        requestMethod: "POST",
+        metadata: { realocacao_id: realoc.id, rows },
+      });
+      return NextResponse.json({ error: "erro criando realocações" }, { status: 500 });
+    }
+
+    await registrarEvento({
+      pedidoId: pedido.id,
+      evento: "realocacao_parcial_cascade",
+      detalhes: {
+        item_id: item.id,
+        realocacao_id_origem: realoc.id,
+        qtd_novas_realocacoes: criadas?.length ?? 0,
+        sku: item.sku,
+      },
+      usuarioId: session.id,
+    });
+
+    return NextResponse.json({
+      status: "realocado",
+      realocacoes: (criadas ?? []).map((c, i) => ({
+        id: c.id,
+        empresa_dona_id: c.empresa_dona_id,
+        localizacao_id: c.localizacao_id,
+        localizacao_codigo: resolver.realocacoes[i].localizacao_codigo,
+        quantidade: c.quantidade,
+        is_emprestimo: c.is_emprestimo,
+      })),
+    });
   } catch (err) {
     logger.logError({
       error: err,

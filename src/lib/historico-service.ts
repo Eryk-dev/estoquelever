@@ -41,6 +41,8 @@ export type EventoPedido =
   | "realocacao_parcial"
   | "realocacao_cancelada"
   | "realocacao_sem_cobertura_galpao"
+  | "realocacao_sem_cobertura_cascade"
+  | "realocacao_parcial_cascade"
   | "parcial_desfeito";
 
 /**

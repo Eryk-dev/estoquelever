@@ -604,7 +604,20 @@ export default function WmsChecklistPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(data.error ?? "Erro ao processar parcial");
+        if (res.status === 409 && data.error === "posicao_reservada") {
+          toast.warning(
+            `Posição reservada por outro pedido — saldo ${data.saldo}, disponível ${data.disponivel}. Avise o supervisor.`,
+            { duration: 6000 },
+          );
+        } else if (
+          res.status === 409 &&
+          (data.error === "realocacao_ja_picada" || data.error === "race_item_ja_picado")
+        ) {
+          toast.warning("Outro operador picou primeiro — atualizando…", { duration: 4000 });
+          queryClient.invalidateQueries({ queryKey });
+        } else {
+          toast.error(data.error ?? data.message ?? "Erro ao processar parcial");
+        }
         setParcialModal(null);
         return;
       }
@@ -642,21 +655,41 @@ export default function WmsChecklistPage() {
     const ids = Array.isArray(realocacaoIds) ? realocacaoIds : [realocacaoIds];
     try {
       const results = await Promise.all(
-        ids.map((id) =>
-          sisoFetch("/api/wms/separacao/marcar-realocacao", {
+        ids.map(async (id) => {
+          const res = await sisoFetch("/api/wms/separacao/marcar-realocacao", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ realocacao_id: id }),
-          }),
-        ),
+          });
+          const data = await res.json().catch(() => ({}));
+          return { res, data };
+        }),
       );
-      const erradas = results.filter((r) => !r.ok);
+      const erradas = results.filter((r) => !r.res.ok);
       if (erradas.length > 0) {
-        toast.error(
-          erradas.length === ids.length
-            ? "Erro ao marcar realocação"
-            : `${ids.length - erradas.length}/${ids.length} marcada(s) — algumas falharam`,
+        // Distinguir 409 conhecidos pra dar feedback melhor
+        const reservada = erradas.find(
+          (r) => r.res.status === 409 && r.data?.error === "posicao_reservada",
         );
+        const jaPicada = erradas.find(
+          (r) =>
+            r.res.status === 409 &&
+            (r.data?.error === "realocacao_ja_picada" || r.data?.error === "race_item_ja_picado"),
+        );
+        if (reservada) {
+          toast.warning(
+            `Posição reservada por outro pedido — saldo ${reservada.data?.saldo ?? "?"}, disponível ${reservada.data?.disponivel ?? "?"}. Avise o supervisor.`,
+            { duration: 6000 },
+          );
+        } else if (jaPicada) {
+          toast.warning("Outro operador picou primeiro — atualizando…", { duration: 4000 });
+        } else {
+          toast.error(
+            erradas.length === ids.length
+              ? "Erro ao marcar realocação"
+              : `${ids.length - erradas.length}/${ids.length} marcada(s) — algumas falharam`,
+          );
+        }
       } else {
         toast.success(
           ids.length === 1 ? "Realocação picada" : `${ids.length} realocações picadas`,

@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Realocação Cascateável — Auditoria · Fix-Pack</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 32px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 13px; font-weight: 700; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+  code { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace; font-size: 13px; background: var(--code-bg); padding: 2px 6px; border-radius: 4px; color: var(--zinc-800); }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+  .stat-num { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+  .stat-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 6px; }
+  .stat-crit { color: var(--red); }
+  .stat-imp { color: var(--amber); }
+  .stat-min { color: var(--cyan); }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 700; margin-bottom: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  table { width: 100%; border-collapse: collapse; margin: 16px 0 32px; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover { background: var(--zinc-50); }
+  td a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  td a:hover { text-decoration: underline; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-crit { background: var(--red-bg); color: #991b1b; }
+  .badge-imp { background: var(--amber-bg); color: #92400e; }
+  .badge-min { background: var(--cyan-bg); color: #155e75; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+  .badge-migration { background: #fce7f3; color: #9d174d; }
+
+  .finding { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px 28px; margin: 20px 0; scroll-margin-top: 20px; }
+  .finding.crit { border-left: 6px solid var(--red); }
+  .finding.imp { border-left: 6px solid var(--amber); }
+  .finding.min { border-left: 6px solid var(--cyan); }
+  .finding-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .finding-id { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 14px; font-weight: 700; color: var(--zinc-900); background: var(--zinc-100); padding: 4px 10px; border-radius: 6px; }
+  .finding-title { font-size: 18px; font-weight: 600; color: var(--text); margin: 0; flex: 1; }
+  .finding-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .finding-section { margin: 14px 0; }
+  .finding-section h4 { margin-top: 0; }
+  .finding-section p { font-size: 14px; margin: 0; color: var(--zinc-800); }
+  .finding-section ul { font-size: 14px; margin: 0; padding-left: 22px; color: var(--zinc-800); }
+  .finding-section ul li { margin-bottom: 4px; }
+
+  .decision-box { background: var(--zinc-50); border: 1px dashed var(--zinc-200); border-radius: 8px; padding: 12px 16px; margin-top: 16px; font-size: 13px; color: var(--muted); }
+  .decision-box strong { color: var(--zinc-800); display: block; margin-bottom: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .nav-pills { position: sticky; top: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin: 0 0 32px; display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  .nav-pills a { padding: 4px 10px; border-radius: 6px; text-decoration: none; color: var(--zinc-700); background: var(--zinc-100); font-weight: 500; }
+  .nav-pills a:hover { background: var(--zinc-200); }
+  .nav-pills .pill-crit { background: var(--red-bg); color: #991b1b; }
+  .nav-pills .pill-imp { background: var(--amber-bg); color: #92400e; }
+  .nav-pills .pill-min { background: var(--cyan-bg); color: #155e75; }
+
+  .top5 { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border: 1px solid #d97706; border-radius: 12px; padding: 20px 24px; margin: 24px 0; }
+  .top5 h3 { margin: 0 0 8px; color: #78350f; }
+  .top5 ol { margin: 0; padding-left: 22px; color: #78350f; }
+  .top5 li { margin-bottom: 4px; }
+
+  .legend { font-size: 12px; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Realocação Cascateável — Auditoria · Fix-Pack</h1>
+  <p class="subtitle">24 achados pra decidir quais entram no fix-pack antes da produção</p>
+  <p class="meta">Auditoria · 2026-05-18 · feature em staging, testes manuais em andamento</p>
+</header>
+
+<div class="callout callout-info">
+  <div class="callout-title">Como usar este HTML</div>
+  Cada achado tem um ID (<code>C1</code>…<code>M8</code>), severidade, cenário concreto, comportamento atual com arquivo:linha, comportamento esperado, fix sugerido e impacto. Marca mentalmente quais você quer fixar e me responde no chat com:
+  <strong>"Fixar: C1, C2, I3, I7, M4..."</strong> ou <strong>"Pular: M5, M8"</strong> ou <strong>"Tudo menos os que pedi pra pular"</strong>. Eu sigo daí pra spec → plano → implementação.
+</div>
+
+<div class="stats">
+  <div class="stat-card"><div class="stat-num">24</div><div class="stat-label">Achados totais</div></div>
+  <div class="stat-card"><div class="stat-num stat-crit">5</div><div class="stat-label">Critical</div></div>
+  <div class="stat-card"><div class="stat-num stat-imp">11</div><div class="stat-label">Important</div></div>
+  <div class="stat-card"><div class="stat-num stat-min">8</div><div class="stat-label">Minor</div></div>
+</div>
+
+<div class="top5">
+  <h3>Recomendação mínima pra produção</h3>
+  <ol>
+    <li><strong>C1</strong> — frontend mandar array de realoc IDs (regressão direta do fix do bug 2)</li>
+    <li><strong>C4 + C5</strong> — lock pessimista na realoc + adicionar tabela na publication realtime</li>
+    <li><strong>C2</strong> — desfazer-parcial parar de estornar mov_ajuste_loc_zerou (viola spec)</li>
+    <li><strong>C3</strong> — definir comportamento de desfazer em wave consolidado</li>
+    <li><strong>I1 + I2</strong> — desbloquear pendente_realocacao em encaminhar + 4 outros endpoints</li>
+  </ol>
+</div>
+
+<div class="nav-pills">
+  <a href="#sumario">Sumário</a>
+  <a href="#critical" class="pill-crit">Critical (5)</a>
+  <a href="#important" class="pill-imp">Important (11)</a>
+  <a href="#minor" class="pill-min">Minor (8)</a>
+</div>
+
+<h2 id="sumario">Sumário tabular</h2>
+<p>Visão consolidada — clique no ID pra ir pro detalhe.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Severidade</th>
+      <th>Título</th>
+      <th>Arquivo principal</th>
+      <th>Schema?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><a href="#C1">C1</a></td><td><span class="badge badge-crit">Critical</span></td><td>Frontend envia só <code>itemIds[0]</code> em parcial agregada</td><td><code>checklist/page.tsx:597</code></td><td>Não</td></tr>
+    <tr><td><a href="#C2">C2</a></td><td><span class="badge badge-crit">Critical</span></td><td><code>desfazer-parcial</code> estorna <code>mov_ajuste_loc_zerou</code> violando spec</td><td><code>desfazer-parcial/route.ts:82-88</code></td><td>Não</td></tr>
+    <tr><td><a href="#C3">C3</a></td><td><span class="badge badge-crit">Critical</span></td><td><code>mov_saida_id</code> amarrada só no primeiro beneficiário do wave</td><td><code>parcial/route.ts:358,810</code></td><td>Talvez</td></tr>
+    <tr><td><a href="#C4">C4</a></td><td><span class="badge badge-crit">Critical</span></td><td>Sem lock pessimista em <code>siso_pedido_item_realocacoes</code></td><td><code>parcial/route.ts:569</code></td><td>Não</td></tr>
+    <tr><td><a href="#C5">C5</a></td><td><span class="badge badge-crit">Critical</span></td><td>Tabela de realocações fora da publication <code>supabase_realtime</code></td><td>migration nova</td><td><span class="badge badge-migration">Sim</span></td></tr>
+    <tr><td><a href="#I1">I1</a></td><td><span class="badge badge-imp">Important</span></td><td><code>pendente_realocacao</code> bloqueado em 5 endpoints</td><td>iniciar, marcar-item, encaminhar, voltar-etapa, produto-esgotado</td><td>Não</td></tr>
+    <tr><td><a href="#I2">I2</a></td><td><span class="badge badge-imp">Important</span></td><td><code>encaminhar</code> não estorna movs nem cancela realocs do galpão origem</td><td><code>encaminhar/route.ts:190-322</code></td><td>Não</td></tr>
+    <tr><td><a href="#I3">I3</a></td><td><span class="badge badge-imp">Important</span></td><td><code>reiniciar</code> só reseta <code>separacao_marcado</code></td><td><code>reiniciar/route.ts:82-98</code></td><td>Não</td></tr>
+    <tr><td><a href="#I4">I4</a></td><td><span class="badge badge-imp">Important</span></td><td><code>concluir-oc</code> não bloqueia realocs pendentes</td><td><code>concluir-oc/route.ts:51,92</code></td><td>Não</td></tr>
+    <tr><td><a href="#I5">I5</a></td><td><span class="badge badge-imp">Important</span></td><td><code>compras-release</code> ignora <code>mov_saida_id</code> já feita → double-deduct</td><td><code>compras-release.ts:49-189</code></td><td>Não</td></tr>
+    <tr><td><a href="#I6">I6</a></td><td><span class="badge badge-imp">Important</span></td><td>Embalagem usa só <code>quantidade_bipada</code>, ignora qty pega real</td><td><code>bipar-embalagem</code> + RPC</td><td>Talvez</td></tr>
+    <tr><td><a href="#I7">I7</a></td><td><span class="badge badge-imp">Important</span></td><td><code>DELETE /realocacao/[id]</code> não cancela filhas em chain</td><td><code>realocacao/[id]/route.ts:39</code></td><td>Não</td></tr>
+    <tr><td><a href="#I8">I8</a></td><td><span class="badge badge-imp">Important</span></td><td>Cascade em wave multi-empresa usa só o primeiro pedido</td><td><code>parcial/route.ts:884-922</code></td><td>Não</td></tr>
+    <tr><td><a href="#I9">I9</a></td><td><span class="badge badge-imp">Important</span></td><td>Read-modify-write em <code>quantidade_pega</code> sem lock</td><td><code>parcial/route.ts:828, marcar-realocacao:124</code></td><td>Talvez</td></tr>
+    <tr><td><a href="#I10">I10</a></td><td><span class="badge badge-imp">Important</span></td><td><code>produto-esgotado</code> modo OC ignora qty parcial</td><td><code>produto-esgotado/route.ts:257</code></td><td>Não</td></tr>
+    <tr><td><a href="#I11">I11</a></td><td><span class="badge badge-imp">Important</span></td><td>Auth ausente em 4 endpoints destrutivos</td><td>concluir, reiniciar, produto-esgotado, checklist-items</td><td>Não</td></tr>
+    <tr><td><a href="#M1">M1</a></td><td><span class="badge badge-min">Minor</span></td><td>Parcial modal força <code>locZerou=true</code> sem opção de desmarcar</td><td><code>parcial-modal.tsx:35-39</code></td><td>Não</td></tr>
+    <tr><td><a href="#M2">M2</a></td><td><span class="badge badge-min">Minor</span></td><td>Frontend não distingue 409 <code>posicao_reservada</code> de outros 409</td><td><code>checklist/page.tsx:606-610</code></td><td>Não</td></tr>
+    <tr><td><a href="#M3">M3</a></td><td><span class="badge badge-min">Minor</span></td><td><code>concluir</code> e <code>cancelar</code> registram eventos sem <code>usuarioId</code></td><td><code>concluir/route.ts, cancelar/route.ts</code></td><td>Não</td></tr>
+    <tr><td><a href="#M4">M4</a></td><td><span class="badge badge-min">Minor</span></td><td><code>parcial_motivo</code> usa strings divergentes nos 2 modos</td><td><code>parcial/route.ts:353,802</code></td><td>Não</td></tr>
+    <tr><td><a href="#M5">M5</a></td><td><span class="badge badge-min">Minor</span></td><td>Resolver usa <code>localeCompare</code> ASCII, frontend usa natural sort</td><td><code>realocacao-resolver.ts:104</code></td><td>Não</td></tr>
+    <tr><td><a href="#M6">M6</a></td><td><span class="badge badge-min">Minor</span></td><td><code>buildCompraFieldReset</code> não limpa campos parciais</td><td><code>compras-utils.ts:7-24</code></td><td>Não</td></tr>
+    <tr><td><a href="#M7">M7</a></td><td><span class="badge badge-min">Minor</span></td><td>Sem proteção contra double-click em vários handlers</td><td><code>checklist/page.tsx:592,641</code></td><td>Não</td></tr>
+    <tr><td><a href="#M8">M8</a></td><td><span class="badge badge-min">Minor</span></td><td><code>compras-equivalencia</code> hardcoda "CWB"/"SP"</td><td><code>compras-equivalencia.ts:185-198</code></td><td>Não</td></tr>
+  </tbody>
+</table>
+
+<p class="legend"><strong>Schema:</strong> indica se o fix requer migration nova (Supabase). "Talvez" significa que existem opções com e sem schema change.</p>
+
+<h2 id="critical">Critical · 5 achados</h2>
+
+<div class="finding crit" id="C1">
+  <div class="finding-header">
+    <span class="finding-id">C1</span>
+    <h3 class="finding-title">Frontend envia só <code>itemIds[0]</code> em parcial de realocação agregada</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-crit">Critical</span>
+    <span class="badge badge-neutral">Frontend</span>
+    <span class="badge badge-neutral">1 linha de código</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Wave consolidou 3 pedidos com o mesmo SKU. Cascade gerou 3 realocações no mesmo destino A-02-3 (uma por pedido_item). UI agrupa visualmente em 1 linha (qty 3). Operador João clica "Parcial → peguei 2, loc zerou".</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>src/app/wms/separacao/checklist/page.tsx:597</code> — manda <code>{ realocacao_id: parcialModal.itemIds[0], ... }</code>. Só o primeiro ID, mesmo o array tendo 3.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Mandar <code>{ realocacao_ids: parcialModal.itemIds, ... }</code>. O backend (refatorado no fix do bug 2) já aceita array via <code>parcial/route.ts:82-84</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Trocar <code>realocacao_id: itemIds[0]</code> por <code>realocacao_ids: itemIds</code> no body da chamada (linha 597). 1 linha.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>As outras 2 realocs do grupo ficam <code>aguardando_picking</code> apontando pra loc que já teve mov ajuste loc_zerou aplicado (saldo = 0). Cascade nunca dispara pra elas. Pedidos travam em estado inconsistente. Regressão direta do fix anterior — backend foi refatorado pra aceitar array, frontend não foi atualizado.</p>
+  </div>
+</div>
+
+<div class="finding crit" id="C2">
+  <div class="finding-header">
+    <span class="finding-id">C2</span>
+    <h3 class="finding-title"><code>desfazer-parcial</code> estorna <code>mov_ajuste_loc_zerou_id</code> violando spec</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-crit">Critical</span>
+    <span class="badge badge-neutral">Backend</span>
+    <span class="badge badge-neutral">Drift de ledger</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Operador deu parcial com loc_zerou (pegou 2, sistema dizia 5 → mov ajuste estorna 3). Operador percebe que errou, clica "desfazer parcial".</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>src/app/api/wms/separacao/desfazer-parcial/route.ts:82-88</code> chama <code>estornarMovimentacao(mov_ajuste_loc_zerou_id)</code>. Sistema devolve saldo de 3 que <strong>fisicamente não existe</strong>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Spec invariante (<code>docs/superpowers/specs/2026-05-18-realocacao-cascateavel-design.md</code>) e <code>cancelar/route.ts:79-80</code> dizem: <strong>"mov_ajuste_loc_zerou_id NUNCA é estornado por design — reflete descoberta física"</strong>. Quem zera é uma contagem futura.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Remover linhas 82-88 do <code>desfazer-parcial/route.ts</code>. Manter estorno só do <code>mov_saida_id</code> + reset dos campos.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Cada parcial-desfeito cria saldo fantasma. Próxima wave pega saldo que não existe, dispara nova parcial loc_zerou, sistema gera nova mov ajuste, ciclo repete. Reconciliação cron eventualmente acusa, supervisor manual.</p>
+  </div>
+</div>
+
+<div class="finding crit" id="C3">
+  <div class="finding-header">
+    <span class="finding-id">C3</span>
+    <h3 class="finding-title"><code>mov_saida_id</code> amarrada só no primeiro beneficiário do wave consolidado</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-crit">Critical</span>
+    <span class="badge badge-neutral">Backend</span>
+    <span class="badge badge-neutral">Decisão estrutural</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Wave consolidou 3 pedidos com mesmo SKU. Operador deu parcial: 1 mov S total qty=5. Os 3 itens ficaram <code>separacao_parcial=true</code> com <code>quantidade_pega</code> proporcional, mas só o item beneficiário tem <code>mov_saida_id</code> setado. Operador agora quer desfazer parcial em um dos itens.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>parcial/route.ts:358-359</code> (item) e <code>:809-810</code> (realoc) — <code>mov_saida_id: ehBeneficiario ? movSaidaId : null</code>. Apenas 1 dos 3 registros ganha o ID. Se o operador desfaz no <strong>beneficiário</strong>, estorna mov inteira (que cobria os 3) — outros 2 ficam órfãos. Se desfaz no <strong>não-beneficiário</strong>, <code>mov_saida_id</code> é null, nada é estornado, mas item é resetado.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Desfazer-parcial em qualquer item do wave deve ou (a) estornar proporcional, ou (b) recusar com mensagem clara, ou (c) cada item ter sua própria mov.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido — 3 opções (preciso da sua escolha)</h4>
+    <ul>
+      <li><strong>(a) Tabela ponte</strong> <code>siso_pedido_item_mov_links(pedido_item_id, mov_id, qty)</code>. Schema change. Elegante. Desfazer recalcula.</li>
+      <li><strong>(b) Bloquear desfazer em wave</strong>. Zero schema change. UX restritiva: operador precisa cancelar wave inteira. Detecta via <code>origem_detalhes.pedido_item_ids.length &gt; 1</code>.</li>
+      <li><strong>(c) 1 mov por pedido_item</strong>. Modo realoc gera N movs em vez de 1 consolidada. Sem ambiguidade. Mais inserts no ledger.</li>
+    </ul>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Wave consolidado é um caso comum (mesmo SKU em N pedidos do dia). Cada desfazer cria ou ledger drift ou item órfão. Reconciliação manual frequente.</p>
+  </div>
+</div>
+
+<div class="finding crit" id="C4">
+  <div class="finding-header">
+    <span class="finding-id">C4</span>
+    <h3 class="finding-title">Sem lock pessimista em <code>siso_pedido_item_realocacoes</code> — race condition</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-crit">Critical</span>
+    <span class="badge badge-neutral">Backend</span>
+    <span class="badge badge-neutral">Concorrência</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Operador A e Operador B bipam a mesma realocação no mesmo wave ao mesmo tempo (ambos clicam "marcar realocação" em janelas de milissegundos).</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>parcial/route.ts:569-597</code> e <code>marcar-realocacao/route.ts:31-48</code> fazem SELECT da realoc sem <code>FOR UPDATE</code>. Ambos veem status <code>aguardando_picking</code>, ambos chamam <code>inserirMovimentacao</code> (a RPC interna tem <code>FOR UPDATE</code> em <code>siso_estoque</code>, então os dois rodam sequencial — mas <strong>ambos passam</strong>). Resultado: 2 movs S no ledger pra 1 realocação.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>UPDATE condicional <code>WHERE id = $id AND status = 'aguardando_picking'</code> retornando linhas afetadas. Se 0, abortar 409.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Substituir o SELECT-then-UPDATE por UPDATE...RETURNING com filtro condicional. Antes de gerar mov, garantir que o UPDATE pegou a linha.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Estoque drenado 2x da loc. <code>quantidade_pega</code> do item pai recebe 2x via read-modify-write. <code>mov_saida_id</code> aponta só pra última mov. Em produção com 2 operadores no chão, isso acontece toda semana.</p>
+  </div>
+</div>
+
+<div class="finding crit" id="C5">
+  <div class="finding-header">
+    <span class="finding-id">C5</span>
+    <h3 class="finding-title">Tabela de realocações fora da publication <code>supabase_realtime</code></h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-crit">Critical</span>
+    <span class="badge badge-migration">Migration</span>
+    <span class="badge badge-neutral">UX cross-operador</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Operador A e B no mesmo wave. A cria cascade (nova realoc surge) ou marca uma realoc. B deveria ver na UI.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p>Nenhuma migration adiciona <code>siso_pedido_item_realocacoes</code> à publication <code>supabase_realtime</code>. <code>checklist/page.tsx</code> também não tem subscribe nem polling — só <code>invalidateQueries</code> após mutation própria. B só vê mudança ao refresh manual.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Per <code>CLAUDE.md</code> ("Direção Estratégica"): "Toda tabela que afeta operação ao vivo entra na publication". B deveria reagir em &lt;1s.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Migration: <code>ALTER PUBLICATION supabase_realtime ADD TABLE siso_pedido_item_realocacoes</code>. Estender <code>use-realtime-separacao</code> pra escutar a tabela.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Op A marca realoc → Op B vê estado velho → Op B tenta marcar a mesma → 409 (C4) ou pior. Confusão garantida em wave compartilhado.</p>
+  </div>
+</div>
+
+<h2 id="important">Important · 11 achados</h2>
+
+<div class="finding imp" id="I1">
+  <div class="finding-header">
+    <span class="finding-id">I1</span>
+    <h3 class="finding-title"><code>pendente_realocacao</code> é cidadão de segunda classe em 5 endpoints</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend</span>
+    <span class="badge badge-neutral">Fluxo bloqueado</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Pedido entrou em <code>pendente_realocacao</code> (cascade sem cobertura no galpão). Operador ou admin tenta resgatar.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <ul>
+      <li><code>iniciar/route.ts:76-89</code> — status válidos não incluem <code>pendente_realocacao</code></li>
+      <li><code>marcar-item/route.ts:59-65</code> — idem</li>
+      <li><code>encaminhar/route.ts:131-138</code> — só aceita <code>aguardando_separacao</code>/<code>em_separacao</code> (caso de uso CENTRAL — encaminhar quando galpão esgota — bloqueado)</li>
+      <li><code>voltar-etapa/route.ts:19-26</code> — status fora do <code>STATUS_ORDER</code></li>
+      <li><code>produto-esgotado/route.ts:54-65</code> — fora dos <code>ACTIVE_STATUSES</code></li>
+    </ul>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>O design original previa: cascade falhou → modal abre → operador encaminha pra outro galpão ou cria OC. Mas o endpoint <code>encaminhar</code> rejeita o pedido nesse status. Único caminho hoje: <code>desfazer-parcial</code> → fluxo refaz.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Adicionar <code>pendente_realocacao</code> em todos os 5 endpoints como status aceito. Em <code>encaminhar</code>, antes do switch de galpão: cancelar realocs aguardando + estornar movs do galpão origem.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Pedido entra em <code>pendente_realocacao</code> e fica preso. Operador fica chamando supervisor. Em produção, vai ser o ticket #1 da primeira semana.</p>
+  </div>
+</div>
+
+<div class="finding imp" id="I2">
+  <div class="finding-header">
+    <span class="finding-id">I2</span>
+    <h3 class="finding-title"><code>encaminhar</code> não estorna mov_saida nem cancela realocs do galpão origem</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Pedido picado parcialmente em CWB (mov S registrada, realocs aguardando). Decisão: encaminhar pra SP refazer.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>encaminhar/route.ts:190-200</code> reseta <code>separacao_marcado</code>, <code>quantidade_bipada</code>, <code>bipado_completo</code>, <code>estoque_saida_lancada</code> — mas <strong>não toca</strong> em <code>quantidade_pega</code>, <code>separacao_parcial</code>, <code>parcial_*</code>, <code>mov_saida_id</code>, <code>mov_ajuste_loc_zerou_id</code>. Estorno via Tiny legado só se <code>estoque_lancado=true</code>. Realocs órfãs no galpão origem.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Encaminhar = "abandono este galpão". Cancela todas realocs aguardando, estorna <code>mov_saida_id</code>, reseta todos os campos parciais.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Helper compartilhado <code>resetarEstadoSeparacao(supabase, pedidoIds, usuarioId)</code> chamado também em <code>voltar-etapa</code>, <code>reiniciar</code>, <code>produto-esgotado modo encaminhar</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Mov fica órfã em CWB; realoc aguardando fica órfã; pedido vai pra SP com <code>separacao_parcial=true</code> causando confusão.</p>
+  </div>
+</div>
+
+<div class="finding imp" id="I3">
+  <div class="finding-header">
+    <span class="finding-id">I3</span>
+    <h3 class="finding-title"><code>reiniciar/route.ts</code> reseta só <code>separacao_marcado</code></h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Operador clica "Reiniciar progresso" durante wave em andamento que já tem parcial + cascade.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>reiniciar/route.ts:82-98</code> reseta só <code>separacao_marcado</code> + timestamp. Mov S fica no ledger. Realocs picadas continuam picadas. <code>quantidade_pega</code>, <code>separacao_parcial</code>, <code>mov_saida_id</code> persistem.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>"Reiniciar progresso" volta ao zero — estornar movs, cancelar realocs aguardando, resetar campos parciais.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Mesmo helper compartilhado do I2.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Item visualmente "não pego" no UI, WMS já fez saída. Operador refaz, mov duplicada, estoque drenado 2x.</p>
+  </div>
+</div>
+
+<div class="finding imp" id="I4">
+  <div class="finding-header">
+    <span class="finding-id">I4</span>
+    <h3 class="finding-title"><code>concluir-oc</code> não bloqueia realocs pendentes</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Pedido OC tem item com realoc <code>aguardando_picking</code> (cascade ainda não pega).</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>concluir-oc/route.ts:51, 92-99</code> só checa <code>separacao_marcado=true</code>. Nunca consulta <code>siso_pedido_item_realocacoes</code>. Pedido vai pra <code>separado</code> com realoc em aberto.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Bloquear se há realoc <code>aguardando_picking</code> em qualquer item do pedido — espelhar o check de <code>concluir/route.ts:59-75</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Adicionar a mesma query de bloqueio que existe em <code>concluir/route.ts</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Pedido OC sai pra embalagem com realoc órfã. Ledger inconsistente.</p>
+  </div>
+</div>
+
+<div class="finding imp" id="I5">
+  <div class="finding-header">
+    <span class="finding-id">I5</span>
+    <h3 class="finding-title"><code>compras-release</code> cego a <code>mov_saida_id</code> já feitas — double-deduct</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend</span>
+    <span class="badge badge-neutral">Drift de estoque</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Pedido híbrido: alguns itens viraram cascade (parcial + realoc picada — mov S já no ledger), outros viraram OC. OC chega.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>compras-release.ts:49-67</code> lê só <code>compra_status</code> e enfileira <code>lancar_estoque</code> cegamente pra todos os itens. Worker legado deduz estoque dos itens cascade pela segunda vez.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Worker honra <code>mov_saida_id</code> já preenchido (skip dedução). Ou release passa flag com itens já lançados.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>No payload da fila, adicionar <code>itens_ja_lancados: [ids com mov_saida_id]</code> e worker honra.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Double-deduction. Saldo WMS diverge da realidade. Reconciliação cron eventualmente acusa, mas só depois do dano.</p>
+  </div>
+</div>
+
+<div class="finding imp" id="I6">
+  <div class="finding-header">
+    <span class="finding-id">I6</span>
+    <h3 class="finding-title">Embalagem usa só <code>quantidade_bipada &gt;= quantidade_pedida</code></h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend RPC</span>
+    <span class="badge badge-neutral">Pedido travado</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário (A)</h4>
+    <p>Parcial sem cobertura total — qty pega real = 7 de 10. Operador físico só tem 7 peças. Bipou 7. <code>bipado_completo</code> nunca vira true, pedido fica preso em <code>separado</code> sem aviso claro.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Cenário (B)</h4>
+    <p>Operador usa <code>confirmar-item-embalagem</code> (botão +/- manual) e fura — bipou só 7 mas clica +3 sem ter peças. Pedido sai expedido com qty diferente da NF.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p>RPC <code>siso_processar_bip_embalagem</code> e <code>confirmar-item-embalagem/route.ts:86</code> usam só qty bipada vs pedida. Nunca consulta <code>quantidade_pega</code> ou realocs.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Mostrar no UI: "qty pega real = 7 vs pedida = 10 — fechar parcial?". Bloquear bipar acima da qty pega real.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Tela embalagem soma <code>item.quantidade_pega + Σ(realocs.quantidade_pega)</code>. RPC valida teto <code>quantidade_pega</code> em vez de <code>quantidade_pedida</code> quando item tem <code>separacao_parcial=true</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Pedido sem cobertura total trava silencioso, ou expede com qty errada → NF Tiny incompatível com saída real.</p>
+  </div>
+</div>
+
+<div class="finding imp" id="I7">
+  <div class="finding-header">
+    <span class="finding-id">I7</span>
+    <h3 class="finding-title"><code>DELETE /realocacao/[id]</code> não cancela filhas em chain</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Realoc raiz (A-02-3) gerou cascade pra filha (A-04-1). Operador cancela a raiz.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>realocacao/[id]/route.ts:39-42</code> só seta <code>status='cancelado'</code> na raiz. Filha com <code>parent_realocacao_id = raiz</code> continua <code>aguardando_picking</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Cancelar toda a chain via <code>parent_realocacao_id</code>. Se alguma filha já foi picada (mov gerada), retornar 409 sugerindo desfazer wave inteiro.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Query recursiva (CTE) ou loop iterativo cancelando descendentes em <code>aguardando_picking</code>. 409 se algum descendente em <code>picado*</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Chain órfã. Supervisor vê "raiz cancelada → filha aguardando" e fica confuso. Pode bipar filha que não devia.</p>
+  </div>
+</div>
+
+<div class="finding imp" id="I8">
+  <div class="finding-header">
+    <span class="finding-id">I8</span>
+    <h3 class="finding-title">Cascade em wave multi-empresa usa só o primeiro pedido residual</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Wave consolida pedidos de NetAir e NetParts (mesma SKU, mesmo galpão CWB, mesmo grupo). Parcial dispara cascade.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>parcial/route.ts:884-922</code> usa <code>empresaOrigemPrimResid = pedidos[0].empresa_origem_id</code> para <code>resolverProdutoWms</code>, <code>resolverRealocacao</code> e <code>locOriginal</code>. Items do pedido 2..N: <code>is_emprestimo</code> flag pode estar errado, loc original do pedido 2..N pode ser re-sugerida no cascade.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Computar individualmente por residual, ou agrupar por <code>empresa_origem</code> antes do cascade.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Loop: agrupar residuais por <code>empresa_origem_id</code> → cascade por grupo. Ou (simpler) bloquear wave consolidado cross-empresa por enquanto.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Em wave cross-empresa, alguns itens podem ter <code>is_emprestimo</code> errado. Hoje raro porque waves geralmente são single-empresa, mas o dia que cair vai gerar drift de saldo devedor.</p>
+  </div>
+</div>
+
+<div class="finding imp" id="I9">
+  <div class="finding-header">
+    <span class="finding-id">I9</span>
+    <h3 class="finding-title">Read-modify-write em <code>quantidade_pega</code> do item pai sem lock</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend</span>
+    <span class="badge badge-neutral">Race condition</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Wave + algo paralelo (worker / outro endpoint mexendo no mesmo item).</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>parcial/route.ts:828-837</code> e <code>marcar-realocacao/route.ts:124-128</code> — lê <code>item.quantidade_pega</code>, soma, escreve. Cache local atualizado em memória pra iterações.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>UPDATE atômico numérico: <code>SET quantidade_pega = COALESCE(quantidade_pega, 0) + $delta</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>RPC <code>wms_acumular_qty_pega(item_id, delta)</code> que faz UPDATE atômico RETURNING. Substituir os 2 call-sites.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Em produção com paralelismo, <code>quantidade_pega</code> pode ficar abaixo do real. Concluir aceita pedido com qty &lt; pedida sem saber.</p>
+  </div>
+</div>
+
+<div class="finding imp" id="I10">
+  <div class="finding-header">
+    <span class="finding-id">I10</span>
+    <h3 class="finding-title"><code>produto-esgotado</code> modo OC ignora <code>quantidade_pega</code> parcial</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend</span>
+    <span class="badge badge-neutral">Compras infla</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Item já tem parcial (<code>quantidade_pega=3</code> de 10). Operador clica "Esgotado → criar OC".</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>produto-esgotado/route.ts:257</code> seta <code>compra_quantidade_solicitada = item.quantidade_pedida</code> (10 inteiro). Solicita OC pelos 10 — duplicando os 3 que já saíram.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Solicitar pelo residual: <code>quantidade_pedida - quantidade_pega - Σ realocs.quantidade_pega</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Computar residual antes de setar <code>compra_quantidade_solicitada</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Compras infla. Fornecedor entrega a maior. Reverter manual.</p>
+  </div>
+</div>
+
+<div class="finding imp" id="I11">
+  <div class="finding-header">
+    <span class="finding-id">I11</span>
+    <h3 class="finding-title">Auth ausente em 4 endpoints destrutivos</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-imp">Important</span>
+    <span class="badge badge-neutral">Backend</span>
+    <span class="badge badge-neutral">Auditoria</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Qualquer requisição com payload válido reseta state sem autenticação.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>produto-esgotado/route.ts:23-50</code>, <code>reiniciar/route.ts</code>, <code>concluir/route.ts</code>, <code>checklist-items/route.ts:34-66</code> — não chamam <code>getSessionUser</code>. Eventos sem <code>usuarioId</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Todo endpoint mutador exige sessão.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p><code>const session = await getSessionUser(req); if (!session) return 401</code> no início de cada um.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Vetor de ataque interno (qualquer um na rede). Auditoria perdida — não sabe quem cancelou/reiniciou.</p>
+  </div>
+</div>
+
+<h2 id="minor">Minor · 8 achados</h2>
+
+<div class="finding min" id="M1">
+  <div class="finding-header">
+    <span class="finding-id">M1</span>
+    <h3 class="finding-title">Parcial modal força <code>locZerou=true</code> sem opção de desmarcar</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-min">Minor</span>
+    <span class="badge badge-neutral">Frontend</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Cenário</h4>
+    <p>Operador pegou 7 de 10 mas a loc ainda tem mais peças (operador pegou só o que precisava).</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>parcial-modal.tsx:35-39</code> useEffect força <code>locZerou=true</code> sempre que qty &lt; pedida. Operador não pode desmarcar.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Comportamento esperado</h4>
+    <p>Checkbox livre. Operador decide se loc zerou ou se só pegou parcial.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Remover o useEffect que força. Manter default false; operador marca quando aplicável.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Falsa "loc zerou" gera mov ajuste pelo delta — saldo cai pra zero artificialmente. Cascade dispara desnecessário.</p>
+  </div>
+</div>
+
+<div class="finding min" id="M2">
+  <div class="finding-header">
+    <span class="finding-id">M2</span>
+    <h3 class="finding-title">Frontend não distingue 409 <code>posicao_reservada</code> de outros 409</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-min">Minor</span>
+    <span class="badge badge-neutral">Frontend UX</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>checklist/page.tsx:606-610</code> mostra toast genérico "Erro ao processar parcial" pra qualquer 409.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Inspecionar <code>data.error</code> e mostrar mensagem específica pra <code>posicao_reservada</code> ("Outro op já pegou — atualizando").</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Operador re-tenta sem entender que houve conflito.</p>
+  </div>
+</div>
+
+<div class="finding min" id="M3">
+  <div class="finding-header">
+    <span class="finding-id">M3</span>
+    <h3 class="finding-title"><code>concluir</code> e <code>cancelar</code> registram eventos sem <code>usuarioId</code></h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-min">Minor</span>
+    <span class="badge badge-neutral">Auditoria</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>cancelar/route.ts</code> não chama <code>registrarEvento</code> de cancelamento. <code>concluir/route.ts</code> registra mas sem <code>usuarioId</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Adicionar <code>registrarEvento</code> com <code>usuarioId: session.id</code> em ambos.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Histórico fica sem "quem cancelou/concluiu". Forense ruim.</p>
+  </div>
+</div>
+
+<div class="finding min" id="M4">
+  <div class="finding-header">
+    <span class="finding-id">M4</span>
+    <h3 class="finding-title"><code>parcial_motivo</code> usa strings divergentes nos 2 modos</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-min">Minor</span>
+    <span class="badge badge-neutral">Naming</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p>Modo item: <code>loc_zerou</code>/<code>qty_diferente</code>. Modo realoc: <code>cascade_loc_zerou</code>/<code>cascade_parcial</code>. Mesma coluna, 4 valores.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Padronizar: <code>loc_zerou</code>/<code>qty_diferente</code> em ambos. <code>parent_realocacao_id IS NOT NULL</code> já indica que é cascade.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Queries de relatório precisam aceitar 4 valores; risco de filtro errado.</p>
+  </div>
+</div>
+
+<div class="finding min" id="M5">
+  <div class="finding-header">
+    <span class="finding-id">M5</span>
+    <h3 class="finding-title">Resolver ordena por <code>localeCompare</code> ASCII; frontend usa natural sort</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-min">Minor</span>
+    <span class="badge badge-neutral">UX</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>realocacao-resolver.ts:104</code> usa <code>localeCompare</code> — "A-10" vem antes de "A-2". Frontend usa <code>naturalLocCompare</code> (<code>page.tsx:14</code>).</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Importar <code>naturalLocCompare</code> ou re-implementar no resolver.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Realocs sugeridas em ordem diferente da visual no checklist. Supervisor se confunde no histórico.</p>
+  </div>
+</div>
+
+<div class="finding min" id="M6">
+  <div class="finding-header">
+    <span class="finding-id">M6</span>
+    <h3 class="finding-title"><code>buildCompraFieldReset</code> não limpa campos parciais</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-min">Minor</span>
+    <span class="badge badge-neutral">Backend</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>compras-utils.ts:7-24</code> não inclui <code>quantidade_pega</code>, <code>separacao_parcial</code>, <code>parcial_*</code>, <code>mov_saida_id</code>, <code>mov_ajuste_loc_zerou_id</code>. Nem deleta realocs.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Estender o helper. Quando troca SKU equivalente, limpar tudo + cancelar realocs do SKU antigo.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Troca de SKU equivalente deixa estado parcial órfão. Reconciliação manual.</p>
+  </div>
+</div>
+
+<div class="finding min" id="M7">
+  <div class="finding-header">
+    <span class="finding-id">M7</span>
+    <h3 class="finding-title">Sem proteção contra double-click em vários handlers</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-min">Minor</span>
+    <span class="badge badge-neutral">Frontend</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>checklist/page.tsx:592,641,1094</code> — <code>handleParcialConfirm</code>, <code>handleMarcarRealocacao</code>, <code>onToggle</code> do checkbox sem flag pending local. Double-click rápido vira 2 chamadas paralelas.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Flag <code>isSubmitting</code> local OU desabilitar botão via <code>mutation.isPending</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Operador agitado dispara C4 (race). Amplifica o problema.</p>
+  </div>
+</div>
+
+<div class="finding min" id="M8">
+  <div class="finding-header">
+    <span class="finding-id">M8</span>
+    <h3 class="finding-title"><code>compras-equivalencia</code> hardcoda "CWB"/"SP"</h3>
+  </div>
+  <div class="finding-meta">
+    <span class="badge badge-min">Minor</span>
+    <span class="badge badge-neutral">Convenção</span>
+  </div>
+
+  <div class="finding-section">
+    <h4>Comportamento atual</h4>
+    <p><code>compras-equivalencia.ts:185-198</code> tem strings literais "CWB"/"SP" e retorna campos <code>estoqueCwb*</code>/<code>estoqueSp*</code>.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Fix sugerido</h4>
+    <p>Refatorar pra retornar <code>estoques: Record&lt;galpao_nome, ...&gt;</code> dinâmico. Iterar sobre galpões ativos.</p>
+  </div>
+  <div class="finding-section">
+    <h4>Impacto se não fizer</h4>
+    <p>Galpão novo (PR, RS) quebra a tela. Viola convenção do CLAUDE.md.</p>
+  </div>
+</div>
+
+<h2>Decisões a tomar</h2>
+<div class="callout callout-warn">
+  <div class="callout-title">3 perguntas que travam o design</div>
+  <ol>
+    <li><strong>C3 — desfazer-parcial em wave consolidado:</strong> tabela ponte (a), bloquear (b), ou 1 mov por item (c)?</li>
+    <li><strong>I6 — embalagem checar qty pega real:</strong> alterar a RPC (mais profundo) ou só validar no UI antes do bipe?</li>
+    <li><strong>Escopo final:</strong> tudo (24), só os Críticos (5), top-5 + Important (16), ou cherry-pick que você vai listar?</li>
+  </ol>
+</div>
+
+<div class="callout callout-success">
+  <div class="callout-title">Como responder</div>
+  Volta no chat e me diz tipo: <strong>"Vamos tudo, exceto M8. C3 opção b (bloquear). I6 alterar RPC."</strong> Eu sigo daí pra spec → plano → implementação.
+</div>
+
+</div>
+</body>
+</html>

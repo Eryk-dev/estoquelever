@@ -59,7 +59,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `erro` | text | YES | | Error message if status = 'erro' |
 | `estoque_lancado` | boolean | NO | false | Flag: stock already deducted in Tiny |
 | `compra_estoque_lancado_alerta` | boolean | NO | false | Flag: alert if stock entered before cancellation |
-| `status_separacao` | text | YES | | Separation status: `aguardando_compra`, `aguardando_nf`, `aguardando_separacao`, `em_separacao`, `separado`, `embalado` |
+| `status_separacao` | text | YES | | Separation status: `aguardando_compra`, `aguardando_nf`, `aguardando_separacao`, `em_separacao`, `pendente_realocacao`, `separado`, `embalado` |
 | `separacao_galpao_id` | uuid | YES | FK | Galpão where separation happens |
 | `separacao_operador_id` | uuid | YES | FK | User performing separation |
 | `separacao_iniciada_em` | timestamptz | YES | | When wave picking started |
@@ -97,7 +97,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 **Constraints:**
 - `CHECK (status IN ('pendente', 'executando', 'concluido', 'cancelado', 'erro'))`
-- `CHECK (status_separacao IS NULL OR status_separacao IN (...))`
+- `CHECK (status_separacao IS NULL OR status_separacao IN ('aguardando_compra', 'aguardando_nf', 'aguardando_separacao', 'em_separacao', 'pendente_realocacao', 'separado', 'embalado'))`
 - `CHECK (etiqueta_status IS NULL OR etiqueta_status IN (...))`
 
 **Notes:**
@@ -159,6 +159,14 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `compra_equivalente_sku_original` | text | YES | | Original SKU (before equivalence) |
 | `compra_equivalente_descricao_original` | text | YES | | Original description |
 | `compra_equivalente_produto_id_original` | bigint | YES | | Original Tiny product ID |
+| **Short pick (parcial) columns:** | | | | |
+| `quantidade_pega` | integer | YES | null | Qty actually picked in a partial pick |
+| `separacao_parcial` | boolean | NO | false | Flag: item had a short pick |
+| `parcial_motivo` | text | YES | null | Reason text for the short pick |
+| `parcial_em` | timestamptz | YES | null | When the short pick was registered |
+| `parcial_por` | uuid | YES | FK | User who registered the short pick |
+| `mov_saida_id` | uuid | YES | FK | WMS movement ID for the saida created on mark/parcial |
+| `mov_ajuste_loc_zerou_id` | uuid | YES | FK | WMS movement ID for loc_zerou physical adjustment |
 | **Cancellation handling:** | | | | |
 | `compra_cancelamento_motivo` | text | YES | | Reason for cancellation |
 | `compra_cancelamento_solicitado_em` | timestamptz | YES | | When cancellation was requested |
@@ -175,6 +183,9 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `ordem_compra_id` → `siso_ordens_compra(id)`
 - `comprado_por` → `siso_usuarios(id)`
 - `recebido_por` → `siso_usuarios(id)`
+- `parcial_por` → `siso_usuarios(id)`
+- `mov_saida_id` → `siso_movimentacoes(id)`
+- `mov_ajuste_loc_zerou_id` → `siso_movimentacoes(id)`
 - And similar FKs for equivalence and cancellation user references
 
 **Indexes:**
@@ -232,6 +243,55 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - API aggregates by galpão for dynamic stock display
 - `produto_id_na_empresa` added in migration 20260324 to support cloning products to other empresas
 - Replaces deprecated `estoque_cwb_*` / `estoque_sp_*` columns in `siso_pedido_itens`
+
+---
+
+### siso_pedido_item_realocacoes
+
+**Purpose:** Re-allocation candidates created when a short pick zeroes a location. Each row points to an alternate location (possibly in another empresa via empréstimo) where remaining qty can be picked.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | (PK) | Realocacao ID |
+| `pedido_item_id` | bigint | NO | FK | Parent item in `siso_pedido_itens` |
+| `empresa_dona_id` | uuid | NO | FK | Empresa that owns the stock in the alternate location |
+| `empresa_nome` | text | NO | | Empresa name (denormalized for display) |
+| `localizacao_id` | uuid | NO | FK | WMS location UUID |
+| `localizacao_codigo` | text | NO | | Location code (e.g., "A1-2-3") — denormalized for display |
+| `quantidade` | integer | NO | | Qty to be picked from this location (CHECK > 0) |
+| `is_emprestimo` | boolean | NO | false | Whether this requires an inter-empresa empréstimo movement |
+| `empresa_devedora_id` | uuid | YES | FK | Empresa that will owe stock if empréstimo (required iff is_emprestimo=true) |
+| `status` | text | NO | 'aguardando_picking' | Status: `aguardando_picking`, `picado`, `cancelado` |
+| `mov_id` | uuid | YES | FK | WMS movement ID after picking (set on `marcar-realocacao`) |
+| `operador_id` | uuid | YES | FK | User who picked this realocacao |
+| `picado_em` | timestamptz | YES | | When this realocacao was picked |
+| `cancelado_em` | timestamptz | YES | | When this realocacao was cancelled |
+| `criado_em` | timestamptz | NO | now() | Record creation |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `pedido_item_id` → `siso_pedido_itens(id)` ON DELETE CASCADE
+- `empresa_dona_id` → `siso_empresas(id)`
+- `empresa_devedora_id` → `siso_empresas(id)`
+- `localizacao_id` → `siso_localizacoes(id)`
+- `mov_id` → `siso_movimentacoes(id)`
+- `operador_id` → `siso_usuarios(id)`
+
+**Indexes:**
+- Partial index on `(pedido_item_id)` WHERE `status = 'aguardando_picking'`
+
+**Constraints:**
+- `CHECK (quantidade > 0)`
+- `CHECK ((is_emprestimo = true AND empresa_devedora_id IS NOT NULL) OR (is_emprestimo = false AND empresa_devedora_id IS NULL))`
+- `CHECK (status IN ('aguardando_picking', 'picado', 'cancelado'))`
+
+**Notes:**
+- Created by `POST /api/separacao/parcial` when the re-allocation cascade finds coverage
+- Picked via `POST /api/separacao/marcar-realocacao` (creates WMS movement)
+- Cancelled via `DELETE /api/separacao/realocacao/[id]` (no movement — nothing was picked)
+- All rows cancelled automatically when parent item is desfazer-parcial'd or onda is cancelled
+- `checklist-items` endpoint returns only `aguardando_picking` rows in `item.realocacoes[]`
 
 ---
 
@@ -441,6 +501,11 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `etiqueta_falhou` — label print failed
 - `cancelado` — order cancelled
 - `erro` — processing error
+- `parcial_loc_zerou` — short pick registered; 1-2 WMS movements created
+- `realocacao_picada` — re-allocation picked from alternate location
+- `realocacao_cancelada` — pending re-allocation cancelled (no pick)
+- `realocacao_sem_cobertura_galpao` — short pick with no re-allocation coverage; pedido moved to `pendente_realocacao`
+- `parcial_desfeito` — short pick fully undone; all movements estorned
 
 **Notes:**
 - Write via `registrarEvento()` in historico-service.ts
@@ -1201,8 +1266,10 @@ erDiagram
 
     PEDIDO_ITEM ||--o{ ORDEN_COMPRA : requires
     PEDIDO_ITEM ||--o{ PEDIDO_ITEM_ESTOQUE : references
+    PEDIDO_ITEM ||--o{ PEDIDO_ITEM_REALOCACAO : has_realocacoes
 
     PEDIDO_ITEM_ESTOQUE }o--|| EMPRESA : per_empresa
+    PEDIDO_ITEM_REALOCACAO }o--|| EMPRESA : dona_stock
 
     USUARIO ||--o{ PEDIDO : approves
     USUARIO ||--o{ PEDIDO_HISTORICO : records
@@ -1231,6 +1298,7 @@ erDiagram
 3. **Pedido → Empresa:** Order received by origin empresa
 4. **Pedido → PedidoItem (1:N):** One order has multiple line items
 5. **PedidoItem → PedidoItemEstoque (1:N):** One item has stock in multiple empresas
+5a. **PedidoItem → PedidoItemRealocacao (1:N):** Re-allocation candidates after a short pick
 6. **Pedido → FilaExecucao (1:1):** After approval, queued for stock posting
 7. **Usuario → Galpão (N:M):** via `siso_usuario_galpoes`
 8. **Usuario → Sessao (1:N):** Active sessions per user

@@ -3,7 +3,7 @@
 > Módulo de separação física: dashboard `/separacao`, checklist de wave picking, bipagem por código de barras, validação OC inline, encaminhamento entre galpões, ações administrativas e realtime cross-operador.
 
 **Endpoints cobertos:**
-`GET /api/separacao` · `POST /api/separacao/iniciar` · `POST /api/separacao/bipar` · `POST /api/separacao/bipar-checklist` · `POST /api/separacao/marcar-item` · `POST /api/separacao/desfazer-bip` · `POST /api/separacao/concluir` · `POST /api/separacao/concluir-oc` · `GET /api/separacao/checklist-items` · `POST /api/separacao/encaminhar` · `POST /api/separacao/cancelar` · `POST /api/separacao/reiniciar` · `POST /api/separacao/voltar-etapa` · `GET|POST /api/separacao/tags` · `POST /api/separacao/produto-esgotado` · `POST /api/separacao/validar-oc-item` · `POST /api/separacao/forcar-pendente` (batch) · `PATCH /api/separacao/{pedidoId}/forcar-pendente` (single) · `POST /api/separacao/localizacao`
+`GET /api/separacao` · `POST /api/separacao/iniciar` · `POST /api/separacao/bipar` · `POST /api/separacao/bipar-checklist` · `POST /api/separacao/marcar-item` · `POST /api/separacao/desfazer-bip` · `POST /api/separacao/concluir` · `POST /api/separacao/concluir-oc` · `GET /api/separacao/checklist-items` · `POST /api/separacao/encaminhar` · `POST /api/separacao/cancelar` · `POST /api/separacao/reiniciar` · `POST /api/separacao/voltar-etapa` · `GET|POST /api/separacao/tags` · `POST /api/separacao/produto-esgotado` · `POST /api/separacao/validar-oc-item` · `POST /api/separacao/forcar-pendente` (batch) · `PATCH /api/separacao/{pedidoId}/forcar-pendente` (single) · `POST /api/separacao/localizacao` · `POST /api/separacao/parcial` · `POST /api/separacao/marcar-realocacao` · `DELETE /api/separacao/realocacao/[id]` · `POST /api/separacao/desfazer-parcial`
 
 ---
 
@@ -21,6 +21,7 @@
 10. [Concluir separação OC (`pick-oc`)](#10-concluir-separação-oc-pick-oc)
 11. [Validação OC inline (`validar-oc-item`)](#11-validação-oc-inline-validar-oc-item)
 12. [Produto esgotado](#12-produto-esgotado)
+12a. [Short pick + re-alocação por localização](#12a-short-pick--re-alocação-por-localização)
 13. [Encaminhar pedido para outro galpão](#13-encaminhar-pedido-para-outro-galpão)
 14. [Cancelar separação](#14-cancelar-separação)
 15. [Reiniciar progresso](#15-reiniciar-progresso)
@@ -82,13 +83,14 @@ Arquitetura ponta a ponta:
 A coluna canônica é `siso_pedidos.status_separacao`. O type é `StatusSeparacao` em `src/types/index.ts`.
 
 ```
-aguardando_compra  → fila de itens OC (compras module trabalha aqui)
-aguardando_nf      → pedido aprovado, esperando webhook de nota fiscal
-validacao_oc       → pedido com `oc_pendente` em separação física (sub-tipo de aguardando_separacao)
+aguardando_compra   → fila de itens OC (compras module trabalha aqui)
+aguardando_nf       → pedido aprovado, esperando webhook de nota fiscal
+validacao_oc        → pedido com `oc_pendente` em separação física (sub-tipo de aguardando_separacao)
 aguardando_separacao → pronto pra operador picar
-em_separacao        → wave picking em andamento
-separado            → todos itens marcados, pronto pra embalar
-embalado            → embalagem concluída, pronto pra expedir
+em_separacao         → wave picking em andamento
+pendente_realocacao  → short pick aconteceu e galpão não tem cobertura para qty restante; aguardando ação do supervisor
+separado             → todos itens marcados, pronto pra embalar
+embalado             → embalagem concluída, pronto pra expedir
 ```
 
 | De | Para | Endpoint que dispara | Notas |
@@ -100,7 +102,9 @@ embalado            → embalagem concluída, pronto pra expedir
 | `validacao_oc` | `em_separacao` | `POST /api/separacao/iniciar` | só se não houver `oc_pendente` ainda pendente |
 | `em_separacao` | `separado` | `POST /api/separacao/concluir` | todos `separacao_marcado=true` |
 | `em_separacao` | `aguardando_compra` | `POST /api/separacao/concluir` | partial pause: tem itens `aguardando_compra`/`comprado`/`oc_pendente` |
-| `em_separacao` | `aguardando_separacao` | `POST /api/separacao/cancelar` | reset de todos os checks |
+| `em_separacao` | `pendente_realocacao` | `POST /api/separacao/parcial` | short pick + galpão sem cobertura pra qty restante |
+| `pendente_realocacao` | `em_separacao` | `POST /api/separacao/desfazer-parcial` | operador desfaz o short pick |
+| `em_separacao` | `aguardando_separacao` | `POST /api/separacao/cancelar` | reset de todos os checks + estorno de movs WMS |
 | `em_separacao` | `aguardando_separacao` | `POST /api/separacao/desfazer-bip` | só se total de bipados zerar |
 | `em_separacao` | `aguardando_compra` (ou `validacao_oc`) | `POST /api/separacao/produto-esgotado` (acao=oc) | SKU sem estoque, vira OC |
 | `em_separacao` | `aguardando_compra` | `POST /api/separacao/concluir-oc` | pick-oc com itens incompletos volta |
@@ -714,6 +718,82 @@ Fluxo modal:
 1. Click "Esgotado" no item
 2. Chama preview, abre modal com lista de galpões alternativos + opção "Criar OC"
 3. Operador escolhe → segunda chamada com `acao` setado
+
+---
+
+## 12a. Short pick + re-alocação por localização
+
+Quando o operador encontra **menos unidades do que o pedido exige** na localização indicada pelo sistema, ele usa o botão "Parcial" no checklist. O sistema gera as movimentações WMS, descobre automaticamente localizações alternativas em cascata, e exibe as realocações na interface.
+
+### 12a.1 Fluxo de curto pick
+
+```mermaid
+flowchart TD
+    A["Operador clica 'Parcial'<br/>no item do checklist"] --> B["Modal: informe qty pega<br/>+ checkbox 'Localização zerou?'"]
+    B --> C["POST /api/separacao/parcial<br/>{pedido_item_id, quantidade_pega, loc_zerou}"]
+
+    C --> D["1. Mov WMS tipo=S, origem=nf_venda<br/>qty = quantidade_pega → mov_saida_id"]
+    D --> E{"loc_zerou = true?"}
+    E -->|sim| F["2. Mov WMS tipo=S, origem=ajuste_pick_zerou<br/>qty = saldo restante da loc<br/>Reflete descoberta física → mov_ajuste_loc_zerou_id"]
+    E -->|nao| G["Pula segunda mov"]
+    F --> H["Re-busca cascade para qty faltante"]
+    G --> H
+
+    H --> I["Busca: mesma empresa, tipo picking → overstock → ...<br/>Maior disponivel, codigo ASC"]
+    I --> J{"Cobertura encontrada?"}
+
+    J -->|sim| K["Insere siso_pedido_item_realocacoes<br/>status = aguardando_picking"]
+    K --> L["Response: {status: 'realocado', realocacoes: [...]}"]
+    L --> M["UI exibe linhas de realocação<br/>Operador vai buscar nas localizações indicadas"]
+
+    J -->|nao| N["Transita pedido → pendente_realocacao"]
+    N --> O["Response: {status: 'aguardando_supervisor'}"]
+    O --> P["Supervisor visualiza e<br/>decide próxima ação"]
+
+    M --> Q["Operador clica 'Peguei' em cada realocação"]
+    Q --> R["POST /api/separacao/marcar-realocacao<br/>{realocacao_id}"]
+    R --> S["Mov WMS tipo=S, origem=nf_venda (ou emprestimo)<br/>status = picado, soma em quantidade_pega"]
+```
+
+### 12a.2 Regras de re-busca cascade
+
+| Prioridade | Critério |
+|---|---|
+| 1 | Mesma empresa (dona) que está separando |
+| 2 | Empresas parceiras via `siso_emprestimo_regras` |
+| 3 | Dentro de cada empresa: tipo `picking` > `overstock` > `recebimento` > `expedicao` > `quarentena` |
+| 4 | Dentro do mesmo tipo: maior `disponivel` primeiro, depois `localizacao_codigo` ASC |
+
+Cada localização que cobre a qty gera uma linha em `siso_pedido_item_realocacoes` com `is_emprestimo=true/false`.
+
+### 12a.3 Desfazer parcial
+
+```
+POST /api/separacao/desfazer-parcial { pedido_item_id }
+```
+
+- Bloqueado se alguma realocação já está `picado` (não é possível reverter pick físico automaticamente)
+- Estorna `mov_saida_id` + `mov_ajuste_loc_zerou_id` se presente
+- Cancela realocações `aguardando_picking`
+- Reseta todos os campos `separacao_parcial*` do item
+- Se pedido estava em `pendente_realocacao` → volta para `em_separacao`
+
+### 12a.4 Cancelar onda com parciais
+
+`POST /api/separacao/cancelar` agora estorna automaticamente:
+- `mov_saida_id` de cada item marcado (incluindo via parcial)
+- Movs das realocações já `picado`
+- **NÃO** estorna `mov_ajuste_loc_zerou_id` — essa mov reflete descoberta física real (localização realmente estava vazia)
+
+### 12a.5 Tabelas afetadas
+
+| Tabela | Operação |
+|---|---|
+| `siso_movimentacoes` | INSERT (mov_saida, mov_ajuste_loc_zerou, estornos) |
+| `siso_pedido_itens` | UPDATE (separacao_parcial, quantidade_pega, parcial_*, mov_saida_id, mov_ajuste_loc_zerou_id) |
+| `siso_pedido_item_realocacoes` | INSERT (aguardando_picking) / UPDATE (picado/cancelado) |
+| `siso_pedidos` | UPDATE status_separacao (pendente_realocacao ↔ em_separacao) |
+| `siso_pedido_historico` | INSERT (parcial_loc_zerou, realocacao_picada, etc.) |
 
 ---
 

@@ -8,6 +8,19 @@ The system also handles the full post-approval workflow: separation (wave pickin
 
 **Volume:** ~500 orders/day across all companies.
 
+## Direção Estratégica (firmada 2026-05-18)
+
+O SISO está sendo unificado sob o módulo **WMS**. Decisões arquiteturais não-negociáveis pra próximas implementações:
+
+- **WMS é source of truth absoluta de estoque.** Todo saldo vive em `siso_estoque` + `siso_movimentacoes` (ledger imutável). A tabela `siso_pedido_item_estoques` (e todo o caminho legado de escrita) será descontinuada. Toda escrita de saldo passa por `wms_inserir_movimentacao`.
+- **Tiny ERP é camada fiscal/marketplace apenas.** Tiny deixa de controlar estoque próprio — recebe saldo do SISO como *downstream sync* (fire-and-forget). Continua responsável por emissão de NF e propagação pra Mercado Livre / Shopee.
+- **Todos os módulos legados migram pro WMS.** Separação, compras, inventário (legacy `/inventario`), transferências, etiquetas, dashboard de pedidos — tudo vira fluxo WMS ou é refatorado pra escrever via ledger. `/wms/*` é o destino canônico.
+- **Fluxos físicos são eventos timestamped.** Recebimento e putaway são passos separados — saldo entra em `RECEBIMENTO` (staging), e a mov de transferência pra localização final só acontece quando o operador confirma o putaway. Cada movimentação é evento auditável no ledger.
+- **Concorrência via reconciliação temporal.** Operações continuam durante inventário; aprovação de divergências calcula `saldo_esperado = saldo_no_bipe + Σ(movs entre contado_em e aprovado_em)` e só sinaliza divergência real se `qty_contada ≠ saldo_esperado`.
+- **Realtime é cross-module.** Toda tabela que afeta operação ao vivo (`siso_estoque`, `siso_movimentacoes`, `siso_pedidos`, `siso_pedido_itens`, `siso_fila_execucao`, `siso_localizacao_locks`) entra na publication `supabase_realtime`. Clientes reagem por subscrição, não por polling.
+
+Cutover (Plano 6) deixa de ser "big bang isolado de WMS" e passa a ser **a migração do app inteiro pra arquitetura WMS-first**.
+
 ## Stack
 
 - **Framework:** Next.js 16.1.6 (App Router), React 19, TypeScript
@@ -92,6 +105,7 @@ aguardando_compra → aguardando_nf → aguardando_separacao → em_separacao �
 - `aguardando_nf`: waiting for Tiny nota fiscal webhook
 - `aguardando_separacao`: ready for operator to start picking
 - `em_separacao`: wave picking in progress (barcode scanning)
+- `pendente_realocacao`: short pick happened and galpão has no coverage for remaining qty; needs supervisor action
 - `separado`: picking complete, ready for packing
 - `embalado`: packing done, ready for expedition
 
@@ -144,7 +158,7 @@ src/
         iniciar/route.ts           # Start separation (POST)
         bipar/route.ts             # Barcode scan during picking (POST)
         bipar-checklist/route.ts   # Barcode scan in checklist phase (POST)
-        marcar-item/route.ts       # Mark item as picked (POST)
+        marcar-item/route.ts       # Mark item as picked (POST) — generates WMS ledger mov on mark, estorno on unmark
         desfazer-bip/route.ts      # Undo a barcode scan (POST)
         concluir/route.ts          # Complete separation (POST)
         concluir-oc/route.ts       # Complete OC separation: auto-resolve compra + enqueue execution (POST)
@@ -152,9 +166,9 @@ src/
         confirmar-item-embalagem/route.ts  # Confirm item packed (POST)
         expedir/route.ts           # Dispatch order (POST)
         retry-etiqueta/route.ts    # Retry label printing after failure (POST)
-        checklist-items/route.ts   # Get checklist items (GET)
+        checklist-items/route.ts   # Get checklist items (GET) — includes quantidade_pega, separacao_parcial, realocacoes[]
         encaminhar/route.ts        # Forward order to another galpão (POST)
-        cancelar/route.ts          # Cancel separation (POST)
+        cancelar/route.ts          # Cancel separation (POST) — estorna movs WMS + cancela realocações
         reiniciar/route.ts         # Restart separation (POST)
         voltar-etapa/route.ts      # Go back one step (POST)
         tags/route.ts              # Manage separacao tags (GET list, POST add/remove/set)
@@ -164,6 +178,10 @@ src/
         forcar-pendente/route.ts   # Force orders back to pending — batch (POST)
         [pedidoId]/forcar-pendente/route.ts  # Force single order back to pending (PATCH)
         localizacao/route.ts       # Update product location in Tiny + DB (POST)
+        parcial/route.ts           # Parcial: 2 movs + re-busca cascade (POST)
+        marcar-realocacao/route.ts # Confirma pick da realocação no WMS (POST)
+        realocacao/[id]/route.ts   # Cancela realocação pendente (DELETE)
+        desfazer-parcial/route.ts  # Estorna parcial + reseta campos (POST)
       compras/
         route.ts                   # List purchase items by status: comprar/receber (GET)
         comprar/route.ts           # Mark items as purchased (comprado) by SKU, distribute across orders (POST)
@@ -257,6 +275,7 @@ src/
       tab-embalados.tsx            # Packed orders tab
       tab-expedidos.tsx            # Dispatched orders tab
       audio-feedback.ts            # Audio beep on scan
+      parcial-modal.tsx            # Modal de qty + loc zerou (Parcial)
     compras/
       fornecedor-comprar-card.tsx  # Supplier card with items by SKU for Comprar tab
       fornecedor-receber-card.tsx  # Supplier card with received items for Receber tab
@@ -313,6 +332,12 @@ src/
     compras-utils.ts               # Shared utilities for compras module (allowed cargos, field reset)
     inventario-processor.ts        # Consolidate + process/reverse inventory sessions via Tiny
     transferencia-processor.ts     # Process/reverse inter-galpão stock transfers via Tiny
+    # ── Separação (short pick + re-alocação) ──
+    separacao/
+      wms-mapping.ts             # Resolve Tiny produto/loc → uuids WMS
+      wms-mapping.test.ts
+      realocacao-resolver.ts     # Algoritmo de re-busca cascade (mesma empresa → tipo loc → maior disponivel)
+      realocacao-resolver.test.ts
     # ── Cross (catálogo e equivalência) ──
     cross/types.ts                 # Tipos compartilhados
     cross/oem-extractor.ts         # Regex de extração de OEM (porta do projeto cross)
@@ -487,9 +512,10 @@ All tables are prefixed with `siso_`:
 
 | Table | Purpose |
 |---|---|
-| `siso_pedidos` | Orders with stock enrichment, suggestion, status, separation status. Has `empresa_origem_id` FK. `separacao_tags text[]` for user-created tags (separate from Tiny `marcadores`). |
-| `siso_pedido_itens` | Per-item data (unique: `pedido_id + produto_id`). Has legacy `estoque_cwb_*`/`estoque_sp_*` columns + normalized FK. |
+| `siso_pedidos` | Orders with stock enrichment, suggestion, status, separation status. Has `empresa_origem_id` FK. `separacao_tags text[]` for user-created tags (separate from Tiny `marcadores`). `status_separacao` includes `pendente_realocacao` (short pick without coverage). |
+| `siso_pedido_itens` | Per-item data (unique: `pedido_id + produto_id`). Has legacy `estoque_cwb_*`/`estoque_sp_*` columns + normalized FK. New cols: `quantidade_pega`, `separacao_parcial`, `parcial_motivo/em/por`, `mov_saida_id`, `mov_ajuste_loc_zerou_id`. |
 | `siso_pedido_item_estoques` | **Primary stock source.** Normalized stock per empresa (pedido_id, produto_id, empresa_id). API reads from here. |
+| `siso_pedido_item_realocacoes` | Re-allocation rows created when a short pick zeroes a location and another location must be used. FK to `siso_pedido_itens`. Status: `aguardando_picking`, `picado`, `cancelado`. |
 | `siso_fila_execucao` | Execution queue with empresa_id, retry logic, exponential backoff |
 | `siso_usuarios` | Users with name, PIN, cargo, active flag, printnode printer config |
 | `siso_sessoes` | Server-side sessions (id, usuario_id, expira_em) |

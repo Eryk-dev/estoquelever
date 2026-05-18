@@ -257,6 +257,8 @@ stateDiagram-v2
     aguardando_nf --> aguardando_separacao: Webhook NF recebido
     aguardando_separacao --> em_separacao: Operador inicia picking
     em_separacao --> separado: Todos itens bipados + concluir
+    em_separacao --> pendente_realocacao: Short pick sem cobertura no galpao
+    pendente_realocacao --> em_separacao: Desfazer parcial ou supervisor reabre
     separado --> embalado: Todos itens embalados
     embalado --> expedido: Operador despacha
     expedido --> [*]
@@ -267,6 +269,7 @@ stateDiagram-v2
     aguardando_compra --> em_separacao: Pick OC - inicia separacao OC<br/>Operador resolve compra items primeiro
     em_separacao --> separado: Concluir OC - auto-resolve compra
     note right of aguardando_compra: Pick OC: atalho para separar<br/>itens OC fisicamente disponiveis<br/>Blindagem: itens com compra pendente<br/>nao transitam para em_separacao
+    note right of pendente_realocacao: Short pick: operador encontrou menos<br/>unidades que o pedido + galpao nao tem<br/>cobertura em nenhuma outra localizacao
 ```
 
 ### Acoes especiais durante separacao

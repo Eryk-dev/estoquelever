@@ -1113,7 +1113,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **File:** `src/app/api/separacao/marcar-item/route.ts`
 
-**Purpose:** Toggle an item's separacao_marcado checkbox during wave-picking.
+**Purpose:** Toggle an item's separacao_marcado checkbox during wave-picking. Also generates a WMS ledger movement on mark and estorna it on unmark.
 
 **Auth:** None
 
@@ -1144,6 +1144,13 @@ This is the **authoritative, comprehensive reference** for every API route in th
 }
 ```
 
+**Response (400 - Item already partially picked):**
+```json
+{
+  "error": "Item com separacao_parcial=true — use /api/separacao/parcial"
+}
+```
+
 **Response (404 - Item or pedido not found):**
 ```json
 {
@@ -1154,10 +1161,15 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Business Logic:**
 - Fetches item from `siso_pedido_itens`
 - Validates parent pedido has status_separacao = "em_separacao" or "aguardando_separacao"
+- Blocks if `separacao_parcial = true` (must use `/api/separacao/parcial` instead)
 - Updates separacao_marcado and separacao_marcado_em (null if unmarked)
+- On mark: calls WMS `wms_inserir_movimentacao` (tipo=S, origem_tipo=nf_venda) — graceful failure (logs warn, proceeds)
+- On unmark: estorna the ledger movement stored in `mov_saida_id` — graceful failure
 
 **Side Effects:**
-- Updates `siso_pedido_itens.separacao_marcado`, `separacao_marcado_em`
+- Updates `siso_pedido_itens.separacao_marcado`, `separacao_marcado_em`, `mov_saida_id`
+- On mark: inserts row in `siso_movimentacoes` (origem_tipo=`nf_venda`)
+- On unmark: inserts estorno row in `siso_movimentacoes` (estorno_de = previous mov_id)
 - Logs on error
 
 ---
@@ -1340,7 +1352,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **File:** `src/app/api/separacao/checklist-items/route.ts`
 
-**Purpose:** Fetch individual items for the given pedido IDs with localizacao and stock info. For transfers, resolves to the separating empresa (the one that will ship), not the origin empresa.
+**Purpose:** Fetch individual items for the given pedido IDs with localizacao, stock info, and short-pick state. For transfers, resolves to the separating empresa (the one that will ship), not the origin empresa.
 
 **Auth:** None
 
@@ -1359,6 +1371,10 @@ This is the **authoritative, comprehensive reference** for every API route in th
       "gtin": "string | null",
       "descricao": "string",
       "quantidade": "number (quantidade_pedida)",
+      "quantidade_pega": "number | null",
+      "separacao_parcial": "boolean",
+      "parcial_motivo": "string | null",
+      "parcial_em": "ISO datetime | null",
       "separacao_marcado": "boolean",
       "separacao_marcado_em": "ISO datetime | null",
       "quantidade_bipada": "number",
@@ -1369,7 +1385,21 @@ This is the **authoritative, comprehensive reference** for every API route in th
       "saldo": "number",
       "disponivel": "number",
       "empresa_origem_id": "uuid (separating empresa)",
-      "galpao_nome": "string | null"
+      "galpao_nome": "string | null",
+      "realocacoes": [
+        {
+          "id": "uuid",
+          "empresa_dona_id": "uuid",
+          "empresa_nome": "string",
+          "localizacao_id": "uuid",
+          "localizacao_codigo": "string",
+          "quantidade": "number",
+          "is_emprestimo": "boolean",
+          "empresa_devedora_id": "uuid | null",
+          "status": "aguardando_picking",
+          "criado_em": "ISO datetime"
+        }
+      ]
     }
   ]
 }
@@ -1384,6 +1414,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
   - If status = "aguardando_compra": exclude items with compra_status = null (only show OC items)
   - Otherwise: exclude items with compra_status = "indisponivel" or "cancelado"
 - Returns items with empresa_origem_id = separating empresa (for location updates)
+- Includes `realocacoes` for items with `separacao_parcial=true` — only rows with `status='aguardando_picking'`
 
 **Side Effects:** None (read-only)
 
@@ -1392,6 +1423,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Notes:**
 - For transferência orders, empresa_origem_id refers to the separating empresa, not the origin empresa
 - Localizacao comes from the separating empresa's stock snapshot
+- `realocacoes` array is empty (not null) when item has no pending re-allocations
 
 ---
 
@@ -1399,7 +1431,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **File:** `src/app/api/separacao/cancelar/route.ts`
 
-**Purpose:** Cancel an in-progress separation. Resets all item checkmarks and moves pedidos back to 'aguardando_separacao'.
+**Purpose:** Cancel an in-progress separation. Resets all item checkmarks, estorna WMS movements, cancels pending re-allocations, and moves pedidos back to 'aguardando_separacao'.
 
 **Auth:** None
 
@@ -1419,12 +1451,257 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```
 
 **Business Logic:**
+- For each item with `mov_saida_id`: estorna the ledger movement in WMS (graceful failure)
+- For items with `separacao_parcial=true`:
+  - Estorna `mov_saida_id` (reflects physical pick already done — does NOT estorn `mov_ajuste_loc_zerou_id` which reflects physical discovery)
+  - Cancels realocações with status `aguardando_picking` in `siso_pedido_item_realocacoes`
+  - Estorna mov_saida of any realocações already `picado`
+  - Resets partial fields: `separacao_parcial=false`, `quantidade_pega=null`, `parcial_motivo/em/por=null`, `mov_saida_id=null`, `mov_ajuste_loc_zerou_id=null`
 - Resets all items: separacao_marcado = false, separacao_marcado_em = null
 - Resets pedidos: status_separacao = "aguardando_separacao", separacao_operador_id = null, separacao_iniciada_em = null
 
 **Side Effects:**
-- Updates `siso_pedido_itens` and `siso_pedidos`
+- Updates `siso_pedido_itens` (resets marcado + partial fields)
+- Updates `siso_pedidos` (resets status)
+- Inserts estorno rows in `siso_movimentacoes` for each estorned movement
+- Updates `siso_pedido_item_realocacoes.status = 'cancelado'`
+- Registers audit event in `siso_pedido_historico`
 - Logs to `siso_logs`
+
+---
+
+### POST /api/separacao/parcial
+
+**File:** `src/app/api/separacao/parcial/route.ts`
+
+**Purpose:** Register a short pick — operator found fewer units than requested at the current location. Creates WMS ledger movements, searches for re-allocation candidates in cascade, and either creates realocacao rows or transitions pedido to `pendente_realocacao`.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:**
+```json
+{
+  "pedido_item_id": "uuid",
+  "quantidade_pega": "number",
+  "loc_zerou": "boolean"
+}
+```
+
+**Response (200 — coverage found):**
+```json
+{
+  "status": "realocado",
+  "realocacoes": [
+    {
+      "id": "uuid",
+      "empresa_dona_id": "uuid",
+      "empresa_nome": "string",
+      "localizacao_id": "uuid",
+      "localizacao_codigo": "string",
+      "quantidade": "number",
+      "is_emprestimo": "boolean",
+      "empresa_devedora_id": "uuid | null"
+    }
+  ]
+}
+```
+
+**Response (200 — all qty satisfied):**
+```json
+{
+  "status": "completo"
+}
+```
+
+**Response (200 — no coverage):**
+```json
+{
+  "status": "aguardando_supervisor",
+  "motivo": "sem_cobertura_galpao"
+}
+```
+
+**Response (400 - Validation):**
+```json
+{
+  "error": "string"
+}
+```
+
+**Business Logic:**
+1. Validates `quantidade_pega > 0` and `quantidade_pega < quantidade_pedida`
+2. Creates WMS movement: tipo=S, origem_tipo=`nf_venda`, qty=`quantidade_pega` → stores `mov_saida_id`
+3. If `loc_zerou=true`: creates second WMS movement: tipo=S, origem_tipo=`ajuste_pick_zerou`, qty=(saldo restante da localização) — reflects physical discovery that location is empty → stores `mov_ajuste_loc_zerou_id`
+4. Sets item: `separacao_parcial=true`, `quantidade_pega`, `parcial_em/por`, `separacao_marcado=true`
+5. Re-allocation cascade for remaining qty (qty_faltante = quantidade_pedida - quantidade_pega):
+   - Search same empresa first → then empréstimo partners
+   - Within each empresa: prefer tipo=picking > overstock > recebimento > expedicao > quarentena
+   - Within same tipo: prefer highest disponivel, then localizacao_codigo ASC
+   - Inserts rows in `siso_pedido_item_realocacoes` with status=`aguardando_picking`
+6. If coverage found: returns `realocado` + list of realocacoes
+7. If all qty satisfied by first location: returns `completo`
+8. If no coverage: transitions pedido to `pendente_realocacao`, records audit event `realocacao_sem_cobertura_galpao`
+9. Always records audit event `parcial_loc_zerou` in `siso_pedido_historico`
+
+**Side Effects:**
+- Inserts 1-2 rows in `siso_movimentacoes` (origem_tipo=`nf_venda` + optionally `ajuste_pick_zerou`)
+- Updates `siso_pedido_itens`: `separacao_parcial`, `quantidade_pega`, `parcial_em`, `parcial_por`, `parcial_motivo`, `mov_saida_id`, `mov_ajuste_loc_zerou_id`, `separacao_marcado=true`
+- Inserts rows in `siso_pedido_item_realocacoes` (status=`aguardando_picking`)
+- May update `siso_pedidos.status_separacao = 'pendente_realocacao'` if no coverage
+- Inserts events in `siso_pedido_historico`: `parcial_loc_zerou` (always) + `realocacao_sem_cobertura_galpao` (if sem_cobertura)
+
+---
+
+### POST /api/separacao/marcar-realocacao
+
+**File:** `src/app/api/separacao/marcar-realocacao/route.ts`
+
+**Purpose:** Confirm that the operator has physically picked a re-allocated item from the indicated location. Creates a WMS ledger movement.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:**
+```json
+{
+  "realocacao_id": "uuid"
+}
+```
+
+**Response (200):**
+```json
+{
+  "status": "picado",
+  "mov_id": "uuid"
+}
+```
+
+**Response (400 - Already picked or cancelled):**
+```json
+{
+  "error": "Realocacao ja foi picada ou cancelada",
+  "status_atual": "string"
+}
+```
+
+**Response (404 - Not found):**
+```json
+{
+  "error": "Realocacao nao encontrada"
+}
+```
+
+**Business Logic:**
+- Fetches realocacao row from `siso_pedido_item_realocacoes`
+- Validates status = `aguardando_picking`
+- Creates WMS movement: tipo=S, origem_tipo=`nf_venda` (regular stock) or `emprestimo` (if `is_emprestimo=true`)
+- Updates realocacao: `status = 'picado'`, `mov_id`
+- Adds `quantidade` to parent item's `quantidade_pega`
+- Registers audit event `realocacao_picada`
+
+**Side Effects:**
+- Inserts row in `siso_movimentacoes`
+- Updates `siso_pedido_item_realocacoes.status = 'picado'`
+- Updates `siso_pedido_itens.quantidade_pega` (+=quantidade)
+- Inserts event `realocacao_picada` in `siso_pedido_historico`
+
+---
+
+### DELETE /api/separacao/realocacao/[id]
+
+**File:** `src/app/api/separacao/realocacao/[id]/route.ts`
+
+**Purpose:** Cancel a pending re-allocation (status=`aguardando_picking`). Does not create any WMS movement since no pick has occurred yet.
+
+**Auth:** X-Session-Id (required)
+
+**Path Params:**
+- `id`: realocacao UUID
+
+**Response (200):**
+```json
+{
+  "status": "cancelado"
+}
+```
+
+**Response (400 - Already picked):**
+```json
+{
+  "error": "Realocacao ja foi picada — use desfazer-parcial para reverter"
+}
+```
+
+**Response (404 - Not found):**
+```json
+{
+  "error": "Realocacao nao encontrada"
+}
+```
+
+**Business Logic:**
+- Validates realocacao has status = `aguardando_picking` (cannot cancel already-picked)
+- Updates realocacao: `status = 'cancelado'`
+- No WMS movement created (nothing was physically picked)
+- Registers audit event `realocacao_cancelada`
+
+**Side Effects:**
+- Updates `siso_pedido_item_realocacoes.status = 'cancelado'`
+- Inserts event `realocacao_cancelada` in `siso_pedido_historico`
+
+---
+
+### POST /api/separacao/desfazer-parcial
+
+**File:** `src/app/api/separacao/desfazer-parcial/route.ts`
+
+**Purpose:** Undo a short pick entirely. Estorna all ledger movements (saida + ajuste), cancels pending realocacoes, resets all partial fields on the item. Blocked if any realocacao has already been picked.
+
+**Auth:** X-Session-Id (required)
+
+**Request Body:**
+```json
+{
+  "pedido_item_id": "uuid"
+}
+```
+
+**Response (200):**
+```json
+{
+  "status": "desfeito"
+}
+```
+
+**Response (400 - Realocacao already picked):**
+```json
+{
+  "error": "Realocacao ja foi picada — nao e possivel desfazer parcial",
+  "realocacao_id": "uuid"
+}
+```
+
+**Response (404 - Item not found):**
+```json
+{
+  "error": "Item nao encontrado"
+}
+```
+
+**Business Logic:**
+- Validates no realocacao has status = `picado` (would require manual correction)
+- Estorna `mov_saida_id` (the original short-pick saida movement)
+- Estorna `mov_ajuste_loc_zerou_id` if present
+- Cancels all realocacoes with status = `aguardando_picking`
+- Resets item fields: `separacao_parcial=false`, `quantidade_pega=null`, `parcial_motivo/em/por=null`, `mov_saida_id=null`, `mov_ajuste_loc_zerou_id=null`, `separacao_marcado=false`
+- If pedido was in `pendente_realocacao`: transitions back to `em_separacao`
+- Registers audit event `parcial_desfeito`
+
+**Side Effects:**
+- Inserts estorno rows in `siso_movimentacoes` (estorno_de = original mov IDs)
+- Updates `siso_pedido_item_realocacoes.status = 'cancelado'` for pending rows
+- Resets `siso_pedido_itens` partial fields
+- May update `siso_pedidos.status_separacao = 'em_separacao'`
+- Inserts event `parcial_desfeito` in `siso_pedido_historico`
 
 ---
 

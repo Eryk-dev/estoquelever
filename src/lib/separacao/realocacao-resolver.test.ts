@@ -219,4 +219,52 @@ describe("resolverRealocacao", () => {
 
     expect(r.status).toBe("sem_cobertura");
   });
+
+  it("exclui múltiplas localizações via localizacoes_excluir", async () => {
+    const deps: ResolverDeps = {
+      listarEmpresasDoGrupoMesmoGalpao: vi.fn(async () => [empresaOrigem]),
+      listarSaldoCandidato: vi.fn(async ({ localizacao_id_excluir, localizacoes_excluir }) => {
+        const todas: EstoqueCandidato[] = [
+          {
+            empresa_dona_id: empresaOrigem,
+            localizacao_id: "loc-A",
+            localizacao_codigo: "A",
+            localizacao_tipo: "picking",
+            disponivel: 5,
+          },
+          {
+            empresa_dona_id: empresaOrigem,
+            localizacao_id: "loc-B",
+            localizacao_codigo: "B",
+            localizacao_tipo: "picking",
+            disponivel: 5,
+          },
+          {
+            empresa_dona_id: empresaOrigem,
+            localizacao_id: "loc-C",
+            localizacao_codigo: "C",
+            localizacao_tipo: "picking",
+            disponivel: 5,
+          },
+        ];
+        const excluidas = new Set(localizacoes_excluir ?? (localizacao_id_excluir ? [localizacao_id_excluir] : []));
+        return todas.filter((c) => !excluidas.has(c.localizacao_id));
+      }),
+    };
+
+    const r = await resolverRealocacao(
+      {
+        produto_id: "prod1",
+        empresa_origem_id: empresaOrigem,
+        galpao_id: galpao,
+        localizacoes_excluir: ["loc-A", "loc-B"],
+        qty_residual: 3,
+      },
+      deps,
+    );
+
+    expect(r.status).toBe("realocado");
+    expect(r.realocacoes).toHaveLength(1);
+    expect(r.realocacoes[0].localizacao_id).toBe("loc-C");
+  });
 });

@@ -13,7 +13,10 @@ export interface ResolverInput {
   produto_id: string;
   empresa_origem_id: string;
   galpao_id: string;
-  localizacao_id_original: string;
+  /** Loc original do item (compat com chamadas legacy — usado quando localizacoes_excluir não é passado). */
+  localizacao_id_original?: string;
+  /** Lista completa de localizações a excluir do pool. Tem precedência sobre localizacao_id_original. */
+  localizacoes_excluir?: string[];
   qty_residual: number;
 }
 
@@ -40,7 +43,9 @@ export interface ResolverDeps {
     produto_id: string;
     galpao_id: string;
     empresas_grupo: string[];
-    localizacao_id_excluir: string;
+    /** @deprecated use `localizacoes_excluir`. Mantido por compat. */
+    localizacao_id_excluir?: string;
+    localizacoes_excluir?: string[];
   }) => Promise<EstoqueCandidato[]>;
 }
 
@@ -61,11 +66,20 @@ export async function resolverRealocacao(
     input.galpao_id,
   );
 
+  const excluir =
+    input.localizacoes_excluir && input.localizacoes_excluir.length > 0
+      ? input.localizacoes_excluir
+      : input.localizacao_id_original
+        ? [input.localizacao_id_original]
+        : [];
+
   const candidatos = await deps.listarSaldoCandidato({
     produto_id: input.produto_id,
     galpao_id: input.galpao_id,
     empresas_grupo: empresas,
-    localizacao_id_excluir: input.localizacao_id_original,
+    localizacoes_excluir: excluir,
+    // Mantém legacy pra deps que ainda lêem só localizacao_id_excluir
+    localizacao_id_excluir: excluir[0],
   });
 
   if (candidatos.length === 0) {
@@ -147,10 +161,18 @@ function defaultDeps(): ResolverDeps {
       produto_id,
       galpao_id,
       empresas_grupo,
+      localizacoes_excluir,
       localizacao_id_excluir,
     }) => {
       const supabase = createServiceClient();
-      const { data } = await supabase
+      const excluir =
+        localizacoes_excluir && localizacoes_excluir.length > 0
+          ? localizacoes_excluir
+          : localizacao_id_excluir
+            ? [localizacao_id_excluir]
+            : [];
+
+      let query = supabase
         .from("siso_estoque")
         .select(
           `
@@ -163,8 +185,13 @@ function defaultDeps(): ResolverDeps {
         .eq("produto_id", produto_id)
         .eq("galpao_id", galpao_id)
         .in("empresa_dona_id", empresas_grupo)
-        .neq("localizacao_id", localizacao_id_excluir)
         .gt("disponivel", 0);
+
+      if (excluir.length > 0) {
+        query = query.not("localizacao_id", "in", `(${excluir.join(",")})`);
+      }
+
+      const { data } = await query;
 
       return (data ?? []).map((row) => {
         const loc = row.siso_localizacoes as unknown as {

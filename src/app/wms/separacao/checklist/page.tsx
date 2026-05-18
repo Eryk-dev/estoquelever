@@ -637,20 +637,31 @@ export default function WmsChecklistPage() {
     }
   }
 
-  // Handle marcar realocação
-  async function handleMarcarRealocacao(realocacaoId: string) {
+  // Handle marcar realocação (1 ou N — batch paralelo pra UI consolidada)
+  async function handleMarcarRealocacao(realocacaoIds: string | string[]) {
+    const ids = Array.isArray(realocacaoIds) ? realocacaoIds : [realocacaoIds];
     try {
-      const res = await sisoFetch("/api/wms/separacao/marcar-realocacao", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ realocacao_id: realocacaoId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        toast.error(data.error ?? "Erro ao marcar realocação");
-        return;
+      const results = await Promise.all(
+        ids.map((id) =>
+          sisoFetch("/api/wms/separacao/marcar-realocacao", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ realocacao_id: id }),
+          }),
+        ),
+      );
+      const erradas = results.filter((r) => !r.ok);
+      if (erradas.length > 0) {
+        toast.error(
+          erradas.length === ids.length
+            ? "Erro ao marcar realocação"
+            : `${ids.length - erradas.length}/${ids.length} marcada(s) — algumas falharam`,
+        );
+      } else {
+        toast.success(
+          ids.length === 1 ? "Realocação picada" : `${ids.length} realocações picadas`,
+        );
       }
-      toast.success("Realocação picada");
       queryClient.invalidateQueries({ queryKey });
     } catch {
       toast.error("Erro de conexão");
@@ -859,12 +870,10 @@ export default function WmsChecklistPage() {
             </div>
           )}
 
-          {/* ─── Realocações — todas as tentativas em ordem cronológica ─── */}
+          {/* ─── Realocações — agrupadas por loc+status pra UI consolidada ─── */}
           {(() => {
-            const realocacaoLinhas: Array<{
-              item: ChecklistItem;
-              realocacao: Realocacao;
-            }> = [];
+            type LinhaRaw = { item: ChecklistItem; realocacao: Realocacao };
+            const realocacaoLinhas: LinhaRaw[] = [];
             for (const item of items) {
               if (item.compra_status === "oc_pendente") continue;
               for (const r of item.realocacoes ?? []) {
@@ -873,35 +882,110 @@ export default function WmsChecklistPage() {
             }
             if (realocacaoLinhas.length === 0) return null;
 
-            // Ordena cronologicamente
-            realocacaoLinhas.sort((a, b) =>
-              a.realocacao.criado_em.localeCompare(b.realocacao.criado_em),
+            // Agrupa por chave (sku + loc + is_emprestimo + status group + empresa)
+            // Status group: "ativa" (aguardando_picking) | "picada" (picado/picado_parcial) | "cancelada"
+            type Grupo = {
+              key: string;
+              sku: string;
+              item_primeiro: ChecklistItem;
+              realocs: Realocacao[];
+              status_group: "ativa" | "picada" | "cancelada";
+              localizacao_codigo: string;
+              is_emprestimo: boolean;
+              empresa_nome: string | null;
+              qty_sugerida_total: number;
+              qty_pega_total: number;
+              criado_em_primeiro: string;
+            };
+
+            const grupos = new Map<string, Grupo>();
+            for (const { item, realocacao: r } of realocacaoLinhas) {
+              const statusGroup =
+                r.status === "aguardando_picking"
+                  ? "ativa"
+                  : r.status === "cancelado"
+                    ? "cancelada"
+                    : "picada"; // picado + picado_parcial juntos no histórico
+
+              const key = [
+                item.sku,
+                r.localizacao_codigo,
+                r.is_emprestimo ? "emp" : "own",
+                r.empresa_dona_id,
+                statusGroup,
+              ].join("|");
+
+              const existente = grupos.get(key);
+              if (existente) {
+                existente.realocs.push(r);
+                existente.qty_sugerida_total += r.quantidade;
+                existente.qty_pega_total += r.quantidade_pega ?? 0;
+                if (r.criado_em < existente.criado_em_primeiro) {
+                  existente.criado_em_primeiro = r.criado_em;
+                }
+              } else {
+                grupos.set(key, {
+                  key,
+                  sku: item.sku,
+                  item_primeiro: item,
+                  realocs: [r],
+                  status_group: statusGroup,
+                  localizacao_codigo: r.localizacao_codigo,
+                  is_emprestimo: r.is_emprestimo,
+                  empresa_nome: r.empresa_nome,
+                  qty_sugerida_total: r.quantidade,
+                  qty_pega_total: r.quantidade_pega ?? 0,
+                  criado_em_primeiro: r.criado_em,
+                });
+              }
+            }
+
+            const gruposOrdenados = [...grupos.values()].sort((a, b) =>
+              a.criado_em_primeiro.localeCompare(b.criado_em_primeiro),
             );
 
             return (
               <>
                 <h2 className="wms-sec-h">
-                  Realocações ({realocacaoLinhas.length})
+                  Realocações ({gruposOrdenados.length})
                 </h2>
                 <div>
-                  {realocacaoLinhas.map(({ item, realocacao: r }) => (
-                    <RealocacaoRow
-                      key={`realoc-${r.id}`}
-                      item={item}
-                      realocacao={r}
-                      onMarcar={() => handleMarcarRealocacao(r.id)}
-                      onParcial={() =>
-                        setParcialModal({
-                          itemIds: [r.id],
-                          isRealocacao: true,
-                          sku: item.sku,
-                          localizacao: r.localizacao_codigo,
-                          quantidade: r.quantidade,
-                          loading: false,
-                        })
-                      }
-                    />
-                  ))}
+                  {gruposOrdenados.map((g) => {
+                    const realocIds = g.realocs.map((r) => r.id);
+                    const realocAgregada: Realocacao = {
+                      ...g.realocs[0],
+                      quantidade: g.qty_sugerida_total,
+                      quantidade_pega:
+                        g.status_group === "ativa" ? null : g.qty_pega_total,
+                      // status visual: pega o "pior" status do grupo pra mostrar parcial
+                      status:
+                        g.status_group === "ativa"
+                          ? "aguardando_picking"
+                          : g.status_group === "cancelada"
+                            ? "cancelado"
+                            : g.realocs.some((r) => r.status === "picado_parcial")
+                              ? "picado_parcial"
+                              : "picado",
+                    };
+                    return (
+                      <RealocacaoRow
+                        key={`realoc-grp-${g.key}`}
+                        item={g.item_primeiro}
+                        realocacao={realocAgregada}
+                        onMarcar={() => handleMarcarRealocacao(realocIds)}
+                        onParcial={() =>
+                          setParcialModal({
+                            itemIds: realocIds,
+                            isRealocacao: true,
+                            sku: g.sku,
+                            localizacao: g.localizacao_codigo,
+                            quantidade: g.qty_sugerida_total,
+                            loading: false,
+                          })
+                        }
+                      />
+                    );
+                  })}
                 </div>
               </>
             );

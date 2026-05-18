@@ -71,14 +71,62 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Estorna movimentações do ledger WMS se existirem
-    if (item.mov_saida_id) {
+    // Estorna movs via tabela ponte:
+    // - mov com 1 único link → full estorno
+    // - mov compartilhada (N links) → estorno parcial proporcional via RPC
+    const { data: links } = await supabase
+      .from("siso_pedido_item_mov_links")
+      .select("id, mov_id, qty, tipo_link")
+      .eq("pedido_item_id", item.id)
+      .eq("tipo_link", "saida");
+
+    let totalEstornado = 0;
+
+    for (const link of links ?? []) {
+      const { count } = await supabase
+        .from("siso_pedido_item_mov_links")
+        .select("id", { count: "exact", head: true })
+        .eq("mov_id", link.mov_id);
+
+      if (count === 1) {
+        await estornarMovimentacao({
+          mov_id: link.mov_id as string,
+          usuario_id: session.id,
+          observacoes: "Desfazer parcial — operador (link único)",
+        });
+      } else {
+        await supabase.rpc("wms_estornar_parcial_movimentacao", {
+          p_mov_id: link.mov_id,
+          p_qty: link.qty,
+          p_usuario_id: session.id,
+          p_observacoes: "Desfazer parcial — operador (estorno parcial)",
+        });
+      }
+
+      await supabase
+        .from("siso_pedido_item_mov_links")
+        .delete()
+        .eq("id", link.id);
+
+      totalEstornado += Number(link.qty);
+    }
+
+    // Fallback legacy: item sem links mas com mov_saida_id (criado pré-fix-pack)
+    if ((links ?? []).length === 0 && item.mov_saida_id) {
       await estornarMovimentacao({
         mov_id: item.mov_saida_id,
         usuario_id: session.id,
-        observacoes: "Desfazer parcial — operador",
+        observacoes: "Desfazer parcial — operador (legacy path)",
       });
     }
+
+    // Apaga links de ajuste_loc_zerou (NÃO estorna mov — reflete descoberta física)
+    await supabase
+      .from("siso_pedido_item_mov_links")
+      .delete()
+      .eq("pedido_item_id", item.id)
+      .eq("tipo_link", "ajuste_loc_zerou");
+
     // mov_ajuste_loc_zerou_id NUNCA é estornado por design — reflete descoberta física.
     // Espelha cancelar/route.ts:79-80 e a spec original (invariantes).
 
@@ -89,7 +137,22 @@ export async function POST(request: NextRequest) {
       .eq("pedido_item_id", item.id)
       .eq("status", "aguardando_picking");
 
-    // Reseta campos do item
+    // Decrementa quantidade_pega via RPC atômica (pelo total efetivamente estornado).
+    // Caminho legacy (sem links) zera direto via UPDATE.
+    if (totalEstornado > 0) {
+      await supabase.rpc("wms_acumular_qty_pega", {
+        p_item_id: item.id,
+        p_delta: -totalEstornado,
+      });
+    }
+    if ((links ?? []).length === 0) {
+      await supabase
+        .from("siso_pedido_itens")
+        .update({ quantidade_pega: null })
+        .eq("id", item.id);
+    }
+
+    // Reseta campos do item (quantidade_pega já tratado acima)
     await supabase
       .from("siso_pedido_itens")
       .update({
@@ -97,7 +160,6 @@ export async function POST(request: NextRequest) {
         parcial_motivo: null,
         parcial_em: null,
         parcial_por: null,
-        quantidade_pega: null,
         separacao_marcado: false,
         separacao_marcado_em: null,
         mov_saida_id: null,

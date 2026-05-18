@@ -178,6 +178,18 @@ export async function checkAndReleasePedidos(
       continue;
     }
 
+    // Coleta itens cujo estoque já foi lançado (mov_saida_id setado via realoc/parcial).
+    // Sem isso, o worker tentaria deduzir o estoque desses itens uma 2ª vez no fluxo OC,
+    // causando saldo negativo. Passar via payload é mais robusto que re-consultar no worker.
+    const { data: itensRaw } = await supabase
+      .from("siso_pedido_itens")
+      .select("id, mov_saida_id")
+      .eq("pedido_id", pedidoId);
+
+    const itensJaLancados = (itensRaw ?? [])
+      .filter((i) => i.mov_saida_id != null)
+      .map((i) => i.id as number);
+
     // Insert job in execution queue
     const { error: queueError } = await supabase
       .from("siso_fila_execucao")
@@ -186,6 +198,7 @@ export async function checkAndReleasePedidos(
         tipo: "lancar_estoque",
         empresa_id: empresaExecId,
         decisao,
+        payload: { itens_ja_lancados: itensJaLancados },
       });
 
     if (queueError) {

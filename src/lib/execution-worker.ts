@@ -93,6 +93,9 @@ interface FilaJob {
   decisao: string;
   tentativas: number;
   max_tentativas: number;
+  payload?: {
+    itens_ja_lancados?: number[];
+  } | null;
 }
 
 export interface ProcessResult {
@@ -120,7 +123,7 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
   const { data: jobs, error } = await supabase
     .from("siso_fila_execucao")
     .select(
-      "id, pedido_id, tipo, empresa_id, decisao, tentativas, max_tentativas",
+      "id, pedido_id, tipo, empresa_id, decisao, tentativas, max_tentativas, payload",
     )
     .eq("status", "pendente")
     .or(`proximo_retry_em.is.null,proximo_retry_em.lte.${now}`)
@@ -751,11 +754,15 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
       });
     } else {
       // Legacy Tiny: enfileira pos_nf direto pra rodar via worker.
+      // Forward payload (itens_ja_lancados) pro pos-nf, onde o loop de saída
+      // por item realmente acontece. Sem isso, itens lançados via realocação
+      // seriam deduzidos uma 2ª vez no fluxo OC.
       const { error: insertErr } = await supabase.from("siso_fila_execucao").insert({
         pedido_id: job.pedido_id,
         tipo: "lancar_estoque_pos_nf",
         empresa_id: job.empresa_id,
         decisao: job.decisao,
+        payload: job.payload ?? {},
         atualizado_em: new Date().toISOString(),
       });
 
@@ -898,9 +905,9 @@ async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
   const depositoIdOrigem = connOrigem?.deposito_id ?? null;
 
   // 3. Stock deduction: find ONE empresa that covers 100% of items
-  const { data: itens, error: itensErr } = await supabase
+  const { data: itensRaw, error: itensErr } = await supabase
     .from("siso_pedido_itens")
-    .select("produto_id, sku, descricao, quantidade_pedida, estoque_saida_lancada")
+    .select("id, produto_id, sku, descricao, quantidade_pedida, estoque_saida_lancada, mov_saida_id")
     .eq("pedido_id", job.pedido_id)
     .or("estoque_saida_lancada.is.null,estoque_saida_lancada.eq.false");
 
@@ -908,7 +915,29 @@ async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
     throw new Error(`Erro ao buscar itens: ${itensErr.message}`);
   }
 
-  if (!itens?.length) {
+  // Filtra itens cuja saída já foi lançada via realocação/parcial.
+  // Aceita tanto o payload.itens_ja_lancados (passado pelo compras-release)
+  // quanto o flag mov_saida_id no próprio item (defesa em profundidade).
+  const itensJaLancados = new Set<number>(job.payload?.itens_ja_lancados ?? []);
+  const itens = (itensRaw ?? []).filter((it) => {
+    if (itensJaLancados.has(it.id as number)) {
+      logger.info("worker", "pulando item já lançado via realocação (payload)", {
+        pedidoId: job.pedido_id,
+        itemId: it.id,
+      });
+      return false;
+    }
+    if (it.mov_saida_id != null) {
+      logger.info("worker", "pulando item já lançado via realocação (mov_saida_id)", {
+        pedidoId: job.pedido_id,
+        itemId: it.id,
+      });
+      return false;
+    }
+    return true;
+  });
+
+  if (!itens.length) {
     logger.info("worker", "Todos os itens já tiveram saída lançada", { pedidoId: job.pedido_id });
     await supabase.from("siso_pedidos").update({ estoque_lancado: true }).eq("id", job.pedido_id);
     return;

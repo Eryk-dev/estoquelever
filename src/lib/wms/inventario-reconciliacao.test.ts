@@ -355,3 +355,31 @@ describe("reconciliarTemporal — múltiplas contagens da mesma quádrupla", () 
     expect(out).toEqual([]);
   });
 });
+
+describe("reconciliarTemporal — regressão: bug do item 001233 (sessão 6282e654)", () => {
+  it("contagem → picking → cutoff: ZERO divergência (antes era +1 fake)", () => {
+    // Replay literal:
+    //   18:08:30  conta 1 unidade
+    //   18:10:36  picking sai 1 (saldo 1→0) origem=nf_venda pedido:91130001
+    //   18:13:28  aprovação (cutoff)
+    const T_CONT = "2026-05-18T18:08:30.000Z";
+    const T_PICK = "2026-05-18T18:10:36.000Z";
+    const T_CUTOFF = "2026-05-18T18:13:28.000Z";
+
+    const out = reconciliarTemporal({
+      sessao_id: "6282e654-f778-4a11-9d47-4b1ec12ad9a4",
+      cutoff_em: T_CUTOFF,
+      contagens: [
+        { localizacao_id: "e64758ac-028e-4471-9150-e202f72d1cf6", produto_id: "59c90d29-7a04-40b9-9f8e-47e8756b0eec", empresa_dona_id: "4473ca97-67e7-44e5-a192-ec756146b691", qty_contada: 1, contado_em: T_CONT },
+      ],
+      locs_visitadas: [{ localizacao_id: "e64758ac-028e-4471-9150-e202f72d1cf6", contagem_finalizada_em: T_CONT }],
+      saldos_atuais: [
+        { localizacao_id: "e64758ac-028e-4471-9150-e202f72d1cf6", produto_id: "59c90d29-7a04-40b9-9f8e-47e8756b0eec", empresa_dona_id: "4473ca97-67e7-44e5-a192-ec756146b691", saldo: 0, custo_medio: 25 },
+      ],
+      movs: [
+        { id: "2bf9a187", localizacao_id: "e64758ac-028e-4471-9150-e202f72d1cf6", produto_id: "59c90d29-7a04-40b9-9f8e-47e8756b0eec", empresa_dona_id: "4473ca97-67e7-44e5-a192-ec756146b691", criado_em: T_PICK, saldo_anterior: 1, saldo_posterior: 0, origem_tipo: "nf_venda", origem_id: "pedido:91130001", estorno_de: null },
+      ],
+    });
+    expect(out).toEqual([]);
+  });
+});

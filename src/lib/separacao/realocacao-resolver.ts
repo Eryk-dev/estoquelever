@@ -1,5 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import type { TipoLocalizacao } from "@/lib/wms/types";
+import { naturalLocCompare } from "@/lib/wms/loc-compare";
 
 export interface EstoqueCandidato {
   empresa_dona_id: string;
@@ -100,8 +101,8 @@ export async function resolverRealocacao(
     // 3. maior disponivel primeiro
     if (a.disponivel !== b.disponivel) return b.disponivel - a.disponivel;
 
-    // 4. código ASC (desempate)
-    return a.localizacao_codigo.localeCompare(b.localizacao_codigo);
+    // 4. código ASC (desempate) — natural sort (A-2 < A-10)
+    return naturalLocCompare(a.localizacao_codigo, b.localizacao_codigo);
   });
 
   // Verifica cobertura total antes de comprometer (tudo ou nada)

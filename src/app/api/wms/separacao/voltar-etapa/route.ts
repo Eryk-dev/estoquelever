@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
 import { dispararCutoverSePronto, reverterCutoverSeRetrocedeu } from "@/lib/wms/cutover";
+import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
 import type { StatusSeparacao } from "@/types";
 
 /**
@@ -162,14 +163,24 @@ export async function POST(request: NextRequest) {
     // ── Item-level cleanup (backward) ───────────────────────────────────
     if (goingBack) {
       if (targetIdx <= STATUS_ORDER.indexOf("aguardando_separacao")) {
-        // Full reset: both separacao and embalagem progress
+        // Full reset: usa helper compartilhado pra estornar mov_saida_id,
+        // cancelar realocs, resetar parciais e registrar evento de auditoria.
+        const { data: itensReset } = await supabase
+          .from("siso_pedido_itens")
+          .select("id")
+          .in("pedido_id", validIds);
+
+        await resetarEstadoSeparacaoItens({
+          supabase,
+          itemIds: (itensReset ?? []).map((i) => i.id),
+          usuarioId: session.id,
+          motivo: "voltar_etapa",
+        });
+
+        // Campos não cobertos pelo helper (auditoria de embalagem)
         await supabase
           .from("siso_pedido_itens")
           .update({
-            separacao_marcado: false,
-            separacao_marcado_em: null,
-            quantidade_bipada: 0,
-            bipado_completo: false,
             bipado_em: null,
             bipado_por: null,
           })

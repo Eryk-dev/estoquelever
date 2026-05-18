@@ -401,90 +401,125 @@ async function processarParcialItem(
       }
     }
 
-    // C4: race-check via .eq("separacao_marcado", false) — se outro op
-    // marcou primeiro (0 rows affected), rollback (estornar movs + delete bridge)
-    // e retorna 409 race_item_ja_picado.
+    // C4: 2-pass atomic claim — evita drift mid-loop quando race acontece
+    // numa iteração N>1 (iterações 1..N-1 já estavam committed no padrão antigo).
+    //
+    // Pass A: UPDATE atômico em lote que flipa `separacao_marcado` false→true em
+    // TODOS os items ao mesmo tempo, com filtro de race. Se claimed.length !==
+    // itemsParaMarcar.length, race detectada → rollback. SQL é atômico, então
+    // ou claim TODOS ou NENHUM (sem commits parciais).
+    //
+    // Pass B: per-row UPDATE pra setar campos diferenciais (separacao_parcial,
+    // parcial_motivo, mov_saida_id, etc) SEM filtro de race — já temos lock.
+    const itemsParaMarcar = itemUpdates.filter(
+      (u) => u.qty_para_este > 0 || loc_zerou,
+    );
     let racePerdida = false;
-    for (let i = 0; i < itemUpdates.length; i++) {
-      const u = itemUpdates[i];
-      const { item: it, qty_para_este, qty_residual } = u;
-      const ehBeneficiario = i === indexPrimeiroBeneficiado;
-      const isCompleto = qty_residual === 0;
+    let itemIdsClaimedParaReverter: number[] = [];
 
-      // Decisão de marcar/parcial:
-      // - qty_para_este == pedida: completo (marcado=true, parcial=false)
-      // - qty_para_este > 0 mas < pedida: parcial (marcado=true, parcial=true)
-      // - qty_para_este == 0 AND loc_zerou: parcial residual completo (marcado=true, parcial=true, qty=0)
-      // - qty_para_este == 0 AND NOT loc_zerou: NÃO marca (operador continua a fazer)
-      const deveMarcar = qty_para_este > 0 || loc_zerou;
-      if (!deveMarcar) continue;
-
-      const isParcial = !isCompleto;
-      const { data: claimed, error: updErr } = await supabase
+    if (itemsParaMarcar.length > 0) {
+      // ─── Pass A: claim atômico em lote ─────────────────────────────────
+      const itemIdsParaMarcar = itemsParaMarcar.map((u) => Number(u.item.id));
+      const { data: claimedIds, error: claimErr } = await supabase
         .from("siso_pedido_itens")
         .update({
-          separacao_parcial: isParcial,
-          parcial_motivo: isParcial ? (loc_zerou ? "loc_zerou" : "qty_diferente") : null,
-          parcial_em: isParcial ? nowIso : null,
-          parcial_por: isParcial ? session.id : null,
           separacao_marcado: true,
           separacao_marcado_em: nowIso,
-          // Legacy field: mov_saida vinculada a TODOS os beneficiários (qty > 0)
-          // pra desfazer-parcial/cancelar legados localizarem a mov. A tabela ponte
-          // (criada acima) é a fonte de verdade pra rateamento.
-          mov_saida_id: qty_para_este > 0 ? movSaidaId : null,
-          // mov_ajuste é da loc — fica só no primeiro beneficiário (não rateado)
-          mov_ajuste_loc_zerou_id: ehBeneficiario ? movAjusteId : null,
         })
-        .eq("id", it.id)
+        .in("id", itemIdsParaMarcar)
         .eq("separacao_marcado", false)
         .select("id");
 
-      if (updErr) {
+      if (claimErr) {
         logger.logError({
-          error: updErr,
+          error: claimErr,
           source: "separacao-parcial",
-          message: "Falhou update pedido_itens após movs",
+          message: "Falhou claim atômico em lote",
           category: "database",
           requestPath: "/api/wms/separacao/parcial",
           requestMethod: "POST",
-          metadata: { pedido_item_id: it.id, movSaidaId, movAjusteId },
+          metadata: { itemIdsParaMarcar, movSaidaId, movAjusteId },
         });
         return NextResponse.json({ error: "erro persistindo parcial" }, { status: 500 });
       }
 
-      if (!claimed || claimed.length === 0) {
+      if (!claimedIds || claimedIds.length !== itemIdsParaMarcar.length) {
         racePerdida = true;
-        break;
+        // Captura os IDs que FORAM claimed (Pass A parcial) pra reverter
+        // os campos marker no rollback abaixo.
+        itemIdsClaimedParaReverter = (claimedIds ?? []).map((r) => Number(r.id));
       }
 
-      // I9: acumula qty_pega atomicamente via RPC (substitui RMW)
-      if (qty_para_este > 0) {
-        await supabase.rpc("wms_acumular_qty_pega", {
-          p_item_id: it.id,
-          p_delta: qty_para_este,
-        });
-      }
+      // ─── Pass B: differential per-row (sem race filter) ────────────────
+      if (!racePerdida) {
+        for (let i = 0; i < itemUpdates.length; i++) {
+          const u = itemUpdates[i];
+          const { item: it, qty_para_este, qty_residual } = u;
+          const ehBeneficiario = i === indexPrimeiroBeneficiado;
+          const isCompleto = qty_residual === 0;
+          const deveMarcar = qty_para_este > 0 || loc_zerou;
+          if (!deveMarcar) continue;
 
-      await registrarEvento({
-        pedidoId: it.pedido_id,
-        evento: "parcial_loc_zerou",
-        detalhes: {
-          item_id: it.id,
-          sku: it.sku,
-          quantidade_pega: qty_para_este,
-          quantidade_pedida: Number(it.quantidade_pedida),
-          loc_codigo: locCodigo,
-          loc_zerou,
-          delta_ajuste: ehBeneficiario && movAjusteId ? saldoWms - quantidade_pega : 0,
-          wave_consolidado: itemsRaw.length > 1,
-        },
-        usuarioId: session.id,
-      });
+          const isParcial = !isCompleto;
+          const { error: updErr } = await supabase
+            .from("siso_pedido_itens")
+            .update({
+              separacao_parcial: isParcial,
+              parcial_motivo: isParcial ? (loc_zerou ? "loc_zerou" : "qty_diferente") : null,
+              parcial_em: isParcial ? nowIso : null,
+              parcial_por: isParcial ? session.id : null,
+              // Legacy field: mov_saida vinculada a TODOS os beneficiários (qty > 0)
+              // pra desfazer-parcial/cancelar legados localizarem a mov. A tabela ponte
+              // (criada acima) é a fonte de verdade pra rateamento.
+              mov_saida_id: qty_para_este > 0 ? movSaidaId : null,
+              // mov_ajuste é da loc — fica só no primeiro beneficiário (não rateado)
+              mov_ajuste_loc_zerou_id: ehBeneficiario ? movAjusteId : null,
+            })
+            .eq("id", it.id);
+
+          if (updErr) {
+            logger.logError({
+              error: updErr,
+              source: "separacao-parcial",
+              message: "Falhou update diferencial pedido_itens após claim",
+              category: "database",
+              requestPath: "/api/wms/separacao/parcial",
+              requestMethod: "POST",
+              metadata: { pedido_item_id: it.id, movSaidaId, movAjusteId },
+            });
+            return NextResponse.json({ error: "erro persistindo parcial" }, { status: 500 });
+          }
+
+          // I9: acumula qty_pega atomicamente via RPC (substitui RMW)
+          if (qty_para_este > 0) {
+            await supabase.rpc("wms_acumular_qty_pega", {
+              p_item_id: it.id,
+              p_delta: qty_para_este,
+            });
+          }
+
+          await registrarEvento({
+            pedidoId: it.pedido_id,
+            evento: "parcial_loc_zerou",
+            detalhes: {
+              item_id: it.id,
+              sku: it.sku,
+              quantidade_pega: qty_para_este,
+              quantidade_pedida: Number(it.quantidade_pedida),
+              loc_codigo: locCodigo,
+              loc_zerou,
+              delta_ajuste: ehBeneficiario && movAjusteId ? saldoWms - quantidade_pega : 0,
+              wave_consolidado: itemsRaw.length > 1,
+            },
+            usuarioId: session.id,
+          });
+        }
+      }
     }
 
     if (racePerdida) {
-      // Rollback: estornar movs + delete bridge links
+      // Rollback: estornar movs + delete bridge links + reverter markers
+      // de Pass A (rows que foram parcialmente claimed antes da race ser detectada).
       if (movSaidaId) {
         try {
           await estornarMovimentacao({
@@ -516,6 +551,24 @@ async function processarParcialItem(
       }
       if (movAjusteId) {
         await supabase.from("siso_pedido_item_mov_links").delete().eq("mov_id", movAjusteId);
+      }
+      // Reverte marker fields de Pass A pras rows efetivamente claimed.
+      // Pass B nunca rodou (skipped por racePerdida), então só os markers de
+      // Pass A precisam voltar (separacao_marcado=false + separacao_marcado_em=null).
+      if (itemIdsClaimedParaReverter.length > 0) {
+        const { error: revertErr } = await supabase
+          .from("siso_pedido_itens")
+          .update({
+            separacao_marcado: false,
+            separacao_marcado_em: null,
+          })
+          .in("id", itemIdsClaimedParaReverter);
+        if (revertErr) {
+          logger.warn("separacao-parcial", "rollback marker item falhou", {
+            error: revertErr.message,
+            itemIdsClaimedParaReverter,
+          });
+        }
       }
       return NextResponse.json(
         {
@@ -989,91 +1042,137 @@ async function processarParcialRealocacao(
     }
 
     // 9. Update cada realocação + acumula no item pai
-    //    C4: race-check via .eq("status","aguardando_picking") — se outro op
-    //    picou primeiro (0 rows affected), rollback (estornar movs + delete bridge)
-    //    e retorna 409 realocacao_ja_picada.
+    //    C4: 2-pass atomic claim — evita drift mid-loop quando race acontece
+    //    numa iteração N>1 (iterações 1..N-1 já estavam committed no padrão antigo).
+    //
+    //    Pass A: UPDATE atômico em lote que muda status='aguardando_picking' →
+    //    'picado_parcial' (placeholder) em TODAS as realocs ao mesmo tempo,
+    //    com filtro de race. Se claimed.length !== updatesParaMarcar.length,
+    //    race detectada → rollback. SQL atômico = claim TODOS ou NENHUM.
+    //
+    //    Pass B: per-row UPDATE pra setar campos diferenciais (status final,
+    //    quantidade_pega, parcial flags, mov_saida_id, etc) SEM filtro de race
+    //    — já temos lock exclusivo nessas linhas.
+    const updatesParaMarcar = updates.filter(
+      (u) => u.qty_para_esta > 0 || loc_zerou,
+    );
     let racePerdida = false;
-    for (let i = 0; i < updates.length; i++) {
-      const u = updates[i];
-      const { realoc, qty_para_esta, qty_residual } = u;
-      const ehBeneficiario = i === indexPrimeiroBeneficiario;
-      const isCompletoEsta = qty_residual === 0;
-      const deveMarcar = qty_para_esta > 0 || loc_zerou;
+    let realocIdsClaimedParaReverter: string[] = [];
 
-      if (!deveMarcar) continue; // realoc fica como aguardando_picking pra próxima ação
-
-      const isParcialEsta = !isCompletoEsta;
-
-      const { data: claimed, error: updErr } = await supabase
+    if (updatesParaMarcar.length > 0) {
+      // ─── Pass A: claim atômico em lote ─────────────────────────────────
+      // Usa 'picado_parcial' como status intermediário do claim — qualquer
+      // outro endpoint que filtra por status='aguardando_picking' deixa de
+      // ver essas linhas, ou seja, lock exclusivo efetivo.
+      const realocIdsParaMarcar = updatesParaMarcar.map((u) => u.realoc.id);
+      const { data: claimedIds, error: claimErr } = await supabase
         .from("siso_pedido_item_realocacoes")
         .update({
-          status: isCompletoEsta ? "picado" : "picado_parcial",
-          quantidade_pega: qty_para_esta,
-          parcial: isParcialEsta,
-          parcial_motivo: isParcialEsta
-            ? loc_zerou ? "cascade_loc_zerou" : "cascade_parcial"
-            : null,
-          parcial_em: isParcialEsta ? nowIso : null,
-          parcial_por: isParcialEsta ? session.id : null,
-          picado_em: isCompletoEsta ? nowIso : null,
-          picado_por: isCompletoEsta ? session.id : null,
-          // Legacy field: mov_saida vinculada a TODAS as realocs beneficiadas (qty > 0).
-          // Tabela ponte (criada acima) é a fonte de verdade pra rateamento.
-          mov_saida_id: qty_para_esta > 0 ? movSaidaId : null,
-          // mov_ajuste é da loc — fica só na primeira beneficiária (não rateado)
-          mov_ajuste_loc_zerou_id: ehBeneficiario ? movAjusteId : null,
+          status: "picado_parcial",
+          picado_em: nowIso,
+          picado_por: session.id,
         })
-        .eq("id", realoc.id)
+        .in("id", realocIdsParaMarcar)
         .eq("status", "aguardando_picking")
         .select("id");
 
-      if (updErr) {
+      if (claimErr) {
         logger.logError({
-          error: updErr,
+          error: claimErr,
           source: "separacao-parcial-realoc",
-          message: "Falhou update realocação",
+          message: "Falhou claim atômico em lote",
           category: "database",
           requestPath: "/api/wms/separacao/parcial",
           requestMethod: "POST",
-          metadata: { realocacao_id: realoc.id, movSaidaId, movAjusteId },
+          metadata: { realocIdsParaMarcar, movSaidaId, movAjusteId },
         });
         return NextResponse.json({ error: "erro persistindo realocação" }, { status: 500 });
       }
 
-      if (!claimed || claimed.length === 0) {
+      if (!claimedIds || claimedIds.length !== realocIdsParaMarcar.length) {
         racePerdida = true;
-        break;
+        // Captura os IDs que FORAM claimed (Pass A parcial) pra reverter
+        // os campos marker no rollback abaixo.
+        realocIdsClaimedParaReverter = (claimedIds ?? []).map((r) => r.id as string);
       }
 
-      // I9: acumula qty no item pai atomicamente via RPC (substitui RMW)
-      const item = itemById.get(realoc.pedido_item_id)!;
-      if (qty_para_esta > 0) {
-        await supabase.rpc("wms_acumular_qty_pega", {
-          p_item_id: item.id,
-          p_delta: qty_para_esta,
-        });
-      }
+      // ─── Pass B: differential per-row (sem race filter) ────────────────
+      if (!racePerdida) {
+        for (let i = 0; i < updates.length; i++) {
+          const u = updates[i];
+          const { realoc, qty_para_esta, qty_residual } = u;
+          const ehBeneficiario = i === indexPrimeiroBeneficiario;
+          const isCompletoEsta = qty_residual === 0;
+          const deveMarcar = qty_para_esta > 0 || loc_zerou;
 
-      const pedido = pedidoById.get(item.pedido_id)!;
-      await registrarEvento({
-        pedidoId: pedido.id,
-        evento: isCompletoEsta ? "realocacao_picada" : "realocacao_parcial",
-        detalhes: {
-          item_id: item.id,
-          realocacao_id: realoc.id,
-          sku: item.sku,
-          quantidade_pega: qty_para_esta,
-          quantidade_sugerida: Number(realoc.quantidade),
-          is_emprestimo: isEmprestimo,
-          loc_zerou,
-          wave_consolidado: realocs.length > 1,
-        },
-        usuarioId: session.id,
-      });
+          if (!deveMarcar) continue; // realoc fica como aguardando_picking pra próxima ação
+
+          const isParcialEsta = !isCompletoEsta;
+
+          const { error: updErr } = await supabase
+            .from("siso_pedido_item_realocacoes")
+            .update({
+              status: isCompletoEsta ? "picado" : "picado_parcial",
+              quantidade_pega: qty_para_esta,
+              parcial: isParcialEsta,
+              parcial_motivo: isParcialEsta
+                ? loc_zerou ? "cascade_loc_zerou" : "cascade_parcial"
+                : null,
+              parcial_em: isParcialEsta ? nowIso : null,
+              parcial_por: isParcialEsta ? session.id : null,
+              // Legacy field: mov_saida vinculada a TODAS as realocs beneficiadas (qty > 0).
+              // Tabela ponte (criada acima) é a fonte de verdade pra rateamento.
+              mov_saida_id: qty_para_esta > 0 ? movSaidaId : null,
+              // mov_ajuste é da loc — fica só na primeira beneficiária (não rateado)
+              mov_ajuste_loc_zerou_id: ehBeneficiario ? movAjusteId : null,
+            })
+            .eq("id", realoc.id);
+
+          if (updErr) {
+            logger.logError({
+              error: updErr,
+              source: "separacao-parcial-realoc",
+              message: "Falhou update diferencial realocação após claim",
+              category: "database",
+              requestPath: "/api/wms/separacao/parcial",
+              requestMethod: "POST",
+              metadata: { realocacao_id: realoc.id, movSaidaId, movAjusteId },
+            });
+            return NextResponse.json({ error: "erro persistindo realocação" }, { status: 500 });
+          }
+
+          // I9: acumula qty no item pai atomicamente via RPC (substitui RMW)
+          const item = itemById.get(realoc.pedido_item_id)!;
+          if (qty_para_esta > 0) {
+            await supabase.rpc("wms_acumular_qty_pega", {
+              p_item_id: item.id,
+              p_delta: qty_para_esta,
+            });
+          }
+
+          const pedido = pedidoById.get(item.pedido_id)!;
+          await registrarEvento({
+            pedidoId: pedido.id,
+            evento: isCompletoEsta ? "realocacao_picada" : "realocacao_parcial",
+            detalhes: {
+              item_id: item.id,
+              realocacao_id: realoc.id,
+              sku: item.sku,
+              quantidade_pega: qty_para_esta,
+              quantidade_sugerida: Number(realoc.quantidade),
+              is_emprestimo: isEmprestimo,
+              loc_zerou,
+              wave_consolidado: realocs.length > 1,
+            },
+            usuarioId: session.id,
+          });
+        }
+      }
     }
 
     if (racePerdida) {
-      // Rollback: estornar movs + delete bridge links
+      // Rollback: estornar movs + delete bridge links + reverter markers
+      // de Pass A (rows que foram parcialmente claimed antes da race ser detectada).
       if (movSaidaId) {
         try {
           await estornarMovimentacao({
@@ -1105,6 +1204,25 @@ async function processarParcialRealocacao(
       }
       if (movAjusteId) {
         await supabase.from("siso_pedido_item_mov_links").delete().eq("mov_id", movAjusteId);
+      }
+      // Reverte marker fields de Pass A pras rows efetivamente claimed.
+      // Pass B nunca rodou (skipped por racePerdida), então só os markers de
+      // Pass A precisam voltar a 'aguardando_picking' + picado_em/por NULL.
+      if (realocIdsClaimedParaReverter.length > 0) {
+        const { error: revertErr } = await supabase
+          .from("siso_pedido_item_realocacoes")
+          .update({
+            status: "aguardando_picking",
+            picado_em: null,
+            picado_por: null,
+          })
+          .in("id", realocIdsClaimedParaReverter);
+        if (revertErr) {
+          logger.warn("separacao-parcial-realoc", "rollback marker realoc falhou", {
+            error: revertErr.message,
+            realocIdsClaimedParaReverter,
+          });
+        }
       }
       return NextResponse.json(
         {

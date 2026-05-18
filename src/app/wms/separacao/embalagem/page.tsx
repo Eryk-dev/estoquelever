@@ -26,6 +26,12 @@ import type { SeparacaoPedido } from "@/components/wms/separacao/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+interface PedidoItemRealocacao {
+  id: string;
+  status: string;
+  quantidade_pega: number | null;
+}
+
 interface PedidoItem {
   id: string;
   pedido_id: string;
@@ -38,6 +44,9 @@ interface PedidoItem {
   bipado_completo: boolean;
   localizacao: string | null;
   imagem_url: string | null;
+  quantidade_pega: number | null;
+  separacao_parcial: boolean;
+  realocacoes?: PedidoItemRealocacao[];
 }
 
 interface BiparResult {
@@ -166,6 +175,21 @@ function WmsEmbalagemPage() {
     return map;
   }, [items]);
 
+  // Soma quantidade_pega de realocs já picadas por item (banner qty pega real).
+  const qtyPegaPorItem = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const it of items) {
+      let total = Number(it.quantidade_pega ?? 0);
+      for (const r of it.realocacoes ?? []) {
+        if (r.status === "picado" || r.status === "picado_parcial") {
+          total += Number(r.quantidade_pega ?? 0);
+        }
+      }
+      map.set(it.id, total);
+    }
+    return map;
+  }, [items]);
+
   // Toggle expand
   const toggleExpand = useCallback((id: string) => {
     setExpanded((prev) => {
@@ -178,7 +202,16 @@ function WmsEmbalagemPage() {
 
   // ─── Mutations ─────────────────────────────────────────────
 
-  const biparMut = useMutation<BiparResult, Error & { status?: number }, string>(
+  const biparMut = useMutation<
+    BiparResult,
+    Error & {
+      status?: number;
+      code?: string;
+      teto?: number | null;
+      tentado?: number | null;
+    },
+    string
+  >(
     {
       mutationFn: async (sku: string) => {
         const endpoint =
@@ -201,11 +234,22 @@ function WmsEmbalagemPage() {
         if (!r.ok) {
           const err = (await r.json().catch(() => ({}))) as {
             error?: string;
+            message?: string;
+            teto?: number;
+            tentado?: number;
           };
           const error = new Error(
-            err.error || `HTTP ${r.status}`,
-          ) as Error & { status?: number };
+            err.message || err.error || `HTTP ${r.status}`,
+          ) as Error & {
+            status?: number;
+            code?: string;
+            teto?: number | null;
+            tentado?: number | null;
+          };
           error.status = r.status;
+          error.code = err.error;
+          error.teto = err.teto ?? null;
+          error.tentado = err.tentado ?? null;
           throw error;
         }
         return (await r.json()) as BiparResult;
@@ -252,7 +296,17 @@ function WmsEmbalagemPage() {
         queryClient.invalidateQueries({ queryKey: itemsQueryKey });
       },
       onError: (err) => {
-        if (err.status === 404) {
+        if (err.code === "bipou_alem_do_teto") {
+          const teto = err.teto ?? "?";
+          setScanFeedback({
+            text: `Parcial — só ${teto} unidade(s) foram pegas. Use "Fechar como parcial".`,
+            tone: "warn",
+          });
+          toast.error(
+            `Parcial — só ${teto} unidade(s) foram pegas. Use "Fechar como parcial".`,
+            { duration: 6000 },
+          );
+        } else if (err.status === 404) {
           setScanFeedback({
             text: `SKU não encontrado em pedidos pendentes`,
             tone: "error",
@@ -345,6 +399,22 @@ function WmsEmbalagemPage() {
       queryClient.invalidateQueries({ queryKey: itemsQueryKey });
     },
   });
+
+  // Fecha um item como parcial bipando exatamente a qty pega real.
+  // Útil quando a UI mostra o banner "pega real = N" e o operador
+  // quer fechar o item sem digitar.
+  const fecharComoParcial = useCallback(
+    (item: PedidoItem, qtyPegaTotal: number) => {
+      const remaining = Math.max(0, qtyPegaTotal - (item.quantidade_bipada ?? 0));
+      if (remaining <= 0) {
+        toast.info("Item já bipado até o teto pega real.");
+        return;
+      }
+      setScanQty(remaining);
+      biparMut.mutate(item.sku);
+    },
+    [biparMut],
+  );
 
   const reimprimirMut = useMutation<
     { status: string; error?: string },
@@ -553,10 +623,12 @@ function WmsEmbalagemPage() {
               itemsLoading={itemsQuery.isLoading}
               completed={false}
               expanded={expanded.has(p.id)}
+              qtyPegaPorItem={qtyPegaPorItem}
               onToggle={() => toggleExpand(p.id)}
               onConfirm={(item, delta) =>
                 confirmarMut.mutate({ item, delta })
               }
+              onFecharComoParcial={fecharComoParcial}
               onReimprimir={() => reimprimirMut.mutate(p.id)}
               reimprimindo={
                 reimprimirMut.isPending && reimprimirMut.variables === p.id
@@ -580,10 +652,12 @@ function WmsEmbalagemPage() {
               itemsLoading={itemsQuery.isLoading}
               completed
               expanded={expanded.has(p.id)}
+              qtyPegaPorItem={qtyPegaPorItem}
               onToggle={() => toggleExpand(p.id)}
               onConfirm={(item, delta) =>
                 confirmarMut.mutate({ item, delta })
               }
+              onFecharComoParcial={fecharComoParcial}
               onReimprimir={() => reimprimirMut.mutate(p.id)}
               reimprimindo={
                 reimprimirMut.isPending && reimprimirMut.variables === p.id
@@ -616,8 +690,10 @@ function PedidoCardWms({
   itemsLoading,
   completed,
   expanded,
+  qtyPegaPorItem,
   onToggle,
   onConfirm,
+  onFecharComoParcial,
   onReimprimir,
   reimprimindo,
 }: {
@@ -626,8 +702,10 @@ function PedidoCardWms({
   itemsLoading: boolean;
   completed: boolean;
   expanded: boolean;
+  qtyPegaPorItem: Map<string, number>;
   onToggle: () => void;
   onConfirm: (item: PedidoItem, delta: number) => void;
+  onFecharComoParcial: (item: PedidoItem, qtyPegaTotal: number) => void;
   onReimprimir: () => void;
   reimprimindo: boolean;
 }) {
@@ -725,7 +803,9 @@ function PedidoCardWms({
                 key={item.id}
                 item={item}
                 readOnly={completed}
+                qtyPegaTotal={qtyPegaPorItem.get(item.id) ?? 0}
                 onConfirm={onConfirm}
+                onFecharComoParcial={onFecharComoParcial}
               />
             ))
           )}
@@ -740,15 +820,58 @@ function PedidoCardWms({
 function ItemRow({
   item,
   readOnly,
+  qtyPegaTotal,
   onConfirm,
+  onFecharComoParcial,
 }: {
   item: PedidoItem;
   readOnly: boolean;
+  qtyPegaTotal: number;
   onConfirm: (item: PedidoItem, delta: number) => void;
+  onFecharComoParcial: (item: PedidoItem, qtyPegaTotal: number) => void;
 }) {
   const isDone = item.bipado_completo;
+  const showParcialBanner =
+    !readOnly && item.separacao_parcial && qtyPegaTotal > 0 && qtyPegaTotal < item.quantidade;
   return (
-    <div className={`wms-hand-item ${isDone ? "is-done" : ""}`}>
+    <>
+      {showParcialBanner && (
+        <div
+          style={{
+            background: "rgb(255 251 235)",
+            borderLeft: "4px solid rgb(217 119 6)",
+            padding: "8px 12px",
+            fontSize: 12.5,
+            color: "rgb(120 53 15)",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            marginBottom: 2,
+          }}
+        >
+          <span>
+            <strong>Parcial:</strong> pega real {qtyPegaTotal} de {item.quantidade}. Bipar apenas{" "}
+            {qtyPegaTotal} unidade(s).
+          </span>
+          <button
+            type="button"
+            onClick={() => onFecharComoParcial(item, qtyPegaTotal)}
+            style={{
+              marginLeft: "auto",
+              textDecoration: "underline",
+              fontWeight: 600,
+              color: "rgb(120 53 15)",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            Fechar como parcial ({qtyPegaTotal}/{item.quantidade})
+          </button>
+        </div>
+      )}
+      <div className={`wms-hand-item ${isDone ? "is-done" : ""}`}>
       <div className="wms-hand-item-check" aria-hidden="true">
         {isDone && <Icon name="check" size={11} />}
       </div>
@@ -836,5 +959,6 @@ function ItemRow({
         </button>
       </div>
     </div>
+    </>
   );
 }

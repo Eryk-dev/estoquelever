@@ -51,10 +51,37 @@ export async function POST(request: NextRequest) {
         p_galpao_id: galpao_id,
         p_quantidade: quantidade,
         p_operador_id: session.id,
+        p_strict_qty_pega: true,
       },
     );
 
     if (error) {
+      // Trata 'bipou_alem_do_teto' como erro de domínio (item parcial)
+      // — RPC raise EXCEPTION com DETAIL "teto=N,tentado=M".
+      const isAlemDoTeto =
+        error.message === "bipou_alem_do_teto" ||
+        error.message?.includes("bipou_alem_do_teto");
+      if (isAlemDoTeto) {
+        const detailMatch = (error.details || "").match(/teto=(\d+),tentado=(\d+)/);
+        const teto = detailMatch?.[1] ? Number(detailMatch[1]) : null;
+        const tentado = detailMatch?.[2] ? Number(detailMatch[2]) : null;
+        logger.warn("bipar-embalagem", "Bipou além do teto (item parcial)", {
+          sku,
+          galpao_id,
+          teto,
+          tentado,
+        });
+        return NextResponse.json(
+          {
+            error: "bipou_alem_do_teto",
+            message: `Bipou ${tentado ?? "?"} mas só ${teto ?? "?"} foi pego de fato. Item parcial.`,
+            teto,
+            tentado,
+          },
+          { status: 422 },
+        );
+      }
+
       logger.error("bipar-embalagem", "RPC error", {
         error: error.message,
         sku,

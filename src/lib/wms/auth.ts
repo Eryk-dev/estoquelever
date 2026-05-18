@@ -20,7 +20,9 @@ function isAdmin(user: SessionUser): boolean {
 
 function isOperator(user: SessionUser): boolean {
   const cargos = user.cargos?.length ? user.cargos : [user.cargo];
-  return cargos.some((c) => c === "operador_cwb" || c === "operador_sp");
+  return cargos.some(
+    (c) => c === "operador" || c === "operador_cwb" || c === "operador_sp",
+  );
 }
 
 /**

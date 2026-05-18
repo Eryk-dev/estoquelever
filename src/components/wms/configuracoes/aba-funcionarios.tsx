@@ -633,7 +633,7 @@ function LinhaFuncionario({
                 onClick={() => {
                   if (
                     confirm(
-                      `Excluir ${funcionario.nome} permanentemente? Esta ação não pode ser desfeita.`,
+                      `Excluir ${funcionario.nome}? Vai sumir da lista e perder acesso aos galpões. Histórico fica preservado.`,
                     )
                   ) {
                     excluir.mutate();

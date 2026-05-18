@@ -186,7 +186,9 @@ export async function PUT(request: NextRequest) {
 
 /**
  * DELETE /api/admin/usuarios?id=<uuid>
- * Deletes a user permanently (galpão associations cascade).
+ * Soft-delete: marca ativo=false e renomeia pra liberar UNIQUE(nome). Preserva
+ * auditoria — não tem como hard-delete usuário com histórico (FKs em
+ * siso_movimentacoes, inventário, pedidos etc. sem ON DELETE).
  */
 export async function DELETE(request: NextRequest) {
   const id = request.nextUrl.searchParams.get("id");
@@ -195,7 +197,32 @@ export async function DELETE(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
-  const { error } = await supabase.from("siso_usuarios").delete().eq("id", id);
+
+  // Remove vínculos de galpão (impede que usuário desativado ainda apareça em queries
+  // que filtram por galpao). Tabela tem ON DELETE CASCADE — mas como não estamos mais
+  // deletando, fazemos manualmente.
+  await supabase.from("siso_usuario_galpoes").delete().eq("usuario_id", id);
+
+  const sufixo = `_excluido_${Math.floor(Date.now() / 1000)}`;
+  const { data: atual } = await supabase
+    .from("siso_usuarios")
+    .select("nome, ativo")
+    .eq("id", id)
+    .single();
+
+  if (!atual) {
+    return NextResponse.json({ erro: "usuário não encontrado" }, { status: 404 });
+  }
+
+  // Idempotente: se já foi excluído (nome já tem o sufixo), não renomeia de novo.
+  const novoNome = atual.nome.includes("_excluido_")
+    ? atual.nome
+    : `${atual.nome}${sufixo}`;
+
+  const { error } = await supabase
+    .from("siso_usuarios")
+    .update({ nome: novoNome, ativo: false, atualizado_em: new Date().toISOString() })
+    .eq("id", id);
 
   if (error) {
     return NextResponse.json({ erro: error.message }, { status: 500 });

@@ -15,9 +15,7 @@ export async function POST(request: NextRequest) {
   if (!session) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
-  if (!session.galpaoId) {
-    return NextResponse.json({ error: "admin não pode marcar realocação" }, { status: 403 });
-  }
+  // Admin não precisa de galpaoId — usamos o galpao_id da própria realocação
 
   const body = await request.json().catch(() => null);
   if (!body?.realocacao_id) {

@@ -17,12 +17,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
 
-  if (!session.galpaoId) {
-    return NextResponse.json(
-      { error: "admin não pode expedir diretamente" },
-      { status: 403 },
-    );
-  }
+  // Admin pode expedir qualquer galpão (bypass do ownership check abaixo).
+  const isAdmin = session.cargos.includes("admin");
 
   const body = await request.json().catch(() => null);
   if (
@@ -65,10 +61,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Validate all pedidos belong to operator's galpão
-    const wrongGalpao = (pedidos ?? []).filter(
-      (p) => p.separacao_galpao_id !== session.galpaoId,
-    );
+    // 2. Validate all pedidos belong to operator's galpão (admin bypassa)
+    const wrongGalpao = isAdmin
+      ? []
+      : (pedidos ?? []).filter(
+          (p) => p.separacao_galpao_id !== session.galpaoId,
+        );
     if (wrongGalpao.length > 0) {
       return NextResponse.json(
         {

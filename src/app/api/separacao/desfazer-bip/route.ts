@@ -19,12 +19,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
 
-  if (!session.galpaoId) {
-    return NextResponse.json(
-      { error: "admin não pode desfazer bip diretamente" },
-      { status: 403 },
-    );
-  }
+  // Admin pode desfazer bip de qualquer galpão (bypass ownership abaixo)
+  const isAdmin = session.cargos.includes("admin");
 
   const body = await request.json().catch(() => null);
   if (
@@ -61,7 +57,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (pedido.separacao_galpao_id !== session.galpaoId) {
+    if (!isAdmin && pedido.separacao_galpao_id !== session.galpaoId) {
       return NextResponse.json(
         { error: "pedido não pertence ao seu galpão" },
         { status: 403 },

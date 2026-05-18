@@ -29,13 +29,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "rate_limit" }, { status: 429 });
   }
 
-  // Operators must have a galpão; admins cannot bip
-  if (!session.galpaoId) {
-    return NextResponse.json(
-      { error: "admin não pode bipar diretamente" },
-      { status: 403 },
-    );
-  }
+  // Admin pode bipar passando X-Galpao-Id no header (resolvido em getSessionUser).
+  // Sem galpaoId, a RPC recebe null e processa em todos os galpões.
 
   const body = await request.json().catch(() => null);
   if (!body?.codigo || typeof body.codigo !== "string") {

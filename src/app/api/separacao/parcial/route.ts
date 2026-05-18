@@ -17,12 +17,7 @@ export async function POST(request: NextRequest) {
   if (!session) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
-  if (!session.galpaoId) {
-    return NextResponse.json(
-      { error: "admin não pode fazer parcial" },
-      { status: 403 },
-    );
-  }
+  // Admin não precisa de galpaoId — derivamos do próprio pedido abaixo
 
   const body = await request.json().catch(() => null);
   if (

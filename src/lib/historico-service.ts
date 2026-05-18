@@ -35,7 +35,12 @@ export type EventoPedido =
   | "oc_item_encontrado"
   | "oc_item_desfazer_encontrado"
   | "oc_item_confirmado"
-  | "mini_swap_executado";
+  | "mini_swap_executado"
+  | "parcial_loc_zerou"
+  | "realocacao_picada"
+  | "realocacao_cancelada"
+  | "realocacao_sem_cobertura_galpao"
+  | "parcial_desfeito";
 
 /**
  * Record a single event in the order history.

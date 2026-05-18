@@ -26,7 +26,9 @@ export type OrigemTipo =
   | "inventario"
   | "inventario_inicial"
   | "estorno"
-  | "cancelamento_nf";
+  | "cancelamento_nf"
+  | "swap"
+  | "ajuste_pick_zerou";
 
 export interface Produto {
   id: string;

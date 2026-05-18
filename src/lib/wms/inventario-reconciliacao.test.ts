@@ -238,3 +238,35 @@ describe("reconciliarTemporal — movs da própria sessão", () => {
     expect(out).toEqual([]);
   });
 });
+
+describe("reconciliarTemporal — cutoff_em", () => {
+  it("mov criada após cutoff_em é ignorada", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: T1, // cutoff antes da mov
+      contagens: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 5, contado_em: T0 },
+      ],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T0 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 2, custo_medio: 10 },
+      ],
+      movs: [
+        // saída após cutoff
+        { id: "m1", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: T2, saldo_anterior: 5, saldo_posterior: 2, origem_tipo: "nf_venda", origem_id: "p1", estorno_de: null },
+      ],
+    });
+    // Mov após cutoff → ignorada → saldo_esperado=saldo_atual=2, qty=5, delta=+3
+    expect(out).toEqual([
+      {
+        localizacao_id: LOC,
+        produto_id: PROD,
+        empresa_dona_id: DONA,
+        saldo_esperado: 2,
+        qty_contada_final: 5,
+        delta: 3,
+        valor_financeiro: 30,
+      },
+    ]);
+  });
+});

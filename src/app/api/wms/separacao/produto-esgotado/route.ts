@@ -56,6 +56,7 @@ export async function POST(request: NextRequest) {
       "aguardando_nf",
       "aguardando_separacao",
       "em_separacao",
+      "pendente_realocacao",
     ];
 
     const { data: activePedidos, error: pedidosErr } = await supabase

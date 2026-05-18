@@ -72,15 +72,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate all have an allowed status (aguardando_separacao, aguardando_compra, or em_separacao for resume)
-    const ALLOWED_STATUSES = ["aguardando_separacao", "aguardando_compra", "em_separacao", "validacao_oc"];
+    // Validate all have an allowed status (aguardando_separacao, aguardando_compra, em_separacao for resume, or pendente_realocacao for resume after short-pick)
+    const ALLOWED_STATUSES = ["aguardando_separacao", "aguardando_compra", "em_separacao", "validacao_oc", "pendente_realocacao"];
     const invalidPedidos = (pedidos ?? []).filter(
       (p) => !ALLOWED_STATUSES.includes(p.status_separacao),
     );
     if (invalidPedidos.length > 0) {
       return NextResponse.json(
         {
-          error: "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra', 'validacao_oc' ou 'em_separacao'",
+          error: "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra', 'validacao_oc', 'em_separacao' ou 'pendente_realocacao'",
           pedido_ids: invalidPedidos.map((p) => p.id),
           statuses: invalidPedidos.map((p) => p.status_separacao),
         },

@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     if (!pedido) {
       return NextResponse.json({ error: "pedido não encontrado" }, { status: 404 });
     }
-    const ALLOWED = ["em_separacao", "aguardando_separacao", "aguardando_compra"];
+    const ALLOWED = ["em_separacao", "aguardando_separacao", "aguardando_compra", "pendente_realocacao"];
     if (!ALLOWED.includes(pedido.status_separacao ?? "")) {
       return NextResponse.json(
         { error: `pedido status ${pedido.status_separacao} não permite marcar` },

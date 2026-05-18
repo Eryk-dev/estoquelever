@@ -21,6 +21,7 @@ const STATUS_ORDER: StatusSeparacao[] = [
   "validacao_oc",
   "aguardando_separacao",
   "em_separacao",
+  "pendente_realocacao",
   "separado",
   "embalado",
 ];

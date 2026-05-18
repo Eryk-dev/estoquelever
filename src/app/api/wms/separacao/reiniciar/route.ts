@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
+import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
 import { logger } from "@/lib/logger";
 
 /**
@@ -13,6 +15,11 @@ import { logger } from "@/lib/logger";
  * - embalagem: resets quantidade_bipada/bipado_completo (pedido must be separado)
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
+  }
+
   const body = await request.json().catch(() => null);
 
   if (
@@ -79,23 +86,19 @@ export async function POST(request: NextRequest) {
 
     // Reset item progress based on etapa
     if (etapa === "separacao") {
-      const { error: updateError } = await supabase
+      // Helper estorna mov_saida_id, cancela realocs, reseta 10 campos do item
+      // e registra evento `separacao_resetada` por pedido.
+      const { data: items } = await supabase
         .from("siso_pedido_itens")
-        .update({
-          separacao_marcado: false,
-          separacao_marcado_em: null,
-        })
+        .select("id")
         .in("pedido_id", pedido_ids);
 
-      if (updateError) {
-        logger.error("separacao-reiniciar", "Failed to reset separacao items", {
-          error: updateError.message,
-        });
-        return NextResponse.json(
-          { error: updateError.message },
-          { status: 500 },
-        );
-      }
+      await resetarEstadoSeparacaoItens({
+        supabase,
+        itemIds: (items ?? []).map((i) => i.id),
+        usuarioId: session.id,
+        motivo: "reiniciar",
+      });
     } else {
       const { error: updateError } = await supabase
         .from("siso_pedido_itens")

@@ -127,3 +127,27 @@ describe("reconciliarTemporal — movs após contagem", () => {
     expect(out).toEqual([]); // saldo_esperado = 3, qty = 3 → delta = 0
   });
 });
+
+describe("reconciliarTemporal — múltiplas movs após contagem", () => {
+  it("usa saldo_anterior da PRIMEIRA mov após T_ref (a cadeia se contém)", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: "2026-05-18T13:30:00.000Z",
+      contagens: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 10, contado_em: T0 },
+      ],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T0 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 4, custo_medio: 10 },
+      ],
+      movs: [
+        // saída 3 às T1 (saldo 10 → 7)
+        { id: "m1", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: T1, saldo_anterior: 10, saldo_posterior: 7, origem_tipo: "nf_venda", origem_id: "p1", estorno_de: null },
+        // saída 3 às T2 (saldo 7 → 4)
+        { id: "m2", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: T2, saldo_anterior: 7, saldo_posterior: 4, origem_tipo: "nf_venda", origem_id: "p2", estorno_de: null },
+      ],
+    });
+    // saldo_esperado = saldo_anterior de m1 = 10 → delta = 10 - 10 = 0
+    expect(out).toEqual([]);
+  });
+});

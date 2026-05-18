@@ -79,6 +79,12 @@ function primeiraMovEfetiva(
   sessaoId: string,
   cutoff: string,
 ): MovInput | null {
+  // IDs de movs que foram alvo de estorno (campo estorno_de aponta pra elas)
+  const estornadas = new Set<string>();
+  for (const m of movs) {
+    if (m.estorno_de) estornadas.add(m.estorno_de);
+  }
+
   const candidatos = movs
     .filter(
       (m) =>
@@ -88,6 +94,7 @@ function primeiraMovEfetiva(
         m.criado_em > t_ref &&
         m.criado_em <= cutoff &&
         m.estorno_de === null &&
+        !estornadas.has(m.id) &&
         !(m.origem_tipo === "inventario" && m.origem_id === sessaoId),
     )
     .sort((a, b) => a.criado_em.localeCompare(b.criado_em));

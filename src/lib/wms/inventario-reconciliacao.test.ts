@@ -151,3 +151,49 @@ describe("reconciliarTemporal — múltiplas movs após contagem", () => {
     expect(out).toEqual([]);
   });
 });
+
+describe("reconciliarTemporal — estornos", () => {
+  it("par estornado + sem movs reais: saldo_esperado = saldo_atual", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: "2026-05-18T13:30:00.000Z",
+      contagens: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 7, contado_em: T0 },
+      ],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T0 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 7, custo_medio: 10 },
+      ],
+      movs: [
+        // m1: saída de 3 (estornada depois)
+        { id: "m1", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: T1, saldo_anterior: 7, saldo_posterior: 4, origem_tipo: "nf_venda", origem_id: "p1", estorno_de: null },
+        // m2: estorno de m1
+        { id: "m2", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: T2, saldo_anterior: 4, saldo_posterior: 7, origem_tipo: "estorno", origem_id: "m1", estorno_de: "m1" },
+      ],
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("ignora par estornado e usa mov posterior não-estornada", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: "2026-05-18T13:30:00.000Z",
+      contagens: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 5, contado_em: T0 },
+      ],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T0 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 3, custo_medio: 10 },
+      ],
+      movs: [
+        // m1: saída de 1 em T1 (estornada depois)
+        { id: "m1", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: T1, saldo_anterior: 5, saldo_posterior: 4, origem_tipo: "nf_venda", origem_id: "p1", estorno_de: null },
+        // m2: estorno de m1 em T2
+        { id: "m2", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: "2026-05-18T13:11:00.000Z", saldo_anterior: 4, saldo_posterior: 5, origem_tipo: "estorno", origem_id: "m1", estorno_de: "m1" },
+        // m3: saída posterior REAL de 2 (saldo 5 → 3)
+        { id: "m3", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: "2026-05-18T13:15:00.000Z", saldo_anterior: 5, saldo_posterior: 3, origem_tipo: "nf_venda", origem_id: "p2", estorno_de: null },
+      ],
+    });
+    expect(out).toEqual([]);
+  });
+});

@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
     const { data: items, error: itemsError } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em, quantidade_bipada, bipado_completo, imagem_url, compra_status",
+        "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em, quantidade_bipada, bipado_completo, imagem_url, compra_status, quantidade_pega, separacao_parcial, parcial_motivo, parcial_em",
       )
       .in("pedido_id", pedido_ids);
 
@@ -140,6 +140,70 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // 3c. Fetch realocacoes aguardando_picking for all items
+    const itemIds = (items ?? []).map((i) => i.id);
+    let realocacoes: Array<{
+      id: string;
+      pedido_item_id: number;
+      empresa_dona_id: string;
+      galpao_id: string | null;
+      localizacao_id: string | null;
+      quantidade: number;
+      is_emprestimo: boolean;
+      empresa_devedora_id: string | null;
+      status: string;
+      criado_em: string;
+    }> = [];
+
+    if (itemIds.length > 0) {
+      const { data: realocacoesRaw } = await supabase
+        .from("siso_pedido_item_realocacoes")
+        .select(
+          "id, pedido_item_id, empresa_dona_id, galpao_id, localizacao_id, quantidade, is_emprestimo, empresa_devedora_id, status, criado_em",
+        )
+        .in("pedido_item_id", itemIds)
+        .eq("status", "aguardando_picking");
+      realocacoes = realocacoesRaw ?? [];
+    }
+
+    // Fetch localizacao codes for realocacoes
+    const localizacaoIds = [
+      ...new Set(realocacoes.map((r) => r.localizacao_id).filter(Boolean) as string[]),
+    ];
+    const localizacaoCodigoMap = new Map<string, string>();
+    if (localizacaoIds.length > 0) {
+      const { data: locs } = await supabase
+        .from("siso_localizacoes")
+        .select("id, codigo")
+        .in("id", localizacaoIds);
+      for (const loc of locs ?? []) {
+        localizacaoCodigoMap.set(loc.id, loc.codigo);
+      }
+    }
+
+    // Fetch empresa names for realocacoes (empresa_dona_id)
+    const realocacaoEmpresaIds = [
+      ...new Set(realocacoes.map((r) => r.empresa_dona_id).filter(Boolean) as string[]),
+    ];
+    const realocacaoEmpresaNomeMap = new Map<string, string>();
+    if (realocacaoEmpresaIds.length > 0) {
+      const { data: empNomes } = await supabase
+        .from("siso_empresas")
+        .select("id, nome")
+        .in("id", realocacaoEmpresaIds);
+      for (const emp of empNomes ?? []) {
+        realocacaoEmpresaNomeMap.set(emp.id, emp.nome);
+      }
+    }
+
+    // Build map pedido_item_id -> realocacoes[]
+    const realocacoesPorItem = new Map<string, typeof realocacoes>();
+    for (const r of realocacoes) {
+      const arr = realocacoesPorItem.get(String(r.pedido_item_id)) ?? [];
+      arr.push(r);
+      realocacoesPorItem.set(String(r.pedido_item_id), arr);
+    }
+
     // 4. Shape response (empresa_origem_id = separating empresa for location updates)
     // In pick-oc mode, show ALL items (including OC items) so the operator can pick them.
     // In normal mode, hide OC items for aguardando_compra pedidos.
@@ -160,6 +224,20 @@ export async function GET(request: NextRequest) {
 
     const result = visibleItems.map((item) => {
       const sepEmpresaId = pedidoSepEmpresaMap.get(item.pedido_id) ?? null;
+      const itemRealocacoes = (realocacoesPorItem.get(String(item.id)) ?? []).map((r) => ({
+        id: r.id,
+        empresa_dona_id: r.empresa_dona_id,
+        empresa_nome: realocacaoEmpresaNomeMap.get(r.empresa_dona_id) ?? null,
+        localizacao_id: r.localizacao_id,
+        localizacao_codigo: r.localizacao_id
+          ? (localizacaoCodigoMap.get(r.localizacao_id) ?? null)
+          : null,
+        quantidade: r.quantidade,
+        is_emprestimo: r.is_emprestimo,
+        empresa_devedora_id: r.empresa_devedora_id,
+        status: r.status,
+        criado_em: r.criado_em,
+      }));
       return {
         id: item.id,
         pedido_id: item.pedido_id,
@@ -180,6 +258,11 @@ export async function GET(request: NextRequest) {
         disponivel: stockMap.get(`${item.pedido_id}:${item.produto_id}`)?.disponivel ?? 0,
         empresa_origem_id: sepEmpresaId,
         galpao_nome: galpaoMap.get(sepEmpresaId ?? "") ?? null,
+        quantidade_pega: item.quantidade_pega ?? null,
+        separacao_parcial: item.separacao_parcial ?? false,
+        parcial_motivo: item.parcial_motivo ?? null,
+        parcial_em: item.parcial_em ?? null,
+        realocacoes: itemRealocacoes,
       };
     });
 

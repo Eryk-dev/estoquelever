@@ -627,3 +627,59 @@ erros:
       - src/app/wms/guarda/rota/page.tsx
     commit: 11fad16
     tags: [wms, guarda, rota, hooks, react, early-return, client-error]
+  - id: separacao-parcial-reservado-excede-saldo
+    date: "2026-05-18"
+    source: separacao-parcial
+    category: business_logic
+    message: "Error: reservado (5) excederia saldo (3)"
+    cause: >
+      O /api/separacao/parcial chama wms_inserir_movimentacao com tipo=S
+      origem_tipo=nf_venda direto, sem checar se a posicao tem reserva
+      ativa de outro pedido. A RPC valida `reservado <= saldo_posterior`
+      e rejeita. Em staging o problema apareceu por causa de uma reserva
+      orfa do shadow-logging do Plano 3 (mov ff1df10f, pedido 91000092,
+      qty=5) trazida via staging-refresh — saldo=5 totalmente reservado.
+      Em prod o mesmo bug aparece em qualquer pedido que tente picking
+      parcial numa loc com reserva ativa.
+    fix: >
+      Validacao explicita no endpoint antes de inserirMovimentacao: se
+      `disponivel < quantidade_pega` retorna 409 com mensagem informativa
+      (saldo, reservado, disponivel). Em staging tb estornei a reserva
+      orfa via mov L referenciando ff1df10f. Migration prereq idempotente
+      (CREATE OR REPLACE) garante que siso_consolidar_produtos_separacao
+      exista em staging — gap separado de staging-refresh que copia dados
+      mas nao funcoes.
+    files:
+      - src/app/api/separacao/parcial/route.ts
+      - supabase/migrations/20260518_pick_multi_loc_prereq_consolidar.sql
+    tags: [separacao, parcial, wms, reserva, ledger, staging, picking, plano-3]
+
+- id: ERR-2026-05-18-001
+  date: 2026-05-18
+  source: wms.inventario.computar_divergencias
+  category: business_logic
+  message: "Inventário com operação concorrente gera divergências fake (saldo_esperado lê siso_estoque atual, não saldo no bipe)"
+  cause: |
+    computarDivergencias comparava qty_contada com siso_estoque.saldo atual no
+    momento da aprovação. Se uma mov (picking/recebimento/etc) ocorresse entre
+    o bipe e a aprovação, o saldo já havia mudado e a comparação ficava errada.
+    O algoritmo temporal previsto na spec (saldo_esperado = saldo no momento do
+    bipe, reconstruído via siso_movimentacoes.saldo_anterior da primeira mov
+    após T_count) nunca foi implementado.
+  fix: |
+    - Nova função pura reconciliarTemporal em src/lib/wms/inventario-reconciliacao.ts
+    - Refactor de computarDivergencias pra fazer snapshot cutoff_em=now() e delegar
+    - Loc visitada-e-vazia (sem bipes) só gera divergência se saldo já existia antes
+      de contagem_finalizada_em
+    - Loc não visitada (contagem_finalizada_em IS NULL) é completamente ignorada
+    - Movs estornadas (par original+estorno) são desconsideradas
+    - Movs origem='inventario' da própria sessão são desconsideradas (idempotência)
+  files:
+    - src/lib/wms/inventario-reconciliacao.ts
+    - src/lib/wms/inventario-reconciliacao.test.ts
+    - src/lib/wms/inventario.ts
+  tags: [inventario, reconciliacao-temporal, estoque-online, picking-concorrente, divergencia-fake]
+  observacao: |
+    Estoque fantasma criado pela sessão 6282e654 (1× SKU 001233 em A-01-3,
+    mov 62bb5c59-323e-4308-b605-a2cb426bc791) NÃO foi estornado neste fix.
+    Decisão do usuário em 2026-05-18 — tratar caso a caso via /wms/ajuste.

@@ -19,7 +19,7 @@
 //   D4 — empresa NÃO é exposta no toolbar nem nos cards
 //   D6 — usa <DecisaoLabel> pra mostrar a decisão final por pedido
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
@@ -305,10 +305,27 @@ export default function WmsSeparacaoPage() {
   }>({ key: "", ids: new Set() });
   const selectedIds: Set<string> =
     selection.key === contextKey ? selection.ids : new Set();
+  // Expansão de linha — independente da selection. Reseta ao trocar contexto.
+  const [expansion, setExpansion] = useState<{
+    key: string;
+    ids: Set<string>;
+  }>({ key: "", ids: new Set() });
+  const expandedIds: Set<string> =
+    expansion.key === contextKey ? expansion.ids : new Set();
   const lastCheckedIdxRef = useRef<number | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
   const [tagModalOpen, setTagModalOpen] = useState(false);
   const [encaminharOpenId, setEncaminharOpenId] = useState<string | null>(null);
+
+  const toggleExpand = (id: string) => {
+    setExpansion((prev) => {
+      const base = prev.key === contextKey ? prev.ids : new Set<string>();
+      const next = new Set(base);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { key: contextKey, ids: next };
+    });
+  };
 
   // ── Query principal ────────────────────────────────────────────────────
   const queryString = useMemo(() => {
@@ -1119,6 +1136,7 @@ export default function WmsSeparacaoPage() {
                     onChange={toggleAll}
                   />
                 </th>
+                <th style={{ width: 28 }} aria-label="Expandir"></th>
                 <th>Pedido</th>
                 <th>Cliente</th>
                 <th>Mkt</th>
@@ -1134,6 +1152,7 @@ export default function WmsSeparacaoPage() {
             <tbody>
               {pedidos.map((p, idx) => {
                 const isSel = selectedIds.has(p.id);
+                const isExp = expandedIds.has(p.id);
                 const galpao = p.filial_origem ?? "?";
                 const galpaoLower = galpao.toLowerCase();
                 const progresso =
@@ -1145,9 +1164,9 @@ export default function WmsSeparacaoPage() {
                     p.status_separacao === "em_separacao") &&
                   galpoesAll.filter((g) => g.id !== p.galpao_id).length > 0;
                 return (
+                  <Fragment key={p.id}>
                   <tr
-                    key={p.id}
-                    className={`wms-tr-clickable ${isSel ? "is-expanded" : ""}`}
+                    className={`wms-tr-clickable ${isExp ? "is-expanded" : ""}`}
                     onClick={(e) => toggleSelect(p.id, e.shiftKey, idx)}
                   >
                     <td onClick={(e) => e.stopPropagation()}>
@@ -1162,6 +1181,21 @@ export default function WmsSeparacaoPage() {
                           )
                         }
                       />
+                    </td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className="wms-btn-icon"
+                        title={isExp ? "Recolher" : "Ver itens e detalhes"}
+                        aria-expanded={isExp}
+                        onClick={() => toggleExpand(p.id)}
+                        style={{
+                          transform: isExp ? "rotate(90deg)" : "none",
+                          transition: "transform 120ms",
+                        }}
+                      >
+                        <Icon name="chevron-r" size={12} />
+                      </button>
                     </td>
                     <td className="wms-mono">
                       #{p.numero_pedido || p.numero_ec || "—"}
@@ -1329,6 +1363,17 @@ export default function WmsSeparacaoPage() {
                       )}
                     </td>
                   </tr>
+                  {isExp && (
+                    <tr
+                      className="wms-tr-expansion"
+                      style={{ background: "var(--wms-c-faint)" }}
+                    >
+                      <td colSpan={12} style={{ padding: 0 }}>
+                        <PedidoExpansaoPanel pedido={p} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -1823,5 +1868,344 @@ function moverItem(): React.CSSProperties {
     color: "var(--wms-c-fg)",
     cursor: "pointer",
     borderRadius: 4,
+  };
+}
+
+// ─── Painel expandido por pedido ─────────────────────────────────────────
+// Lazy-fetch dos itens via /api/separacao/checklist-items.
+// Layout: 2 colunas — itens à esquerda, infos do pedido à direita.
+
+interface ChecklistItem {
+  id: string;
+  pedido_id: string;
+  sku: string;
+  gtin: string | null;
+  descricao: string | null;
+  quantidade: number;
+  separacao_marcado: boolean;
+  quantidade_bipada: number;
+  bipado_completo: boolean;
+  imagem_url: string | null;
+  compra_status: string | null;
+  localizacao: string | null;
+  saldo: number;
+  disponivel: number;
+  galpao_nome: string | null;
+  quantidade_pega: number | null;
+  separacao_parcial: boolean;
+  parcial_motivo: string | null;
+}
+
+function PedidoExpansaoPanel({ pedido }: { pedido: SeparacaoPedido }) {
+  // Em pedidos da tab Aguardando OC os itens "comprar" só aparecem em pick-oc mode.
+  const isPickOC = pedido.status_separacao === "aguardando_compra";
+  const { data, isLoading, isError, error } = useQuery<{ items: ChecklistItem[] }>({
+    queryKey: ["wms-separacao-expansao", pedido.id, isPickOC],
+    queryFn: async () => {
+      const qs = new URLSearchParams({ pedidos: pedido.id });
+      if (isPickOC) qs.set("modo", "pick-oc");
+      const r = await sisoFetch(`/api/separacao/checklist-items?${qs.toString()}`);
+      if (!r.ok) {
+        const b = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error || `HTTP ${r.status}`);
+      }
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const items = data?.items ?? [];
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) 280px",
+        gap: 16,
+        padding: "14px 16px 18px 56px",
+        borderTop: "1px solid var(--wms-c-border)",
+      }}
+    >
+      {/* Coluna 1 — itens */}
+      <div>
+        <div
+          className="wms-td-mute"
+          style={{
+            fontSize: 10,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: ".06em",
+            marginBottom: 8,
+          }}
+        >
+          Itens do pedido
+        </div>
+        {isLoading ? (
+          <div className="wms-td-mute" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+            <Loader2 className="animate-spin" size={12} /> Carregando itens…
+          </div>
+        ) : isError ? (
+          <div style={{ fontSize: 12, color: "var(--wms-c-danger)" }}>
+            {error instanceof Error ? error.message : "Erro ao carregar itens"}
+          </div>
+        ) : items.length === 0 ? (
+          <div className="wms-td-mute" style={{ fontSize: 12 }}>
+            Nenhum item visível.
+          </div>
+        ) : (
+          <table className="wms-mini-tbl" style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ fontSize: 10, color: "var(--wms-c-mute)", textTransform: "uppercase", letterSpacing: ".05em" }}>
+                <th style={{ width: 36, textAlign: "left", padding: "4px 6px" }}></th>
+                <th style={{ textAlign: "left", padding: "4px 6px" }}>SKU</th>
+                <th style={{ textAlign: "left", padding: "4px 6px" }}>Descrição</th>
+                <th style={{ textAlign: "left", padding: "4px 6px" }}>Local</th>
+                <th className="wms-tar" style={{ padding: "4px 6px" }}>Qtd</th>
+                <th style={{ padding: "4px 6px" }}>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it) => {
+                const estado = itemEstado(it);
+                return (
+                  <tr key={it.id} style={{ borderTop: "1px solid var(--wms-c-border)" }}>
+                    <td style={{ padding: "4px 6px" }}>
+                      {it.imagem_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={it.imagem_url}
+                          alt=""
+                          style={{
+                            width: 28,
+                            height: 28,
+                            objectFit: "cover",
+                            borderRadius: 3,
+                            border: "1px solid var(--wms-c-border)",
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 3,
+                            background: "var(--wms-c-panel-2)",
+                            border: "1px solid var(--wms-c-border)",
+                          }}
+                        />
+                      )}
+                    </td>
+                    <td className="wms-mono" style={{ padding: "4px 6px", fontSize: 12 }}>
+                      {it.sku}
+                    </td>
+                    <td style={{ padding: "4px 6px", fontSize: 12 }}>
+                      <span title={it.descricao ?? ""}>{it.descricao ?? "—"}</span>
+                    </td>
+                    <td className="wms-mono" style={{ padding: "4px 6px", fontSize: 11.5 }}>
+                      {it.localizacao ?? <span className="wms-td-mute">—</span>}
+                    </td>
+                    <td className="wms-tar wms-mono" style={{ padding: "4px 6px", fontSize: 12 }}>
+                      {it.quantidade_bipada > 0 || it.bipado_completo
+                        ? `${it.quantidade_bipada}/${it.quantidade}`
+                        : it.quantidade}
+                    </td>
+                    <td style={{ padding: "4px 6px" }}>
+                      <span style={estadoBadge(estado.tone)}>{estado.label}</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Coluna 2 — infos do pedido */}
+      <div>
+        <div
+          className="wms-td-mute"
+          style={{
+            fontSize: 10,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: ".06em",
+            marginBottom: 8,
+          }}
+        >
+          Detalhes
+        </div>
+        <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 10px", fontSize: 12, margin: 0 }}>
+          <DetailRow label="Cliente" value={pedido.cliente} />
+          <DetailRow
+            label="Cidade/UF"
+            value={
+              [pedido.cidade, pedido.uf].filter(Boolean).join(" / ") || null
+            }
+          />
+          <DetailRow label="Envio" value={pedido.forma_envio} />
+          <DetailRow label="Marketplace" value={pedido.nome_ecommerce} />
+          <DetailRow label="Nº pedido" value={pedido.numero_pedido} mono />
+          <DetailRow label="Nº ML" value={pedido.numero_ec} mono />
+          <DetailRow label="Nº NF" value={pedido.numero_nf} mono />
+          <DetailRow
+            label="Data"
+            value={pedido.data_pedido ? fmtRelative(pedido.data_pedido) : null}
+          />
+          {pedido.encaminhado_de && (
+            <DetailRow label="Encaminhado de" value={pedido.encaminhado_de} />
+          )}
+        </dl>
+
+        {/* Flags */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+          <FlagPill ok={pedido.nf_emitida} label="NF emitida" />
+          <FlagPill ok={pedido.agrupamento_criado} label="Agrupamento" />
+          <FlagPill ok={pedido.etiqueta_pronta} label="Etiqueta" />
+        </div>
+
+        {pedido.marcadores && pedido.marcadores.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div
+              className="wms-td-mute"
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                marginBottom: 4,
+              }}
+            >
+              Marcadores Tiny
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {pedido.marcadores.map((m) => (
+                <span
+                  key={m}
+                  style={{
+                    fontSize: 10,
+                    padding: "1px 6px",
+                    background: "var(--wms-c-panel-2)",
+                    border: "1px solid var(--wms-c-border)",
+                    borderRadius: 3,
+                  }}
+                >
+                  {m}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {pedido.compra_stats && pedido.compra_stats.total > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div
+              className="wms-td-mute"
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                marginBottom: 4,
+              }}
+            >
+              Compras
+            </div>
+            <div style={{ fontSize: 11.5, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 8px" }}>
+              <span>Aguardando: <strong>{pedido.compra_stats.aguardando}</strong></span>
+              <span>Comprado: <strong>{pedido.compra_stats.comprado}</strong></span>
+              <span>Recebido: <strong>{pedido.compra_stats.recebido}</strong></span>
+              <span>Indispon.: <strong>{pedido.compra_stats.indisponivel}</strong></span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DetailRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string | null | undefined;
+  mono?: boolean;
+}) {
+  return (
+    <>
+      <dt className="wms-td-mute" style={{ fontSize: 11 }}>
+        {label}
+      </dt>
+      <dd
+        className={mono ? "wms-mono" : undefined}
+        style={{ margin: 0, fontSize: 12, wordBreak: "break-word" }}
+      >
+        {value ?? <span className="wms-td-mute">—</span>}
+      </dd>
+    </>
+  );
+}
+
+function FlagPill({ ok, label }: { ok: boolean; label: string }) {
+  const tone = ok ? "ok" : "mute";
+  const colors: Record<string, [string, string, string]> = {
+    ok: ["var(--wms-c-ok-bg)", "var(--wms-c-ok)", "var(--wms-c-ok-bd)"],
+    mute: ["var(--wms-c-panel-2)", "var(--wms-c-mute)", "var(--wms-c-border)"],
+  };
+  const [bg, fg, bd] = colors[tone];
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: 11,
+        padding: "2px 7px",
+        background: bg,
+        color: fg,
+        border: `1px solid ${bd}`,
+        borderRadius: 3,
+        fontWeight: 500,
+      }}
+    >
+      {ok ? "✓" : "○"} {label}
+    </span>
+  );
+}
+
+type EstadoTone = "ok" | "info" | "warn" | "mute" | "danger";
+
+function itemEstado(it: ChecklistItem): { label: string; tone: EstadoTone } {
+  if (it.compra_status === "indisponivel") return { label: "Indisponível", tone: "danger" };
+  if (it.compra_status === "cancelado") return { label: "Cancelado", tone: "danger" };
+  if (it.compra_status === "aguardando") return { label: "Aguardando OC", tone: "warn" };
+  if (it.compra_status === "comprado") return { label: "Comprado", tone: "info" };
+  if (it.compra_status === "recebido") return { label: "Recebido", tone: "ok" };
+  if (it.separacao_parcial) return { label: `Parcial${it.parcial_motivo ? " · " + it.parcial_motivo : ""}`, tone: "warn" };
+  if (it.bipado_completo) return { label: "Bipado", tone: "ok" };
+  if (it.separacao_marcado) return { label: "Marcado", tone: "info" };
+  return { label: "Pendente", tone: "mute" };
+}
+
+function estadoBadge(tone: EstadoTone): React.CSSProperties {
+  const palette: Record<EstadoTone, [string, string, string]> = {
+    ok: ["var(--wms-c-ok-bg)", "var(--wms-c-ok)", "var(--wms-c-ok-bd)"],
+    info: ["var(--wms-c-info-bg)", "var(--wms-c-info)", "var(--wms-c-info-bd)"],
+    warn: ["var(--wms-c-warn-bg)", "var(--wms-c-warn)", "var(--wms-c-warn-bd)"],
+    danger: ["var(--wms-c-danger-bg)", "var(--wms-c-danger)", "var(--wms-c-danger-bd)"],
+    mute: ["var(--wms-c-panel-2)", "var(--wms-c-mute)", "var(--wms-c-border)"],
+  };
+  const [bg, fg, bd] = palette[tone];
+  return {
+    display: "inline-block",
+    fontSize: 10.5,
+    padding: "1px 6px",
+    background: bg,
+    color: fg,
+    border: `1px solid ${bd}`,
+    borderRadius: 3,
+    fontWeight: 500,
+    whiteSpace: "nowrap",
   };
 }

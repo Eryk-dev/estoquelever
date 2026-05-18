@@ -17,6 +17,7 @@ import {
   Kpi,
 } from "@/components/wms/ui/wms-ui";
 import { useAuth } from "@/lib/auth-context";
+import { FeedEventos } from "@/components/wms/inventario/feed-eventos";
 
 interface SessaoData {
   sessao?: {
@@ -465,6 +466,12 @@ export default function InventarioSupervisorPage({
           return <SlotCard key={slot} slot={slot} op={op} locs={locs} />;
         })}
       </div>
+
+      {/* Painel ao vivo */}
+      <section className="mt-8">
+        <h2 className="mb-3 text-lg font-semibold">Painel ao vivo</h2>
+        <FeedEventos sessaoId={id} />
+      </section>
 
       {/* Últimos bipes */}
       {contagens.length > 0 && (

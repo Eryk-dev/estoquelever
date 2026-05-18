@@ -44,6 +44,32 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
+    // ── 0. Bloqueia se há realocs aguardando_picking em algum item dos pedidos ──
+    // Sem isso, o concluir-oc transicionaria direto pra 'separado' deixando o
+    // residual da realocação solto (item normal + cascade pendente).
+    const { data: realocsPend } = await supabase
+      .from("siso_pedido_item_realocacoes")
+      .select("id, pedido_item_id, siso_pedido_itens!inner(pedido_id)")
+      .in("siso_pedido_itens.pedido_id", pedido_ids)
+      .eq("status", "aguardando_picking");
+
+    if ((realocsPend ?? []).length > 0) {
+      const pedidosBloq = new Set(
+        (realocsPend ?? []).map(
+          (r) =>
+            (r.siso_pedido_itens as unknown as { pedido_id: string }).pedido_id,
+        ),
+      );
+      return NextResponse.json(
+        {
+          error: "realocacoes_pendentes",
+          message: `${pedidosBloq.size} pedido(s) com realocação aguardando picking`,
+          pedido_ids_bloqueados: [...pedidosBloq],
+        },
+        { status: 409 },
+      );
+    }
+
     // ── 1. Check all items are marked ──
     const { data: allItems, error: fetchError } = await supabase
       .from("siso_pedido_itens")

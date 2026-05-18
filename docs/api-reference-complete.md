@@ -4878,6 +4878,40 @@ Body: `{ divergencia_id, acao: 'aprovar'|'rejeitar'|'recontar', observacoes? }`.
 ### GET /api/wms/inventario/metricas
 RPCs: acuracidade por operador (30d) + por localização (5000 últimas).
 
+### GET /api/wms/inventario/[id]/eventos
+
+**Auth:** `requireWarehouseAccess`
+**Query params:** `limit` (default 50, max 200)
+
+**Response:**
+```json
+{
+  "eventos": [
+    {
+      "id": "uuid",
+      "cor": "verde|amarelo|vermelho",
+      "tipo": "E|S|R|L",
+      "origem_tipo": "nf_venda|recebimento|inventario|...",
+      "origem_id": "string|null",
+      "loc_codigo": "A-01-3",
+      "sku": "001233",
+      "descricao": "MASCARA AC FORD FIESTA",
+      "quantidade": 1,
+      "saldo_anterior": 1,
+      "saldo_posterior": 0,
+      "criado_em": "2026-05-18T18:10:36Z"
+    }
+  ]
+}
+```
+
+**Classificação:**
+- verde: contagem normal (origem=inventario) ou mov em loc ainda em jogo
+- amarelo: mov em loc não visitada ou em janela contagem_iniciada → contagem_finalizada
+- vermelho: mov em loc já visitada (contagem_finalizada_em < criado_em) — sistema reconcilia
+
+**Business logic:** lista as N últimas movs do galpão da sessão criadas desde `iniciada_em`. Usado pelo painel ao vivo do supervisor.
+
 ### GET /api/wms/inventario/cleanup
 Cron-friendly. Auth: `x-worker-secret`. Detecta sessões inativas há 4h+ (alerta) e libera locks com 30min+ sem contagem nova (mov de status='pendente').
 

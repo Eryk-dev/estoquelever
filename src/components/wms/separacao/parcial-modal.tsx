@@ -32,12 +32,6 @@ export function ParcialModal({
     }
   }, [open, quantidadePedida]);
 
-  useEffect(() => {
-    if (qty < quantidadePedida) {
-      setLocZerou(true);
-    }
-  }, [qty, quantidadePedida]);
-
   if (!open) return null;
 
   const handleQtyChange = (delta: number) => {

@@ -69,6 +69,31 @@ export interface DivergenciaCalculada {
   valor_financeiro: number;
 }
 
+// Helper: primeira mov "efetiva" na quádrupla com criado_em > t_ref
+function primeiraMovEfetiva(
+  movs: MovInput[],
+  loc: string,
+  prod: string,
+  dona: string,
+  t_ref: string,
+  sessaoId: string,
+  cutoff: string,
+): MovInput | null {
+  const candidatos = movs
+    .filter(
+      (m) =>
+        m.localizacao_id === loc &&
+        m.produto_id === prod &&
+        m.empresa_dona_id === dona &&
+        m.criado_em > t_ref &&
+        m.criado_em <= cutoff &&
+        m.estorno_de === null &&
+        !(m.origem_tipo === "inventario" && m.origem_id === sessaoId),
+    )
+    .sort((a, b) => a.criado_em.localeCompare(b.criado_em));
+  return candidatos[0] ?? null;
+}
+
 export function reconciliarTemporal(input: ReconciliarInput): DivergenciaCalculada[] {
   const result: DivergenciaCalculada[] = [];
 
@@ -104,7 +129,8 @@ export function reconciliarTemporal(input: ReconciliarInput): DivergenciaCalcula
     const s = saldoMap.get(k);
     const saldo_atual = s?.saldo ?? 0;
     const custo = s?.custo ?? 0;
-    const saldo_esperado = saldo_atual; // placeholder — task 1.3 traz a lógica temporal
+    const proxima = primeiraMovEfetiva(input.movs, v.loc, v.prod, v.dona, v.t_ref, input.sessao_id, input.cutoff_em);
+    const saldo_esperado = proxima ? proxima.saldo_anterior : saldo_atual;
 
     const delta = v.qty - saldo_esperado;
     if (delta === 0) continue;

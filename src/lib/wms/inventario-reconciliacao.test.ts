@@ -66,3 +66,64 @@ describe("reconciliarTemporal — sem movs após contagem", () => {
     ]);
   });
 });
+
+describe("reconciliarTemporal — movs após contagem", () => {
+  it("saída após contagem: saldo_esperado = saldo_anterior da mov", () => {
+    // Reproduz o bug original: conta 1 às T1, picking sai 1 às T2, aprovação T_cutoff
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: "2026-05-18T13:20:00.000Z",
+      contagens: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 1, contado_em: T0 },
+      ],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T0 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 0, custo_medio: 10 },
+      ],
+      movs: [
+        {
+          id: "m1",
+          localizacao_id: LOC,
+          produto_id: PROD,
+          empresa_dona_id: DONA,
+          criado_em: T1,
+          saldo_anterior: 1,
+          saldo_posterior: 0,
+          origem_tipo: "nf_venda",
+          origem_id: "pedido:91130001",
+          estorno_de: null,
+        },
+      ],
+    });
+    expect(out).toEqual([]); // saldo_esperado = 1, qty = 1 → delta = 0 → vazio
+  });
+
+  it("entrada após contagem: saldo_esperado < saldo_atual", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: "2026-05-18T13:20:00.000Z",
+      contagens: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 3, contado_em: T0 },
+      ],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T0 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 8, custo_medio: 10 },
+      ],
+      movs: [
+        {
+          id: "m2",
+          localizacao_id: LOC,
+          produto_id: PROD,
+          empresa_dona_id: DONA,
+          criado_em: T1,
+          saldo_anterior: 3,
+          saldo_posterior: 8,
+          origem_tipo: "recebimento",
+          origem_id: "guarda:abc",
+          estorno_de: null,
+        },
+      ],
+    });
+    expect(out).toEqual([]); // saldo_esperado = 3, qty = 3 → delta = 0
+  });
+});

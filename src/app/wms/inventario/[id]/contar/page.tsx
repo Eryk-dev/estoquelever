@@ -98,10 +98,15 @@ export default function ContarPage({
     }
   }, [meuOp, etapa]);
 
-  // Auto-entrada: ao montar, se user não está na party ainda, entra automático
+  // Auto-entrada: ao montar, se user não está na party ainda, entra automático.
+  // useRef guard evita double-fire em React StrictMode (mount→unmount→mount em
+  // dev) que aconteceria entre o disparo da mutação e a chegada do meuOp via
+  // realtime. O 23505 fallback no service também cobre, mas evita toast dupla.
+  const autoEntryRef = useRef(false);
   useEffect(() => {
-    if (!user || meuOp || entrarParty.isPending) return;
+    if (!user || meuOp || entrarParty.isPending || autoEntryRef.current) return;
     if (etapa !== "entering") return;
+    autoEntryRef.current = true;
     entrarParty.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, meuOp, etapa]);
@@ -116,6 +121,15 @@ export default function ContarPage({
   // ─── Mutations ───
   const [retomadoFlag, setRetomadoFlag] = useState(false);
 
+  // Limpa o selo "retomado" 5s após acender. useEffect com cleanup garante
+  // que o timer é cancelado se a página desmontar antes — sem warning de
+  // setState em componente desmontado.
+  useEffect(() => {
+    if (!retomadoFlag) return;
+    const t = setTimeout(() => setRetomadoFlag(false), 5000);
+    return () => clearTimeout(t);
+  }, [retomadoFlag]);
+
   const entrarParty = useMutation({
     mutationFn: () =>
       wmsApi<{ ok: true; retomado: boolean }>(
@@ -126,8 +140,6 @@ export default function ContarPage({
       if (r.retomado) {
         setRetomadoFlag(true);
         toast.success("Voltou pra party — contagens preservadas");
-        // Limpa o flag após 5s pra esconder o selo "retomado" do header
-        setTimeout(() => setRetomadoFlag(false), 5000);
       } else {
         toast.success("Entrou na party");
       }

@@ -202,14 +202,20 @@ export async function entrarParty(
   // Auto-start: se sessão tá planejada, inicia (idempotente)
   await iniciarSessao(sessaoId, usuarioId);
 
-  // Existe registro deste usuário nesta sessão? (ativo ou finalizado)
-  const { data: existente, error: errSel } = await sb
+  // Existe registro deste usuário nesta sessão? Defensivo contra dados
+  // legados do modelo slot — quando o user podia ter múltiplas linhas
+  // finalizadas pra mesma sessão (uma por slot diferente). UNIQUE parcial
+  // garante no máximo 1 ativa, mas podem coexistir N finalizadas. Preferimos
+  // a ativa; se não houver, a mais recente finalizada (vira a reativada).
+  const { data: candidatas, error: errSel } = await sb
     .from("siso_inventario_operadores")
     .select("id, finalizado_em")
     .eq("sessao_id", sessaoId)
     .eq("usuario_id", usuarioId)
-    .maybeSingle();
+    .order("finalizado_em", { ascending: false, nullsFirst: true })
+    .limit(1);
   if (errSel) throw errSel;
+  const existente = (candidatas ?? [])[0] ?? null;
 
   const acao = decidirAcaoEntrada(existente);
 

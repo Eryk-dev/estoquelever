@@ -345,6 +345,7 @@ export type StatusKey =
   | "classificada"
   | "aplicada"
   | "pendente"
+  | "pendente_realocacao"
   | "reconciliado"
   | "em_andamento"
   | "planejada"
@@ -373,6 +374,7 @@ const STATUS_MAP: Record<StatusKey, { label: string; cls: string }> = {
   cancelada: { label: "Cancelada", cls: "cancelada" },
   // Outros contextos
   pendente: { label: "Pendente", cls: "warn" },
+  pendente_realocacao: { label: "Realocação", cls: "warn" },
   reconciliado: { label: "Reconciliado", cls: "ok" },
   // Guarda (put-away)
   em_guarda: { label: "Em guarda", cls: "info" },

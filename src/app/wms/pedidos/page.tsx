@@ -194,7 +194,11 @@ export default function WmsPedidosPage() {
 
   const pendentes = useMemo(() => {
     return filteredByGalpao
-      .filter((p) => p.status === "pendente")
+      .filter(
+        (p) =>
+          p.status === "pendente" ||
+          p.status_separacao === "pendente_realocacao",
+      )
       .filter(buscaMatch)
       .sort(
         (a, b) =>
@@ -521,31 +525,54 @@ function TabPendente({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {pedidos.map((p) => (
-        <PedidoCardWms
-          key={p.id}
-          pedido={toCardPedido(p)}
-          onClick={() => onClickPedido(p.id)}
-          interactive={{
-            loading: loadingId === p.id,
-            onApprove: async (decisao) => {
-              if (
-                !window.confirm(
-                  `Aprovar pedido #${p.numero} com a decisão "${decisao}"?`,
+        <div key={p.id}>
+          {p.status_separacao === "pendente_realocacao" && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 4,
+              }}
+            >
+              <StatusBadge status="pendente_realocacao" />
+              <span
+                style={{
+                  fontSize: 11,
+                  color: "var(--wms-c-warn)",
+                  fontWeight: 500,
+                }}
+              >
+                Aguardando realocação manual — separação interrompida por short
+                pick sem cobertura
+              </span>
+            </div>
+          )}
+          <PedidoCardWms
+            pedido={toCardPedido(p)}
+            onClick={() => onClickPedido(p.id)}
+            interactive={{
+              loading: loadingId === p.id,
+              onApprove: async (decisao) => {
+                if (
+                  !window.confirm(
+                    `Aprovar pedido #${p.numero} com a decisão "${decisao}"?`,
+                  )
                 )
-              )
-                return;
-              setLoadingId(p.id);
-              try {
-                await onAprovar(p, decisao);
-              } finally {
-                setLoadingId(null);
-              }
-            },
-            onReject: () => {
-              toast.info("Recusar: implementação pendente");
-            },
-          }}
-        />
+                  return;
+                setLoadingId(p.id);
+                try {
+                  await onAprovar(p, decisao);
+                } finally {
+                  setLoadingId(null);
+                }
+              },
+              onReject: () => {
+                toast.info("Recusar: implementação pendente");
+              },
+            }}
+          />
+        </div>
       ))}
     </div>
   );

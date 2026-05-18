@@ -192,6 +192,7 @@ export default function WmsChecklistPage() {
     loading: boolean;
   } | null>(null);
   const iniciarRef = useRef(false);
+  const submittingActionRef = useRef<boolean>(false);
 
   // ─── Iniciar best-effort (ignora 400) ───
   useEffect(() => {
@@ -591,6 +592,8 @@ export default function WmsChecklistPage() {
   // Handle parcial confirm
   async function handleParcialConfirm(qtyPega: number, locZerou: boolean) {
     if (!parcialModal) return;
+    if (submittingActionRef.current) return;
+    submittingActionRef.current = true;
     setParcialModal((prev) => (prev ? { ...prev, loading: true } : null));
     try {
       const body = parcialModal.isRealocacao
@@ -647,12 +650,16 @@ export default function WmsChecklistPage() {
     } catch {
       toast.error("Erro de conexão");
       setParcialModal(null);
+    } finally {
+      submittingActionRef.current = false;
     }
   }
 
   // Handle marcar realocação (1 ou N — batch paralelo pra UI consolidada)
   async function handleMarcarRealocacao(realocacaoIds: string | string[]) {
     const ids = Array.isArray(realocacaoIds) ? realocacaoIds : [realocacaoIds];
+    if (submittingActionRef.current) return;
+    submittingActionRef.current = true;
     try {
       const results = await Promise.all(
         ids.map(async (id) => {
@@ -698,6 +705,8 @@ export default function WmsChecklistPage() {
       queryClient.invalidateQueries({ queryKey });
     } catch {
       toast.error("Erro de conexão");
+    } finally {
+      submittingActionRef.current = false;
     }
   }
 
@@ -886,6 +895,7 @@ export default function WmsChecklistPage() {
                     produto={p}
                     isParcial={isParcial}
                     parcialItem={parcialItem}
+                    submitting={toggleMutation.isPending}
                     onToggle={() => handleToggle(p)}
                     onParcial={() =>
                       setParcialModal({
@@ -1107,17 +1117,23 @@ function ItemRow({
   produto,
   isParcial,
   parcialItem,
+  submitting,
   onToggle,
   onParcial,
 }: {
   produto: ConsolidatedProduct;
   isParcial: boolean;
   parcialItem: ChecklistItem | undefined;
+  submitting?: boolean;
   onToggle: () => void;
   onParcial: () => void;
 }) {
   const done = produto.all_marcado;
   const multi = produto.quantidade_total > 1;
+  const handleToggleClick = () => {
+    if (submitting) return;
+    onToggle();
+  };
   return (
     <div
       className={`wms-hand-item${done ? " is-done" : ""}`}
@@ -1127,11 +1143,11 @@ function ItemRow({
         role="button"
         tabIndex={0}
         className="wms-hand-item-check"
-        onClick={onToggle}
+        onClick={handleToggleClick}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onToggle();
+            handleToggleClick();
           }
         }}
         aria-label={done ? "Desmarcar item" : "Marcar item"}

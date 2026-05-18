@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, Field } from "@/components/wms/ui/wms-ui";
-import { useAuth } from "@/lib/auth-context";
+import { Avatar } from "@/components/wms/ui/avatar";
+import { sisoFetch, useAuth } from "@/lib/auth-context";
 import { CARGO_LABELS, type Cargo } from "@/types";
 import type { GalpaoHierarquiaWms } from "./types";
 
@@ -22,6 +23,7 @@ interface Funcionario {
   cargo: Cargo;
   cargos: Cargo[];
   ativo: boolean;
+  foto_url: string | null;
   criado_em: string;
   atualizado_em: string;
   galpoes: GalpaoRef[];
@@ -194,6 +196,142 @@ function GalpaoTogglePills({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// FotoUpload — avatar clicável que abre file picker e dispara o upload.
+// Hover mostra overlay "trocar foto". Click longo (botão direito) abre
+// menu "Remover foto" se houver foto.
+// ─────────────────────────────────────────────────────────────────────
+function FotoUpload({
+  funcionario,
+  podeEditar,
+  onMudou,
+  size = "sm",
+}: {
+  funcionario: Funcionario;
+  podeEditar: boolean;
+  onMudou: () => void;
+  size?: "sm" | "md" | "lg";
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [hover, setHover] = useState(false);
+
+  async function uploadFoto(file: File) {
+    setEnviando(true);
+    try {
+      const fd = new FormData();
+      fd.append("id", funcionario.id);
+      fd.append("file", file);
+      const r = await sisoFetch("/api/wms/admin/usuarios/foto", {
+        method: "POST",
+        body: fd,
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.erro ?? `HTTP ${r.status}`);
+      }
+      toast.success("Foto atualizada");
+      onMudou();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha no upload");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  async function removerFoto() {
+    if (!confirm(`Remover a foto de ${funcionario.nome}?`)) return;
+    setEnviando(true);
+    try {
+      const r = await sisoFetch(
+        `/api/wms/admin/usuarios/foto?id=${funcionario.id}`,
+        { method: "DELETE" },
+      );
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.erro ?? `HTTP ${r.status}`);
+      }
+      toast.success("Foto removida");
+      onMudou();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao remover");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  if (!podeEditar) {
+    return (
+      <Avatar
+        nome={funcionario.nome}
+        fotoUrl={funcionario.foto_url}
+        size={size}
+      />
+    );
+  }
+
+  return (
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onContextMenu={(e) => {
+        if (funcionario.foto_url) {
+          e.preventDefault();
+          removerFoto();
+        }
+      }}
+      style={{
+        position: "relative",
+        display: "inline-block",
+        cursor: enviando ? "wait" : "pointer",
+        opacity: enviando ? 0.6 : 1,
+      }}
+      onClick={() => !enviando && fileRef.current?.click()}
+      title={
+        funcionario.foto_url
+          ? "Clique pra trocar · botão direito pra remover"
+          : "Clique pra adicionar foto"
+      }
+    >
+      <Avatar
+        nome={funcionario.nome}
+        fotoUrl={funcionario.foto_url}
+        size={size}
+      />
+      {hover && !enviando && (
+        <span
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(0,0,0,0.55)",
+            borderRadius: "50%",
+            color: "#fff",
+            fontSize: 10,
+            fontWeight: 600,
+            letterSpacing: 0.3,
+          }}
+        >
+          ✎
+        </span>
+      )}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) uploadFoto(f);
+          e.target.value = "";
+        }}
+      />
     </div>
   );
 }
@@ -569,19 +707,38 @@ function LinhaFuncionario({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const { user: viewer } = useAuth();
+  const viewerCargos = viewer?.cargos?.length
+    ? viewer.cargos
+    : viewer?.cargo
+      ? [viewer.cargo]
+      : [];
+  const viewerIsAdmin = viewerCargos.includes("admin");
+  const podeEditarFoto = isSelf || viewerIsAdmin;
+
   if (!editando) {
     return (
       <tr style={{ opacity: funcionario.ativo ? 1 : 0.55 }}>
         <td>
-          <strong>{funcionario.nome}</strong>
-          {isSelf && (
-            <span
-              className="wms-badge wms-badge-mute"
-              style={{ marginLeft: 6, fontSize: 10 }}
-            >
-              você
-            </span>
-          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <FotoUpload
+              funcionario={funcionario}
+              podeEditar={podeEditarFoto}
+              onMudou={onMudou}
+              size="md"
+            />
+            <div style={{ minWidth: 0 }}>
+              <strong>{funcionario.nome}</strong>
+              {isSelf && (
+                <span
+                  className="wms-badge wms-badge-mute"
+                  style={{ marginLeft: 6, fontSize: 10 }}
+                >
+                  você
+                </span>
+              )}
+            </div>
+          </div>
         </td>
         <td>
           <CargoChips cargos={cargosDisplay} />

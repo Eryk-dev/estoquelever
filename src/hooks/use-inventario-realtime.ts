@@ -56,7 +56,7 @@ export interface Operador {
   claim_codigo: string | null;
   claim_direcao: ClaimDirecao | null;
   claim_atualizado_em: string | null;
-  usuario?: { nome?: string };
+  usuario?: { nome?: string; foto_url?: string | null };
 }
 
 interface SessaoSnapshot {

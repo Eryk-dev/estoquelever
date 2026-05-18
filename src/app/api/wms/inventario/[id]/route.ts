@@ -20,7 +20,7 @@ export async function GET(
       .single(),
     sb
       .from("siso_inventario_operadores")
-      .select("*, usuario:siso_usuarios(nome)")
+      .select("*, usuario:siso_usuarios(nome, foto_url)")
       .eq("sessao_id", id)
       .order("slot", { ascending: true }),
     sb

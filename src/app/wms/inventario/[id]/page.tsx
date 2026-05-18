@@ -18,6 +18,7 @@ import {
 } from "@/components/wms/ui/wms-ui";
 import { useAuth } from "@/lib/auth-context";
 import { FeedEventos } from "@/components/wms/inventario/feed-eventos";
+import { Avatar } from "@/components/wms/ui/avatar";
 
 interface SessaoData {
   sessao?: {
@@ -701,10 +702,32 @@ function ParticipanteCard({
         minHeight: 130,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <strong style={{ fontSize: 13 }}>
-          {op.usuario?.nome ?? "Operador"}
-        </strong>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <Avatar
+            nome={op.usuario?.nome ?? "Operador"}
+            fotoUrl={op.usuario?.foto_url ?? null}
+            size="md"
+            ring
+          />
+          <strong
+            style={{
+              fontSize: 13,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {op.usuario?.nome ?? "Operador"}
+          </strong>
+        </div>
         <span
           className="wms-mono wms-td-mute"
           style={{ fontSize: 11, fontFamily: "var(--wms-mono)" }}

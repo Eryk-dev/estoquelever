@@ -11,7 +11,7 @@ export async function GET() {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("siso_usuarios")
-    .select("id, nome, cargo, cargos, ativo, criado_em, atualizado_em, printnode_printer_id, printnode_printer_nome, printnode_printer_id_produto, printnode_printer_nome_produto")
+    .select("id, nome, cargo, cargos, ativo, foto_url, criado_em, atualizado_em, printnode_printer_id, printnode_printer_nome, printnode_printer_id_produto, printnode_printer_nome_produto")
     .order("criado_em", { ascending: true });
 
   if (error) {

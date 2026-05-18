@@ -9,6 +9,18 @@ import "dotenv/config";
 import { describe, it, expect, beforeEach, afterEach, afterAll } from "vitest";
 import { createServiceClient } from "@/lib/supabase-server";
 
+// ─── Safety guard: refuse to run outside staging ────────────────────────
+// Este suite muta o DB real (insere siso_pedido_itens + siso_movimentacoes
+// de 10 unidades contra produto real). Se NEXT_PUBLIC_SUPABASE_URL não
+// apontar pro projeto staging, abortamos antes de tocar em qualquer linha.
+const STAGING_PROJECT_REF = "ehbxpbeijofxtsbezwxd";
+if (!process.env.NEXT_PUBLIC_SUPABASE_URL?.includes(STAGING_PROJECT_REF)) {
+  throw new Error(
+    `realoc-fix-pack.test.ts: refusing to run outside staging (${STAGING_PROJECT_REF}). ` +
+      `Got URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`,
+  );
+}
+
 const sb = createServiceClient();
 
 // ─── Seed UUIDs (staging-specific) ──────────────────────────────────────

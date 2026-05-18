@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
+import { estornarMovimentacao } from "@/lib/wms/ledger";
 
 /**
  * POST /api/separacao/cancelar
@@ -10,9 +12,20 @@ import { logger } from "@/lib/logger";
  * Pedidos with pending compra items return to 'aguardando_compra'.
  * All others return to 'aguardando_separacao'.
  *
+ * Also:
+ * - Estorna mov_saida_id para cada item (NÃO estorna mov_ajuste_loc_zerou_id — reflete descoberta física)
+ * - Estorna movs de realocações já picadas
+ * - Cancela realocações em qualquer status (exceto já cancelado)
+ * - Reseta campos novos: separacao_parcial, parcial_*, quantidade_pega, mov_saida_id, mov_ajuste_loc_zerou_id
+ *
  * Body: { pedido_ids: string[] }
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
+  }
+
   const body = await request.json().catch(() => null);
   if (
     !body?.pedido_ids ||
@@ -30,12 +43,77 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // 1. Reset all item checkmarks for the given pedidos
+    // 1. Carrega itens com movs para estornar
+    const { data: itensComMovs } = await supabase
+      .from("siso_pedido_itens")
+      .select("id, mov_saida_id, mov_ajuste_loc_zerou_id, separacao_parcial")
+      .in("pedido_id", pedido_ids);
+
+    // Estorna mov_saida (NÃO estorna mov_ajuste_loc_zerou_id por design — reflete descoberta física)
+    for (const it of itensComMovs ?? []) {
+      if (it.mov_saida_id) {
+        try {
+          await estornarMovimentacao({
+            mov_id: it.mov_saida_id,
+            usuario_id: session.id,
+            observacoes: "Cancelar separação — estorno automático",
+          });
+        } catch (e) {
+          logger.warn("separacao-cancelar", "Estorno mov_saida falhou", {
+            mov_id: it.mov_saida_id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    }
+
+    // Realocações: estorna picadas, cancela aguardando_picking e demais
+    const itemIds = (itensComMovs ?? []).map((i) => i.id);
+    const { data: realocs } = itemIds.length > 0
+      ? await supabase
+          .from("siso_pedido_item_realocacoes")
+          .select("id, status, mov_saida_id, pedido_item_id")
+          .in("pedido_item_id", itemIds)
+      : { data: [] };
+
+    for (const r of realocs ?? []) {
+      if (r.status === "picado" && r.mov_saida_id) {
+        try {
+          await estornarMovimentacao({
+            mov_id: r.mov_saida_id,
+            usuario_id: session.id,
+            observacoes: "Cancelar separação — estorno realocação picada",
+          });
+        } catch (e) {
+          logger.warn("separacao-cancelar", "Estorno realocação falhou", {
+            realocacao_id: r.id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    }
+
+    if (itemIds.length > 0) {
+      await supabase
+        .from("siso_pedido_item_realocacoes")
+        .update({ status: "cancelado" })
+        .in("pedido_item_id", itemIds)
+        .neq("status", "cancelado");
+    }
+
+    // 2. Reset all item checkmarks + parcial fields for the given pedidos
     const { error: itemsError } = await supabase
       .from("siso_pedido_itens")
       .update({
         separacao_marcado: false,
         separacao_marcado_em: null,
+        separacao_parcial: false,
+        parcial_motivo: null,
+        parcial_em: null,
+        parcial_por: null,
+        quantidade_pega: null,
+        mov_saida_id: null,
+        mov_ajuste_loc_zerou_id: null,
       })
       .in("pedido_id", pedido_ids);
 
@@ -49,7 +127,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Find pedidos with compra items to decide return status
+    // 3. Find pedidos with compra items to decide return status
     const { data: compraRows } = await supabase
       .from("siso_pedido_itens")
       .select("pedido_id, compra_status")

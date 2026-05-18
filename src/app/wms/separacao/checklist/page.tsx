@@ -181,7 +181,10 @@ export default function WmsChecklistPage() {
     bipando: boolean;
   } | null>(null);
   const [parcialModal, setParcialModal] = useState<{
-    itemId: string;
+    // Em modo realocação: itemIds[0] é o realocacao_id (sempre 1).
+    // Em modo item: itemIds pode ter N items se a linha do checklist for
+    // consolidada (mesmo SKU em pedidos diferentes do wave).
+    itemIds: string[];
     isRealocacao: boolean;
     sku: string;
     localizacao: string | null;
@@ -591,8 +594,8 @@ export default function WmsChecklistPage() {
     setParcialModal((prev) => (prev ? { ...prev, loading: true } : null));
     try {
       const body = parcialModal.isRealocacao
-        ? { realocacao_id: parcialModal.itemId, quantidade_pega: qtyPega, loc_zerou: locZerou }
-        : { pedido_item_id: parcialModal.itemId, quantidade_pega: qtyPega, loc_zerou: locZerou };
+        ? { realocacao_id: parcialModal.itemIds[0], quantidade_pega: qtyPega, loc_zerou: locZerou }
+        : { pedido_item_ids: parcialModal.itemIds, quantidade_pega: qtyPega, loc_zerou: locZerou };
 
       const res = await sisoFetch("/api/wms/separacao/parcial", {
         method: "POST",
@@ -842,7 +845,7 @@ export default function WmsChecklistPage() {
                     onToggle={() => handleToggle(p)}
                     onParcial={() =>
                       setParcialModal({
-                        itemId: firstItemId,
+                        itemIds: p.item_ids,
                         isRealocacao: false,
                         sku: p.sku,
                         localizacao: p.localizacao,
@@ -889,7 +892,7 @@ export default function WmsChecklistPage() {
                       onMarcar={() => handleMarcarRealocacao(r.id)}
                       onParcial={() =>
                         setParcialModal({
-                          itemId: r.id,
+                          itemIds: [r.id],
                           isRealocacao: true,
                           sku: item.sku,
                           localizacao: r.localizacao_codigo,

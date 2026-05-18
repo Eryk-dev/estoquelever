@@ -19,14 +19,18 @@ import { ParcialModal } from "@/components/wms/separacao/parcial-modal";
 
 interface Realocacao {
   id: string;
+  parent_realocacao_id: string | null;
   empresa_dona_id: string;
   empresa_nome: string | null;
   localizacao_id: string;
   localizacao_codigo: string;
   quantidade: number;
+  quantidade_pega: number | null;
+  parcial: boolean;
+  parcial_motivo: string | null;
   is_emprestimo: boolean;
   empresa_devedora_id: string | null;
-  status: string;
+  status: "aguardando_picking" | "picado" | "picado_parcial" | "cancelado";
   criado_em: string;
 }
 
@@ -178,6 +182,7 @@ export default function WmsChecklistPage() {
   } | null>(null);
   const [parcialModal, setParcialModal] = useState<{
     itemId: string;
+    isRealocacao: boolean;
     sku: string;
     localizacao: string | null;
     quantidade: number;
@@ -585,14 +590,14 @@ export default function WmsChecklistPage() {
     if (!parcialModal) return;
     setParcialModal((prev) => (prev ? { ...prev, loading: true } : null));
     try {
+      const body = parcialModal.isRealocacao
+        ? { realocacao_id: parcialModal.itemId, quantidade_pega: qtyPega, loc_zerou: locZerou }
+        : { pedido_item_id: parcialModal.itemId, quantidade_pega: qtyPega, loc_zerou: locZerou };
+
       const res = await sisoFetch("/api/wms/separacao/parcial", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pedido_item_id: parcialModal.itemId,
-          quantidade_pega: qtyPega,
-          loc_zerou: locZerou,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -607,8 +612,13 @@ export default function WmsChecklistPage() {
           .map((r: Realocacao) => r.localizacao_codigo)
           .join(", ");
         toast.success(
-          `${data.realocacoes?.length ?? 0} loc(s) encontrada(s): ${locs} — adicionado ao fim`,
+          `${data.realocacoes?.length ?? 0} loc(s) encontrada(s): ${locs}`,
         );
+      } else if (data.status === "sem_cobertura") {
+        // Task 8: disparar modal encaminhar/OC automaticamente aqui
+        toast.warning("Sem cobertura no galpão — abrindo opções…", {
+          duration: 4000,
+        });
       } else if (data.status === "aguardando_supervisor") {
         toast.warning("Sem cobertura — pedido voltou pro painel SISO", {
           duration: 6000,
@@ -831,6 +841,7 @@ export default function WmsChecklistPage() {
                     onParcial={() =>
                       setParcialModal({
                         itemId: firstItemId,
+                        isRealocacao: false,
                         sku: p.sku,
                         localizacao: p.localizacao,
                         quantidade: p.quantidade_total,
@@ -843,7 +854,7 @@ export default function WmsChecklistPage() {
             </div>
           )}
 
-          {/* ─── Realocações — adicionadas ao fim dos itens normais ─── */}
+          {/* ─── Realocações — todas as tentativas em ordem cronológica ─── */}
           {(() => {
             const realocacaoLinhas: Array<{
               item: ChecklistItem;
@@ -852,12 +863,16 @@ export default function WmsChecklistPage() {
             for (const item of items) {
               if (item.compra_status === "oc_pendente") continue;
               for (const r of item.realocacoes ?? []) {
-                if (r.status === "aguardando_picking") {
-                  realocacaoLinhas.push({ item, realocacao: r });
-                }
+                realocacaoLinhas.push({ item, realocacao: r });
               }
             }
             if (realocacaoLinhas.length === 0) return null;
+
+            // Ordena cronologicamente
+            realocacaoLinhas.sort((a, b) =>
+              a.realocacao.criado_em.localeCompare(b.realocacao.criado_em),
+            );
+
             return (
               <>
                 <h2 className="wms-sec-h">
@@ -865,99 +880,22 @@ export default function WmsChecklistPage() {
                 </h2>
                 <div>
                   {realocacaoLinhas.map(({ item, realocacao: r }) => (
-                    <div
+                    <RealocacaoRow
                       key={`realoc-${r.id}`}
-                      className="wms-hand-item"
-                      style={{
-                        borderColor: "var(--wms-c-warn-border, #fcd34d)",
-                        background: "var(--wms-c-warn-faint, #fffbeb)",
-                      }}
-                    >
-                      <div className="wms-hand-item-check" style={{ cursor: "default" }} aria-hidden>
-                        <input
-                          type="checkbox"
-                          onChange={() => handleMarcarRealocacao(r.id)}
-                          style={{ width: 16, height: 16 }}
-                          title="Marcar como picado"
-                        />
-                      </div>
-                      {item.imagem_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={item.imagem_url}
-                          alt={item.sku}
-                          className="wms-thumb wms-thumb-sm"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div
-                          className="wms-thumb wms-thumb-sm"
-                          style={{
-                            display: "grid",
-                            placeItems: "center",
-                            background: "var(--wms-c-faint)",
-                          }}
-                        >
-                          <Icon name="box" size={16} className="wms-td-mute" />
-                        </div>
-                      )}
-                      <div style={{ minWidth: 0 }}>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <span
-                            className="wms-mono"
-                            style={{ fontWeight: 600, fontSize: 13 }}
-                          >
-                            {item.sku}
-                          </span>
-                          <span
-                            className="wms-badge wms-badge-warn"
-                            style={{ fontSize: 10 }}
-                          >
-                            Realocada
-                          </span>
-                          {r.is_emprestimo && (
-                            <span
-                              className="wms-badge"
-                              style={{
-                                fontSize: 10,
-                                background: "var(--wms-c-info-faint, #cffafe)",
-                                color: "var(--wms-c-info-text, #164e63)",
-                              }}
-                            >
-                              Empréstimo
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: 11, marginTop: 2 }}>
-                          <span className="wms-hand-item-loc">
-                            {r.localizacao_codigo}
-                          </span>
-                          {r.is_emprestimo && r.empresa_nome && (
-                            <span className="wms-td-mute">
-                              {" "}
-                              · {r.empresa_nome}
-                            </span>
-                          )}
-                          <span className="wms-td-mute">
-                            {" "}
-                            ← de {item.localizacao ?? "sem loc"}
-                          </span>
-                        </div>
-                      </div>
-                      <div
-                        className="wms-mono wms-tar"
-                        style={{ fontWeight: 700, fontSize: 16 }}
-                      >
-                        {r.quantidade}
-                      </div>
-                    </div>
+                      item={item}
+                      realocacao={r}
+                      onMarcar={() => handleMarcarRealocacao(r.id)}
+                      onParcial={() =>
+                        setParcialModal({
+                          itemId: r.id,
+                          isRealocacao: true,
+                          sku: item.sku,
+                          localizacao: r.localizacao_codigo,
+                          quantidade: r.quantidade,
+                          loading: false,
+                        })
+                      }
+                    />
                   ))}
                 </div>
               </>
@@ -1289,6 +1227,178 @@ function ItemRowOC({
               Esgotado
             </button>
           </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// RealocacaoRow — linha de realocação (cascade); aceita Parcial + checkbox
+
+function RealocacaoRow({
+  item,
+  realocacao: r,
+  onMarcar,
+  onParcial,
+}: {
+  item: ChecklistItem;
+  realocacao: Realocacao;
+  onMarcar: () => void;
+  onParcial: () => void;
+}) {
+  const isActive = r.status === "aguardando_picking";
+  const isPicadoCompleto = r.status === "picado";
+  const isPicadoParcial = r.status === "picado_parcial";
+  const isCancelado = r.status === "cancelado";
+
+  const badgeLabel = isPicadoCompleto
+    ? "Picado"
+    : isPicadoParcial
+      ? `Picado ${r.quantidade_pega ?? 0}/${r.quantidade}`
+      : isCancelado
+        ? "Cancelada"
+        : "Aguardando";
+
+  const badgeClass = isPicadoCompleto
+    ? "wms-badge wms-badge-ok"
+    : isCancelado || isPicadoParcial
+      ? "wms-badge"
+      : "wms-badge wms-badge-warn";
+
+  const rowStyle: React.CSSProperties = isActive
+    ? {
+        borderColor: "var(--wms-c-warn-border, #fcd34d)",
+        background: "var(--wms-c-warn-faint, #fffbeb)",
+      }
+    : isPicadoCompleto
+      ? {
+          borderColor: "var(--wms-c-ok-border, #a7f3d0)",
+          background: "var(--wms-c-ok-faint, #ecfdf5)",
+          opacity: 0.85,
+        }
+      : {
+          opacity: 0.6,
+        };
+
+  return (
+    <div
+      className="wms-hand-item"
+      style={{
+        gridTemplateColumns: "28px 44px minmax(0,1fr) 56px 170px",
+        ...rowStyle,
+      }}
+    >
+      <div
+        role={isActive ? "button" : undefined}
+        tabIndex={isActive ? 0 : -1}
+        className="wms-hand-item-check"
+        onClick={isActive ? onMarcar : undefined}
+        onKeyDown={
+          isActive
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onMarcar();
+                }
+              }
+            : undefined
+        }
+        style={{ cursor: isActive ? "pointer" : "default" }}
+        aria-label={isActive ? "Marcar como picado" : undefined}
+      >
+        {(isPicadoCompleto || isPicadoParcial) && <Icon name="check" size={12} />}
+      </div>
+      {item.imagem_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={item.imagem_url}
+          alt={item.sku}
+          className="wms-thumb wms-thumb-sm"
+          loading="lazy"
+        />
+      ) : (
+        <div
+          className="wms-thumb wms-thumb-sm"
+          style={{
+            display: "grid",
+            placeItems: "center",
+            background: "var(--wms-c-faint)",
+          }}
+        >
+          <Icon name="box" size={16} className="wms-td-mute" />
+        </div>
+      )}
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
+          }}
+        >
+          <span className="wms-mono" style={{ fontWeight: 600, fontSize: 13 }}>
+            {item.sku}
+          </span>
+          <span className={badgeClass} style={{ fontSize: 10 }}>
+            {badgeLabel}
+          </span>
+          <span
+            className="wms-badge wms-badge-warn"
+            style={{ fontSize: 10 }}
+          >
+            Realocada
+          </span>
+          {r.is_emprestimo && (
+            <span
+              className="wms-badge"
+              style={{
+                fontSize: 10,
+                background: "var(--wms-c-info-faint, #cffafe)",
+                color: "var(--wms-c-info-text, #164e63)",
+              }}
+            >
+              Empréstimo
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, marginTop: 2 }}>
+          <span className="wms-hand-item-loc">{r.localizacao_codigo}</span>
+          {r.is_emprestimo && r.empresa_nome && (
+            <span className="wms-td-mute"> · {r.empresa_nome}</span>
+          )}
+          <span className="wms-td-mute"> ← de {item.localizacao ?? "sem loc"}</span>
+        </div>
+      </div>
+      <div
+        className="wms-mono wms-tar"
+        style={{ fontWeight: 700, fontSize: 16 }}
+      >
+        {r.quantidade}
+      </div>
+      <div
+        className="wms-tar"
+        style={{
+          display: "flex",
+          gap: 6,
+          alignItems: "center",
+          justifyContent: "flex-end",
+        }}
+      >
+        {isActive && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-ghost"
+            onClick={onParcial}
+            title="Pegar parcialmente"
+            style={{
+              color: "var(--wms-c-warn, #b45309)",
+              borderColor: "var(--wms-c-warn, #b45309)",
+            }}
+          >
+            Parcial
+          </button>
         )}
       </div>
     </div>

@@ -140,15 +140,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 3c. Fetch realocacoes aguardando_picking for all items
+    // 3c. Fetch realocacoes (todos os status) para todos os itens
     const itemIds = (items ?? []).map((i) => i.id);
     let realocacoes: Array<{
       id: string;
       pedido_item_id: number;
+      parent_realocacao_id: string | null;
       empresa_dona_id: string;
       galpao_id: string | null;
       localizacao_id: string | null;
       quantidade: number;
+      quantidade_pega: number | null;
+      parcial: boolean;
+      parcial_motivo: string | null;
       is_emprestimo: boolean;
       empresa_devedora_id: string | null;
       status: string;
@@ -159,10 +163,9 @@ export async function GET(request: NextRequest) {
       const { data: realocacoesRaw } = await supabase
         .from("siso_pedido_item_realocacoes")
         .select(
-          "id, pedido_item_id, empresa_dona_id, galpao_id, localizacao_id, quantidade, is_emprestimo, empresa_devedora_id, status, criado_em",
+          "id, pedido_item_id, parent_realocacao_id, empresa_dona_id, galpao_id, localizacao_id, quantidade, quantidade_pega, parcial, parcial_motivo, is_emprestimo, empresa_devedora_id, status, criado_em",
         )
-        .in("pedido_item_id", itemIds)
-        .eq("status", "aguardando_picking");
+        .in("pedido_item_id", itemIds);
       realocacoes = realocacoesRaw ?? [];
     }
 
@@ -226,6 +229,7 @@ export async function GET(request: NextRequest) {
       const sepEmpresaId = pedidoSepEmpresaMap.get(item.pedido_id) ?? null;
       const itemRealocacoes = (realocacoesPorItem.get(String(item.id)) ?? []).map((r) => ({
         id: r.id,
+        parent_realocacao_id: r.parent_realocacao_id,
         empresa_dona_id: r.empresa_dona_id,
         empresa_nome: realocacaoEmpresaNomeMap.get(r.empresa_dona_id) ?? null,
         localizacao_id: r.localizacao_id,
@@ -233,6 +237,9 @@ export async function GET(request: NextRequest) {
           ? (localizacaoCodigoMap.get(r.localizacao_id) ?? null)
           : null,
         quantidade: r.quantidade,
+        quantidade_pega: r.quantidade_pega,
+        parcial: r.parcial,
+        parcial_motivo: r.parcial_motivo,
         is_emprestimo: r.is_emprestimo,
         empresa_devedora_id: r.empresa_devedora_id,
         status: r.status,

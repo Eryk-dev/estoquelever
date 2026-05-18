@@ -329,3 +329,29 @@ describe("reconciliarTemporal — loc não visitada", () => {
     expect(out).toEqual([]);
   });
 });
+
+describe("reconciliarTemporal — múltiplas contagens da mesma quádrupla", () => {
+  it("soma qtys e usa max(contado_em) como T_ref", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: "2026-05-18T13:30:00.000Z",
+      contagens: [
+        // Mesma quádrupla bipada 3 vezes (caso edge: dois operadores)
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 2, contado_em: T0 },
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 1, contado_em: T1 },
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 1, contado_em: "2026-05-18T13:07:00.000Z" },
+      ],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T1 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 2, custo_medio: 10 },
+      ],
+      movs: [
+        // Saída de 2 depois da última contagem (T_ref = T1)
+        { id: "m1", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: T2, saldo_anterior: 4, saldo_posterior: 2, origem_tipo: "nf_venda", origem_id: "p1", estorno_de: null },
+      ],
+    });
+    // qty agregada = 2+1+1 = 4. T_ref = T1 (max). Primeira mov após T1 é m1, saldo_anterior=4.
+    // delta = 4 - 4 = 0 → []
+    expect(out).toEqual([]);
+  });
+});

@@ -1,6 +1,6 @@
 # 07 — Módulo de Compras v2
 
-> Documento minucioso do módulo de **compras** do SISO. Cobre toda a UI (`/compras`), todas as rotas API (`/api/compras/*`), as bibliotecas de domínio (`compras-release.ts`, `compras-equivalencia.ts`, `compras-embalagem.ts`, `compras-utils.ts`, `sku-fornecedor.ts`), os estados de itens e ordens de compra, exceções (indisponível / equivalente / cancelamento), troca de SKU, devolução, cancelamento de pedido inteiro, distribuição por aging, release de execução pós-recebimento e staging para embalagem direta.
+> Documento minucioso do módulo de **compras** do SISO. Cobre toda a UI (`/compras`), todas as rotas API (`/api/wms/compras/*`), as bibliotecas de domínio (`compras-release.ts`, `compras-equivalencia.ts`, `compras-embalagem.ts`, `compras-utils.ts`, `sku-fornecedor.ts`), os estados de itens e ordens de compra, exceções (indisponível / equivalente / cancelamento), troca de SKU, devolução, cancelamento de pedido inteiro, distribuição por aging, release de execução pós-recebimento e staging para embalagem direta.
 >
 > **Não cobre** a separação detalhada (doc [05](./05-separacao-wave-picking.md)) nem a embalagem/expedição (doc [06](./06-embalagem-expedicao-etiquetas.md)).
 
@@ -13,15 +13,15 @@
 3. [Modelo de dados](#3-modelo-de-dados)
 4. [Estados de item de compra](#4-estados-de-item-de-compra)
 5. [Estados de OC](#5-estados-de-oc)
-6. [Listagem unificada — `GET /api/compras`](#6-listagem-unificada--get-apicompras)
+6. [Listagem unificada — `GET /api/wms/compras`](#6-listagem-unificada--get-apicompras)
 7. [Tab "Comprar"](#7-tab-comprar)
 8. [Tab "Aguardando recebimento" (Receber)](#8-tab-aguardando-recebimento-receber)
 9. [Tab "Recebidos" (Histórico)](#9-tab-recebidos-histórico)
-10. [Endpoint `/api/compras/comprar` — marcar comprado por SKU](#10-endpoint-apicomprascomprar--marcar-comprado-por-sku)
-11. [Endpoint `/api/compras/receber` — receber por SKU](#11-endpoint-apicomprasreceber--receber-por-sku)
-12. [Endpoint `/api/compras/ordens` — criar OC explícita](#12-endpoint-apicomprasordens--criar-oc-explícita)
-13. [Tela de conferência de OC `GET /api/compras/conferencia/[id]`](#13-tela-de-conferência-de-oc-get-apicomprasconferenciaid)
-14. [Endpoint deprecated `/api/compras/conferir`](#14-endpoint-deprecated-apicomprasconferir)
+10. [Endpoint `/api/wms/compras/comprar` — marcar comprado por SKU](#10-endpoint-apicomprascomprar--marcar-comprado-por-sku)
+11. [Endpoint `/api/wms/compras/receber` — receber por SKU](#11-endpoint-apicomprasreceber--receber-por-sku)
+12. [Endpoint `/api/wms/compras/ordens` — criar OC explícita](#12-endpoint-apicomprasordens--criar-oc-explícita)
+13. [Tela de conferência de OC `GET /api/wms/compras/conferencia/[id]`](#13-tela-de-conferência-de-oc-get-apicomprasconferenciaid)
+14. [Endpoint deprecated `/api/wms/compras/conferir`](#14-endpoint-deprecated-apicomprasconferir)
 15. [Exceção: Indisponível](#15-exceção-indisponível)
 16. [Exceção: Equivalente (SKU alternativo)](#16-exceção-equivalente-sku-alternativo)
 17. [Exceção: Cancelamento (item)](#17-exceção-cancelamento-item)
@@ -64,7 +64,7 @@ A página é cliente puro (Next.js App Router `"use client"`) e usa TanStack Rea
 | Aguardando recebimento | `?tab=receber` | `compra_status = 'comprado'` |
 | Recebidos | `?tab=historico` | `compra_status = 'recebido'`, paginação simples (limit 500) |
 
-Aliases legados aceitos: `tab=pendentes` → `comprar`; `tab=recebidos` → `historico` (`src/app/api/compras/route.ts:122-124`).
+Aliases legados aceitos: `tab=pendentes` → `comprar`; `tab=recebidos` → `historico` (`src/app/api/wms/compras/route.ts:122-124`).
 
 ### Atores
 
@@ -101,7 +101,7 @@ Tabela completa (sincronizada com `CLAUDE.md`):
 - **Case-insensitive.** O SKU é convertido para `toUpperCase()` antes de testar (`sku-fornecedor.ts:82`).
 - **Default seguro.** Se nada bate e o SKU não é 6 dígitos puros, retorna `Diversos / CWB` (constante `DEFAULT`, `sku-fornecedor.ts:14`).
 - **Galpão de OC vs galpão de origem.** O `filialOC` é o galpão *de recebimento físico* sugerido — onde o fornecedor entrega. Pode divergir do galpão de origem do pedido (que recebeu o pedido pela conta Tiny da empresa). Esse descasamento é o que decide entre `propria` e `transferencia` no release pós-OC (ver §22).
-- **Onde é gravado.** O resultado de `getFornecedorBySku()` é gravado em `siso_pedido_itens.fornecedor_oc` durante o webhook (`webhook-processor.ts`) e regravado no fluxo `trocar-sku` quando o SKU é substituído (`src/app/api/compras/trocar-sku/route.ts:189-192`).
+- **Onde é gravado.** O resultado de `getFornecedorBySku()` é gravado em `siso_pedido_itens.fornecedor_oc` durante o webhook (`webhook-processor.ts`) e regravado no fluxo `trocar-sku` quando o SKU é substituído (`src/app/api/wms/compras/trocar-sku/route.ts:189-192`).
 
 ---
 
@@ -207,12 +207,12 @@ Estados possíveis em `siso_pedido_itens.compra_status`:
 |---|---|---|
 | `null` | Item sem fluxo de compras (decisão `propria` ou `transferencia`) | Default |
 | `aguardando_compra` | Item está na fila para o comprador | Webhook ao detectar `oc` |
-| `comprado` | Item foi marcado como comprado pelo operador, aguarda recebimento | `POST /api/compras/comprar` ou `/api/compras/ordens` |
-| `recebido` | Quantidade recebida ≥ quantidade solicitada | `POST /api/compras/receber` ou `/api/compras/conferir` |
-| `indisponivel` | Fornecedor não tem o item | `POST /api/compras/itens/[id]/indisponivel` |
-| `equivalente_pendente` | Operador propôs SKU equivalente, aguarda confirmação manual | `POST /api/compras/itens/[id]/equivalente` |
-| `cancelamento_pendente` | Operador solicitou cancelamento externo (Tiny/marketplace), aguarda confirmação | `POST /api/compras/itens/[id]/cancelamento` |
-| `cancelado` | Cancelamento confirmado externamente | `POST /api/compras/itens/[id]/cancelamento/confirmar` ou via cancelamento do pedido inteiro |
+| `comprado` | Item foi marcado como comprado pelo operador, aguarda recebimento | `POST /api/wms/compras/comprar` ou `/api/wms/compras/ordens` |
+| `recebido` | Quantidade recebida ≥ quantidade solicitada | `POST /api/wms/compras/receber` ou `/api/wms/compras/conferir` |
+| `indisponivel` | Fornecedor não tem o item | `POST /api/wms/compras/itens/[id]/indisponivel` |
+| `equivalente_pendente` | Operador propôs SKU equivalente, aguarda confirmação manual | `POST /api/wms/compras/itens/[id]/equivalente` |
+| `cancelamento_pendente` | Operador solicitou cancelamento externo (Tiny/marketplace), aguarda confirmação | `POST /api/wms/compras/itens/[id]/cancelamento` |
+| `cancelado` | Cancelamento confirmado externamente | `POST /api/wms/compras/itens/[id]/cancelamento/confirmar` ou via cancelamento do pedido inteiro |
 
 ### Constantes auxiliares (`compras-utils.ts`)
 
@@ -270,17 +270,17 @@ stateDiagram-v2
 | De → Para | Endpoint | Side effects principais |
 |---|---|---|
 | `null` → `aguardando_compra` | webhook (`webhook-processor.ts`) | Define `fornecedor_oc`, `compra_quantidade_solicitada`, `compra_solicitada_em`. Pedido fica em `status_separacao=aguardando_compra`. |
-| `aguardando_compra` → `comprado` | `POST /api/compras/comprar` | Insere `comprado_em`, `comprado_por`, `comprado_por_nome`, `compra_quantidade_comprada`. **Não cria OC formal**. |
-| `aguardando_compra` → `comprado` (com OC) | `POST /api/compras/ordens` | Cria/atualiza `siso_ordens_compra`, popula `ordem_compra_id` no item. |
-| `comprado` → `recebido` | `POST /api/compras/receber` | Acumula `compra_quantidade_recebida`. Se ≥ solicitada → `recebido` + `recebido_em` + `recebido_por`. Chama `checkAndReleasePedidos`. |
+| `aguardando_compra` → `comprado` | `POST /api/wms/compras/comprar` | Insere `comprado_em`, `comprado_por`, `comprado_por_nome`, `compra_quantidade_comprada`. **Não cria OC formal**. |
+| `aguardando_compra` → `comprado` (com OC) | `POST /api/wms/compras/ordens` | Cria/atualiza `siso_ordens_compra`, popula `ordem_compra_id` no item. |
+| `comprado` → `recebido` | `POST /api/wms/compras/receber` | Acumula `compra_quantidade_recebida`. Se ≥ solicitada → `recebido` + `recebido_em` + `recebido_por`. Chama `checkAndReleasePedidos`. |
 | `recebido` → release | `compras-release.ts` | Pedido pai vai para `aguardando_nf` ou `aguardando_separacao` + insert na fila de execução. |
-| `*` → `indisponivel` | `POST /api/compras/itens/[id]/indisponivel` | Reset de campos de exceção, desvincula da OC, opcionalmente grava motivo. Recalcula status da OC. Pode cancelar pedido se todos itens forem terminais. |
-| `*` → `equivalente_pendente` | `POST /api/compras/itens/[id]/equivalente` | Lookup do SKU no Tiny da empresa de origem, salva snapshot do original, popula campos `compra_equivalente_*`. Bloqueia se já houve entrada de estoque. |
-| `equivalente_pendente` → `aguardando_compra` | `POST /api/compras/itens/[id]/equivalente/confirmar` | Aplica o equivalente (substitui `sku`/`descricao`/`produto_id`/imagem/gtin/estoques) e zera campos de exceção. |
-| `*` → `cancelamento_pendente` | `POST /api/compras/itens/[id]/cancelamento` | Marca cancelamento, opcionalmente com motivo. Recalcula OC. |
-| `cancelamento_pendente` → `cancelado` | `POST /api/compras/itens/[id]/cancelamento/confirmar` | Apaga linhas de estoque do item. Pode cancelar pedido se todos itens forem terminais; senão tenta release. |
-| `*` → `aguardando_compra` (devolver) | `POST /api/compras/itens/[id]/devolver` | Reset, volta o item para fila. Recalcula OC. |
-| `comprado` → `aguardando_compra` (mudar fornecedor) | `POST /api/compras/itens/[id]/trocar-fornecedor` (DEPRECATED) | Reset, troca `fornecedor_oc`. |
+| `*` → `indisponivel` | `POST /api/wms/compras/itens/[id]/indisponivel` | Reset de campos de exceção, desvincula da OC, opcionalmente grava motivo. Recalcula status da OC. Pode cancelar pedido se todos itens forem terminais. |
+| `*` → `equivalente_pendente` | `POST /api/wms/compras/itens/[id]/equivalente` | Lookup do SKU no Tiny da empresa de origem, salva snapshot do original, popula campos `compra_equivalente_*`. Bloqueia se já houve entrada de estoque. |
+| `equivalente_pendente` → `aguardando_compra` | `POST /api/wms/compras/itens/[id]/equivalente/confirmar` | Aplica o equivalente (substitui `sku`/`descricao`/`produto_id`/imagem/gtin/estoques) e zera campos de exceção. |
+| `*` → `cancelamento_pendente` | `POST /api/wms/compras/itens/[id]/cancelamento` | Marca cancelamento, opcionalmente com motivo. Recalcula OC. |
+| `cancelamento_pendente` → `cancelado` | `POST /api/wms/compras/itens/[id]/cancelamento/confirmar` | Apaga linhas de estoque do item. Pode cancelar pedido se todos itens forem terminais; senão tenta release. |
+| `*` → `aguardando_compra` (devolver) | `POST /api/wms/compras/itens/[id]/devolver` | Reset, volta o item para fila. Recalcula OC. |
+| `comprado` → `aguardando_compra` (mudar fornecedor) | `POST /api/wms/compras/itens/[id]/trocar-fornecedor` (DEPRECATED) | Reset, troca `fornecedor_oc`. |
 
 ---
 
@@ -328,7 +328,7 @@ Lógica:
 
 ### Reuso de rascunho em `POST /ordens`
 
-`src/app/api/compras/ordens/route.ts:117-175` implementa lógica de reuso:
+`src/app/api/wms/compras/ordens/route.ts:117-175` implementa lógica de reuso:
 - Coleta `ordem_compra_id` distintos dos itens selecionados (filtra null).
 - Filtra apenas OCs com `status='aguardando_compra'` (rascunhos auto-criados de fluxos como `produto-esgotado` da separação).
 - Se exatamente **1 rascunho**: reutiliza, faz UPDATE para `status='comprado'`, popula `galpao_id`, `empresa_id`, `comprado_por`, `comprado_em`.
@@ -336,9 +336,9 @@ Lógica:
 
 ---
 
-## 6. Listagem unificada — `GET /api/compras`
+## 6. Listagem unificada — `GET /api/wms/compras`
 
-**Arquivo:** `src/app/api/compras/route.ts:110-164`
+**Arquivo:** `src/app/api/wms/compras/route.ts:110-164`
 
 **Auth:** `getSessionUser()` + `hasComprasAccess()` (admin ou comprador).
 
@@ -357,7 +357,7 @@ Lógica:
 }
 ```
 
-`fetchCounts()` em `src/app/api/compras/route.ts:168-203` faz 5 queries em paralelo (`Promise.all`).
+`fetchCounts()` em `src/app/api/wms/compras/route.ts:168-203` faz 5 queries em paralelo (`Promise.all`).
 
 ### 6.1 `tab=comprar` — `fetchComprar()` (`route.ts:207-314`)
 
@@ -498,12 +498,12 @@ Cada exceção retorna:
 ### Interações
 
 - **Multi-seleção com Shift-click** (`fornecedor-comprar-card.tsx:247-265`): clicar com Shift seleciona o intervalo do último checkbox clicado até o atual.
-- **Edição inline de SKU**: clicar no ícone `Pencil` ao lado do SKU abre input que aceita Enter (confirma) / Esc (cancela). Confirmação dispara `POST /api/compras/trocar-sku` (ver §21).
+- **Edição inline de SKU**: clicar no ícone `Pencil` ao lado do SKU abre input que aceita Enter (confirma) / Esc (cancela). Confirmação dispara `POST /api/wms/compras/trocar-sku` (ver §21).
 - **`QtyInput`** (`src/components/compras/qty-input.tsx`): permite ajustar a quantidade comprada (default = `quantidade_necessaria`). Útil quando o operador comprou mais ou menos do que precisava.
 - **Context menu** (`ItemContextMenu` — `src/components/compras/item-context-menu.tsx`): botão `MoreHorizontal` abre menu com:
   - "Marcar indisponível" → abre `IndisponivelDialog`.
   - "Solicitar cancelamento" → abre `CancelamentoDialog`.
-- **Marcar como comprado**: chama `POST /api/compras/comprar` com `{ itens: [{ sku, quantidade_comprada }] }`. Após sucesso, `invalidate()` e fecha expandido.
+- **Marcar como comprado**: chama `POST /api/wms/compras/comprar` com `{ itens: [{ sku, quantidade_comprada }] }`. Após sucesso, `invalidate()` e fecha expandido.
 
 ### Banner de exceções (§15-17)
 
@@ -532,7 +532,7 @@ Cada exceção retorna:
 ### Interações
 
 - **Receber todos** / **Limpar todos**: botão de toggle no header da seção. Preenche todos os campos com `max(quantidade_pendente, quantidade_comprada)` ou zera.
-- **Confirmar recebimento**: chama `POST /api/compras/receber` com `{ itens: [{ sku, quantidade_recebida }] }` apenas para SKUs com qty > 0.
+- **Confirmar recebimento**: chama `POST /api/wms/compras/receber` com `{ itens: [{ sku, quantidade_recebida }] }` apenas para SKUs com qty > 0.
 
 ---
 
@@ -546,9 +546,9 @@ Renderizada inline em `src/app/compras/page.tsx:230-277`. Não tem componente de
 
 ---
 
-## 10. Endpoint `/api/compras/comprar` — marcar comprado por SKU
+## 10. Endpoint `/api/wms/compras/comprar` — marcar comprado por SKU
 
-**Arquivo:** `src/app/api/compras/comprar/route.ts`
+**Arquivo:** `src/app/api/wms/compras/comprar/route.ts`
 
 **Método:** POST.
 
@@ -614,14 +614,14 @@ Para cada `{sku, quantidade_comprada}` no body:
 ### Observação importante
 
 Como esse endpoint **não cria OC formal**, os itens passam de `aguardando_compra` para `comprado` mas continuam com `ordem_compra_id = null` (ou com o rascunho que já tinham). O fluxo de **release** (§22) consulta `compra_items.ordem_compra_id` para resolver o galpão da OC. Se todos os itens de um pedido vieram via `/comprar` sem OC, o release NÃO consegue resolver o galpão da OC e o pedido não é liberado. Por isso o uso na prática é:
-- `/api/compras/comprar` — atalho rápido, mas requer que algum item da mesma OC tenha `ordem_compra_id` definido para o release funcionar.
-- `/api/compras/ordens` — fluxo completo que sempre cria/atualiza a OC.
+- `/api/wms/compras/comprar` — atalho rápido, mas requer que algum item da mesma OC tenha `ordem_compra_id` definido para o release funcionar.
+- `/api/wms/compras/ordens` — fluxo completo que sempre cria/atualiza a OC.
 
 ---
 
-## 11. Endpoint `/api/compras/receber` — receber por SKU
+## 11. Endpoint `/api/wms/compras/receber` — receber por SKU
 
-**Arquivo:** `src/app/api/compras/receber/route.ts`
+**Arquivo:** `src/app/api/wms/compras/receber/route.ts`
 
 **Método:** POST.
 
@@ -693,15 +693,15 @@ Para cada `{sku, quantidade_recebida}`:
 
 ### Importante
 
-- **Não chama Tiny** para entrada de estoque. Diferente do `/api/compras/conferir` (deprecated, §14) que chamava `movimentarEstoque` tipo `E` e fazia rollback se Tiny falhasse. Aqui o estoque é apenas atualizado em `siso_pedido_itens` e a entrada formal no Tiny acontece **depois** via worker (`execution-worker.ts`).
+- **Não chama Tiny** para entrada de estoque. Diferente do `/api/wms/compras/conferir` (deprecated, §14) que chamava `movimentarEstoque` tipo `E` e fazia rollback se Tiny falhasse. Aqui o estoque é apenas atualizado em `siso_pedido_itens` e a entrada formal no Tiny acontece **depois** via worker (`execution-worker.ts`).
 - Suporta **recebimento parcial** (qty < solicitada). O item permanece em `comprado` até qty acumulada >= solicitada.
 - Não há cap explícito por SKU global — o cap é por item via `min(remaining, faltante)`.
 
 ---
 
-## 12. Endpoint `/api/compras/ordens` — criar OC explícita
+## 12. Endpoint `/api/wms/compras/ordens` — criar OC explícita
 
-**Arquivo:** `src/app/api/compras/ordens/route.ts`
+**Arquivo:** `src/app/api/wms/compras/ordens/route.ts`
 
 **Método:** POST.
 
@@ -768,11 +768,11 @@ Para cada `{sku, quantidade_recebida}`:
 
 ---
 
-## 13. Tela de conferência de OC `GET /api/compras/conferencia/[id]`
+## 13. Tela de conferência de OC `GET /api/wms/compras/conferencia/[id]`
 
-**Arquivo:** `src/app/api/compras/conferencia/[ordemCompraId]/route.ts`
+**Arquivo:** `src/app/api/wms/compras/conferencia/[ordemCompraId]/route.ts`
 
-> **Status:** Endpoint preservado por compatibilidade. A página correspondente `src/app/compras/conferencia/[ordemCompraId]/page.tsx` **não existe mais** na v2 — o uso atual é apenas via integração específica ou para visualização debug. O fluxo de recebimento principal usa `POST /api/compras/receber` agrupado por SKU.
+> **Status:** Endpoint preservado por compatibilidade. A página correspondente `src/app/compras/conferencia/[ordemCompraId]/page.tsx` **não existe mais** na v2 — o uso atual é apenas via integração específica ou para visualização debug. O fluxo de recebimento principal usa `POST /api/wms/compras/receber` agrupado por SKU.
 
 **Método:** GET.
 
@@ -810,15 +810,15 @@ Onde `ConferenciaItem` (definido em `src/types/index.ts`):
 
 ---
 
-## 14. Endpoint deprecated `/api/compras/conferir`
+## 14. Endpoint deprecated `/api/wms/compras/conferir`
 
-**Arquivo:** `src/app/api/compras/conferir/route.ts`
+**Arquivo:** `src/app/api/wms/compras/conferir/route.ts`
 
-> **Status:** DEPRECATED. Mantido para compatibilidade com integrações antigas. **Substituído por `POST /api/compras/receber`** que é mais simples (agrupa por SKU em vez de OC) e não faz a chamada Tiny diretamente.
+> **Status:** DEPRECATED. Mantido para compatibilidade com integrações antigas. **Substituído por `POST /api/wms/compras/receber`** que é mais simples (agrupa por SKU em vez de OC) e não faz a chamada Tiny diretamente.
 
 ### Diferença chave entre os dois fluxos
 
-| | `/api/compras/conferir` (deprecated) | `/api/compras/receber` (atual) |
+| | `/api/wms/compras/conferir` (deprecated) | `/api/wms/compras/receber` (atual) |
 |---|---|---|
 | Granularidade | Por OC + lista de `item_id` | Por SKU global (sem OC) |
 | Chama Tiny? | Sim, `movimentarEstoque` tipo `E` | Não — entrada feita pelo worker depois |
@@ -831,7 +831,7 @@ Onde `ConferenciaItem` (definido em `src/types/index.ts`):
 
 ### Lógica do `/conferir`
 
-Ver `src/app/api/compras/conferir/route.ts:40-344`. Resumo:
+Ver `src/app/api/wms/compras/conferir/route.ts:40-344`. Resumo:
 
 1. Busca OC + galpão + empresa de recebimento (primeira ativa do galpão).
 2. Pega `deposito_id` da `siso_tiny_connections` da empresa.
@@ -862,7 +862,7 @@ Ver `src/app/api/compras/conferir/route.ts:40-344`. Resumo:
 
 ## 15. Exceção: Indisponível
 
-**Arquivo:** `src/app/api/compras/itens/[itemId]/indisponivel/route.ts`
+**Arquivo:** `src/app/api/wms/compras/itens/[itemId]/indisponivel/route.ts`
 
 **Método:** POST.
 
@@ -916,12 +916,12 @@ Dialog `IndisponivelDialog` (`src/components/compras/indisponivel-dialog.tsx`):
 ## 16. Exceção: Equivalente (SKU alternativo)
 
 Fluxo de duas etapas:
-1. **Propor:** `POST /api/compras/itens/[id]/equivalente` → status `equivalente_pendente`.
-2. **Confirmar:** `POST /api/compras/itens/[id]/equivalente/confirmar` → aplica troca, status volta para `aguardando_compra`.
+1. **Propor:** `POST /api/wms/compras/itens/[id]/equivalente` → status `equivalente_pendente`.
+2. **Confirmar:** `POST /api/wms/compras/itens/[id]/equivalente/confirmar` → aplica troca, status volta para `aguardando_compra`.
 
-### 16.1 Propor — `POST /api/compras/itens/[itemId]/equivalente`
+### 16.1 Propor — `POST /api/wms/compras/itens/[itemId]/equivalente`
 
-**Arquivo:** `src/app/api/compras/itens/[itemId]/equivalente/route.ts`
+**Arquivo:** `src/app/api/wms/compras/itens/[itemId]/equivalente/route.ts`
 
 **Body:**
 ```ts
@@ -970,9 +970,9 @@ Fluxo de duas etapas:
    ```
 7. `cancelOcIfEmpty(supabase, ordemCompraIdAnterior)`.
 
-### 16.2 Confirmar — `POST /api/compras/itens/[itemId]/equivalente/confirmar`
+### 16.2 Confirmar — `POST /api/wms/compras/itens/[itemId]/equivalente/confirmar`
 
-**Arquivo:** `src/app/api/compras/itens/[itemId]/equivalente/confirmar/route.ts`
+**Arquivo:** `src/app/api/wms/compras/itens/[itemId]/equivalente/confirmar/route.ts`
 
 Confirma que **a troca já foi aplicada externamente** (no Tiny/marketplace), e sincroniza o item local com o equivalente. Esse é o passo onde a troca de SKU se materializa nos campos principais.
 
@@ -1036,12 +1036,12 @@ Confirma que **a troca já foi aplicada externamente** (no Tiny/marketplace), e 
 ## 17. Exceção: Cancelamento (item)
 
 Fluxo de duas etapas:
-1. **Solicitar:** `POST /api/compras/itens/[id]/cancelamento` → status `cancelamento_pendente`.
-2. **Confirmar:** `POST /api/compras/itens/[id]/cancelamento/confirmar` → status `cancelado`.
+1. **Solicitar:** `POST /api/wms/compras/itens/[id]/cancelamento` → status `cancelamento_pendente`.
+2. **Confirmar:** `POST /api/wms/compras/itens/[id]/cancelamento/confirmar` → status `cancelado`.
 
-### 17.1 Solicitar — `POST /api/compras/itens/[itemId]/cancelamento`
+### 17.1 Solicitar — `POST /api/wms/compras/itens/[itemId]/cancelamento`
 
-**Arquivo:** `src/app/api/compras/itens/[itemId]/cancelamento/route.ts`
+**Arquivo:** `src/app/api/wms/compras/itens/[itemId]/cancelamento/route.ts`
 
 **Body:** `{ motivo?: string }` (UI exige obrigatório, mas a API aceita null).
 
@@ -1061,9 +1061,9 @@ Fluxo de duas etapas:
    ```
 3. `cancelOcIfEmpty(supabase, ordemCompraIdAnterior)`.
 
-### 17.2 Confirmar — `POST /api/compras/itens/[itemId]/cancelamento/confirmar`
+### 17.2 Confirmar — `POST /api/wms/compras/itens/[itemId]/cancelamento/confirmar`
 
-**Arquivo:** `src/app/api/compras/itens/[itemId]/cancelamento/confirmar/route.ts`
+**Arquivo:** `src/app/api/wms/compras/itens/[itemId]/cancelamento/confirmar/route.ts`
 
 Confirma que o item **já foi cancelado externamente** (no Tiny/marketplace) e remove do fluxo.
 
@@ -1110,7 +1110,7 @@ Confirma que o item **já foi cancelado externamente** (no Tiny/marketplace) e r
 
 ## 18. Devolver item à fila
 
-**Arquivo:** `src/app/api/compras/itens/[itemId]/devolver/route.ts`
+**Arquivo:** `src/app/api/wms/compras/itens/[itemId]/devolver/route.ts`
 
 **Método:** POST.
 
@@ -1156,7 +1156,7 @@ Volta o item para `aguardando_compra` desfazendo:
 
 ## 19. Trocar fornecedor (deprecated)
 
-**Arquivo:** `src/app/api/compras/itens/[itemId]/trocar-fornecedor/route.ts`
+**Arquivo:** `src/app/api/wms/compras/itens/[itemId]/trocar-fornecedor/route.ts`
 
 > **Status:** DEPRECATED. Substituído pelo fluxo de equivalente + trocar-sku. Mantido para compatibilidade com chamadas legadas.
 
@@ -1201,7 +1201,7 @@ Volta o item para `aguardando_compra` desfazendo:
 
 ## 20. Cancelar pedido inteiro a partir de compras
 
-**Arquivo:** `src/app/api/compras/pedidos/[pedidoId]/cancelar/route.ts`
+**Arquivo:** `src/app/api/wms/compras/pedidos/[pedidoId]/cancelar/route.ts`
 
 **Método:** POST.
 
@@ -1262,7 +1262,7 @@ Cancela o pedido inteiro: marca todos os itens como `cancelado`, cancela OCs ór
 
 ## 21. Trocar SKU (substituição direta)
 
-**Arquivo:** `src/app/api/compras/trocar-sku/route.ts`
+**Arquivo:** `src/app/api/wms/compras/trocar-sku/route.ts`
 
 **Método:** POST.
 
@@ -1347,9 +1347,9 @@ Edição inline no `FornecedorComprarCard` (ícone `Pencil` ao lado do SKU). Com
 Função pública: `checkAndReleasePedidos(itemIds: string[]): Promise<string[]>`. Retorna lista de `pedido_id` liberados.
 
 Chamada por:
-- `POST /api/compras/receber` (`receber/route.ts:130`)
-- `POST /api/compras/conferir` (deprecated, `conferir/route.ts:317`)
-- `POST /api/compras/itens/[id]/cancelamento/confirmar` (`cancelamento/confirmar/route.ts:82`, somente se pedido NÃO foi cancelado)
+- `POST /api/wms/compras/receber` (`receber/route.ts:130`)
+- `POST /api/wms/compras/conferir` (deprecated, `conferir/route.ts:317`)
+- `POST /api/wms/compras/itens/[id]/cancelamento/confirmar` (`cancelamento/confirmar/route.ts:82`, somente se pedido NÃO foi cancelado)
 - Auto-fix de itens "presos" em `route.ts:354`
 
 ### Definição de "release"
@@ -1463,10 +1463,10 @@ EquivalentSyncResult {
 
 Função pública: `prepararPedidosDasOcsParaEmbalagem({ ordemCompraIds, usuarioId, usuarioNome })`. Retorna `PrepararPedidosParaEmbalagemResult`.
 
-Disparada via endpoint `POST /api/compras/preparar-embalagem`:
+Disparada via endpoint `POST /api/wms/compras/preparar-embalagem`:
 
 ```ts
-// src/app/api/compras/preparar-embalagem/route.ts
+// src/app/api/wms/compras/preparar-embalagem/route.ts
 { ordem_compra_ids: string[] }  // body
 ```
 
@@ -1582,22 +1582,22 @@ UPDATE siso_fila_execucao SET status='cancelado' WHERE pedido_id=X AND status='p
 
 | Endpoint | Auth |
 |---|---|
-| `GET /api/compras` | `hasComprasAccess` (admin OU comprador) |
-| `POST /api/compras/comprar` | **STRICT**: admin OU comprador (verificação manual em vez de `hasComprasAccess`) |
-| `POST /api/compras/receber` | `hasComprasAccess` |
-| `POST /api/compras/ordens` | `hasComprasAccess` |
-| `POST /api/compras/preparar-embalagem` | `hasComprasAccess` |
-| `POST /api/compras/trocar-sku` | `hasComprasAccess` |
-| `GET /api/compras/conferencia/[id]` | `hasComprasAccess` |
-| `POST /api/compras/conferir` (deprecated) | `hasComprasAccess` |
-| `POST /api/compras/pedidos/[id]/cancelar` | `hasComprasAccess` |
-| `POST /api/compras/itens/[id]/indisponivel` | `hasComprasAccess` |
-| `POST /api/compras/itens/[id]/devolver` | `hasComprasAccess` |
-| `POST /api/compras/itens/[id]/cancelamento` | `hasComprasAccess` |
-| `POST /api/compras/itens/[id]/cancelamento/confirmar` | `hasComprasAccess` |
-| `POST /api/compras/itens/[id]/equivalente` | `hasComprasAccess` |
-| `POST /api/compras/itens/[id]/equivalente/confirmar` | `hasComprasAccess` |
-| `POST /api/compras/itens/[id]/trocar-fornecedor` (deprecated) | `hasComprasAccess` |
+| `GET /api/wms/compras` | `hasComprasAccess` (admin OU comprador) |
+| `POST /api/wms/compras/comprar` | **STRICT**: admin OU comprador (verificação manual em vez de `hasComprasAccess`) |
+| `POST /api/wms/compras/receber` | `hasComprasAccess` |
+| `POST /api/wms/compras/ordens` | `hasComprasAccess` |
+| `POST /api/wms/compras/preparar-embalagem` | `hasComprasAccess` |
+| `POST /api/wms/compras/trocar-sku` | `hasComprasAccess` |
+| `GET /api/wms/compras/conferencia/[id]` | `hasComprasAccess` |
+| `POST /api/wms/compras/conferir` (deprecated) | `hasComprasAccess` |
+| `POST /api/wms/compras/pedidos/[id]/cancelar` | `hasComprasAccess` |
+| `POST /api/wms/compras/itens/[id]/indisponivel` | `hasComprasAccess` |
+| `POST /api/wms/compras/itens/[id]/devolver` | `hasComprasAccess` |
+| `POST /api/wms/compras/itens/[id]/cancelamento` | `hasComprasAccess` |
+| `POST /api/wms/compras/itens/[id]/cancelamento/confirmar` | `hasComprasAccess` |
+| `POST /api/wms/compras/itens/[id]/equivalente` | `hasComprasAccess` |
+| `POST /api/wms/compras/itens/[id]/equivalente/confirmar` | `hasComprasAccess` |
+| `POST /api/wms/compras/itens/[id]/trocar-fornecedor` (deprecated) | `hasComprasAccess` |
 
 Todos retornam:
 - **401** se não há sessão.
@@ -1739,7 +1739,7 @@ sequenceDiagram
 
     Note over C,UI: Caso: fornecedor não tem o item
     C->>UI: Click "Marcar indisponível" (item X)
-    UI->>API: POST /api/compras/itens/X/indisponivel<br/>{motivo: "Sem estoque no fornecedor"}
+    UI->>API: POST /api/wms/compras/itens/X/indisponivel<br/>{motivo: "Sem estoque no fornecedor"}
     API->>DB: UPDATE compra_status=indisponivel,<br/>ordem_compra_id=null,<br/>compra_cancelamento_motivo=motivo
     API->>DB: cancelOcIfEmpty(oc_id_anterior)
     API->>DB: checkAndCancelPedidoIfAllTerminal(pedido_id)
@@ -1750,13 +1750,13 @@ sequenceDiagram
     Note over C,UI: Mais tarde, comprador encontra equivalente
     C->>UI: Vê banner exceções com SKU X "Indisponível"
     C->>UI: Devolve para fila + busca equivalente
-    UI->>API: POST /api/compras/itens/X/devolver
+    UI->>API: POST /api/wms/compras/itens/X/devolver
     API->>DB: UPDATE compra_status=aguardando_compra<br/>+ buildCompraFieldReset()
     API-->>UI: 200 ok
 
     C->>UI: Edita SKU inline ou usa fluxo equivalente
     Note right of C: Fluxo escolhido:<br/>POST /equivalente (proposta)
-    UI->>API: POST /api/compras/itens/X/equivalente<br/>{sku_equivalente: "Y", observacao: "..."}
+    UI->>API: POST /api/wms/compras/itens/X/equivalente<br/>{sku_equivalente: "Y", observacao: "..."}
     API->>T: buscarProdutoPorSku(token, "Y")
     T-->>API: { id, codigo, descricao }
     API->>T: getProdutoDetalhe(token, produto.id)
@@ -1767,7 +1767,7 @@ sequenceDiagram
 
     Note over C,UI: Operador aplica troca externamente (Tiny/ML)
     C->>UI: Click "Confirmar troca" no banner
-    UI->>API: POST /api/compras/itens/X/equivalente/confirmar
+    UI->>API: POST /api/wms/compras/itens/X/equivalente/confirmar
     API->>DB: SELECT pedido + empresa_origem + grupo
     loop empresas do grupo
         API->>T: buscarProdutoPorSku(token, "Y")
@@ -1795,7 +1795,7 @@ sequenceDiagram
     C->>UI: Click "Solicitar cancelamento" (item X)
     UI->>UI: CancelamentoDialog<br/>(motivo obrigatório)
     C->>UI: Preenche motivo + Confirma
-    UI->>API: POST /api/compras/itens/X/cancelamento<br/>{motivo: "Cliente cancelou"}
+    UI->>API: POST /api/wms/compras/itens/X/cancelamento<br/>{motivo: "Cliente cancelou"}
     API->>DB: UPDATE compra_status=cancelamento_pendente,<br/>compra_cancelamento_motivo=motivo,<br/>compra_cancelamento_solicitado_em=now
     API->>DB: cancelOcIfEmpty(oc_anterior)
     API-->>UI: 200 ok
@@ -1806,7 +1806,7 @@ sequenceDiagram
     Ext-->>C: NF de devolução / crédito gerada
 
     C->>UI: Volta ao SISO, click "Confirmar" no banner
-    UI->>API: POST /api/compras/itens/X/cancelamento/confirmar
+    UI->>API: POST /api/wms/compras/itens/X/cancelamento/confirmar
     API->>DB: SELECT item → compra_status==cancelamento_pendente?
     Note right of API: Se não → 409
     API->>DB: DELETE siso_pedido_item_estoques<br/>WHERE pedido_id=X AND produto_id=Y

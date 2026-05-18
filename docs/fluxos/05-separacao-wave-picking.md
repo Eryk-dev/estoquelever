@@ -3,7 +3,7 @@
 > Módulo de separação física: dashboard `/separacao`, checklist de wave picking, bipagem por código de barras, validação OC inline, encaminhamento entre galpões, ações administrativas e realtime cross-operador.
 
 **Endpoints cobertos:**
-`GET /api/separacao` · `POST /api/separacao/iniciar` · `POST /api/separacao/bipar` · `POST /api/separacao/bipar-checklist` · `POST /api/separacao/marcar-item` · `POST /api/separacao/desfazer-bip` · `POST /api/separacao/concluir` · `POST /api/separacao/concluir-oc` · `GET /api/separacao/checklist-items` · `POST /api/separacao/encaminhar` · `POST /api/separacao/cancelar` · `POST /api/separacao/reiniciar` · `POST /api/separacao/voltar-etapa` · `GET|POST /api/separacao/tags` · `POST /api/separacao/produto-esgotado` · `POST /api/separacao/validar-oc-item` · `POST /api/separacao/forcar-pendente` (batch) · `PATCH /api/separacao/{pedidoId}/forcar-pendente` (single) · `POST /api/separacao/localizacao` · `POST /api/separacao/parcial` · `POST /api/separacao/marcar-realocacao` · `DELETE /api/separacao/realocacao/[id]` · `POST /api/separacao/desfazer-parcial`
+`GET /api/wms/separacao` · `POST /api/wms/separacao/iniciar` · `POST /api/wms/separacao/bipar` · `POST /api/wms/separacao/bipar-checklist` · `POST /api/wms/separacao/marcar-item` · `POST /api/wms/separacao/desfazer-bip` · `POST /api/wms/separacao/concluir` · `POST /api/wms/separacao/concluir-oc` · `GET /api/wms/separacao/checklist-items` · `POST /api/wms/separacao/encaminhar` · `POST /api/wms/separacao/cancelar` · `POST /api/wms/separacao/reiniciar` · `POST /api/wms/separacao/voltar-etapa` · `GET|POST /api/wms/separacao/tags` · `POST /api/wms/separacao/produto-esgotado` · `POST /api/wms/separacao/validar-oc-item` · `POST /api/wms/separacao/forcar-pendente` (batch) · `PATCH /api/wms/separacao/{pedidoId}/forcar-pendente` (single) · `POST /api/wms/separacao/localizacao` · `POST /api/wms/separacao/parcial` · `POST /api/wms/separacao/marcar-realocacao` · `DELETE /api/wms/separacao/realocacao/[id]` · `POST /api/wms/separacao/desfazer-parcial`
 
 ---
 
@@ -48,19 +48,19 @@ Arquitetura ponta a ponta:
 [Dashboard /separacao]            (lista por status, filtros, ações em lote)
         |
         v  Separar selecionados
-[POST /api/separacao/iniciar]     (transita para em_separacao)
+[POST /api/wms/separacao/iniciar]     (transita para em_separacao)
         |
         v  router.push
 [Checklist /separacao/checklist?pedidos=...]
         |
-        ├─> bipar  ─────> [POST /api/separacao/bipar-checklist] (auto-marca SKU em todos pedidos)
-        ├─> click  ─────> [POST /api/separacao/marcar-item]     (toggle manual)
-        ├─> esgotado ───> [POST /api/separacao/produto-esgotado]  (modal: encaminhar | OC)
-        ├─> OC encontrei─> [POST /api/separacao/validar-oc-item]  (acao=encontrei|esgotado)
-        ├─> editar loc.─> [POST /api/separacao/localizacao]      (atualiza Tiny + DB)
-        ├─> reiniciar ──> [POST /api/separacao/reiniciar]
-        ├─> cancelar  ──> [POST /api/separacao/cancelar]
-        └─> concluir  ──> [POST /api/separacao/concluir | concluir-oc]
+        ├─> bipar  ─────> [POST /api/wms/separacao/bipar-checklist] (auto-marca SKU em todos pedidos)
+        ├─> click  ─────> [POST /api/wms/separacao/marcar-item]     (toggle manual)
+        ├─> esgotado ───> [POST /api/wms/separacao/produto-esgotado]  (modal: encaminhar | OC)
+        ├─> OC encontrei─> [POST /api/wms/separacao/validar-oc-item]  (acao=encontrei|esgotado)
+        ├─> editar loc.─> [POST /api/wms/separacao/localizacao]      (atualiza Tiny + DB)
+        ├─> reiniciar ──> [POST /api/wms/separacao/reiniciar]
+        ├─> cancelar  ──> [POST /api/wms/separacao/cancelar]
+        └─> concluir  ──> [POST /api/wms/separacao/concluir | concluir-oc]
                                 |
                                 v
                         siso_pedidos.status_separacao = 'separado'
@@ -98,21 +98,21 @@ embalado             → embalagem concluída, pronto pra expedir
 | (criação no execution-worker) | `aguardando_compra` | `lib/execution-worker.ts` | itens OC sem estoque |
 | (criação no execution-worker) | `aguardando_nf` | `lib/execution-worker.ts` | pedido próprio, NF não chegou |
 | `aguardando_nf` | `aguardando_separacao` | `lib/nf-webhook-handler.ts` (auto) **ou** `forcar-pendente` (admin) | webhook NF autoriza (situação 6/7) |
-| `aguardando_separacao` | `em_separacao` | `POST /api/separacao/iniciar` | operador clica "Separar" |
-| `validacao_oc` | `em_separacao` | `POST /api/separacao/iniciar` | só se não houver `oc_pendente` ainda pendente |
-| `em_separacao` | `separado` | `POST /api/separacao/concluir` | todos `separacao_marcado=true` |
-| `em_separacao` | `aguardando_compra` | `POST /api/separacao/concluir` | partial pause: tem itens `aguardando_compra`/`comprado`/`oc_pendente` |
-| `em_separacao` | `pendente_realocacao` | `POST /api/separacao/parcial` | short pick + galpão sem cobertura pra qty restante |
-| `pendente_realocacao` | `em_separacao` | `POST /api/separacao/desfazer-parcial` | operador desfaz o short pick |
-| `em_separacao` | `aguardando_separacao` | `POST /api/separacao/cancelar` | reset de todos os checks + estorno de movs WMS |
-| `em_separacao` | `aguardando_separacao` | `POST /api/separacao/desfazer-bip` | só se total de bipados zerar |
-| `em_separacao` | `aguardando_compra` (ou `validacao_oc`) | `POST /api/separacao/produto-esgotado` (acao=oc) | SKU sem estoque, vira OC |
-| `em_separacao` | `aguardando_compra` | `POST /api/separacao/concluir-oc` | pick-oc com itens incompletos volta |
-| `validacao_oc` | `aguardando_separacao` | `POST /api/separacao/validar-oc-item` (acao=encontrei) | todos OC resolvidos como "encontrei" |
-| `validacao_oc` | `aguardando_compra` | `POST /api/separacao/validar-oc-item` (acao=esgotado) | todos confirmados esgotado, 100% OC |
-| qualquer | qualquer | `POST /api/separacao/voltar-etapa` | admin only |
-| `aguardando_separacao`/`em_separacao` | `pendente` (volta no painel `/siso`) | `POST /api/separacao/encaminhar` | reverte estoque, reseta itens |
-| `separado` | `embalado` | `POST /api/separacao/embalar` (módulo embalagem) | fluxo coberto em `06-embalagem-expedicao-etiquetas.md` |
+| `aguardando_separacao` | `em_separacao` | `POST /api/wms/separacao/iniciar` | operador clica "Separar" |
+| `validacao_oc` | `em_separacao` | `POST /api/wms/separacao/iniciar` | só se não houver `oc_pendente` ainda pendente |
+| `em_separacao` | `separado` | `POST /api/wms/separacao/concluir` | todos `separacao_marcado=true` |
+| `em_separacao` | `aguardando_compra` | `POST /api/wms/separacao/concluir` | partial pause: tem itens `aguardando_compra`/`comprado`/`oc_pendente` |
+| `em_separacao` | `pendente_realocacao` | `POST /api/wms/separacao/parcial` | short pick + galpão sem cobertura pra qty restante |
+| `pendente_realocacao` | `em_separacao` | `POST /api/wms/separacao/desfazer-parcial` | operador desfaz o short pick |
+| `em_separacao` | `aguardando_separacao` | `POST /api/wms/separacao/cancelar` | reset de todos os checks + estorno de movs WMS |
+| `em_separacao` | `aguardando_separacao` | `POST /api/wms/separacao/desfazer-bip` | só se total de bipados zerar |
+| `em_separacao` | `aguardando_compra` (ou `validacao_oc`) | `POST /api/wms/separacao/produto-esgotado` (acao=oc) | SKU sem estoque, vira OC |
+| `em_separacao` | `aguardando_compra` | `POST /api/wms/separacao/concluir-oc` | pick-oc com itens incompletos volta |
+| `validacao_oc` | `aguardando_separacao` | `POST /api/wms/separacao/validar-oc-item` (acao=encontrei) | todos OC resolvidos como "encontrei" |
+| `validacao_oc` | `aguardando_compra` | `POST /api/wms/separacao/validar-oc-item` (acao=esgotado) | todos confirmados esgotado, 100% OC |
+| qualquer | qualquer | `POST /api/wms/separacao/voltar-etapa` | admin only |
+| `aguardando_separacao`/`em_separacao` | `pendente` (volta no painel `/siso`) | `POST /api/wms/separacao/encaminhar` | reverte estoque, reseta itens |
+| `separado` | `embalado` | `POST /api/wms/separacao/embalar` (módulo embalagem) | fluxo coberto em `06-embalagem-expedicao-etiquetas.md` |
 
 > O type interno do dashboard (`VisibleSeparacaoTab`, `page.tsx:23`) consolida `aguardando_separacao + validacao_oc` em uma única tab. A coluna `validacao_oc` existe pra distinguir, no card, "OC pendente validação física" (cor âmbar) vs "Pronto para separar".
 
@@ -135,7 +135,7 @@ São 6 tabs visíveis (`TAB_CONFIG`, `page.tsx:42`):
 | `separado` | Separados | `separado` |
 | `embalado` | Embalados | `embalado` |
 
-A contagem por tab vem de `counts: SeparacaoCounts` no payload do `GET /api/separacao`. Cada tab roda HEAD queries paralelas (`route.ts:117`).
+A contagem por tab vem de `counts: SeparacaoCounts` no payload do `GET /api/wms/separacao`. Cada tab roda HEAD queries paralelas (`route.ts:117`).
 
 ### 3.2 Filtros
 
@@ -171,11 +171,11 @@ Cada `<SeparacaoCard>` (`src/components/separacao/separacao-card.tsx`) exibe:
 - Linha de metadados: marketplace, empresa, transferência, "Encaminhado de", forma de envio
 - Para `em_separacao`: barra de progresso `itens_marcados / total_itens`
 - Para `aguardando_compra`/`validacao_oc`: tabela embutida de itens com `compra_status`, `fornecedor_oc`, badges coloridos
-- Painel expansível com lista detalhada (vai pra `/api/separacao/checklist-items?pedidos={id}`)
+- Painel expansível com lista detalhada (vai pra `/api/wms/separacao/checklist-items?pedidos={id}`)
 - Botão de retry etiqueta (quando `(separado || embalado) && !etiqueta_pronta`)
 - Kebab "Encaminhar para {galpao}" (só `aguardando_separacao`/`em_separacao`)
 - Botão de imprimir (só `embalado` com etiqueta pronta)
-- Botão de Timeline (`History` icon) → carrega `/api/pedidos/{id}/historico`
+- Botão de Timeline (`History` icon) → carrega `/api/wms/pedidos/{id}/historico`
 
 ### 3.5 Refetch e realtime
 
@@ -186,7 +186,7 @@ Cada `<SeparacaoCard>` (`src/components/separacao/separacao-card.tsx`) exibe:
 
 ## 4. Iniciar separação
 
-**Endpoint:** `POST /api/separacao/iniciar`
+**Endpoint:** `POST /api/wms/separacao/iniciar`
 
 ### 4.1 Contrato
 
@@ -247,7 +247,7 @@ A `/separacao/checklist` chama `iniciar` no mount também (`checklist/page.tsx:1
 ## 5. Checklist de wave picking
 
 **Página:** `src/app/separacao/checklist/page.tsx`
-**Endpoint backend:** `GET /api/separacao/checklist-items?pedidos=id1,id2&modo=pick-oc?`
+**Endpoint backend:** `GET /api/wms/separacao/checklist-items?pedidos=id1,id2&modo=pick-oc?`
 
 ### 5.1 Pipeline de carregamento
 
@@ -308,14 +308,14 @@ const visibleItems = items.filter((item) => {
 
 Cada linha do checklist permite:
 
-- **Editar localização** (`Pencil` icon ao lado): abre input, ENTER salva via `POST /api/separacao/localizacao` (atualiza Tiny + DB)
-- **Editar saldo** (`Pencil` no badge de estoque): chama `POST /api/tiny/stock/ajustar` (cobertura no doc do módulo de inventário)
+- **Editar localização** (`Pencil` icon ao lado): abre input, ENTER salva via `POST /api/wms/separacao/localizacao` (atualiza Tiny + DB)
+- **Editar saldo** (`Pencil` no badge de estoque): chama `POST /api/wms/tiny/stock/ajustar` (cobertura no doc do módulo de inventário)
 - **Esgotado**: para item normal abre modal com alternativas; para item OC chama direto `validar-oc-item` (acao=esgotado)
 
 ### 5.6 Conclusão
 
 ```ts
-const endpoint = isPickOC ? "/api/separacao/concluir-oc" : "/api/separacao/concluir";
+const endpoint = isPickOC ? "/api/wms/separacao/concluir-oc" : "/api/wms/separacao/concluir";
 ```
 
 Mesmo body em ambos: `{ pedido_ids }`. Resposta tem 3 listas: `separados`, `pendentes`, `aguardandoCompra` (somente em `concluir`).
@@ -326,9 +326,9 @@ Mesmo body em ambos: `{ pedido_ids }`. Resposta tem 3 listas: `separados`, `pend
 
 Existem **dois endpoints** de bipagem com semânticas distintas. Na prática o checklist usa `bipar-checklist`, mas o `bipar` (RPC `siso_processar_bip`) é mantido pra fluxo legado de "tab pendentes" e tem rate limit + impressão automática de etiqueta.
 
-### 6.1 `POST /api/separacao/bipar-checklist` (wave picking moderno)
+### 6.1 `POST /api/wms/separacao/bipar-checklist` (wave picking moderno)
 
-**Source:** `src/app/api/separacao/bipar-checklist/route.ts`
+**Source:** `src/app/api/wms/separacao/bipar-checklist/route.ts`
 
 Contrato:
 
@@ -357,9 +357,9 @@ toast.success(`Item marcado: ${sku}`);
 setHighlightedSku(matchedProduct.produto_id);
 ```
 
-### 6.2 `POST /api/separacao/bipar` (RPC legacy)
+### 6.2 `POST /api/wms/separacao/bipar` (RPC legacy)
 
-**Source:** `src/app/api/separacao/bipar/route.ts`
+**Source:** `src/app/api/wms/separacao/bipar/route.ts`
 
 Usado pelo componente `<ScanInput>` (legado, não usado no checklist atual). Tem rate limit (`checkBipRateLimit`, 2 bips/s por sessão), bloqueia admin, e chama RPC `siso_processar_bip(p_codigo, p_usuario_id, p_galpao_id)`.
 
@@ -398,7 +398,7 @@ Status RPC → resposta HTTP:
 
 ## 7. Marcar / Desmarcar item manualmente
 
-**Endpoint:** `POST /api/separacao/marcar-item`
+**Endpoint:** `POST /api/wms/separacao/marcar-item`
 
 ```ts
 { pedido_item_id: string, marcado: boolean }
@@ -428,7 +428,7 @@ Optimistic update (atualiza cache antes do fetch). Em caso de erro, invalida `["
 
 ## 8. Desfazer bipagem
 
-**Endpoint:** `POST /api/separacao/desfazer-bip`
+**Endpoint:** `POST /api/wms/separacao/desfazer-bip`
 
 ```ts
 { pedido_id: string, produto_id: number }
@@ -471,7 +471,7 @@ Se `pedido` está `em_separacao` e a soma de **todas** as `quantidade_bipada` ze
 
 ## 9. Concluir separação (normal)
 
-**Endpoint:** `POST /api/separacao/concluir`
+**Endpoint:** `POST /api/wms/separacao/concluir`
 
 ```ts
 { pedido_ids: string[] }
@@ -527,7 +527,7 @@ E redireciona: se só foi pra OC, vai pra tab `aguardando_compra`; senão, `sepa
 
 ## 10. Concluir separação OC (`pick-oc`)
 
-**Endpoint:** `POST /api/separacao/concluir-oc`
+**Endpoint:** `POST /api/wms/separacao/concluir-oc`
 
 Diferente do `concluir`: aqui o operador picou os itens OC (que já chegaram do fornecedor) usando o checklist. O endpoint **auto-resolve** os itens marcando-os como `recebido` e enfileira a execução do estoque.
 
@@ -591,7 +591,7 @@ Diferente do `concluir`: aqui o operador picou os itens OC (que já chegaram do 
 
 ## 11. Validação OC inline (`validar-oc-item`)
 
-**Endpoint:** `POST /api/separacao/validar-oc-item`
+**Endpoint:** `POST /api/wms/separacao/validar-oc-item`
 
 Usado durante a fase `validacao_oc` (operador está conferindo itens OC fisicamente — alguns chegaram, outros não). É a porta de entrada para 2 cenários físicos: "achei o item no galpão" e "confirmo que está esgotado".
 
@@ -670,7 +670,7 @@ Se `result.transicoes` cobre todos os `pedidoIds`, redireciona pra `/separacao` 
 
 ## 12. Produto esgotado
 
-**Endpoint:** `POST /api/separacao/produto-esgotado`
+**Endpoint:** `POST /api/wms/separacao/produto-esgotado`
 
 3 modos baseados em `acao`:
 
@@ -730,7 +730,7 @@ Quando o operador encontra **menos unidades do que o pedido exige** na localiza�
 ```mermaid
 flowchart TD
     A["Operador clica 'Parcial'<br/>no item do checklist"] --> B["Modal: informe qty pega<br/>+ checkbox 'Localização zerou?'"]
-    B --> C["POST /api/separacao/parcial<br/>{pedido_item_id, quantidade_pega, loc_zerou}"]
+    B --> C["POST /api/wms/separacao/parcial<br/>{pedido_item_id, quantidade_pega, loc_zerou}"]
 
     C --> D["1. Mov WMS tipo=S, origem=nf_venda<br/>qty = quantidade_pega → mov_saida_id"]
     D --> E{"loc_zerou = true?"}
@@ -751,7 +751,7 @@ flowchart TD
     O --> P["Supervisor visualiza e<br/>decide próxima ação"]
 
     M --> Q["Operador clica 'Peguei' em cada realocação"]
-    Q --> R["POST /api/separacao/marcar-realocacao<br/>{realocacao_id}"]
+    Q --> R["POST /api/wms/separacao/marcar-realocacao<br/>{realocacao_id}"]
     R --> S["Mov WMS tipo=S, origem=nf_venda (ou emprestimo)<br/>status = picado, soma em quantidade_pega"]
 ```
 
@@ -769,7 +769,7 @@ Cada localização que cobre a qty gera uma linha em `siso_pedido_item_realocaco
 ### 12a.3 Desfazer parcial
 
 ```
-POST /api/separacao/desfazer-parcial { pedido_item_id }
+POST /api/wms/separacao/desfazer-parcial { pedido_item_id }
 ```
 
 - Bloqueado se alguma realocação já está `picado` (não é possível reverter pick físico automaticamente)
@@ -780,7 +780,7 @@ POST /api/separacao/desfazer-parcial { pedido_item_id }
 
 ### 12a.4 Cancelar onda com parciais
 
-`POST /api/separacao/cancelar` agora estorna automaticamente:
+`POST /api/wms/separacao/cancelar` agora estorna automaticamente:
 - `mov_saida_id` de cada item marcado (incluindo via parcial)
 - Movs das realocações já `picado`
 - **NÃO** estorna `mov_ajuste_loc_zerou_id` — essa mov reflete descoberta física real (localização realmente estava vazia)
@@ -799,7 +799,7 @@ POST /api/separacao/desfazer-parcial { pedido_item_id }
 
 ## 13. Encaminhar pedido para outro galpão
 
-**Endpoint:** `POST /api/separacao/encaminhar`
+**Endpoint:** `POST /api/wms/separacao/encaminhar`
 
 ```ts
 { pedido_ids: string[], galpao_destino_id: string }
@@ -855,7 +855,7 @@ O pedido aparece de volta na fila pendente do galpão destino com `sugestao = 't
 
 ## 14. Cancelar separação
 
-**Endpoint:** `POST /api/separacao/cancelar`
+**Endpoint:** `POST /api/wms/separacao/cancelar`
 
 ```ts
 { pedido_ids: string[] }
@@ -883,7 +883,7 @@ O pedido aparece de volta na fila pendente do galpão destino com `sugestao = 't
 
 ## 15. Reiniciar progresso
 
-**Endpoint:** `POST /api/separacao/reiniciar`
+**Endpoint:** `POST /api/wms/separacao/reiniciar`
 
 ```ts
 { pedido_ids: string[], etapa: 'separacao' | 'embalagem' }
@@ -913,7 +913,7 @@ UX: botão "Reiniciar progresso" no checklist. Confirmação `window.confirm()` 
 
 ## 16. Voltar/avançar etapa (admin)
 
-**Endpoint:** `POST /api/separacao/voltar-etapa`
+**Endpoint:** `POST /api/wms/separacao/voltar-etapa`
 
 Só **admin** pode chamar. Move pedido(s) para qualquer status de separação.
 
@@ -970,7 +970,7 @@ Por target index:
 
 Dois endpoints para a mesma operação: tirar pedido de `aguardando_nf` → `aguardando_separacao` consultando o Tiny pra confirmar que NF está autorizada (situação 6 ou 7).
 
-### 17.1 Batch: `POST /api/separacao/forcar-pendente`
+### 17.1 Batch: `POST /api/wms/separacao/forcar-pendente`
 
 ```ts
 { pedido_ids: string[] }
@@ -995,7 +995,7 @@ Pipeline (`forcar-pendente/route.ts:53`):
 3. Side effect (per pedido autorizado): `criarAgrupamentoFase1(pedido.id)` fire-and-forget
 4. Histórico: `evento = 'nf_autorizada'`, `detalhes: { forcado: true, verificado_tiny: true }`
 
-### 17.2 Single: `PATCH /api/separacao/{pedidoId}/forcar-pendente`
+### 17.2 Single: `PATCH /api/wms/separacao/{pedidoId}/forcar-pendente`
 
 Idêntico, mas pra 1 pedido. Retorna 400 se status atual ≠ `aguardando_nf` ou se NF não está autorizada.
 
@@ -1010,7 +1010,7 @@ Idêntico, mas pra 1 pedido. Retorna 400 se status atual ≠ `aguardando_nf` ou 
 
 Tags de UX criadas pelo operador (NÃO são `marcadores` do Tiny). Salvas em `siso_pedidos.separacao_tags text[]`.
 
-### 18.1 `GET /api/separacao/tags`
+### 18.1 `GET /api/wms/separacao/tags`
 
 Lista todas as tags únicas usadas no escopo de separação. Filtragem por galpão se não for admin (`tags/route.ts:30`).
 
@@ -1018,7 +1018,7 @@ Lista todas as tags únicas usadas no escopo de separação. Filtragem por galp�
 // → 200: { tags: string[] }
 ```
 
-### 18.2 `POST /api/separacao/tags`
+### 18.2 `POST /api/wms/separacao/tags`
 
 ```ts
 { pedido_ids: string[], tags: string[], action: 'add' | 'remove' | 'set' }
@@ -1040,7 +1040,7 @@ Sanitização: `trim().toLowerCase()`, max 50 chars, remove vazios.
 
 ## 19. Atualizar localização
 
-**Endpoint:** `POST /api/separacao/localizacao`
+**Endpoint:** `POST /api/wms/separacao/localizacao`
 
 ```ts
 { produto_id: number, localizacao: string, empresa_id: string }
@@ -1092,7 +1092,7 @@ Subscribe a **todos** os UPDATEs em `siso_pedidos` (independente de operação o
 
 ## 21. Filtragem por role
 
-A filtragem ocorre no `GET /api/separacao` (`route.ts:67`):
+A filtragem ocorre no `GET /api/wms/separacao` (`route.ts:67`):
 
 ```ts
 const isAdmin = session.cargos.includes('admin');
@@ -1120,14 +1120,14 @@ if (activeGalpaoId && !isAguardandoCompraOnly) {
 
 ### Endpoints com restrição admin-only
 
-- `POST /api/separacao/voltar-etapa` (`voltar-etapa/route.ts:34`)
-- `POST /api/separacao/forcar-pendente` (`forcar-pendente/route.ts:29`)
-- `PATCH /api/separacao/[pedidoId]/forcar-pendente` (`[pedidoId]/forcar-pendente/route.ts:29`)
+- `POST /api/wms/separacao/voltar-etapa` (`voltar-etapa/route.ts:34`)
+- `POST /api/wms/separacao/forcar-pendente` (`forcar-pendente/route.ts:29`)
+- `PATCH /api/wms/separacao/[pedidoId]/forcar-pendente` (`[pedidoId]/forcar-pendente/route.ts:29`)
 
 ### Endpoints com restrição "tem galpão"
 
-- `POST /api/separacao/bipar` (`bipar/route.ts:33`) — admin sem galpão é bloqueado
-- `POST /api/separacao/desfazer-bip` (`desfazer-bip/route.ts:21`) — idem
+- `POST /api/wms/separacao/bipar` (`bipar/route.ts:33`) — admin sem galpão é bloqueado
+- `POST /api/wms/separacao/desfazer-bip` (`desfazer-bip/route.ts:21`) — idem
 
 ### Endpoints sem auth de role
 
@@ -1185,7 +1185,7 @@ stateDiagram-v2
 sequenceDiagram
     participant Op as Operador
     participant UI as Checklist UI
-    participant API as /api/separacao/bipar-checklist
+    participant API as /api/wms/separacao/bipar-checklist
     participant DB as Supabase
     participant RT as Realtime
 
@@ -1360,7 +1360,7 @@ flowchart TD
 
 ### `siso_pedido_item_estoques`
 
-- `localizacao` — `POST /api/separacao/localizacao` (também atualiza Tiny)
+- `localizacao` — `POST /api/wms/separacao/localizacao` (também atualiza Tiny)
 
 ### `siso_fila_execucao`
 
@@ -1393,7 +1393,7 @@ Eventos disparados via `registrarEvento`/`registrarEventos`:
 
 - `preCriarAgrupamentosEmLote(pedidoIds)` — concluir, concluir-oc → cria agrupamento Tiny + downloads ZPL
 - `recarregarEtiquetasFaltantes(pedidoIds)` — concluir, concluir-oc → re-tenta ZPL pra agrupamentos antigos
-- `kickWorker()` — concluir-oc → dispara `/api/worker/processar`
+- `kickWorker()` — concluir-oc → dispara `/api/wms/worker/processar`
 - `criarAgrupamentoFase1(pedidoId)` — forcar-pendente (single + batch)
 - `registrarEvento(s)` — todos os endpoints com mudança significativa
 - DB write em `siso_pedido_item_estoques.localizacao` — localizacao (Tiny já foi)
@@ -1432,7 +1432,7 @@ Pedidos com `compra_status ∈ {aguardando_compra, comprado}` são intencionalme
 
 ### 25.3 `aguardando_compra` sem `separacao_galpao_id`
 
-Pedidos em `aguardando_compra` ainda **não têm `separacao_galpao_id` definido** (só ganham quando entram em separação). Por isso o `GET /api/separacao` filtra essa tab por **destino do fornecedor** (`getFornecedorBySku(sku).filialOC`), não por galpão da pedido. A contagem é recalculada (`route.ts:226`).
+Pedidos em `aguardando_compra` ainda **não têm `separacao_galpao_id` definido** (só ganham quando entram em separação). Por isso o `GET /api/wms/separacao` filtra essa tab por **destino do fornecedor** (`getFornecedorBySku(sku).filialOC`), não por galpão da pedido. A contagem é recalculada (`route.ts:226`).
 
 ### 25.4 PostgREST cache em `etiqueta_status`
 
@@ -1459,7 +1459,7 @@ Tanto `validar-oc-item:esgotado` quanto `produto-esgotado:oc` tentam encontrar/c
 
 ### 25.9 Localização atualiza globalmente por (produto+empresa)
 
-`POST /api/separacao/localizacao` atualiza **todas** as ocorrências de `(produto_id, empresa_id)` em `siso_pedido_item_estoques`, não só pra esse pedido. Faz sentido — uma prateleira é a prateleira. Mas se o produto está em 2 lugares (raro), só fica uma localização registrada.
+`POST /api/wms/separacao/localizacao` atualiza **todas** as ocorrências de `(produto_id, empresa_id)` em `siso_pedido_item_estoques`, não só pra esse pedido. Faz sentido — uma prateleira é a prateleira. Mas se o produto está em 2 lugares (raro), só fica uma localização registrada.
 
 ### 25.10 Realtime não filtra por galpão
 

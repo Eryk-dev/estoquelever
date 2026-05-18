@@ -66,7 +66,7 @@ Quando o Tiny ERP dispara um webhook, o sistema identifica se e um **pedido** ou
 
 ```mermaid
 flowchart TD
-    A["POST /api/webhook/tiny"] --> B{"Tipo do evento?"}
+    A["POST /api/wms/webhook/tiny"] --> B{"Tipo do evento?"}
 
     B -->|pedido| C["Dedup Check<br/>siso_webhook_logs"]
     B -->|nota_fiscal| D["NF Handler"]
@@ -129,14 +129,14 @@ Apos o operador aprovar no painel, o pedido entra na fila de execucao. O worker 
 
 ```mermaid
 flowchart TD
-    A["Operador clica Aprovar<br/>POST /api/pedidos/aprovar"] --> B["Valida: status == pendente"]
+    A["Operador clica Aprovar<br/>POST /api/wms/pedidos/aprovar"] --> B["Valida: status == pendente"]
     B --> C["Resolve grupo + tier order<br/>getOrdemDeducao"]
     C --> D["Update pedido<br/>status = executando<br/>decisao_final = escolha"]
 
     D --> E["Enfileira job<br/>siso_fila_execucao<br/>tipo = lancar_estoque"]
     E --> F["Registra historico<br/>evento = aprovado"]
 
-    F --> G["Worker: /api/worker/processar<br/>Claim atomico do job"]
+    F --> G["Worker: /api/wms/worker/processar<br/>Claim atomico do job"]
 
     G --> H{"Tipo de decisao?"}
 
@@ -189,10 +189,10 @@ O fluxo de separacao usa **wave picking** com bipagem por codigo de barras. Mult
 
 ```mermaid
 flowchart TD
-    A["Operador seleciona pedidos<br/>Tab: Aguardando Separacao ou Aguardando OC"] --> B["POST /api/separacao/iniciar<br/>pedido_ids + operador_id"]
+    A["Operador seleciona pedidos<br/>Tab: Aguardando Separacao ou Aguardando OC"] --> B["POST /api/wms/separacao/iniciar<br/>pedido_ids + operador_id"]
 
     B --> C["BLINDAGEM: Verifica compra_status pendente<br/>Se houver itens nao resolvidos, aborta"]
-    C -->|Sim - bloqueado| D["Erro 400: Resolve compra items antes<br/>Via /api/compras/conferir"]
+    C -->|Sim - bloqueado| D["Erro 400: Resolve compra items antes<br/>Via /api/wms/compras/conferir"]
     D --> A
     C -->|Nao - ok| E["status_separacao = em_separacao<br/>operador_id atribuido<br/>Modo pick-oc ativado se necessario"]
 
@@ -201,7 +201,7 @@ flowchart TD
 
     F --> H["WAVE PICKING<br/>Operador bipa codigos de barras<br/>Itens OC mostram badge amarelo/azul/verde"]
 
-    H --> I["POST /api/separacao/bipar<br/>codigo = GTIN ou SKU"]
+    H --> I["POST /api/wms/separacao/bipar<br/>codigo = GTIN ou SKU"]
     I --> J["Rate limit: max 2 bips/seg"]
     J --> K["RPC: processar_bip"]
 
@@ -219,8 +219,8 @@ flowchart TD
     Q --> H
 
     H -->|"todos bipados"| R{"Modo Pick OC?"}
-    R -->|Nao - normal| S["POST /api/separacao/concluir"]
-    R -->|Sim - OC| T["POST /api/separacao/concluir-oc"]
+    R -->|Nao - normal| S["POST /api/wms/separacao/concluir"]
+    R -->|Sim - OC| T["POST /api/wms/separacao/concluir-oc"]
 
     S --> U["status_separacao = separado<br/>Retry etiquetas faltantes"]
     T --> V["Auto-resolve compra items<br/>Determina decisao (propria/transferencia)<br/>Enfileira execution job<br/>Adiciona tag 'pick oc'"]
@@ -229,8 +229,8 @@ flowchart TD
     V --> W
 
     W --> X{"Metodo?"}
-    X -->|barcode| Y["POST /api/separacao/bipar-embalagem<br/>SKU por SKU"]
-    X -->|manual| Z["POST /api/separacao/confirmar-item-embalagem<br/>Click no item"]
+    X -->|barcode| Y["POST /api/wms/separacao/bipar-embalagem<br/>SKU por SKU"]
+    X -->|manual| Z["POST /api/wms/separacao/confirmar-item-embalagem<br/>Click no item"]
 
     Y --> AA["Incrementa quantidade_embalado"]
     Z --> AA
@@ -240,7 +240,7 @@ flowchart TD
     AB -->|sim| AC["status_separacao = embalado<br/>Claim atomico - imprime etiqueta"]
 
     AC --> AD["EXPEDICAO<br/>Tab: Embalados"]
-    AD --> AE["POST /api/separacao/expedir"]
+    AD --> AE["POST /api/wms/separacao/expedir"]
     AE --> AF["status_separacao = expedido<br/>expedido_em = now"]
 ```
 
@@ -276,17 +276,17 @@ stateDiagram-v2
 
 | Acao | Endpoint | Entrada | Efeito |
 |---|---|---|---|
-| Desfazer bip | `POST /api/separacao/desfazer-bip` | pedido_id, codigo | Reverte ultima bipagem, atualiza quantidade_bipada |
-| Produto esgotado | `POST /api/separacao/produto-esgotado` | pedido_id, item_id | Marca item como indisponivel, desconta do checklist |
-| Reimprimir etiqueta | `POST /api/separacao/reimprimir` | pedido_id, printer_id | Reenvia ZPL cacheado para PrintNode |
-| Forcar pendente | `POST /api/separacao/forcar-pendente` | pedido_ids | Volta pedido(s) para aguardando_separacao, reseta marcacoes |
-| Voltar etapa | `POST /api/separacao/voltar-etapa` | pedido_id | Retrocede um status (embalado → separado, separado → em_separacao) |
-| Cancelar separacao | `POST /api/separacao/cancelar` | pedido_ids | Cancela separacao em andamento, volta para aguardando_separacao |
-| Reiniciar separacao | `POST /api/separacao/reiniciar` | pedido_ids | Reseta marcacoes (separacao_marcado=false) mantendo status em_separacao |
-| Concluir separacao | `POST /api/separacao/concluir` | pedido_ids | Conclui picking normal: valida todos itens marcados, move para separado |
-| Concluir OC | `POST /api/separacao/concluir-oc` | pedido_ids, operador_id | Conclui pick OC: auto-resolve compra items, enfileira execucao, adiciona tag 'pick oc' |
-| Encaminhar | `POST /api/separacao/encaminhar` | pedido_id, galpao_destino_id | Encaminha pedido para outro galpao, reseta separacao |
-| Marcar item | `POST /api/separacao/marcar-item` | item_id | Marca item como separacao_marcado=true via API (alternativa ao scan) |
+| Desfazer bip | `POST /api/wms/separacao/desfazer-bip` | pedido_id, codigo | Reverte ultima bipagem, atualiza quantidade_bipada |
+| Produto esgotado | `POST /api/wms/separacao/produto-esgotado` | pedido_id, item_id | Marca item como indisponivel, desconta do checklist |
+| Reimprimir etiqueta | `POST /api/wms/separacao/reimprimir` | pedido_id, printer_id | Reenvia ZPL cacheado para PrintNode |
+| Forcar pendente | `POST /api/wms/separacao/forcar-pendente` | pedido_ids | Volta pedido(s) para aguardando_separacao, reseta marcacoes |
+| Voltar etapa | `POST /api/wms/separacao/voltar-etapa` | pedido_id | Retrocede um status (embalado → separado, separado → em_separacao) |
+| Cancelar separacao | `POST /api/wms/separacao/cancelar` | pedido_ids | Cancela separacao em andamento, volta para aguardando_separacao |
+| Reiniciar separacao | `POST /api/wms/separacao/reiniciar` | pedido_ids | Reseta marcacoes (separacao_marcado=false) mantendo status em_separacao |
+| Concluir separacao | `POST /api/wms/separacao/concluir` | pedido_ids | Conclui picking normal: valida todos itens marcados, move para separado |
+| Concluir OC | `POST /api/wms/separacao/concluir-oc` | pedido_ids, operador_id | Conclui pick OC: auto-resolve compra items, enfileira execucao, adiciona tag 'pick oc' |
+| Encaminhar | `POST /api/wms/separacao/encaminhar` | pedido_id, galpao_destino_id | Encaminha pedido para outro galpao, reseta separacao |
+| Marcar item | `POST /api/wms/separacao/marcar-item` | item_id | Marca item como separacao_marcado=true via API (alternativa ao scan) |
 
 ### Pick OC — Atalho de Separacao para Itens Aguardando Compra
 
@@ -296,12 +296,12 @@ Quando os itens estao fisicamente disponiveis no galpao (ex.: fornecedor entrego
 
 ```mermaid
 flowchart TD
-    A["Operador na aba Aguardando OC<br/>Seleciona pedidos"] --> B["POST /api/separacao/iniciar<br/>com pedidos status=aguardando_compra"]
+    A["Operador na aba Aguardando OC<br/>Seleciona pedidos"] --> B["POST /api/wms/separacao/iniciar<br/>com pedidos status=aguardando_compra"]
 
     B --> C["BLINDAGEM CHECK:<br/>Itens tem compra_status pendente?"]
 
     C -->|Sim - itens nao resolvidos| D["BLOQUEIA TRANSICAO<br/>Retorna erro 400<br/>Pedidos ficam em aguardando_compra"]
-    D --> E["Operador deve resolver compra items ANTES<br/>Via /api/compras/conferir<br/>ou marcar como indisponivel"]
+    D --> E["Operador deve resolver compra items ANTES<br/>Via /api/wms/compras/conferir<br/>ou marcar como indisponivel"]
     E --> B
 
     C -->|Nao - todos itens ok| F["status_separacao = em_separacao<br/>Modo pick-oc ativado"]
@@ -309,7 +309,7 @@ flowchart TD
 
     G --> H["WAVE PICKING<br/>Operador bipa codigos de barras<br/>Itens OC transitam para recebido"]
 
-    H --> I["POST /api/separacao/concluir-oc<br/>Endpoint especifico para Pick OC"]
+    H --> I["POST /api/wms/separacao/concluir-oc<br/>Endpoint especifico para Pick OC"]
 
     I --> J["1. Verifica todos itens marcados<br/>separacao_marcado = true"]
     J --> K["2. Auto-resolve itens OC<br/>compra_status → recebido<br/>compra_quantidade_recebida = solicitada"]
@@ -334,8 +334,8 @@ flowchart TD
 #### Regras Importantes
 
 1. **Blindagem:** Nenhum pedido com `compra_status IN ('aguardando_compra', 'comprado')` pode transicionar para `em_separacao` no fluxo normal
-2. **Desbloqueio:** Operador deve resolver itens via `/api/compras/conferir` antes de tentar pick OC
-3. **Auto-Resolucao:** `/api/separacao/concluir-oc` marca TODOS os itens OC como `recebido`
+2. **Desbloqueio:** Operador deve resolver itens via `/api/wms/compras/conferir` antes de tentar pick OC
+3. **Auto-Resolucao:** `/api/wms/separacao/concluir-oc` marca TODOS os itens OC como `recebido`
 4. **Decisao:** Usa `galpao_id` da OC para determinar propria vs transferencia
 5. **Tag:** Todos os pick OC recebem a tag `'pick oc'` para auditoria
 6. **Execution:** Job fica na fila e é processado normalmente pelo execution worker
@@ -348,17 +348,17 @@ Quando um pedido tem decisao `oc`, os itens ficam aguardando compra. O operador/
 
 ```mermaid
 flowchart TD
-    A["Pedido com decisao = oc<br/>status_separacao = aguardando_compra"] --> B["GET /api/compras<br/>Lista itens por fornecedor"]
+    A["Pedido com decisao = oc<br/>status_separacao = aguardando_compra"] --> B["GET /api/wms/compras<br/>Lista itens por fornecedor"]
 
     B --> C["Agrupado por fornecedor<br/>SKU prefix identifica fornecedor"]
 
-    C --> D["Operador cria OC<br/>POST /api/compras/ordens"]
+    C --> D["Operador cria OC<br/>POST /api/wms/compras/ordens"]
     D --> E["siso_ordens_compra criada<br/>status = aberto<br/>Itens: compra_status = comprado"]
 
     E --> F["Fornecedor envia produtos<br/>processo manual"]
 
     F --> G["CONFERENCIA<br/>/compras/conferencia/ordemCompraId"]
-    G --> H["POST /api/compras/conferir<br/>itens + quantidade_recebida"]
+    G --> H["POST /api/wms/compras/conferir<br/>itens + quantidade_recebida"]
 
     H --> I["Para cada item:"]
     I --> J["1. Optimistic lock check<br/>2. Update quantidade_recebida<br/>3. Tiny: movimentarEstoque tipo=E<br/>4. Upsert estoque normalizado"]
@@ -408,11 +408,11 @@ flowchart TD
 
 | Acao | Endpoint | Efeito |
 |---|---|---|
-| Item indisponivel | `POST /api/compras/itens/{id}/indisponivel` | Marca como indisponivel, reavalia pedido |
-| Devolver item | `POST /api/compras/itens/{id}/devolver` | Reverte entrada no Tiny (saida estoque) |
-| Trocar fornecedor | `POST /api/compras/itens/{id}/trocar-fornecedor` | Cancela e cria novo item para outro fornecedor |
-| Produto equivalente | `POST /api/compras/itens/{id}/equivalente` | Substitui por produto alternativo |
-| Cancelar item | `POST /api/compras/itens/{id}/cancelamento` | Cancela item da OC |
+| Item indisponivel | `POST /api/wms/compras/itens/{id}/indisponivel` | Marca como indisponivel, reavalia pedido |
+| Devolver item | `POST /api/wms/compras/itens/{id}/devolver` | Reverte entrada no Tiny (saida estoque) |
+| Trocar fornecedor | `POST /api/wms/compras/itens/{id}/trocar-fornecedor` | Cancela e cria novo item para outro fornecedor |
+| Produto equivalente | `POST /api/wms/compras/itens/{id}/equivalente` | Substitui por produto alternativo |
+| Cancelar item | `POST /api/wms/compras/itens/{id}/cancelamento` | Cancela item da OC |
 
 ---
 
@@ -825,9 +825,9 @@ Modulo de busca e rastreamento de pedidos com filtros por status, decisao, empre
 |---|---|
 | `/pedidos` | Lista universal: abas Pedidos/Expedidos, busca, filtros |
 | `/pedidos/[id]` | Detalhe: itens + estoque por galpao, timeline, observacoes, acoes |
-| `GET /api/pedidos/tracking` | Lista paginada com busca textual e filtros |
-| `GET /api/pedidos/[id]/detalhe` | Dados consolidados: pedido + itens + estoques + historico + observacoes |
-| `GET/POST /api/pedidos/[id]/observacoes` | Listar e adicionar observacoes |
+| `GET /api/wms/pedidos/tracking` | Lista paginada com busca textual e filtros |
+| `GET /api/wms/pedidos/[id]/detalhe` | Dados consolidados: pedido + itens + estoques + historico + observacoes |
+| `GET/POST /api/wms/pedidos/[id]/observacoes` | Listar e adicionar observacoes |
 
 ### Controle de acesso
 
@@ -846,7 +846,7 @@ Atalho para embalar pedidos OC diretamente sem picking. Operador escaneia itens 
 ```mermaid
 flowchart TD
     A["Aba Aguardando OC<br/>Botao 'Embalar'"] --> B["/separacao/embalagem?modo=embalagem-oc"]
-    B --> C["Scan: POST /api/separacao/bipar-embalagem-oc<br/>{ sku, pedido_ids[], quantidade }"]
+    B --> C["Scan: POST /api/wms/separacao/bipar-embalagem-oc<br/>{ sku, pedido_ids[], quantidade }"]
     C --> D["Busca pedido mais antigo<br/>com SKU pendente (oldest-first)"]
     D --> E["Incrementa quantidade_bipada<br/>(optimistic lock)"]
     E --> F{"Todos itens do pedido<br/>bipado_completo?"}

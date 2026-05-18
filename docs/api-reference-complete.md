@@ -1,8 +1,10 @@
 # SISO API Reference - Complete
 
-This is the **authoritative, comprehensive reference** for every API route in the SISO system. Use this before reading route source code or making API changes.
+This is the **authoritative, comprehensive reference** for every API route in the system. Use this before reading route source code or making API changes.
 
-**Last updated:** 2026-05-07
+**Last updated:** 2026-05-18
+
+> ⚠️ **Cutover de superfície (2026-05-18, commit `f8b7dbb`):** todas as APIs foram movidas pra `/api/wms/*`. As únicas exceções são `/api/auth/login` e `/api/auth/me`. Endpoints **removidos** nessa data: `/api/inventario/*` (versão Tiny-based), `/api/transferencia/*`, `/api/etiquetas-endereco/*`, `/api/painel`, `/api/monitoring`, `/api/dashboard/*`, `/api/reconciliacao` (SISO; `/api/wms/reconciliacao` permanece). O webhook do Tiny ERP precisa apontar pra `https://.../api/wms/webhook/tiny` (URL nova).
 
 ---
 
@@ -13,15 +15,13 @@ This is the **authoritative, comprehensive reference** for every API route in th
 3. [Pedidos API](#pedidos-api)
 4. [Separação API](#separação-api)
 5. [Compras API](#compras-api)
-6. [Inventário API](#inventário-api)
-7. [Transferência API](#transferência-api)
-8. [Etiquetas API](#etiquetas-api)
-9. [Admin API](#admin-api)
-10. [Tiny ERP API](#tiny-erp-api)
-11. [Worker & Background Jobs](#worker--background-jobs)
-12. [Dashboard & Monitoring](#dashboard--monitoring)
-13. [Reconciliation API](#reconciliation-api)
-14. [Cross — Busca de produtos e equivalência](#cross--busca-de-produtos-e-equivalência)
+6. [Admin API](#admin-api)
+7. [Tiny ERP API](#tiny-erp-api)
+8. [Worker & Background Jobs](#worker--background-jobs)
+9. [Cross — Busca de produtos e equivalência](#cross--busca-de-produtos-e-equivalência)
+10. [WMS — Core (estoque, ledger, localizações, movimentações)](#wms--core)
+11. [WMS — Inventário v2 (pull queue + claim hierárquico)](#wms--inventário-v2)
+12. [WMS — Exceções, dashboards, insights](#wms--exceções-dashboards-insights)
 
 **Total API Routes Documented:** 100+ endpoints across all sections
 
@@ -29,9 +29,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ## Webhook API
 
-### POST /api/webhook/tiny
+### POST /api/wms/webhook/tiny
 
-**File:** `src/app/api/webhook/tiny/route.ts`
+**File:** `src/app/api/wms/webhook/tiny/route.ts`
 
 **Purpose:** Receives webhooks from Tiny ERP when orders or invoices are updated. Deduplicates by order ID + type + situation.
 
@@ -95,9 +95,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/webhook/reprocessar
+### POST /api/wms/webhook/reprocessar
 
-**File:** `src/app/api/webhook/reprocessar/route.ts`
+**File:** `src/app/api/wms/webhook/reprocessar/route.ts`
 
 **Purpose:** Reprocesses failed webhook logs (status = 'pendente' after manual reset). Used to recover from bugs that have since been fixed.
 
@@ -219,9 +219,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ## Pedidos API
 
-### GET /api/pedidos
+### GET /api/wms/pedidos
 
-**File:** `src/app/api/pedidos/route.ts`
+**File:** `src/app/api/wms/pedidos/route.ts`
 
 **Purpose:** List orders with stock enrichment and status information.
 
@@ -307,9 +307,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/pedidos/aprovar
+### POST /api/wms/pedidos/aprovar
 
-**File:** `src/app/api/pedidos/aprovar/route.ts`
+**File:** `src/app/api/wms/pedidos/aprovar/route.ts`
 
 **Purpose:** Operator approves a pending order with a decision. Moves order to "executando" state and enqueues stock posting.
 
@@ -400,9 +400,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### GET /api/pedidos/[id]/historico
+### GET /api/wms/pedidos/[id]/historico
 
-**File:** `src/app/api/pedidos/[id]/historico/route.ts`
+**File:** `src/app/api/wms/pedidos/[id]/historico/route.ts`
 
 **Purpose:** Returns the full audit trail for an order, sorted chronologically.
 
@@ -435,9 +435,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### GET /api/pedidos/[id]/observacoes
+### GET /api/wms/pedidos/[id]/observacoes
 
-**File:** `src/app/api/pedidos/[id]/observacoes/route.ts`
+**File:** `src/app/api/wms/pedidos/[id]/observacoes/route.ts`
 
 **Purpose:** Returns all observations (comments) for an order.
 
@@ -465,9 +465,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/pedidos/[id]/observacoes
+### POST /api/wms/pedidos/[id]/observacoes
 
-**File:** `src/app/api/pedidos/[id]/observacoes/route.ts`
+**File:** `src/app/api/wms/pedidos/[id]/observacoes/route.ts`
 
 **Purpose:** Create a new observation (comment) on an order.
 
@@ -512,9 +512,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/pedidos/[id]/liberar-reserva
+### POST /api/wms/pedidos/[id]/liberar-reserva
 
-**File:** `src/app/api/pedidos/[id]/liberar-reserva/route.ts`
+**File:** `src/app/api/wms/pedidos/[id]/liberar-reserva/route.ts`
 
 **Purpose:** Admin-only override que libera todas as reservas WMS do pedido e o reseta pra pendente. Quando estoque já foi lançado (cutover R→S rodou), lança entradas compensatórias (E) antes pra zerar a posição.
 
@@ -554,9 +554,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### GET /api/pedidos/tracking
+### GET /api/wms/pedidos/tracking
 
-**File:** `src/app/api/pedidos/tracking/route.ts`
+**File:** `src/app/api/wms/pedidos/tracking/route.ts`
 
 **Purpose:** Paginated list of pedidos for the universal tracking page. Returns pedido summary data with combined status, empresa/galpao names, search, and advanced filters.
 
@@ -632,9 +632,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### GET /api/pedidos/[id]/detalhe
+### GET /api/wms/pedidos/[id]/detalhe
 
-**File:** `src/app/api/pedidos/[id]/detalhe/route.ts`
+**File:** `src/app/api/wms/pedidos/[id]/detalhe/route.ts`
 
 **Purpose:** Returns all consolidated data for a single pedido: base data, items with stock per galpao, historico (audit trail), and observacoes (comments).
 
@@ -770,9 +770,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ## Separação API
 
-### GET /api/separacao
+### GET /api/wms/separacao
 
-**File:** `src/app/api/separacao/route.ts`
+**File:** `src/app/api/wms/separacao/route.ts`
 
 **Purpose:** List orders filtered by separation status with aggregated item counts. Galpão-aware.
 
@@ -884,9 +884,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/iniciar
+### POST /api/wms/separacao/iniciar
 
-**File:** `src/app/api/separacao/iniciar/route.ts`
+**File:** `src/app/api/wms/separacao/iniciar/route.ts`
 
 **Purpose:** Start separation for selected orders. Moves to "em_separacao" and returns consolidated product checklist for wave picking. Pre-creates Tiny agrupamentos and caches ZPL labels.
 
@@ -959,9 +959,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/bipar
+### POST /api/wms/separacao/bipar
 
-**File:** `src/app/api/separacao/bipar/route.ts`
+**File:** `src/app/api/wms/separacao/bipar/route.ts`
 
 **Purpose:** Process a barcode scan (GTIN or SKU) to confirm item separation. Calls atomic RPC function siso_processar_bip.
 
@@ -1056,9 +1056,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/bipar-checklist
+### POST /api/wms/separacao/bipar-checklist
 
-**File:** `src/app/api/separacao/bipar-checklist/route.ts`
+**File:** `src/app/api/wms/separacao/bipar-checklist/route.ts`
 
 **Purpose:** Scan a barcode during wave-picking to auto-check matching items across given pedidos.
 
@@ -1109,9 +1109,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/marcar-item
+### POST /api/wms/separacao/marcar-item
 
-**File:** `src/app/api/separacao/marcar-item/route.ts`
+**File:** `src/app/api/wms/separacao/marcar-item/route.ts`
 
 **Purpose:** Toggle an item's separacao_marcado checkbox during wave-picking. Also generates a WMS ledger movement on mark and estorna it on unmark.
 
@@ -1147,7 +1147,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Response (400 - Item already partially picked):**
 ```json
 {
-  "error": "Item com separacao_parcial=true — use /api/separacao/parcial"
+  "error": "Item com separacao_parcial=true — use /api/wms/separacao/parcial"
 }
 ```
 
@@ -1161,7 +1161,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Business Logic:**
 - Fetches item from `siso_pedido_itens`
 - Validates parent pedido has status_separacao = "em_separacao" or "aguardando_separacao"
-- Blocks if `separacao_parcial = true` (must use `/api/separacao/parcial` instead)
+- Blocks if `separacao_parcial = true` (must use `/api/wms/separacao/parcial` instead)
 - Updates separacao_marcado and separacao_marcado_em (null if unmarked)
 - On mark: calls WMS `wms_inserir_movimentacao` (tipo=S, origem_tipo=nf_venda) — graceful failure (logs warn, proceeds)
 - On unmark: estorna the ledger movement stored in `mov_saida_id` — graceful failure
@@ -1174,9 +1174,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/desfazer-bip
+### POST /api/wms/separacao/desfazer-bip
 
-**File:** `src/app/api/separacao/desfazer-bip/route.ts`
+**File:** `src/app/api/wms/separacao/desfazer-bip/route.ts`
 
 **Purpose:** Undo a bip (decrement quantidade_bipada by 1), revert bipado_completo if needed, and revert pedido status if all bips are now zero.
 
@@ -1239,9 +1239,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/concluir
+### POST /api/wms/separacao/concluir
 
-**File:** `src/app/api/separacao/concluir/route.ts`
+**File:** `src/app/api/wms/separacao/concluir/route.ts`
 
 **Purpose:** Finish separation for selected orders. Only orders where ALL items have separacao_marcado = true are moved to 'separado'.
 
@@ -1279,9 +1279,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/concluir-oc
+### POST /api/wms/separacao/concluir-oc
 
-**File:** `src/app/api/separacao/concluir-oc/route.ts`
+**File:** `src/app/api/wms/separacao/concluir-oc/route.ts`
 
 **Purpose:** Complete OC separation (Pick OC flow). Auto-resolves pending compra items as received, resolves decisao (propria vs transferencia), enqueues execution job, and transitions directly to 'separado' with tag 'pick oc'. Used when the operator physically picks items before the formal purchase order cycle completes.
 
@@ -1348,9 +1348,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### GET /api/separacao/checklist-items?pedidos=id1,id2,id3
+### GET /api/wms/separacao/checklist-items?pedidos=id1,id2,id3
 
-**File:** `src/app/api/separacao/checklist-items/route.ts`
+**File:** `src/app/api/wms/separacao/checklist-items/route.ts`
 
 **Purpose:** Fetch individual items for the given pedido IDs with localizacao, stock info, and short-pick state. For transfers, resolves to the separating empresa (the one that will ship), not the origin empresa.
 
@@ -1427,9 +1427,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/cancelar
+### POST /api/wms/separacao/cancelar
 
-**File:** `src/app/api/separacao/cancelar/route.ts`
+**File:** `src/app/api/wms/separacao/cancelar/route.ts`
 
 **Purpose:** Cancel an in-progress separation. Resets all item checkmarks, estorna WMS movements, cancels pending re-allocations, and moves pedidos back to 'aguardando_separacao'.
 
@@ -1470,9 +1470,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/parcial
+### POST /api/wms/separacao/parcial
 
-**File:** `src/app/api/separacao/parcial/route.ts`
+**File:** `src/app/api/wms/separacao/parcial/route.ts`
 
 **Purpose:** Register a short pick — operator found fewer units than requested at the current location. Creates WMS ledger movements, searches for re-allocation candidates in cascade, and either creates realocacao rows or transitions pedido to `pendente_realocacao`.
 
@@ -1552,9 +1552,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/marcar-realocacao
+### POST /api/wms/separacao/marcar-realocacao
 
-**File:** `src/app/api/separacao/marcar-realocacao/route.ts`
+**File:** `src/app/api/wms/separacao/marcar-realocacao/route.ts`
 
 **Purpose:** Confirm that the operator has physically picked a re-allocated item from the indicated location. Creates a WMS ledger movement.
 
@@ -1606,9 +1606,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### DELETE /api/separacao/realocacao/[id]
+### DELETE /api/wms/separacao/realocacao/[id]
 
-**File:** `src/app/api/separacao/realocacao/[id]/route.ts`
+**File:** `src/app/api/wms/separacao/realocacao/[id]/route.ts`
 
 **Purpose:** Cancel a pending re-allocation (status=`aguardando_picking`). Does not create any WMS movement since no pick has occurred yet.
 
@@ -1650,9 +1650,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/desfazer-parcial
+### POST /api/wms/separacao/desfazer-parcial
 
-**File:** `src/app/api/separacao/desfazer-parcial/route.ts`
+**File:** `src/app/api/wms/separacao/desfazer-parcial/route.ts`
 
 **Purpose:** Undo a short pick entirely. Estorna all ledger movements (saida + ajuste), cancels pending realocacoes, resets all partial fields on the item. Blocked if any realocacao has already been picked.
 
@@ -1705,9 +1705,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/reiniciar
+### POST /api/wms/separacao/reiniciar
 
-**File:** `src/app/api/separacao/reiniciar/route.ts`
+**File:** `src/app/api/wms/separacao/reiniciar/route.ts`
 
 **Purpose:** Reset checklist or packing progress for given pedidos.
 
@@ -1756,9 +1756,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/encaminhar
+### POST /api/wms/separacao/encaminhar
 
-**File:** `src/app/api/separacao/encaminhar/route.ts`
+**File:** `src/app/api/wms/separacao/encaminhar/route.ts`
 
 **Purpose:** Forward one or more orders to another galpão. Reverses any stock execution that already occurred, resets the pedido to `pendente` with `sugestao = "transferencia"` so the destination galpão sees it in their SISO dashboard.
 
@@ -1831,9 +1831,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/forcar-pendente
+### POST /api/wms/separacao/forcar-pendente
 
-**File:** `src/app/api/separacao/forcar-pendente/route.ts`
+**File:** `src/app/api/wms/separacao/forcar-pendente/route.ts`
 
 **Purpose:** Force one or more orders back to pending separation status. Also verifies NF data via Tiny API and attempts early agrupamento creation when NF is complete.
 
@@ -1871,9 +1871,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### PATCH /api/separacao/{pedidoId}/forcar-pendente
+### PATCH /api/wms/separacao/{pedidoId}/forcar-pendente
 
-**File:** `src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts`
+**File:** `src/app/api/wms/separacao/[pedidoId]/forcar-pendente/route.ts`
 
 **Purpose:** Force a single order back to pending. Same logic as batch endpoint but for one pedido.
 
@@ -1899,9 +1899,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/voltar-etapa
+### POST /api/wms/separacao/voltar-etapa
 
-**File:** `src/app/api/separacao/voltar-etapa/route.ts`
+**File:** `src/app/api/wms/separacao/voltar-etapa/route.ts`
 
 **Purpose:** Admin-only. Move one or more pedidos to ANY separation stage (forward or backward). Cleans up item-level data appropriately.
 
@@ -1967,9 +1967,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/bipar-embalagem
+### POST /api/wms/separacao/bipar-embalagem
 
-**File:** `src/app/api/separacao/bipar-embalagem/route.ts`
+**File:** `src/app/api/wms/separacao/bipar-embalagem/route.ts`
 
 **Purpose:** Process a barcode scan during packing. Finds the oldest separado-status order with the scanned SKU and updates quantities atomically.
 
@@ -2018,9 +2018,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/bipar-embalagem-oc
+### POST /api/wms/separacao/bipar-embalagem-oc
 
-**File:** `src/app/api/separacao/bipar-embalagem-oc/route.ts`
+**File:** `src/app/api/wms/separacao/bipar-embalagem-oc/route.ts`
 
 **Purpose:** Process a barcode scan for direct packing of OC (aguardando_compra) orders. Finds the oldest matching pedido among provided IDs, increments item quantities, and auto-resolves the full OC lifecycle when a pedido completes.
 
@@ -2095,9 +2095,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/confirmar-item-embalagem
+### POST /api/wms/separacao/confirmar-item-embalagem
 
-**File:** `src/app/api/separacao/confirmar-item-embalagem/route.ts`
+**File:** `src/app/api/wms/separacao/confirmar-item-embalagem/route.ts`
 
 **Purpose:** Manually confirm item quantities during packing via +/- buttons. Increments quantidade_bipada and checks pedido completion.
 
@@ -2154,9 +2154,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/expedir
+### POST /api/wms/separacao/expedir
 
-**File:** `src/app/api/separacao/expedir/route.ts`
+**File:** `src/app/api/wms/separacao/expedir/route.ts`
 
 **Purpose:** Mark packed orders as shipped (embalado → expedido).
 
@@ -2211,9 +2211,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### GET /api/separacao/tags
+### GET /api/wms/separacao/tags
 
-**File:** `src/app/api/separacao/tags/route.ts`
+**File:** `src/app/api/wms/separacao/tags/route.ts`
 
 **Purpose:** Returns all unique separacao_tags used across pedidos (for autocomplete). Galpão-scoped for non-admins.
 
@@ -2234,9 +2234,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/tags
+### POST /api/wms/separacao/tags
 
-**File:** `src/app/api/separacao/tags/route.ts`
+**File:** `src/app/api/wms/separacao/tags/route.ts`
 
 **Purpose:** Add, remove, or replace tags on pedidos.
 
@@ -2272,9 +2272,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/produto-esgotado
+### POST /api/wms/separacao/produto-esgotado
 
-**File:** `src/app/api/separacao/produto-esgotado/route.ts`
+**File:** `src/app/api/wms/separacao/produto-esgotado/route.ts`
 
 **Purpose:** Three modes for handling out-of-stock products: preview alternatives, create purchase order, or redirect to another galpão.
 
@@ -2351,9 +2351,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/validar-oc-item
+### POST /api/wms/separacao/validar-oc-item
 
-**File:** `src/app/api/separacao/validar-oc-item/route.ts`
+**File:** `src/app/api/wms/separacao/validar-oc-item/route.ts`
 
 **Purpose:** Handle OC item validation during the validacao_oc phase. Supports "encontrei" (found physically), "esgotado" (confirmed missing), and "desfazer_encontrei" (undo found) actions, with auto-transitions when all OC items are resolved.
 
@@ -2396,9 +2396,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/reimprimir
+### POST /api/wms/separacao/reimprimir
 
-**File:** `src/app/api/separacao/reimprimir/route.ts`
+**File:** `src/app/api/wms/separacao/reimprimir/route.ts`
 
 **Purpose:** Print/reprint a shipping label. Fast path uses cached ZPL; fallback creates agrupamento in Tiny.
 
@@ -2455,9 +2455,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/separacao/retry-etiqueta
+### POST /api/wms/separacao/retry-etiqueta
 
-**File:** `src/app/api/separacao/retry-etiqueta/route.ts`
+**File:** `src/app/api/wms/separacao/retry-etiqueta/route.ts`
 
 **Purpose:** Retries label (etiqueta) acquisition for packed/separated orders that reached final stages without cached ZPL. Does not print anything, only recovers/re-generates labels.
 
@@ -2547,9 +2547,9 @@ OR
 
 ---
 
-### POST /api/separacao/localizacao
+### POST /api/wms/separacao/localizacao
 
-**File:** `src/app/api/separacao/localizacao/route.ts`
+**File:** `src/app/api/wms/separacao/localizacao/route.ts`
 
 **Purpose:** Update a product's warehouse location (localização) in Tiny ERP and local DB.
 
@@ -2600,9 +2600,9 @@ OR
 
 ## Compras API
 
-### GET /api/compras
+### GET /api/wms/compras
 
-**File:** `src/app/api/compras/route.ts`
+**File:** `src/app/api/wms/compras/route.ts`
 
 **Purpose:** Comprehensive purchase management dashboard. Returns counts and item groups by supplier, with aging and priority metrics.
 
@@ -2733,9 +2733,9 @@ OR
 
 ---
 
-### POST /api/compras/ordens
+### POST /api/wms/compras/ordens
 
-**File:** `src/app/api/compras/ordens/route.ts`
+**File:** `src/app/api/wms/compras/ordens/route.ts`
 
 **Purpose:** Create an ordem de compra and link all aguardando items for that fornecedor.
 
@@ -2804,9 +2804,9 @@ OR
 
 ---
 
-### GET /api/compras/conferencia/[ordemCompraId]
+### GET /api/wms/compras/conferencia/[ordemCompraId]
 
-**File:** `src/app/api/compras/conferencia/[ordemCompraId]/route.ts`
+**File:** `src/app/api/wms/compras/conferencia/[ordemCompraId]/route.ts`
 
 **Purpose:** Returns OC info + items for the receiving/checking screen.
 
@@ -2864,9 +2864,9 @@ OR
 
 ---
 
-### POST /api/compras/receber
+### POST /api/wms/compras/receber
 
-**File:** `src/app/api/compras/receber/route.ts`
+**File:** `src/app/api/wms/compras/receber/route.ts`
 
 **Purpose:** Confirms receiving of purchased items. Supports partial receiving. Identifies and releases orders where all purchase items are now received.
 
@@ -2921,9 +2921,9 @@ OR
 
 ---
 
-### POST /api/compras/conferir
+### POST /api/wms/compras/conferir
 
-**File:** `src/app/api/compras/conferir/route.ts`
+**File:** `src/app/api/wms/compras/conferir/route.ts`
 
 **Purpose:** Process receiving confirmation. Updates DB, calls Tiny movimentarEstoque, and releases orders where all OC items are received.
 
@@ -2978,9 +2978,9 @@ OR
 
 ---
 
-### POST /api/compras/comprar
+### POST /api/wms/compras/comprar
 
-**File:** `src/app/api/compras/comprar/route.ts`
+**File:** `src/app/api/wms/compras/comprar/route.ts`
 
 **Purpose:** Marks items as purchased (comprado) for a supplier. Qty is consolidated by SKU and distributed across order items by aging (oldest first).
 
@@ -3043,9 +3043,9 @@ OR
 
 ---
 
-### POST /api/compras/trocar-sku
+### POST /api/wms/compras/trocar-sku
 
-**File:** `src/app/api/compras/trocar-sku/route.ts`
+**File:** `src/app/api/wms/compras/trocar-sku/route.ts`
 
 **Purpose:** Swaps the SKU of order items to an equivalent product. Looks up product in Tiny across all group empresas, updates description, image, stock, and supplier. Does not auto-release the order.
 
@@ -3100,9 +3100,9 @@ OR
 
 ---
 
-### POST /api/compras/itens/[itemId]/equivalente
+### POST /api/wms/compras/itens/[itemId]/equivalente
 
-**File:** `src/app/api/compras/itens/[itemId]/equivalente/route.ts`
+**File:** `src/app/api/wms/compras/itens/[itemId]/equivalente/route.ts`
 
 **Purpose:** Registers an equivalent SKU for an item and moves case to pending exception until swap is applied externally on Tiny/marketplace.
 
@@ -3164,9 +3164,9 @@ OR
 
 ---
 
-### POST /api/compras/itens/[itemId]/equivalente/confirmar
+### POST /api/wms/compras/itens/[itemId]/equivalente/confirmar
 
-**File:** `src/app/api/compras/itens/[itemId]/equivalente/confirmar/route.ts`
+**File:** `src/app/api/wms/compras/itens/[itemId]/equivalente/confirmar/route.ts`
 
 **Purpose:** Confirms that the item swap has been applied externally and synchronizes the local item with the equivalent SKU.
 
@@ -3220,9 +3220,9 @@ OR
 
 ---
 
-### POST /api/compras/itens/[itemId]/cancelamento
+### POST /api/wms/compras/itens/[itemId]/cancelamento
 
-**File:** `src/app/api/compras/itens/[itemId]/cancelamento/route.ts`
+**File:** `src/app/api/wms/compras/itens/[itemId]/cancelamento/route.ts`
 
 **Purpose:** Marks an item as pending external cancellation with optional reason.
 
@@ -3269,9 +3269,9 @@ OR
 
 ---
 
-### POST /api/compras/itens/[itemId]/cancelamento/confirmar
+### POST /api/wms/compras/itens/[itemId]/cancelamento/confirmar
 
-**File:** `src/app/api/compras/itens/[itemId]/cancelamento/confirmar/route.ts`
+**File:** `src/app/api/wms/compras/itens/[itemId]/cancelamento/confirmar/route.ts`
 
 **Purpose:** Confirms that item cancellation has been processed externally.
 
@@ -3316,9 +3316,9 @@ OR
 
 ---
 
-### POST /api/compras/preparar-embalagem
+### POST /api/wms/compras/preparar-embalagem
 
-**File:** `src/app/api/compras/preparar-embalagem/route.ts`
+**File:** `src/app/api/wms/compras/preparar-embalagem/route.ts`
 
 **Purpose:** Prepares orders from purchase orders for packing (embalagem). Transitions items to "aguardando_embalagem" status.
 
@@ -3371,9 +3371,9 @@ OR
 
 ---
 
-### POST /api/compras/itens/[itemId]/indisponivel
+### POST /api/wms/compras/itens/[itemId]/indisponivel
 
-**File:** `src/app/api/compras/itens/[itemId]/indisponivel/route.ts`
+**File:** `src/app/api/wms/compras/itens/[itemId]/indisponivel/route.ts`
 
 **Purpose:** Marks an item as unavailable from the supplier. Auto-cancels OC if empty and pedido if all items reach terminal status.
 
@@ -3426,9 +3426,9 @@ OR
 
 ---
 
-### POST /api/compras/itens/[itemId]/devolver
+### POST /api/wms/compras/itens/[itemId]/devolver
 
-**File:** `src/app/api/compras/itens/[itemId]/devolver/route.ts`
+**File:** `src/app/api/wms/compras/itens/[itemId]/devolver/route.ts`
 
 **Purpose:** Returns an item to the "Aguardando Compra" queue by unlinking it from its OC.
 
@@ -3472,9 +3472,9 @@ OR
 
 ---
 
-### POST /api/compras/itens/[itemId]/trocar-fornecedor
+### POST /api/wms/compras/itens/[itemId]/trocar-fornecedor
 
-**File:** `src/app/api/compras/itens/[itemId]/trocar-fornecedor/route.ts`
+**File:** `src/app/api/wms/compras/itens/[itemId]/trocar-fornecedor/route.ts`
 
 **Purpose:** Changes the supplier of an item. Optionally moves it to a new OC.
 
@@ -3535,9 +3535,9 @@ OR
 
 ---
 
-### POST /api/compras/pedidos/[pedidoId]/cancelar
+### POST /api/wms/compras/pedidos/[pedidoId]/cancelar
 
-**File:** `src/app/api/compras/pedidos/[pedidoId]/cancelar/route.ts`
+**File:** `src/app/api/wms/compras/pedidos/[pedidoId]/cancelar/route.ts`
 
 **Purpose:** Cancels entire order in Tiny and cleans up local purchase flow.
 
@@ -3581,341 +3581,11 @@ OR
 
 ---
 
-## Inventário API
-
-### GET /api/inventario
-
-**File:** `src/app/api/inventario/route.ts`
-
-**Purpose:** List inventory sessions with computed item counts.
-
-**Auth:** X-Session-Id (required)
-
-**Query Params:**
-- `status`: filter by inventory status (optional)
-
-**Response (200):**
-```json
-{
-  "inventarios": [
-    {
-      "id": "uuid",
-      "empresa_id": "uuid",
-      "galpao_id": "uuid",
-      "usuario_id": "uuid",
-      "modo": "string",
-      "tipo_estoque": "string | null",
-      "manter_localizacao_antiga": "boolean",
-      "status": "em_andamento" | "processado" | "concluido" | "reversao",
-      "observacoes": "string | null",
-      "created_at": "ISO datetime",
-      "processado_em": "ISO datetime | null",
-      "concluido_em": "ISO datetime | null",
-      "deposito_id": "number | null",
-      "empresa": { "nome": "string" } | null,
-      "galpao": { "nome": "string" } | null,
-      "usuario": { "nome": "string" } | null,
-      "total_itens": "number",
-      "itens_sucesso": "number",
-      "itens_erro": "number"
-    }
-  ]
-}
-```
-
-**Business Logic:**
-- Fetches inventory sessions (filtered by galpaoId if user has one)
-- Computes item counts per status (total, sucesso, erro)
-- Returns in descending order of creation
-
-**Side Effects:** None (read-only)
-
----
-
-### POST /api/inventario
-
-**File:** `src/app/api/inventario/route.ts`
-
-**Purpose:** Create a new inventory session.
-
-**Auth:** X-Session-Id (required)
-
-**Request Body:**
-```json
-{
-  "empresa_id": "uuid",
-  "modo": "contagem" | "loc_estoque" | "etc",
-  "tipo_estoque": "string (if modo=loc_estoque)",
-  "manter_localizacao_antiga": "boolean | null",
-  "observacoes": "string | null"
-}
-```
-
-**Response (201):**
-```json
-{
-  "id": "uuid",
-  "empresa_id": "uuid",
-  "galpao_id": "uuid",
-  "deposito_id": "number",
-  "modo": "string",
-  "status": "em_andamento"
-}
-```
-
-**Response (400 - Missing fields):**
-```json
-{
-  "error": "empresa_id é obrigatório" | "modo é obrigatório"
-}
-```
-
-**Business Logic:**
-- Resolves galpao_id from empresa
-- Resolves deposito_id from Tiny connection
-- Creates inventory session in DB with status = "em_andamento"
-
-**Side Effects:**
-- Inserts to `siso_inventarios`
-- Logs to `siso_logs`
-
----
-
-## Inventário Item Operations
-
-Additional endpoints for inventory items:
-- GET `/api/inventario/[id]` - Fetch inventory session detail
-- POST `/api/inventario/[id]/coletar` - Scan product into inventory
-- PATCH `/api/inventario/[id]/itens/[itemId]` - Edit qty or delete
-- POST `/api/inventario/[id]/processar` - Start processing (fire-and-forget)
-- GET `/api/inventario/[id]/progresso` - Poll processing progress
-- POST `/api/inventario/[id]/reverter` - Reverse completed inventory
-
----
-
-## Transferência API
-
-### GET /api/transferencia
-
-**File:** `src/app/api/transferencia/route.ts`
-
-**Purpose:** List inter-galpão transfer sessions with computed item counts. User sees transfers where their galpão is origin or destination.
-
-**Auth:** X-Session-Id (required)
-
-**Query Params:**
-- `status`: filter by transfer status (optional)
-
-**Response (200):**
-```json
-{
-  "transferencias": [
-    {
-      "id": "uuid",
-      "empresa_origem_id": "uuid",
-      "empresa_destino_id": "uuid",
-      "galpao_origem_id": "uuid",
-      "galpao_destino_id": "uuid",
-      "usuario_id": "uuid",
-      "deposito_origem_id": "number | null",
-      "deposito_destino_id": "number | null",
-      "status": "em_andamento" | "processado" | "concluido" | "reversao",
-      "observacoes": "string | null",
-      "created_at": "ISO datetime",
-      "processado_em": "ISO datetime | null",
-      "concluido_em": "ISO datetime | null",
-      "empresa_origem": { "nome": "string" } | null,
-      "empresa_destino": { "nome": "string" } | null,
-      "galpao_origem": { "nome": "string" } | null,
-      "galpao_destino": { "nome": "string" } | null,
-      "usuario": { "nome": "string" } | null,
-      "total_itens": "number",
-      "itens_sucesso": "number",
-      "itens_erro": "number"
-    }
-  ]
-}
-```
-
-**Business Logic:**
-- Fetches transfer sessions filtered by galpaoId (origin or destination)
-- Computes item counts per status (total, sucesso, erro)
-- Returns in descending order of creation
-
-**Side Effects:** None (read-only)
-
----
-
-### POST /api/transferencia
-
-**File:** `src/app/api/transferencia/route.ts`
-
-**Purpose:** Create a new inter-galpão transfer session.
-
-**Auth:** X-Session-Id (required)
-
-**Request Body:**
-```json
-{
-  "empresa_origem_id": "uuid",
-  "empresa_destino_id": "uuid",
-  "galpao_origem_id": "uuid",
-  "galpao_destino_id": "uuid",
-  "deposito_origem_id": "number | null",
-  "deposito_destino_id": "number | null",
-  "observacoes": "string (optional)"
-}
-```
-
-**Response (201):**
-```json
-{
-  "id": "uuid",
-  "empresa_origem_id": "uuid",
-  "empresa_destino_id": "uuid",
-  "galpao_origem_id": "uuid",
-  "galpao_destino_id": "uuid",
-  "status": "em_andamento"
-}
-```
-
-**Response (400 - Missing fields):**
-```json
-{
-  "error": "empresa_origem_id e empresa_destino_id são obrigatórios"
-}
-```
-
-**Business Logic:**
-- Validates required fields
-- Creates transfer session with status = "em_andamento"
-
-**Side Effects:**
-- Inserts to `siso_transferencias`
-- Logs to `siso_logs`
-
----
-
-### Transferência Item Operations
-
-Additional endpoints for transfer items (parallel to inventory):
-- GET `/api/transferencia/[id]` - Fetch transfer session detail
-- POST `/api/transferencia/[id]/coletar` - Scan product from origin
-- PATCH `/api/transferencia/[id]/itens/[itemId]` - Edit qty or delete
-- POST `/api/transferencia/[id]/processar` - Start processing (fire-and-forget)
-- GET `/api/transferencia/[id]/progresso` - Poll processing progress
-- POST `/api/transferencia/[id]/reverter` - Reverse completed transfer
-
----
-
-## Etiquetas API
-
-### POST /api/etiquetas-endereco/preview
-
-**File:** `src/app/api/etiquetas-endereco/preview/route.ts`
-
-**Purpose:** Generates address label preview for a range of orders. Shows layout and formatting before printing.
-
-**Auth:** X-Session-Id (required)
-
-**Request Body:**
-```json
-{
-  "pedido_ids": ["string"],
-  "tamanho": "pequeno" | "grande"
-}
-```
-
-**Response (200):**
-```json
-{
-  "labels": [
-    {
-      "pedido_id": "string",
-      "numero": "string",
-      "endereço": "string",
-      "zpl": "string",
-      "imagem_url": "string | null"
-    }
-  ],
-  "total": "number"
-}
-```
-
-**Response (400 - Missing fields):**
-```json
-{
-  "error": "pedido_ids é obrigatório"
-}
-```
-
-**Business Logic:**
-- Fetches pedidos with their addresses
-- Generates ZPL based on tamanho (pequeno = 2 labels per page rotated, grande = large label)
-- Returns preview data for display
-
-**Side Effects:** None (read-only)
-
----
-
-### POST /api/etiquetas-endereco/imprimir
-
-**File:** `src/app/api/etiquetas-endereco/imprimir/route.ts`
-
-**Purpose:** Generates ZPL address labels and sends to PrintNode for printing via selected printer.
-
-**Auth:** X-Session-Id (required)
-
-**Request Body:**
-```json
-{
-  "pedido_ids": ["string"],
-  "tamanho": "pequeno" | "grande",
-  "printer_id": "number (PrintNode printer ID)"
-}
-```
-
-**Response (200):**
-```json
-{
-  "ok": true,
-  "impressoes": "number",
-  "printjob_ids": ["number"]
-}
-```
-
-**Response (400 - Missing fields):**
-```json
-{
-  "error": "pedido_ids, tamanho e printer_id são obrigatórios"
-}
-```
-
-**Response (500 - PrintNode error):**
-```json
-{
-  "error": "Erro ao enviar para impressora: ..."
-}
-```
-
-**Business Logic:**
-- Validates all fields
-- Fetches pedidos with addresses
-- Generates ZPL labels
-- Sends to PrintNode API with specified printer
-- Returns print job IDs for tracking
-
-**Side Effects:**
-- Calls PrintNode API
-- Logs to `siso_logs`
-
----
-
 ## Admin API
 
-### GET /api/admin/galpoes
+### GET /api/wms/admin/galpoes
 
-**File:** `src/app/api/admin/galpoes/route.ts`
+**File:** `src/app/api/wms/admin/galpoes/route.ts`
 
 **Purpose:** Returns galpões with nested empresas, grupo info, and Tiny connection status.
 
@@ -3967,9 +3637,9 @@ Additional endpoints for transfer items (parallel to inventory):
 
 ---
 
-### POST /api/admin/galpoes
+### POST /api/wms/admin/galpoes
 
-**File:** `src/app/api/admin/galpoes/route.ts`
+**File:** `src/app/api/wms/admin/galpoes/route.ts`
 
 **Purpose:** Create a new galpão.
 
@@ -4007,9 +3677,9 @@ Additional endpoints for transfer items (parallel to inventory):
 
 ---
 
-### GET /api/admin/usuarios
+### GET /api/wms/admin/usuarios
 
-**File:** `src/app/api/admin/usuarios/route.ts`
+**File:** `src/app/api/wms/admin/usuarios/route.ts`
 
 **Purpose:** Lists all users with their galpão associations (without exposing PIN).
 
@@ -4047,9 +3717,9 @@ Additional endpoints for transfer items (parallel to inventory):
 
 ---
 
-### POST /api/admin/usuarios
+### POST /api/wms/admin/usuarios
 
-**File:** `src/app/api/admin/usuarios/route.ts`
+**File:** `src/app/api/wms/admin/usuarios/route.ts`
 
 **Purpose:** Create a new user with optional galpão associations.
 
@@ -4096,9 +3766,9 @@ Additional endpoints for transfer items (parallel to inventory):
 
 ---
 
-### PUT /api/admin/usuarios
+### PUT /api/wms/admin/usuarios
 
-**File:** `src/app/api/admin/usuarios/route.ts`
+**File:** `src/app/api/wms/admin/usuarios/route.ts`
 
 **Purpose:** Update a user. If galpao_ids provided, replaces all galpão associations.
 
@@ -4141,9 +3811,9 @@ Additional endpoints for transfer items (parallel to inventory):
 
 ---
 
-### DELETE /api/admin/usuarios?id=uuid
+### DELETE /api/wms/admin/usuarios?id=uuid
 
-**File:** `src/app/api/admin/usuarios/route.ts`
+**File:** `src/app/api/wms/admin/usuarios/route.ts`
 
 **Purpose:** Deletes a user permanently (galpão associations cascade).
 
@@ -4166,107 +3836,107 @@ Additional endpoints for transfer items (parallel to inventory):
 
 ### Additional Admin Routes - Galpões
 
-- **GET** `/api/admin/galpoes/[id]` - Fetch galpão detail with nested empresas and grupo info
-- **PUT** `/api/admin/galpoes/[id]` - Update galpão name, descricao, ativo status
-- **DELETE** `/api/admin/galpoes/[id]` - Delete galpão (cascades to empresas)
+- **GET** `/api/wms/admin/galpoes/[id]` - Fetch galpão detail with nested empresas and grupo info
+- **PUT** `/api/wms/admin/galpoes/[id]` - Update galpão name, descricao, ativo status
+- **DELETE** `/api/wms/admin/galpoes/[id]` - Delete galpão (cascades to empresas)
 
 ### Additional Admin Routes - Empresas
 
-- **GET** `/api/admin/empresas` - List all empresas with galpão, grupo, and Tiny connection info
-- **POST** `/api/admin/empresas` - Create new empresa (CNPJ, name, galpão)
-- **PUT** `/api/admin/empresas/[id]` - Update empresa name, CNPJ, ativo status
-- **DELETE** `/api/admin/empresas/[id]` - Delete empresa (cascades to grupo relations and connections)
+- **GET** `/api/wms/admin/empresas` - List all empresas with galpão, grupo, and Tiny connection info
+- **POST** `/api/wms/admin/empresas` - Create new empresa (CNPJ, name, galpão)
+- **PUT** `/api/wms/admin/empresas/[id]` - Update empresa name, CNPJ, ativo status
+- **DELETE** `/api/wms/admin/empresas/[id]` - Delete empresa (cascades to grupo relations and connections)
 
 ### Additional Admin Routes - Grupos
 
-- **GET** `/api/admin/grupos` - List all grupos
-- **POST** `/api/admin/grupos` - Create new grupo (name, descricao)
-- **PUT** `/api/admin/grupos/[id]` - Update grupo name, descricao
-- **DELETE** `/api/admin/grupos/[id]` - Delete grupo (cascades to empresa relations)
+- **GET** `/api/wms/admin/grupos` - List all grupos
+- **POST** `/api/wms/admin/grupos` - Create new grupo (name, descricao)
+- **PUT** `/api/wms/admin/grupos/[id]` - Update grupo name, descricao
+- **DELETE** `/api/wms/admin/grupos/[id]` - Delete grupo (cascades to empresa relations)
 
 ### Additional Admin Routes - Grupo-Empresa Relations
 
-- **POST** `/api/admin/grupos/[id]/empresas` - Add empresa to grupo (updates or creates empresa_id + tier)
-- **PUT** `/api/admin/grupos/[id]/empresas/[empresaId]` - Update empresa tier in grupo
-- **DELETE** `/api/admin/grupos/[id]/empresas/[empresaId]` - Remove empresa from grupo
+- **POST** `/api/wms/admin/grupos/[id]/empresas` - Add empresa to grupo (updates or creates empresa_id + tier)
+- **PUT** `/api/wms/admin/grupos/[id]/empresas/[empresaId]` - Update empresa tier in grupo
+- **DELETE** `/api/wms/admin/grupos/[id]/empresas/[empresaId]` - Remove empresa from grupo
 
 ### Additional Admin Routes - PrintNode
 
-- **GET** `/api/admin/printnode/api-key` - Fetch stored PrintNode API key
-- **PUT** `/api/admin/printnode/api-key` - Update PrintNode API key
-- **DELETE** `/api/admin/printnode/api-key` - Delete PrintNode API key
-- **GET** `/api/admin/printnode/printers` - List available printers from PrintNode
-- **POST** `/api/admin/printnode/test` - Test PrintNode connection
+- **GET** `/api/wms/admin/printnode/api-key` - Fetch stored PrintNode API key
+- **PUT** `/api/wms/admin/printnode/api-key` - Update PrintNode API key
+- **DELETE** `/api/wms/admin/printnode/api-key` - Delete PrintNode API key
+- **GET** `/api/wms/admin/printnode/printers` - List available printers from PrintNode
+- **POST** `/api/wms/admin/printnode/test` - Test PrintNode connection
 
 ---
 
 ## Tiny ERP API
 
-### GET /api/tiny/connections
+### GET /api/wms/tiny/connections
 
 **Purpose:** List/manage Tiny OAuth2 connections per empresa.
 
 **Auth:** None (should be admin-only)
 
-See `src/app/api/tiny/connections/route.ts`
+See `src/app/api/wms/tiny/connections/route.ts`
 
 ---
 
-### POST /api/tiny/oauth
+### POST /api/wms/tiny/oauth
 
 **Purpose:** Initiate OAuth2 flow for Tiny.
 
 **Auth:** None
 
-See `src/app/api/tiny/oauth/route.ts`
+See `src/app/api/wms/tiny/oauth/route.ts`
 
 ---
 
-### GET /api/tiny/oauth/callback
+### GET /api/wms/tiny/oauth/callback
 
 **Purpose:** OAuth2 callback from Tiny. Stores access token.
 
 **Auth:** None (Tiny redirects here)
 
-See `src/app/api/tiny/oauth/callback/route.ts`
+See `src/app/api/wms/tiny/oauth/callback/route.ts`
 
 ---
 
-### GET /api/tiny/deposits
+### GET /api/wms/tiny/deposits
 
 **Purpose:** List Tiny deposits (warehouses) for a given empresa.
 
 **Auth:** None (should require auth)
 
-See `src/app/api/tiny/deposits/route.ts`
+See `src/app/api/wms/tiny/deposits/route.ts`
 
 ---
 
-### POST /api/tiny/test-connection
+### POST /api/wms/tiny/test-connection
 
 **Purpose:** Test Tiny connection for an empresa.
 
 **Auth:** None (should be admin-only)
 
-See `src/app/api/tiny/test-connection/route.ts`
+See `src/app/api/wms/tiny/test-connection/route.ts`
 
 ---
 
-### POST /api/tiny/stock/ajustar
+### POST /api/wms/tiny/stock/ajustar
 
 **Purpose:** Manually adjust stock in Tiny ERP.
 
 **Auth:** None (should require auth)
 
-See `src/app/api/tiny/stock/ajustar/route.ts`
+See `src/app/api/wms/tiny/stock/ajustar/route.ts`
 
 ---
 
 ## Worker & Background Jobs
 
-### POST /api/worker/processar
+### POST /api/wms/worker/processar
 
-**File:** `src/app/api/worker/processar/route.ts`
+**File:** `src/app/api/wms/worker/processar/route.ts`
 
 **Purpose:** Triggers the execution worker to process pending jobs from `siso_fila_execucao`.
 
@@ -4320,181 +3990,10 @@ See `src/app/api/tiny/stock/ajustar/route.ts`
 
 **Notes:**
 - Can be called from cron job (e.g., every 10 seconds)
-- Can be called directly from `/api/pedidos/aprovar` via `kickWorker()`
+- Can be called directly from `/api/wms/pedidos/aprovar` via `kickWorker()`
 - Can be called manually from monitoring page
 - OC orders now generate NF at approval time (creating Tiny reservation). The Ciclo 2 worker (after compras-release) detects existing NF via `gerarNotaFiscalPedido` idempotency and skips to stock deduction
 - `criarAgrupamentoFase1` is fire-and-forget: agrupamento failure after stock posting never causes job retry
-
----
-
-## Dashboard & Monitoring
-
-### GET /api/dashboard/counts
-
-**File:** `src/app/api/dashboard/counts/route.ts`
-
-**Purpose:** Lightweight endpoint returning pending counts for each module card.
-
-**Auth:** X-Session-Id (required)
-
-**Response (200):**
-```json
-{
-  "siso": "number (pending orders)",
-  "separacao": "number (orders in separation)",
-  "compras": "number (orders awaiting purchase)"
-}
-```
-
-**Response (401 - No session):**
-```json
-{
-  "error": "sessao_invalida"
-}
-```
-
-**Business Logic:**
-- Counts orders by status and galpão
-- For operators: filters by assigned galpão
-- For admins: returns global counts
-
-**Side Effects:** None (read-only)
-
----
-
-### GET /api/painel
-
-**File:** `src/app/api/painel/route.ts`
-
-**Purpose:** Aggregated data for the control tower view. Includes pipeline counts, aging, deadlines, cycle time, throughput, operator workload, decision mix, channel mix, etc.
-
-**Auth:** None (should require auth)
-
-**Query Params:**
-- `galpao_id`: filter by galpão (optional)
-
-**Response (200):**
-```json
-{
-  "server_time": "ISO datetime",
-  "galpoes": [{ "id": "uuid", "nome": "string" }],
-  "pipeline": {
-    "aguardando_compra": "number",
-    "aguardando_nf": "number",
-    "aguardando_separacao": "number",
-    "em_separacao": "number",
-    "separado": "number",
-    "embalado": "number"
-  },
-  "throughput": {
-    "buckets": [
-      {
-        "hour": "number (0-23)",
-        "count": "number"
-      }
-    ],
-    "total_today": "number"
-  },
-  "alerts": {
-    "stuck_nf": "number (orders waiting NF > 4h)",
-    "stuck_separacao": "number (picking > 2h)",
-    "recent_errors": "number (errors in last 1h)",
-    "error_samples": [
-      {
-        "source": "string",
-        "message": "string",
-        "timestamp": "ISO datetime"
-      }
-    ]
-  },
-  "kpis": {
-    "processed_today": "number",
-    "pipeline_total": "number",
-    "avg_cycle_time_min": "number | null"
-  },
-  "operations": {
-    "summary": { ...detailed metrics... },
-    "funnel": { ...pipeline stages with bottleneck... },
-    "deadlines": { ...overdue/due_in_2h/due_today/future counts... },
-    "aging": { ...orders stuck in each stage... },
-    "throughput": { ...hourly/daily/weekly metrics... },
-    "operators": { ...workload by operator... }
-  },
-  "management": {
-    "lead_time": { ...cycle time metrics... },
-    "decision_mix": [...decision type breakdown...],
-    "channel_mix": [...e-commerce channel breakdown...],
-    "galpao_mix": [...galpão distribution...],
-    "concentration": { ...bottleneck and concentration analysis... }
-  }
-}
-```
-
-**Business Logic:**
-- Fetches orders from siso_pedidos (paginated to handle large datasets)
-- Computes:
-  - Pipeline counts per status
-  - Cycle time averages and percentiles
-  - Deadline aging analysis
-  - Hourly throughput
-  - Operator workload distribution
-  - Decision type mix
-  - E-commerce channel distribution
-  - Galpão concentration
-  - Bottleneck identification
-- All BRT timezone aware
-
-**Side Effects:** None (read-only)
-
----
-
-### GET /api/monitoring
-
-**File:** `src/app/api/monitoring/route.ts`
-
-**Purpose:** Returns monitoring data for the monitoring dashboard (admin only).
-
-**Auth:** None (should be admin-only)
-
-**Response:** (Complex monitoring data structure - see route file for details)
-
----
-
-## Reconciliation API
-
-### GET /api/reconciliacao
-
-**File:** `src/app/api/reconciliacao/route.ts`
-
-**Purpose:** Reconciliation: find and reprocess lost orders that exist in Tiny but not in SISO, or orders stuck in webhook queue.
-
-**Auth:** None (should be admin-only)
-
-**Query Params:**
-- (none currently)
-
-**Response (200):**
-```json
-{
-  "found_in_tiny": "number",
-  "reprocessed": "number",
-  "erro": "string | null"
-}
-```
-
-**Business Logic:**
-- Queries Tiny for recent approved orders
-- Checks if they exist in SISO's `siso_pedidos`
-- If missing: fetches order data and queues for processing
-- Also finds and reprocesses webhook logs stuck in "pendente" status
-- Returns counts of found and reprocessed orders
-
-**Side Effects:**
-- Inserts webhook logs
-- Enqueues `processWebhook` tasks
-- Logs to `siso_logs`
-
-**Rate Limiting:** Per-empresa via Tiny API rate limiter
 
 ---
 
@@ -4502,9 +4001,9 @@ See `src/app/api/tiny/stock/ajustar/route.ts`
 
 Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizado de produtos do Tiny em `siso_produtos_catalogo`, com OEMs e compatibilidade veicular como fontes de verdade em tabelas próprias e denormalização via trigger.
 
-### GET /api/cross/search
+### GET /api/wms/cross/search
 
-**File:** `src/app/api/cross/search/route.ts`
+**File:** `src/app/api/wms/cross/search/route.ts`
 
 **Purpose:** Busca universal de produtos por SKU, código OEM, nome ou modo automático (heurística).
 
@@ -4555,9 +4054,9 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ---
 
-### GET /api/cross/produtos/[sku]
+### GET /api/wms/cross/produtos/[sku]
 
-**File:** `src/app/api/cross/produtos/[sku]/route.ts`
+**File:** `src/app/api/wms/cross/produtos/[sku]/route.ts`
 
 **Purpose:** Detalhe completo de um produto: nome, descrição, OEMs, veículos compatíveis, estoque por galpão e SKUs equivalentes.
 
@@ -4643,9 +4142,9 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ---
 
-### POST /api/cross/produtos/[sku]/refetch
+### POST /api/wms/cross/produtos/[sku]/refetch
 
-**File:** `src/app/api/cross/produtos/[sku]/refetch/route.ts`
+**File:** `src/app/api/wms/cross/produtos/[sku]/refetch/route.ts`
 
 **Purpose:** Força refresh bloqueante do cache do produto via Tiny.
 
@@ -4667,7 +4166,7 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 - Atualiza `siso_produtos_catalogo` (nome, descricao, marca, fornecedor, imagem_url, gtin, sincronizado_em)
 - Re-extrai OEMs da descrição via `oem-extractor.ts`; insere os novos como `origem='extracao_tiny'` (não duplica os manuais)
 - Triggers recomputam `oem text[]` e `compatibility_v2 jsonb` automaticamente
-- Não retorna o detalhe — o cliente deve chamar `GET /api/cross/produtos/[sku]` em seguida
+- Não retorna o detalhe — o cliente deve chamar `GET /api/wms/cross/produtos/[sku]` em seguida
 
 **Side Effects:**
 - Update em `siso_produtos_catalogo`
@@ -4677,9 +4176,9 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ---
 
-### POST /api/cross/produtos/[sku]/oems
+### POST /api/wms/cross/produtos/[sku]/oems
 
-**File:** `src/app/api/cross/produtos/[sku]/oems/route.ts`
+**File:** `src/app/api/wms/cross/produtos/[sku]/oems/route.ts`
 
 **Purpose:** Adiciona um código OEM manual ao produto. Avisa se o mesmo código já existe em outros SKUs (cruzamento).
 
@@ -4719,9 +4218,9 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ---
 
-### DELETE /api/cross/produtos/[sku]/oems/[codigo]
+### DELETE /api/wms/cross/produtos/[sku]/oems/[codigo]
 
-**File:** `src/app/api/cross/produtos/[sku]/oems/[codigo]/route.ts`
+**File:** `src/app/api/wms/cross/produtos/[sku]/oems/[codigo]/route.ts`
 
 **Purpose:** Remove um código OEM do produto.
 
@@ -4743,9 +4242,9 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ---
 
-### POST /api/cross/produtos/[sku]/veiculos
+### POST /api/wms/cross/produtos/[sku]/veiculos
 
-**File:** `src/app/api/cross/produtos/[sku]/veiculos/route.ts`
+**File:** `src/app/api/wms/cross/produtos/[sku]/veiculos/route.ts`
 
 **Purpose:** Adiciona uma compatibilidade veicular ao produto.
 
@@ -4787,9 +4286,9 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ---
 
-### DELETE /api/cross/produtos/[sku]/veiculos/[id]
+### DELETE /api/wms/cross/produtos/[sku]/veiculos/[id]
 
-**File:** `src/app/api/cross/produtos/[sku]/veiculos/[id]/route.ts`
+**File:** `src/app/api/wms/cross/produtos/[sku]/veiculos/[id]/route.ts`
 
 **Purpose:** Remove uma compatibilidade veicular do produto.
 
@@ -4811,9 +4310,9 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ---
 
-### GET /api/cross/sugestoes/marcas
+### GET /api/wms/cross/sugestoes/marcas
 
-**File:** `src/app/api/cross/sugestoes/marcas/route.ts`
+**File:** `src/app/api/wms/cross/sugestoes/marcas/route.ts`
 
 **Purpose:** Autocomplete de marcas de veículos cadastradas no catálogo.
 
@@ -4835,9 +4334,9 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ---
 
-### GET /api/cross/sugestoes/modelos
+### GET /api/wms/cross/sugestoes/modelos
 
-**File:** `src/app/api/cross/sugestoes/modelos/route.ts`
+**File:** `src/app/api/wms/cross/sugestoes/modelos/route.ts`
 
 **Purpose:** Autocomplete de modelos para uma marca específica.
 
@@ -5564,7 +5063,6 @@ Or for validation errors:
 ### Pagination
 
 Most list endpoints return up to 200 rows by default. Larger datasets are paginated:
-- `/api/painel` uses PAGE=1000 pagination internally
 - Some endpoints use `.limit(N)` to cap results
 
 ### Auth
@@ -5576,8 +5074,7 @@ Most list endpoints return up to 200 rows by default. Larger datasets are pagina
 ### Timestamps
 
 - All ISO 8601 format (e.g., `2026-03-25T14:30:00Z`)
-- BRT timezone used in `/api/painel` calculations
-- Server time always included in painel response
+- BRT timezone is the canonical timezone for date math in dashboards
 
 ### Rate Limiting
 

@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Picking Multi-Loc — Fluxo Completo Proposto</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    margin: 0;
+    padding: 0;
+  }
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 48px 32px 96px;
+  }
+  header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 32px;
+    margin-bottom: 48px;
+  }
+  h1 {
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 8px;
+  }
+  h2 {
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 48px 0 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  h3 {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 32px 0 12px;
+    color: var(--zinc-800);
+  }
+  h4 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 24px 0 8px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  p {
+    margin: 0 0 16px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 16px;
+    margin: 4px 0 0;
+  }
+  .meta {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 16px;
+  }
+  .meta a { color: var(--accent); text-decoration: none; }
+  .meta a:hover { text-decoration: underline; }
+
+  /* TOC */
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin: 32px 0;
+  }
+  .toc-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .toc ol {
+    margin: 0;
+    padding-left: 20px;
+    columns: 2;
+    column-gap: 32px;
+  }
+  .toc a {
+    color: var(--text);
+    text-decoration: none;
+  }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  /* Callouts */
+  .callout {
+    border-left: 4px solid;
+    padding: 16px 20px;
+    margin: 24px 0;
+    border-radius: 0 8px 8px 0;
+    font-size: 15px;
+  }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* Mermaid wrapper */
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+  .diagram-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .mermaid { text-align: center; }
+
+  /* Code/mockup */
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  code {
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 24px 0;
+    font-size: 14px;
+    background: var(--surface);
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  th {
+    background: var(--zinc-100);
+    text-align: left;
+    padding: 10px 14px;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--zinc-100);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  td code { font-size: 12px; }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .badge-checkbox { background: #f1f5f9; color: #475569; }
+  .badge-parcial { background: var(--amber-bg); color: var(--amber); }
+  .badge-esgotado { background: var(--red-bg); color: var(--red); }
+  .badge-realocada { background: #fed7aa; color: #9a3412; }
+  .badge-emprestimo { background: var(--cyan-bg); color: var(--cyan); }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: var(--amber); }
+
+  /* UI mockup */
+  .mockup {
+    background: var(--zinc-900);
+    color: #fafafa;
+    padding: 20px;
+    border-radius: 12px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 13px;
+    margin: 16px 0;
+    line-height: 1.6;
+  }
+  .mockup .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .mockup .row.completed { opacity: 0.5; }
+  .mockup .row.new { background: rgba(251, 146, 60, 0.1); border-color: rgba(251, 146, 60, 0.3); }
+  .mockup .checkbox {
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid #71717a;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .mockup .checkbox.checked {
+    background: #16a34a;
+    border-color: #16a34a;
+    position: relative;
+  }
+  .mockup .checkbox.checked::after {
+    content: "✓";
+    position: absolute;
+    color: white;
+    top: -3px;
+    left: 2px;
+    font-size: 12px;
+  }
+  .mockup .product { flex: 1; }
+  .mockup .sku { font-weight: 600; color: #fafafa; }
+  .mockup .loc { color: #a1a1aa; font-size: 11px; }
+  .mockup .qty {
+    font-size: 18px;
+    font-weight: 600;
+    color: #fafafa;
+    margin-right: 12px;
+  }
+  .mockup .btn {
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    background: rgba(255,255,255,0.08);
+    color: #fafafa;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .mockup .btn-parcial { background: rgba(217, 119, 6, 0.2); color: #fcd34d; border-color: rgba(217, 119, 6, 0.4); }
+  .mockup .btn-esgotado { background: rgba(220, 38, 38, 0.15); color: #fca5a5; border-color: rgba(220, 38, 38, 0.3); }
+
+  /* Stepper */
+  .stepper {
+    counter-reset: step;
+    margin: 24px 0;
+  }
+  .stepper-item {
+    position: relative;
+    padding: 16px 16px 16px 56px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    counter-increment: step;
+  }
+  .stepper-item::before {
+    content: counter(step);
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    width: 28px;
+    height: 28px;
+    background: var(--zinc-900);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .stepper-item strong {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text);
+  }
+  .stepper-item p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--muted);
+  }
+
+  /* 3-column comparison */
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin: 24px 0;
+  }
+  .compare-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .compare-card h4 {
+    margin-top: 0;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 16px;
+    color: var(--text);
+  }
+  .compare-card .when {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 12px;
+    font-style: italic;
+  }
+  .compare-card ul {
+    margin: 0;
+    padding-left: 20px;
+    font-size: 14px;
+  }
+  .compare-card li {
+    margin-bottom: 6px;
+    color: var(--muted);
+  }
+  .compare-card li strong { color: var(--text); }
+
+  /* Ledger row */
+  .ledger-mov {
+    display: grid;
+    grid-template-columns: 32px 60px 60px 80px 100px 1fr;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--zinc-100);
+    align-items: center;
+    font-size: 13px;
+    font-family: "JetBrains Mono", monospace;
+  }
+  .ledger-mov.header {
+    background: var(--zinc-100);
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+  }
+  .ledger-mov .tipo-S { color: var(--red); font-weight: 700; }
+  .ledger-mov .tipo-E { color: var(--green); font-weight: 700; }
+  .ledger-mov .origem {
+    background: var(--zinc-100);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+  .ledger-mov .origem.ajuste {
+    background: var(--amber-bg);
+    color: var(--amber);
+  }
+  .ledger-mov .origem.emprestimo {
+    background: var(--cyan-bg);
+    color: var(--cyan);
+  }
+  .ledger-mov .obs {
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 12px;
+  }
+
+  /* KV */
+  .kv-grid {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 8px 16px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .kv-grid dt {
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .kv-grid dd {
+    margin: 0;
+    color: var(--text);
+  }
+
+  /* Hr */
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 48px 0;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Picking Multi-Loc</h1>
+  <p class="subtitle">Captura de posição e quantidade na separação — fluxo completo proposto</p>
+  <div class="meta">
+    Data: 2026-05-18 &nbsp;·&nbsp;
+    Spec: <a href="2026-05-18-pick-multi-loc-design.md">2026-05-18-pick-multi-loc-design.md</a> &nbsp;·&nbsp;
+    Status: aprovado, pronto pra plano de implementação
+  </div>
+</header>
+
+<div class="callout callout-info">
+  <div class="callout-title">TL;DR</div>
+  Hoje, na separação, o operador clica num checkbox por SKU e o sistema assume que ele pegou a quantidade pedida da única loc registrada. Não captura nem qual posição zerou nem quanto foi pego. Esta proposta adiciona um botão <span class="badge badge-parcial">Parcial</span> ao lado do <span class="badge badge-esgotado">Esgotado</span> existente. Quando a loc esvazia no meio do pick, o operador informa quanto pegou; o sistema ajusta o ledger, procura o saldo restante em outras locs do mesmo galpão (mesma empresa, depois outras do grupo via empréstimo) e re-injeta a quantidade residual no fim da própria onda. Se não achar saldo no galpão, o pedido sai da onda e volta pro painel SISO pra decisão humana.
+</div>
+
+<div class="toc">
+  <div class="toc-title">Índice</div>
+  <ol>
+    <li><a href="#1">Estado atual vs proposto</a></li>
+    <li><a href="#2">Os três botões do card</a></li>
+    <li><a href="#3">UX no checklist</a></li>
+    <li><a href="#4">Fluxo do modal Parcial</a></li>
+    <li><a href="#5">Algoritmo de re-busca</a></li>
+    <li><a href="#6">Cenários no ledger</a></li>
+    <li><a href="#7">State machine do item</a></li>
+    <li><a href="#8">State machine do pedido</a></li>
+    <li><a href="#9">Data model</a></li>
+    <li><a href="#10">Pontos de atenção</a></li>
+  </ol>
+</div>
+
+<!-- ─────────────────────────── 1 ─────────────────────────── -->
+<h2 id="1">1. Estado atual vs proposto</h2>
+
+<div class="compare-grid">
+  <div class="compare-card" style="grid-column: span 1;">
+    <h4>Hoje (staging)</h4>
+    <div class="when">Single-loc, checkbox-only</div>
+    <ul>
+      <li>1 SKU por linha, 1 loc registrada</li>
+      <li>Checkbox = pegou tudo (assumido)</li>
+      <li>Sem captura de qty real</li>
+      <li>Botão <strong>Esgotado</strong> existente é macro: afeta todos pedidos com esse SKU</li>
+      <li>Ledger WMS não recebe mov de saída no picking — só Tiny é atualizado</li>
+    </ul>
+  </div>
+  <div class="compare-card" style="grid-column: span 2;">
+    <h4>Proposta</h4>
+    <div class="when">Multi-loc tolerante + re-roteamento inline</div>
+    <ul>
+      <li>Mantém checkbox como caso comum (zero atrito)</li>
+      <li>Adiciona botão <strong>Parcial</strong> pra exceção: modal de qty + flag "loc zerou"</li>
+      <li>Ledger ganha mov de saída no checkbox e mov de ajuste no Parcial (origem nova: <code>ajuste_pick_zerou</code>)</li>
+      <li>Sistema busca residual no mesmo galpão: mesma empresa → outras empresas do grupo (via empréstimo)</li>
+      <li>Achou? Re-injeta linha extra <span class="badge badge-realocada">Realocada</span> no <em>fim</em> da onda</li>
+      <li>Não achou no galpão? Pedido sai da onda, vira <code>pendente_realocacao</code>, supervisor decide no painel SISO</li>
+      <li><strong>Esgotado</strong> permanece inalterado pra o caso macro</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ─────────────────────────── 2 ─────────────────────────── -->
+<h2 id="2">2. Os três botões do card — quando usar cada um</h2>
+
+<p>O card de item no checklist passa a oferecer três caminhos. Cada um responde a uma realidade física diferente:</p>
+
+<div class="compare-grid">
+  <div class="compare-card">
+    <h4><span class="badge badge-checkbox">Checkbox</span></h4>
+    <div class="when">Caso comum (95%)</div>
+    <p style="margin-bottom: 8px; font-size: 14px;"><strong>Quando:</strong> a loc indicada tem a quantidade esperada e operador pegou tudo.</p>
+    <p style="margin: 0; font-size: 14px;"><strong>Efeito:</strong> 1 click, gera 1 mov de saída no ledger (<code>nf_venda</code>), item é riscado.</p>
+  </div>
+  <div class="compare-card" style="border-color: var(--amber); background: #fffbeb;">
+    <h4><span class="badge badge-parcial">Parcial</span> <span style="font-weight: 400; color: var(--muted); font-size: 13px;">(novo)</span></h4>
+    <div class="when">Esta loc zerou no meio do pick</div>
+    <p style="margin-bottom: 8px; font-size: 14px;"><strong>Quando:</strong> a loc indicada tinha menos do que o sistema dizia; operador pegou o que tinha e a posição esvaziou.</p>
+    <p style="margin: 0; font-size: 14px;"><strong>Efeito:</strong> modal de qty real; gera 2 movs no ledger (saída + ajuste); sistema procura saldo restante em outras locs e re-injeta no fim da onda.</p>
+  </div>
+  <div class="compare-card" style="border-color: var(--red); background: #fef2f2;">
+    <h4><span class="badge badge-esgotado">Esgotado</span> <span style="font-weight: 400; color: var(--muted); font-size: 13px;">(inalterado)</span></h4>
+    <div class="when">Macro: o galpão não tem o SKU</div>
+    <p style="margin-bottom: 8px; font-size: 14px;"><strong>Quando:</strong> não tem o SKU em loc nenhuma deste galpão; nem adianta procurar.</p>
+    <p style="margin: 0; font-size: 14px;"><strong>Efeito:</strong> abre modal com galpões alternativos; escolhe entre <em>Encaminhar todos pedidos</em> ou <em>Virar OC</em>. Atinge todos os pedidos com esse SKU em separação ativa.</p>
+  </div>
+</div>
+
+<div class="diagram">
+  <div class="diagram-title">Árvore de decisão do operador</div>
+  <div class="mermaid">
+flowchart TD
+  Start([Operador chega na loc indicada]) --> Q1{Tem o que precisa?}
+  Q1 -->|Sim, pegou tudo| CB[Clica Checkbox]
+  Q1 -->|Não, mas tem alguma coisa<br/>OU loc zerou no meio| PA[Clica Parcial]
+  Q1 -->|Tá vazio E sei que<br/>não tem nenhum em galpão nenhum| ES[Clica Esgotado]
+
+  CB --> CB1[Gera mov saída nf_venda<br/>Item riscado]
+  CB1 --> CBend([Pronto, próximo SKU])
+
+  PA --> PA1[Modal: quantos pegou? loc zerou?]
+  PA1 --> PA2[Gera mov saída + mov ajuste<br/>ajuste_pick_zerou]
+  PA2 --> PA3{Sistema acha residual<br/>no mesmo galpão?}
+  PA3 -->|Sim, mesma empresa| RA[Re-injeta linha no fim<br/>Realocada loc nova]
+  PA3 -->|Sim, outra empresa do grupo| REMP[Re-injeta linha no fim<br/>Realocada + Empréstimo]
+  PA3 -->|Só achou em outro galpão| PS1[Pedido sai da onda<br/>status pendente_realocacao]
+  PA3 -->|Não achou em galpão nenhum| PS2[Pedido sai da onda<br/>status pendente_realocacao]
+
+  ES --> ES1[Modal: encaminhar todos<br/>ou virar OC]
+
+  classDef start fill:#0ea5e9,stroke:#0369a1,color:#fff
+  classDef checkbox fill:#dcfce7,stroke:#16a34a,color:#166534
+  classDef parcial fill:#fef3c7,stroke:#d97706,color:#92400e
+  classDef esgotado fill:#fee2e2,stroke:#dc2626,color:#991b1b
+  classDef decision fill:#f4f4f5,stroke:#71717a,color:#27272a
+  classDef terminal fill:#cffafe,stroke:#0891b2,color:#155e75
+
+  class Start start
+  class CB,CB1,CBend checkbox
+  class PA,PA1,PA2,RA,REMP parcial
+  class ES,ES1 esgotado
+  class Q1,PA3 decision
+  class PS1,PS2 terminal
+  </div>
+</div>
+
+<!-- ─────────────────────────── 3 ─────────────────────────── -->
+<h2 id="3">3. UX no checklist</h2>
+
+<h3>Antes do pick</h3>
+<div class="mockup">
+  <div style="opacity: 0.6; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px;">Wave picking — 1 pedido · 0/3 marcados</div>
+  <div class="row">
+    <div class="checkbox"></div>
+    <div class="product">
+      <div class="sku">19SWAP-31</div>
+      <div class="loc">B-02-01 · saldo 5</div>
+    </div>
+    <div class="qty">5</div>
+    <div class="btn btn-parcial">Parcial</div>
+    <div class="btn btn-esgotado">Esgotado</div>
+  </div>
+  <div class="row">
+    <div class="checkbox"></div>
+    <div class="product">
+      <div class="sku">19SWAP-32</div>
+      <div class="loc">B-02-02 · saldo 8</div>
+    </div>
+    <div class="qty">2</div>
+    <div class="btn btn-parcial">Parcial</div>
+    <div class="btn btn-esgotado">Esgotado</div>
+  </div>
+  <div class="row">
+    <div class="checkbox"></div>
+    <div class="product">
+      <div class="sku">GBSWAP-33</div>
+      <div class="loc">A-01-05 · saldo 4</div>
+    </div>
+    <div class="qty">4</div>
+    <div class="btn btn-parcial">Parcial</div>
+    <div class="btn btn-esgotado">Esgotado</div>
+  </div>
+</div>
+
+<h3>Depois de Parcial no primeiro item</h3>
+<p style="font-size: 14px; color: var(--muted);">Operador foi em B-02-01, achou só 3 (sistema dizia 5). Clicou Parcial, informou 3, marcou loc zerou. Sistema gerou movs e achou os 2 que faltavam em A-01-02.</p>
+<div class="mockup">
+  <div style="opacity: 0.6; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px;">Wave picking — 1 pedido · 1/3 marcados · 1 realocação pendente</div>
+  <div class="row completed">
+    <div class="checkbox checked"></div>
+    <div class="product">
+      <div class="sku">19SWAP-31 <span class="badge badge-parcial">Parcial 3/5</span></div>
+      <div class="loc">B-02-01 · loc zerada às 14:32</div>
+    </div>
+    <div class="qty">3</div>
+  </div>
+  <div class="row">
+    <div class="checkbox"></div>
+    <div class="product">
+      <div class="sku">19SWAP-32</div>
+      <div class="loc">B-02-02 · saldo 8</div>
+    </div>
+    <div class="qty">2</div>
+    <div class="btn btn-parcial">Parcial</div>
+    <div class="btn btn-esgotado">Esgotado</div>
+  </div>
+  <div class="row">
+    <div class="checkbox"></div>
+    <div class="product">
+      <div class="sku">GBSWAP-33</div>
+      <div class="loc">A-01-05 · saldo 4</div>
+    </div>
+    <div class="qty">4</div>
+    <div class="btn btn-parcial">Parcial</div>
+    <div class="btn btn-esgotado">Esgotado</div>
+  </div>
+  <div class="row new">
+    <div class="checkbox"></div>
+    <div class="product">
+      <div class="sku">19SWAP-31 <span class="badge badge-realocada">Realocada</span></div>
+      <div class="loc">A-01-02 · saldo 2 · originada de B-02-01</div>
+    </div>
+    <div class="qty">2</div>
+    <div class="btn btn-parcial">Parcial</div>
+    <div class="btn btn-esgotado">Esgotado</div>
+  </div>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Por que a realocação vai pro fim?</div>
+  Se o sistema reordenasse a lista por loc (que é o sort padrão), a nova linha de A-01-02 cairia <em>antes</em> de B-02-02 (loc atual do operador). Como o operador já passou geograficamente por A, ele iria precisar voltar — e o risco de passar batido é alto. Append no fim mantém o operador andando pra frente; quando ele termina o resto, chega no fim e pega as realocações em sequência.
+</div>
+
+<!-- ─────────────────────────── 4 ─────────────────────────── -->
+<h2 id="4">4. Fluxo do modal Parcial</h2>
+
+<div class="diagram">
+  <div class="diagram-title">Sequência completa</div>
+  <div class="mermaid">
+sequenceDiagram
+  participant O as Operador
+  participant UI as Checklist UI
+  participant API as POST /parcial
+  participant L as Ledger (wms_inserir_movimentacao)
+  participant E as siso_estoque
+  participant R as Re-busca (realocacao-resolver)
+  participant P as siso_pedidos
+
+  O->>UI: Click "Parcial" no SKU-X (esperada=5)
+  UI->>O: Modal "Quantos pegou? Loc zerou?"
+  O->>UI: 3 unidades, loc zerou=true
+  UI->>API: POST /api/separacao/parcial<br/>{item, qty_pega:3, loc_zerou:true}
+
+  API->>L: mov 1: S, 3 un, origem=nf_venda
+  L->>E: B-02-01 saldo 5 → 2
+  API->>L: mov 2: S, 2 un, origem=ajuste_pick_zerou
+  L->>E: B-02-01 saldo 2 → 0
+
+  API->>R: buscar residual=2 no mesmo galpão
+  R->>E: SELECT FROM siso_estoque<br/>WHERE produto=X, galpao=CWB,<br/>empresa IN (grupo), loc≠B-02-01,<br/>disponivel>0 ORDER BY ...
+  E-->>R: A-01-02 (NetAir) qty=2
+
+  API->>API: INSERT siso_pedido_item_realocacoes<br/>{loc=A-01-02, qty=2, is_emprestimo=false}
+  API->>P: histórico: parcial_loc_zerou
+  API-->>UI: {status: 'realocado', realocacoes: [...]}
+  UI->>O: Toast: "Achei 2 em A-01-02 — adicionado ao fim"
+  UI->>UI: Re-render lista (item original com badge Parcial, nova linha no fim)
+  </div>
+</div>
+
+<h3>Variações do modal conforme cenário</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Cenário</th>
+      <th>Qty pega</th>
+      <th>Loc zerou?</th>
+      <th>Movs gerados</th>
+      <th>Resultado</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Operador achou parte, loc esvaziou</td>
+      <td>3 de 5</td>
+      <td>Sim (pré-marcado)</td>
+      <td>1 saída <code>nf_venda</code> (3) + 1 ajuste <code>ajuste_pick_zerou</code> (2)</td>
+      <td>Re-busca pelos 2 faltantes</td>
+    </tr>
+    <tr>
+      <td>Operador foi e tava vazio</td>
+      <td>0 de 5</td>
+      <td>Sim</td>
+      <td>1 ajuste <code>ajuste_pick_zerou</code> (5)</td>
+      <td>Re-busca pelos 5</td>
+    </tr>
+    <tr>
+      <td>Operador achou parte mas loc não zerou (errou conta)</td>
+      <td>3 de 5</td>
+      <td>Não</td>
+      <td>1 saída <code>nf_venda</code> (3); sem ajuste</td>
+      <td>Re-busca pelos 2 faltantes (loc original ainda tem saldo)</td>
+    </tr>
+    <tr>
+      <td>Operador errou clique, era pra ser checkbox</td>
+      <td>5 de 5</td>
+      <td>Não</td>
+      <td>1 saída <code>nf_venda</code> (5); sem ajuste</td>
+      <td>Sem re-busca, item completo (equivale ao checkbox)</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 5 ─────────────────────────── -->
+<h2 id="5">5. Algoritmo de re-busca</h2>
+
+<p>Quando o Parcial dispara re-busca, o sistema procura o saldo residual seguindo uma ordem de prioridade. A lógica reusa <code>grupo-resolver.ts</code> filtrada por galpão.</p>
+
+<div class="diagram">
+  <div class="diagram-title">Cascade de prioridade</div>
+  <div class="mermaid">
+flowchart TD
+  Start([qty_residual > 0]) --> Q1[Lista empresas do grupo<br/>no mesmo galpão do pedido]
+  Q1 --> Q2[SELECT siso_estoque<br/>WHERE produto, galpao, empresa IN<br/>(grupo), loc ≠ original, disponivel > 0]
+  Q2 --> Q3{Achou alguma loc?}
+
+  Q3 -->|Não| FAIL[Pedido vai pra<br/>pendente_realocacao]
+  Q3 -->|Sim| ORD[Ordena por prioridade]
+
+  ORD --> O1[1. Mesma empresa do pedido<br/>evita empréstimo]
+  O1 --> O2[2. Tipo da loc:<br/>picking → overstock<br/>→ recebimento → quarentena]
+  O2 --> O3[3. Maior disponivel<br/>consolida em menos locs]
+  O3 --> O4[4. Codigo da loc ASC<br/>determinístico]
+
+  O4 --> Loop[Loop: pega da loc top<br/>até cobrir residual<br/>ou esgotar candidatos]
+  Loop --> Q4{Cobriu residual?}
+  Q4 -->|Sim| OK[Cria N realocações<br/>retorna sucesso]
+  Q4 -->|Não| Q5{Restam candidatos<br/>no mesmo galpão?}
+  Q5 -->|Sim| Loop
+  Q5 -->|Não| FAIL2[Cobertura parcial:<br/>realocações criadas +<br/>pendente_realocacao pro residual]
+
+  classDef start fill:#0ea5e9,stroke:#0369a1,color:#fff
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#166534
+  classDef fail fill:#fee2e2,stroke:#dc2626,color:#991b1b
+  classDef step fill:#f4f4f5,stroke:#71717a,color:#27272a
+
+  class Start start
+  class OK success
+  class FAIL,FAIL2 fail
+  class Q1,Q2,ORD,O1,O2,O3,O4,Loop step
+  </div>
+</div>
+
+<h3>Exemplo concreto da prioridade</h3>
+
+<p>Pedido pede 5 de SKU-X. Empresa origem: NetAir. Galpão: CWB. B-02-01 (NetAir) zerou após pegar 0. Residual = 5. Sistema vê em <code>siso_estoque</code>:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Empresa</th>
+      <th>Loc</th>
+      <th>Tipo</th>
+      <th>Disponível</th>
+      <th>Posição na cascade</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>NetAir</td>
+      <td>A-01-02</td>
+      <td>picking</td>
+      <td>2</td>
+      <td><strong>1º</strong> (mesma empresa + picking + maior)</td>
+    </tr>
+    <tr>
+      <td>NetAir</td>
+      <td>OVERSTOCK-1</td>
+      <td>overstock</td>
+      <td>3</td>
+      <td><strong>2º</strong> (mesma empresa, mas tipo inferior)</td>
+    </tr>
+    <tr>
+      <td>NetParts</td>
+      <td>A-04-07</td>
+      <td>picking</td>
+      <td>1</td>
+      <td>3º (outra empresa do grupo)</td>
+    </tr>
+    <tr>
+      <td>NetParts</td>
+      <td>OVERSTOCK-1</td>
+      <td>overstock</td>
+      <td>10</td>
+      <td>4º (outra empresa, tipo inferior)</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Sistema pega 2 de A-01-02 (NetAir, picking) → falta 3. Pega 3 de OVERSTOCK-1 (NetAir, overstock) → completou. Resultado: 2 realocações, ambas mesma empresa, sem empréstimo. Ledger fica limpo.</p>
+
+<!-- ─────────────────────────── 6 ─────────────────────────── -->
+<h2 id="6">6. Cenários no ledger</h2>
+
+<p>Movs no ledger (<code>siso_movimentacoes</code>) por cenário. <code>S</code> = saída, <code>E</code> = entrada. Origem novo introduzido: <code>ajuste_pick_zerou</code>.</p>
+
+<h3>Cenário 1 — operador achou parte, loc zerou, residual encontrado na mesma empresa</h3>
+
+<div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 16px 0;">
+  <div class="ledger-mov header">
+    <div>#</div><div>Tipo</div><div>Qty</div><div>Empresa</div><div>Origem</div><div>Observações</div>
+  </div>
+  <div class="ledger-mov">
+    <div>1</div><div class="tipo-S">S</div><div>3</div><div>NetAir<br/>B-02-01</div><div><span class="origem">nf_venda</span></div><div class="obs">Picking parcial pedido #1234 — qty confirmada pelo operador</div>
+  </div>
+  <div class="ledger-mov">
+    <div>2</div><div class="tipo-S">S</div><div>2</div><div>NetAir<br/>B-02-01</div><div><span class="origem ajuste">ajuste_pick_zerou</span></div><div class="obs">Loc zerou no picking — ajuste 2 unidades (sistema dizia 5, real foi 3)</div>
+  </div>
+  <div class="ledger-mov">
+    <div>3</div><div class="tipo-S">S</div><div>2</div><div>NetAir<br/>A-01-02</div><div><span class="origem">nf_venda</span></div><div class="obs">Picking pedido #1234 — realocação de B-02-01 (após operador marcar)</div>
+  </div>
+</div>
+
+<p style="font-size: 13px; color: var(--muted);">Movs 1+2 são atômicos (mesma transação no <code>POST /parcial</code>). Mov 3 só roda quando operador marca a linha realocada como completa, depois.</p>
+
+<h3>Cenário 2 — residual encontrado em outra empresa do grupo (empréstimo)</h3>
+
+<div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 16px 0;">
+  <div class="ledger-mov header">
+    <div>#</div><div>Tipo</div><div>Qty</div><div>Empresa</div><div>Origem</div><div>Observações</div>
+  </div>
+  <div class="ledger-mov">
+    <div>1</div><div class="tipo-S">S</div><div>3</div><div>NetAir<br/>B-02-01</div><div><span class="origem">nf_venda</span></div><div class="obs">Picking parcial pedido #1234</div>
+  </div>
+  <div class="ledger-mov">
+    <div>2</div><div class="tipo-S">S</div><div>2</div><div>NetAir<br/>B-02-01</div><div><span class="origem ajuste">ajuste_pick_zerou</span></div><div class="obs">Loc zerou no picking</div>
+  </div>
+  <div class="ledger-mov">
+    <div>3</div><div class="tipo-S">S</div><div>2</div><div>NetParts<br/>A-04-07</div><div><span class="origem emprestimo">emprestimo</span></div><div class="obs">Picking pedido #1234 — empréstimo NetParts → NetAir (devedora)</div>
+  </div>
+</div>
+
+<p style="font-size: 13px; color: var(--muted);">Mov 3 leva <code>emprestimo_devedora_id = NetAir</code>. Saldo devedor aparece em <code>wms_saldos_devedores()</code>. Regra do empréstimo precisa existir em <code>siso_emprestimo_regras</code> (credora NetParts → devedora NetAir).</p>
+
+<h3>Cenário 3 — operador foi e a loc tava completamente vazia</h3>
+
+<div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 16px 0;">
+  <div class="ledger-mov header">
+    <div>#</div><div>Tipo</div><div>Qty</div><div>Empresa</div><div>Origem</div><div>Observações</div>
+  </div>
+  <div class="ledger-mov">
+    <div>1</div><div class="tipo-S">S</div><div>5</div><div>NetAir<br/>B-02-01</div><div><span class="origem ajuste">ajuste_pick_zerou</span></div><div class="obs">Loc estava vazia (sistema dizia 5) — ajuste total</div>
+  </div>
+</div>
+
+<p style="font-size: 13px; color: var(--muted);">Sem mov de saída (qty pega = 0). Só ajuste pra zerar a loc. Re-busca pega os 5 inteiros em outra(s) loc(s).</p>
+
+<h3>Cenário 4 — re-busca falha, pedido sai da onda</h3>
+
+<div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 16px 0;">
+  <div class="ledger-mov header">
+    <div>#</div><div>Tipo</div><div>Qty</div><div>Empresa</div><div>Origem</div><div>Observações</div>
+  </div>
+  <div class="ledger-mov">
+    <div>1</div><div class="tipo-S">S</div><div>3</div><div>NetAir<br/>B-02-01</div><div><span class="origem">nf_venda</span></div><div class="obs">Picking parcial pedido #1234</div>
+  </div>
+  <div class="ledger-mov">
+    <div>2</div><div class="tipo-S">S</div><div>2</div><div>NetAir<br/>B-02-01</div><div><span class="origem ajuste">ajuste_pick_zerou</span></div><div class="obs">Loc zerou no picking</div>
+  </div>
+</div>
+
+<p style="font-size: 13px; color: var(--muted);">Movs 1+2 ficam registradas. Pedido transita pra <code>status_separacao = 'pendente_realocacao'</code>. Aparece no painel SISO com badge "Realocação", supervisor decide entre transferência (se outro galpão tem) ou OC.</p>
+
+<!-- ─────────────────────────── 7 ─────────────────────────── -->
+<h2 id="7">7. State machine do item (siso_pedido_itens)</h2>
+
+<div class="diagram">
+  <div class="diagram-title">Transições de estado</div>
+  <div class="mermaid">
+stateDiagram-v2
+  [*] --> Pendente: item criado na onda
+
+  Pendente --> CompletoNormal: checkbox marcado
+  Pendente --> Parcial: botão Parcial<br/>(loc zerou)
+  Pendente --> Esgotado: botão Esgotado<br/>(macro)
+
+  Parcial --> ParcialComCobertura: re-busca achou<br/>no mesmo galpão
+  Parcial --> ParcialSemCobertura: re-busca falhou<br/>ou só achou cross-galpão
+
+  ParcialComCobertura --> CompletoComRealocacao: todas realocações picadas
+  ParcialComCobertura --> ParcialEmAndamento: realocação parcialmente picada
+
+  ParcialSemCobertura --> [*]: pedido sai da onda
+
+  CompletoNormal --> Pendente: desfazer (desmarcar checkbox)
+  Parcial --> Pendente: desfazer-parcial<br/>(antes de qualquer realocação picada)
+  ParcialEmAndamento --> ParcialComCobertura: marca próxima realocação
+
+  CompletoNormal --> [*]: pedido segue
+  CompletoComRealocacao --> [*]: pedido segue
+  Esgotado --> [*]: pedido sai da onda<br/>(via Encaminhar ou OC)
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Estado</th>
+      <th>Flags em <code>siso_pedido_itens</code></th>
+      <th>Realocações</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Pendente</td>
+      <td><code>separacao_marcado=false</code></td>
+      <td>nenhuma</td>
+    </tr>
+    <tr>
+      <td>Completo normal</td>
+      <td><code>separacao_marcado=true</code>, <code>separacao_parcial=false</code>, <code>quantidade_pega=quantidade_pedida</code></td>
+      <td>nenhuma</td>
+    </tr>
+    <tr>
+      <td>Parcial com cobertura</td>
+      <td><code>separacao_marcado=true</code>, <code>separacao_parcial=true</code>, <code>quantidade_pega &lt; quantidade_pedida</code></td>
+      <td>≥1 com <code>status='aguardando_picking'</code></td>
+    </tr>
+    <tr>
+      <td>Completo com realocação</td>
+      <td>mesma do Parcial</td>
+      <td>todas com <code>status='picado'</code>, somatório de qty cobre o residual</td>
+    </tr>
+    <tr>
+      <td>Parcial sem cobertura</td>
+      <td>mesma do Parcial</td>
+      <td>algumas <code>'picado'</code>, outras inexistentes — pedido fora da onda</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 8 ─────────────────────────── -->
+<h2 id="8">8. State machine do pedido (siso_pedidos.status_separacao)</h2>
+
+<div class="diagram">
+  <div class="diagram-title">Inclusão do novo status <code>pendente_realocacao</code></div>
+  <div class="mermaid">
+stateDiagram-v2
+  [*] --> aguardando_compra: OC criada
+  [*] --> aguardando_nf: pedido aprovado
+  aguardando_compra --> aguardando_nf: NF da OC chegou
+  aguardando_nf --> aguardando_separacao: NF de venda chegou
+  aguardando_separacao --> em_separacao: operador iniciou onda
+
+  em_separacao --> separado: todos itens marcados +<br/>todas realocações picadas
+  em_separacao --> pendente_realocacao: parcial sem cobertura<br/>(NOVO)
+
+  pendente_realocacao --> aguardando_separacao: supervisor decidiu<br/>(transferência local)
+  pendente_realocacao --> aguardando_compra: supervisor decidiu<br/>(OC pro residual)
+  pendente_realocacao --> em_separacao: supervisor manualmente<br/>liberou pra continuar
+
+  separado --> embalado: packing concluído
+
+  classDef novo fill:#fef3c7,stroke:#d97706,color:#92400e
+  class pendente_realocacao novo
+  </div>
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">Comportamento no painel SISO</div>
+  Pedidos com <code>status_separacao = 'pendente_realocacao'</code> aparecem na aba "Pendente" do dashboard <code>/siso</code> com badge "Realocação" + detalhes: qual item, qty residual, onde o sistema procurou, onde tem saldo (se houver em outro galpão). Supervisor decide a ação. Não trava o painel principal — é uma fila à parte visualmente diferenciada.
+</div>
+
+<!-- ─────────────────────────── 9 ─────────────────────────── -->
+<h2 id="9">9. Data model</h2>
+
+<div class="diagram">
+  <div class="diagram-title">Entidades novas e mudanças em entidades existentes</div>
+  <div class="mermaid">
+erDiagram
+  siso_pedidos {
+    uuid id PK
+    text status_separacao "+pendente_realocacao"
+    uuid empresa_origem_id FK
+  }
+  siso_pedido_itens {
+    uuid id PK
+    uuid pedido_id FK
+    int quantidade_pedida
+    int quantidade_pega "NEW: qty real na loc original"
+    bool separacao_marcado
+    bool separacao_parcial "NEW"
+    text parcial_motivo "NEW"
+    timestamptz parcial_em "NEW"
+    uuid parcial_por FK "NEW"
+    uuid mov_saida_id FK "NEW"
+    uuid mov_ajuste_loc_zerou_id FK "NEW"
+  }
+  siso_pedido_item_realocacoes {
+    uuid id PK
+    uuid pedido_item_id FK "NEW TABLE"
+    uuid empresa_dona_id FK
+    uuid galpao_id FK
+    uuid localizacao_id FK
+    int quantidade
+    bool is_emprestimo
+    uuid empresa_devedora_id FK
+    text status "aguardando_picking | picado | cancelado"
+    text motivo
+    uuid mov_saida_id FK
+  }
+  siso_movimentacoes {
+    uuid id PK
+    text origem_tipo "+ajuste_pick_zerou"
+    char tipo "S | E | R | L"
+    int quantidade
+    uuid empresa_dona_id FK
+    uuid localizacao_id FK
+    uuid emprestimo_devedora_id FK
+    uuid estorno_de FK
+  }
+  siso_estoque {
+    uuid id PK
+    uuid produto_id FK
+    uuid empresa_dona_id FK
+    uuid galpao_id FK
+    uuid localizacao_id FK
+    int saldo
+    int reservado
+  }
+
+  siso_pedidos ||--o{ siso_pedido_itens : "tem"
+  siso_pedido_itens ||--o{ siso_pedido_item_realocacoes : "pode ter"
+  siso_pedido_itens ||--o| siso_movimentacoes : "mov_saida_id"
+  siso_pedido_itens ||--o| siso_movimentacoes : "mov_ajuste_loc_zerou_id"
+  siso_pedido_item_realocacoes ||--o| siso_movimentacoes : "mov_saida_id"
+  siso_movimentacoes }o--|| siso_estoque : "atualiza"
+  </div>
+</div>
+
+<h3>Resumo das mudanças de schema</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Mudança</th>
+      <th>Tipo</th>
+      <th>Local</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>ajuste_pick_zerou</code> em CHECK</td>
+      <td>Novo enum value</td>
+      <td><code>siso_movimentacoes.origem_tipo</code></td>
+    </tr>
+    <tr>
+      <td><code>siso_pedido_item_realocacoes</code></td>
+      <td>Nova tabela</td>
+      <td>schema public</td>
+    </tr>
+    <tr>
+      <td><code>quantidade_pega</code>, <code>separacao_parcial</code>, <code>parcial_motivo</code>, <code>parcial_em</code>, <code>parcial_por</code>, <code>mov_saida_id</code>, <code>mov_ajuste_loc_zerou_id</code></td>
+      <td>Novas colunas</td>
+      <td><code>siso_pedido_itens</code></td>
+    </tr>
+    <tr>
+      <td><code>pendente_realocacao</code> em CHECK</td>
+      <td>Novo enum value</td>
+      <td><code>siso_pedidos.status_separacao</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────── 10 ─────────────────────────── -->
+<h2 id="10">10. Pontos de atenção</h2>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Mudança no comportamento do checkbox</div>
+  Hoje o endpoint <code>marcar-item</code> só toggle um booleano. Esta proposta o estende pra <strong>também</strong> gerar uma mov de saída no ledger (origem <code>nf_venda</code>). Operacionalmente nada muda pro operador, mas o ledger WMS passa a refletir o picking físico. Estorno (desmarcar checkbox) precisa estornar a mov.
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Convivência com Tiny até o cutover</div>
+  O <code>execution-worker.ts</code> continua deduzindo estoque diretamente no Tiny (via API), independente do ledger. Esta proposta <strong>não</strong> mexe nesse caminho. Durante a transição, ledger WMS e Tiny são fontes paralelas; divergências pontuais são esperadas e serão reconciliadas no Plano 6 (cutover big bang).
+</div>
+
+<div class="callout callout-success">
+  <div class="callout-title">Empréstimo entre empresas é seguro</div>
+  Quando a re-busca acha saldo em outra empresa do grupo, gera mov com <code>origem='emprestimo'</code> e <code>emprestimo_devedora_id</code> apontando pra empresa origem do pedido. O Plano 3 já cuida da contabilização do saldo devedor, regras de matriz N×N e limites por par+produto. Só precisa garantir que a regra existe em <code>siso_emprestimo_regras</code> antes de operar.
+</div>
+
+<div class="callout callout-danger">
+  <div class="callout-title">Operador pode confundir Parcial com Esgotado</div>
+  Risco de UX: operador que não internalizar a diferença entre "esta loc zerou" (Parcial) e "o galpão não tem o SKU" (Esgotado) pode escolher errado. Mitigação: <strong>Esgotado</strong> mantém o mesmo lugar e cor (vermelho), <strong>Parcial</strong> entra em cor diferente (amarelo) e o texto do botão é claro. O modal do Parcial reforça: "Quantos você conseguiu pegar?" — orienta ação por qty, não por sintoma.
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">Audit é minimalista por decisão</div>
+  Cada Parcial registra entrada em <code>siso_pedido_historico</code> (evento <code>parcial_loc_zerou</code>) e duas movs no ledger. Sem dashboards novos, sem alertas, sem bloqueio por valor. Se o volume de Parciais virar alto e merecer ação, podemos adicionar visibilidade depois — preferência por construir contra dor real, não antecipada.
+</div>
+
+<hr>
+
+<p style="font-size: 13px; color: var(--muted); text-align: center;">
+  Spec completo: <a href="2026-05-18-pick-multi-loc-design.md" style="color: var(--accent);">2026-05-18-pick-multi-loc-design.md</a>
+</p>
+
+</div>
+
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'base',
+  themeVariables: {
+    primaryColor: '#fafafa',
+    primaryTextColor: '#18181b',
+    primaryBorderColor: '#71717a',
+    lineColor: '#71717a',
+    secondaryColor: '#f4f4f5',
+    tertiaryColor: '#fff',
+    background: '#ffffff',
+    fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif'
+  },
+  flowchart: { curve: 'basis', padding: 16 },
+  sequence: { actorMargin: 50, boxMargin: 10 }
+});
+</script>
+</body>
+</html>

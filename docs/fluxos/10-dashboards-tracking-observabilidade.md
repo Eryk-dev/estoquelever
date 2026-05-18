@@ -1,5 +1,7 @@
 # 10 — Dashboards, Tracking e Observabilidade
 
+> ⚠️ **DOCUMENTO PARCIALMENTE OBSOLETO (2026-05-18, commit `f8b7dbb`)**: as páginas `/painel/*`, `/pedidos/*` e `/monitoramento` foram apagadas. Substituídas por `/wms/dashboard` + `/wms/insights/*` + `/wms/pedidos/*`. As APIs `/api/painel`, `/api/monitoring`, `/api/dashboard/counts`, `/api/reconciliacao` (versão SISO) também foram removidas. Use este doc apenas como referência histórica do desenho original. Os endpoints **ainda válidos** descritos aqui (`/api/wms/pedidos/*`, `lib/historico-service.ts`, `erros-conhecidos.yaml`) continuam funcionando.
+
 > Doc da família **Fluxos do SISO**. Cobre o **Painel Operacional** (Torre de Controle), o **Painel Gerencial**, a página universal de pedidos `/pedidos`, o detalhamento `/pedidos/[id]` (itens, timeline, observações), reconciliação, dashboard de counts, logging estruturado e a base de conhecimento `erros-conhecidos.yaml`.
 >
 > Pré-requisitos: leitura prévia de `01-webhook-pedido.md`, `04-execucao-worker.md`, `05-separacao-wave-picking.md`, `09-auth-configuracao-hierarquia.md`. Conhecimento de TanStack React Query e Supabase Realtime.
@@ -19,20 +21,20 @@
    - [4.3 Cálculos: pipeline, deadlines, aging, throughput](#43-cálculos-pipeline-deadlines-aging-throughput)
    - [4.4 Cálculos gerenciais: lead time, mix, concentração](#44-cálculos-gerenciais-lead-time-mix-concentração)
 5. [Pedidos universal tracking `/pedidos`](#5-pedidos-universal-tracking-pedidos)
-   - [5.1 Endpoint GET /api/pedidos/tracking](#51-endpoint-get-apipedidostracking)
+   - [5.1 Endpoint GET /api/wms/pedidos/tracking](#51-endpoint-get-apipedidostracking)
    - [5.2 Tabs Pedidos / Expedidos](#52-tabs-pedidos--expedidos)
    - [5.3 Filtros, busca e paginação](#53-filtros-busca-e-paginação)
 6. [Pedido detalhe `/pedidos/[id]`](#6-pedido-detalhe-pedidosid)
-   - [6.1 Endpoint GET /api/pedidos/[id]/detalhe](#61-endpoint-get-apipedidosiddetalhe)
+   - [6.1 Endpoint GET /api/wms/pedidos/[id]/detalhe](#61-endpoint-get-apipedidosiddetalhe)
    - [6.2 Estoque por galpão](#62-estoque-por-galpão)
    - [6.3 Acesso role-based](#63-acesso-role-based)
 7. [Histórico (audit trail)](#7-histórico-audit-trail)
    - [7.1 Schema siso_pedido_historico](#71-schema-siso_pedido_historico)
-   - [7.2 Endpoint GET /api/pedidos/[id]/historico](#72-endpoint-get-apipedidosidhistorico)
+   - [7.2 Endpoint GET /api/wms/pedidos/[id]/historico](#72-endpoint-get-apipedidosidhistorico)
    - [7.3 PedidoTimeline (UI)](#73-pedidotimeline-ui)
    - [7.4 registrarEvento fire-and-forget](#74-registrarevento-fire-and-forget)
 8. [Observações (comments)](#8-observações-comments)
-   - [8.1 Endpoint GET/POST /api/pedidos/[id]/observacoes](#81-endpoint-getpost-apipedidosidobservacoes)
+   - [8.1 Endpoint GET/POST /api/wms/pedidos/[id]/observacoes](#81-endpoint-getpost-apipedidosidobservacoes)
    - [8.2 ObservacoesTimeline (UI)](#82-observacoestimeline-ui)
 9. [Dashboard counts `/api/dashboard/counts`](#9-dashboard-counts-apidashboardcounts)
 10. [Reconciliação `/api/reconciliacao` + lib/reconciliacao.ts](#10-reconciliação-apireconciliacao--libreconciliacaots)
@@ -77,7 +79,7 @@ Há também a camada **infraestrutura/diagnóstico**, voltada para devs:
 │   operacao      │    │   tracking         │   │   detalhe          │
 │   gerencial     │    │   tabs/filtros     │   │   timeline + obs   │
 └────────┬────────┘    └─────────┬──────────┘   └─────────┬──────────┘
-         │ GET /api/painel       │ GET /api/pedidos/      │ GET /api/pedidos/[id]
+         │ GET /api/painel       │ GET /api/wms/pedidos/      │ GET /api/wms/pedidos/[id]
          │ (polling 30s +        │       tracking         │       /detalhe
          │  Realtime)            │                        │       /historico
          │                       │                        │       /observacoes
@@ -395,9 +397,9 @@ Top 5 retornados.
 
 ## 5. Pedidos universal tracking `/pedidos`
 
-### 5.1 Endpoint GET /api/pedidos/tracking
+### 5.1 Endpoint GET /api/wms/pedidos/tracking
 
-`src/app/api/pedidos/tracking/route.ts:30-260`.
+`src/app/api/wms/pedidos/tracking/route.ts:30-260`.
 
 #### Auth
 
@@ -515,9 +517,9 @@ Click → navega para `/pedidos/[id]`.
 
 ## 6. Pedido detalhe `/pedidos/[id]`
 
-### 6.1 Endpoint GET /api/pedidos/[id]/detalhe
+### 6.1 Endpoint GET /api/wms/pedidos/[id]/detalhe
 
-`src/app/api/pedidos/[id]/detalhe/route.ts:18-252`.
+`src/app/api/wms/pedidos/[id]/detalhe/route.ts:18-252`.
 
 Retorna **payload consolidado** em uma única request:
 - Dados base do pedido + empresa + galpão (JOIN).
@@ -604,9 +606,9 @@ criado_em    timestamp
 
 Imutável: nunca é UPDATE, só INSERT. Read-only via API.
 
-### 7.2 Endpoint GET /api/pedidos/[id]/historico
+### 7.2 Endpoint GET /api/wms/pedidos/[id]/historico
 
-`src/app/api/pedidos/[id]/historico/route.ts:10-33`:
+`src/app/api/wms/pedidos/[id]/historico/route.ts:10-33`:
 
 ```sql
 SELECT id, evento, usuario_id, usuario_nome, detalhes, criado_em
@@ -665,9 +667,9 @@ registrarEvento({ pedidoId, evento, usuarioId, usuarioNome, detalhes }).catch(()
 
 ## 8. Observações (comments)
 
-### 8.1 Endpoint GET/POST /api/pedidos/[id]/observacoes
+### 8.1 Endpoint GET/POST /api/wms/pedidos/[id]/observacoes
 
-`src/app/api/pedidos/[id]/observacoes/route.ts`:
+`src/app/api/wms/pedidos/[id]/observacoes/route.ts`:
 
 #### GET (`route.ts:9-36`)
 
@@ -1031,7 +1033,7 @@ Exemplo (extraído de `erros-conhecidos.yaml#nf-antes-aprovacao-race-condition`)
   fix: >
     1) Rota de aprovação verifica nota_fiscal_id antes...
   files:
-    - src/app/api/pedidos/aprovar/route.ts
+    - src/app/api/wms/pedidos/aprovar/route.ts
     - src/lib/execution-worker.ts
   tags: [nf, aprovacao, race-condition, aguardando_nf]
 ```
@@ -1121,7 +1123,7 @@ sequenceDiagram
     autonumber
     actor U as Usuário
     participant UI as /pedidos page
-    participant API as GET /api/pedidos/tracking
+    participant API as GET /api/wms/pedidos/tracking
     participant SES as getSessionUser
     participant DB as Supabase
 
@@ -1222,22 +1224,22 @@ flowchart LR
 - 🚫 Sem mutations.
 - ⏱️ Tipicamente <500ms; sob 5k pedidos ativos pode chegar a 2s.
 
-### Em GET /api/pedidos/tracking
+### Em GET /api/wms/pedidos/tracking
 - 📡 Pre-fetch SKU lookup em `siso_pedido_itens` (se `busca`).
 - 📡 Pre-fetch `siso_empresas` (se operador).
 - 📡 Count + data em paralelo.
 - 🚫 Sem mutations.
 
-### Em GET /api/pedidos/[id]/detalhe
+### Em GET /api/wms/pedidos/[id]/detalhe
 - 📡 5 queries em paralelo (pedido + JOIN, itens, estoques + JOIN, histórico, observações).
 - 🔒 Acesso role-based (admin/comprador/operador).
 - 🚫 Sem mutations.
 
-### Em GET /api/pedidos/[id]/historico
+### Em GET /api/wms/pedidos/[id]/historico
 - 📡 SELECT `siso_pedido_historico ORDER BY criado_em ASC`.
 - 🚫 Sem mutations.
 
-### Em POST /api/pedidos/[id]/observacoes
+### Em POST /api/wms/pedidos/[id]/observacoes
 - 📝 INSERT `siso_pedido_observacoes`.
 - 📝 (em erro) `logger.error("observacoes", ...)`.
 

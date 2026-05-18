@@ -6,7 +6,7 @@
 
 1. [Visão geral](#1-visão-geral)
 2. [Contrato do webhook (entrada)](#2-contrato-do-webhook-entrada)
-3. [Recepção e validação (`POST /api/webhook/tiny`)](#3-recepção-e-validação-post-apiwebhooktiny)
+3. [Recepção e validação (`POST /api/wms/webhook/tiny`)](#3-recepção-e-validação-post-apiwebhooktiny)
 4. [Identificação da empresa por CNPJ](#4-identificação-da-empresa-por-cnpj)
 5. [Discriminação `pedido` vs `nota_fiscal`](#5-discriminação-pedido-vs-nota_fiscal)
 6. [Deduplicação via `dedup_key`](#6-deduplicação-via-dedup_key)
@@ -30,7 +30,7 @@
    - 9.15 [Finalização do `webhook_log`](#915-finalização-do-webhook_log)
 10. [Lógica de decisão (4 cenários)](#10-lógica-de-decisão-4-cenários)
 11. [State diagram do `siso_webhook_logs`](#11-state-diagram-do-siso_webhook_logs)
-12. [Reprocessamento manual (`POST /api/webhook/reprocessar`)](#12-reprocessamento-manual-post-apiwebhookreprocessar)
+12. [Reprocessamento manual (`POST /api/wms/webhook/reprocessar`)](#12-reprocessamento-manual-post-apiwebhookreprocessar)
 13. [Tratamento de erros e edge cases](#13-tratamento-de-erros-e-edge-cases)
 14. [Logging e correlation IDs](#14-logging-e-correlation-ids)
 15. [Side effects (resumo canônico)](#15-side-effects-resumo-canônico)
@@ -39,7 +39,7 @@
 
 ## 1. Visão geral
 
-O Tiny ERP envia um `POST` para `https://<host>/api/webhook/tiny` sempre que ocorre um evento relevante (inclusão/atualização de pedido, emissão de nota fiscal). O endpoint:
+O Tiny ERP envia um `POST` para `https://<host>/api/wms/webhook/tiny` sempre que ocorre um evento relevante (inclusão/atualização de pedido, emissão de nota fiscal). O endpoint:
 
 1. Valida o payload (campos obrigatórios `tipo`, `cnpj`, `dados`).
 2. Identifica a **empresa** pelo CNPJ usando `siso_empresas` (cache 5 min).
@@ -59,7 +59,7 @@ O processamento assíncrono enriquece o pedido com estoque de **todas** as empre
 sequenceDiagram
     autonumber
     participant T as Tiny ERP
-    participant API as POST /api/webhook/tiny
+    participant API as POST /api/wms/webhook/tiny
     participant DB as Supabase
     participant P as processWebhook (async)
     participant TAPI as Tiny API v3
@@ -157,7 +157,7 @@ O Tiny não envia headers de autenticação (não há HMAC). A segurança vem da
 
 ### 2.2 Body (payload)
 
-Campos validados em `src/app/api/webhook/tiny/route.ts:36-43`:
+Campos validados em `src/app/api/wms/webhook/tiny/route.ts:36-43`:
 
 ```ts
 {
@@ -192,9 +192,9 @@ Para `tipo === "nota_fiscal"` o esquema esperado vem de `src/lib/nf-webhook-hand
 
 ---
 
-## 3. Recepção e validação (`POST /api/webhook/tiny`)
+## 3. Recepção e validação (`POST /api/wms/webhook/tiny`)
 
-Arquivo: `src/app/api/webhook/tiny/route.ts:20-314`.
+Arquivo: `src/app/api/wms/webhook/tiny/route.ts:20-314`.
 
 | Etapa | Linhas | Descrição |
 |---|---|---|
@@ -260,7 +260,7 @@ Arquivo: `src/lib/empresa-lookup.ts`.
 
 ### 4.2 Função `getEmpresaById(empresaId)`
 
-Usada pelo reprocessamento (`/api/webhook/reprocessar`). Mesma lógica, busca por `id` em vez de `cnpj`. Cache compartilhado (`:130-133`).
+Usada pelo reprocessamento (`/api/wms/webhook/reprocessar`). Mesma lógica, busca por `id` em vez de `cnpj`. Cache compartilhado (`:130-133`).
 
 ### 4.3 Função `clearEmpresaCache()`
 
@@ -379,7 +379,7 @@ Pedido nunca foi recebido ou foi expurgado. Marca `webhook_log` como `concluido`
 
 ### 7.3 Eventos não enviados ao histórico
 
-O cancelamento via webhook **não** chama `registrarEvento('cancelado', ...)` — esse evento é registrado apenas em cancelamentos manuais via `/api/separacao/cancelar`. (Possível débito técnico — verificar se está alinhado com o produto.)
+O cancelamento via webhook **não** chama `registrarEvento('cancelado', ...)` — esse evento é registrado apenas em cancelamentos manuais via `/api/wms/separacao/cancelar`. (Possível débito técnico — verificar se está alinhado com o produto.)
 
 ---
 
@@ -400,7 +400,7 @@ processWebhook(webhookLogId, pedidoId, empresa.empresaId, empresa.galpaoId, empr
       empresaNome: empresa.empresaNome,
       galpaoNome: empresa.galpaoNome,
       correlationId,
-      requestPath: "/api/webhook/tiny",
+      requestPath: "/api/wms/webhook/tiny",
       requestMethod: "POST",
       metadata: { webhookLogId },
     });
@@ -801,7 +801,7 @@ Detalhes da função em `src/lib/historico-service.ts:43-74`. Insere em `siso_pe
 ```mermaid
 sequenceDiagram
     participant T as Tiny
-    participant API as /api/webhook/tiny
+    participant API as /api/wms/webhook/tiny
     participant DB as Supabase
 
     Note over T,DB: cenário: NF chega quase simultânea ao pedido
@@ -919,14 +919,14 @@ stateDiagram-v2
     processando --> ignorado: pedido sem ecommerce
     aguardando_pedido --> processado: reconciliação após pedido salvo
     erro --> pendente: reset manual via SQL para reprocessar
-    pendente --> processando: POST /api/webhook/reprocessar
+    pendente --> processando: POST /api/wms/webhook/reprocessar
     erro --> [*]
     concluido --> [*]
     ignorado --> [*]
     processado --> [*]
 ```
 
-> **Nota sobre `'recebido'` vs `'pendente'`**: o default da coluna é `'recebido'` (verificado via `pg_attribute`). No `route.ts:107-119` o INSERT não define `status`, então o default vale. O `processWebhook` faz a transição `'recebido' → 'processando'` no início (`:108-111`). O endpoint `/api/webhook/reprocessar` busca por `status='pendente'` — para reaproveitar logs antigos é necessário primeiro setar `status='pendente'` via SQL.
+> **Nota sobre `'recebido'` vs `'pendente'`**: o default da coluna é `'recebido'` (verificado via `pg_attribute`). No `route.ts:107-119` o INSERT não define `status`, então o default vale. O `processWebhook` faz a transição `'recebido' → 'processando'` no início (`:108-111`). O endpoint `/api/wms/webhook/reprocessar` busca por `status='pendente'` — para reaproveitar logs antigos é necessário primeiro setar `status='pendente'` via SQL.
 
 ### 11.1 Transições válidas (resumo)
 
@@ -943,16 +943,16 @@ stateDiagram-v2
 
 ---
 
-## 12. Reprocessamento manual (`POST /api/webhook/reprocessar`)
+## 12. Reprocessamento manual (`POST /api/wms/webhook/reprocessar`)
 
-Arquivo: `src/app/api/webhook/reprocessar/route.ts`.
+Arquivo: `src/app/api/wms/webhook/reprocessar/route.ts`.
 
 ### 12.1 Caso de uso
 
 Após corrigir um bug que causou `status='erro'` em vários webhook_logs, o admin pode:
 
 1. Via SQL: `UPDATE siso_webhook_logs SET status='pendente', erro=NULL WHERE status='erro' AND <filtro>`.
-2. `POST /api/webhook/reprocessar` para chamar `processWebhook` de novo para todos `(status='pendente', codigo_situacao='aprovado')`.
+2. `POST /api/wms/webhook/reprocessar` para chamar `processWebhook` de novo para todos `(status='pendente', codigo_situacao='aprovado')`.
 
 ### 12.2 Fluxo
 
@@ -1205,7 +1205,7 @@ Não chamado neste fluxo (apenas após `aguardando_separacao` — ver doc 06).
 
 | Função | Arquivo | Linha | Papel |
 |---|---|---|---|
-| `POST /api/webhook/tiny` | `src/app/api/webhook/tiny/route.ts` | `:20-314` | Receptor HTTP |
+| `POST /api/wms/webhook/tiny` | `src/app/api/wms/webhook/tiny/route.ts` | `:20-314` | Receptor HTTP |
 | `getEmpresaByCnpj` | `src/lib/empresa-lookup.ts` | `:33-82` | CNPJ → EmpresaInfo (cache 5min) |
 | `getEmpresaById` | `src/lib/empresa-lookup.ts` | `:87-135` | ID → EmpresaInfo |
 | `processWebhook` | `src/lib/webhook-processor.ts` | `:99-595` | Orquestrador async |

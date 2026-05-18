@@ -23,7 +23,7 @@
 4. [Hierarquia Galpão > Empresa > Grupo](#4-hierarquia-galpão--empresa--grupo)
    - [4.1 Modelo conceitual](#41-modelo-conceitual)
    - [4.2 CRUD em /configuracoes](#42-crud-em-configuracoes)
-   - [4.3 Endpoint GET /api/admin/galpoes (hierarquia)](#43-endpoint-get-apiadmingalpoes-hierarquia)
+   - [4.3 Endpoint GET /api/wms/admin/galpoes (hierarquia)](#43-endpoint-get-apiadmingalpoes-hierarquia)
    - [4.4 CRUD de empresas](#44-crud-de-empresas)
    - [4.5 CRUD de grupos e tier](#45-crud-de-grupos-e-tier)
    - [4.6 Diagrama ER simplificado](#46-diagrama-er-simplificado)
@@ -239,7 +239,7 @@ export type Cargo = "admin" | "operador" | "operador_cwb" | "operador_sp" | "com
 | `operador_sp` | **Legado.** Operador exclusivo do galpão SP. | Pré-multi-galpão. |
 | `comprador` | Vê apenas pedidos com `decisao_final = 'oc'` e itens de compra. Sem acesso a separação. | Cargo desde início. |
 
-> ⚠️ Os cargos `operador_cwb`/`operador_sp` permanecem aceitos em validação (`VALID_CARGOS` em `src/app/api/admin/usuarios/route.ts:4`) e em `filtrar-pedidos.ts` para backward-compat, mas o frontend de criação/edição (`src/app/admin/usuarios/page.tsx:38`) só expõe `admin | operador | comprador`. Editar um usuário legado normaliza para `operador` (`page.tsx:601-606`).
+> ⚠️ Os cargos `operador_cwb`/`operador_sp` permanecem aceitos em validação (`VALID_CARGOS` em `src/app/api/wms/admin/usuarios/route.ts:4`) e em `filtrar-pedidos.ts` para backward-compat, mas o frontend de criação/edição (`src/app/admin/usuarios/page.tsx:38`) só expõe `admin | operador | comprador`. Editar um usuário legado normaliza para `operador` (`page.tsx:601-606`).
 
 ### 3.2 Tabela de permissões
 
@@ -287,9 +287,9 @@ Funções `filtrarPendentes`, `filtrarConcluidos`, `filtrarAuto` (`filtrar-pedid
 
 São mantidas porque alguns componentes ainda recebem `cargos` em vez de `galpaoNome`. A migração para a versão por galpão está em andamento.
 
-#### 3.3.3 Aplicação no backend (`/api/pedidos/tracking`)
+#### 3.3.3 Aplicação no backend (`/api/wms/pedidos/tracking`)
 
-`src/app/api/pedidos/tracking/route.ts:99-109` aplica filtragem coerente:
+`src/app/api/wms/pedidos/tracking/route.ts:99-109` aplica filtragem coerente:
 
 ```
 isAdmin       → sem filtro de empresa
@@ -299,7 +299,7 @@ operador      → q.in("empresa_origem_id", empresaIdsDoGalpao)
 
 Onde `empresaIdsDoGalpao` é resolvido via SELECT em `siso_empresas WHERE galpao_id = session.galpaoId` (`tracking/route.ts:182-191`).
 
-A mesma estratégia aparece em `/api/pedidos/[id]/detalhe` (`detalhe/route.ts:52-70`) e `/api/dashboard/counts` (`counts/route.ts:21-89`).
+A mesma estratégia aparece em `/api/wms/pedidos/[id]/detalhe` (`detalhe/route.ts:52-70`) e `/api/dashboard/counts` (`counts/route.ts:21-89`).
 
 ### 3.4 Páginas admin-only
 
@@ -333,7 +333,7 @@ Detalhamento e ordem de dedução estão em `04-execucao-worker.md` § Tier-base
 `src/app/configuracoes/page.tsx:20-141` é a página de configuração unificada. Estrutura:
 
 1. **Links rápidos** para `/admin/usuarios` e `/monitoramento` (linhas 91-112).
-2. **WebhookUrlCard** (linha 115) — exibe a URL pública `${origin}/api/webhook/tiny` para colar no Tiny. A mesma URL atende todas as empresas (identificação por CNPJ no payload).
+2. **WebhookUrlCard** (linha 115) — exibe a URL pública `${origin}/api/wms/webhook/tiny` para colar no Tiny. A mesma URL atende todas as empresas (identificação por CNPJ no payload).
 3. **GalpoesEmpresasSection** (linha 118) — lista hierarquia, permite criar galpões/empresas/conexões.
 4. **GruposSection** (linha 126) — CRUD de grupos e associação de empresas (com tier).
 5. **PrintNodeSection** (linha 134) — admin-only. API key, impressoras, override por usuário.
@@ -341,15 +341,15 @@ Detalhamento e ordem de dedução estão em `04-execucao-worker.md` § Tier-base
 Carregamento inicial (`fetchAll`, `page.tsx:36-59`) faz 4 fetches em paralelo:
 
 ```
-GET /api/tiny/connections   → conexões
-GET /api/admin/galpoes       → galpões com empresas + conexões + grupos aninhados
-GET /api/admin/grupos        → grupos com tier por empresa
-GET /api/admin/usuarios      → usuários com galpões (para PrintNode override)
+GET /api/wms/tiny/connections   → conexões
+GET /api/wms/admin/galpoes       → galpões com empresas + conexões + grupos aninhados
+GET /api/wms/admin/grupos        → grupos com tier por empresa
+GET /api/wms/admin/usuarios      → usuários com galpões (para PrintNode override)
 ```
 
-### 4.3 Endpoint GET /api/admin/galpoes (hierarquia)
+### 4.3 Endpoint GET /api/wms/admin/galpoes (hierarquia)
 
-`src/app/api/admin/galpoes/route.ts:8-70` retorna a árvore inteira:
+`src/app/api/wms/admin/galpoes/route.ts:8-70` retorna a árvore inteira:
 
 ```sql
 siso_galpoes
@@ -379,7 +379,7 @@ PUT em `[id]/route.ts:7-38`:
 
 ### 4.4 CRUD de empresas
 
-`src/app/api/admin/empresas/route.ts`:
+`src/app/api/wms/admin/empresas/route.ts`:
 
 - **GET** (`route.ts:8-17`) — lista plana de `siso_empresas`. Ordenado por `nome`.
 - **POST** (`route.ts:22-57`) — body `{ nome, cnpj, galpao_id }`:
@@ -390,7 +390,7 @@ PUT em `[id]/route.ts:7-38`:
 - **PUT em `[id]/route.ts:7-35`** — body parcial `{ nome?, galpao_id?, ativo? }`. Atualiza `atualizado_em`. Limpa cache.
 - Não existe DELETE.
 
-Para "desconectar" uma empresa (remover credenciais Tiny + desativar), use **DELETE /api/tiny/connections** (`src/app/api/tiny/connections/route.ts:109-143`):
+Para "desconectar" uma empresa (remover credenciais Tiny + desativar), use **DELETE /api/wms/tiny/connections** (`src/app/api/wms/tiny/connections/route.ts:109-143`):
 1. Deleta row de `siso_tiny_connections`.
 2. UPDATE `siso_empresas SET ativo = false`.
 3. `clearEmpresaCache()`.
@@ -399,7 +399,7 @@ Para "desconectar" uma empresa (remover credenciais Tiny + desativar), use **DEL
 
 #### 4.5.1 Grupos
 
-`src/app/api/admin/grupos/route.ts`:
+`src/app/api/wms/admin/grupos/route.ts`:
 
 - **GET** (`route.ts:7-22`) — lista grupos com `siso_grupo_empresas` aninhado, cada um com tier + empresa básica (id, nome, cnpj). Ordenado por nome.
 - **POST** (`route.ts:27-50`) — body `{ nome, descricao? }`. 23505 → 409.
@@ -408,10 +408,10 @@ Para "desconectar" uma empresa (remover credenciais Tiny + desativar), use **DEL
 
 #### 4.5.2 Empresas dentro de grupo
 
-`src/app/api/admin/grupos/[id]/empresas/route.ts:9-44`:
+`src/app/api/wms/admin/grupos/[id]/empresas/route.ts:9-44`:
 - **POST** body `{ empresa_id, tier? = 1 }`. 23505 → 409 “Empresa já pertence a um grupo” (cada empresa só pode estar em um grupo). `clearGrupoCache()` invalida cache de resolução.
 
-`src/app/api/admin/grupos/[id]/empresas/[empresaId]/route.ts`:
+`src/app/api/wms/admin/grupos/[id]/empresas/[empresaId]/route.ts`:
 - **PUT** (`route.ts:9-36`) — body `{ tier }`. Validação: `tier >= 1`. `clearGrupoCache()`.
 - **DELETE** (`route.ts:42-61`) — remove empresa do grupo. `clearGrupoCache()`.
 
@@ -510,23 +510,23 @@ A row em `siso_tiny_connections` é criada automaticamente quando uma empresa é
 Na UI (`/configuracoes`), o admin clica em uma empresa, expande, e:
 
 1. **Configura credenciais** (`ConnectionCard.handleSaveCredentials`, `connection-card.tsx:80-110`):
-   - PUT `/api/tiny/connections` com `{ id, client_id, client_secret }`.
-   - Backend (`src/app/api/tiny/connections/route.ts:149-204`) atualiza `client_id` + `client_secret` e **zera tokens existentes** (`access_token`, `refresh_token`, `token_expires_at`, `token`, `ultimo_teste_em`, `ultimo_teste_ok`). Isso força nova autorização.
-2. **Copia URL de redirect** (`ConnectionCard:71-78`) — `${origin}/api/tiny/oauth/callback`. O admin cola essa URL no portal Tiny.
-3. **Clica em "Autorizar"** (`ConnectionCard.handleAuthorize`, `connection-card.tsx:112-114`) — navega o browser para `/api/tiny/oauth?connectionId=X`.
+   - PUT `/api/wms/tiny/connections` com `{ id, client_id, client_secret }`.
+   - Backend (`src/app/api/wms/tiny/connections/route.ts:149-204`) atualiza `client_id` + `client_secret` e **zera tokens existentes** (`access_token`, `refresh_token`, `token_expires_at`, `token`, `ultimo_teste_em`, `ultimo_teste_ok`). Isso força nova autorização.
+2. **Copia URL de redirect** (`ConnectionCard:71-78`) — `${origin}/api/wms/tiny/oauth/callback`. O admin cola essa URL no portal Tiny.
+3. **Clica em "Autorizar"** (`ConnectionCard.handleAuthorize`, `connection-card.tsx:112-114`) — navega o browser para `/api/wms/tiny/oauth?connectionId=X`.
 
 ### 5.3 Fluxo de autorização (Authorization Code)
 
-#### 5.3.1 Iniciação — `GET /api/tiny/oauth`
+#### 5.3.1 Iniciação — `GET /api/wms/tiny/oauth`
 
-`src/app/api/tiny/oauth/route.ts:11-63`:
+`src/app/api/wms/tiny/oauth/route.ts:11-63`:
 
 1. Lê `connectionId` da query.
 2. SELECT `siso_tiny_connections`. 404 se não existe; 400 se sem `client_id`/`client_secret`.
 3. **Gera state CSRF** — `${connectionId}:${crypto.randomUUID()}` (`route.ts:42`). Salva em `siso_tiny_connections.oauth_state`.
 4. Resolve **redirect URI público** lendo `x-forwarded-proto` + `x-forwarded-host` (suporte a reverse proxy):
    ```
-   redirectUri = `${proto}://${host}/api/tiny/oauth/callback`
+   redirectUri = `${proto}://${host}/api/wms/tiny/oauth/callback`
    ```
 5. Constrói URL de authorize via `buildAuthorizeUrl` (`tiny-oauth.ts:26-38`):
    ```
@@ -539,9 +539,9 @@ Na UI (`/configuracoes`), o admin clica em uma empresa, expande, e:
    ```
 6. **`NextResponse.redirect(authorizeUrl)`** — browser vai para Keycloak.
 
-#### 5.3.2 Callback — `GET /api/tiny/oauth/callback`
+#### 5.3.2 Callback — `GET /api/wms/tiny/oauth/callback`
 
-`src/app/api/tiny/oauth/callback/route.ts:12-91`:
+`src/app/api/wms/tiny/oauth/callback/route.ts:12-91`:
 
 1. Extrai `code`, `state`, `error` da query.
 2. Reconstrói `publicOrigin` (mesma lógica de `x-forwarded-*`).
@@ -589,7 +589,7 @@ A função wrapper `getValidTokenByEmpresa(empresaId)` (`tiny-oauth.ts:188-204`)
 
 ### 5.5 Test connection
 
-`POST /api/tiny/test-connection` (`src/app/api/tiny/test-connection/route.ts:11-41`):
+`POST /api/wms/tiny/test-connection` (`src/app/api/wms/tiny/test-connection/route.ts:11-41`):
 
 1. Body `{ connectionId }`.
 2. `getValidToken(connectionId)` — força refresh se necessário.
@@ -606,14 +606,14 @@ A função wrapper `getValidTokenByEmpresa(empresaId)` (`tiny-oauth.ts:188-204`)
 
 Cada empresa Tiny tem múltiplos depósitos (warehouses). O SISO precisa saber **qual depósito** ler para estoque e movimentações.
 
-`GET /api/tiny/deposits?connectionId=X` (`src/app/api/tiny/deposits/route.ts:11-41`):
+`GET /api/wms/tiny/deposits?connectionId=X` (`src/app/api/wms/tiny/deposits/route.ts:11-41`):
 1. Verifica que conexão existe e está autorizada.
 2. `getValidToken` + `listarDepositos(token)` (em `tiny-api.ts`).
 3. Retorna `[{ id, nome }]`.
 
 > O Tiny v3 **não tem endpoint dedicado `/depositos`**. `listarDepositos` faz GET em `/estoque/{produtoId}` e extrai o array `depositos[]` do retorno (qualquer produto serve, contanto que tenha estoque).
 
-A UI `DepositoSelector` (`src/components/configuracoes/deposito-selector.tsx`) renderiza um `<select>` e salva via PUT `/api/tiny/connections` `{ id, deposito_id, deposito_nome }`.
+A UI `DepositoSelector` (`src/components/configuracoes/deposito-selector.tsx`) renderiza um `<select>` e salva via PUT `/api/wms/tiny/connections` `{ id, deposito_id, deposito_nome }`.
 
 Sem depósito configurado, `webhook-processor.ts` e `execution-worker.ts` falham em encontrar a coluna `depositos` correta para enriquecer estoque.
 
@@ -624,9 +624,9 @@ sequenceDiagram
     autonumber
     actor A as Admin
     participant CFG as /configuracoes
-    participant OAUTH as GET /api/tiny/oauth
+    participant OAUTH as GET /api/wms/tiny/oauth
     participant TINY as Keycloak Tiny
-    participant CB as GET /api/tiny/oauth/callback
+    participant CB as GET /api/wms/tiny/oauth/callback
     participant DB as siso_tiny_connections
 
     A->>CFG: Configura client_id/secret (PUT)
@@ -661,7 +661,7 @@ sequenceDiagram
 
 A API key do PrintNode é **única para o sistema** (não per empresa). Reside em `siso_configuracoes` com chave `PRINTNODE_API_KEY`.
 
-`/api/admin/printnode/api-key`:
+`/api/wms/admin/printnode/api-key`:
 
 - **GET** (`api-key/route.ts:11-39`):
   - Auth via header `x-siso-user-id` (legado — não usa `X-Session-Id`).
@@ -673,8 +673,8 @@ A API key do PrintNode é **única para o sistema** (não per empresa). Reside e
 
 ### 6.2 Listagem e teste de impressoras
 
-- **POST `/api/admin/printnode/test`** (`test/route.ts:11-39`) — testa conexão via `testarConexao(apiKey)` em `lib/printnode.ts`. Retorna `{ ok, email?, error? }`.
-- **GET `/api/admin/printnode/printers`** (`printers/route.ts:11-44`) — lista impressoras visíveis via `listarImpressoras(apiKey)`. Cada printer: `{ id, name, computer, state }`.
+- **POST `/api/wms/admin/printnode/test`** (`test/route.ts:11-39`) — testa conexão via `testarConexao(apiKey)` em `lib/printnode.ts`. Retorna `{ ok, email?, error? }`.
+- **GET `/api/wms/admin/printnode/printers`** (`printers/route.ts:11-44`) — lista impressoras visíveis via `listarImpressoras(apiKey)`. Cada printer: `{ id, name, computer, state }`.
 
 Ambos exigem cargo `admin` e API key configurada.
 
@@ -683,7 +683,7 @@ Ambos exigem cargo `admin` e API key configurada.
 A impressora padrão é configurada por galpão (`siso_galpoes.printnode_printer_id`):
 
 - UI em `PrintNodeSection.handleGalpaoPrinterChange` (`printnode-section.tsx:169-189`).
-- PUT `/api/admin/galpoes/[id]` `{ printnode_printer_id, printnode_printer_nome }`.
+- PUT `/api/wms/admin/galpoes/[id]` `{ printnode_printer_id, printnode_printer_nome }`.
 
 Quando uma etiqueta precisa imprimir, o sistema resolve a impressora seguindo prioridade:
 
@@ -698,7 +698,7 @@ A regra de fallback é implementada em `lib/etiqueta-service.ts` (ver `06-embala
 Cada usuário pode ter sua própria impressora preferida (útil quando opera em estação fixa):
 
 - UI em `PrintNodeSection.handleUsuarioPrinterChange` (`printnode-section.tsx:191-212`).
-- PUT `/api/admin/usuarios` `{ id, printnode_printer_id, printnode_printer_nome }`.
+- PUT `/api/wms/admin/usuarios` `{ id, printnode_printer_id, printnode_printer_nome }`.
 
 Override vazio (`null`) → usa o padrão do galpão.
 
@@ -743,7 +743,7 @@ criado_em     timestamp
 
 ### 7.2 CRUD admin-only
 
-`src/app/api/admin/usuarios/route.ts`:
+`src/app/api/wms/admin/usuarios/route.ts`:
 
 - **GET** (`route.ts:10-43`):
   - SELECT `siso_usuarios` (sem PIN). JOIN `siso_usuario_galpoes` para anexar galpões.

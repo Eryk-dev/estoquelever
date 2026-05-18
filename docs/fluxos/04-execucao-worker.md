@@ -7,7 +7,7 @@
 ## Sumário (TOC)
 
 - [1. Visão geral](#1-visão-geral)
-- [2. Trigger do worker (`/api/worker/processar`)](#2-trigger-do-worker-apiworkerprocessar)
+- [2. Trigger do worker (`/api/wms/worker/processar`)](#2-trigger-do-worker-apiworkerprocessar)
 - [3. Fila `siso_fila_execucao`](#3-fila-siso_fila_execucao)
 - [4. Loop principal (`processQueue`)](#4-loop-principal-processqueue)
   - [4.1 Pull com prioridade](#41-pull-com-prioridade)
@@ -35,7 +35,7 @@
 O execution worker é o componente que faz o **lançamento físico** das operações no Tiny ERP depois que o operador (ou auto-aprovação) decidiu o que fazer com um pedido. Ele é dirigido por uma fila simples (`siso_fila_execucao`), executa um job por vez (com batch opcional), respeita rate limit por empresa, e tem retry exponencial.
 
 **Arquivos centrais:**
-- `src/app/api/worker/processar/route.ts` — endpoint HTTP que dispara o loop.
+- `src/app/api/wms/worker/processar/route.ts` — endpoint HTTP que dispara o loop.
 - `src/lib/execution-worker.ts` — implementação completa: `processQueue`, `kickWorker`, `executeJob` e os 3 caminhos de decisão.
 - `src/lib/grupo-resolver.ts:94-114` — `getOrdemDeducao` (ordem de tier).
 - `src/lib/tiny-api.ts` — clientes Tiny (`criarMarcadoresPedido`, `gerarNotaFiscal`, `lancarEstoqueNota`, `movimentarEstoque`, `obterNotaFiscal`).
@@ -47,15 +47,15 @@ O execution worker é o componente que faz o **lançamento físico** das operaç
 
 ---
 
-## 2. Trigger do worker (`/api/worker/processar`)
+## 2. Trigger do worker (`/api/wms/worker/processar`)
 
-`src/app/api/worker/processar/route.ts:19-66`.
+`src/app/api/wms/worker/processar/route.ts:19-66`.
 
-### 2.1 `POST /api/worker/processar`
+### 2.1 `POST /api/wms/worker/processar`
 
 **Quem chama:**
 - **Cron externo** (Easypanel, GitHub Actions, etc.) chamando a cada ~10s para garantir que jobs com `proximo_retry_em` no passado sejam pegos mesmo sem trigger interno.
-- **`/api/pedidos/aprovar`** dispara `kickWorker()` em `after()` (não chama HTTP, chama direto a função).
+- **`/api/wms/pedidos/aprovar`** dispara `kickWorker()` em `after()` (não chama HTTP, chama direto a função).
 - **`webhook-processor`** dispara `kickWorker()` em auto-aprovação (idem, função direta).
 - **Botão de monitoramento** (admin) pode chamar manualmente.
 
@@ -80,7 +80,7 @@ O execution worker é o componente que faz o **lançamento físico** das operaç
 }
 ```
 
-### 2.2 `GET /api/worker/processar`
+### 2.2 `GET /api/wms/worker/processar`
 
 Health check. Retorna:
 
@@ -632,7 +632,7 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Aprov as POST /api/pedidos/aprovar
+    participant Aprov as POST /api/wms/pedidos/aprovar
     participant DB as Supabase
     participant W as kickWorker / processQueue
     participant Tiny as Tiny ERP API
@@ -662,7 +662,7 @@ sequenceDiagram
 
     Note over Tiny,NfHook: Tiny envia webhook NF (situacao=6)
 
-    Tiny-)NfHook: POST /api/webhook/tiny (nota_fiscal)
+    Tiny-)NfHook: POST /api/wms/webhook/tiny (nota_fiscal)
     NfHook->>DB: SELECT siso_pedidos by nota_fiscal_id ou chave_acesso_nf
     NfHook->>DB: INSERT siso_fila_execucao<br/>(tipo='lancar_estoque_pos_nf', decisao='transferencia')
     NfHook->>DB: UPDATE siso_pedidos.status_separacao='aguardando_separacao'
@@ -733,7 +733,7 @@ Lançado em `executarEstoquePosNfTransferencia:909`. Significa que entre o momen
 
 ### 16.4 Compensação `tipo='E'` falha mas saída `tipo='S'` ok
 
-Saldo "fantasma" negativo na origem. Falha **não-crítica** apenas loga warn e não retry. Precisa de ajuste manual via inventário ou via `POST /api/tiny/stock/ajustar`. Detectar via `siso_logs` filtrando por `"Falha na entrada compensatória"`.
+Saldo "fantasma" negativo na origem. Falha **não-crítica** apenas loga warn e não retry. Precisa de ajuste manual via inventário ou via `POST /api/wms/tiny/stock/ajustar`. Detectar via `siso_logs` filtrando por `"Falha na entrada compensatória"`.
 
 ### 16.5 Worker em multi-instância
 

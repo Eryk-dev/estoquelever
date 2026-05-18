@@ -287,9 +287,9 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `CHECK (status IN ('aguardando_picking', 'picado', 'cancelado'))`
 
 **Notes:**
-- Created by `POST /api/separacao/parcial` when the re-allocation cascade finds coverage
-- Picked via `POST /api/separacao/marcar-realocacao` (creates WMS movement)
-- Cancelled via `DELETE /api/separacao/realocacao/[id]` (no movement — nothing was picked)
+- Created by `POST /api/wms/separacao/parcial` when the re-allocation cascade finds coverage
+- Picked via `POST /api/wms/separacao/marcar-realocacao` (creates WMS movement)
+- Cancelled via `DELETE /api/wms/separacao/realocacao/[id]` (no movement — nothing was picked)
 - All rows cancelled automatically when parent item is desfazer-parcial'd or onda is cancelled
 - `checklist-items` endpoint returns only `aguardando_picking` rows in `item.realocacoes[]`
 
@@ -790,7 +790,7 @@ pendente ──iniciar──> em_guarda ──confirmar (parcial)──> pendent
 **Seed:** 1 row por galpão ativo, todos com `ativo=true`.
 
 **Notes:**
-- Lida por `executarMiniSwap()` antes de cada wave picking (via `POST /api/separacao/iniciar`)
+- Lida por `executarMiniSwap()` antes de cada wave picking (via `POST /api/wms/separacao/iniciar`)
 - Toggle via `PATCH /api/wms/mini-swap/config/[galpaoId]` (admin only)
 
 ### RPC `wms_executar_mini_swap`
@@ -869,7 +869,7 @@ wms_executar_mini_swap(
 | `empresa_nome` | text | YES | | Empresa name (denormalized) |
 | `galpao_nome` | text | YES | | Galpão name (denormalized) |
 | `correlation_id` | text | YES | | Request correlation ID for tracing |
-| `request_path` | text | YES | | API path (e.g., "/api/webhook/tiny") |
+| `request_path` | text | YES | | API path (e.g., "/api/wms/webhook/tiny") |
 | `request_method` | text | YES | | HTTP method |
 | `metadata` | jsonb | NO | '{}' | Structured context |
 | `resolved` | boolean | NO | false | Resolution status |
@@ -919,7 +919,7 @@ wms_executar_mini_swap(
 - `printnode_api_key` — PrintNode API key (secret)
 
 **Notes:**
-- Managed via `/api/admin/printnode/api-key` endpoints
+- Managed via `/api/wms/admin/printnode/api-key` endpoints
 - Accessed via `getConfig(chave)` and `setConfig(chave, valor)`
 - Used for credentials and system-wide settings
 
@@ -1198,13 +1198,13 @@ Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicula
 **Unique Constraint:** `(produto_sku, marca, modelo, ano_inicio, ano_fim, variante)`
 
 **Constraints:**
-- (Não há CHECK no banco para ano_inicio/ano_fim — a validação 1900–2100 é feita apenas na camada de API, em `POST /api/cross/produtos/[sku]/veiculos`)
+- (Não há CHECK no banco para ano_inicio/ano_fim — a validação 1900–2100 é feita apenas na camada de API, em `POST /api/wms/cross/produtos/[sku]/veiculos`)
 
 **Triggers:**
 - `AFTER INSERT/UPDATE/DELETE`: recomputa `siso_produtos_catalogo.compatibility_v2` (jsonb) para o `produto_sku` afetado
 
 **Notes:**
-- Autocomplete de marca/modelo é feito por `GET /api/cross/sugestoes/marcas` e `GET /api/cross/sugestoes/modelos`
+- Autocomplete de marca/modelo é feito por `GET /api/wms/cross/sugestoes/marcas` e `GET /api/wms/cross/sugestoes/modelos`
 
 ---
 
@@ -1328,27 +1328,27 @@ erDiagram
       Else: status='pendente', awaiting operator
 
 3. OPERATOR REVIEW (if manual)
-   ├─ GET /api/pedidos returns order with stock + suggestion
+   ├─ GET /api/wms/pedidos returns order with stock + suggestion
    ├─ Operator chooses decision (propria/transferencia/oc)
-   └─ POST /api/pedidos/aprovar sets decision_final, operador_id, status='executando'
+   └─ POST /api/wms/pedidos/aprovar sets decision_final, operador_id, status='executando'
 
 4. EXECUTION QUEUE
    ├─ siso_fila_execucao row created (status='pendente')
-   ├─ POST /api/worker/processar async worker starts
+   ├─ POST /api/wms/worker/processar async worker starts
    ├─ Worker deducts stock item-by-item from Tiny following tier order
    └─ On success: siso_pedidos.status='concluido', estoque_lancado=true
 
 5. SEPARATION (if not cancelled)
    ├─ NF webhook arrives (or manual authorization)
    ├─ siso_pedidos.status_separacao='aguardando_separacao'
-   ├─ GET /api/separacao lists ready orders
-   ├─ POST /api/separacao/iniciar starts wave picking
-   └─ Operator scans products (GTIN/SKU) via /api/separacao/bipar
+   ├─ GET /api/wms/separacao lists ready orders
+   ├─ POST /api/wms/separacao/iniciar starts wave picking
+   └─ Operator scans products (GTIN/SKU) via /api/wms/separacao/bipar
       - siso_pedido_itens.quantidade_bipada incremented
       - When all items complete: status_separacao='embalado'
 
 6. PACKING & DISPATCH
-   ├─ Operator scans items again via /api/separacao/bipar-embalagem
+   ├─ Operator scans items again via /api/wms/separacao/bipar-embalagem
    └─ On completion: status_separacao='embalado', label printed
 
 7. COMPLETION
@@ -1383,7 +1383,7 @@ erDiagram
    └─ PO status transitions: aguardando_compra → comprado
 
 3. RECEIVING
-   ├─ POST /api/compras/conferir marks items received
+   ├─ POST /api/wms/compras/conferir marks items received
    ├─ compra_quantidade_recebida incremented
    ├─ recebido_em, recebido_por recorded
    └─ When all items received: compra_status='recebido'
@@ -1404,34 +1404,15 @@ erDiagram
 
 ### Inventory Session Lifecycle
 
+> ⚠️ **Lifecycle abaixo é OBSOLETO (Tiny-based, removido em 2026-05-18 commit `f8b7dbb`)**. O fluxo atual é o **WMS Plano 4 v2** (pull queue + slots OP1-OP5 + claim hierárquico, escrita no ledger imutável). Endpoints atuais em `/api/wms/inventario/*`. Detalhes em `CLAUDE.md` seção "WMS Plano 4 v2".
+
 ```
-1. CREATION
-   ├─ POST /api/inventario (modo, tipo_estoque, deposito_id)
-   ├─ siso_inventarios created (status='em_andamento')
-   └─ User enters session ID
-
-2. SCANNING
-   ├─ POST /api/inventario/[id]/coletar (sku, localizacao, quantidade)
-   ├─ siso_inventario_itens created (status='pendente')
-   └─ Repeat until all items scanned
-
-3. PROCESSING
-   ├─ POST /api/inventario/[id]/processar (fire-and-forget)
-   ├─ siso_inventarios.status='processando'
-   ├─ For each item: resolve SKU → Tiny product
-   ├─ Fetch old location/balance from Tiny
-   ├─ Update location or stock movement in Tiny
-   └─ Set item status='sucesso' or 'erro'
-
-4. COMPLETION
-   ├─ GET /api/inventario/[id]/progresso polls status
-   └─ When all items processed: status='concluido'
-
-5. OPTIONAL: REVERT
-   ├─ POST /api/inventario/[id]/reverter
-   ├─ siso_inventarios.status='revertendo'
-   ├─ Undo all Tiny movements (opposite operations)
-   └─ Final status='revertido'
+LEGACY (removido):
+1. CREATION    → POST /api/inventario              (apagado)
+2. SCANNING    → POST /api/inventario/[id]/coletar (apagado)
+3. PROCESSING  → POST /api/inventario/[id]/processar (fire-and-forget, escrevia no Tiny)
+4. COMPLETION  → GET  /api/inventario/[id]/progresso
+5. REVERT      → POST /api/inventario/[id]/reverter
 ```
 
 ---
@@ -1609,7 +1590,7 @@ Stock is stored normalized in `siso_pedido_item_estoques` (one per empresa). Alw
 GROUP BY galpao_nome
 ```
 
-See `/api/pedidos` for reference implementation.
+See `/api/wms/pedidos` for reference implementation.
 
 ### Session Management
 

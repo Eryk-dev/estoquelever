@@ -11,7 +11,7 @@
 
 ### Overview
 
-When an operator selects orders for a wave and calls `POST /api/separacao/iniciar`, the system:
+When an operator selects orders for a wave and calls `POST /api/wms/separacao/iniciar`, the system:
 
 1. Transitions the orders to `em_separacao`
 2. Optionally runs the **mini-swap** optimization (if enabled for the operator's galpão)
@@ -24,7 +24,7 @@ The mini-swap step consolidates stock from multiple empresas in the same galpão
 ```mermaid
 sequenceDiagram
   participant Op as Operador
-  participant API as /api/separacao/iniciar
+  participant API as /api/wms/separacao/iniciar
   participant MS as executarMiniSwap (TS)
   participant RPC as wms_executar_mini_swap
   participant DB as siso_estoque
@@ -51,7 +51,7 @@ sequenceDiagram
 
 ### Key Properties
 
-- **Disparo:** 1× por wave, síncrono dentro de `POST /api/separacao/iniciar`, antes de retornar a checklist.
+- **Disparo:** 1× por wave, síncrono dentro de `POST /api/wms/separacao/iniciar`, antes de retornar a checklist.
 - **Falha graceful:** qualquer exceção no mini-swap é capturada silenciosamente — a wave segue normalmente sem otimização. O evento `mini_swap_executado` só é registrado se o RPC completar com sucesso.
 - **Toggle por galpão:** configurável em `/wms/configuracoes/otimizacoes` (admin only). Lido de `siso_wms_mini_swap_config`.
 - **Atomicidade:** o RPC `wms_executar_mini_swap` aplica liberar-reservas + swaps + recriar-reservas numa única transação Postgres com lock pessimista em `siso_estoque`.
@@ -63,7 +63,7 @@ sequenceDiagram
 |---|---|
 | `src/lib/wms/mini-swap-types.ts` | Tipos: `SaldoLinha`, `Demanda`, `PlanoMiniSwap`, `MiniSwapConfig` |
 | `src/lib/wms/mini-swap.ts` | `planejarMiniSwap()` (algoritmo puro, sem I/O) + `executarMiniSwap()` (orchestrator) |
-| `src/app/api/separacao/iniciar/route.ts` | Ponto de integração — chama `executarMiniSwap()` após transição |
+| `src/app/api/wms/separacao/iniciar/route.ts` | Ponto de integração — chama `executarMiniSwap()` após transição |
 | `src/app/api/wms/mini-swap/config/route.ts` | `GET` lista config por galpão |
 | `src/app/api/wms/mini-swap/config/[galpaoId]/route.ts` | `PATCH` toggle ativo (admin) |
 | `src/app/api/wms/mini-swap/simular/route.ts` | `POST` dry-run sem DB writes |
@@ -78,4 +78,4 @@ sequenceDiagram
 
 ---
 
-*Last updated: 2026-05-14*
+*Last updated: 2026-05-18 — paths atualizados pra refletir cutover `/api/wms/*` (commit f8b7dbb).*

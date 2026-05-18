@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Estoque Online — Fluxos Visuais</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #d4d4d8;
+    --ink: #18181b;
+    --muted: #71717a;
+    --soft: #a1a1aa;
+    --blue: #2563eb;
+    --blue-soft: #dbeafe;
+    --green: #16a34a;
+    --green-soft: #dcfce7;
+    --amber: #d97706;
+    --amber-soft: #fef3c7;
+    --red: #dc2626;
+    --red-soft: #fee2e2;
+    --purple: #7c3aed;
+    --purple-soft: #ede9fe;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.55;
+    font-size: 16px;
+  }
+  .wrap {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 56px 32px 120px;
+  }
+
+  /* HERO */
+  .hero {
+    text-align: center;
+    padding: 32px 0 56px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 72px;
+  }
+  .hero h1 {
+    font-size: 48px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin-bottom: 12px;
+  }
+  .hero .tag {
+    color: var(--muted);
+    font-size: 18px;
+  }
+
+  /* SECTION */
+  section { margin-bottom: 120px; }
+  .section-num {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    color: var(--soft);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .section-title {
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 8px 0 12px;
+  }
+  .section-sub {
+    font-size: 18px;
+    color: var(--muted);
+    margin-bottom: 40px;
+    max-width: 640px;
+  }
+
+  /* STORY STRIP — comic-style frames */
+  .strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  @media (max-width: 900px) {
+    .strip { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 540px) {
+    .strip { grid-template-columns: 1fr; }
+  }
+  .frame {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px 20px;
+    position: relative;
+    min-height: 340px;
+    display: flex;
+    flex-direction: column;
+  }
+  .frame .clock {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+  .frame .who {
+    margin-top: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    align-self: flex-start;
+  }
+  .frame .who.pedro { background: var(--amber-soft); color: var(--amber); }
+  .frame .who.joao { background: var(--blue-soft); color: var(--blue); }
+  .frame .who.ana { background: var(--purple-soft); color: var(--purple); }
+  .frame .who.maria { background: #fce7f3; color: #be185d; }
+  .frame .what {
+    margin-top: 16px;
+    font-size: 17px;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+  .frame .visual {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 20px;
+  }
+  .frame.amber { border-top: 4px solid var(--amber); }
+  .frame.green { border-top: 4px solid var(--green); }
+  .frame.purple { border-top: 4px solid var(--purple); }
+  .frame.red { border-top: 4px solid var(--red); }
+  .frame.blue { border-top: 4px solid var(--blue); }
+  .frame.pink { border-top: 4px solid #ec4899; }
+
+  /* Prateleira SVG-ish */
+  .shelf {
+    width: 100%;
+    max-width: 180px;
+    background: #f4f4f5;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+  }
+  .shelf .loc {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .shelf .qty {
+    font-size: 56px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }
+  .shelf .qty.amber { color: var(--amber); }
+  .shelf .qty.green { color: var(--green); }
+  .shelf .qty.red { color: var(--red); }
+  .shelf .qty.muted { color: var(--soft); }
+  .shelf .arrow {
+    font-size: 18px;
+    color: var(--muted);
+    margin: 6px 0;
+  }
+  .shelf .changed {
+    font-size: 12px;
+    margin-top: 8px;
+    color: var(--muted);
+  }
+
+  /* Big result box */
+  .result-box {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: 20px;
+    padding: 40px;
+    text-align: center;
+  }
+  .result-box.good { background: var(--green-soft); border-color: var(--green); }
+  .result-box.bad { background: var(--red-soft); border-color: var(--red); }
+  .result-headline {
+    font-size: 56px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+  }
+  .result-headline.good { color: var(--green); }
+  .result-headline.bad { color: var(--red); }
+  .result-sub {
+    font-size: 18px;
+    margin-top: 12px;
+    color: var(--muted);
+  }
+
+  /* Math diagram */
+  .math {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 48px;
+    display: grid;
+    grid-template-columns: auto auto auto auto auto auto auto;
+    gap: 20px;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    overflow-x: auto;
+  }
+  .math-box {
+    background: #fafafa;
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    min-width: 120px;
+  }
+  .math-box.amber { border-color: var(--amber); background: var(--amber-soft); }
+  .math-box.green { border-color: var(--green); background: var(--green-soft); }
+  .math-box.blue { border-color: var(--blue); background: var(--blue-soft); }
+  .math-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .math-value {
+    font-size: 40px;
+    font-weight: 800;
+    line-height: 1;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  .math-op {
+    font-size: 32px;
+    color: var(--soft);
+    font-weight: 700;
+  }
+  @media (max-width: 900px) {
+    .math {
+      grid-template-columns: 1fr;
+    }
+    .math-op { transform: rotate(90deg); }
+  }
+
+  /* Recebimento workflow */
+  .flow {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr;
+    align-items: center;
+    gap: 24px;
+    margin: 32px 0;
+  }
+  @media (max-width: 900px) {
+    .flow { grid-template-columns: 1fr; }
+    .flow-arrow { transform: rotate(90deg); justify-self: center; }
+  }
+  .flow-step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px 24px;
+    text-align: center;
+  }
+  .flow-step .icon {
+    font-size: 56px;
+    margin-bottom: 12px;
+  }
+  .flow-step .title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .flow-step .desc {
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .flow-step .badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 12px;
+  }
+  .flow-step.staging .badge { background: var(--amber-soft); color: var(--amber); }
+  .flow-step.final .badge { background: var(--green-soft); color: var(--green); }
+  .flow-step.in .badge { background: var(--blue-soft); color: var(--blue); }
+  .flow-arrow {
+    font-size: 36px;
+    color: var(--soft);
+    font-weight: 100;
+  }
+
+  /* Painel mock */
+  .painel {
+    background: #0a0a0a;
+    color: #fafafa;
+    border-radius: 16px;
+    padding: 32px 36px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.9;
+  }
+  .painel .head {
+    display: flex;
+    justify-content: space-between;
+    border-bottom: 1px solid #27272a;
+    padding-bottom: 16px;
+    margin-bottom: 16px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #a1a1aa;
+  }
+  .painel .dot {
+    display: inline-block;
+    width: 10px; height: 10px;
+    background: #22c55e;
+    border-radius: 50%;
+    margin-right: 8px;
+    box-shadow: 0 0 8px #22c55e;
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .ev { padding: 4px 0; }
+  .ev .t { color: #71717a; margin-right: 12px; }
+  .ev .ok { color: #22c55e; font-weight: 700; }
+  .ev .info { color: #f59e0b; font-weight: 700; }
+  .ev .warn { color: #ef4444; font-weight: 700; }
+  .ev .who { color: #60a5fa; }
+
+  /* Personas grid */
+  .personas {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+  }
+  @media (max-width: 900px) {
+    .personas { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 540px) {
+    .personas { grid-template-columns: 1fr; }
+  }
+  .pcard {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+  .pcard .top {
+    padding: 20px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .pcard .top .face {
+    font-size: 48px;
+    margin-bottom: 8px;
+  }
+  .pcard .top .name { font-size: 20px; font-weight: 700; }
+  .pcard .top .role { font-size: 13px; color: var(--muted); }
+  .pcard .bot { padding: 20px; }
+  .pcard .bot .label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .pcard .change {
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  /* Edge cases — icon grid */
+  .edges {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 900px) {
+    .edges { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 540px) {
+    .edges { grid-template-columns: 1fr; }
+  }
+  .edge {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+  }
+  .edge .icon {
+    font-size: 32px;
+    margin-bottom: 12px;
+  }
+  .edge .title { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  .edge .desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+  /* Big quote / principle */
+  .pull {
+    text-align: center;
+    padding: 56px 32px;
+    margin: 56px 0;
+  }
+  .pull .big {
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    max-width: 720px;
+    margin: 0 auto;
+    line-height: 1.35;
+  }
+  .pull .small {
+    margin-top: 16px;
+    color: var(--muted);
+    font-size: 15px;
+  }
+
+  /* Before/after */
+  .ba {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 720px) {
+    .ba { grid-template-columns: 1fr; }
+  }
+  .ba-card {
+    border-radius: 16px;
+    padding: 28px;
+    border: 2px solid;
+  }
+  .ba-card.before {
+    background: var(--red-soft);
+    border-color: var(--red);
+  }
+  .ba-card.after {
+    background: var(--green-soft);
+    border-color: var(--green);
+  }
+  .ba-card .label {
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 16px;
+  }
+  .ba-card.before .label { color: var(--red); }
+  .ba-card.after .label { color: var(--green); }
+  .ba-card .headline {
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 12px;
+  }
+  .ba-card .body {
+    font-size: 15px;
+    color: var(--ink);
+    opacity: 0.85;
+  }
+
+  code {
+    background: #f4f4f5;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.9em;
+  }
+
+  .footer {
+    margin-top: 96px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HERO -->
+  <div class="hero">
+    <h1>Estoque Online</h1>
+    <p class="tag">A operação continua. O inventário acontece. Ninguém se trava. O sistema reconcilia.</p>
+  </div>
+
+  <!-- 1. THE STORY — 4 FRAMES -->
+  <section>
+    <div class="section-num">01 — A CENA</div>
+    <h2 class="section-title">Uma terça, 13h.</h2>
+    <p class="section-sub">Pedro tá inventariando. João tá separando pedidos. Ana tá supervisionando. Veja o que acontece em 9 minutos na prateleira <code>A-01-01</code> — 5 filtros de ar.</p>
+
+    <div class="strip">
+      <!-- Frame 1 -->
+      <div class="frame amber">
+        <div class="clock">13:01</div>
+        <span class="who pedro">Pedro · inventário</span>
+        <div class="what">Conta a prateleira A-01-01.</div>
+        <div class="visual">
+          <div class="shelf">
+            <div class="loc">A-01-01</div>
+            <div class="qty amber">5</div>
+            <div class="changed">filtros de ar</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Frame 2 -->
+      <div class="frame blue">
+        <div class="clock">13:05</div>
+        <span class="who joao">João · separação</span>
+        <div class="what">Bipa pedido ML-87654321. Pega 2 da mesma loc.</div>
+        <div class="visual">
+          <div class="shelf">
+            <div class="loc">A-01-01</div>
+            <div class="qty muted" style="text-decoration:line-through;font-size:32px">5</div>
+            <div class="arrow">↓ −2</div>
+            <div class="qty green">3</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Frame 3 -->
+      <div class="frame purple">
+        <div class="clock">13:10</div>
+        <span class="who ana">Ana · aprovação</span>
+        <div class="what">Clica "conferir divergências".</div>
+        <div class="visual" style="font-size:64px">🔍</div>
+      </div>
+
+      <!-- Frame 4 -->
+      <div class="frame green">
+        <div class="clock">13:10</div>
+        <span class="who ana">Sistema</span>
+        <div class="what">Aprovado. Zero divergência. Ninguém recontou.</div>
+        <div class="visual" style="font-size:96px">✓</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. THE MATH — visual formula -->
+  <section>
+    <div class="section-num">02 — A CONTA</div>
+    <h2 class="section-title">Por que zero?</h2>
+    <p class="section-sub">O sistema lembra do saldo no instante do bipe e desconta tudo que mexeu depois.</p>
+
+    <div class="math">
+      <div class="math-box amber">
+        <div class="math-label">Pedro contou</div>
+        <div class="math-value">5</div>
+      </div>
+      <div class="math-op">−</div>
+      <div class="math-box" style="background:#fff;border-color:var(--blue);">
+        <div class="math-label">Saldo no bipe</div>
+        <div class="math-value">5</div>
+      </div>
+      <div class="math-op">+</div>
+      <div class="math-box" style="background:#fff;border-color:var(--blue);">
+        <div class="math-label">Vendido depois</div>
+        <div class="math-value">−2</div>
+      </div>
+      <div class="math-op">=</div>
+      <div class="math-box green">
+        <div class="math-label">Divergência</div>
+        <div class="math-value">0</div>
+      </div>
+    </div>
+
+    <p style="text-align:center;color:var(--muted);font-size:14px;margin-top:16px">
+      Saldo esperado = 5 + (−2) = 3. Saldo real = 3. Bate.
+    </p>
+  </section>
+
+  <!-- 3. BEFORE/AFTER -->
+  <section>
+    <div class="section-num">03 — O CONTRASTE</div>
+    <h2 class="section-title">Hoje vs Amanhã</h2>
+    <p class="section-sub">A mesma cena, dois mundos diferentes.</p>
+
+    <div class="ba">
+      <div class="ba-card before">
+        <div class="label">❌ Hoje</div>
+        <div class="headline">"Faltam 2 filtros!"</div>
+        <div class="body">Sistema olha A-01-01, vê 3. Pedro anotou 5. Acusa divergência. Pedro vai recontar. Ana vai discutir. Ninguém entende que foi só uma venda normal no meio.</div>
+      </div>
+      <div class="ba-card after">
+        <div class="label">✅ Amanhã</div>
+        <div class="headline">"Zero divergência."</div>
+        <div class="body">Sistema sabe a hora exata da contagem e a hora exata da venda. Faz a conta. Reconcilia sozinho. Pedro nem fica sabendo que teve uma venda na loc dele.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. RECEBIMENTO -->
+  <section>
+    <div class="section-num">04 — A DOCA</div>
+    <h2 class="section-title">Recebimento e Guarda — dois passos.</h2>
+    <p class="section-sub">Hoje vira saldo na prateleira no instante da NF — antes mesmo da peça sair da doca. Não dá.</p>
+
+    <div class="flow">
+      <div class="flow-step in">
+        <div class="icon">🚛</div>
+        <div class="title">Chega a NF</div>
+        <div class="desc">Maria bipa NF 4521 do fornecedor Diversos. 50 filtros.</div>
+        <div class="badge">Passo 1</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step staging">
+        <div class="icon">📦</div>
+        <div class="title">Vai pra RECEB-01</div>
+        <div class="desc">Saldo entra no "limbo" da doca. Aguarda guarda.</div>
+        <div class="badge">Staging</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step final">
+        <div class="icon">📍</div>
+        <div class="title">Guarda em A-04-03</div>
+        <div class="desc">Maria carrega, bipa loc final, confirma. Saldo entra ali agora.</div>
+        <div class="badge">Passo 2</div>
+      </div>
+    </div>
+
+    <div class="pull" style="background:var(--surface);border:1px solid var(--border);border-radius:16px">
+      <div class="big">"A prateleira só 'tem' a peça quando o operador disse que botou ela lá."</div>
+      <div class="small">Antes disso, ela vive na doca. Sistema não mente.</div>
+    </div>
+  </section>
+
+  <!-- 5. LIVE PAINEL -->
+  <section>
+    <div class="section-num">05 — A VISÃO DA ANA</div>
+    <h2 class="section-title">Painel ao vivo.</h2>
+    <p class="section-sub">Sem F5. Cada bipe, cada movimentação, cada contagem — aparece sozinho.</p>
+
+    <div class="painel">
+      <div class="head">
+        <div><span class="dot"></span>Inventário CWB · sessão #87</div>
+        <div>3 operadores · ao vivo</div>
+      </div>
+      <div class="ev"><span class="t">13:08:42</span> <span class="ok">✓ FIM SEÇÃO</span> <span class="who">Pedro</span> fechou RUA A · 24 SKUs</div>
+      <div class="ev"><span class="t">13:07:11</span> <span class="info">↗ ENTRADA</span> 12× filtro óleo em A-04-03 · <span class="who">Maria</span> · NF 4521</div>
+      <div class="ev"><span class="t">13:05:14</span> <span class="warn">⚠ DURANTE CONTAGEM</span> saída 2× filtro ar de A-01-01 · <span class="who">João</span> · pedido ML-87654321</div>
+      <div class="ev"><span class="t">13:04:50</span> <span class="ok">✓ BIPE</span> <span class="who">Pedro</span> · A-01-02 · 17 un</div>
+      <div class="ev"><span class="t">13:03:22</span> <span class="ok">✓ BIPE</span> <span class="who">Pedro</span> · A-01-01 · 5 un</div>
+      <div class="ev"><span class="t">13:01:00</span> <span class="ok">▶ INÍCIO</span> <span class="who">Pedro</span> entrou na sessão · pegou RUA A</div>
+    </div>
+
+    <div class="strip" style="grid-template-columns:1fr 1fr 1fr;margin-top:32px">
+      <div class="frame green" style="min-height:140px">
+        <div style="font-size:28px">✓</div>
+        <div class="what" style="margin-top:8px;font-size:14px">Verde = contagem ou movimentação normal</div>
+      </div>
+      <div class="frame amber" style="min-height:140px">
+        <div style="font-size:28px">↗</div>
+        <div class="what" style="margin-top:8px;font-size:14px">Amarelo = mov em loc ainda não contada</div>
+      </div>
+      <div class="frame red" style="min-height:140px">
+        <div style="font-size:28px">⚠</div>
+        <div class="what" style="margin-top:8px;font-size:14px">Vermelho = mov em loc já contada — sistema reconcilia</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. EDGE CASES -->
+  <section>
+    <div class="section-num">06 — CASOS REAIS</div>
+    <h2 class="section-title">E quando dá ruim?</h2>
+    <p class="section-sub">Operação tem caos. O sistema é desenhado pra absorver ele.</p>
+
+    <div class="edges">
+      <div class="edge">
+        <div class="icon">📦💥</div>
+        <div class="title">Veio com avaria</div>
+        <div class="desc">50 filtros vieram, 3 amassados. Maria guarda 47 + marca 3 como avaria. Sistema separa as duas movs.</div>
+      </div>
+      <div class="edge">
+        <div class="icon">🔄</div>
+        <div class="title">Pedido pediu mais que tem</div>
+        <div class="desc">João bipa Parcial. Sistema busca em outra loc, em outra empresa do grupo, ou aciona compra.</div>
+      </div>
+      <div class="edge">
+        <div class="icon">↩️</div>
+        <div class="title">Operador errou e desfez</div>
+        <div class="desc">Bipou 2 por engano, voltou atrás. Sistema soma: saída de 2 + estorno de 2 = zero. Nada conta.</div>
+      </div>
+      <div class="edge">
+        <div class="icon">🤒</div>
+        <div class="title">Pedro ficou doente</div>
+        <div class="desc">Ana cancela a sessão. Contagens viram histórico read-only. Nenhum ajuste é aplicado.</div>
+      </div>
+      <div class="edge">
+        <div class="icon">⏱️</div>
+        <div class="title">Mov caiu no momento da aprovação</div>
+        <div class="desc">Ana clicou em "conferir" às 13:10. Movs após 13:10 não entram nessa sessão. Ficam pra próxima.</div>
+      </div>
+      <div class="edge">
+        <div class="icon">🏢🏢</div>
+        <div class="title">Inventário em CWB e SP juntos</div>
+        <div class="desc">Cada galpão isolado. CWB não vê eventos de SP e vice-versa. Tudo paralelo.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. PERSONAS -->
+  <section>
+    <div class="section-num">07 — NO CHÃO</div>
+    <h2 class="section-title">O que muda pra cada um.</h2>
+    <p class="section-sub">A grande maioria nem percebe. Quem mais ganha: Pedro e Ana.</p>
+
+    <div class="personas">
+      <div class="pcard">
+        <div class="top">
+          <div class="face">📦</div>
+          <div class="name">Maria</div>
+          <div class="role">Recebimento</div>
+        </div>
+        <div class="bot">
+          <div class="label">Mudou</div>
+          <div class="change">Bipa NF + bipa loc final. Dois cliques, não um.</div>
+        </div>
+      </div>
+
+      <div class="pcard">
+        <div class="top">
+          <div class="face">🛒</div>
+          <div class="name">João</div>
+          <div class="role">Separação</div>
+        </div>
+        <div class="bot">
+          <div class="label">Mudou</div>
+          <div class="change">Nada. Continua bipando pedidos normal. Não precisa esperar inventário acabar.</div>
+        </div>
+      </div>
+
+      <div class="pcard">
+        <div class="top">
+          <div class="face">📋</div>
+          <div class="name">Pedro</div>
+          <div class="role">Inventário</div>
+        </div>
+        <div class="bot">
+          <div class="label">Mudou</div>
+          <div class="change">Conta uma vez só. Recontagem é exceção, não regra. Trabalho fica curto.</div>
+        </div>
+      </div>
+
+      <div class="pcard">
+        <div class="top">
+          <div class="face">👀</div>
+          <div class="name">Ana</div>
+          <div class="role">Supervisão</div>
+        </div>
+        <div class="bot">
+          <div class="label">Mudou</div>
+          <div class="change">Painel ao vivo. Aprovação quase automática. Confia no número.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRINCIPLE -->
+  <div class="pull" style="background:var(--ink);color:var(--bg);border-radius:24px">
+    <div class="big" style="color:var(--bg)">"Tudo que mexe no estoque vira um evento com hora. Histórico é imutável. O sistema reconstrói qualquer cena do passado."</div>
+    <div class="small" style="color:#a1a1aa">Mesmo princípio de extrato bancário: erro vira reversão, não edição.</div>
+  </div>
+
+  <div class="footer">
+    Companion visual da spec <code>2026-05-18-estoque-online-design.md</code> · galpão CWB · NetAir · fornecedor Diversos
+  </div>
+
+</div>
+</body>
+</html>

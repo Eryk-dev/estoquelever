@@ -52,10 +52,10 @@ Referência: `src/lib/nf-webhook-handler.ts:1-249`.
 
 ## 2. Entrada e discriminação do payload
 
-O endpoint **único** de webhook do Tiny é `POST /api/webhook/tiny` (`src/app/api/webhook/tiny/route.ts`). Ele recebe **dois tipos** de eventos: pedido (`tipo: "atualizacao_pedido"` ou `"inclusao_pedido"`) e NF (`tipo: "nota_fiscal"`). A discriminação é feita logo após a identificação da empresa por CNPJ:
+O endpoint **único** de webhook do Tiny é `POST /api/wms/webhook/tiny` (`src/app/api/wms/webhook/tiny/route.ts`). Ele recebe **dois tipos** de eventos: pedido (`tipo: "atualizacao_pedido"` ou `"inclusao_pedido"`) e NF (`tipo: "nota_fiscal"`). A discriminação é feita logo após a identificação da empresa por CNPJ:
 
 ```ts
-// src/app/api/webhook/tiny/route.ts:56-79
+// src/app/api/wms/webhook/tiny/route.ts:56-79
 if (tipo === "nota_fiscal") {
   const nfPayload = payload as unknown as NfWebhookPayload;
   if (!nfPayload.dados?.idNotaFiscalTiny) {
@@ -126,7 +126,7 @@ export interface NfWebhookPayload {
 sequenceDiagram
     autonumber
     participant TINY as Tiny ERP
-    participant API as POST /api/webhook/tiny
+    participant API as POST /api/wms/webhook/tiny
     participant H as handleNfWebhook
     participant DB as Supabase
     participant TAPI as Tiny API (obterNotaFiscal)
@@ -218,7 +218,7 @@ T1  Pedido webhook → cria siso_pedidos
 T2  webhook-processor varre logs 'aguardando_pedido' e reconcilia
 ```
 
-> Esta reconciliação é executada **após** o `INSERT` do pedido, no mesmo handler do webhook de pedido. Mesmo que o pedido seja criado em estado `pendente` (não auto-aprovado, sem `status_separacao`), a NF é gravada — e quando o operador aprovar, o endpoint `/api/pedidos/aprovar` decide `aguardando_nf` ou `aguardando_separacao` com base em `nota_fiscal_id && chave_acesso_nf` (`aprovar/route.ts:143-148`).
+> Esta reconciliação é executada **após** o `INSERT` do pedido, no mesmo handler do webhook de pedido. Mesmo que o pedido seja criado em estado `pendente` (não auto-aprovado, sem `status_separacao`), a NF é gravada — e quando o operador aprovar, o endpoint `/api/wms/pedidos/aprovar` decide `aguardando_nf` ou `aguardando_separacao` com base em `nota_fiscal_id && chave_acesso_nf` (`aprovar/route.ts:143-148`).
 
 ### 5.3 NF de pedido cancelado / status errado
 
@@ -470,7 +470,7 @@ Linha gerada por NF autorizada:
 | `detalhes` | `{ idNotaFiscalTiny, chaveAcesso }` |
 | `criado_em` | `now()` |
 
-Quando admin força via `PATCH /api/separacao/{pedidoId}/forcar-pendente` ou `POST /api/separacao/forcar-pendente`, o detalhe inclui `{ forcado: true, verificado_tiny: true }` com `usuario_id`/`usuario_nome` da sessão admin (`forcar-pendente/route.ts:124-132`).
+Quando admin força via `PATCH /api/wms/separacao/{pedidoId}/forcar-pendente` ou `POST /api/wms/separacao/forcar-pendente`, o detalhe inclui `{ forcado: true, verificado_tiny: true }` com `usuario_id`/`usuario_nome` da sessão admin (`forcar-pendente/route.ts:124-132`).
 
 > O evento `aguardando_separacao` da `EventoPedido` enum **não** é gravado por este handler — quem grava é o flow de iniciar separação. A NF apenas faz o pedido ficar elegível.
 
@@ -544,7 +544,7 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant T as Tiny
-    participant API as /api/webhook/tiny
+    participant API as /api/wms/webhook/tiny
     participant NFH as nf-webhook-handler
     participant PWP as webhook-processor
     participant DB
@@ -654,7 +654,7 @@ handleNfWebhook(nfPayload, empresa.empresaId).catch((err) => {
     pedidoId: String(nfPayload.dados.idNotaFiscalTiny),
     empresaId: empresa.empresaId,
     correlationId,
-    requestPath: "/api/webhook/tiny",
+    requestPath: "/api/wms/webhook/tiny",
     requestMethod: "POST",
     metadata: { tipo: "nota_fiscal" },
   });
@@ -724,7 +724,7 @@ Se `decisao_final` é `null` (pedido em estado inválido pós-aprovação) ou `"
 
 ### 13.7 Override admin (forcar-pendente)
 
-Quando admin usa `PATCH /api/separacao/{pedidoId}/forcar-pendente`:
+Quando admin usa `PATCH /api/wms/separacao/{pedidoId}/forcar-pendente`:
 
 1. Valida sessão admin (`session.cargos.includes("admin")`).
 2. Valida `status_separacao === 'aguardando_nf'`.
@@ -776,7 +776,7 @@ FROM siso_webhook_logs
 WHERE tipo = 'nota_fiscal' AND status = 'aguardando_pedido' AND criado_em < now() - interval '1 hour';
 ```
 
-**Fix manual:** Disparar reconciliação pelo `POST /api/reconciliacao` ou processar o webhook de pedido manualmente via `POST /api/webhook/reprocessar`.
+**Fix manual:** Disparar reconciliação pelo `POST /api/reconciliacao` ou processar o webhook de pedido manualmente via `POST /api/wms/webhook/reprocessar`.
 
 ### 15.2 Pedido com `nota_fiscal_id` salvo mas sem `chave_acesso_nf`
 
@@ -786,8 +786,8 @@ WHERE tipo = 'nota_fiscal' AND status = 'aguardando_pedido' AND criado_em < now(
 
 **Fix:**
 
-1. Admin pode usar `POST /api/separacao/forcar-pendente` (`forcar-pendente/route.ts`) — consulta Tiny ao vivo para verificar `situacao` e força transição se autorizada.
-2. Backfill: `POST /api/admin/backfill-agrupamentos` itera pedidos com `nota_fiscal_id IS NOT NULL AND chave_acesso_nf IS NOT NULL` em `aguardando_nf` para tentar reagrupamento (`backfill-agrupamentos/route.ts:40-45`).
+1. Admin pode usar `POST /api/wms/separacao/forcar-pendente` (`forcar-pendente/route.ts`) — consulta Tiny ao vivo para verificar `situacao` e força transição se autorizada.
+2. Backfill: `POST /api/wms/admin/backfill-agrupamentos` itera pedidos com `nota_fiscal_id IS NOT NULL AND chave_acesso_nf IS NOT NULL` em `aguardando_nf` para tentar reagrupamento (`backfill-agrupamentos/route.ts:40-45`).
 
 ### 15.3 Webhook duplicado de NF para empresas diferentes
 
@@ -809,7 +809,7 @@ O UPDATE com `WHERE status_separacao = 'aguardando_nf'` é atômico. Reentregas 
 
 **Arquivos referenciados:**
 
-- `src/app/api/webhook/tiny/route.ts:1-323` — entrada e discriminação
+- `src/app/api/wms/webhook/tiny/route.ts:1-323` — entrada e discriminação
 - `src/lib/nf-webhook-handler.ts:1-249` — handler principal
 - `src/lib/webhook-processor.ts:495-562` — reconciliação reversa pós-pedido
 - `src/lib/execution-worker.ts:65-83`, `:343-380`, `:594-596`, `:715-752`, `:757-796` — geração NF e jobs pós-NF
@@ -817,9 +817,9 @@ O UPDATE com `WHERE status_separacao = 'aguardando_nf'` é atômico. Reentregas 
 - `src/lib/historico-service.ts:13-74` — eventos de histórico
 - `src/lib/logger.ts:319-337` — `logError` estruturado
 - `src/lib/tiny-api.ts:461-484` — `obterNotaFiscal`, contrato `TinyNotaFiscal`
-- `src/app/api/separacao/forcar-pendente/route.ts:1-155` — override em lote
-- `src/app/api/separacao/[pedidoId]/forcar-pendente/route.ts:1-129` — override single
-- `src/app/api/admin/backfill-agrupamentos/route.ts` — backfill de agrupamentos
-- `src/app/api/pedidos/aprovar/route.ts:140-148` — decisão `aguardando_nf` vs. `aguardando_separacao` na aprovação manual
+- `src/app/api/wms/separacao/forcar-pendente/route.ts:1-155` — override em lote
+- `src/app/api/wms/separacao/[pedidoId]/forcar-pendente/route.ts:1-129` — override single
+- `src/app/api/wms/admin/backfill-agrupamentos/route.ts` — backfill de agrupamentos
+- `src/app/api/wms/pedidos/aprovar/route.ts:140-148` — decisão `aguardando_nf` vs. `aguardando_separacao` na aprovação manual
 - `src/lib/compras-release.ts:144-152` — caminho OC pós-recebimento
 - `docs/database-schema.md` (linhas 745-776 — siso_webhook_logs; linhas 60-72 — colunas NF em siso_pedidos)

@@ -16,12 +16,12 @@
 - [4. Card de pedido pendente — UI](#4-card-de-pedido-pendente--ui)
   - [4.1 Anatomia do card](#41-anatomia-do-card)
   - [4.2 Pílulas de estoque por galpão](#42-pílulas-de-estoque-por-galpão)
-  - [4.3 Edição inline de saldo (`/api/tiny/stock/ajustar`)](#43-edição-inline-de-saldo-apitinystockajustar)
-  - [4.4 Troca de SKU (`/api/compras/trocar-sku`)](#44-troca-de-sku-apicomprastrocar-sku)
+  - [4.3 Edição inline de saldo (`/api/wms/tiny/stock/ajustar`)](#43-edição-inline-de-saldo-apitinystockajustar)
+  - [4.4 Troca de SKU (`/api/wms/compras/trocar-sku`)](#44-troca-de-sku-apicomprastrocar-sku)
   - [4.5 Dropdown de decisão e override](#45-dropdown-de-decisão-e-override)
 - [5. Card de pedido concluído](#5-card-de-pedido-concluído)
-- [6. Listagem `GET /api/pedidos`](#6-listagem-get-apipedidos)
-- [7. Aprovação manual `POST /api/pedidos/aprovar`](#7-aprovação-manual-post-apipedidosaprovar)
+- [6. Listagem `GET /api/wms/pedidos`](#6-listagem-get-apipedidos)
+- [7. Aprovação manual `POST /api/wms/pedidos/aprovar`](#7-aprovação-manual-post-apipedidosaprovar)
   - [7.1 Contrato request/response](#71-contrato-requestresponse)
   - [7.2 Validações](#72-validações)
   - [7.3 Resolução de empresa de execução](#73-resolução-de-empresa-de-execução)
@@ -42,7 +42,7 @@
 
 `src/app/siso/page.tsx:30` é o componente raiz do dashboard. É um painel client-side (Next.js App Router, `"use client"`) que:
 
-1. Faz **polling** de `GET /api/pedidos` a cada 30s via TanStack React Query (`refetchInterval: 30_000`, `src/app/siso/page.tsx:36-41`).
+1. Faz **polling** de `GET /api/wms/pedidos` a cada 30s via TanStack React Query (`refetchInterval: 30_000`, `src/app/siso/page.tsx:36-41`).
 2. Particiona os pedidos retornados em três conjuntos disjuntos: `pendentes`, `concluidos` (manual), `auto` (auto-aprovados — `tipoResolucao === "auto"`).
 3. Aplica **filtro por galpão ativo** (do `<GalpaoSelector />` no header) + busca textual livre (`cliente.nome`, `idPedidoEcommerce`, `numero`, `sku`) — `src/app/siso/page.tsx:58-92`.
 4. Renderiza pedidos pendentes no `<PedidoCard>` (interativo, com aprovação) e os demais no `<PedidoCardConcluido>` (read-only, expandível).
@@ -208,13 +208,13 @@ A pílula do galpão **relevante** para a decisão escolhida fica destacada (lab
 
 Quando **nenhum galpão atende** (`!Object.values(item.estoques).some((g) => g.atende)`), o card mostra um badge âmbar "🛒 OC" + as localizações de cada galpão que tenha localização, indicando ao operador que aquele item provavelmente irá para compra (`src/components/pedido/pedido-card.tsx:437-446`).
 
-### 4.3 Edição inline de saldo (`/api/tiny/stock/ajustar`)
+### 4.3 Edição inline de saldo (`/api/wms/tiny/stock/ajustar`)
 
-Clique no número da pílula → input editável → Enter envia `POST /api/tiny/stock/ajustar`:
+Clique no número da pílula → input editável → Enter envia `POST /api/wms/tiny/stock/ajustar`:
 
 ```ts
 // src/components/pedido/pedido-card.tsx:183-187
-fetch("/api/tiny/stock/ajustar", {
+fetch("/api/wms/tiny/stock/ajustar", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ pedidoId, produtoId, galpao, quantidade: novoSaldo, tipo: "B" }),
@@ -225,13 +225,13 @@ fetch("/api/tiny/stock/ajustar", {
 
 > Produtos com `produtoId === 0` (sem ID Tiny) ficam **read-only** com tooltip explicativo (`src/components/pedido/pedido-card.tsx:251-262`).
 
-### 4.4 Troca de SKU (`/api/compras/trocar-sku`)
+### 4.4 Troca de SKU (`/api/wms/compras/trocar-sku`)
 
-Lápis ao lado do badge de SKU → input → Enter chama `POST /api/compras/trocar-sku`:
+Lápis ao lado do badge de SKU → input → Enter chama `POST /api/wms/compras/trocar-sku`:
 
 ```ts
 // src/components/pedido/pedido-card.tsx:332-336
-sisoFetch("/api/compras/trocar-sku", {
+sisoFetch("/api/wms/compras/trocar-sku", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ item_ids: [item.itemId], novo_sku: newSku.trim() }),
@@ -280,9 +280,9 @@ Botão `Aprovar` chama `handleAprovar(pedido.id, decisao)` → toaster `toast.su
 
 ---
 
-## 6. Listagem `GET /api/pedidos`
+## 6. Listagem `GET /api/wms/pedidos`
 
-`src/app/api/pedidos/route.ts:157-204`.
+`src/app/api/wms/pedidos/route.ts:157-204`.
 
 **Query params:**
 - `?status=pendente,executando` — filtro CSV opcional.
@@ -290,7 +290,7 @@ Botão `Aprovar` chama `handleAprovar(pedido.id, decisao)` → toaster `toast.su
 **Sem filtro:** retorna **todos** os pedidos ativos (`status in ('pendente','executando','erro')`) **+** os 150 mais recentes em outros status (`concluido`, `cancelado`). Isso evita o LIMIT esconder pendentes em momentos de alto volume.
 
 ```ts
-// src/app/api/pedidos/route.ts:181-193
+// src/app/api/wms/pedidos/route.ts:181-193
 const activeStatuses = ["pendente", "executando", "erro"];
 const [activeResult, recentResult] = await Promise.all([
   supabase.from("siso_pedidos")
@@ -305,7 +305,7 @@ const [activeResult, recentResult] = await Promise.all([
 ]);
 ```
 
-**Joins paralelos** em `buildResponse` (`src/app/api/pedidos/route.ts:16-143`):
+**Joins paralelos** em `buildResponse` (`src/app/api/wms/pedidos/route.ts:16-143`):
 
 1. `siso_pedido_itens` — produtos do pedido (id, produto_id, sku, descricao, quantidade_pedida, fornecedor_oc, imagem_url).
 2. `siso_pedido_item_estoques` com `siso_empresas!inner(galpao_id, siso_galpoes!inner(nome))` — estoque normalizado por empresa, agregando para o `nome` do galpão.
@@ -316,9 +316,9 @@ A resposta é mapeada para o tipo `Pedido` (camelCase) usado no frontend (`src/t
 
 ---
 
-## 7. Aprovação manual `POST /api/pedidos/aprovar`
+## 7. Aprovação manual `POST /api/wms/pedidos/aprovar`
 
-`src/app/api/pedidos/aprovar/route.ts:20-219`.
+`src/app/api/wms/pedidos/aprovar/route.ts:20-219`.
 
 ### 7.1 Contrato request/response
 
@@ -359,7 +359,7 @@ A resposta é mapeada para o tipo `Pedido` (camelCase) usado no frontend (`src/t
 ### 7.2 Validações
 
 ```ts
-// src/app/api/pedidos/aprovar/route.ts:36-72
+// src/app/api/wms/pedidos/aprovar/route.ts:36-72
 if (!pedidoId || !decisao) → 400
 if (!["propria","transferencia","oc"].includes(decisao)) → 400
 SELECT pedido by id → if missing → 404
@@ -372,7 +372,7 @@ if (!empresaOrigem) → 404
 ### 7.3 Resolução de empresa de execução
 
 ```ts
-// src/app/api/pedidos/aprovar/route.ts:92-125
+// src/app/api/wms/pedidos/aprovar/route.ts:92-125
 if (decisao === "propria" || decisao === "oc") {
   empresaExecucaoId = pedido.empresa_origem_id;
   filialExecucao    = filialOrigem;
@@ -402,7 +402,7 @@ if (decisao === "propria" || decisao === "oc") {
 ### 7.4 Marcadores enviados ao Tiny
 
 ```ts
-// src/app/api/pedidos/aprovar/route.ts:128-130
+// src/app/api/wms/pedidos/aprovar/route.ts:128-130
 const marcadores: string[] =
   decisao === "oc"
     ? ["OC", filialOrigem, "LVR"]
@@ -416,7 +416,7 @@ const marcadores: string[] =
 ### 7.5 Atualização de `siso_pedidos`
 
 ```ts
-// src/app/api/pedidos/aprovar/route.ts:133-150
+// src/app/api/wms/pedidos/aprovar/route.ts:133-150
 UPDATE siso_pedidos SET
   status              = 'executando',
   decisao_final       = <decisao>,
@@ -440,7 +440,7 @@ A lógica de `status_separacao` reflete o estado atual do pedido na hora da apro
 ### 7.6 Insert em `siso_fila_execucao`
 
 ```ts
-// src/app/api/pedidos/aprovar/route.ts:164-174
+// src/app/api/wms/pedidos/aprovar/route.ts:164-174
 INSERT INTO siso_fila_execucao (
   pedido_id, tipo, filial_execucao, empresa_id, decisao,
   operador_id, operador_nome
@@ -452,12 +452,12 @@ INSERT INTO siso_fila_execucao (
 
 Defaults da tabela: `status='pendente'`, `tentativas=0`, `max_tentativas=3`, `prioridade=false`. Ver schema completo em `docs/database-schema.md` § `siso_fila_execucao`.
 
-> **Falha do queue insert é tolerada**: se der erro o status do pedido já está como `executando` e pode ser reprocessado manualmente. O endpoint loga e segue (`src/app/api/pedidos/aprovar/route.ts:176-183`).
+> **Falha do queue insert é tolerada**: se der erro o status do pedido já está como `executando` e pode ser reprocessado manualmente. O endpoint loga e segue (`src/app/api/wms/pedidos/aprovar/route.ts:176-183`).
 
 ### 7.7 Kick do worker (`after()`)
 
 ```ts
-// src/app/api/pedidos/aprovar/route.ts:202-209
+// src/app/api/wms/pedidos/aprovar/route.ts:202-209
 after(() => {
   kickWorker().catch((err) => {
     logger.error("aprovar", "Worker kick failed", {
@@ -486,7 +486,7 @@ const tipoResolucao = isAuto ? "auto" : null;
 
 | Aspecto | Auto-aprovação | Aprovação manual |
 |---|---|---|
-| **Origem** | `src/lib/webhook-processor.ts:404-419` | `src/app/api/pedidos/aprovar/route.ts:131-209` |
+| **Origem** | `src/lib/webhook-processor.ts:404-419` | `src/app/api/wms/pedidos/aprovar/route.ts:131-209` |
 | **Trigger** | Webhook Tiny (`pedido.alterado`/`pedido.incluido`) | Operador clica `Aprovar` no `/siso` |
 | **Status inicial** | `executando` (já cria com esse status) | `pendente` → `executando` |
 | **`tipo_resolucao`** | `"auto"` | `"manual"` |
@@ -506,7 +506,7 @@ const tipoResolucao = isAuto ? "auto" : null;
 
 ## 9. Cancelamento via webhook
 
-`src/app/api/webhook/tiny/route.ts:147-260`. Quando o Tiny envia webhook com `codigoSituacao === "cancelado"`:
+`src/app/api/wms/webhook/tiny/route.ts:147-260`. Quando o Tiny envia webhook com `codigoSituacao === "cancelado"`:
 
 1. `SELECT siso_pedidos WHERE id = pedidoId` — se o pedido já existe localmente.
 2. Se o pedido **estava em fluxo de compras** (`status_separacao IN ('aguardando_compra','comprado')`):
@@ -528,7 +528,7 @@ Para o painel `/siso`, pedidos cancelados aparecem **fora** das três tabs princ
 A aprovação manual grava **um único evento** via `registrarEvento` (fire-and-forget):
 
 ```ts
-// src/app/api/pedidos/aprovar/route.ts:185-191
+// src/app/api/wms/pedidos/aprovar/route.ts:185-191
 registrarEvento({
   pedidoId,
   evento: "aprovado",
@@ -546,13 +546,13 @@ Tipos de evento usados no fluxo de aprovação (`src/lib/historico-service.ts:13
 |---|---|
 | `recebido` | webhook-processor, ao criar o pedido |
 | `auto_aprovado` | webhook-processor, se `propria` + cobre 100% |
-| `aprovado` | endpoint `/api/pedidos/aprovar` |
+| `aprovado` | endpoint `/api/wms/pedidos/aprovar` |
 | `aguardando_nf` | (gravado pelo worker / NF webhook handler) |
 | `cancelado` | (não gravado explicitamente no fluxo de cancel — só status) |
 | `erro` | (gravado em pontos específicos, ex: separação) |
 | `status_revertido` | endpoint `forcar-pendente` |
 
-A timeline de eventos é exposta em `GET /api/pedidos/[id]/historico` e renderizada no detail do pedido (`/pedidos/[id]`).
+A timeline de eventos é exposta em `GET /api/wms/pedidos/[id]/historico` e renderizada no detail do pedido (`/pedidos/[id]`).
 
 ---
 
@@ -562,7 +562,7 @@ A timeline de eventos é exposta em `GET /api/pedidos/[id]/historico` e renderiz
 
 ```mermaid
 flowchart TD
-    User[Operador abre /siso] --> Q[useQuery 'pedidos' GET /api/pedidos]
+    User[Operador abre /siso] --> Q[useQuery 'pedidos' GET /api/wms/pedidos]
     Q --> P{Particionar por status + tipo_resolucao}
     P -->|status=pendente| Pend[Lista pendentes]
     P -->|status=concluido AND tipo_resolucao!=auto| Concl[Lista concluídos manuais]
@@ -574,7 +574,7 @@ flowchart TD
     Tabs -->|auto| RAuto[Render PedidoCardConcluido readonly tipo=Auto]
     Tabs -->|todos| RTodos[Mistura todos, dedup por id]
     RPend --> Aprov[handleAprovar id, decisao]
-    Aprov --> API[POST /api/pedidos/aprovar]
+    Aprov --> API[POST /api/wms/pedidos/aprovar]
     API --> Inv[queryClient.invalidateQueries pedidos]
     Inv --> Q
 ```
@@ -586,7 +586,7 @@ stateDiagram-v2
     [*] --> pendente: webhook recebido<br/>(propria parcial / transf / oc / sem grupo)
     [*] --> executando: webhook recebido<br/>(propria 100% = auto-aprovado)
 
-    pendente --> executando: POST /api/pedidos/aprovar<br/>(operador escolhe decisao)
+    pendente --> executando: POST /api/wms/pedidos/aprovar<br/>(operador escolhe decisao)
     pendente --> cancelado: webhook tiny cancelamento
 
     executando --> concluido: worker executeJob OK<br/>(siso_fila_execucao.status=concluido)
@@ -607,7 +607,7 @@ sequenceDiagram
     autonumber
     actor Op as Operador
     participant UI as PedidoCard /siso
-    participant API as POST /api/pedidos/aprovar
+    participant API as POST /api/wms/pedidos/aprovar
     participant DB as Supabase
     participant Look as empresa-lookup / grupo-resolver
     participant W as kickWorker (after())
@@ -646,11 +646,11 @@ sequenceDiagram
 
 | Acão | Side effect |
 |---|---|
-| Operador abre `/siso` | Polling 30s `GET /api/pedidos` (200 pedidos default), invalidação no `RefreshCw`. |
-| Render do `<PedidoCard>` | Sub-fetch de observações via `<ObservacoesTimeline pedidoId={...}>` (não documentado aqui — ver `/api/pedidos/[id]/observacoes`). |
-| Click em pílula de estoque | `POST /api/tiny/stock/ajustar` → chama Tiny `movimentarEstoque(tipo='B')` → atualiza `siso_pedido_item_estoques`. |
-| Click no lápis de SKU | `POST /api/compras/trocar-sku` → atualiza `siso_pedido_itens.sku` + reconsulta produto Tiny. |
-| Click `Aprovar` | `POST /api/pedidos/aprovar` → UPDATE `siso_pedidos`, INSERT `siso_fila_execucao`, INSERT `siso_pedido_historico`, kick worker via `after()`. |
+| Operador abre `/siso` | Polling 30s `GET /api/wms/pedidos` (200 pedidos default), invalidação no `RefreshCw`. |
+| Render do `<PedidoCard>` | Sub-fetch de observações via `<ObservacoesTimeline pedidoId={...}>` (não documentado aqui — ver `/api/wms/pedidos/[id]/observacoes`). |
+| Click em pílula de estoque | `POST /api/wms/tiny/stock/ajustar` → chama Tiny `movimentarEstoque(tipo='B')` → atualiza `siso_pedido_item_estoques`. |
+| Click no lápis de SKU | `POST /api/wms/compras/trocar-sku` → atualiza `siso_pedido_itens.sku` + reconsulta produto Tiny. |
+| Click `Aprovar` | `POST /api/wms/pedidos/aprovar` → UPDATE `siso_pedidos`, INSERT `siso_fila_execucao`, INSERT `siso_pedido_historico`, kick worker via `after()`. |
 | Aprovação `transferencia` sem empresa suporte | Logger warn `"Transferência sem empresa suporte — fallback para origem"`. Worker depois falhará e levará job para retry/erro. |
 | Pedido auto-aprovado pelo webhook | Já entra com `status='executando'`, `tipo_resolucao='auto'`, `decisao_final='propria'`, marcadores `[galpao,'LVR']`, fila inserida, worker kicked. Aparece direto na tab `Auto`. |
 | Webhook `cancelado` | Atualiza `siso_pedidos.status='cancelado'`, cancela jobs pendentes, limpa `compra_status` se em fluxo de compras, cancela OCs órfãs. |
@@ -664,11 +664,11 @@ sequenceDiagram
 
 ### 13.1 `422 Pedido sem empresa_origem_id`
 
-**Causa:** webhook antigo (anterior à migração de hierarquia) gravou pedido sem `empresa_origem_id`. **Fix:** reprocessar webhook via `/api/webhook/reprocessar` ou rodar reconciliação. Não tem mais como aparecer em pedidos novos (webhook-processor exige `empresaOrigemId` antes de inserir).
+**Causa:** webhook antigo (anterior à migração de hierarquia) gravou pedido sem `empresa_origem_id`. **Fix:** reprocessar webhook via `/api/wms/webhook/reprocessar` ou rodar reconciliação. Não tem mais como aparecer em pedidos novos (webhook-processor exige `empresaOrigemId` antes de inserir).
 
 ### 13.2 Aprovação `transferencia` para grupo single-galpão
 
-`src/app/api/pedidos/aprovar/route.ts:115-124` cai no fallback "usa origem mesmo" + warn log. O operador **consegue aprovar**, mas o worker depois lança erro porque `executarSaidaTransferencia` precisa de `getOrdemDeducao` retornando empresas de outros galpões. **Mitigação UX:** o `<DecisaoDropdown>` desabilita `transferencia` se `decisaoIsAvailable` retornar false (nenhum galpão alternativo cobre tudo) — `src/components/pedido/pedido-card.tsx:511-548`.
+`src/app/api/wms/pedidos/aprovar/route.ts:115-124` cai no fallback "usa origem mesmo" + warn log. O operador **consegue aprovar**, mas o worker depois lança erro porque `executarSaidaTransferencia` precisa de `getOrdemDeducao` retornando empresas de outros galpões. **Mitigação UX:** o `<DecisaoDropdown>` desabilita `transferencia` se `decisaoIsAvailable` retornar false (nenhum galpão alternativo cobre tudo) — `src/components/pedido/pedido-card.tsx:511-548`.
 
 ### 13.3 Operador escolhe decisão sem estoque
 
@@ -684,7 +684,7 @@ Produtos sem ID Tiny (campo `produto_id` em `siso_pedido_itens` ficou `0` por fa
 
 ### 13.6 Listagem trunca pedidos antigos
 
-`/api/pedidos` retorna **todos** ativos + apenas 150 dos não-ativos mais recentes (`src/app/api/pedidos/route.ts:182-194`). Pedido `concluido` antigo sumir da tab `Concluídos` é **comportamento esperado** — para histórico completo, usar `/pedidos` (tracking universal) com filtros.
+`/api/wms/pedidos` retorna **todos** ativos + apenas 150 dos não-ativos mais recentes (`src/app/api/wms/pedidos/route.ts:182-194`). Pedido `concluido` antigo sumir da tab `Concluídos` é **comportamento esperado** — para histórico completo, usar `/pedidos` (tracking universal) com filtros.
 
 ### 13.7 Múltiplas tabs abertas → race no `invalidateQueries`
 

@@ -1,6 +1,10 @@
 # 08 — Inventário e Transferência Inter-Galpão
 
-> Sessões manuais para sincronizar estoque físico entre o que está nas prateleiras e o que está no Tiny ERP. Este fluxo cobre dois processos paralelos e independentes: **Inventário** (`/inventario`) e **Transferência** (`/transferencias`). Ambos seguem o mesmo padrão arquitetural — sessão → bipagem → processamento fire-and-forget → polling de progresso → reverter — mas atuam sobre escopos diferentes.
+> ⚠️ **DOCUMENTO OBSOLETO (2026-05-18, commit `f8b7dbb`)**: as páginas `/inventario` e `/transferencias` e as APIs `/api/inventario/*` e `/api/transferencia/*` (Tiny-based) foram apagadas. Substituídas por:
+> - **Inventário v2** (pull queue + slots OP1-OP5 + claim hierárquico): `/wms/inventario/*` + `/api/wms/inventario/*` — escreve no ledger, sem Tiny.
+> - **Transferências inter-galpão**: `/wms/transferir` + `/api/wms/transferir-galpao` e `/api/wms/transferencias/*` — par S+E no ledger.
+>
+> Esta página fica preservada como documentação histórica do desenho legado (Tiny-first). Para o desenho atual, consulte `CLAUDE.md` (seção WMS Plano 4 v2) e os specs em `docs/superpowers/`.
 
 ---
 
@@ -868,7 +872,7 @@ sequenceDiagram
 
 **Conclusão:** uma transferência **de pedido** é uma decisão sobre qual empresa do grupo paga a dedução, mas o produto fisicamente **já está** na empresa que vai expedir. **Transferência manual** é uma operação para ajustar estoque entre empresas que **fisicamente** moveram produto.
 
-### vs. encaminhar pedido (`/api/separacao/encaminhar` — ver doc 05)
+### vs. encaminhar pedido (`/api/wms/separacao/encaminhar` — ver doc 05)
 
 `encaminhar` é uma operação dentro do fluxo de **separação** que muda o galpão executor de um pedido em andamento (ex.: o galpão CWB começou a separar mas percebeu que o produto está faltando, e encaminha o pedido para SP). Ele atualiza `siso_pedidos.empresa_origem_id` ou `empresa_deducao_id`, mas **não movimenta estoque** entre Tiny accounts. Não confunde com transferência manual.
 

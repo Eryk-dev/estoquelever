@@ -17,8 +17,8 @@
 - [4. Embalagem](#4-embalagem)
   - [4.1 Quando um pedido entra em embalagem](#41-quando-um-pedido-entra-em-embalagem)
   - [4.2 UI `/separacao/embalagem`](#42-ui-separacaoembalagem)
-  - [4.3 `POST /api/separacao/bipar-embalagem`](#43-post-apiseparacaobipar-embalagem)
-  - [4.4 `POST /api/separacao/confirmar-item-embalagem`](#44-post-apiseparacaoconfirmar-item-embalagem)
+  - [4.3 `POST /api/wms/separacao/bipar-embalagem`](#43-post-apiseparacaobipar-embalagem)
+  - [4.4 `POST /api/wms/separacao/confirmar-item-embalagem`](#44-post-apiseparacaoconfirmar-item-embalagem)
   - [4.5 Conferência: contagem real e itens ocultos](#45-conferência-contagem-real-e-itens-ocultos)
   - [4.6 Caminho OC: embalagem direta `aguardando_compra` → `embalado`](#46-caminho-oc-embalagem-direta-aguardando_compra--embalado)
 - [5. Impressão de etiqueta no momento da embalagem](#5-impressão-de-etiqueta-no-momento-da-embalagem)
@@ -26,11 +26,11 @@
   - [5.2 Slow path — `buscarEImprimirEtiqueta`](#52-slow-path--buscareimprimiretiqueta)
   - [5.3 `imprimirEtiquetaDireta` (claim atômico no RPC)](#53-imprimiretiquetadireta-claim-atômico-no-rpc)
 - [6. Expedição](#6-expedição)
-  - [6.1 `POST /api/separacao/expedir`](#61-post-apiseparacaoexpedir)
+  - [6.1 `POST /api/wms/separacao/expedir`](#61-post-apiseparacaoexpedir)
   - [6.2 UI tab `embalados` e batch expedir](#62-ui-tab-embalados-e-batch-expedir)
 - [7. Reimpressão e retry](#7-reimpressão-e-retry)
-  - [7.1 `POST /api/separacao/reimprimir`](#71-post-apiseparacaoreimprimir)
-  - [7.2 `POST /api/separacao/retry-etiqueta`](#72-post-apiseparacaoretry-etiqueta)
+  - [7.1 `POST /api/wms/separacao/reimprimir`](#71-post-apiseparacaoreimprimir)
+  - [7.2 `POST /api/wms/separacao/retry-etiqueta`](#72-post-apiseparacaoretry-etiqueta)
 - [8. Integração PrintNode](#8-integração-printnode)
   - [8.1 Configuração](#81-configuração)
   - [8.2 Resolução de impressora](#82-resolução-de-impressora)
@@ -138,8 +138,8 @@ Entrypoints fire-and-forget:
 - `src/lib/execution-worker.ts:565` — após enriquecer NF no worker (`propria`/`transferencia`/`oc`).
 - `src/lib/nf-webhook-handler.ts:163` — quando o webhook de NF chega após o pedido.
 - `src/lib/webhook-processor.ts:547` — reconciliação de NF dentro do webhook de pedido.
-- `src/app/api/separacao/forcar-pendente/route.ts:110` e `[pedidoId]/forcar-pendente/route.ts:119` — após override manual de NF.
-- `src/app/api/admin/backfill-agrupamentos/route.ts:85` — endpoint de backfill admin.
+- `src/app/api/wms/separacao/forcar-pendente/route.ts:110` e `[pedidoId]/forcar-pendente/route.ts:119` — após override manual de NF.
+- `src/app/api/wms/admin/backfill-agrupamentos/route.ts:85` — endpoint de backfill admin.
 
 Gates (em ordem, `agrupamento-service.ts:219-274`):
 1. Pedido encontrado.
@@ -165,10 +165,10 @@ A **fase 2** roda quando o pedido transita para `separado`. Tem dois objetivos:
 2. **`recarregarEtiquetasFaltantes(pedidoIds[])`** (`agrupamento-service.ts:121-202`) — para pedidos que **já têm `agrupamento_expedicao_id`** numérico mas estão sem `etiqueta_zpl`, redownload. Casos comuns: rede instável durante fase 1, ZIP corrompido.
 
 Entrypoints fire-and-forget:
-- `src/app/api/separacao/concluir/route.ts:202-212` — após concluir wave picking. Roda **ambos** em sequência.
-- `src/app/api/separacao/concluir-oc/route.ts:310-316` — caminho OC equivalente.
+- `src/app/api/wms/separacao/concluir/route.ts:202-212` — após concluir wave picking. Roda **ambos** em sequência.
+- `src/app/api/wms/separacao/concluir-oc/route.ts:310-316` — caminho OC equivalente.
 - `src/lib/compras-embalagem.ts:198-206` — quando OC foi recebida e itens estão prontos para embalar.
-- `src/app/api/separacao/retry-etiqueta/route.ts:167-199` — retry manual.
+- `src/app/api/wms/separacao/retry-etiqueta/route.ts:167-199` — retry manual.
 
 `recarregarEtiquetasFaltantes` filtra primeiro pedidos com `agrupamento_expedicao_id` numérico (`/^\d+$/`); os com `'pending'` ou `'expedido_externo'` são pulados com warning. Para cada pedido válido, chama `retryAgrupamento`:
 1. `concluirAgrupamento` — 404 → limpa IDs (re-criação), 400 → segue (já concluído), outros erros → throw.
@@ -227,12 +227,12 @@ Componentes principais:
 - **Lista de pedidos** — separada em duas seções: **Pendentes** (status `separado`) e **Embalados** (transitaram durante a sessão). O `completedIds: Set<string>` mantém em memória os pedidos completos da sessão; `completedPedidoData: Map` guarda os dados originais para que o pedido continue visível mesmo após o `useQuery` deixar de retorná-lo.
 - **`EmbalagemOrderRow`** (`page.tsx:655-834`) — header expansível com `numero`, NF, EC (clicável para copiar), cliente, empresa origem, contagem `itens_bipados/total_itens`. Expandido mostra `EmbalagemItemRow` para cada item.
 - **`EmbalagemItemRow`** (`page.tsx:838-939`) — imagem (clicável para zoom), descrição, SKU (clicável para copiar), localização, contagem `bipada/pedida`, e botões **+/-** para ajuste manual.
-- **Botão Reimprimir** — aparece em pedidos completos expandidos. Chama `POST /api/separacao/reimprimir`.
-- **Botão "Reiniciar progresso"** — chama `POST /api/separacao/reiniciar` com `etapa: "embalagem"` para os pedidos ativos. Zerar pode ser destrutivo: confirmation `window.confirm`.
+- **Botão Reimprimir** — aparece em pedidos completos expandidos. Chama `POST /api/wms/separacao/reimprimir`.
+- **Botão "Reiniciar progresso"** — chama `POST /api/wms/separacao/reiniciar` com `etapa: "embalagem"` para os pedidos ativos. Zerar pode ser destrutivo: confirmation `window.confirm`.
 
 Dados:
-- `useQuery(["embalagem-pedidos", ...])` chama `GET /api/separacao?status_separacao=separado` (ou `aguardando_compra` no modo OC), `refetchInterval: 5000`.
-- `useQuery(["embalagem-items", ...])` chama `GET /api/separacao/checklist-items?pedidos=ID1,ID2,...` para os itens. `staleTime: 30_000`.
+- `useQuery(["embalagem-pedidos", ...])` chama `GET /api/wms/separacao?status_separacao=separado` (ou `aguardando_compra` no modo OC), `refetchInterval: 5000`.
+- `useQuery(["embalagem-items", ...])` chama `GET /api/wms/separacao/checklist-items?pedidos=ID1,ID2,...` para os itens. `staleTime: 30_000`.
 
 Diferenças vs. picking (fluxo 05):
 - **Picking** mostra produto/localização para coleta no armazém; SKU é validado contra item em `siso_pedido_itens.bipado` (campo separado de `bipado_completo`).
@@ -240,9 +240,9 @@ Diferenças vs. picking (fluxo 05):
 - **Picking** usa `marcar-item` / `bipar` / `desfazer-bip`. **Embalagem** usa `bipar-embalagem` / `confirmar-item-embalagem`.
 - **Picking** termina com `concluir`. **Embalagem** **não tem endpoint explícito de conclusão** — a transição para `embalado` é detectada **dentro** dos próprios endpoints quando todos os items packáveis ficam `bipado_completo = true`.
 
-### 4.3 `POST /api/separacao/bipar-embalagem`
+### 4.3 `POST /api/wms/separacao/bipar-embalagem`
 
-Arquivo: `src/app/api/separacao/bipar-embalagem/route.ts`.
+Arquivo: `src/app/api/wms/separacao/bipar-embalagem/route.ts`.
 
 Headers: `X-Session-Id`. Body: `{ sku: string, galpao_id?: string, quantidade?: number }`.
 
@@ -292,9 +292,9 @@ Erros:
 - 404 com mensagem diagnóstica (`Nenhum pedido com este SKU pendente de embalagem` ou `SKU encontrado mas não disponível: #1234: já bipado, ...`)
 - 500 erro interno
 
-### 4.4 `POST /api/separacao/confirmar-item-embalagem`
+### 4.4 `POST /api/wms/separacao/confirmar-item-embalagem`
 
-Arquivo: `src/app/api/separacao/confirmar-item-embalagem/route.ts`.
+Arquivo: `src/app/api/wms/separacao/confirmar-item-embalagem/route.ts`.
 
 Headers: `X-Session-Id`. Body: `{ pedido_item_id: string, quantidade: number }`.
 
@@ -416,9 +416,9 @@ Comportamento idêntico ao `buscarEImprimirEtiqueta` mas sem o claim RPC.
 
 ## 6. Expedição
 
-### 6.1 `POST /api/separacao/expedir`
+### 6.1 `POST /api/wms/separacao/expedir`
 
-Arquivo: `src/app/api/separacao/expedir/route.ts`.
+Arquivo: `src/app/api/wms/separacao/expedir/route.ts`.
 
 Headers: `X-Session-Id`. Body: `{ pedido_ids: string[] }`.
 
@@ -445,9 +445,9 @@ Layout: lista de cards com checkbox por pedido, rótulo "Embalado às HH:MM", a�
 
 Operações:
 - **Selecionar todos** + checkbox por linha. Suporta **Shift+click** para seleção em range (`tab-embalados.tsx:46-65`).
-- **Expedir Selecionados (N)** — chama `POST /api/separacao/expedir` com array. Não exibido para admin.
+- **Expedir Selecionados (N)** — chama `POST /api/wms/separacao/expedir` com array. Não exibido para admin.
 - **Expedir individual** — single-pedido também via mesmo endpoint.
-- **Reimprimir / Tentar Novamente** — chama `POST /api/separacao/reimprimir`. Botão muda visual conforme status:
+- **Reimprimir / Tentar Novamente** — chama `POST /api/wms/separacao/reimprimir`. Botão muda visual conforme status:
   - `etiqueta_status = 'falhou'` → botão vermelho "Tentar Novamente" com texto.
   - `etiqueta_status = 'impresso'` → ícone Printer pequeno.
   - Outros → ícone disabled (40% opacity).
@@ -458,9 +458,9 @@ Após expedir, chama `onUpdated()` que invalida queries da página `/separacao` 
 
 ## 7. Reimpressão e retry
 
-### 7.1 `POST /api/separacao/reimprimir`
+### 7.1 `POST /api/wms/separacao/reimprimir`
 
-Arquivo: `src/app/api/separacao/reimprimir/route.ts`.
+Arquivo: `src/app/api/wms/separacao/reimprimir/route.ts`.
 
 Headers: `X-Session-Id`. Body: `{ pedido_id: string }`.
 
@@ -479,9 +479,9 @@ Fluxo (`route.ts:23-131`):
 
 `splitZplLabels` (em `etiqueta-download.ts:120-145`): split por `^XA...^XZ`. **Não** divide labels Shopee (contêm `~DG`) porque `~DG` baixa raster gráfico, `^XG` imprime, `^ID` limpa — separar quebra a sequência. Em cache normal Tiny (envio + DANFE), reimprimir só envia o primeiro (etiqueta de envio).
 
-### 7.2 `POST /api/separacao/retry-etiqueta`
+### 7.2 `POST /api/wms/separacao/retry-etiqueta`
 
-Arquivo: `src/app/api/separacao/retry-etiqueta/route.ts`.
+Arquivo: `src/app/api/wms/separacao/retry-etiqueta/route.ts`.
 
 Headers: `X-Session-Id`. Body: `{ pedido_id: string }` ou `{ pedido_ids: string[] }`.
 
@@ -534,7 +534,7 @@ Resposta:
 
 API key salva em `siso_configuracoes` sob a chave `PRINTNODE_API_KEY` (uppercase no `etiqueta-service.ts`) **ou** `printnode_api_key` (lowercase no `etiquetas-endereco/imprimir`). Ambas formas existem em produção; o `getConfig` consulta literalmente a chave passada. **Cuidado** ao migrar — convém padronizar.
 
-CRUD via `/api/admin/printnode/api-key`. Listar impressoras: `/api/admin/printnode/printers`. Testar conexão: `/api/admin/printnode/test`.
+CRUD via `/api/wms/admin/printnode/api-key`. Listar impressoras: `/api/wms/admin/printnode/printers`. Testar conexão: `/api/wms/admin/printnode/test`.
 
 Cliente PrintNode (`src/lib/printnode.ts`):
 - Base URL: `https://api.printnode.com`.
@@ -634,11 +634,13 @@ Exemplo: `A-01-1, A-01-2, A-02-1, ..., A-20-5, B-01-1, ...`.
 
 ### 9.3 Preview e impressão
 
-UI: `src/app/etiquetas/page.tsx`. Tabs `pequena` / `grande` com forms separados (refs `rangePequenaRef` / `rangeGrandeRef` preservam params entre tabs).
+> ⚠️ **Seção obsoleta (2026-05-18, commit `f8b7dbb`)**: a página `/etiquetas` e os endpoints `/api/etiquetas-endereco/*` foram apagados. Etiquetas de endereço hoje vivem dentro do fluxo de WMS — geradas via `src/lib/wms/zpl-produto.ts` e impressas pelo fluxo de Guarda em `/wms/guarda/*` (`POST /api/wms/guarda/[id]/imprimir` + `POST /api/wms/guarda/imprimir-lote`). O conteúdo abaixo fica como referência histórica.
 
-Componentes:
-- `EtiquetaEnderecoForm` (`src/components/etiquetas/etiqueta-endereco-form.tsx`) — três campos de range (corredor, horizontal, vertical). Submit chama `POST /api/etiquetas-endereco/preview`.
-- `EnderecoPreview` (`src/components/etiquetas/endereco-preview.tsx`) — exibe pílulas com cada endereço, contagem total, **dropdown de impressora** (carregado de `/api/admin/printnode/printers`), warning se `total > 100`. Botão "Imprimir N etiquetas" chama `POST /api/etiquetas-endereco/imprimir`.
+UI: `src/app/etiquetas/page.tsx` (REMOVIDO). Tabs `pequena` / `grande` com forms separados.
+
+Componentes (REMOVIDOS):
+- `EtiquetaEnderecoForm` — três campos de range (corredor, horizontal, vertical). Submit chamava `POST /api/etiquetas-endereco/preview`.
+- `EnderecoPreview` — exibia pílulas com cada endereço, contagem total, dropdown de impressora, warning se `total > 100`. Botão chamava `POST /api/etiquetas-endereco/imprimir`.
 
 **`POST /api/etiquetas-endereco/preview`** (`src/app/api/etiquetas-endereco/preview/route.ts`):
 - Valida campos obrigatórios (`corredor_inicio/fim` strings, `horizontal_*`/`vertical_*` numbers, start ≤ end).
@@ -711,7 +713,7 @@ stateDiagram-v2
 sequenceDiagram
     actor Op as Operador
     participant UI as /separacao/embalagem
-    participant API as /api/separacao/bipar-embalagem
+    participant API as /api/wms/separacao/bipar-embalagem
     participant DB as Supabase (RPC)
     participant ES as etiqueta-service
     participant PN as PrintNode
@@ -744,7 +746,7 @@ Latência típica: **180-250 ms** end-to-end no fast path.
 ```mermaid
 sequenceDiagram
     actor Op as Operador
-    participant API as /api/separacao/bipar-embalagem
+    participant API as /api/wms/separacao/bipar-embalagem
     participant DB as Supabase
     participant ES as etiqueta-service
     participant TY as Tiny API
@@ -862,7 +864,7 @@ Não toca em `siso_pedido_item_estoques`, `siso_grupo_empresas`, `siso_galpoes`,
 | Pedido completou items mas `status_separacao` não mudou | items `compra_status='indisponivel'` ainda contados (bug pré-`20260318_fix_embalagem_hidden_items_count.sql`) | Migração corrigiu o filtro. Endpoint usa `.or("compra_status.is.null,compra_status.not.in.(...)")` para tratar NULL. |
 | Etiqueta nunca imprime, `etiqueta_status` fica `pendente` | Pedido sem `nota_fiscal_id` ou `chave_acesso_nf`. Fase 1 desistiu. | Esperar webhook de NF, ou endpoint admin `forcar-pendente` que dispara `criarAgrupamentoFase1`. |
 | `agrupamento_expedicao_id = 'pending'` indefinidamente | Crash entre claim e save | `recuperarPendingTravados` libera após 5min em qualquer entrypoint que chame fase 1 ou 2. |
-| Etiqueta diz "PrintNode 4xx" | API key revogada, printer ID stale, ou job rejeitado por formato | Re-testar via `/api/admin/printnode/test`, validar lista atual com `/printers`. |
+| Etiqueta diz "PrintNode 4xx" | API key revogada, printer ID stale, ou job rejeitado por formato | Re-testar via `/api/wms/admin/printnode/test`, validar lista atual com `/printers`. |
 | ZPL baixado mas vazio/inválido | ZIP corrompido, ou URL apontou para PDF (legacy/fallback) | `etiqueta-download.ts:101-106` valida com `^`/`~`. Retorna null, slow path tenta de novo no próximo retry. |
 | Etiqueta Shopee duplica labels antigas na impressora | `splitZplLabels` separou bloco `~DG`/`^XG`/`^ID` perdendo cleanup | `splitZplLabels` agora trata `~DG` como bloco único (`etiqueta-download.ts:124-127`). |
 | Reimpressão fast path imprime DANFE também | `etiqueta_zpl` cacheado contém múltiplos labels concatenados (envio + DANFE) | `reimprimir/route.ts:101` usa `splitZplLabels(...)[0]` para garantir só envio. |
@@ -893,11 +895,11 @@ Não toca em `siso_pedido_item_estoques`, `siso_grupo_empresas`, `siso_galpoes`,
 | Arquivo | Função |
 |---|---|
 | `src/app/separacao/embalagem/page.tsx` | UI de embalagem (bip + +/- + reimprimir + reiniciar) |
-| `src/app/api/separacao/bipar-embalagem/route.ts` | Endpoint de bip principal (RPC PL/pgSQL) |
-| `src/app/api/separacao/confirmar-item-embalagem/route.ts` | +/- manual + caminho OC direto |
-| `src/app/api/separacao/expedir/route.ts` | `embalado → expedido` |
-| `src/app/api/separacao/reimprimir/route.ts` | Reimpressão sob demanda |
-| `src/app/api/separacao/retry-etiqueta/route.ts` | Recovery batch sem imprimir |
+| `src/app/api/wms/separacao/bipar-embalagem/route.ts` | Endpoint de bip principal (RPC PL/pgSQL) |
+| `src/app/api/wms/separacao/confirmar-item-embalagem/route.ts` | +/- manual + caminho OC direto |
+| `src/app/api/wms/separacao/expedir/route.ts` | `embalado → expedido` |
+| `src/app/api/wms/separacao/reimprimir/route.ts` | Reimpressão sob demanda |
+| `src/app/api/wms/separacao/retry-etiqueta/route.ts` | Recovery batch sem imprimir |
 | `src/lib/etiqueta-service.ts` | Fast/slow path + claim atômico |
 | `src/lib/agrupamento-service.ts` | Fase 1 + fase 2 do pré-cache |
 | `src/lib/etiqueta-download.ts` | Download ZIP + extract ZPL + split |

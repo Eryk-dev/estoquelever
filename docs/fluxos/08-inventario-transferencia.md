@@ -1076,3 +1076,24 @@ Todos os pontos relevantes usam o `logger` em `src/lib/logger.ts`.
   - `src/lib/tiny-queue.ts` (`runWithEmpresa`)
 - DB:
   - [`docs/database-schema.md` §siso_inventarios](../database-schema.md#siso_inventarios), §siso_inventario_itens, §siso_transferencias, §siso_transferencia_itens
+
+### Reconciliação temporal (estoque online)
+
+```mermaid
+sequenceDiagram
+    participant Op as Operador (handheld)
+    participant Sep as Separação (concorrente)
+    participant Sup as Supervisor
+    participant DB as siso_movimentacoes
+    participant Calc as reconciliarTemporal
+
+    Op->>DB: bipe qty=1 às T0 (siso_inventario_contagens)
+    Sep->>DB: picking saída qty=1 às T1>T0 (mov nf_venda, saldo 1→0)
+    Sup->>Calc: aprovar (cutoff = now())
+    Calc->>DB: busca primeira mov efetiva na quádrupla com criado_em > T0
+    DB-->>Calc: mov T1 com saldo_anterior=1
+    Calc->>Calc: saldo_esperado = 1, qty_contada = 1, delta = 0
+    Calc-->>Sup: zero divergência
+```
+
+A reconstrução do saldo no instante do bipe é o que permite que picking, recebimento e inventário rodem em paralelo sem fricção.

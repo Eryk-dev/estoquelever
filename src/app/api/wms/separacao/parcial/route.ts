@@ -330,6 +330,77 @@ async function processarParcialItem(
         ? itemUpdates.findIndex((u) => u.qty_para_este > 0)
         : 0;
 
+    // 9a. Popula tabela ponte siso_pedido_item_mov_links — 1 linha por item com qty>0
+    //     pra mov de saída (rateada), e 1 linha pro primeiro beneficiado se houve
+    //     mov de ajuste loc_zerou (ajuste é da loc, não rateado).
+    if (movSaidaId) {
+      const linksData: Array<{
+        pedido_item_id: number;
+        realocacao_id: null;
+        mov_id: string;
+        qty: number;
+        tipo_link: "saida" | "ajuste_loc_zerou";
+      }> = [];
+
+      for (const upd of itemUpdates) {
+        if (upd.qty_para_este > 0) {
+          linksData.push({
+            pedido_item_id: Number(upd.item.id),
+            realocacao_id: null,
+            mov_id: movSaidaId,
+            qty: upd.qty_para_este,
+            tipo_link: "saida",
+          });
+        }
+      }
+
+      if (linksData.length > 0) {
+        const { error: linkErr } = await supabase
+          .from("siso_pedido_item_mov_links")
+          .insert(linksData);
+        if (linkErr) {
+          logger.logError({
+            error: linkErr,
+            source: "separacao-parcial-item",
+            message: "Falhou criar links",
+            category: "database",
+            requestPath: "/api/wms/separacao/parcial",
+            requestMethod: "POST",
+            metadata: { movSaidaId, linksData },
+          });
+          return NextResponse.json({ error: "erro persistindo links" }, { status: 500 });
+        }
+      }
+    }
+
+    if (movAjusteId && loc_zerou) {
+      const delta = saldoWms - quantidade_pega;
+      if (delta > 0) {
+        // ajuste é da loc, não rateado entre itens — vai no primeiro beneficiado
+        const { error: linkAjErr } = await supabase
+          .from("siso_pedido_item_mov_links")
+          .insert({
+            pedido_item_id: Number(itemsRaw[indexPrimeiroBeneficiado].id),
+            realocacao_id: null,
+            mov_id: movAjusteId,
+            qty: delta,
+            tipo_link: "ajuste_loc_zerou",
+          });
+        if (linkAjErr) {
+          logger.logError({
+            error: linkAjErr,
+            source: "separacao-parcial-item",
+            message: "Falhou criar link de ajuste",
+            category: "database",
+            requestPath: "/api/wms/separacao/parcial",
+            requestMethod: "POST",
+            metadata: { movAjusteId, delta },
+          });
+          return NextResponse.json({ error: "erro persistindo links" }, { status: 500 });
+        }
+      }
+    }
+
     for (let i = 0; i < itemUpdates.length; i++) {
       const u = itemUpdates[i];
       const { item: it, qty_para_este, qty_residual } = u;
@@ -355,7 +426,11 @@ async function processarParcialItem(
           parcial_por: isParcial ? session.id : null,
           separacao_marcado: true,
           separacao_marcado_em: nowIso,
-          mov_saida_id: ehBeneficiario ? movSaidaId : null,
+          // Legacy field: mov_saida vinculada a TODOS os beneficiários (qty > 0)
+          // pra desfazer-parcial/cancelar legados localizarem a mov. A tabela ponte
+          // (criada acima) é a fonte de verdade pra rateamento.
+          mov_saida_id: qty_para_este > 0 ? movSaidaId : null,
+          // mov_ajuste é da loc — fica só no primeiro beneficiário (não rateado)
           mov_ajuste_loc_zerou_id: ehBeneficiario ? movAjusteId : null,
         })
         .eq("id", it.id);

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
-import { inserirMovimentacao } from "@/lib/wms/ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import { registrarEvento } from "@/lib/historico-service";
 import { resolverProdutoWms, resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
 import { resolverRealocacao } from "@/lib/separacao/realocacao-resolver";
@@ -401,6 +401,10 @@ async function processarParcialItem(
       }
     }
 
+    // C4: race-check via .eq("separacao_marcado", false) — se outro op
+    // marcou primeiro (0 rows affected), rollback (estornar movs + delete bridge)
+    // e retorna 409 race_item_ja_picado.
+    let racePerdida = false;
     for (let i = 0; i < itemUpdates.length; i++) {
       const u = itemUpdates[i];
       const { item: it, qty_para_este, qty_residual } = u;
@@ -416,7 +420,7 @@ async function processarParcialItem(
       if (!deveMarcar) continue;
 
       const isParcial = !isCompleto;
-      const { error: updErr } = await supabase
+      const { data: claimed, error: updErr } = await supabase
         .from("siso_pedido_itens")
         .update({
           quantidade_pega: qty_para_este,
@@ -433,7 +437,9 @@ async function processarParcialItem(
           // mov_ajuste é da loc — fica só no primeiro beneficiário (não rateado)
           mov_ajuste_loc_zerou_id: ehBeneficiario ? movAjusteId : null,
         })
-        .eq("id", it.id);
+        .eq("id", it.id)
+        .eq("separacao_marcado", false)
+        .select("id");
 
       if (updErr) {
         logger.logError({
@@ -446,6 +452,11 @@ async function processarParcialItem(
           metadata: { pedido_item_id: it.id, movSaidaId, movAjusteId },
         });
         return NextResponse.json({ error: "erro persistindo parcial" }, { status: 500 });
+      }
+
+      if (!claimed || claimed.length === 0) {
+        racePerdida = true;
+        break;
       }
 
       await registrarEvento({
@@ -463,6 +474,49 @@ async function processarParcialItem(
         },
         usuarioId: session.id,
       });
+    }
+
+    if (racePerdida) {
+      // Rollback: estornar movs + delete bridge links
+      if (movSaidaId) {
+        try {
+          await estornarMovimentacao({
+            mov_id: movSaidaId,
+            usuario_id: session.id,
+            observacoes: "Race condition — outro operador marcou primeiro",
+          });
+        } catch (e: unknown) {
+          logger.warn("separacao-parcial", "rollback estorno falhou", {
+            error: (e as Error).message,
+          });
+        }
+      }
+      if (movAjusteId) {
+        try {
+          await estornarMovimentacao({
+            mov_id: movAjusteId,
+            usuario_id: session.id,
+            observacoes: "Race condition (ajuste)",
+          });
+        } catch (e: unknown) {
+          logger.warn("separacao-parcial", "rollback ajuste falhou", {
+            error: (e as Error).message,
+          });
+        }
+      }
+      if (movSaidaId) {
+        await supabase.from("siso_pedido_item_mov_links").delete().eq("mov_id", movSaidaId);
+      }
+      if (movAjusteId) {
+        await supabase.from("siso_pedido_item_mov_links").delete().eq("mov_id", movAjusteId);
+      }
+      return NextResponse.json(
+        {
+          error: "race_item_ja_picado",
+          message: "Outro operador marcou primeiro — atualize a tela",
+        },
+        { status: 409 },
+      );
     }
 
     // 10. Cascade: pra cada item com residual, busca outra loc.
@@ -928,6 +982,10 @@ async function processarParcialRealocacao(
     }
 
     // 9. Update cada realocação + acumula no item pai
+    //    C4: race-check via .eq("status","aguardando_picking") — se outro op
+    //    picou primeiro (0 rows affected), rollback (estornar movs + delete bridge)
+    //    e retorna 409 realocacao_ja_picada.
+    let racePerdida = false;
     for (let i = 0; i < updates.length; i++) {
       const u = updates[i];
       const { realoc, qty_para_esta, qty_residual } = u;
@@ -939,7 +997,7 @@ async function processarParcialRealocacao(
 
       const isParcialEsta = !isCompletoEsta;
 
-      const { error: updErr } = await supabase
+      const { data: claimed, error: updErr } = await supabase
         .from("siso_pedido_item_realocacoes")
         .update({
           status: isCompletoEsta ? "picado" : "picado_parcial",
@@ -958,7 +1016,9 @@ async function processarParcialRealocacao(
           // mov_ajuste é da loc — fica só na primeira beneficiária (não rateado)
           mov_ajuste_loc_zerou_id: ehBeneficiario ? movAjusteId : null,
         })
-        .eq("id", realoc.id);
+        .eq("id", realoc.id)
+        .eq("status", "aguardando_picking")
+        .select("id");
 
       if (updErr) {
         logger.logError({
@@ -971,6 +1031,11 @@ async function processarParcialRealocacao(
           metadata: { realocacao_id: realoc.id, movSaidaId, movAjusteId },
         });
         return NextResponse.json({ error: "erro persistindo realocação" }, { status: 500 });
+      }
+
+      if (!claimed || claimed.length === 0) {
+        racePerdida = true;
+        break;
       }
 
       // Acumula qty no item pai
@@ -1001,6 +1066,49 @@ async function processarParcialRealocacao(
         },
         usuarioId: session.id,
       });
+    }
+
+    if (racePerdida) {
+      // Rollback: estornar movs + delete bridge links
+      if (movSaidaId) {
+        try {
+          await estornarMovimentacao({
+            mov_id: movSaidaId,
+            usuario_id: session.id,
+            observacoes: "Race condition — outro operador picou primeiro",
+          });
+        } catch (e: unknown) {
+          logger.warn("separacao-parcial-realoc", "rollback estorno falhou", {
+            error: (e as Error).message,
+          });
+        }
+      }
+      if (movAjusteId) {
+        try {
+          await estornarMovimentacao({
+            mov_id: movAjusteId,
+            usuario_id: session.id,
+            observacoes: "Race condition (ajuste)",
+          });
+        } catch (e: unknown) {
+          logger.warn("separacao-parcial-realoc", "rollback ajuste falhou", {
+            error: (e as Error).message,
+          });
+        }
+      }
+      if (movSaidaId) {
+        await supabase.from("siso_pedido_item_mov_links").delete().eq("mov_id", movSaidaId);
+      }
+      if (movAjusteId) {
+        await supabase.from("siso_pedido_item_mov_links").delete().eq("mov_id", movAjusteId);
+      }
+      return NextResponse.json(
+        {
+          error: "realocacao_ja_picada",
+          message: "Outro operador picou primeiro — atualize a tela",
+        },
+        { status: 409 },
+      );
     }
 
     // 10. Cascade — pra cada realoc com residual em loc_zerou=true, busca próxima loc

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
-import { inserirMovimentacao } from "@/lib/wms/ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import { registrarEvento } from "@/lib/historico-service";
 import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
 
@@ -121,7 +121,10 @@ export async function POST(request: NextRequest) {
     }
 
     const nowIso = new Date().toISOString();
-    const { error: updErr } = await supabase
+    // C4: race-check via .eq("status","aguardando_picking") — se outro op
+    // picou primeiro (0 rows affected), rollback (estornar mov + delete bridge)
+    // e retorna 409 realocacao_ja_picada.
+    const { data: claimed, error: updErr } = await supabase
       .from("siso_pedido_item_realocacoes")
       .update({
         status: "picado",
@@ -129,7 +132,9 @@ export async function POST(request: NextRequest) {
         picado_por: session.id,
         mov_saida_id: mov.id,
       })
-      .eq("id", realoc.id);
+      .eq("id", realoc.id)
+      .eq("status", "aguardando_picking")
+      .select("id");
 
     if (updErr) {
       logger.logError({
@@ -142,6 +147,32 @@ export async function POST(request: NextRequest) {
         metadata: { realocacao_id: realoc.id, mov_id: mov.id },
       });
       return NextResponse.json({ error: "erro persistindo realocação" }, { status: 500 });
+    }
+
+    if (!claimed || claimed.length === 0) {
+      // Race: rollback (estornar mov + delete bridge link)
+      try {
+        await estornarMovimentacao({
+          mov_id: mov.id,
+          usuario_id: session.id,
+          observacoes: "Race condition — outro operador picou primeiro",
+        });
+      } catch (e: unknown) {
+        logger.warn("separacao-marcar-realocacao", "rollback estorno falhou", {
+          error: (e as Error).message,
+        });
+      }
+      await supabase
+        .from("siso_pedido_item_mov_links")
+        .delete()
+        .eq("mov_id", mov.id);
+      return NextResponse.json(
+        {
+          error: "realocacao_ja_picada",
+          message: "Outro operador picou primeiro — atualize a tela",
+        },
+        { status: 409 },
+      );
     }
 
     const novaQty = (item.quantidade_pega ?? 0) + realoc.quantidade;

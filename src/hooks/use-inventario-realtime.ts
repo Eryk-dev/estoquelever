@@ -74,8 +74,10 @@ export function useInventarioRealtime(sessaoId: string | null) {
     if (!sessaoId) return;
     let cancelled = false;
 
-    // 1. Snapshot inicial via API auth-gated
-    (async () => {
+    // Snapshot fetch reutilizável: pega tudo de uma vez, incluindo joins
+    // (usuario.nome, produto.sku, etc) — eventos crus do Realtime não trazem
+    // esses joins, então re-buscamos quando aparece linha nova com dependência.
+    const refreshSnapshot = async () => {
       try {
         const snap = await wmsApi<SessaoSnapshot>(
           `/api/wms/inventario/${sessaoId}`,
@@ -85,9 +87,12 @@ export function useInventarioRealtime(sessaoId: string | null) {
         setLocs((snap.localizacoes ?? []) as LocSessao[]);
         setOperadores((snap.operadores ?? []) as Operador[]);
       } catch {
-        // Falha de auth/rede: estado vazio, UI mostra empty state
+        // Falha de auth/rede: mantém estado atual (não zera UI)
       }
-    })();
+    };
+
+    // 1. Snapshot inicial via API auth-gated
+    void refreshSnapshot();
 
     // 2. Realtime: aplica eventos incrementalmente
     const channel = sb
@@ -125,7 +130,10 @@ export function useInventarioRealtime(sessaoId: string | null) {
           table: "siso_inventario_operadores",
           filter: `sessao_id=eq.${sessaoId}`,
         },
-        ({ new: r }) => setOperadores((prev) => [...prev, r as Operador]),
+        // Operador novo entra na party — re-busca snapshot pra trazer o
+        // join usuario.nome. Sem isso o card mostra "Operador" genérico até
+        // a próxima carga manual.
+        () => void refreshSnapshot(),
       )
       .on(
         "postgres_changes",

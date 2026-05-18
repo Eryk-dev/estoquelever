@@ -5,6 +5,7 @@ import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { estornarEstoque, movimentarEstoque } from "@/lib/tiny-api";
 import { registrarEvento } from "@/lib/historico-service";
+import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "encaminhar";
@@ -130,7 +131,8 @@ async function encaminharPedido(
 
   if (
     pedido.status_separacao !== "aguardando_separacao" &&
-    pedido.status_separacao !== "em_separacao"
+    pedido.status_separacao !== "em_separacao" &&
+    pedido.status_separacao !== "pendente_realocacao"
   ) {
     throw new Error(
       `Status inválido para encaminhar: ${pedido.status_separacao ?? "null"}`,
@@ -186,12 +188,27 @@ async function encaminharPedido(
     throw new Error(`Falha ao resetar pedido: ${updateErr.message}`);
   }
 
-  // Reset item-level separation state
+  // Reset item-level separation state via shared helper
+  // (estorna mov_saida_id, cancela realocs, reseta 10 campos do item, registra evento).
+  // Mantém o reset de campos legados (estoque_saida_lancada, empresa_deducao_id, quantidade_bipada)
+  // que o helper não cobre.
+  const { data: pedidoItens } = await supabase
+    .from("siso_pedido_itens")
+    .select("id")
+    .eq("pedido_id", pedidoId);
+  const itemIdsTodos = (pedidoItens ?? []).map((i) => i.id);
+
+  await resetarEstadoSeparacaoItens({
+    supabase,
+    itemIds: itemIdsTodos,
+    usuarioId: session.id,
+    motivo: "encaminhar",
+  });
+
+  // Reset campos legados não cobertos pelo helper
   await supabase
     .from("siso_pedido_itens")
     .update({
-      separacao_marcado: false,
-      separacao_marcado_em: null,
       quantidade_bipada: 0,
       bipado_completo: false,
       estoque_saida_lancada: false,

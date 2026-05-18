@@ -270,3 +270,46 @@ describe("reconciliarTemporal — cutoff_em", () => {
     ]);
   });
 });
+
+describe("reconciliarTemporal — loc visitada vazia", () => {
+  it("loc visitada sem contagens + entrada após visita → não emite divergência", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: "2026-05-18T13:30:00.000Z",
+      contagens: [], // operador encerrou sem bipar (confirmou modal "vazia")
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T1 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 3, custo_medio: 10 },
+      ],
+      movs: [
+        // Entrada DEPOIS da visita — não conta como sumiço
+        { id: "m1", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: T2, saldo_anterior: 0, saldo_posterior: 3, origem_tipo: "recebimento", origem_id: "g1", estorno_de: null },
+      ],
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("loc visitada sem contagens + saldo > 0 SEM entrada após visita → divergência qty=0", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: "2026-05-18T13:30:00.000Z",
+      contagens: [],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T2 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 3, custo_medio: 10 },
+      ],
+      movs: [], // saldo é antigo, persiste desde antes da sessão
+    });
+    expect(out).toEqual([
+      {
+        localizacao_id: LOC,
+        produto_id: PROD,
+        empresa_dona_id: DONA,
+        saldo_esperado: 3,
+        qty_contada_final: 0,
+        delta: -3,
+        valor_financeiro: -30,
+      },
+    ]);
+  });
+});

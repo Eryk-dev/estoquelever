@@ -131,6 +131,29 @@ export function reconciliarTemporal(input: ReconciliarInput): DivergenciaCalcula
     });
   }
 
+  // Para cada loc visitada, descobrir quádruplas SEM contagem mas com
+  // saldo presente AGORA → divergência candidata com qty=0.
+  // T_ref = contagem_finalizada_em da loc.
+  const locsVisitadasMap = new Map<string, string>();
+  for (const lv of input.locs_visitadas) {
+    locsVisitadasMap.set(lv.localizacao_id, lv.contagem_finalizada_em);
+  }
+
+  for (const s of input.saldos_atuais) {
+    if (s.saldo <= 0) continue;
+    const k = `${s.localizacao_id}|${s.produto_id}|${s.empresa_dona_id}`;
+    if (agregado.has(k)) continue;
+    const finalizadaEm = locsVisitadasMap.get(s.localizacao_id);
+    if (!finalizadaEm) continue; // loc não visitada → ignora
+    agregado.set(k, {
+      loc: s.localizacao_id,
+      prod: s.produto_id,
+      dona: s.empresa_dona_id,
+      qty: 0,
+      t_ref: finalizadaEm,
+    });
+  }
+
   for (const v of agregado.values()) {
     const k = `${v.loc}|${v.prod}|${v.dona}`;
     const s = saldoMap.get(k);

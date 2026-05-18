@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     const { data: item } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega")
+      .select("id, pedido_id, produto_id, sku, quantidade_pedida")
       .eq("id", realoc.pedido_item_id)
       .single();
     if (!item) {
@@ -175,11 +175,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const novaQty = (item.quantidade_pega ?? 0) + realoc.quantidade;
-    await supabase
-      .from("siso_pedido_itens")
-      .update({ quantidade_pega: novaQty })
-      .eq("id", item.id);
+    // I9: acumula qty_pega atomicamente via RPC (substitui RMW)
+    await supabase.rpc("wms_acumular_qty_pega", {
+      p_item_id: item.id,
+      p_delta: Number(realoc.quantidade),
+    });
 
     await registrarEvento({
       pedidoId: pedido.id,

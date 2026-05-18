@@ -423,7 +423,6 @@ async function processarParcialItem(
       const { data: claimed, error: updErr } = await supabase
         .from("siso_pedido_itens")
         .update({
-          quantidade_pega: qty_para_este,
           separacao_parcial: isParcial,
           parcial_motivo: isParcial ? (loc_zerou ? "loc_zerou" : "qty_diferente") : null,
           parcial_em: isParcial ? nowIso : null,
@@ -457,6 +456,14 @@ async function processarParcialItem(
       if (!claimed || claimed.length === 0) {
         racePerdida = true;
         break;
+      }
+
+      // I9: acumula qty_pega atomicamente via RPC (substitui RMW)
+      if (qty_para_este > 0) {
+        await supabase.rpc("wms_acumular_qty_pega", {
+          p_item_id: it.id,
+          p_delta: qty_para_este,
+        });
       }
 
       await registrarEvento({
@@ -749,7 +756,7 @@ async function processarParcialRealocacao(
     const itemIds = [...new Set(realocs.map((r) => r.pedido_item_id))];
     const { data: items, error: itemsErr } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega")
+      .select("id, pedido_id, produto_id, sku, quantidade_pedida")
       .in("id", itemIds);
 
     if (itemsErr || !items || items.length !== itemIds.length) {
@@ -1038,16 +1045,13 @@ async function processarParcialRealocacao(
         break;
       }
 
-      // Acumula qty no item pai
+      // I9: acumula qty no item pai atomicamente via RPC (substitui RMW)
       const item = itemById.get(realoc.pedido_item_id)!;
       if (qty_para_esta > 0) {
-        const novaQty = (Number(item.quantidade_pega) || 0) + qty_para_esta;
-        await supabase
-          .from("siso_pedido_itens")
-          .update({ quantidade_pega: novaQty })
-          .eq("id", item.id);
-        // Atualiza cache local pra próximos updates somarem corretamente
-        item.quantidade_pega = novaQty as unknown as typeof item.quantidade_pega;
+        await supabase.rpc("wms_acumular_qty_pega", {
+          p_item_id: item.id,
+          p_delta: qty_para_esta,
+        });
       }
 
       const pedido = pedidoById.get(item.pedido_id)!;

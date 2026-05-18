@@ -39,7 +39,7 @@ const STATUS_GUIDE: Record<
   planejada: {
     titulo: "Sessão criada",
     descricao:
-      "Aguardando operador assumir um slot. Quando o primeiro entrar, a sessão arranca automaticamente.",
+      "Aguardando o primeiro operador entrar na party. Quando o primeiro entrar, a sessão arranca automaticamente.",
     proximo: "Operadores entram pela tela handheld e puxam locs uma a uma.",
   },
   em_andamento: {

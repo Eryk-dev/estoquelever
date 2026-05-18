@@ -97,6 +97,29 @@ export async function POST(request: NextRequest) {
       usuario_id: session.id,
     });
 
+    // Tabela ponte: 1 link por mov de saída de realocação picada.
+    const { error: linkErr } = await supabase
+      .from("siso_pedido_item_mov_links")
+      .insert({
+        pedido_item_id: Number(realoc.pedido_item_id),
+        realocacao_id: realoc.id,
+        mov_id: mov.id,
+        qty: Number(realoc.quantidade),
+        tipo_link: "saida",
+      });
+    if (linkErr) {
+      logger.logError({
+        error: linkErr,
+        source: "separacao-marcar-realocacao",
+        message: "Falhou criar link da mov",
+        category: "database",
+        requestPath: "/api/wms/separacao/marcar-realocacao",
+        requestMethod: "POST",
+        metadata: { realocacao_id: realoc.id, mov_id: mov.id },
+      });
+      return NextResponse.json({ error: "erro persistindo link" }, { status: 500 });
+    }
+
     const nowIso = new Date().toISOString();
     const { error: updErr } = await supabase
       .from("siso_pedido_item_realocacoes")

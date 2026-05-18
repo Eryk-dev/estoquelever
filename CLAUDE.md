@@ -115,6 +115,15 @@ aguardando_compra → aguardando_nf → aguardando_separacao → em_separacao �
 - `separado`: picking complete, ready for packing
 - `embalado`: packing done, ready for expedition
 
+**Realocação cascateável (2026-05-18):** quando uma loc sugerida (original
+ou realocação anterior) dá parcial/zerou, o sistema busca automaticamente
+a próxima loc no galpão, excluindo todas as locs já tentadas no item. A
+chain é rastreada via `siso_pedido_item_realocacoes.parent_realocacao_id`.
+Cascade que esgota cobertura dispara o modal encaminhar/OC no frontend
+(sem marcar `pendente_realocacao` automaticamente — operador decide).
+Botão "Esgotado" das linhas normais removido — caso particular do Parcial
+com qty=0 + loc_zerou=true. Spec: `docs/superpowers/specs/2026-05-18-realocacao-cascateavel-design.md`.
+
 ## Project Structure
 
 **Pós-cutover de superfície (2026-05-18):** apenas `/login`, `/wms/*` e `/api/{auth,wms}/*` existem.

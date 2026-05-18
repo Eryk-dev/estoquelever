@@ -261,12 +261,19 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `quantidade` | integer | NO | | Qty to be picked from this location (CHECK > 0) |
 | `is_emprestimo` | boolean | NO | false | Whether this requires an inter-empresa empréstimo movement |
 | `empresa_devedora_id` | uuid | YES | FK | Empresa that will owe stock if empréstimo (required iff is_emprestimo=true) |
-| `status` | text | NO | 'aguardando_picking' | Status: `aguardando_picking`, `picado`, `cancelado` |
-| `mov_id` | uuid | YES | FK | WMS movement ID after picking (set on `marcar-realocacao`) |
+| `status` | text | NO | 'aguardando_picking' | Status: `aguardando_picking`, `picado`, `picado_parcial`, `cancelado` |
+| `mov_id` | uuid | YES | FK | WMS movement ID after picking (set on `marcar-realocacao` or modo realocação do parcial) |
 | `operador_id` | uuid | YES | FK | User who picked this realocacao |
 | `picado_em` | timestamptz | YES | | When this realocacao was picked |
 | `cancelado_em` | timestamptz | YES | | When this realocacao was cancelled |
 | `criado_em` | timestamptz | NO | now() | Record creation |
+| `parent_realocacao_id` | uuid | YES | FK | Self-ref. NULL = realocação raiz (criada direto pelo parcial do item); não-NULL = nó da chain de cascade. |
+| `quantidade_pega` | integer | YES | | Qty efetivamente pega (pode ser < `quantidade` quando houve parcial; NULL no fluxo legado via `marcar-realocacao`). |
+| `parcial` | boolean | NO | false | true se a realocação foi parcial e gerou cascade (ou sem cobertura). |
+| `parcial_motivo` | text | YES | | `cascade_parcial` \| `cascade_loc_zerou` (legado: `loc_zerou` na raiz criada pelo modo item). |
+| `parcial_em` | timestamptz | YES | | Quando o parcial foi registrado. |
+| `parcial_por` | uuid | YES | FK | Usuário que registrou o parcial. |
+| `mov_ajuste_loc_zerou_id` | uuid | YES | FK | Referência à mov `ajuste_pick_zerou` gerada quando a loc zerou no picking da realocação. |
 
 **Primary Key:** `id`
 
@@ -277,21 +284,31 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `localizacao_id` → `siso_localizacoes(id)`
 - `mov_id` → `siso_movimentacoes(id)`
 - `operador_id` → `siso_usuarios(id)`
+- `parent_realocacao_id` → `siso_pedido_item_realocacoes(id)` (self-ref)
+- `parcial_por` → `siso_usuarios(id)`
+- `mov_ajuste_loc_zerou_id` → `siso_movimentacoes(id)`
 
 **Indexes:**
 - Partial index on `(pedido_item_id)` WHERE `status = 'aguardando_picking'`
+- `idx_realoc_parent` em `parent_realocacao_id` — suporta navegação da chain pra debug e reconciliação
 
 **Constraints:**
 - `CHECK (quantidade > 0)`
 - `CHECK ((is_emprestimo = true AND empresa_devedora_id IS NOT NULL) OR (is_emprestimo = false AND empresa_devedora_id IS NULL))`
-- `CHECK (status IN ('aguardando_picking', 'picado', 'cancelado'))`
+- `CHECK (status IN ('aguardando_picking', 'picado', 'picado_parcial', 'cancelado'))`
+
+**Status (transições terminais):**
+- `picado_parcial` (terminal): `quantidade_pega < quantidade`, sistema disparou cascade (criou descendente OU marcou pedido `pendente_realocacao` por sem_cobertura).
+- `picado` (terminal, sucesso): `quantidade_pega == quantidade` ou via `marcar-realocacao` endpoint (sem modal).
+- `cancelado` (terminal): cancelada via `DELETE /api/wms/separacao/realocacao/[id]` (sem mov).
 
 **Notes:**
-- Created by `POST /api/wms/separacao/parcial` when the re-allocation cascade finds coverage
-- Picked via `POST /api/wms/separacao/marcar-realocacao` (creates WMS movement)
+- Created by `POST /api/wms/separacao/parcial` when the re-allocation cascade finds coverage (modo item ou modo realocação)
+- Picked via `POST /api/wms/separacao/marcar-realocacao` (creates WMS movement, fluxo simples) ou via `POST /api/wms/separacao/parcial` modo realocação (parcial com cascade)
 - Cancelled via `DELETE /api/wms/separacao/realocacao/[id]` (no movement — nothing was picked)
 - All rows cancelled automatically when parent item is desfazer-parcial'd or onda is cancelled
 - `checklist-items` endpoint returns only `aguardando_picking` rows in `item.realocacoes[]`
+- Spec: `docs/superpowers/specs/2026-05-18-realocacao-cascateavel-design.md`
 
 ---
 

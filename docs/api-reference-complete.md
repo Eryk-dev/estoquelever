@@ -1474,81 +1474,60 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **File:** `src/app/api/wms/separacao/parcial/route.ts`
 
-**Purpose:** Register a short pick — operator found fewer units than requested at the current location. Creates WMS ledger movements, searches for re-allocation candidates in cascade, and either creates realocacao rows or transitions pedido to `pendente_realocacao`.
+**Purpose:** Marca item ou realocação como parcial. Modo dual: aceita parcial tanto numa loc original do item (modo item) quanto numa loc de realocação ativa (modo realocação). Gera mov S no ledger pela qty pega, opcionalmente gera mov S de ajuste quando a loc zerou, e dispara cascade pra cobrir o residual excluindo todas as locs já tentadas no item.
 
 **Auth:** X-Session-Id (required)
 
-**Request Body:**
+**Request Body — modo item (parcial na loc original):**
 ```json
 {
-  "pedido_item_id": "uuid",
-  "quantidade_pega": "number",
-  "loc_zerou": "boolean"
+  "pedido_item_id": 123,
+  "quantidade_pega": 2,
+  "loc_zerou": true
 }
 ```
 
-**Response (200 — coverage found):**
+**Request Body — modo realocação (parcial em loc de realocação ativa):**
 ```json
 {
-  "status": "realocado",
-  "realocacoes": [
-    {
-      "id": "uuid",
-      "empresa_dona_id": "uuid",
-      "empresa_nome": "string",
-      "localizacao_id": "uuid",
-      "localizacao_codigo": "string",
-      "quantidade": "number",
-      "is_emprestimo": "boolean",
-      "empresa_devedora_id": "uuid | null"
-    }
-  ]
+  "realocacao_id": "uuid",
+  "quantidade_pega": 2,
+  "loc_zerou": true
 }
 ```
 
-**Response (200 — all qty satisfied):**
-```json
-{
-  "status": "completo"
-}
-```
+**Side effects (ambos os modos):**
+- Gera mov S no ledger pela qty pega (origem `nf_venda` ou `emprestimo` em realocação que é empréstimo).
+- Se `loc_zerou` e `saldo > qty_pega`, gera mov S de ajuste `ajuste_pick_zerou` pra delta.
+- Marca registro como parcial:
+  - Modo item: `siso_pedido_itens.separacao_parcial = true` + `separacao_marcado = true`.
+  - Modo realocação: `siso_pedido_item_realocacoes.status = 'picado_parcial'` (ou `'picado'` se cobriu integral).
+- Acumula `quantidade_pega` no item pai (`siso_pedido_itens.quantidade_pega +=`).
+- Se sobra residual: dispara `resolverRealocacao` excluindo loc original do item + todas as locs de realocações do mesmo item (qualquer status). Cria novas linhas em `siso_pedido_item_realocacoes` com `parent_realocacao_id = realoc.id` no modo realocação, ou sem parent no modo item.
 
-**Response (200 — no coverage):**
-```json
-{
-  "status": "aguardando_supervisor",
-  "motivo": "sem_cobertura_galpao"
-}
-```
+**Resposta:**
 
-**Response (400 - Validation):**
-```json
-{
-  "error": "string"
-}
-```
+| Status | Significado | Modo |
+|---|---|---|
+| `{ status: 'completo' }` | Sem residual — pegou tudo ou pegou o suficiente | ambos |
+| `{ status: 'realocado', realocacoes: [...] }` | Cascade criou linhas novas pra cobrir o residual | ambos |
+| `{ status: 'sem_cobertura' }` | Modo realocação: galpão sem cobertura pro residual. Frontend abre modal encaminhar/OC. **NÃO** marca pedido pendente_realocacao. | realocação |
+| `{ status: 'aguardando_supervisor', motivo: 'sem_cobertura_total' }` | Modo item: galpão sem cobertura. Pedido marcado `pendente_realocacao` automaticamente. | item |
 
-**Business Logic:**
-1. Validates `quantidade_pega > 0` and `quantidade_pega < quantidade_pedida`
-2. Creates WMS movement: tipo=S, origem_tipo=`nf_venda`, qty=`quantidade_pega` → stores `mov_saida_id`
-3. If `loc_zerou=true`: creates second WMS movement: tipo=S, origem_tipo=`ajuste_pick_zerou`, qty=(saldo restante da localização) — reflects physical discovery that location is empty → stores `mov_ajuste_loc_zerou_id`
-4. Sets item: `separacao_parcial=true`, `quantidade_pega`, `parcial_em/por`, `separacao_marcado=true`
-5. Re-allocation cascade for remaining qty (qty_faltante = quantidade_pedida - quantidade_pega):
-   - Search same empresa first → then empréstimo partners
-   - Within each empresa: prefer tipo=picking > overstock > recebimento > expedicao > quarentena
-   - Within same tipo: prefer highest disponivel, then localizacao_codigo ASC
-   - Inserts rows in `siso_pedido_item_realocacoes` with status=`aguardando_picking`
-6. If coverage found: returns `realocado` + list of realocacoes
-7. If all qty satisfied by first location: returns `completo`
-8. If no coverage: transitions pedido to `pendente_realocacao`, records audit event `realocacao_sem_cobertura_galpao`
-9. Always records audit event `parcial_loc_zerou` in `siso_pedido_historico`
+**Erros:**
+- 400 — body inválido, qty > sugerida, ou pedido sem empresa_origem.
+- 404 — item / realocação / pedido não encontrado.
+- 409 — item já processado, realocação não-`aguardando_picking`, ou `posicao_reservada` (saldo reservado por outro pedido).
 
-**Side Effects:**
-- Inserts 1-2 rows in `siso_movimentacoes` (origem_tipo=`nf_venda` + optionally `ajuste_pick_zerou`)
-- Updates `siso_pedido_itens`: `separacao_parcial`, `quantidade_pega`, `parcial_em`, `parcial_por`, `parcial_motivo`, `mov_saida_id`, `mov_ajuste_loc_zerou_id`, `separacao_marcado=true`
-- Inserts rows in `siso_pedido_item_realocacoes` (status=`aguardando_picking`)
-- May update `siso_pedidos.status_separacao = 'pendente_realocacao'` if no coverage
-- Inserts events in `siso_pedido_historico`: `parcial_loc_zerou` (always) + `realocacao_sem_cobertura_galpao` (if sem_cobertura)
+**Side Effects (resumo):**
+- Inserts 1-2 rows in `siso_movimentacoes` (origem_tipo=`nf_venda` ou `emprestimo` + optionally `ajuste_pick_zerou`).
+- Modo item: updates `siso_pedido_itens` (`separacao_parcial`, `quantidade_pega`, `parcial_em`, `parcial_por`, `parcial_motivo`, `mov_saida_id`, `mov_ajuste_loc_zerou_id`, `separacao_marcado=true`).
+- Modo realocação: updates `siso_pedido_item_realocacoes` da raiz (`status`, `quantidade_pega`, `parcial`, `parcial_motivo`, `parcial_em`, `parcial_por`, `mov_id`, `mov_ajuste_loc_zerou_id`); acumula `quantidade_pega` no `siso_pedido_itens` pai.
+- Inserts rows in `siso_pedido_item_realocacoes` (status=`aguardando_picking`, `parent_realocacao_id` setado no modo realocação).
+- May update `siso_pedidos.status_separacao = 'pendente_realocacao'` se modo item sem cobertura.
+- Inserts events in `siso_pedido_historico`: `parcial_loc_zerou` (sempre) + `realocacao_sem_cobertura_galpao` (se sem_cobertura no modo item).
+
+**Spec:** `docs/superpowers/specs/2026-05-18-realocacao-cascateavel-design.md`
 
 ---
 

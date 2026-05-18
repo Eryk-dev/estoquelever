@@ -22,7 +22,6 @@ interface SessaoDetail {
     modo_contagem: "aberto" | "blind";
     empresa_dona_id?: string | null;
     status: string;
-    num_operadores?: number;
   };
 }
 
@@ -45,7 +44,7 @@ interface ContagemLocal {
   empresa_dona_id: string | null;
 }
 
-type Etapa = "slot-picker" | "standby" | "confirming-loc" | "counting" | "pool-vazio";
+type Etapa = "entering" | "standby" | "confirming-loc" | "counting" | "pool-vazio";
 
 export default function ContarPage({
   params,
@@ -58,7 +57,7 @@ export default function ContarPage({
   const { user } = useAuth();
   const { operadores } = useInventarioRealtime(id);
 
-  const [etapa, setEtapa] = useState<Etapa>("slot-picker");
+  const [etapa, setEtapa] = useState<Etapa>("entering");
   const [locAtual, setLocAtual] = useState<ProximaLocOutput | null>(null);
   const [contagens, setContagens] = useState<ContagemLocal[]>([]);
   const [resumoFinal, setResumoFinal] = useState<{
@@ -83,19 +82,29 @@ export default function ContarPage({
   const modoBlind = sessao?.modo_contagem === "blind";
 
   // Detecta se o user já está num slot
-  const meuSlot = user
+  const meuOp = user
     ? operadores.find(
         (o) => o.usuario_id === user.id && o.finalizado_em === null,
       )
     : undefined;
 
-  // Sincroniza etapa com slot: se já tem slot e tá em slot-picker, vai pra standby
+  // Sincroniza etapa com presença: se já entrou na party e tá em 'entering',
+  // pula direto pra standby. Setado tanto pela auto-entrada quanto por usuário
+  // que já estava ativo numa sessão anterior do app.
   useEffect(() => {
-    if (meuSlot && etapa === "slot-picker") {
+    if (meuOp && etapa === "entering") {
       setEtapa("standby");
-      setEntrouEm(new Date(meuSlot.entrou_em).getTime());
+      setEntrouEm(new Date(meuOp.entrou_em).getTime());
     }
-  }, [meuSlot, etapa]);
+  }, [meuOp, etapa]);
+
+  // Auto-entrada: ao montar, se user não está na party ainda, entra automático
+  useEffect(() => {
+    if (!user || meuOp || entrarParty.isPending) return;
+    if (etapa !== "entering") return;
+    entrarParty.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, meuOp, etapa]);
 
   // Auto-foco no scan quando aplicável
   useEffect(() => {
@@ -105,14 +114,23 @@ export default function ContarPage({
   }, [etapa]);
 
   // ─── Mutations ───
-  const entrarSlot = useMutation({
-    mutationFn: (slot: number) =>
-      wmsApi<{ ok: true; slot: number }>(
-        `/api/wms/inventario/${id}/slots/${slot}/entrar`,
+  const [retomadoFlag, setRetomadoFlag] = useState(false);
+
+  const entrarParty = useMutation({
+    mutationFn: () =>
+      wmsApi<{ ok: true; retomado: boolean }>(
+        `/api/wms/inventario/${id}/party`,
         { method: "POST" },
       ),
     onSuccess: (r) => {
-      toast.success(`Entrou como OP${r.slot}`);
+      if (r.retomado) {
+        setRetomadoFlag(true);
+        toast.success("Voltou pra party — contagens preservadas");
+        // Limpa o flag após 5s pra esconder o selo "retomado" do header
+        setTimeout(() => setRetomadoFlag(false), 5000);
+      } else {
+        toast.success("Entrou na party");
+      }
       setEntrouEm(Date.now());
       setEtapa("standby");
       queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
@@ -120,13 +138,13 @@ export default function ContarPage({
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const sairSlot = useMutation({
+  const sairParty = useMutation({
     mutationFn: () =>
-      wmsApi<{ ok: true }>(`/api/wms/inventario/${id}/slots`, {
+      wmsApi<{ ok: true }>(`/api/wms/inventario/${id}/party`, {
         method: "DELETE",
       }),
     onSuccess: () => {
-      toast.success("Você saiu do slot");
+      toast.success("Você saiu da party");
       router.push(`/wms/inventario/${id}`);
     },
     onError: (e: Error) => toast.error(e.message),
@@ -143,7 +161,7 @@ export default function ContarPage({
           ? Math.round((Date.now() - entrouEm) / 60000)
           : 0;
         setResumoFinal({
-          locs: meuSlot?.locs_contadas ?? 0,
+          locs: meuOp?.locs_contadas ?? 0,
           minutos,
         });
         setEtapa("pool-vazio");
@@ -413,24 +431,20 @@ export default function ContarPage({
   if (etapa === "pool-vazio") {
     return (
       <ResumoFinal
-        locsContadas={resumoFinal?.locs ?? meuSlot?.locs_contadas ?? 0}
+        locsContadas={resumoFinal?.locs ?? meuOp?.locs_contadas ?? 0}
         minutos={resumoFinal?.minutos ?? 0}
-        onSair={() => sairSlot.mutate()}
+        onSair={() => sairParty.mutate()}
         onVoltar={() => router.push(`/wms/inventario/${id}`)}
       />
     );
   }
 
-  // Slot picker
-  if (etapa === "slot-picker") {
+  // Entrando na party
+  if (etapa === "entering") {
     return (
-      <SlotPicker
-        operadores={operadores}
-        meuId={user?.id}
-        onEscolher={(slot) => entrarSlot.mutate(slot)}
-        pending={entrarSlot.isPending}
-        numSlots={sessao?.num_operadores ?? 5}
-      />
+      <div className="wms-loading-pane">
+        {entrarParty.isPending ? "Entrando na party…" : "Aguardando…"}
+      </div>
     );
   }
 
@@ -439,9 +453,9 @@ export default function ContarPage({
     <>
       <PageHeader
         title={sessao.nome ?? `Sessão ${id.slice(0, 8)}`}
-        subtitle={`Você é OP${meuSlot?.slot ?? "?"} · ${
+        subtitle={`${user?.nome ?? "Você"} na party · ${
           modoBlind ? "blind" : "aberto"
-        }`}
+        }${retomadoFlag ? " · ↻ retomado" : ""}`}
       >
         <button
           type="button"
@@ -449,20 +463,20 @@ export default function ContarPage({
           onClick={() => {
             if (
               confirm(
-                "Sair do slot? Locs em contagem ficam liberadas pra cleanup.",
+                "Sair da party? Locs em contagem ficam liberadas pra cleanup.",
               )
             ) {
-              sairSlot.mutate();
+              sairParty.mutate();
             }
           }}
         >
-          Sair do slot
+          Sair da party
         </button>
       </PageHeader>
 
       {etapa === "standby" && (
         <StandbyView
-          locsContadas={meuSlot?.locs_contadas ?? 0}
+          locsContadas={meuOp?.locs_contadas ?? 0}
           onPegarProxima={() => pegarProxima.mutate()}
           pending={pegarProxima.isPending}
         />
@@ -527,99 +541,6 @@ export default function ContarPage({
           onCancelar={() => setModalVazia(false)}
         />
       )}
-    </>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Sub-views
-// ─────────────────────────────────────────────────────────────────────
-
-function SlotPicker({
-  operadores,
-  meuId,
-  onEscolher,
-  pending,
-  numSlots,
-}: {
-  operadores: Array<{
-    slot: number;
-    usuario_id: string;
-    finalizado_em: string | null;
-    locs_contadas: number;
-    usuario?: { nome?: string };
-  }>;
-  meuId?: string;
-  onEscolher: (slot: number) => void;
-  pending: boolean;
-  numSlots: number;
-}) {
-  const slots = Array.from({ length: Math.max(1, Math.min(5, numSlots)) }, (_, i) => i + 1);
-  const subtitle =
-    numSlots > 1
-      ? `Escolha um slot livre. Você e até ${numSlots - 1} colega${numSlots - 1 > 1 ? "s" : ""} podem contar ao mesmo tempo.`
-      : "Sessão configurada pra 1 operador.";
-  return (
-    <>
-      <PageHeader title="Quem é você?" subtitle={subtitle} />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 10,
-        }}
-      >
-        {slots.map((slot) => {
-          const op = operadores.find(
-            (o) => o.slot === slot && o.finalizado_em === null,
-          );
-          const livre = !op;
-          const ehMeuSlotJa = op && op.usuario_id === meuId;
-          return (
-            <button
-              key={slot}
-              type="button"
-              disabled={!livre || pending}
-              onClick={() => onEscolher(slot)}
-              style={{
-                padding: 18,
-                minHeight: 110,
-                borderRadius: "var(--wms-r-3)",
-                border: livre
-                  ? "2px dashed var(--wms-c-border)"
-                  : "1px solid var(--wms-c-border)",
-                background: livre ? "transparent" : "var(--wms-c-faint)",
-                cursor: livre ? "pointer" : "not-allowed",
-                opacity: livre ? 1 : 0.6,
-                textAlign: "left",
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-              }}
-            >
-              <strong style={{ fontSize: 16 }}>OP{slot}</strong>
-              {livre ? (
-                <span className="wms-td-mute" style={{ fontSize: 12 }}>
-                  Slot livre — clique pra entrar
-                </span>
-              ) : (
-                <>
-                  <span style={{ fontSize: 13 }}>
-                    {op.usuario?.nome ?? "Operador"}
-                  </span>
-                  <span
-                    className="wms-td-mute"
-                    style={{ fontSize: 11.5 }}
-                  >
-                    {op.locs_contadas} loc(s) contada(s)
-                    {ehMeuSlotJa && " · é você"}
-                  </span>
-                </>
-              )}
-            </button>
-          );
-        })}
-      </div>
     </>
   );
 }
@@ -957,7 +878,7 @@ function ResumoFinal({
           className="wms-btn wms-btn-primary"
           onClick={onSair}
         >
-          Sair do slot
+          Sair da party
         </button>
         <button
           type="button"

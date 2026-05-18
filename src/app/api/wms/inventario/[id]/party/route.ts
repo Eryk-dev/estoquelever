@@ -1,0 +1,59 @@
+import { NextRequest, NextResponse } from "next/server";
+import { entrarParty, sairParty } from "@/lib/wms/inventario";
+import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
+
+// POST /api/wms/inventario/[id]/party
+// Operador entra na party desta sessão. Idempotente: chamadas repetidas
+// pelo mesmo user retornam ok sem duplicar. Auto-inicia a sessão se
+// ainda estiver em 'planejada'. Reentrada (após sair) retorna retomado=true
+// e preserva locs_contadas acumulada.
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
+  const { id } = await params;
+  try {
+    const { retomado } = await entrarParty(id, auth.user.id);
+    return NextResponse.json({ ok: true, retomado });
+  } catch (e) {
+    return wmsErrorResponse({
+      source: "wms.inventario.party.entrar",
+      error: e,
+      status: 400,
+      requestPath: `/api/wms/inventario/${id}/party`,
+      requestMethod: "POST",
+      metadata: { sessao_id: id, usuario_id: auth.user.id },
+    });
+  }
+}
+
+// DELETE /api/wms/inventario/[id]/party
+// Operador (auth.user) sai da party. Locs em em_contagem dele ficam
+// até o cleanup cron (siso_inventario_recovery) liberar. Reentrar depois
+// preserva locs_contadas.
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
+  const { id } = await params;
+  try {
+    await sairParty(id, auth.user.id);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return wmsErrorResponse({
+      source: "wms.inventario.party.sair",
+      error: e,
+      status: 400,
+      requestPath: `/api/wms/inventario/${id}/party`,
+      requestMethod: "DELETE",
+      metadata: { sessao_id: id, usuario_id: auth.user.id },
+    });
+  }
+}

@@ -40,10 +40,6 @@ export interface CriarSessaoInput {
   observacoes?: string;
   criada_por: string;
   localizacoes: LocSessaoInput[];
-  /** Hint informativo de quantos operadores devem trabalhar (1..5).
-   *  Não restringe quem pode entrar — qualquer operador pode assumir
-   *  qualquer slot 1..5. Usado só pra estimativa de tempo na UI. */
-  num_operadores?: number;
 }
 
 export async function criarSessao(input: CriarSessaoInput): Promise<string> {
@@ -51,13 +47,6 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
     throw new Error("sessão precisa de pelo menos uma localização");
   }
   const sb = createServiceClient();
-  const numOps =
-    input.num_operadores != null &&
-    Number.isInteger(input.num_operadores) &&
-    input.num_operadores >= 1 &&
-    input.num_operadores <= 5
-      ? input.num_operadores
-      : 5;
   const { data: sessao, error } = await sb
     .from("siso_inventario_sessoes")
     .insert({
@@ -72,7 +61,6 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
       observacoes: input.observacoes ?? null,
       criada_por: input.criada_por,
       tamanho_pool: input.localizacoes.length,
-      num_operadores: numOps,
     })
     .select("id")
     .single();
@@ -89,7 +77,6 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
     .from("siso_inventario_localizacoes")
     .insert(rows);
   if (errL) {
-    // Rollback: a sessão sem locs é inútil. Cancela.
     await sb
       .from("siso_inventario_sessoes")
       .update({ status: "cancelada" })
@@ -206,34 +193,60 @@ export function decidirAcaoEntrada(
   return { tipo: "reativar", id: existente.id };
 }
 
-export async function entrarSlot(
+export async function entrarParty(
   sessaoId: string,
-  slot: number,
   usuarioId: string,
-): Promise<void> {
-  if (slot < 1 || slot > 5) throw new Error("slot deve estar entre 1 e 5");
+): Promise<{ retomado: boolean }> {
   const sb = createServiceClient();
 
   // Auto-start: se sessão tá planejada, inicia (idempotente)
   await iniciarSessao(sessaoId, usuarioId);
 
-  // Insere operador no slot — UNIQUE constraint (sessao_id, slot) trava colisão.
-  // num_operadores é só hint informativo; qualquer slot 1..5 fica disponível
-  // (distribuição de trabalho é dinâmica via claim hierárquico no RPC).
+  // Existe registro deste usuário nesta sessão? (ativo ou finalizado)
+  const { data: existente, error: errSel } = await sb
+    .from("siso_inventario_operadores")
+    .select("id, finalizado_em")
+    .eq("sessao_id", sessaoId)
+    .eq("usuario_id", usuarioId)
+    .maybeSingle();
+  if (errSel) throw errSel;
+
+  const acao = decidirAcaoEntrada(existente);
+
+  if (acao.tipo === "no-op") {
+    return { retomado: false };
+  }
+
+  if (acao.tipo === "reativar") {
+    const nowIso = new Date().toISOString();
+    const { error } = await sb
+      .from("siso_inventario_operadores")
+      .update({
+        finalizado_em: null,
+        ultima_reentrada_em: nowIso,
+        ultima_acao_em: nowIso,
+      })
+      .eq("id", acao.id);
+    if (error) throw error;
+    return { retomado: true };
+  }
+
+  // acao.tipo === "criar"
   const { error } = await sb.from("siso_inventario_operadores").insert({
     sessao_id: sessaoId,
-    slot,
     usuario_id: usuarioId,
   });
   if (error) {
-    if (error.code === "23505") {
-      throw new Error("slot já está ocupado ou você já está em outro slot");
-    }
+    // 23505 = duplicate key (UNIQUE parcial em sessao+user ativo). Pode
+    // acontecer em race condition rara entre maybeSingle e insert. Trata
+    // como no-op (alguém já entrou pelo mesmo user concorrente).
+    if (error.code === "23505") return { retomado: false };
     throw error;
   }
+  return { retomado: false };
 }
 
-export async function sairSlot(
+export async function sairParty(
   sessaoId: string,
   usuarioId: string,
 ): Promise<void> {

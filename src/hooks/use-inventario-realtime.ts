@@ -43,10 +43,11 @@ export type ClaimDirecao = "asc" | "desc";
 
 export interface Operador {
   id: string;
-  slot: number;
   sessao_id: string;
   usuario_id: string;
   entrou_em: string;
+  /** NULL na primeira entrada. Setada toda vez que reentra na party. */
+  ultima_reentrada_em: string | null;
   finalizado_em: string | null;
   locs_contadas: number;
   ultima_acao_em: string;

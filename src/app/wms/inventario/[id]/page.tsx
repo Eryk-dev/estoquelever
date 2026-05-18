@@ -29,7 +29,6 @@ interface SessaoData {
     criado_em?: string;
     iniciada_em?: string;
     tamanho_pool?: number;
-    num_operadores?: number;
   } | null;
 }
 
@@ -250,7 +249,7 @@ export default function InventarioSupervisorPage({
   const guide = status ? STATUS_GUIDE[status] : undefined;
   const podeCancelar = status === "planejada" || status === "em_andamento";
 
-  const meuSlot = user
+  const meuOp = user
     ? operadores.find(
         (o) => o.usuario_id === user.id && o.finalizado_em === null,
       )
@@ -340,7 +339,7 @@ export default function InventarioSupervisorPage({
             onClick={() => router.push(`/wms/inventario/${id}/contar`)}
           >
             <Icon name="clipboard" size={11} />
-            {meuSlot ? `Continuar como OP${meuSlot.slot}` : "Entrar como operador"}
+            {meuOp ? "Continuar contando" : "Entrar na party"}
           </button>
         )}
         {status === "em_andamento" && (
@@ -435,37 +434,56 @@ export default function InventarioSupervisorPage({
         )}
       </div>
 
-      {/* Slots de operadores */}
-      <h3 className="wms-sec-h">
-        Slots de operador
-        {sessao?.num_operadores ? (
-          <span
-            className="wms-td-mute"
-            style={{ marginLeft: 6, fontSize: 12, fontWeight: 400 }}
-          >
-            · {sessao.num_operadores} configurado
-            {sessao.num_operadores > 1 ? "s" : ""}
-          </span>
-        ) : null}
-      </h3>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 10,
-          marginBottom: 24,
-        }}
-      >
-        {Array.from(
-          { length: Math.max(1, Math.min(5, sessao?.num_operadores ?? 5)) },
-          (_, i) => i + 1,
-        ).map((slot) => {
-          const op = operadores.find(
-            (o) => o.slot === slot && o.finalizado_em === null,
-          );
-          return <SlotCard key={slot} slot={slot} op={op} locs={locs} />;
-        })}
-      </div>
+      {/* Na party — lista dinâmica de operadores ativos */}
+      {(() => {
+        const ativos = operadores.filter((o) => o.finalizado_em === null);
+        return (
+          <>
+            <h3 className="wms-sec-h">
+              Na party
+              {ativos.length > 0 ? (
+                <span
+                  className="wms-td-mute"
+                  style={{ marginLeft: 6, fontSize: 12, fontWeight: 400 }}
+                >
+                  · {ativos.length} operador
+                  {ativos.length > 1 ? "es" : ""}
+                </span>
+              ) : null}
+            </h3>
+            {ativos.length === 0 ? (
+              <div
+                style={{
+                  border: "1.5px dashed var(--wms-c-border)",
+                  borderRadius: "var(--wms-r-3)",
+                  padding: "32px 16px",
+                  textAlign: "center",
+                  marginBottom: 24,
+                  color: "var(--wms-c-mute)",
+                  fontStyle: "italic",
+                  fontSize: 13,
+                }}
+              >
+                Ninguém na party ainda. Aguardando o primeiro operador entrar.
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(180px, 1fr))",
+                  gap: 10,
+                  marginBottom: 24,
+                }}
+              >
+                {ativos.map((op) => (
+                  <ParticipanteCard key={op.id} op={op} locs={locs} />
+                ))}
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {/* Painel ao vivo */}
       <section className="mt-8">
@@ -623,37 +641,33 @@ export default function InventarioSupervisorPage({
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Card de slot — mostra estado ao vivo de um slot de operador
+// Card de participante — mostra estado ao vivo de um operador na party
 // ─────────────────────────────────────────────────────────────────────
 
-function SlotCard({
-  slot,
+function ParticipanteCard({
   op,
   locs,
 }: {
-  slot: number;
-  op: Operador | undefined;
+  op: Operador;
   locs: Array<{
     status: string;
     bloqueada_por: string | null;
     localizacao?: { codigo?: string };
   }>;
 }) {
-  const livre = !op;
-  const locAtual = op
-    ? locs.find(
-        (l) => l.bloqueada_por === op.usuario_id && l.status === "em_contagem",
-      )
-    : undefined;
+  const locAtual = locs.find(
+    (l) => l.bloqueada_por === op.usuario_id && l.status === "em_contagem",
+  );
 
-  const horasAtivo = op
-    ? Math.max(0.001, (Date.now() - new Date(op.entrou_em).getTime()) / 3600000)
-    : 0;
+  const horasAtivo = Math.max(
+    0.001,
+    (Date.now() - new Date(op.entrou_em).getTime()) / 3600000,
+  );
   const velocidade =
-    op && horasAtivo > 0 ? Math.round(op.locs_contadas / horasAtivo) : 0;
+    horasAtivo > 0 ? Math.round(op.locs_contadas / horasAtivo) : 0;
 
   // Render do claim ao vivo (rua / prédio / colisão + direção)
-  const claimLabel = op?.claim_tipo
+  const claimLabel = op.claim_tipo
     ? (() => {
         const arrow =
           op.claim_direcao === "desc" ? "↑" : op.claim_direcao === "asc" ? "↓" : "";
@@ -667,83 +681,63 @@ function SlotCard({
       })()
     : null;
 
+  const reentradaLabel = op.ultima_reentrada_em
+    ? `↻ voltou às ${new Date(op.ultima_reentrada_em).toLocaleTimeString(
+        "pt-BR",
+        { hour: "2-digit", minute: "2-digit" },
+      )}`
+    : null;
+
   return (
     <div
       style={{
-        border: livre
-          ? "1px dashed var(--wms-c-border)"
-          : "1px solid var(--wms-c-border)",
-        background: livre ? "transparent" : "var(--wms-c-faint)",
+        border: "1px solid var(--wms-c-border)",
+        background: "var(--wms-c-faint)",
         borderRadius: "var(--wms-r-3)",
         padding: 14,
         display: "flex",
         flexDirection: "column",
         gap: 6,
         minHeight: 130,
-        opacity: livre ? 0.6 : 1,
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <strong style={{ fontSize: 13 }}>OP{slot}</strong>
-        {!livre && (
-          <span
-            className="wms-mono wms-td-mute"
-            style={{ fontSize: 11, fontFamily: "var(--wms-mono)" }}
-          >
-            {velocidade} locs/h
-          </span>
-        )}
+        <strong style={{ fontSize: 13 }}>
+          {op.usuario?.nome ?? "Operador"}
+        </strong>
+        <span
+          className="wms-mono wms-td-mute"
+          style={{ fontSize: 11, fontFamily: "var(--wms-mono)" }}
+        >
+          {velocidade} locs/h
+        </span>
       </div>
-      {livre ? (
-        <div className="wms-td-mute" style={{ fontSize: 12 }}>
-          Slot livre
+      <div className="wms-td-mute" style={{ fontSize: 11.5 }}>
+        {op.locs_contadas} loc(s) contada(s)
+      </div>
+      {claimLabel && (
+        <div
+          className="wms-mono"
+          style={{
+            fontSize: 11,
+            color:
+              op.claim_tipo === "colisao"
+                ? "var(--wms-c-warn)"
+                : "var(--wms-c-accent)",
+          }}
+        >
+          {claimLabel}
         </div>
-      ) : (
-        <>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>
-            {op.usuario?.nome ?? "Operador"}
-          </div>
-          <div className="wms-td-mute" style={{ fontSize: 11.5 }}>
-            {op.locs_contadas} loc(s) contada(s)
-          </div>
-          {claimLabel && (
-            <div
-              className="wms-mono"
-              style={{
-                fontSize: 11,
-                color:
-                  op.claim_tipo === "colisao"
-                    ? "var(--wms-c-warn, #b76f0e)"
-                    : "var(--wms-c-fg-2)",
-              }}
-              title={
-                op.claim_tipo === "rua"
-                  ? "Operador tem reivindicação exclusiva da rua"
-                  : op.claim_tipo === "predio"
-                    ? "Operador está num prédio dedicado (com buffer)"
-                    : "Operador compartilhando último prédio (entrou pela ponta oposta)"
-              }
-            >
-              {claimLabel}
-            </div>
-          )}
-          {locAtual && (
-            <div
-              style={{
-                marginTop: 4,
-                padding: "4px 8px",
-                background: "var(--wms-c-panel-2)",
-                borderRadius: 4,
-                fontSize: 11.5,
-              }}
-            >
-              <span className="wms-td-mute">contando </span>
-              <span className="wms-mono">
-                {locAtual.localizacao?.codigo ?? "—"}
-              </span>
-            </div>
-          )}
-        </>
+      )}
+      {locAtual?.localizacao?.codigo && (
+        <div className="wms-mono wms-td-mute" style={{ fontSize: 10.5 }}>
+          contando: {locAtual.localizacao.codigo}
+        </div>
+      )}
+      {reentradaLabel && (
+        <div className="wms-td-mute" style={{ fontSize: 10.5 }}>
+          {reentradaLabel}
+        </div>
       )}
     </div>
   );

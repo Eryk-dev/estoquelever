@@ -79,13 +79,8 @@ export async function POST(request: NextRequest) {
         observacoes: "Desfazer parcial — operador",
       });
     }
-    if (item.mov_ajuste_loc_zerou_id) {
-      await estornarMovimentacao({
-        mov_id: item.mov_ajuste_loc_zerou_id,
-        usuario_id: session.id,
-        observacoes: "Desfazer parcial (ajuste) — operador",
-      });
-    }
+    // mov_ajuste_loc_zerou_id NUNCA é estornado por design — reflete descoberta física.
+    // Espelha cancelar/route.ts:79-80 e a spec original (invariantes).
 
     // Cancela realocações pendentes
     await supabase

@@ -200,3 +200,61 @@ export async function venderKit(input: {
   }
   return movs;
 }
+
+/**
+ * Estorna uma movimentação anterior gerando uma nova com tipo invertido
+ * (E↔S, R↔L) e origem_tipo='estorno' + estorno_de=mov_id.
+ *
+ * Valida que a movimentação original:
+ * - existe
+ * - não é ela mesma um estorno (estorno_de não null)
+ * - ainda não foi estornada (não existe outra mov com estorno_de = mov_id)
+ */
+export async function estornarMovimentacao(input: {
+  mov_id: string;
+  usuario_id: string;
+  observacoes?: string;
+}): Promise<Movimentacao> {
+  const sb = createServiceClient();
+
+  const { data: original } = await sb
+    .from("siso_movimentacoes")
+    .select("*")
+    .eq("id", input.mov_id)
+    .single();
+  if (!original) throw new Error(`mov ${input.mov_id} não encontrada`);
+  if (original.estorno_de)
+    throw new Error(`mov ${input.mov_id} já é um estorno (estorno_de=${original.estorno_de})`);
+
+  const { data: existente } = await sb
+    .from("siso_movimentacoes")
+    .select("id")
+    .eq("estorno_de", input.mov_id)
+    .maybeSingle();
+  if (existente) throw new Error(`mov ${input.mov_id} já foi estornada (estorno id=${existente.id})`);
+
+  const tipoMap: Record<string, TipoMov> = { E: "S", S: "E", R: "L", L: "R" };
+  const tipoInverso = tipoMap[original.tipo as string];
+  if (!tipoInverso)
+    throw new Error(`tipo desconhecido na mov original: ${original.tipo}`);
+
+  return inserirMovimentacao({
+    quadrupla: {
+      produto_id: original.produto_id,
+      empresa_dona_id: original.empresa_dona_id,
+      galpao_id: original.galpao_id,
+      localizacao_id: original.localizacao_id,
+    },
+    tipo: tipoInverso,
+    qty: Number(original.quantidade),
+    origem_tipo: "estorno",
+    origem_id: input.mov_id,
+    origem_detalhes: {
+      estorno_de: input.mov_id,
+      mov_original_origem: original.origem_tipo,
+    },
+    observacoes: input.observacoes ?? `Estorno de mov ${input.mov_id}`,
+    usuario_id: input.usuario_id,
+    estorno_de: input.mov_id,
+  });
+}

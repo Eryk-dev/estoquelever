@@ -78,21 +78,16 @@ function primeiraMovEfetiva(
   t_ref: string,
   sessaoId: string,
   cutoff: string,
+  estornadas: Set<string>,
 ): MovInput | null {
-  // IDs de movs que foram alvo de estorno (campo estorno_de aponta pra elas)
-  const estornadas = new Set<string>();
-  for (const m of movs) {
-    if (m.estorno_de) estornadas.add(m.estorno_de);
-  }
-
   const candidatos = movs
     .filter(
       (m) =>
         m.localizacao_id === loc &&
         m.produto_id === prod &&
         m.empresa_dona_id === dona &&
-        m.criado_em > t_ref &&
-        m.criado_em <= cutoff &&
+        m.criado_em > t_ref &&    // strict: bipe instantâneo é "antes" da mov concorrente
+        m.criado_em <= cutoff &&   // inclusive: cutoff fecha a janela da sessão
         m.estorno_de === null &&
         !estornadas.has(m.id) &&
         !(m.origem_tipo === "inventario" && m.origem_id === sessaoId),
@@ -154,12 +149,18 @@ export function reconciliarTemporal(input: ReconciliarInput): DivergenciaCalcula
     });
   }
 
+  // Pre-computa IDs estornados — invariante em todas as chamadas a primeiraMovEfetiva
+  const estornadas = new Set<string>();
+  for (const m of input.movs) {
+    if (m.estorno_de) estornadas.add(m.estorno_de);
+  }
+
   for (const v of agregado.values()) {
     const k = `${v.loc}|${v.prod}|${v.dona}`;
     const s = saldoMap.get(k);
     const saldo_atual = s?.saldo ?? 0;
     const custo = s?.custo ?? 0;
-    const proxima = primeiraMovEfetiva(input.movs, v.loc, v.prod, v.dona, v.t_ref, input.sessao_id, input.cutoff_em);
+    const proxima = primeiraMovEfetiva(input.movs, v.loc, v.prod, v.dona, v.t_ref, input.sessao_id, input.cutoff_em, estornadas);
     const saldo_esperado = proxima ? proxima.saldo_anterior : saldo_atual;
 
     const delta = v.qty - saldo_esperado;

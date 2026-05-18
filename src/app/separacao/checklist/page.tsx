@@ -29,8 +29,22 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GalpaoSelector } from "@/components/galpao-selector";
 import { ProductImageZoom } from "@/components/ui/product-image-zoom";
+import { ParcialModal } from "@/components/separacao/parcial-modal";
 
 // ─── Types ───────────────────────────────────────────────────
+
+interface Realocacao {
+  id: string;
+  empresa_dona_id: string;
+  empresa_nome: string | null;
+  localizacao_id: string;
+  localizacao_codigo: string;
+  quantidade: number;
+  is_emprestimo: boolean;
+  empresa_devedora_id: string | null;
+  status: string;
+  criado_em: string;
+}
 
 interface ChecklistItem {
   id: string;
@@ -49,6 +63,12 @@ interface ChecklistItem {
   disponivel: number;
   galpao_nome: string | null;
   compra_status: string | null;
+  // Parcial fields
+  quantidade_pega: number | null;
+  separacao_parcial: boolean;
+  parcial_motivo: string | null;
+  parcial_em: string | null;
+  realocacoes: Realocacao[];
 }
 
 interface ConsolidatedProduct {
@@ -118,6 +138,13 @@ function ChecklistPage() {
   const [editStockValue, setEditStockValue] = useState("");
   const [savingStock, setSavingStock] = useState(false);
   const [ocValidarLoading, setOcValidarLoading] = useState<string | null>(null);
+  const [parcialModal, setParcialModal] = useState<{
+    itemId: string;
+    sku: string;
+    localizacao: string | null;
+    quantidade: number;
+    loading: boolean;
+  } | null>(null);
   const locInputRef = useRef<HTMLInputElement>(null);
   const stockInputRef = useRef<HTMLInputElement>(null);
   const scanRef = useRef<HTMLInputElement>(null);
@@ -162,7 +189,21 @@ function ChecklistPage() {
     enabled: !!user && pedidoIds.length > 0,
   });
 
-  const items = useMemo(() => data?.items ?? [], [data?.items]);
+  const items = useMemo(
+    () =>
+      (data?.items ?? []).map((item) => {
+        const base = item as Partial<ChecklistItem>;
+        return {
+          ...item,
+          quantidade_pega: base.quantidade_pega ?? null,
+          separacao_parcial: base.separacao_parcial ?? false,
+          parcial_motivo: base.parcial_motivo ?? null,
+          parcial_em: base.parcial_em ?? null,
+          realocacoes: base.realocacoes ?? [],
+        } as ChecklistItem;
+      }),
+    [data?.items],
+  );
 
   // Consolidate items by produto_id
   const consolidated = useMemo(() => {
@@ -764,11 +805,83 @@ function ChecklistPage() {
     }
   }
 
+  // Handle parcial confirm
+  async function handleParcialConfirm(qtyPega: number, locZerou: boolean) {
+    if (!parcialModal) return;
+    setParcialModal((prev) => prev ? { ...prev, loading: true } : null);
+
+    try {
+      const res = await sisoFetch("/api/separacao/parcial", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedido_item_id: parcialModal.itemId,
+          quantidade_pega: qtyPega,
+          loc_zerou: locZerou,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        toast.error(data.error ?? "Erro ao processar parcial");
+        setParcialModal(null);
+        return;
+      }
+
+      if (data.status === "completo") {
+        toast.success("Item marcado como completo");
+      } else if (data.status === "realocado") {
+        const locs = (data.realocacoes ?? [])
+          .map((r: Realocacao) => r.localizacao_codigo)
+          .join(", ");
+        toast.success(
+          `${data.realocacoes?.length ?? 0} loc(s) encontrada(s): ${locs} — adicionado ao fim`,
+        );
+      } else if (data.status === "aguardando_supervisor") {
+        toast.warning("Sem cobertura — pedido voltou pro painel SISO", { duration: 6000 });
+      }
+
+      setParcialModal(null);
+      queryClient.invalidateQueries({ queryKey });
+    } catch {
+      toast.error("Erro de conexao");
+      setParcialModal(null);
+    }
+  }
+
+  // Handle marcar realocação
+  async function handleMarcarRealocacao(realocacaoId: string) {
+    try {
+      const res = await sisoFetch("/api/separacao/marcar-realocacao", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ realocacao_id: realocacaoId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Erro ao marcar realocacao");
+        return;
+      }
+      toast.success("Realocacao picada");
+      queryClient.invalidateQueries({ queryKey });
+    } catch {
+      toast.error("Erro de conexao");
+    }
+  }
+
   // ─── Product row renderer (shared between OC and normal sections) ───
 
   const renderProductRow = (product: ConsolidatedProduct) => {
     const isOc = product.is_oc;
     const isLoadingOc = isOc && ocValidarLoading === product.produto_id;
+
+    // Find parcial info from underlying items (first item with separacao_parcial=true, or first item for itemId)
+    const underlyingItems = items.filter((i) =>
+      product.item_ids.includes(String(i.id)),
+    );
+    const parcialItem = underlyingItems.find((i) => i.separacao_parcial);
+    const isParcial = !!parcialItem;
+    const firstItemId = product.item_ids[0] ?? "";
 
     return (
       <button
@@ -856,6 +969,11 @@ function ChecklistPage() {
               {product.gtin && (
                 <span className="text-[10px] text-ink-faint">
                   <span className="hidden sm:inline">GTIN </span>{product.gtin}
+                </span>
+              )}
+              {isParcial && parcialItem && (
+                <span className="rounded-md bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900 dark:bg-amber-800 dark:text-amber-200">
+                  Parcial {parcialItem.quantidade_pega}/{parcialItem.quantidade}
                 </span>
               )}
               {/* Qty badge — mobile only */}
@@ -1002,6 +1120,27 @@ function ChecklistPage() {
                   </>
                 )}
                 <Pencil className="h-2.5 w-2.5 opacity-50" />
+              </button>
+            )}
+
+            {/* Parcial button — only for normal, non-marked, non-parcial items */}
+            {!product.all_marcado && !isOc && !isParcial && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setParcialModal({
+                    itemId: firstItemId,
+                    sku: product.sku,
+                    localizacao: product.localizacao,
+                    quantidade: product.quantidade_total,
+                    loading: false,
+                  });
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
+                title={`Pegar parcialmente: ${product.sku}`}
+              >
+                Parcial
               </button>
             )}
 
@@ -1167,6 +1306,82 @@ function ChecklistPage() {
                 {normalItems.map(renderProductRow)}
               </div>
             )}
+
+            {/* Realocações — appended after normal items */}
+            {(() => {
+              const realocacaoLinhas: Array<{ item: ChecklistItem; realocacao: Realocacao }> = [];
+              for (const item of items) {
+                if (item.compra_status === "oc_pendente") continue;
+                for (const r of item.realocacoes ?? []) {
+                  if (r.status === "aguardando_picking") {
+                    realocacaoLinhas.push({ item, realocacao: r });
+                  }
+                }
+              }
+              if (realocacaoLinhas.length === 0) return null;
+              return (
+                <div className="space-y-1">
+                  <p className="px-1 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                    Realocações ({realocacaoLinhas.length})
+                  </p>
+                  {realocacaoLinhas.map(({ item, realocacao: r }) => (
+                    <div
+                      key={`realoc-${r.id}`}
+                      className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-900/40 dark:bg-amber-950/20"
+                    >
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          onChange={() => handleMarcarRealocacao(r.id)}
+                          className="h-5 w-5 shrink-0 rounded border-zinc-300"
+                          title="Marcar como picado"
+                        />
+                        <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-line bg-surface">
+                          {item.imagem_url ? (
+                            <ProductImageZoom
+                              src={item.imagem_url}
+                              alt={item.sku}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center">
+                              <Package className="h-4 w-4 text-ink-faint" aria-hidden="true" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-mono text-xs font-semibold text-ink">
+                              {item.sku}
+                            </span>
+                            <span className="rounded-md bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900 dark:bg-amber-800 dark:text-amber-200">
+                              Realocada
+                            </span>
+                            {r.is_emprestimo && (
+                              <span className="rounded-md bg-cyan-200 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-900 dark:bg-cyan-800 dark:text-cyan-200">
+                                Empréstimo
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                            <span className="font-mono font-medium">{r.localizacao_codigo}</span>
+                            {r.is_emprestimo && r.empresa_nome && (
+                              <span className="ml-1.5">({r.empresa_nome})</span>
+                            )}
+                            <span className="ml-1.5 text-zinc-400">
+                              ← originado de {item.localizacao ?? "sem loc"}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-xl font-bold text-ink">
+                          {r.quantidade}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </>
         )}
         {/* Action buttons */}
@@ -1204,6 +1419,19 @@ function ChecklistPage() {
           </div>
         )}
       </main>
+
+      {/* Parcial modal */}
+      {parcialModal && (
+        <ParcialModal
+          open
+          sku={parcialModal.sku}
+          localizacao={parcialModal.localizacao}
+          quantidadePedida={parcialModal.quantidade}
+          loading={parcialModal.loading}
+          onConfirm={handleParcialConfirm}
+          onCancel={() => setParcialModal(null)}
+        />
+      )}
 
       {/* Esgotado modal — choose between encaminhar or OC */}
       {esgotadoModal && (

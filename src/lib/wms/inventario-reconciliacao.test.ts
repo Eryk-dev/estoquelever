@@ -197,3 +197,44 @@ describe("reconciliarTemporal — estornos", () => {
     expect(out).toEqual([]);
   });
 });
+
+describe("reconciliarTemporal — movs da própria sessão", () => {
+  it("ignora mov origem='inventario' com origem_id == sessao_id (caso re-aprovação)", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "sess-1",
+      cutoff_em: "2026-05-18T13:30:00.000Z",
+      contagens: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 5, contado_em: T0 },
+      ],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T0 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 5, custo_medio: 10 },
+      ],
+      movs: [
+        // Mov de inventário aplicado pela MESMA sessão (em re-aprovação)
+        { id: "m1", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: T1, saldo_anterior: 3, saldo_posterior: 5, origem_tipo: "inventario", origem_id: "sess-1", estorno_de: null },
+      ],
+    });
+    // Ignora m1 → saldo_esperado = saldo_atual = 5 → delta = 0 → []
+    expect(out).toEqual([]);
+  });
+
+  it("considera mov origem='inventario' de OUTRA sessão", () => {
+    const out = reconciliarTemporal({
+      sessao_id: "sess-1",
+      cutoff_em: "2026-05-18T13:30:00.000Z",
+      contagens: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, qty_contada: 3, contado_em: T0 },
+      ],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T0 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, saldo: 5, custo_medio: 10 },
+      ],
+      movs: [
+        { id: "m1", localizacao_id: LOC, produto_id: PROD, empresa_dona_id: DONA, criado_em: T1, saldo_anterior: 3, saldo_posterior: 5, origem_tipo: "inventario", origem_id: "sess-OUTRA", estorno_de: null },
+      ],
+    });
+    // m1 é considerada → saldo_esperado = 3 → delta = 0 → []
+    expect(out).toEqual([]);
+  });
+});

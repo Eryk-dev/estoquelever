@@ -38,6 +38,7 @@ export type EventoPedido =
   | "mini_swap_executado"
   | "parcial_loc_zerou"
   | "realocacao_picada"
+  | "realocacao_parcial"
   | "realocacao_cancelada"
   | "realocacao_sem_cobertura_galpao"
   | "parcial_desfeito";

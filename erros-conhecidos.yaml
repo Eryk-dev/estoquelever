@@ -683,3 +683,58 @@ erros:
     Estoque fantasma criado pela sessão 6282e654 (1× SKU 001233 em A-01-3,
     mov 62bb5c59-323e-4308-b605-a2cb426bc791) NÃO foi estornado neste fix.
     Decisão do usuário em 2026-05-18 — tratar caso a caso via /wms/ajuste.
+
+  - id: realoc-fix-pack-2026-05-18
+    date: "2026-05-18"
+    source: docs/superpowers/specs/2026-05-18-realocacao-cascateavel-fix-pack-design.md
+    category: business_logic
+    message: "Fix-pack: 24 achados de auditoria pós-implementação da realocação cascateável"
+    cause: >
+      A feature de realocação cascateável foi entregue sem cobrir alguns cenários
+      de borda em wave consolidado e race conditions. Auditoria pós-deploy listou
+      24 achados (5 critical, 11 important, 8 minor) que precisavam ser fechados
+      antes de virar baseline pra Plano 6 (cutover WMS).
+    fix: >
+      Foundation: tabela ponte siso_pedido_item_mov_links (N:M item↔mov), coluna
+      qty_estornada numeric (suporta kits fracionais), RPCs wms_acumular_qty_pega
+      (UPDATE atômico) e wms_estornar_parcial_movimentacao (estorno proporcional
+      de mov compartilhada). Backend: helper resetarEstadoSeparacaoItens
+      compartilhado entre encaminhar/reiniciar/voltar-etapa/produto-esgotado,
+      lock pessimista pós-mov com batch claim 2-pass, cascade multi-empresa em
+      parcial, auth nos endpoints destrutivos, concluir-oc bloqueia realocs
+      pendentes. Frontend: array de realocacao_ids, distinguir 409 errors,
+      naturalLocCompare compartilhado, banner de qty pega real na embalagem.
+      Realtime: hook escuta siso_pedido_item_realocacoes.
+    files:
+      - supabase/migrations/20260518_realocacao_fix_pack_foundation.sql
+      - supabase/migrations/20260518_realocacao_fix_pack_rpc_acumular.sql
+      - supabase/migrations/20260518_realocacao_fix_pack_rpc_estorno_parcial.sql
+      - supabase/migrations/20260518_realocacao_fix_pack_embalagem_strict.sql
+      - supabase/migrations/20260518_realocacao_fix_pack_fila_payload.sql
+      - src/lib/separacao/reset-state.ts
+      - src/lib/wms/loc-compare.ts
+      - src/app/api/wms/separacao/parcial/route.ts
+      - src/app/api/wms/separacao/marcar-realocacao/route.ts
+      - src/app/api/wms/separacao/desfazer-parcial/route.ts
+      - src/app/api/wms/separacao/cancelar/route.ts
+      - src/app/api/wms/separacao/encaminhar/route.ts
+      - src/app/api/wms/separacao/reiniciar/route.ts
+      - src/app/api/wms/separacao/voltar-etapa/route.ts
+      - src/app/api/wms/separacao/concluir-oc/route.ts
+      - src/app/api/wms/separacao/produto-esgotado/route.ts
+      - src/app/api/wms/separacao/realocacao/[id]/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+      - src/app/wms/separacao/embalagem/page.tsx
+      - src/components/wms/separacao/parcial-modal.tsx
+      - src/hooks/use-realtime-separacao.ts
+      - src/lib/wms/ledger.ts
+      - src/lib/compras-release.ts
+      - src/lib/execution-worker.ts
+      - src/lib/compras-equivalencia.ts
+      - src/lib/compras-utils.ts
+      - src/lib/historico-service.ts
+    tags: [wms, separacao, realocacao, audit, fix-pack, cascade, race-condition]
+    notes: >
+      Plano e spec em docs/superpowers/plans/2026-05-18-realocacao-cascateavel-fix-pack.md
+      e docs/superpowers/specs/2026-05-18-realocacao-cascateavel-fix-pack-design.md.
+      Fix-pack fechou 24 achados via 36 tasks — baseline pra Plano 6 (cutover WMS).

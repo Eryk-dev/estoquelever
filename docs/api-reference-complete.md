@@ -937,8 +937,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Business Logic:**
 - Validates pedido_ids is non-empty array of strings
-- Fetches all pedidos, validates ALL have status_separacao = "aguardando_separacao", "aguardando_compra", or "em_separacao"
-- Filters pedidos with status = "aguardando_separacao" or "aguardando_compra" (ignores already "em_separacao")
+- Fetches all pedidos, validates ALL have status_separacao = "aguardando_separacao", "aguardando_compra", "em_separacao" **or `pendente_realocacao`** (fix-pack 2026-05-18 I7 — permite retomar pedidos travados)
+- Filters pedidos with status = "aguardando_separacao", "aguardando_compra" ou `pendente_realocacao` (ignores already "em_separacao")
 - Updates those to "em_separacao" with separacao_operador_id and separacao_iniciada_em
 - Calls RPC `siso_consolidar_produtos_separacao` to get consolidated product list (aggregates by SKU/localizacao)
 - Returns consolidated products sorted by localizacao
@@ -1139,7 +1139,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Response (400 - Invalid pedido status):**
 ```json
 {
-  "error": "Pedido deve estar com status 'em_separacao' ou 'aguardando_separacao'",
+  "error": "Pedido deve estar com status 'em_separacao', 'aguardando_separacao' ou 'pendente_realocacao'",
   "status_atual": "string"
 }
 ```
@@ -1160,10 +1160,10 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Business Logic:**
 - Fetches item from `siso_pedido_itens`
-- Validates parent pedido has status_separacao = "em_separacao" or "aguardando_separacao"
+- Validates parent pedido has status_separacao = "em_separacao", "aguardando_separacao" **ou `pendente_realocacao`** (fix-pack 2026-05-18 I7 — permite marcar item em pedido travado por realocação sem cobertura)
 - Blocks if `separacao_parcial = true` (must use `/api/wms/separacao/parcial` instead)
 - Updates separacao_marcado and separacao_marcado_em (null if unmarked)
-- On mark: calls WMS `wms_inserir_movimentacao` (tipo=S, origem_tipo=nf_venda) — graceful failure (logs warn, proceeds)
+- On mark: calls WMS `wms_inserir_movimentacao` (tipo=S, origem_tipo=nf_venda) — graceful failure (logs warn, proceeds). Inserta 1 linha em `siso_pedido_item_mov_links` (tipo_link='saida') pra bridge.
 - On unmark: estorna the ledger movement stored in `mov_saida_id` — graceful failure
 
 **Side Effects:**
@@ -1245,7 +1245,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Purpose:** Finish separation for selected orders. Only orders where ALL items have separacao_marcado = true are moved to 'separado'.
 
-**Auth:** None
+**Auth:** X-Session-Id (required)
+
+> **Fix-pack 2026-05-18 (C6):** endpoint passou a exigir sessão autenticada. Antes era `auth: none`. Retorna 401 `sessao_invalida` se ausente.
 
 **Request Body:**
 ```json
@@ -1259,6 +1261,13 @@ This is the **authoritative, comprehensive reference** for every API route in th
 {
   "separados": ["string"],
   "pendentes": ["string"]
+}
+```
+
+**Response (401):**
+```json
+{
+  "error": "sessao_invalida"
 }
 ```
 
@@ -1317,9 +1326,21 @@ This is the **authoritative, comprehensive reference** for every API route in th
 }
 ```
 
+**Response (409 - Pending realocacoes block conclusion):**
+```json
+{
+  "error": "Existem realocacoes pendentes — pique ou cancele antes de concluir",
+  "code": "realocacoes_pendentes",
+  "pedido_ids_bloqueados": ["string"]
+}
+```
+
+> **Fix-pack 2026-05-18 (C7):** o endpoint agora bloqueia com 409 se qualquer item dos pedidos selecionados tem realocação em status `aguardando_picking`. Antes, a chamada passava e a chain ficava órfã. Frontend exibe modal pra pickar ou cancelar a realoc antes de tentar de novo.
+
 **Business Logic:**
 - Validates pedido_ids is non-empty array of strings
 - Fetches all items from `siso_pedido_itens` for the given pedidos
+- **Bloqueia 409 `realocacoes_pendentes`** se qualquer item tem realocação em `aguardando_picking` em `siso_pedido_item_realocacoes`. Retorna `pedido_ids_bloqueados` com os IDs problemáticos.
 - Groups by pedido_id, checks if ALL items have `separacao_marcado = true`
 - Pedidos where any item is unmarked go to `pendentes[]`
 - For fully-marked pedidos:
@@ -1354,7 +1375,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Purpose:** Fetch individual items for the given pedido IDs with localizacao, stock info, and short-pick state. For transfers, resolves to the separating empresa (the one that will ship), not the origin empresa.
 
-**Auth:** None
+**Auth:** X-Session-Id (required)
+
+> **Fix-pack 2026-05-18 (C6):** endpoint passou a exigir sessão autenticada. Retorna 401 `sessao_invalida` se ausente.
 
 **Query Params:**
 - `pedidos`: comma-separated pedido IDs (required)
@@ -1431,9 +1454,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **File:** `src/app/api/wms/separacao/cancelar/route.ts`
 
-**Purpose:** Cancel an in-progress separation. Resets all item checkmarks, estorna WMS movements, cancels pending re-allocations, and moves pedidos back to 'aguardando_separacao'.
+**Purpose:** Cancel an in-progress separation. Resets all item checkmarks, estorna WMS movements (proportional via bridge table), cancels pending re-allocations, and moves pedidos back to 'aguardando_separacao'.
 
-**Auth:** None
+**Auth:** X-Session-Id (required) — usuarioId é usado no evento de histórico `separacao_cancelada`.
 
 **Request Body:**
 ```json
@@ -1451,21 +1474,22 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```
 
 **Business Logic:**
-- For each item with `mov_saida_id`: estorna the ledger movement in WMS (graceful failure)
-- For items with `separacao_parcial=true`:
-  - Estorna `mov_saida_id` (reflects physical pick already done — does NOT estorn `mov_ajuste_loc_zerou_id` which reflects physical discovery)
-  - Cancels realocações with status `aguardando_picking` in `siso_pedido_item_realocacoes`
-  - Estorna mov_saida of any realocações already `picado`
-  - Resets partial fields: `separacao_parcial=false`, `quantidade_pega=null`, `parcial_motivo/em/por=null`, `mov_saida_id=null`, `mov_ajuste_loc_zerou_id=null`
-- Resets all items: separacao_marcado = false, separacao_marcado_em = null
-- Resets pedidos: status_separacao = "aguardando_separacao", separacao_operador_id = null, separacao_iniciada_em = null
+- Lê todas as linhas relevantes de `siso_pedido_item_mov_links` para os itens dos pedidos (todos os `tipo_link`: `saida` + `ajuste_loc_zerou`)
+- **Dedupe via `Set<mov_id>`** — uma mov compartilhada por N itens só é estornada 1× (ou proporcionalmente, conforme a soma de qty dos links). Crítico em wave consolidado onde wave inteira aponta pra mesma mov.
+- Para cada mov estornanda chama `wms_estornar_parcial_movimentacao`. Se a RPC raise "ja foi estornada" (mov.qty_estornada == quantidade), **tolera silenciosamente** — outro endpoint pode ter rodado antes.
+- Cancels realocações com status `aguardando_picking` em `siso_pedido_item_realocacoes` (incluindo cascade via `parent_realocacao_id`).
+- Resets all items: `separacao_marcado=false`, `separacao_marcado_em=null`, `separacao_parcial=false`, `quantidade_pega=null`, `parcial_motivo/em/por=null`, `mov_saida_id=null`, `mov_ajuste_loc_zerou_id=null`
+- Resets pedidos: `status_separacao = "aguardando_separacao"`, `separacao_operador_id = null`, `separacao_iniciada_em = null`
+- Registers evento `separacao_cancelada` em `siso_pedido_historico` com `usuario_id` da sessão.
 
 **Side Effects:**
 - Updates `siso_pedido_itens` (resets marcado + partial fields)
 - Updates `siso_pedidos` (resets status)
-- Inserts estorno rows in `siso_movimentacoes` for each estorned movement
+- Inserts estorno rows in `siso_movimentacoes` for each unique mov_id (dedupado)
+- Atualiza `siso_movimentacoes.qty_estornada` na mov fonte
+- Deleta linhas consumidas de `siso_pedido_item_mov_links`
 - Updates `siso_pedido_item_realocacoes.status = 'cancelado'`
-- Registers audit event in `siso_pedido_historico`
+- Registers audit event `separacao_cancelada` (com usuarioId) in `siso_pedido_historico`
 - Logs to `siso_logs`
 
 ---
@@ -1490,20 +1514,23 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Request Body — modo realocação (parcial em loc de realocação ativa):**
 ```json
 {
-  "realocacao_id": "uuid",
+  "realocacao_ids": ["uuid", "uuid"],
   "quantidade_pega": 2,
   "loc_zerou": true
 }
 ```
 
+> **Fix-pack 2026-05-18 (I3):** o modo realocação agora aceita `realocacao_ids: string[]` (array, não singular). Necessário pra suportar wave consolidado onde a mesma loc pode atender múltiplas realocações de pedidos diferentes (uma única mov S compartilhada, registrada em N linhas via `siso_pedido_item_mov_links`). O endpoint ainda aceita `realocacao_id: string` (singular) como fallback de compatibilidade, mas o frontend sempre envia array.
+
 **Side effects (ambos os modos):**
-- Gera mov S no ledger pela qty pega (origem `nf_venda` ou `emprestimo` em realocação que é empréstimo).
-- Se `loc_zerou` e `saldo > qty_pega`, gera mov S de ajuste `ajuste_pick_zerou` pra delta.
+- Gera mov S no ledger pela qty pega (origem `nf_venda` ou `emprestimo` em realocação que é empréstimo). Wave consolidado: 1 mov S compartilhada por todas as realocações apontando pra mesma quádrupla.
+- Insere 1 linha em `siso_pedido_item_mov_links` por (item, realocação?, mov, tipo_link) — bridge N:M item↔mov pra estorno proporcional posterior.
+- Se `loc_zerou` e `saldo > qty_pega`, gera mov S de ajuste `ajuste_pick_zerou` pra delta (também registrada na bridge).
 - Marca registro como parcial:
   - Modo item: `siso_pedido_itens.separacao_parcial = true` + `separacao_marcado = true`.
   - Modo realocação: `siso_pedido_item_realocacoes.status = 'picado_parcial'` (ou `'picado'` se cobriu integral).
-- Acumula `quantidade_pega` no item pai (`siso_pedido_itens.quantidade_pega +=`).
-- Se sobra residual: dispara `resolverRealocacao` excluindo loc original do item + todas as locs de realocações do mesmo item (qualquer status). Cria novas linhas em `siso_pedido_item_realocacoes` com `parent_realocacao_id = realoc.id` no modo realocação, ou sem parent no modo item.
+- Acumula `quantidade_pega` no item pai via RPC `wms_acumular_qty_pega` (UPDATE atômico — evita race em wave consolidado).
+- Se sobra residual: dispara `resolverRealocacao` excluindo loc original do item + todas as locs de realocações do mesmo item (qualquer status). Em wave consolidado a cascade roda em **todos** os itens afetados (multi-empresa). Cria novas linhas em `siso_pedido_item_realocacoes` com `parent_realocacao_id = realoc.id` no modo realocação, ou sem parent no modo item.
 
 **Resposta:**
 
@@ -1517,7 +1544,11 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Erros:**
 - 400 — body inválido, qty > sugerida, ou pedido sem empresa_origem.
 - 404 — item / realocação / pedido não encontrado.
-- 409 — item já processado, realocação não-`aguardando_picking`, ou `posicao_reservada` (saldo reservado por outro pedido).
+- 409 — código estável no payload `{ error, code }`:
+  - `realocacao_ja_picada` — race no `UPDATE … WHERE status='aguardando_picking'` (a realoc foi marcada como `picado`/`cancelado` por outra request entre o fetch e o UPDATE pessimista).
+  - `race_item_ja_picado` — race no `UPDATE … WHERE separacao_marcado=false` (outro operador marcou o item entre o fetch e o UPDATE).
+  - `posicao_reservada` — saldo da quádrupla reservado por outro pedido.
+  - Item já processado / realocação não-`aguardando_picking` (versões anteriores ao fix-pack — agora coberto pelos códigos acima).
 
 **Side Effects (resumo):**
 - Inserts 1-2 rows in `siso_movimentacoes` (origem_tipo=`nf_venda` ou `emprestimo` + optionally `ajuste_pick_zerou`).
@@ -1554,13 +1585,16 @@ This is the **authoritative, comprehensive reference** for every API route in th
 }
 ```
 
-**Response (400 - Already picked or cancelled):**
+**Response (409 - Race / already picked or cancelled):**
 ```json
 {
   "error": "Realocacao ja foi picada ou cancelada",
+  "code": "realocacao_ja_picada",
   "status_atual": "string"
 }
 ```
+
+> **Fix-pack 2026-05-18 (I2):** retorno passou de 400 para 409 com `code: 'realocacao_ja_picada'` estável, detectado via lock pessimista pós-mov: o UPDATE final tem `WHERE status='aguardando_picking'` — se `rowCount=0` o endpoint estorna a mov S recém-criada e devolve 409, permitindo ao frontend distinguir race de erro de validação.
 
 **Response (404 - Not found):**
 ```json
@@ -1573,14 +1607,16 @@ This is the **authoritative, comprehensive reference** for every API route in th
 - Fetches realocacao row from `siso_pedido_item_realocacoes`
 - Validates status = `aguardando_picking`
 - Creates WMS movement: tipo=S, origem_tipo=`nf_venda` (regular stock) or `emprestimo` (if `is_emprestimo=true`)
-- Updates realocacao: `status = 'picado'`, `mov_id`
-- Adds `quantidade` to parent item's `quantidade_pega`
-- Registers audit event `realocacao_picada`
+- Updates realocacao com lock pessimista: `UPDATE … SET status='picado', mov_id=… WHERE id=… AND status='aguardando_picking'`. Se `rowCount=0`, estorna a mov e devolve 409 `realocacao_ja_picada`.
+- Adds `quantidade` to parent item's `quantidade_pega` via RPC `wms_acumular_qty_pega` (UPDATE atômico).
+- Insere 1 linha em `siso_pedido_item_mov_links` (tipo_link='saida') pra bridge item↔mov.
+- Registers audit event `realocacao_picada`.
 
 **Side Effects:**
 - Inserts row in `siso_movimentacoes`
+- Inserts row in `siso_pedido_item_mov_links`
 - Updates `siso_pedido_item_realocacoes.status = 'picado'`
-- Updates `siso_pedido_itens.quantidade_pega` (+=quantidade)
+- Updates `siso_pedido_itens.quantidade_pega` (+=quantidade) via RPC atômica
 - Inserts event `realocacao_picada` in `siso_pedido_historico`
 
 ---
@@ -1589,7 +1625,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **File:** `src/app/api/wms/separacao/realocacao/[id]/route.ts`
 
-**Purpose:** Cancel a pending re-allocation (status=`aguardando_picking`). Does not create any WMS movement since no pick has occurred yet.
+**Purpose:** Cancel a pending re-allocation (status=`aguardando_picking`) and cascade-cancel all pending descendants (linhas de realocação geradas a partir desta via `parent_realocacao_id`). Does not create any WMS movement since no pick has occurred yet.
 
 **Auth:** X-Session-Id (required)
 
@@ -1599,14 +1635,19 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Response (200):**
 ```json
 {
-  "status": "cancelado"
+  "status": "cancelado",
+  "descendentes_canceladas": 2
 }
 ```
 
-**Response (400 - Already picked):**
+> **Fix-pack 2026-05-18 (C3):** o cancelamento agora cascateia pra toda a chain descendente via `parent_realocacao_id` (recursive CTE). Retorna `descendentes_canceladas: number` no payload.
+
+**Response (409 - Chain has picked descendants):**
 ```json
 {
-  "error": "Realocacao ja foi picada — use desfazer-parcial para reverter"
+  "error": "Chain tem realocacoes ja picadas — use desfazer-parcial",
+  "code": "chain_tem_picadas",
+  "descendentes_picadas": ["uuid"]
 }
 ```
 
@@ -1618,14 +1659,15 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```
 
 **Business Logic:**
-- Validates realocacao has status = `aguardando_picking` (cannot cancel already-picked)
-- Updates realocacao: `status = 'cancelado'`
+- Carrega chain descendente via CTE recursiva (`parent_realocacao_id = :id` + descendentes transitivos)
+- Bloqueia com 409 `chain_tem_picadas` se qualquer descendente está em `picado` ou `picado_parcial` — operador precisa usar `desfazer-parcial` pra estornar a chain
+- Caso ok: `UPDATE siso_pedido_item_realocacoes SET status='cancelado' WHERE id IN (raiz + descendentes_pendentes)`
 - No WMS movement created (nothing was physically picked)
-- Registers audit event `realocacao_cancelada`
+- Registers audit event `realocacao_cancelada` na raiz; descendentes registram `realocacao_cancelada_cascade`
 
 **Side Effects:**
-- Updates `siso_pedido_item_realocacoes.status = 'cancelado'`
-- Inserts event `realocacao_cancelada` in `siso_pedido_historico`
+- Updates `siso_pedido_item_realocacoes.status = 'cancelado'` para a raiz + descendentes pendentes
+- Inserts event `realocacao_cancelada` (raiz) + `realocacao_cancelada_cascade` (descendentes) in `siso_pedido_historico`
 
 ---
 
@@ -1668,15 +1710,17 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Business Logic:**
 - Validates no realocacao has status = `picado` (would require manual correction)
-- Estorna `mov_saida_id` (the original short-pick saida movement)
-- Estorna `mov_ajuste_loc_zerou_id` if present
-- Cancels all realocacoes with status = `aguardando_picking`
+- **Wave consolidado / bridge-table path (preferida):** lê linhas de `siso_pedido_item_mov_links` filtradas por `pedido_item_id = :item_id` e `realocacao_id IS NULL` (mov da raiz do parcial). Para cada link chama `wms_estornar_parcial_movimentacao(mov_id, qty, usuario, observacoes)` — RPC que cria 1 mov contrária com qty proporcional e incrementa `qty_estornada` na mov fonte. Suporta mov compartilhada entre múltiplos itens (estorno proporcional, não total).
+- **Legacy path (fallback):** se não há linhas na bridge (parciais criadas antes do fix-pack), estorna `mov_saida_id` e `mov_ajuste_loc_zerou_id` em modo legacy (full estorno).
+- Cancels all realocacoes with status = `aguardando_picking` (descendentes da raiz incluso, via `parent_realocacao_id`)
 - Resets item fields: `separacao_parcial=false`, `quantidade_pega=null`, `parcial_motivo/em/por=null`, `mov_saida_id=null`, `mov_ajuste_loc_zerou_id=null`, `separacao_marcado=false`
 - If pedido was in `pendente_realocacao`: transitions back to `em_separacao`
 - Registers audit event `parcial_desfeito`
 
 **Side Effects:**
-- Inserts estorno rows in `siso_movimentacoes` (estorno_de = original mov IDs)
+- Inserts estorno rows in `siso_movimentacoes` via RPC `wms_estornar_parcial_movimentacao` (proporcional) ou `wms_estornar_movimentacao` (legacy)
+- Atualiza `siso_movimentacoes.qty_estornada` (acumulado) na mov fonte
+- Deleta linhas da bridge `siso_pedido_item_mov_links` consumidas
 - Updates `siso_pedido_item_realocacoes.status = 'cancelado'` for pending rows
 - Resets `siso_pedido_itens` partial fields
 - May update `siso_pedidos.status_separacao = 'em_separacao'`
@@ -1688,9 +1732,11 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **File:** `src/app/api/wms/separacao/reiniciar/route.ts`
 
-**Purpose:** Reset checklist or packing progress for given pedidos.
+**Purpose:** Reset checklist or packing progress for given pedidos. Usa o helper compartilhado `resetarEstadoSeparacaoItens` (mesma lógica de `encaminhar`/`voltar-etapa`/`produto-esgotado`).
 
-**Auth:** None
+**Auth:** X-Session-Id (required)
+
+> **Fix-pack 2026-05-18 (C6 + I8):** endpoint passou a exigir sessão e foi refatorado pra consumir o helper `resetarEstadoSeparacaoItens` em `src/lib/separacao/reset-state.ts` — antes duplicava a lógica de reset.
 
 **Request Body:**
 ```json
@@ -1776,8 +1822,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```
 
 **Validation per pedido:**
-- `status_separacao` must be `aguardando_separacao` or `em_separacao`
+- `status_separacao` must be `aguardando_separacao`, `em_separacao` **or `pendente_realocacao`** (fix-pack 2026-05-18 I7 — antes pedidos travados em `pendente_realocacao` não podiam ser encaminhados)
 - Cannot forward to the same galpão (`separacao_galpao_id !== galpao_destino_id`)
+- Reset de estado via helper compartilhado `resetarEstadoSeparacaoItens` (fix-pack I8)
 
 **Stock Reversal Logic:**
 - `decisao_final = "propria"`: calls `estornarEstoque()` on origin empresa via Tiny API
@@ -1927,7 +1974,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Business Logic:**
 - Determines direction: going back or going forward
+- Aceita pedidos em `pendente_realocacao` como origem (fix-pack 2026-05-18 I7 — antes status era rejeitado pela validação).
 - **Going backward (to earlier stage):**
+  - Reset de estado via helper compartilhado `resetarEstadoSeparacaoItens` (fix-pack I8)
   - Clears timestamps and operador info as appropriate
   - Keeps etiqueta/agrupamento data (never clear cached ZPL labels)
   - Clears item-level completion markers (separacao_marcado, quantidade_bipada, bipado_completo, etc.)
@@ -1983,10 +2032,22 @@ This is the **authoritative, comprehensive reference** for every API route in th
 }
 ```
 
+**Response (422 - Bipou além do teto em item parcial):**
+```json
+{
+  "error": "bipou_alem_do_teto",
+  "code": "bipou_alem_do_teto",
+  "teto": 2,
+  "tentado": 3
+}
+```
+
+> **Fix-pack 2026-05-18 (I6):** o endpoint passa `p_strict_qty_pega = true` pra RPC. Quando o item tem `separacao_parcial = true`, o teto da bipagem deixa de ser `quantidade_pedida` e passa a ser **qty pega real** = `item.quantidade_pega + Σ realocs.quantidade_pega (em 'picado'|'picado_parcial')`. Tentativa de ultrapassar retorna 422 com `teto` e `tentado` numéricos. UI da embalagem mostra banner explicativo.
+
 **Business Logic:**
 - Validates session to identify the packing operator
-- Calls RPC `siso_processar_bip_embalagem` with operator ID to find and update item atomically
-- RPC finds the oldest separado-status order with matching SKU, increments quantidade_bipada
+- Calls RPC `siso_processar_bip_embalagem` com `p_strict_qty_pega := true`
+- RPC finds the oldest separado-status order with matching SKU, increments quantidade_bipada respeitando teto strict pra itens parciais
 - If pedido_completo: calls `imprimirEtiquetaDireta` or `buscarEImprimirEtiqueta` to print label on the **packing operator's** printer
 
 **Side Effects:**
@@ -2257,7 +2318,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Purpose:** Three modes for handling out-of-stock products: preview alternatives, create purchase order, or redirect to another galpão.
 
-**Auth:** None
+**Auth:** X-Session-Id (required)
+
+> **Fix-pack 2026-05-18 (C8 + I9):** endpoint passou a exigir sessão. No modo OC, o cálculo do residual agora considera o que já foi pego (parcial + realocações picadas): `residual = quantidade_pedida - (item.quantidade_pega + Σ realocs.quantidade_pega em status 'picado'|'picado_parcial')`. Itens com `residual=0` são **pulados** (não viram OC) — antes a request criava OC pra qty 0.
 
 **Request Body (Preview mode - no action):**
 ```json
@@ -2319,8 +2382,10 @@ This is the **authoritative, comprehensive reference** for every API route in th
 - Finds all active pedidos (aguardando_nf, aguardando_separacao, em_separacao) with matching SKU
 - Finds stock alternatives in other galpões
 - **Preview mode:** returns count of affected pedidos/items and alternative galpões
-- **OC mode:** marks items for purchase, creates/updates OC, resets separation state, moves pedidos to aguardando_compra
-- **Encaminhar mode:** resets separation state, changes separacao_galpao_id to destination, moves pedidos back to aguardando_separacao
+- **OC mode:** marks items for purchase, creates/updates OC, resets separation state, moves pedidos to aguardando_compra.
+  - Calcula `residual = quantidade_pedida - quantidade_pega_total` por item, onde `quantidade_pega_total = item.quantidade_pega + Σ realocs.quantidade_pega (status IN ('picado','picado_parcial'))`. Itens com `residual = 0` são pulados.
+  - Usa helper compartilhado `resetarEstadoSeparacaoItens` para reset de estado (mesmo helper consumido por `encaminhar`/`reiniciar`/`voltar-etapa`).
+- **Encaminhar mode:** resets separation state, changes separacao_galpao_id to destination, moves pedidos back to aguardando_separacao. Reset via helper `resetarEstadoSeparacaoItens`.
 
 **Side Effects:**
 - Updates `siso_pedido_itens` (compra_status, fornecedor_oc, etc. for OC mode)

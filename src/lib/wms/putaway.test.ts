@@ -7,14 +7,19 @@ interface ExistRow {
   localizacao?: { codigo?: string; tipo?: string };
 }
 
-function mockSb(rows: ExistRow[], recebRows: { id: string; codigo: string }[] = []) {
+function mockSb(
+  rows: ExistRow[],
+  defaultPickingRows: { id: string; codigo: string }[] = [],
+) {
   return {
     from(table: string) {
       if (table === "siso_estoque") {
         return {
           select: () => ({
             match: () => ({
-              order: () => Promise.resolve({ data: rows, error: null }),
+              gt: () => ({
+                order: () => Promise.resolve({ data: rows, error: null }),
+              }),
             }),
           }),
         };
@@ -23,7 +28,8 @@ function mockSb(rows: ExistRow[], recebRows: { id: string; codigo: string }[] = 
         return {
           select: () => ({
             match: () => ({
-              limit: () => Promise.resolve({ data: recebRows, error: null }),
+              limit: () =>
+                Promise.resolve({ data: defaultPickingRows, error: null }),
             }),
           }),
         };
@@ -47,8 +53,8 @@ describe("sugerirLocalizacaoPutaway", () => {
       empresa_id: "e1",
       galpao_id: "g1",
     });
-    expect(r.localizacao_id).toBe("loc-A12");
-    expect(r.razao).toMatch(/SKU já está/i);
+    expect(r?.localizacao_id).toBe("loc-A12");
+    expect(r?.razao).toMatch(/SKU já está/i);
   });
 
   it("prefere localização picking sobre overstock quando ambas têm saldo", async () => {
@@ -69,17 +75,51 @@ describe("sugerirLocalizacaoPutaway", () => {
       empresa_id: "e1",
       galpao_id: "g1",
     });
-    expect(r.localizacao_id).toBe("loc-picking");
+    expect(r?.localizacao_id).toBe("loc-picking");
   });
 
-  it("retorna localização recebimento quando galpão não tem nada do SKU", async () => {
-    const sb = mockSb([], [{ id: "loc-recv", codigo: "RECEBIMENTO" }]);
+  it("NUNCA sugere loc tipo='recebimento' mesmo se SKU tiver saldo só lá", async () => {
+    // Cenário: SKU foi recebido mas ainda não guardado (saldo só em RECEBIMENTO).
+    // Sugerir RECEBIMENTO como destino do put-away causaria erro "destino==origem".
+    const sb = mockSb(
+      [
+        {
+          localizacao_id: "loc-recv",
+          saldo: 10,
+          localizacao: { codigo: "RECEBIMENTO", tipo: "recebimento" },
+        },
+      ],
+      [{ id: "loc-default", codigo: "DEFAULT-PICKING" }],
+    );
     const r = await sugerirLocalizacaoPutaway(sb as never, {
       produto_id: "p2",
       empresa_id: "e1",
       galpao_id: "g1",
     });
-    expect(r.localizacao_id).toBe("loc-recv");
-    expect(r.razao).toMatch(/recebimento/i);
+    expect(r?.localizacao_id).toBe("loc-default");
+  });
+
+  it("retorna null quando SKU novo e galpão não tem DEFAULT-PICKING", async () => {
+    const sb = mockSb([], []);
+    const r = await sugerirLocalizacaoPutaway(sb as never, {
+      produto_id: "p2",
+      empresa_id: "e1",
+      galpao_id: "g1",
+    });
+    expect(r).toBeNull();
+  });
+
+  it("cai pra DEFAULT-PICKING quando SKU não tem saldo em loc não-recebimento", async () => {
+    const sb = mockSb(
+      [],
+      [{ id: "loc-default", codigo: "DEFAULT-PICKING" }],
+    );
+    const r = await sugerirLocalizacaoPutaway(sb as never, {
+      produto_id: "p2",
+      empresa_id: "e1",
+      galpao_id: "g1",
+    });
+    expect(r?.localizacao_id).toBe("loc-default");
+    expect(r?.razao).toMatch(/DEFAULT-PICKING/i);
   });
 });

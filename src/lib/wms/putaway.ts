@@ -62,15 +62,21 @@ export async function listarLocaisExistentesProduto(
 }
 
 /**
- * Heurística:
- * 1. Se SKU já tem saldo nesse galpão+empresa, sugere essa localização (preferindo picking sobre overstock)
- * 2. Senão, retorna localização tipo='recebimento' do galpão
- * 3. Fallback: DEFAULT-PICKING
+ * Heurística de sugestão de loc destino pro put-away.
+ *
+ * **NUNCA sugere loc tipo='recebimento'** — essa loc é a ORIGEM do put-away,
+ * e usá-la como destino dispara erro "destino == origem" e deixa mov órfã
+ * (bug 2026-05-19).
+ *
+ * 1. SKU já tem saldo em loc não-recebimento? sugere ela (preferindo picking).
+ * 2. Galpão tem DEFAULT-PICKING? sugere ela.
+ * 3. Senão retorna null → frontend mostra "decida no tablet" e a pendência
+ *    nasce sem destino (operador escolhe ao guardar).
  */
 export async function sugerirLocalizacaoPutaway(
   sb: SupabaseClient,
   ctx: PutawayContext,
-): Promise<PutawaySugestao> {
+): Promise<PutawaySugestao | null> {
   const { data: existentes } = await sb
     .from("siso_estoque")
     .select("localizacao_id, saldo, localizacao:siso_localizacoes(codigo, tipo)")
@@ -79,6 +85,7 @@ export async function sugerirLocalizacaoPutaway(
       empresa_dona_id: ctx.empresa_id,
       galpao_id: ctx.galpao_id,
     })
+    .gt("saldo", 0)
     .order("saldo", { ascending: false });
 
   type Existente = {
@@ -86,7 +93,9 @@ export async function sugerirLocalizacaoPutaway(
     saldo: number;
     localizacao?: { codigo?: string; tipo?: string };
   };
-  const lista = (existentes ?? []) as Existente[];
+  const lista = ((existentes ?? []) as Existente[]).filter(
+    (e) => e.localizacao?.tipo && e.localizacao.tipo !== "recebimento",
+  );
   const candidato =
     lista.find((e) => e.localizacao?.tipo === "picking") ?? lista[0];
   if (candidato) {
@@ -94,19 +103,6 @@ export async function sugerirLocalizacaoPutaway(
       localizacao_id: candidato.localizacao_id,
       codigo: candidato.localizacao?.codigo,
       razao: "SKU já está nessa localização",
-    };
-  }
-
-  const { data: recebs } = await sb
-    .from("siso_localizacoes")
-    .select("id, codigo")
-    .match({ galpao_id: ctx.galpao_id, tipo: "recebimento", ativo: true })
-    .limit(1);
-  if (recebs && recebs.length > 0) {
-    return {
-      localizacao_id: recebs[0].id,
-      codigo: recebs[0].codigo,
-      razao: "área de recebimento do galpão",
     };
   }
 
@@ -123,5 +119,5 @@ export async function sugerirLocalizacaoPutaway(
     };
   }
 
-  throw new Error("nenhuma localização disponível no galpão");
+  return null;
 }

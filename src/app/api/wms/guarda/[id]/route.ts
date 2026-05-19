@@ -43,13 +43,13 @@ export async function GET(
         galpao_id: pend.galpao_id,
       }),
     ]);
-    // Filtra a loc RECEBIMENTO da sugestão — operador não pode "guardar"
-    // de volta na origem. Se o algoritmo de putaway só sugeriu RECEBIMENTO
-    // (caso edge: primeiro recebimento do SKU), retorna sem sugestão.
+    // Defesa em profundidade: sugerirLocalizacaoPutaway já não retorna loc
+    // tipo='recebimento', mas mantemos o filtro caso a origem dessa pendência
+    // seja outra coisa edge (loc reaproveitada como origem).
     const sugestaoFinal =
-      sugestao.localizacao_id === pend.localizacao_origem_id
-        ? null
-        : sugestao;
+      sugestao && sugestao.localizacao_id !== pend.localizacao_origem_id
+        ? sugestao
+        : null;
     return NextResponse.json({
       pendencia: pend,
       sugestao: sugestaoFinal,

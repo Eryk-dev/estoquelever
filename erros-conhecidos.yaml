@@ -760,3 +760,40 @@ erros:
       - src/app/api/wms/inventario/[id]/eventos/route.ts
       - docs/api-reference-complete.md
     tags: [wms, inventario, feed-eventos, supervisor, escopo, filtro-loc]
+
+  - id: wms-recebimento-mov-orfa-sem-pendencia-2026-05-19
+    date: "2026-05-19"
+    source: wms.receber / src/lib/wms/movimentacoes.ts + src/lib/wms/putaway.ts
+    category: business_logic
+    message: "loc destino não pode ser igual à loc de recebimento (mov fica órfã, sem pendência de guarda)"
+    cause: >
+      Combinação de 2 bugs:
+      (1) sugerirLocalizacaoPutaway tinha fallback que retornava a própria
+          loc tipo='recebimento' como destino sugerido quando o SKU era novo
+          no galpão. O frontend pré-preenchia destino=RECEBIMENTO e enviava
+          ao POST /api/wms/receber.
+      (2) receberEstoque chamava inserirMovimentacao (entrada em RECEBIMENTO)
+          e só DEPOIS chamava criarPendencia, que então validava
+          destino != origem. Sem transação. Quando a validação falhava, a
+          mov de entrada já estava gravada, ficando órfã (saldo em
+          RECEBIMENTO sem pendência associada na fila /wms/guarda).
+      Caso real: SKU 000001 NetAir/CWB, mov dfe144a3 (10 unidades) ficou
+      órfã em 2026-05-19 11:55:35.
+    fix: >
+      (1) sugerirLocalizacaoPutaway: filtra locs tipo='recebimento' dos
+          candidatos, remove o fallback que sugeria RECEBIMENTO, e retorna
+          null quando não há sugestão (frontend deixa vazio e operador
+          decide no tablet).
+      (2) receberEstoque: pré-valida localizacao_destino_id != loc RECEBIMENTO
+          via função pura validarItensRecebimento ANTES de gravar qualquer
+          mov; e envolve a criação da pendência num try/catch que estorna
+          a mov automaticamente se a pendência falhar (defesa em profundidade).
+      Dado: criada pendência retroativa f571fc4d pra mov dfe144a3.
+    files:
+      - src/lib/wms/putaway.ts
+      - src/lib/wms/movimentacoes.ts
+      - src/app/api/wms/receber/route.ts
+      - src/app/api/wms/guarda/[id]/route.ts
+      - src/lib/wms/putaway.test.ts
+      - src/lib/wms/movimentacoes.test.ts
+    tags: [wms, receber, guarda, putaway, mov-orfa, pendencia, atomicidade, defense-in-depth]

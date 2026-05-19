@@ -81,7 +81,12 @@ export async function GET(req: NextRequest) {
         galpao_id,
       }),
     ]);
-    return NextResponse.json({ ...sugestao, locaisExistentes });
+    return NextResponse.json({
+      localizacao_id: sugestao?.localizacao_id ?? null,
+      codigo: sugestao?.codigo ?? null,
+      razao: sugestao?.razao ?? null,
+      locaisExistentes,
+    });
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.receber.putaway",

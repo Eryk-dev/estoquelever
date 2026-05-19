@@ -919,6 +919,19 @@ function ItemLoteRow({
               </button>
             </>
           )}
+          {canResolve && !isFetching && !locIdAtual && (
+            <>
+              <Icon name="alert" size={11} />
+              <span className="wms-td-mute">Sem sugestão automática</span>
+              <button
+                type="button"
+                className="wms-btn-link"
+                onClick={() => setTrocandoLoc((v) => !v)}
+              >
+                {trocandoLoc ? "Cancelar" : "Definir localização"}
+              </button>
+            </>
+          )}
         </div>
       )}
 

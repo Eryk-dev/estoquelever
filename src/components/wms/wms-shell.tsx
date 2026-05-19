@@ -25,6 +25,7 @@ import {
 } from "@/components/wms/ui/modals";
 import { SidebarGalpaoSwitcher } from "@/components/wms/sidebar-galpao-switcher";
 import type { Produto } from "@/lib/wms/types";
+import type { Cargo } from "@/types";
 
 // ──────────────────────────────────────────────────────────────────
 // Modal Context — qualquer página pode disparar abertura de modal.
@@ -65,11 +66,15 @@ interface NavItem {
   icon: IconName;
   label: string;
   badge?: number;
+  /** Se definido, item só aparece pra cargos listados. Vazio/undefined = todos. */
+  visibleFor?: Cargo[];
 }
 interface NavSection {
   id: string;
   label: string;
   itens: NavItem[];
+  /** Se definido, seção inteira só aparece pra cargos listados. */
+  visibleFor?: Cargo[];
 }
 
 const NAV_SECTIONS: NavSection[] = [
@@ -77,14 +82,16 @@ const NAV_SECTIONS: NavSection[] = [
     id: "vendas",
     label: "Vendas",
     itens: [
-      { href: "/wms/pedidos", icon: "clipboard", label: "Pedidos" },
-      { href: "/wms/separacao", icon: "list", label: "Separação" },
-      { href: "/wms/compras", icon: "truck", label: "Compras" },
+      { href: "/wms/vendas", icon: "handshake", label: "Vendas Diretas" },
+      { href: "/wms/pedidos", icon: "clipboard", label: "Pedidos", visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"] },
+      { href: "/wms/separacao", icon: "list", label: "Separação", visibleFor: ["admin", "operador", "operador_cwb", "operador_sp"] },
+      { href: "/wms/compras", icon: "truck", label: "Compras", visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"] },
     ],
   },
   {
     id: "principal",
     label: "Visibilidade",
+    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"],
     itens: [
       { href: "/wms/estoque", icon: "box", label: "Estoque" },
       { href: "/wms/cobertura", icon: "gauge", label: "Cobertura" },
@@ -93,6 +100,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "operacoes",
     label: "Operações",
+    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp"],
     itens: [
       { href: "/wms/transferir", icon: "arrows", label: "Transferências" },
       { href: "/wms/replenishment", icon: "shuffle", label: "Realocar" },
@@ -104,6 +112,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "inventario",
     label: "Inventário",
+    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp"],
     itens: [
       { href: "/wms/inventario", icon: "clipboard", label: "Sessões" },
       { href: "/wms/inventario/metricas", icon: "gauge", label: "Métricas" },
@@ -112,6 +121,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "insights",
     label: "Insights",
+    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp"],
     itens: [
       { href: "/wms/insights", icon: "sparkle", label: "Hub" },
       { href: "/wms/insights/pessoas", icon: "handshake", label: "Pessoas" },
@@ -125,6 +135,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "cadastros",
     label: "Cadastros",
+    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"],
     itens: [
       { href: "/wms/produtos", icon: "tag", label: "Produtos" },
       { href: "/wms/cross", icon: "sparkle", label: "Cross" },
@@ -136,13 +147,34 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "sistema",
     label: "Sistema",
+    visibleFor: ["admin"],
     itens: [
       { href: "/wms/configuracoes", icon: "building", label: "Configurações" },
     ],
   },
 ];
 
+/** Filtra seções e items conforme cargos do usuário. */
+function filterNavForUser(cargos: Cargo[]): NavSection[] {
+  const cargoSet = new Set(cargos);
+  return NAV_SECTIONS.flatMap<NavSection>((sec) => {
+    if (sec.visibleFor && !sec.visibleFor.some((c) => cargoSet.has(c))) {
+      return [];
+    }
+    const itens = sec.itens.filter(
+      (it) => !it.visibleFor || it.visibleFor.some((c) => cargoSet.has(c)),
+    );
+    if (itens.length === 0) return [];
+    return [{ ...sec, itens }];
+  });
+}
+
 const ALL_NAV: NavItem[] = NAV_SECTIONS.flatMap((s) => s.itens);
+
+function getCargos(user: { cargo: string; cargos?: string[] | null }): Cargo[] {
+  const list = user.cargos?.length ? user.cargos : [user.cargo];
+  return list as Cargo[];
+}
 
 function isActive(pathname: string, href: string): boolean {
   if (pathname === href) return true;
@@ -167,6 +199,7 @@ function Sidebar({
   userInitials,
   userName,
   userRole,
+  sections,
   isOpen,
   onToggle,
   onLogout,
@@ -176,6 +209,7 @@ function Sidebar({
   userInitials: string;
   userName: string;
   userRole: string;
+  sections: NavSection[];
   isOpen: boolean;
   onToggle: () => void;
   onLogout: () => void;
@@ -240,7 +274,7 @@ function Sidebar({
         </button>
       </div>
       <nav className="wms-sb-nav">
-        {NAV_SECTIONS.map((sec) => (
+        {sections.map((sec) => (
           <div key={sec.id} className="wms-sb-sect">
             <div className="wms-sb-sect-lbl">{sec.label}</div>
             {sec.itens.map((n) => {
@@ -597,6 +631,7 @@ export function WmsShell({ children }: { children: ReactNode }) {
             userInitials={initials}
             userName={user.nome}
             userRole={role}
+            sections={filterNavForUser(getCargos(user))}
             isOpen={sidebarOpen}
             onToggle={() => setSidebarOpen((o) => !o)}
             onLogout={() => {

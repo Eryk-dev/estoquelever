@@ -46,7 +46,10 @@ export type EventoPedido =
   | "realocacao_parcial_cascade"
   | "parcial_desfeito"
   | "separacao_resetada"
-  | "separacao_cancelada";
+  | "separacao_cancelada"
+  | "venda_criada_manual"
+  | "venda_baixa_direta_executada"
+  | "venda_vendedor_atribuido";
 
 /**
  * Record a single event in the order history.

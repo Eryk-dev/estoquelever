@@ -14,6 +14,7 @@ export type OrigemTipo =
   | "compra_manual"
   | "lancamento_retroativo"
   | "nf_venda"
+  | "venda_manual"
   | "nf_devolucao_cliente"
   | "nf_devolucao_avariada"
   | "nf_devolucao_fornecedor"

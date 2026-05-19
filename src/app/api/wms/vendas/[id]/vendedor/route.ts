@@ -1,0 +1,92 @@
+/**
+ * PATCH /api/wms/vendas/[id]/vendedor
+ *
+ * Atribui (ou re-atribui, ou desatribui) um vendedor a um pedido.
+ * Útil pra:
+ *   - Admin atribuir pedidos ML/Shopee a um vendedor real (post-hoc)
+ *   - Vendedor reivindicar um pedido que estava sem dono
+ *
+ * Permissão: admin/operador OU o vendedor atual do pedido.
+ * Body: { vendedor_id: string | null }
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
+import { registrarEvento } from "@/lib/historico-service";
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await getSessionUser(request);
+  if (!user) {
+    return NextResponse.json({ erro: "Sessão inválida" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  let body: { vendedor_id: string | null };
+  try {
+    body = (await request.json()) as { vendedor_id: string | null };
+  } catch {
+    return NextResponse.json({ erro: "JSON inválido" }, { status: 400 });
+  }
+
+  const supabase = createServiceClient();
+
+  // Lê pedido atual pra checar permissão
+  const { data: pedido } = await supabase
+    .from("siso_pedidos")
+    .select("id, vendedor_id, vendedor_nome, origem_pedido, nome_ecommerce")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!pedido) {
+    return NextResponse.json({ erro: "Pedido não encontrado" }, { status: 404 });
+  }
+
+  const isAdmin = user.cargos.includes("admin");
+  const isOperador = user.cargos.some((c) => c.startsWith("operador"));
+  const isOwner = pedido.vendedor_id === user.id;
+  if (!isAdmin && !isOperador && !isOwner) {
+    return NextResponse.json({ erro: "Sem permissão pra alterar vendedor" }, { status: 403 });
+  }
+
+  // Resolve nome do novo vendedor
+  let novoNome: string | null = null;
+  if (body.vendedor_id) {
+    const { data: u } = await supabase
+      .from("siso_usuarios")
+      .select("id, nome")
+      .eq("id", body.vendedor_id)
+      .maybeSingle();
+    if (!u) {
+      return NextResponse.json({ erro: "vendedor_id inválido" }, { status: 400 });
+    }
+    novoNome = u.nome;
+  }
+
+  const { error: updErr } = await supabase
+    .from("siso_pedidos")
+    .update({ vendedor_id: body.vendedor_id, vendedor_nome: novoNome })
+    .eq("id", id);
+
+  if (updErr) {
+    return NextResponse.json({ erro: updErr.message }, { status: 500 });
+  }
+
+  registrarEvento({
+    pedidoId: id,
+    evento: "venda_vendedor_atribuido",
+    usuarioId: user.id,
+    usuarioNome: user.nome,
+    detalhes: {
+      vendedor_id_anterior: pedido.vendedor_id,
+      vendedor_id_novo: body.vendedor_id,
+      vendedor_nome_anterior: pedido.vendedor_nome,
+      vendedor_nome_novo: novoNome,
+    },
+  }).catch(() => {});
+
+  return NextResponse.json({ ok: true, vendedor_id: body.vendedor_id, vendedor_nome: novoNome });
+}

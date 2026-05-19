@@ -768,6 +768,144 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
+## Vendas Diretas API
+
+Pedidos de venda direta — abrange pedidos manuais inseridos por vendedores E pedidos vindos de marketplaces rastreados (Mercado Livre, Shopee). Cargo `vendedor` tem visibilidade limitada a essa aba.
+
+### POST /api/wms/vendas/criar
+
+**File:** `src/app/api/wms/vendas/criar/route.ts`
+
+**Purpose:** Cria pedido manual de venda. Dois modos:
+- `separacao`: entra no fluxo de wave picking (pula NF), `status='executando', status_separacao='aguardando_separacao'`.
+- `baixa_direta`: gera mov `'S'` no ledger WMS via `wms_inserir_movimentacao(origem_tipo='venda_manual')` pra cada item, baixando estoque imediatamente. `status='concluido', status_separacao=NULL`.
+
+**Auth:** X-Session-Id (qualquer cargo autenticado pode criar; vendedor é auto-preenchido com user.id).
+
+**Request:**
+```json
+{
+  "cliente_nome": "string (req)",
+  "cliente_cpf_cnpj": "string|null",
+  "canal_venda": "Balcão|WhatsApp|Telefone|...",
+  "empresa_origem_id": "uuid (req)",
+  "modo": "separacao | baixa_direta",
+  "items": [
+    {
+      "produto_id": "uuid (siso_produtos.id)",
+      "quantidade": 1,
+      "galpao_id": "uuid (só baixa_direta)",
+      "localizacao_id": "uuid (só baixa_direta)",
+      "empresa_dona_id": "uuid (só baixa_direta)"
+    }
+  ],
+  "idempotency_key": "uuid (opcional — evita duplicação em retry)"
+}
+```
+
+**Response (200):**
+```json
+{
+  "pedido_id": "MAN-{uuid8}-{ts36}",
+  "numero": "string",
+  "status": "executando | concluido",
+  "status_separacao": "aguardando_separacao | null",
+  "movs_criadas": ["uuid", ...]
+}
+```
+
+**Errors:**
+- 400 — validação (cliente vazio, qty inválida, baixa_direta sem loc/dona, produto não cadastrado em `siso_produto_empresas`)
+- 409 — saldo insuficiente em baixa_direta (após rollback das movs anteriores)
+- 500 — falha de DB / RPC
+
+**Side Effects:**
+- Insert em `siso_pedidos` (origem_pedido='manual')
+- Bulk insert em `siso_pedido_itens`
+- Em baixa_direta: 1 mov `'S'` por item (origem_tipo='venda_manual', origem_id=pedido_id)
+- Em caso de falha de mov: estorna movs anteriores via `estornarMovimentacao` + deleta pedido/items
+- Audit: `registrarEvento('venda_criada_manual')` + (se baixa_direta) `venda_baixa_direta_executada`
+
+---
+
+### GET /api/wms/vendas
+
+**File:** `src/app/api/wms/vendas/route.ts`
+
+**Purpose:** Lista pedidos de venda direta (manuais + ML/Shopee). Auto-filtro "Meus pedidos" pra cargo vendedor.
+
+**Auth:** X-Session-Id
+
+**Query Params:**
+- `tab=pendentes|em_separacao|baixados|concluidos` (default: pendentes)
+- `vendedor_id` — filtra por vendedor. `__todos__` desliga auto-filtro pra vendedor
+- `marketplace` — `manual`, `Mercado Livre`, `Shopee`
+- `galpao_id` — filtra por `separacao_galpao_id`
+- `data_de`, `data_ate` — ISO dates
+- `busca` — número, cliente_nome, id_pedido_ecommerce
+- `page` (default 1), `page_size` (default 50, max 200)
+
+**Auto-filter logic:**
+- Se `cargos.includes('vendedor')` E `vendedor_id` não foi passado → aplica `vendedor_id=user.id`.
+- `vendedor_id=__todos__` desliga o auto-filtro.
+
+**Response (200):**
+```json
+{
+  "pedidos": [ /* siso_pedidos rows com vendedor_*, origem_pedido, canal_venda */ ],
+  "total": "number",
+  "page": "number",
+  "page_size": "number",
+  "auto_filtro_meus": "boolean",
+  "hide_custo": "boolean"
+}
+```
+
+---
+
+### GET /api/wms/vendas/[id]
+
+**File:** `src/app/api/wms/vendas/[id]/route.ts`
+
+**Purpose:** Detalhe completo de um pedido de venda (manual ou marketplace). Inclui items + histórico.
+
+**Auth:** X-Session-Id. Vendedor só consegue ler pedidos de venda direta (manual OR ML/Shopee) — outros → 403.
+
+**Response (200):**
+```json
+{
+  "pedido": { /* siso_pedidos com vendedor_*, origem_pedido, canal_venda */ },
+  "itens": [ /* siso_pedido_itens */ ],
+  "historico": [ /* siso_pedido_historico */ ]
+}
+```
+
+---
+
+### PATCH /api/wms/vendas/[id]/vendedor
+
+**File:** `src/app/api/wms/vendas/[id]/vendedor/route.ts`
+
+**Purpose:** Atribui (ou desatribui) vendedor a um pedido. Útil pra admin atribuir pedidos ML/Shopee a um vendedor real depois.
+
+**Auth:** X-Session-Id. Permissão: admin OU qualquer cargo operador_* OU o vendedor atual do pedido.
+
+**Request:**
+```json
+{ "vendedor_id": "uuid | null" }
+```
+
+**Response (200):**
+```json
+{ "ok": true, "vendedor_id": "uuid | null", "vendedor_nome": "string | null" }
+```
+
+**Side Effects:**
+- Update em `siso_pedidos.vendedor_id` + `vendedor_nome`
+- `registrarEvento('venda_vendedor_atribuido')` com anterior/novo
+
+---
+
 ## Separação API
 
 ### GET /api/wms/separacao

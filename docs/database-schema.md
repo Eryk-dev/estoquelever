@@ -77,6 +77,10 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `expedicao_id` | text | YES | | Tiny expedition ID within agrupamento |
 | `prazo_envio` | text | YES | | Shipping deadline string |
 | `encaminhado_de` | text | YES | | Name of origin galpão when manually forwarded to another galpão |
+| `vendedor_id` | uuid | YES | FK | Sales rep (vendedor cargo) responsible for the order — NULL for marketplaces unless manually assigned |
+| `vendedor_nome` | text | YES | | Denormalized vendedor name. Auto-set to `"{nome_ecommerce} {empresa_nome}"` for ML/Shopee (e.g., "Mercado Livre EasyPeasy") |
+| `origem_pedido` | text | NO | 'webhook' | `webhook` (Tiny/marketplace) or `manual` (inserted in /wms/vendas) |
+| `canal_venda` | text | YES | | Sales channel for manual orders: `Balcão`, `WhatsApp`, `Telefone`, or free text. NULL for webhook orders |
 | `criado_em` | timestamptz | NO | now() | Record creation timestamp |
 | `atualizado_em` | timestamptz | YES | | Last update timestamp |
 
@@ -87,6 +91,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `separacao_galpao_id` → `siso_galpoes(id)`
 - `separacao_operador_id` → `siso_usuarios(id)`
 - `operador_id` → `siso_usuarios(id)`
+- `vendedor_id` → `siso_usuarios(id) ON DELETE SET NULL`
 
 **Indexes:**
 - `idx_pedidos_separacao_galpao` (separacao_galpao_id, status_separacao) WHERE status_separacao IN ('aguardando_separacao', 'em_separacao')
@@ -94,17 +99,22 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `idx_pedidos_separacao_embalado` (separacao_galpao_id) WHERE status_separacao = 'embalado'
 - `idx_pedidos_separacao_data` (separacao_galpao_id, data ASC) WHERE status_separacao IN ('aguardando_separacao', 'em_separacao')
 - `idx_siso_pedidos_separacao_tags` GIN index on separacao_tags
+- `idx_pedidos_vendedor_id` (vendedor_id) WHERE vendedor_id IS NOT NULL — acelera filtro "Meus pedidos" do vendedor
+- `idx_pedidos_vendas_diretas` (status, criado_em DESC) WHERE origem_pedido = 'manual' OR nome_ecommerce IN ('Mercado Livre','Shopee') — acelera listagem /wms/vendas
 
 **Constraints:**
 - `CHECK (status IN ('pendente', 'executando', 'concluido', 'cancelado', 'erro'))`
 - `CHECK (status_separacao IS NULL OR status_separacao IN ('aguardando_compra', 'aguardando_nf', 'aguardando_separacao', 'em_separacao', 'pendente_realocacao', 'separado', 'embalado'))`
 - `CHECK (etiqueta_status IS NULL OR etiqueta_status IN (...))`
+- `siso_pedidos_origem_pedido_chk` — `CHECK (origem_pedido IN ('webhook','manual'))`
 
 **Notes:**
 - `filial_origem` is legacy (text like "CWB", "SP") — prefer `empresa_origem_id` in new code
 - Stock is stored in normalized `siso_pedido_item_estoques`, not in `siso_pedidos`
 - `marcadores` come from Tiny API; `separacao_tags` are user-created in the UI
 - Column `imagem_url` removed (now joined via `siso_pedido_itens`)
+- `origem_pedido='manual'` uses `id = "MAN-{uuid8}-{ts36}"` (e.g., "MAN-a1b2c3d4-l9k7"). `payload_original` may contain `{idempotency_key, manual: true}` for retry idempotency.
+- `vendedor_nome` is auto-populated by `webhook-processor.ts` for Mercado Livre / Shopee. Manual assignment via `PATCH /api/wms/vendas/[id]/vendedor` is preserved across webhook re-deliveries (the upsert only overwrites if existing `vendedor_id IS NULL`).
 
 ---
 
@@ -1742,6 +1752,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-05-18 | `20260518_realocacao_fix_pack_rpc_acumular.sql` | **Fix-pack — RPC `wms_acumular_qty_pega`:** UPDATE atômico de `siso_pedido_itens.quantidade_pega += p_delta` com lock pessimista (`SELECT FOR UPDATE`). Substitui read-modify-write vulnerável a race em wave consolidado. Raises `'item_nao_encontrado'` ou `'quantidade_pega_negativa'`. |
 | 2026-05-18 | `20260518_realocacao_fix_pack_rpc_estorno_parcial.sql` | **Fix-pack — RPC `wms_estornar_parcial_movimentacao`:** estorna parcialmente uma mov criando contrária com qty < total da fonte e incrementando `qty_estornada` na fonte. Lock pessimista + validações (mov existe, não é estorno, qty>0, não excede saldo estornável). Atômica. Origem da contrária = `'estorno_parcial'`. |
 | 2026-05-18 | `20260518_realocacao_fix_pack_embalagem_strict.sql` | **Fix-pack — `siso_processar_bip_embalagem` extension:** adiciona parâmetro `p_strict_qty_pega boolean DEFAULT false`. Quando `true` AND item tem `separacao_parcial=true`, teto da bipagem passa a ser **qty pega real** (item.quantidade_pega + Σ realocs.quantidade_pega em 'picado'/'picado_parcial'). Excesso RAISE `'bipou_alem_do_teto'` com DETAIL `teto=N,tentado=M` (mapeado pra 422 no endpoint). |
+| 2026-05-19 | `20260519_vendas_diretas_vendedor.sql` | **Vendas Diretas + role vendedor:** adiciona `siso_pedidos.vendedor_id (uuid FK siso_usuarios ON DELETE SET NULL)`, `vendedor_nome (text)`, `origem_pedido (text NOT NULL DEFAULT 'webhook' CHECK IN ('webhook','manual'))`, `canal_venda (text)`. Cria índice parcial `idx_pedidos_vendedor_id WHERE vendedor_id IS NOT NULL` + `idx_pedidos_vendas_diretas WHERE origem_pedido='manual' OR nome_ecommerce IN ('Mercado Livre','Shopee')`. Habilita inserção manual de pedidos de venda em /wms/vendas + auto-atribuição de vendedor_nome="{marketplace} {empresa}" no webhook-processor. |
 | 2026-05-18 | `20260518_realocacao_fix_pack_fila_payload.sql` | **Fix-pack — `siso_fila_execucao.payload jsonb`:** adiciona coluna `payload jsonb NOT NULL DEFAULT '{}'::jsonb` pra carregar metadata dos jobs. Usado pelos tipos `lancar_estoque` e `lancar_estoque_pos_nf` pra carregar `itens_ja_lancados: number[]` — IDs dos itens cuja saída já foi gerada via parcial/realocação, que o worker deve pular pra evitar dedução duplicada. Migration estende o CHECK de `tipo` pra incluir `'lancar_estoque_pos_nf'`. |
 
 **Key Phases:**

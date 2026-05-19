@@ -111,6 +111,33 @@ export interface Pedido {
   encaminhado_de?: string | null;
   /** Separation/packing flow status */
   status_separacao?: StatusSeparacao | null;
+  /** Vendor (sales rep) responsible — manual orders or marketplace auto-assigned */
+  vendedor_id?: string | null;
+  vendedor_nome?: string | null;
+  /** Order origin: 'webhook' (Tiny/marketplace) or 'manual' (inserted in /wms/vendas) */
+  origem_pedido?: "webhook" | "manual";
+  /** Sales channel for manual orders: Balcão | WhatsApp | Telefone | livre */
+  canal_venda?: string | null;
+}
+
+/** Mode for manual order creation in /wms/vendas */
+export type ModoVendaDireta = "separacao" | "baixa_direta";
+
+/** Request shape for POST /api/wms/vendas/criar */
+export interface CriarVendaDiretaRequest {
+  cliente_nome: string;
+  cliente_cpf_cnpj?: string | null;
+  canal_venda?: string | null;
+  empresa_origem_id: string;
+  modo: ModoVendaDireta;
+  items: Array<{
+    produto_id: string;
+    quantidade: number;
+    galpao_id?: string;
+    localizacao_id?: string;
+    empresa_dona_id?: string;
+  }>;
+  idempotency_key?: string;
 }
 
 // ─── Separacao / Embalagem ──────────────────────────────────────────────────
@@ -464,7 +491,7 @@ export interface TransferenciaItem {
 // ─── Auth / Usuarios ────────────────────────────────────────────────────────
 
 /** User role — determines what they see */
-export type Cargo = "admin" | "operador" | "operador_cwb" | "operador_sp" | "comprador";
+export type Cargo = "admin" | "operador" | "operador_cwb" | "operador_sp" | "comprador" | "vendedor";
 
 export const CARGO_LABELS: Record<Cargo, string> = {
   admin: "Administrador",
@@ -472,6 +499,7 @@ export const CARGO_LABELS: Record<Cargo, string> = {
   operador_cwb: "Operador CWB",
   operador_sp: "Operador SP",
   comprador: "Comprador",
+  vendedor: "Vendedor",
 };
 
 /** Lightweight galpão reference for user context */

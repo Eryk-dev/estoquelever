@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 
-const VALID_CARGOS = ["admin", "operador", "operador_cwb", "operador_sp", "comprador"];
+const VALID_CARGOS = ["admin", "operador", "operador_cwb", "operador_sp", "comprador", "vendedor"];
 
 /**
  * GET /api/admin/usuarios

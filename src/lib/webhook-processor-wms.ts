@@ -284,6 +284,31 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     return { ok: true, pedidoId: pedido.id, status: "duplicado", sugestao };
   }
 
+  // 4c. Auto-vendedor_nome para marketplaces rastreados (ML/Shopee).
+  //     Preserva vendedor_id já setado manualmente em re-entregas.
+  const trackedMarketplaces = new Set(["Mercado Livre", "Shopee"]);
+  let empresaOrigemNome: string | null = null;
+  {
+    const { data: empresaRow } = await sb
+      .from("siso_empresas")
+      .select("nome")
+      .eq("id", empresaOrigemId)
+      .single();
+    empresaOrigemNome = empresaRow?.nome ?? null;
+  }
+  const vendedorNomeAuto =
+    pedido.nomeEcommerce && trackedMarketplaces.has(pedido.nomeEcommerce) && empresaOrigemNome
+      ? `${pedido.nomeEcommerce} ${empresaOrigemNome}`
+      : null;
+  const { data: pedidoPrev } = await sb
+    .from("siso_pedidos")
+    .select("vendedor_id, vendedor_nome")
+    .eq("id", pedido.id)
+    .maybeSingle();
+  const vendedorIdFinal = pedidoPrev?.vendedor_id ?? null;
+  const vendedorNomeFinal =
+    pedidoPrev?.vendedor_id != null ? pedidoPrev.vendedor_nome : vendedorNomeAuto;
+
   // 5. Grava siso_pedidos — resetar flags de estoque pra permitir reprocessamento
   //    em staging (re-run do seed:cenarios). Em prod o early-return acima
   //    pega o caso de duplicado antes de chegar aqui.
@@ -315,6 +340,9 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       processado_em: null,
       marcadores: isAuto ? [galpaoOrigemNome, "LVR"] : ["LVR"],
       payload_original: pedido,
+      vendedor_id: vendedorIdFinal,
+      vendedor_nome: vendedorNomeFinal,
+      origem_pedido: "webhook",
     },
     { onConflict: "id" },
   );

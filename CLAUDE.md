@@ -157,6 +157,11 @@ src/
         pedidos/[id]/detalhe/route.ts      # Order detail consolidated (GET)
         pedidos/[id]/historico/route.ts    # Order history/audit trail (GET)
         pedidos/[id]/observacoes/route.ts  # Order comments (GET/POST)
+        # ── Vendas Diretas (4 rotas) ──
+        vendas/route.ts                    # List manual+ML/Shopee orders w/ auto-filter (GET)
+        vendas/criar/route.ts              # Create manual order (POST) — modo separacao | baixa_direta
+        vendas/[id]/route.ts               # Sales order detalhe (GET)
+        vendas/[id]/vendedor/route.ts      # Re-assign vendedor (PATCH)
         # ── Separação (29 rotas) ──
         separacao/route.ts                 # List separation orders with counts (GET)
         separacao/iniciar/route.ts         # Start separation (POST)
@@ -339,6 +344,7 @@ src/
       page.tsx                             # Home WMS — 4 cards (catálogo/locs/saldos/ledger)
       wms.css                              # Estilos do shell
       pedidos/page.tsx + [id]/page.tsx     # Order tracking + detalhe
+      vendas/page.tsx + [id]/page.tsx      # Vendas Diretas — manual + ML/Shopee (com vendedor)
       separacao/page.tsx + checklist + embalagem  # Wave picking flow
       compras/page.tsx                     # Compras (Comprar/Receber tabs)
       cross/page.tsx + [sku]/page.tsx      # Cross — busca + detalhe OEMs/veículos
@@ -611,9 +617,11 @@ Helpers: `wms_loc_rua(codigo)` ('A-03-02' → 'A'), `wms_loc_predio(codigo)` ('A
 
 ### User Roles (Cargos)
 - `admin` — sees everything, manages users and settings
+- `operador` — generic operator (used in newer multi-galpão setups)
 - `operador_cwb` — sees/processes CWB orders only
 - `operador_sp` — sees/processes SP orders only
 - `comprador` — sees only purchase-order-suggested orders
+- `vendedor` — sees only `/wms/vendas` (Vendas Diretas) — pode criar pedidos manuais com vendedor_id auto-preenchido + filtro padrão "Meus pedidos"
 
 ### Order Statuses
 - `pendente` — awaiting operator decision
@@ -792,6 +800,7 @@ Failure to update documentation means the next developer or LLM will work with s
 - **WMS Recebimento em 2 etapas (Recebimento + Guarda) — implementado em staging, 2026-05-14.** Quebra o recebimento em duas fases pra alinhar com o fluxo físico: dock RECEBIMENTO (chega caminhão, registra qty) → guarda no tablet (imprime etiqueta, bipa QR da loc destino, confirma). 1 pendência em `siso_wms_pendencias_guarda` por linha de recebimento. Suporta guarda parcial (qty<qty_pendente fica aberta) + cancelamento com motivo. Etiqueta de produto em ZPL pareado 2-por-folha (`gerarZplProduto` em `src/lib/wms/zpl-produto.ts`), N etiquetas por unidade. Impressora dedicada de produto (`printnode_printer_id_produto`) com fallback automático pra impressora de envio se não configurada. Migration: `supabase/migrations/20260514_wms_guarda_pendencias.sql`. APIs: `/api/wms/guarda` (lista + detalhe + iniciar/confirmar/cancelar/imprimir + imprimir-lote bulk).
   - **Entrada direta (2026-05-19):** flag `entrada_direta` em `/api/wms/receber` (tanto no modal individual quanto no lote em `/wms/receber`) pula o dock RECEBIMENTO e grava 1 mov direto na `localizacao_destino_id` de cada item — sem criar pendência. Exige loc destino em **todos** os itens (frontend bloqueia o confirm e mostra alerta em vermelho se faltar). Impressão de etiqueta segue funcionando: `/api/wms/guarda/imprimir-lote` ganhou um modo alternativo `{ linhas: [{produto_id, galpao_id, qty, localizacao_id?}] }` pra cobrir o caso sem pendência. Pra casos onde o operador já vai guardando direto na prateleira (pequenas entradas, lançamento retroativo, achados).
 - **WMS Mini-Swap Intra-Galpão — implementado em staging, 2026-05-14.** Antes de iniciar wave de picking, consolida estoque das empresas no mesmo galpão em 1 loc canônica via swap (zero dívida) + empréstimo (limitado ao planejado pelo roteamento). Algoritmo puro em `src/lib/wms/mini-swap.ts` + RPC `wms_executar_mini_swap` aplica plano sob lock pessimista. Toggle on/off por galpão em `/wms/configuracoes/otimizacoes`. Graceful: qualquer falha → wave segue sem otimização. Foundation pra cycle count oportunista (próximo). Migration: `supabase/migrations/20260514_wms_mini_swap*.sql`. Spec: `docs/superpowers/specs/2026-05-14-mini-swap-intra-galpao-design.md`.
+- **Vendas Diretas + role vendedor — implementado em 2026-05-19.** Nova aba `/wms/vendas` agregando pedidos manuais inseridos por vendedores + marketplaces rastreados (ML, Shopee). Cargo `vendedor` adicionado à whitelist. 2 modos de criação: (a) `separacao` — pula NF e entra direto em `status_separacao='aguardando_separacao'`; (b) `baixa_direta` — vendedor escolhe quadrupla (produto+dona+galpão+localização) e sistema gera mov `'S'` no ledger via `wms_inserir_movimentacao(origem_tipo='venda_manual')` com rollback manual em caso de falha. `webhook-processor.ts` auto-atribui `vendedor_nome='{nome_ecommerce} {empresa_nome}'` pra ML/Shopee, preservando atribuição manual em re-entregas (SELECT-then-update). Sidebar com visibility por cargo (vendedor só vê Vendas Diretas). Migration: `supabase/migrations/20260519_vendas_diretas_vendedor.sql`. Rotas: `POST /api/wms/vendas/criar`, `GET /api/wms/vendas`, `GET /api/wms/vendas/[id]`, `PATCH /api/wms/vendas/[id]/vendedor`. Funciona em ambiente WMS (staging hoje); em prod só funciona modo `separacao` até promoção das tabelas WMS.
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)

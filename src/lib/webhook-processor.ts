@@ -130,6 +130,17 @@ export async function processWebhook(
       galpaoOrigemNome = galpaoRow?.nome ?? "CWB";
     }
 
+    // 0b. Resolve empresa nome (used for auto-vendedor_nome on ML/Shopee orders)
+    let empresaOrigemNome: string | null = null;
+    {
+      const { data: empresaRow } = await supabase
+        .from("siso_empresas")
+        .select("nome")
+        .eq("id", empresaOrigemId)
+        .single();
+      empresaOrigemNome = empresaRow?.nome ?? null;
+    }
+
     // 1. Get all empresas in the grupo
     const empresasDoGrupo = grupoId
       ? await getEmpresasDoGrupo(grupoId)
@@ -342,6 +353,29 @@ export async function processWebhook(
 
     // 8. Use galpaoOrigemNome (resolved at step 0)
 
+    // 8b. Compute auto-vendedor_nome for tracked marketplaces (ML/Shopee).
+    //     Other marketplaces leave it NULL.
+    const trackedMarketplaces = new Set(["Mercado Livre", "Shopee"]);
+    const vendedorNomeAuto =
+      pedido.nomeEcommerce && trackedMarketplaces.has(pedido.nomeEcommerce) && empresaOrigemNome
+        ? `${pedido.nomeEcommerce} ${empresaOrigemNome}`
+        : null;
+
+    // 8c. Preserve manually-assigned vendedor_id/nome if pedido already exists.
+    //     Webhook re-deliveries (manual reprocessing, Tiny retries) must NOT
+    //     overwrite a vendedor that an admin set manually via PATCH.
+    const { data: pedidoExistente } = await supabase
+      .from("siso_pedidos")
+      .select("vendedor_id, vendedor_nome")
+      .eq("id", pedidoTinyId)
+      .maybeSingle();
+
+    const vendedorIdFinal = pedidoExistente?.vendedor_id ?? null;
+    const vendedorNomeFinal =
+      pedidoExistente?.vendedor_id != null
+        ? pedidoExistente.vendedor_nome // preserved manual assignment
+        : vendedorNomeAuto;
+
     // 9. Insert into siso_pedidos
     const { error: pedidoError } = await supabase
       .from("siso_pedidos")
@@ -371,6 +405,9 @@ export async function processWebhook(
           processado_em: null,
           marcadores: isAuto ? [galpaoOrigemNome, "LVR"] : ["LVR"],
           payload_original: pedido,
+          vendedor_id: vendedorIdFinal,
+          vendedor_nome: vendedorNomeFinal,
+          origem_pedido: "webhook",
         },
         { onConflict: "id" },
       );

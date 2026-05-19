@@ -274,7 +274,9 @@
   gap: 24px; padding: 4px 0 24px;
   border-bottom: 1px solid var(--wms-c-border);
   margin-bottom: 20px;
+  flex-wrap: wrap;
 }
+.wms-ph-title { min-width: 0; flex: 1 1 auto; }
 .wms-ph-title h1 {
   margin: 0 0 4px;
   font-size: 22px; font-weight: 600; letter-spacing: -0.015em;
@@ -1471,7 +1473,7 @@
 /* Card de seções da home */
 .wms-home-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   gap: 12px;
 }
 .wms-home-card {
@@ -2185,11 +2187,8 @@
 .wms-aging-chip.is-aging   { background: var(--wms-c-warn-bg);   color: var(--wms-c-warn);   border-color: var(--wms-c-warn-bd); }
 .wms-aging-chip.is-overdue { background: var(--wms-c-danger-bg); color: var(--wms-c-danger); border-color: var(--wms-c-danger-bd); }
 
-/* Mobile fallback: empilha sidebar */
+/* Mobile fallback: ajustes de componentes (sidebar é tratada no bloco final, depois do tablet) */
 @media (max-width: 720px) {
-  .wms-app { grid-template-columns: 1fr; }
-  .wms-sb { display: none; }
-  .wms-view { padding: 16px; }
   .wms-hand-item {
     grid-template-columns: 24px minmax(0,1fr) 70px;
   }
@@ -2735,4 +2734,108 @@
   .wms-sb:not(.is-open) .wms-sb-ft { padding: 10px 6px; }
   .wms-sb:not(.is-open) .wms-sb-user { justify-content: center; gap: 0; }
   .wms-sb:not(.is-open) .wms-sb-user > div:not(.wms-sb-avatar) { display: none; }
+}
+
+/* Botão flutuante mobile — escondido por padrão, aparece no celular */
+.wms-mobile-toggle { display: none; }
+/* Backdrop mobile — escondido por padrão */
+.wms-sb-backdrop { display: none; }
+
+/* Mobile (≤720px) — sidebar vira drawer overlay, conteúdo ocupa 100% da viewport.
+   IMPORTANTE: este bloco precisa vir DEPOIS do bloco @media (max-width: 1280px)
+   pra vencer na cascata (ambos os media queries casam em telas ≤720px). */
+@media (max-width: 720px) {
+  /* Grid passa a ter UMA coluna só — sidebar não reserva mais espaço */
+  .wms-app,
+  .wms-app.is-sidebar-open {
+    grid-template-columns: 1fr;
+  }
+
+  /* Sidebar vira drawer fixo deslizando da esquerda */
+  .wms-sb {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 86vw;
+    transform: translateX(-100%);
+    transition: transform .22s ease;
+    z-index: 1001;
+    box-shadow: var(--wms-shadow-lg);
+  }
+  .wms-app.is-sidebar-open .wms-sb {
+    transform: translateX(0);
+  }
+
+  /* Backdrop só aparece quando sidebar está aberta */
+  .wms-app.is-sidebar-open .wms-sb-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .45);
+    z-index: 1000;
+    animation: wms-sb-backdrop-in .18s ease-out;
+  }
+  @keyframes wms-sb-backdrop-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* Quando aberta no mobile, sidebar é full-feature — desfaz o "rail" do tablet */
+  .wms-sb-hd { padding: 14px 14px 10px; }
+  .wms-sb-brand { justify-content: flex-start; }
+  .wms-sb-logo { display: flex; }
+  .wms-sb-cmd { padding: 6px 8px; justify-content: flex-start; }
+  .wms-sb-cmd > span,
+  .wms-sb-cmd kbd { display: inline; }
+  .wms-sb-gs-btn { padding: 6px 8px; justify-content: flex-start; }
+  .wms-sb-gs-lbl,
+  .wms-sb-gs-caret { display: inline; }
+  .wms-sb-gs-pop {
+    left: 0;
+    right: 0;
+    top: 100%;
+    min-width: 0;
+  }
+  .wms-sb-nav { padding: 10px 8px; }
+  .wms-sb-sect-lbl { display: block; }
+  .wms-sb-sect { gap: 1px; }
+  .wms-sb-item { justify-content: flex-start; padding: 6px 8px; }
+  .wms-sb-item > span { display: inline; }
+  .wms-sb-badge { display: inline-flex; }
+  .wms-sb-ft { padding: 10px 14px 12px; }
+  .wms-sb-user { justify-content: flex-start; gap: 10px; }
+  .wms-sb-user > div:not(.wms-sb-avatar) { display: block; }
+
+  /* Botão flutuante de menu no canto superior esquerdo do conteúdo */
+  .wms-mobile-toggle {
+    display: grid;
+    place-items: center;
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    width: 40px;
+    height: 40px;
+    background: var(--wms-c-panel);
+    border: 1px solid var(--wms-c-border);
+    border-radius: var(--wms-r-2);
+    color: var(--wms-c-fg);
+    box-shadow: var(--wms-shadow-sm);
+    z-index: 900;
+    cursor: pointer;
+    padding: 0;
+  }
+  .wms-mobile-toggle:active { background: var(--wms-c-panel-2); }
+
+  /* Conteúdo precisa de top-padding pra não ficar embaixo do botão flutuante */
+  .wms-view { padding: 60px 14px 80px; }
+
+  /* Page header empilha verticalmente no mobile */
+  .wms-ph {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .wms-ph-actions { flex-wrap: wrap; }
 }

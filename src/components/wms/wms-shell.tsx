@@ -203,6 +203,7 @@ function Sidebar({
   isOpen,
   onToggle,
   onLogout,
+  onNavigate,
 }: {
   pathname: string;
   onCmdK: () => void;
@@ -213,6 +214,7 @@ function Sidebar({
   isOpen: boolean;
   onToggle: () => void;
   onLogout: () => void;
+  onNavigate?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -258,7 +260,7 @@ function Sidebar({
               <path d="M3 5h12M3 9h12M3 13h12" />
             </svg>
           </button>
-          <Link href="/wms" className="wms-sb-logo">
+          <Link href="/wms" className="wms-sb-logo" onClick={() => onNavigate?.()}>
             <div className="wms-sb-logo-mark">N</div>
             <div className="wms-sb-logo-text">
               <div className="wms-sb-logo-name">NetAir WMS</div>
@@ -284,6 +286,7 @@ function Sidebar({
                   key={n.href}
                   href={n.href}
                   className={`wms-sb-item ${active ? "is-active" : ""}`}
+                  onClick={() => onNavigate?.()}
                 >
                   <Icon name={n.icon} />
                   <span>{n.label}</span>
@@ -540,9 +543,11 @@ export function WmsShell({ children }: { children: ReactNode }) {
     seed?: ModalSeed;
   } | null>(null);
 
-  // Hidrata do localStorage no mount (a decisão do operador persiste entre rotas e reloads)
+  // Hidrata do localStorage no mount (a decisão do operador persiste entre rotas e reloads
+  // — mas só no desktop; no mobile a sidebar começa sempre fechada pra não invadir a tela)
   useEffect(() => {
     try {
+      if (window.matchMedia("(max-width: 720px)").matches) return;
       const saved = window.localStorage.getItem("wms-sidebar-open");
       // eslint-disable-next-line react-hooks/set-state-in-effect
       if (saved === "1") setSidebarOpen(true);
@@ -551,9 +556,10 @@ export function WmsShell({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Persiste sempre que muda
+  // Persiste sempre que muda (não persiste no mobile pra preservar preferência do desktop)
   useEffect(() => {
     try {
+      if (window.matchMedia("(max-width: 720px)").matches) return;
       window.localStorage.setItem("wms-sidebar-open", sidebarOpen ? "1" : "0");
     } catch {
       /* ignore */
@@ -621,10 +627,42 @@ export function WmsShell({ children }: { children: ReactNode }) {
     .map((c) => c.replace("_", " "))
     .join(", ");
 
+  const closeSidebarIfMobile = () => {
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 720px)").matches) {
+      setSidebarOpen(false);
+    }
+  };
+
   return (
     <ModalContext.Provider value={ctxValue}>
       <div className="wms-root">
         <div className={`wms-app ${sidebarOpen ? "is-sidebar-open" : ""}`}>
+          {/* Botão flutuante visível apenas no mobile (via CSS) */}
+          <button
+            type="button"
+            className="wms-mobile-toggle"
+            aria-label="Abrir menu"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              aria-hidden
+            >
+              <path d="M3 6h14M3 10h14M3 14h14" />
+            </svg>
+          </button>
+          {/* Backdrop mobile — fecha sidebar ao tocar */}
+          <div
+            className="wms-sb-backdrop"
+            aria-hidden
+            onClick={() => setSidebarOpen(false)}
+          />
           <Sidebar
             pathname={pathname}
             onCmdK={() => setCkOpen(true)}
@@ -638,6 +676,7 @@ export function WmsShell({ children }: { children: ReactNode }) {
               logout();
               router.replace("/login");
             }}
+            onNavigate={closeSidebarIfMobile}
           />
           <div className="wms-main">
             <div className="wms-view">{children}</div>

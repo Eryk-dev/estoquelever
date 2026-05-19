@@ -1,8 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { sisoFetch } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
@@ -18,86 +23,31 @@ import {
   useGalpoes,
   useLocalizacoes,
 } from "@/components/wms/ui/modals";
-import { useWmsModals } from "@/components/wms/wms-shell";
 import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import { MlAnunciosBlock } from "@/components/wms/ml-anuncios-block";
 import type { Produto } from "@/lib/wms/types";
 
-type Tab = "individual" | "lote";
-
 export default function ReceberPage() {
-  const [tab, setTab] = useState<Tab>("individual");
-
   return (
     <>
       <PageHeader
         title="Receber mercadoria"
-        subtitle="Etapa 1 de 2 — registra entrada no dock RECEBIMENTO e decide a loc destino. A guarda física é feita em /wms/guarda (tablet), em rota agrupada por lote."
+        subtitle="Etapa 1 de 2 — registra entrada no dock RECEBIMENTO e decide a loc destino. Pra 1 SKU ou N: tudo na mesma tela. A guarda física é feita em /wms/guarda (tablet), em rota agrupada por lote."
       />
-
-      <div className="wms-seg" style={{ marginBottom: 16, maxWidth: 360 }}>
-        <button
-          type="button"
-          className={`wms-seg-btn ${tab === "individual" ? "is-active" : ""}`}
-          onClick={() => setTab("individual")}
-        >
-          <Icon name="plus" size={11} /> Individual
-        </button>
-        <button
-          type="button"
-          className={`wms-seg-btn ${tab === "lote" ? "is-active" : ""}`}
-          onClick={() => setTab("lote")}
-        >
-          <Icon name="box" size={11} /> Lote
-        </button>
-      </div>
-
-      {tab === "individual" ? <TabIndividual /> : <TabLote />}
+      <Suspense fallback={null}>
+        <ReceberBody />
+      </Suspense>
     </>
   );
 }
 
-function TabIndividual() {
-  const modals = useWmsModals();
-  return (
-    <div
-      style={{
-        background: "var(--wms-c-panel)",
-        border: "1px solid var(--wms-c-border)",
-        borderRadius: "var(--wms-r-3)",
-        padding: 28,
-        textAlign: "center",
-      }}
-    >
-      <div style={{ marginBottom: 8 }}>
-        <Icon name="plus" size={20} />
-      </div>
-      <h3 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 600 }}>
-        Recebimento individual
-      </h3>
-      <p
-        className="wms-td-mute"
-        style={{ margin: "0 0 16px", fontSize: 12.5 }}
-      >
-        1 SKU por vez. Vê onde o SKU já tem saldo, decide a loc destino (opcional)
-        e cria 1 pendência avulsa pra fila de guarda.
-      </p>
-      <button
-        type="button"
-        className="wms-btn wms-btn-primary"
-        onClick={() => modals.open("receber")}
-      >
-        <Icon name="plus" size={11} /> Iniciar recebimento
-      </button>
-    </div>
-  );
-}
-
 // ────────────────────────────────────────────────────────────────────
-// TabLote: bipa N SKUs no recebimento. Cada linha pode receber uma loc
-// destino sugerida/escolhida — agrupadas no Plano de guarda à direita.
-// Confirmação cria 1 lote (UUID compartilhado entre as pendências) que
-// vira 1 rota única no tablet de guarda.
+// ReceberBody: bipa 1..N SKUs no recebimento. Cada linha pode receber
+// uma loc destino sugerida/escolhida — agrupadas no Plano de guarda à
+// direita. Confirmação cria 1 lote (UUID compartilhado entre as
+// pendências) que vira 1 rota única no tablet de guarda. Aceita
+// `?produto_id=` pra pré-selecionar o produto vindo de outra tela
+// (produto-drawer, linha de estoque, command-K).
 
 interface ItemLote {
   uid: string;
@@ -132,9 +82,11 @@ function makeUid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-function TabLote() {
+function ReceberBody() {
   const qc = useQueryClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const produtoIdSeed = searchParams.get("produto_id");
   const { data: galpoes } = useGalpoes();
   const [lightbox, setLightbox] = useState<{
     imagens: string[];
@@ -156,6 +108,34 @@ function TabLote() {
   const [imprimirAuto, setImprimirAuto] = useState(false);
   const [iniciarRota, setIniciarRota] = useState(false);
   const [entradaDireta, setEntradaDireta] = useState(false);
+
+  // Pré-seleciona produto se veio via `?produto_id=` (origem: produto-drawer,
+  // linha de estoque, command-K). Roda 1× só — depois o operador edita à
+  // vontade. Limpa a URL pra não re-seedar em reload.
+  const seededRef = useRef(false);
+  const seedQuery = useQuery({
+    queryKey: ["wms-receber-seed", produtoIdSeed],
+    queryFn: () => wmsApi<Produto>(`/api/wms/produtos/${produtoIdSeed}`),
+    enabled: !!produtoIdSeed && !seededRef.current,
+    staleTime: 60 * 1000,
+  });
+  useEffect(() => {
+    if (seededRef.current) return;
+    const p = seedQuery.data;
+    if (!p) return;
+    seededRef.current = true;
+    setItens((prev) => {
+      const first = prev[0];
+      // Só seeda se a primeira linha estiver vazia (não atropela operador)
+      if (first && first.produto) return prev;
+      return [
+        { ...first!, produto: p },
+        ...prev.slice(1),
+      ];
+    });
+    // Limpa a query string pra evitar re-seed em reload
+    router.replace("/wms/receber", { scroll: false });
+  }, [seedQuery.data, router]);
 
   const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
   const galpao = galpoesList.find((g) => g.id === galpaoId);
@@ -484,31 +464,6 @@ function TabLote() {
           </div>
         </Field>
 
-        <Field
-          label="Entrada direta"
-          hint="pula a guarda — exige loc destino em todos os itens"
-        >
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              cursor: "pointer",
-              fontSize: 12.5,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={entradaDireta}
-              onChange={(e) => {
-                setEntradaDireta(e.target.checked);
-                if (e.target.checked) setIniciarRota(false);
-              }}
-            />
-            <span>Gravar saldo direto na loc destino, sem passar pela fila de guarda</span>
-          </label>
-        </Field>
-
         <Field label="Observações" hint="opcional">
           <input
             className="wms-input"
@@ -738,6 +693,21 @@ function TabLote() {
               onChange={(e) => setImprimirAuto(e.target.checked)}
             />
             Imprimir etiquetas ao confirmar
+          </label>
+          <label
+            style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              checked={entradaDireta}
+              onChange={(e) => {
+                setEntradaDireta(e.target.checked);
+                if (e.target.checked) setIniciarRota(false);
+              }}
+            />
+            <span>
+              Entrada direta <span className="wms-td-mute">(pula a guarda)</span>
+            </span>
           </label>
           <label
             style={{

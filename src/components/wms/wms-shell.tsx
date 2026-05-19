@@ -19,7 +19,6 @@ import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, type IconName } from "@/components/wms/ui/wms-ui";
 import {
   AjusteModal,
-  ReceberModal,
   RealocarModal,
   TransferModal,
 } from "@/components/wms/ui/modals";
@@ -538,8 +537,10 @@ export function WmsShell({ children }: { children: ReactNode }) {
 
   const [ckOpen, setCkOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // "receber" não é mais modal — é navegação pra /wms/receber. State guarda
+  // apenas os modais que de fato renderizam aqui.
   const [modal, setModal] = useState<{
-    kind: Exclude<ModalKind, null>;
+    kind: Exclude<ModalKind, null | "receber">;
     seed?: ModalSeed;
   } | null>(null);
 
@@ -568,9 +569,20 @@ export function WmsShell({ children }: { children: ReactNode }) {
 
   const openModal = useCallback(
     (kind: Exclude<ModalKind, null>, seed?: ModalSeed) => {
+      // "receber" deixou de ser modal: navega pra tela única de lote
+      // (pré-seleciona o produto se vier de um drawer/linha de estoque)
+      if (kind === "receber") {
+        const produtoId = seed?.produto?.id;
+        router.push(
+          produtoId
+            ? `/wms/receber?produto_id=${produtoId}`
+            : "/wms/receber",
+        );
+        return;
+      }
       setModal({ kind, seed });
     },
-    [],
+    [router],
   );
 
   const ctxValue = useMemo<ModalContextValue>(
@@ -689,12 +701,6 @@ export function WmsShell({ children }: { children: ReactNode }) {
             onAction={openModal}
           />
 
-          {modal?.kind === "receber" && (
-            <ReceberModal
-              seed={modal.seed}
-              onClose={() => setModal(null)}
-            />
-          )}
           {modal?.kind === "ajuste" && (
             <AjusteModal seed={modal.seed} onClose={() => setModal(null)} />
           )}

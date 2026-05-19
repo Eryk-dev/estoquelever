@@ -56,6 +56,7 @@ interface ItemLote {
   custo: string;
   locIdOverride: string | null;
   locCodigoOverride: string | null;
+  imprimir: boolean;
 }
 
 interface PutawayResp {
@@ -103,9 +104,8 @@ function ReceberBody() {
   const [data, setData] = useState<string>(hojeISODate());
   const [obs, setObs] = useState("");
   const [itens, setItens] = useState<ItemLote[]>([
-    { uid: makeUid(), produto: null, qty: "1", custo: "", locIdOverride: null, locCodigoOverride: null },
+    { uid: makeUid(), produto: null, qty: "1", custo: "", locIdOverride: null, locCodigoOverride: null, imprimir: true },
   ]);
-  const [imprimirAuto, setImprimirAuto] = useState(false);
   const [iniciarRota, setIniciarRota] = useState(false);
   const [entradaDireta, setEntradaDireta] = useState(false);
 
@@ -236,6 +236,11 @@ function ReceberBody() {
     return { totalUn, totalLinhas, semLoc };
   }, [plano]);
 
+  const marcadosImprimir = itens.filter((it) => it.imprimir).length;
+  const todosMarcadosImprimir = itens.length > 0 && marcadosImprimir === itens.length;
+  const parcialmenteMarcadosImprimir =
+    marcadosImprimir > 0 && marcadosImprimir < itens.length;
+
   const submit = useMutation({
     mutationFn: async () => {
       const itensOut: Array<{
@@ -244,6 +249,7 @@ function ReceberBody() {
         custo_unitario?: number;
         localizacao_destino_id?: string;
       }> = [];
+      const printIndices: number[] = [];
       itens.forEach((it, idx) => {
         if (!it.produto) return;
         const qtyN = Number(it.qty);
@@ -256,6 +262,9 @@ function ReceberBody() {
           custo_unitario: it.custo ? Number(it.custo) : undefined,
           localizacao_destino_id: locId,
         });
+        if (it.imprimir) {
+          printIndices.push(itensOut.length - 1);
+        }
       });
       if (itensOut.length === 0) {
         throw new Error("nenhum item válido pra enviar");
@@ -284,9 +293,10 @@ function ReceberBody() {
       return {
         resp: (await r.json()) as ReceberResponse,
         itensOut,
+        printIndices,
       };
     },
-    onSuccess: async ({ resp, itensOut }) => {
+    onSuccess: async ({ resp, itensOut, printIndices }) => {
       if (entradaDireta) {
         toast.success(
           `Lote em estoque: ${itensOut.length} ite${itensOut.length > 1 ? "ns" : "m"} direto na loc destino`,
@@ -297,55 +307,64 @@ function ReceberBody() {
         );
       }
 
-      // Imprime maço fire-and-forget se opção marcada.
-      // Em modo guarda usa pendencia_ids; em entrada_direta monta `linhas`
-      // a partir dos itens que acabaram de ser enviados.
-      if (imprimirAuto) {
-        const printBody = entradaDireta
-          ? {
-              linhas: itensOut
-                .filter((i) => !!i.localizacao_destino_id)
-                .map((i) => ({
-                  produto_id: i.produto_id,
-                  galpao_id: galpaoId,
-                  qty: i.qty,
-                  localizacao_id: i.localizacao_destino_id,
-                })),
-            }
-          : { pendencia_ids: resp.pendencia_ids };
+      // Imprime maço fire-and-forget só dos itens que o operador marcou
+      // pra imprimir. Em modo guarda usa pendencia_ids; em entrada_direta
+      // monta `linhas` a partir dos itens enviados. Alinhamento por índice
+      // é seguro: `resp.pendencia_ids` segue a ordem de `itensOut` (verificado
+      // em receberEstoque — push sequencial sem reordenação).
+      if (printIndices.length > 0) {
+        const idxSet = new Set(printIndices);
+        const linhas = entradaDireta
+          ? itensOut
+              .map((item, idx) => ({ item, idx }))
+              .filter(({ item, idx }) => idxSet.has(idx) && !!item.localizacao_destino_id)
+              .map(({ item }) => ({
+                produto_id: item.produto_id,
+                galpao_id: galpaoId,
+                qty: item.qty,
+                localizacao_id: item.localizacao_destino_id!,
+              }))
+          : null;
+        const pendenciaIds = entradaDireta
+          ? null
+          : resp.pendencia_ids.filter((_, idx) => idxSet.has(idx));
+        const printBody = linhas !== null ? { linhas } : { pendencia_ids: pendenciaIds! };
+        const hasItems = (linhas?.length ?? pendenciaIds?.length ?? 0) > 0;
 
-        sisoFetch("/api/wms/guarda/imprimir-lote", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(printBody),
-        })
-          .then(async (r) => {
-            if (!r.ok) {
-              const body = (await r.json().catch(() => ({}))) as {
-                error?: string;
-              };
-              toast.warning(
-                `Recebimento ok, falha impressão: ${body.error ?? r.status}`,
-              );
-              return;
-            }
-            const out = (await r.json()) as {
-              ok: boolean;
-              totalEtiquetas?: number;
-              totalFolhas?: number;
-              fallbackEnvelope?: boolean;
-            };
-            toast.success(
-              `${out.totalEtiquetas} etiquetas em ${out.totalFolhas} folhas${out.fallbackEnvelope ? " (impressora de envio — configure uma de produto)" : ""}`,
-            );
+        if (hasItems) {
+          sisoFetch("/api/wms/guarda/imprimir-lote", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(printBody),
           })
-          .catch((err) => {
-            toast.warning(`Recebimento ok, falha impressão: ${err.message}`);
-          });
+            .then(async (r) => {
+              if (!r.ok) {
+                const body = (await r.json().catch(() => ({}))) as {
+                  error?: string;
+                };
+                toast.warning(
+                  `Recebimento ok, falha impressão: ${body.error ?? r.status}`,
+                );
+                return;
+              }
+              const out = (await r.json()) as {
+                ok: boolean;
+                totalEtiquetas?: number;
+                totalFolhas?: number;
+                fallbackEnvelope?: boolean;
+              };
+              toast.success(
+                `${out.totalEtiquetas} etiquetas em ${out.totalFolhas} folhas${out.fallbackEnvelope ? " (impressora de envio — configure uma de produto)" : ""}`,
+              );
+            })
+            .catch((err) => {
+              toast.warning(`Recebimento ok, falha impressão: ${err.message}`);
+            });
+        }
       }
 
       // Limpa form
-      setItens([{ uid: makeUid(), produto: null, qty: "1", custo: "", locIdOverride: null, locCodigoOverride: null }]);
+      setItens([{ uid: makeUid(), produto: null, qty: "1", custo: "", locIdOverride: null, locCodigoOverride: null, imprimir: true }]);
       setNf("");
       setObs("");
 
@@ -512,6 +531,7 @@ function ReceberBody() {
                           custo: "",
                           locIdOverride: null,
                           locCodigoOverride: null,
+                          imprimir: true,
                         },
                       ]
                     : prev.filter((_, i) => i !== idx),
@@ -533,6 +553,7 @@ function ReceberBody() {
                   custo: "",
                   locIdOverride: null,
                   locCodigoOverride: null,
+                  imprimir: true,
                 },
               ])
             }
@@ -686,13 +707,23 @@ function ReceberBody() {
         >
           <label
             style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+            title="Marca/desmarca todos os itens da lista"
           >
             <input
               type="checkbox"
-              checked={imprimirAuto}
-              onChange={(e) => setImprimirAuto(e.target.checked)}
+              checked={todosMarcadosImprimir}
+              ref={(el) => {
+                if (el) el.indeterminate = parcialmenteMarcadosImprimir;
+              }}
+              onChange={() => {
+                const next = !todosMarcadosImprimir;
+                setItens((prev) => prev.map((it) => ({ ...it, imprimir: next })));
+              }}
             />
-            Imprimir etiquetas ao confirmar
+            Imprimir etiquetas ao confirmar{" "}
+            <span className="wms-td-mute" style={{ fontSize: 11 }}>
+              ({marcadosImprimir}/{itens.length})
+            </span>
           </label>
           <label
             style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
@@ -808,6 +839,27 @@ function ItemLoteRow({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            cursor: "pointer",
+            color: item.imprimir ? "currentColor" : "var(--wms-c-mute, #888)",
+          }}
+          title={
+            item.imprimir
+              ? "Etiqueta deste item vai pra impressora"
+              : "Etiqueta deste item NÃO será impressa"
+          }
+        >
+          <input
+            type="checkbox"
+            checked={item.imprimir}
+            onChange={(e) => onChange({ ...item, imprimir: e.target.checked })}
+          />
+          <Icon name="tag" size={12} />
+        </label>
         <div style={{ flex: 1, minWidth: 0 }}>
           <ProdutoCombo
             value={item.produto}

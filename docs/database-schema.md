@@ -451,6 +451,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `proximo_retry_em` | timestamptz | YES | | Exponential backoff: next retry time |
 | `criado_em` | timestamptz | NO | now() | Creation |
 | `atualizado_em` | timestamptz | NO | now() | Last update |
+| `payload` | jsonb | NO | `'{}'::jsonb` | Extra job data. Added by fix-pack 2026-05-18. Currently usado por `lancar_estoque` e `lancar_estoque_pos_nf` para carregar `itens_ja_lancados: number[]` — IDs dos `siso_pedido_itens` cujo estoque já foi deduzido via realocação/parcial. O worker pula esses itens. |
 
 **Primary Key:** `id`
 
@@ -464,7 +465,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `idx_fila_prioridade` (prioridade DESC, criado_em ASC) WHERE status = 'pendente'
 
 **Constraints:**
-- `CHECK (tipo IN ('lancar_estoque'))`
+- `CHECK (tipo IN ('lancar_estoque', 'lancar_estoque_pos_nf'))`
 - `CHECK (decisao IN ('propria', 'transferencia', 'oc'))`
 - `CHECK (status IN ('pendente', 'executando', 'concluido', 'erro', 'cancelado'))`
 
@@ -473,6 +474,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - Exponential backoff on retry: 60s → 300s → 1800s
 - Max 3 retries, then transitions to `erro` status
 - `filial_execucao` is legacy; prefer `empresa_id`
+- `payload.itens_ja_lancados` (fix-pack 2026-05-18): array de IDs dos itens cuja saída já foi gerada no ledger via parcial/realocação — o worker pula esses itens pra não duplicar deduções. Default `[]` (sem itens pré-lançados).
 
 ---
 
@@ -831,6 +833,184 @@ wms_executar_mini_swap(
 - Retorna jsonb array dos planos executados com IDs das movimentações geradas
 
 **Atomicity:** Toda a operação ocorre numa única transação Postgres. Falha em qualquer mov reverte tudo.
+
+---
+
+## WMS — Realocação Fix-Pack (2026-05-18)
+
+Objetos introduzidos pelo fix-pack da realocação cascateável (24 achados de auditoria fechados em 36 tasks). Spec/plano: `docs/superpowers/specs/2026-05-18-realocacao-cascateavel-fix-pack-design.md`, `docs/superpowers/plans/2026-05-18-realocacao-cascateavel-fix-pack.md`.
+
+### siso_pedido_item_mov_links
+
+**Purpose:** Bridge table N:M entre `siso_pedido_itens` e `siso_movimentacoes`. Necessária porque em wave consolidado **uma única mov S pode atender N itens** (mesma quádrupla escolhida pra múltiplos pedidos da wave). Sem a bridge, estornar 1 item exigia ou estornar a mov inteira (errado — afeta outros itens) ou perder o rastreio. Cada linha registra a fatia que aquele (item, realocação?) consumiu da mov, permitindo `wms_estornar_parcial_movimentacao` estornar proporcionalmente.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | `gen_random_uuid()` | PK |
+| `pedido_item_id` | bigint | NO | FK | → `siso_pedido_itens(id)` ON DELETE CASCADE |
+| `realocacao_id` | uuid | YES | FK | → `siso_pedido_item_realocacoes(id)` ON DELETE CASCADE. NULL = mov da raiz do parcial (modo item); não-NULL = mov de pick de uma realocação |
+| `mov_id` | uuid | NO | FK | → `siso_movimentacoes(id)` (sem cascade — ledger é imutável) |
+| `qty` | integer | NO | | Quantidade que esta linha (item, realocação?) consumiu da mov. `CHECK (qty > 0)` |
+| `tipo_link` | text | NO | | `'saida'` (mov S de venda/empréstimo) ou `'ajuste_loc_zerou'` (mov S de `ajuste_pick_zerou` quando a loc zerou). `CHECK (tipo_link IN ('saida','ajuste_loc_zerou'))` |
+| `criado_em` | timestamptz | NO | `now()` | Criação |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `pedido_item_id` → `siso_pedido_itens(id)` ON DELETE CASCADE
+- `realocacao_id` → `siso_pedido_item_realocacoes(id)` ON DELETE CASCADE
+- `mov_id` → `siso_movimentacoes(id)` (no cascade)
+
+**Indexes:**
+- `idx_mov_links_mov` (mov_id) — descobrir todos os consumidores de uma mov (suporta `wms_estornar_parcial_movimentacao`)
+- `idx_mov_links_item` (pedido_item_id) — descobrir todas as movs de um item (suporta `desfazer-parcial` e `cancelar`)
+- `idx_mov_links_realoc` (realocacao_id) WHERE realocacao_id IS NOT NULL — descobrir mov de uma realocação específica (suporta cascade DELETE)
+
+**Constraints:**
+- UNIQUE `(pedido_item_id, realocacao_id, mov_id, tipo_link)` — evita duplicação de link
+
+**Populado por:**
+- `POST /api/wms/separacao/marcar-realocacao` — 1 linha (tipo_link='saida', realocacao_id=NN)
+- `POST /api/wms/separacao/parcial` (modo item) — 1-2 linhas (tipo_link='saida' + opcional 'ajuste_loc_zerou', realocacao_id=NULL)
+- `POST /api/wms/separacao/parcial` (modo realocação) — N linhas (1 por realocacao_id, tipo_link='saida' + opcional 'ajuste_loc_zerou')
+- `POST /api/wms/separacao/marcar-item` — 1 linha (tipo_link='saida', realocacao_id=NULL)
+
+**Consumido por:**
+- `POST /api/wms/separacao/desfazer-parcial` — lê links onde `realocacao_id IS NULL` e estorna proporcionalmente
+- `POST /api/wms/separacao/cancelar` — lê todos os links dos itens e estorna via Set dedupado de mov_ids
+- `DELETE /api/wms/separacao/realocacao/[id]` — cascade pelo FK quando a realocação é cancelada (mas só pra rows ON DELETE CASCADE — se a realocação já foi pickada, o DELETE é bloqueado pelo 409)
+
+---
+
+### siso_movimentacoes.qty_estornada (new column)
+
+**Coluna adicionada por fix-pack 2026-05-18.**
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `qty_estornada` | numeric(14,4) | NO | 0 | Quantidade acumulada já estornada desta movimentação. `CHECK (qty_estornada >= 0)`. Permite estornos proporcionais sucessivos quando a mov é compartilhada entre múltiplos itens (wave consolidado). |
+
+**Backfill:** A migration setou `qty_estornada = quantidade` para todas as movs que tinham um par `estorno_de` existente — preservando contabilidade pré-fix-pack (estornos antigos eram sempre totais).
+
+**Invariantes:**
+- `qty_estornada <= quantidade` (mov não pode ser estornada além de seu próprio total)
+- Movs com `tipo='E'` ou `'L'` ou que sejam elas mesmas estornos (`estorno_de IS NOT NULL`) **nunca** têm `qty_estornada` incrementada — o estorno-de-estorno é vedado pela RPC
+
+**Consumido por:**
+- `wms_estornar_parcial_movimentacao` — incrementa após gerar mov contrária
+
+---
+
+### RPC `wms_acumular_qty_pega`
+
+```sql
+wms_acumular_qty_pega(
+  p_item_id  bigint,
+  p_delta    integer  -- pode ser negativo (estorno) mas resultado não pode ficar < 0
+) RETURNS integer  -- retorna nova quantidade_pega
+```
+
+**Purpose:** UPDATE atômico de `siso_pedido_itens.quantidade_pega += p_delta`. Substitui o padrão anterior (read-modify-write em 2 queries) que era vulnerável a race em wave consolidado — múltiplos endpoints (`marcar-realocacao`, `parcial`, etc.) podem rodar em paralelo apontando pro mesmo item.
+
+**Behavior:**
+- `SELECT quantidade_pega FROM siso_pedido_itens WHERE id=p_item_id FOR UPDATE` (lock pessimista)
+- Calcula `novo = COALESCE(quantidade_pega, 0) + p_delta`
+- RAISE se `novo < 0` (proteção contra over-estorno)
+- `UPDATE … SET quantidade_pega = novo`
+- Retorna `novo`
+
+**Raises:**
+- `'item_nao_encontrado'` se nenhuma row corresponde a `p_item_id`
+- `'quantidade_pega_negativa'` se delta levaria a valor negativo
+
+---
+
+### RPC `wms_estornar_parcial_movimentacao`
+
+```sql
+wms_estornar_parcial_movimentacao(
+  p_mov_id       uuid,
+  p_qty          numeric,
+  p_usuario_id   uuid    DEFAULT NULL,
+  p_observacoes  text    DEFAULT NULL
+) RETURNS siso_movimentacoes  -- a mov contrária criada
+```
+
+**Purpose:** Estorna **parcialmente** uma movimentação criando uma mov contrária com qty < quantidade total da fonte. Necessária pra wave consolidado: 1 mov S compartilhada por N itens; cancelar 1 item estorna só sua fatia, deixando o restante íntegro.
+
+**Behavior:**
+1. `SELECT FOR UPDATE` da mov fonte em `siso_movimentacoes`
+2. Validações:
+   - Mov existe (`'mov_nao_encontrada'`)
+   - Mov **não é** um estorno (`estorno_de IS NULL` — `'mov_e_estorno'` caso contrário)
+   - `p_qty > 0` (`'qty_invalida'`)
+   - `qty_estornada + p_qty <= quantidade` (`'qty_excede_saldo_estornavel'`)
+3. Determina tipo contrário: `S` → `E`, `E` → `S` (recusa `R` e `L` — `'tipo_nao_estornavel'`)
+4. Insere mov contrária via `wms_inserir_movimentacao` com:
+   - Mesmo `produto_id`, `dona_empresa_id`, `galpao_id`, `localizacao_id`, `custo_unitario`
+   - `quantidade = p_qty`
+   - `tipo` invertido
+   - `origem_tipo = 'estorno_parcial'`
+   - `estorno_de = p_mov_id`
+   - `observacoes = p_observacoes` ou template default
+5. `UPDATE siso_movimentacoes SET qty_estornada = qty_estornada + p_qty WHERE id = p_mov_id`
+6. Retorna a row da mov contrária
+
+**Atomicity:** Toda a operação numa única transação. Falha em qualquer passo reverte tudo (incluindo o UPDATE em `qty_estornada`).
+
+**Idempotência:** **Não** é idempotente — chamar duas vezes com mesmo `p_qty` gera dois estornos parciais (ou raise no segundo se exceder saldo). Caller deve dedupar (ex.: `cancelar` usa `Set<mov_id>`).
+
+---
+
+### RPC `siso_processar_bip_embalagem` (extended)
+
+Função pré-existente, **estendida pelo fix-pack 2026-05-18 (I6)** com novo parâmetro:
+
+```sql
+siso_processar_bip_embalagem(
+  p_sku                text,
+  p_galpao_id          uuid,
+  p_quantidade         integer,
+  p_operador_id        uuid,
+  p_strict_qty_pega    boolean DEFAULT false  -- NOVO
+) RETURNS jsonb
+```
+
+**Comportamento alterado quando `p_strict_qty_pega = true`:**
+- Antes: teto da bipagem = `siso_pedido_itens.quantidade` (qty pedida).
+- Agora: se item tem `separacao_parcial = true`, teto = **qty pega real** = `item.quantidade_pega + Σ realocs.quantidade_pega (em status 'picado'|'picado_parcial')`.
+- Bipagem que ultrapassaria o teto: RAISE `'bipou_alem_do_teto'` com `DETAIL` = `'teto=N,tentado=M'` (ints). Endpoint converte em 422 com payload `{ code: 'bipou_alem_do_teto', teto, tentado }`.
+- Quando `p_strict_qty_pega = false` (default): comportamento antigo preservado pra compat.
+
+**Chamado por:** `POST /api/wms/separacao/bipar-embalagem` (passa `true` sempre).
+
+---
+
+### Publication change — Realtime para realocações
+
+`siso_pedido_item_realocacoes` foi adicionada à publication `supabase_realtime` (fix-pack 2026-05-18 C5). Antes o frontend de separação detectava mudanças apenas em `siso_pedido_itens` — perdia eventos de cascade puramente em realocações (sem update no item pai). Agora o hook `use-realtime-separacao` escuta `*` em `siso_pedido_item_realocacoes` filtrado por `pedido_id IN (...)` e refetch derivado.
+
+```sql
+ALTER PUBLICATION supabase_realtime ADD TABLE siso_pedido_item_realocacoes;
+```
+
+---
+
+### Backfill — normalização de `parcial_motivo` legacy
+
+Migration do fix-pack inclui backfill em `siso_pedido_item_realocacoes`:
+
+```sql
+UPDATE siso_pedido_item_realocacoes
+   SET parcial_motivo = 'loc_zerou'
+ WHERE parcial_motivo = 'cascade_loc_zerou';
+
+UPDATE siso_pedido_item_realocacoes
+   SET parcial_motivo = 'qty_diferente'
+ WHERE parcial_motivo = 'cascade_parcial';
+```
+
+Razão: os valores `cascade_*` foram introduzidos na implementação inicial mas a UI/spec converteu pra `loc_zerou` / `qty_diferente`. Backfill alinha o histórico ao vocabulário oficial. Novos inserts pelo endpoint `/api/wms/separacao/parcial` já gravam o nome curto desde o fix-pack.
 
 ---
 
@@ -1558,6 +1738,11 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-05-13 | `20260513_wms_swap.sql` | **WMS Plano 4:** adiciona `'swap'` ao CHECK constraint `siso_movimentacoes_origem_tipo_check`. RPC `wms_executar_swap(p_produto, p_empresa_a, p_empresa_b, p_galpao_a, p_galpao_b, p_localizacao_a, p_localizacao_b, p_qty, p_pedido, p_usuario, p_observacoes) RETURNS TABLE(4 mov uuids)` — 4 movs (S+E em galpao_a, S+E em galpao_b) numa transação trocando dona entre 2 galpões. Saldo total por empresa preservado, sem saldo devedor (vs empréstimo). |
 | 2026-05-14 | `20260514_wms_guarda_pendencias.sql` | **Recebimento em 2 etapas:** cria `siso_wms_pendencias_guarda` (fila de put-away), adiciona `printnode_printer_id_produto`/`printnode_printer_nome_produto` em `siso_galpoes` e `siso_usuarios` (impressora dedicada pra etiqueta de produto, com fallback pra impressora de envio), auto-cria 1 `siso_localizacoes` tipo='recebimento' (codigo='RECEBIMENTO') por galpão ativo que não tenha. Trigger `trg_pendencias_guarda_touch` atualiza `atualizada_em` a cada UPDATE. |
 | 2026-05-14 | `20260514_wms_mini_swap*.sql` | **Mini-Swap Intra-Galpão:** cria `siso_wms_mini_swap_config` (toggle por galpão, seed `ativo=true` para todos os galpões ativos) + RPC `wms_executar_mini_swap` (aplica plano sob lock pessimista: libera reservas → executa swaps → recria reservas, tudo atômico). |
+| 2026-05-18 | `20260518_realocacao_fix_pack_foundation.sql` | **Fix-pack realocação cascateável — foundation:** cria tabela ponte `siso_pedido_item_mov_links` (N:M item↔mov, com `realocacao_id` nullable e `tipo_link IN ('saida','ajuste_loc_zerou')`); adiciona `siso_movimentacoes.qty_estornada numeric NOT NULL DEFAULT 0 CHECK >= 0` com backfill `qty_estornada=quantidade` pra movs com par `estorno_de` existente; adiciona `siso_pedido_item_realocacoes` à publication `supabase_realtime`; backfill normaliza `parcial_motivo`: `cascade_loc_zerou`→`loc_zerou`, `cascade_parcial`→`qty_diferente`. |
+| 2026-05-18 | `20260518_realocacao_fix_pack_rpc_acumular.sql` | **Fix-pack — RPC `wms_acumular_qty_pega`:** UPDATE atômico de `siso_pedido_itens.quantidade_pega += p_delta` com lock pessimista (`SELECT FOR UPDATE`). Substitui read-modify-write vulnerável a race em wave consolidado. Raises `'item_nao_encontrado'` ou `'quantidade_pega_negativa'`. |
+| 2026-05-18 | `20260518_realocacao_fix_pack_rpc_estorno_parcial.sql` | **Fix-pack — RPC `wms_estornar_parcial_movimentacao`:** estorna parcialmente uma mov criando contrária com qty < total da fonte e incrementando `qty_estornada` na fonte. Lock pessimista + validações (mov existe, não é estorno, qty>0, não excede saldo estornável). Atômica. Origem da contrária = `'estorno_parcial'`. |
+| 2026-05-18 | `20260518_realocacao_fix_pack_embalagem_strict.sql` | **Fix-pack — `siso_processar_bip_embalagem` extension:** adiciona parâmetro `p_strict_qty_pega boolean DEFAULT false`. Quando `true` AND item tem `separacao_parcial=true`, teto da bipagem passa a ser **qty pega real** (item.quantidade_pega + Σ realocs.quantidade_pega em 'picado'/'picado_parcial'). Excesso RAISE `'bipou_alem_do_teto'` com DETAIL `teto=N,tentado=M` (mapeado pra 422 no endpoint). |
+| 2026-05-18 | `20260518_realocacao_fix_pack_fila_payload.sql` | **Fix-pack — `siso_fila_execucao.payload jsonb`:** adiciona coluna `payload jsonb NOT NULL DEFAULT '{}'::jsonb` pra carregar metadata dos jobs. Usado pelos tipos `lancar_estoque` e `lancar_estoque_pos_nf` pra carregar `itens_ja_lancados: number[]` — IDs dos itens cuja saída já foi gerada via parcial/realocação, que o worker deve pular pra evitar dedução duplicada. Migration estende o CHECK de `tipo` pra incluir `'lancar_estoque_pos_nf'`. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging
@@ -1571,6 +1756,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 9. **Phase 9 (May 13 — Plano 4):** Fulfillment com swap — origem_tipo 'swap', RPC `wms_executar_swap`, rotearPedido tenta swap entre direta e empréstimo, webhook executa swaps antes das reservas, DecisaoLabel ganha tooltip swap
 10. **Phase 10 (May 14 — Recebimento em 2 etapas):** dock RECEBIMENTO + tabela `siso_wms_pendencias_guarda` + impressora dedicada de etiqueta de produto. `/wms/receber` registra entradas na loc tipo='recebimento' (auto-criada por galpão) e cria pendências; `/wms/guarda` (tablet) consome a fila com bipe de QR + impressão 2-por-folha + replenishment_intra pra loc destino.
 11. **Phase 11 (May 14 — Mini-Swap Intra-Galpão):** antes de iniciar wave picking, consolida estoque das empresas no mesmo galpão via swap (zero dívida) + empréstimo. `siso_wms_mini_swap_config` + RPC `wms_executar_mini_swap`. Toggle por galpão. Graceful failure.
+12. **Phase 12 (May 18 — Realocação Fix-Pack):** 24 achados de auditoria pós-realocação cascateável fechados em 36 tasks. Foundation: tabela ponte `siso_pedido_item_mov_links` (item↔mov N:M com tipo_link), `siso_movimentacoes.qty_estornada` (estorno proporcional), `siso_fila_execucao.payload` (carrega `itens_ja_lancados`). RPCs: `wms_acumular_qty_pega` (UPDATE atômico) e `wms_estornar_parcial_movimentacao` (estorno proporcional de mov compartilhada). `siso_processar_bip_embalagem` ganha `p_strict_qty_pega` (teto = qty pega real em itens parciais). Realtime: `siso_pedido_item_realocacoes` entra na publication. Backfill normaliza `parcial_motivo` legado.
 
 ---
 
@@ -1636,7 +1822,7 @@ This writes to both `siso_logs` and `siso_erros`.
 
 ---
 
-**Schema Last Updated:** 2026-05-07
+**Schema Last Updated:** 2026-05-18 (Realocação Fix-Pack — Phase 12)
 **Database Version:** PostgreSQL 14+ (Supabase)
 **Supabase Project:** `wrbrbhuhsaaupqsimkqz`
 

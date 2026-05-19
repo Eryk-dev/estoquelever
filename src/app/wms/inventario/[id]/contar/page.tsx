@@ -904,7 +904,9 @@ function ResumoFinal({
   );
 }
 
-// Input editável de quantidade — commit no blur ou Enter, revert no Escape
+// Input editável de quantidade — commit no blur ou Enter, revert no Escape.
+// draft=null significa "não estou editando" e o input lê `value` direto da
+// prop, sem render duplo. Bipes rápidos refletem na mesma frame.
 function EditableQty({
   value,
   onCommit,
@@ -912,35 +914,35 @@ function EditableQty({
   value: number;
   onCommit: (n: number) => Promise<void> | void;
 }) {
-  const [val, setVal] = useState<string>(String(value));
-  // Mantém o input sincronizado se o valor mudar de fora (ex: bipe extra)
-  useEffect(() => {
-    setVal(String(value));
-  }, [value]);
+  const [draft, setDraft] = useState<string | null>(null);
 
   const commit = () => {
-    const n = Number(val);
+    if (draft === null) return;
+    const n = Number(draft);
     if (!Number.isFinite(n) || n < 0) {
-      setVal(String(value));
+      setDraft(null);
       return;
     }
-    if (n === value) return;
-    onCommit(n);
+    if (n !== value) onCommit(n);
+    setDraft(null);
   };
 
   return (
     <input
       type="number"
       min={0}
-      value={val}
-      onChange={(e) => setVal(e.target.value)}
-      onFocus={(e) => e.currentTarget.select()}
+      value={draft ?? String(value)}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={(e) => {
+        setDraft(String(value));
+        e.currentTarget.select();
+      }}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           (e.target as HTMLInputElement).blur();
         } else if (e.key === "Escape") {
-          setVal(String(value));
+          setDraft(null);
           (e.target as HTMLInputElement).blur();
         }
       }}

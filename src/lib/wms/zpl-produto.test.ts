@@ -79,36 +79,24 @@ describe("gerarZplProduto", () => {
     expect(zpl.match(/\^XZ/g)?.length).toBe(2);
   });
 
-  it("coluna direita usa offset 440 (shift de 5mm pra compensar gap físico)", () => {
+  it("coluna direita usa offset 400 (segundo bloco com FOx onde x>=400)", () => {
     const zpl = gerarZplProduto([A, B]);
-    // Posições do barcode da direita: FO{>=440},80
+    // Posições do barcode da direita: FO{>=400},80
     expect(zpl).toMatch(/\^FO[4-9]\d{2},80\^BCN/);
-    // Posições do footer SKU da direita: começa em 445 (440 + LEFT_MARGIN=5)
-    expect(zpl).toContain("^FO445,150");
+    // Footer SKU da direita: 400 + LEFT_MARGIN=5
+    expect(zpl).toContain("^FO405,150");
   });
 
-  it("emite QR code (BQ) ao lado do barcode (BC) pra cada etiqueta", () => {
+  it("não emite QR code (apenas CODE128)", () => {
     const zpl = gerarZplProduto([A, B]);
-    // 2 QRs (um por etiqueta) com data MA,<sku>
-    expect(zpl.match(/\^BQN,2,\d\^FDMA,19ABC123\^FS/g)?.length).toBe(1);
-    expect(zpl.match(/\^BQN,2,\d\^FDMA,EWXYZ\^FS/g)?.length).toBe(1);
+    expect(zpl).not.toMatch(/\^BQ/);
     // 2 barcodes (um por etiqueta)
     expect(zpl.match(/\^BCN,/g)?.length).toBe(2);
   });
 
-  it("QR e barcode são centralizados como grupo (QR.X < Barcode.X, mesma metade)", () => {
+  it("barcode com MODULE_WIDTH=1 (^BY1) — versão original", () => {
     const zpl = gerarZplProduto([A]);
-    const qrMatch = zpl.match(/\^FO(\d+),\d+\^BQN/);
-    const bcMatch = zpl.match(/\^FO(\d+),\d+\^BCN/);
-    expect(qrMatch).toBeTruthy();
-    expect(bcMatch).toBeTruthy();
-    const qrX = Number(qrMatch![1]);
-    const bcX = Number(bcMatch![1]);
-    // QR vem antes do barcode com pouco gap
-    expect(bcX).toBeGreaterThan(qrX);
-    // Grupo cabe dentro da etiqueta esquerda (0..400)
-    expect(qrX).toBeGreaterThanOrEqual(0);
-    expect(bcX).toBeLessThan(400);
+    expect(zpl).toContain("^BY1,2,50");
   });
 
   it("limpa newlines no input pra não quebrar ZPL", () => {
@@ -124,6 +112,48 @@ describe("gerarZplProduto", () => {
     expect(zpl).toContain("FDlinha 1 linha 2");
   });
 
+  it("descrição curta usa font 25, 2 linhas", () => {
+    const zpl = gerarZplProduto([A]);
+    expect(zpl).toContain("^CF0,25");
+    expect(zpl).toMatch(/\^FB\d+,2,,C\^FDFiltro de óleo/);
+  });
+
+  it("descrição média (~55 chars) cai pra font 22, 2 linhas", () => {
+    const longa: EtiquetaProdutoInput = {
+      sku: "ABC123",
+      descricao: "FILTRO DE OLEO MOTOR FIAT PALIO STRADA UNO MILLE FIRE",
+      localizacao: "A-01-1",
+    };
+    const zpl = gerarZplProduto([longa]);
+    expect(zpl).toContain("^CF0,22");
+    expect(zpl).toMatch(/\^FB\d+,2,,C\^FD/);
+  });
+
+  it("descrição longa (~100 chars) cai pra font 18, 3 linhas", () => {
+    const muitoLonga: EtiquetaProdutoInput = {
+      sku: "ABC123",
+      descricao:
+        "FILTRO DE OLEO MOTOR 1.0 1.4 1.6 PALIO STRADA UNO MILLE FIRE FLEX 2010 2011 2012 ORIGINAL",
+      localizacao: "A-01-1",
+    };
+    const zpl = gerarZplProduto([muitoLonga]);
+    expect(zpl).toContain("^CF0,18");
+    expect(zpl).toMatch(/\^FB\d+,3,,C\^FD/);
+  });
+
+  it("descrição absurda (>140 chars) é truncada com elipse", () => {
+    const absurda: EtiquetaProdutoInput = {
+      sku: "ABC",
+      descricao: "X".repeat(200),
+      localizacao: "A-01-1",
+    };
+    const zpl = gerarZplProduto([absurda]);
+    expect(zpl).toContain("^CF0,15");
+    // Texto truncado em 139 chars + "…"
+    expect(zpl).toContain("X".repeat(139) + "…");
+    expect(zpl).not.toContain("X".repeat(140));
+  });
+
   it("integra com expandirPorQty: qty=5 vira 3 folhas (5 etiq)", () => {
     const etqs = expandirPorQty([{ etiqueta: A, qty: 5 }]);
     expect(etqs.length).toBe(5);
@@ -134,7 +164,7 @@ describe("gerarZplProduto", () => {
 
   it("PW e LL ficam no início de cada folha", () => {
     const zpl = gerarZplProduto([A, B, A]);
-    expect(zpl.match(/\^PW840/g)?.length).toBe(2);
+    expect(zpl.match(/\^PW800/g)?.length).toBe(2);
     expect(zpl.match(/\^LL200/g)?.length).toBe(2);
   });
 });

@@ -1,14 +1,12 @@
 // Geração de ZPL pra etiqueta de produto (recebimento/guarda).
 //
-// Físico: folha ~105mm × ~25mm dividida ao meio por gap → 2 colunas.
-// PW=840, LL=200. Cada metade tem LABEL_WIDTH=400; coluna direita começa
-// em X=440 pra compensar gap físico maior (+5mm).
+// Físico: folha 100mm × ~25mm dividida ao meio por gap → 2 colunas.
+// PW=800, LL=200. Cada metade tem LABEL_WIDTH=400.
 //
 // Layout:
-//   ┌─────────── DESCRIÇÃO (2 linhas, centro) ───────────┐
+//   ┌─────────── DESCRIÇÃO (centralizada) ───────────────┐
 //   │                                                     │
-//   │       [QR] ▌▌▌▌ BARCODE CODE128 ▌▌▌▌                │
-//   │       (conjunto QR+barcode centralizado)            │
+//   │         ▌▌▌▌▌▌▌ BARCODE CODE128 ▌▌▌▌▌▌▌             │
 //   │                                                     │
 //   │  SKU: 19XXXX           A-01-1                       │
 //   └─────────────────────────────────────────────────────┘
@@ -26,10 +24,10 @@ export interface EtiquetaProdutoInput {
   localizacao: string;
 }
 
-const PAGE_WIDTH = 840; // 105mm @ 8 dots/mm — acomoda shift de 5mm da coluna direita
+const PAGE_WIDTH = 800;
 const LABEL_WIDTH = 400;
 const PAGE_HEIGHT = 200;
-const COLUNA_DIREITA_X = 440; // +40 dots (5mm) vs antes pra compensar gap físico maior
+const COLUNA_DIREITA_X = 400;
 const LEFT_MARGIN = 5;
 
 const DESC_Y = 20;
@@ -40,25 +38,49 @@ const MODULE_WIDTH = 1;
 const BAR_RATIO = 2;
 const BAR_HEIGHT = 50;
 
-// QR code ao lado do barcode. Model 2, magnification 3 → ~60 dots (~7.5mm)
-// pra SKUs curtos. ECC M (correção média) — robusto pra thermal print.
-const QR_MAGNIFICATION = 3;
-const QR_SIZE = 60; // estimativa pra cálculo de centro; ZPL emite o tamanho real
-const QR_BARCODE_GAP = 8; // ~1mm de gap entre QR e barcode
-const QR_Y = BARCODE_Y - Math.round((QR_SIZE - BAR_HEIGHT) / 2); // alinha centro vertical
-
 function clean(s: string | null | undefined): string {
   if (s === null || s === undefined) return "";
   return String(s).replace(/[\r\n]+/g, " ").trim();
 }
 
 /**
+ * Escolhe fonte e nº máximo de linhas pra descrição caber sem "encavalar".
+ * Font 0 do ZPL é proporcional; estimativa empírica: char width ≈ font × 0.55.
+ * Width útil = 390 dots, então chars/linha ≈ 390 / (font × 0.55).
+ *
+ *   font 25 → ~28 chars/linha × 2 = 56 chars
+ *   font 22 → ~32 chars/linha × 2 = 64 chars
+ *   font 18 → ~39 chars/linha × 3 = 117 chars
+ *   font 15 → ~47 chars/linha × 3 = 141 chars
+ *
+ * Acima disso trunca pra não cuspir lixo no print.
+ */
+function escolherFonteDescricao(desc: string): {
+  texto: string;
+  font: number;
+  lines: number;
+} {
+  const len = desc.length;
+  if (len <= 50) return { texto: desc, font: 25, lines: 2 };
+  if (len <= 60) return { texto: desc, font: 22, lines: 2 };
+  if (len <= 110) return { texto: desc, font: 18, lines: 3 };
+  if (len <= 140) return { texto: desc, font: 15, lines: 3 };
+  return { texto: desc.slice(0, 139) + "…", font: 15, lines: 3 };
+}
+
+/**
+ * Largura aproximada do CODE128 baseado no nº de chars do SKU,
+ * pra centralizar o barcode na coluna. Mesma heurística do n8n original.
+ */
+function barcodeX(sku: string, offsetX: number): number {
+  const estModules = sku.length * 11;
+  const barcodeWidth = estModules * MODULE_WIDTH * BAR_RATIO;
+  return offsetX + Math.round((LABEL_WIDTH - barcodeWidth) / 2);
+}
+
+/**
  * Gera os campos ZPL de uma única metade (esquerda OU direita) da folha.
  * Não emite ^XA/^XZ — caller compõe a folha inteira.
- *
- * Layout do bloco central: [QR][gap][CODE128], centralizado horizontalmente
- * na coluna. Largura do barcode estimada pelo nº de chars do SKU (mesma
- * heurística do n8n original).
  */
 function gerarMetade(input: EtiquetaProdutoInput, offsetX: number): string {
   const sku = clean(input.sku);
@@ -67,21 +89,17 @@ function gerarMetade(input: EtiquetaProdutoInput, offsetX: number): string {
 
   const descX = offsetX + LEFT_MARGIN;
   const descBlockWidth = LABEL_WIDTH - LEFT_MARGIN * 2;
+  const { texto: descTexto, font: descFont, lines: descLines } =
+    escolherFonteDescricao(descricao);
 
-  const estModules = sku.length * 11;
-  const barcodeWidth = estModules * MODULE_WIDTH * BAR_RATIO;
-  const groupWidth = QR_SIZE + QR_BARCODE_GAP + barcodeWidth;
-  const groupX = offsetX + Math.round((LABEL_WIDTH - groupWidth) / 2);
-  const qrX = groupX;
-  const bcX = groupX + QR_SIZE + QR_BARCODE_GAP;
+  const bcX = barcodeX(sku, offsetX);
 
   const footerSkuX = offsetX + LEFT_MARGIN;
   const footerLocX = offsetX + Math.round(LABEL_WIDTH / 2) + 10;
 
   return [
-    `^CF0,25`,
-    `^FO${descX},${DESC_Y}^FB${descBlockWidth},2,,C^FD${descricao}^FS`,
-    `^FO${qrX},${QR_Y}^BQN,2,${QR_MAGNIFICATION}^FDMA,${sku}^FS`,
+    `^CF0,${descFont}`,
+    `^FO${descX},${DESC_Y}^FB${descBlockWidth},${descLines},,C^FD${descTexto}^FS`,
     `^BY${MODULE_WIDTH},${BAR_RATIO},${BAR_HEIGHT}`,
     `^FO${bcX},${BARCODE_Y}^BCN,${BAR_HEIGHT},N,N,N^FD${sku}^FS`,
     `^CF0,20`,

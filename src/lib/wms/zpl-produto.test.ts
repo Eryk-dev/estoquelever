@@ -79,12 +79,36 @@ describe("gerarZplProduto", () => {
     expect(zpl.match(/\^XZ/g)?.length).toBe(2);
   });
 
-  it("coluna direita usa offset 400 (segundo bloco com FOx onde x>=400)", () => {
+  it("coluna direita usa offset 440 (shift de 5mm pra compensar gap físico)", () => {
     const zpl = gerarZplProduto([A, B]);
-    // Posições do barcode da direita: FO{>=400},80
+    // Posições do barcode da direita: FO{>=440},80
     expect(zpl).toMatch(/\^FO[4-9]\d{2},80\^BCN/);
-    // Posições do footer SKU da direita: começa em 405
-    expect(zpl).toContain("^FO405,150");
+    // Posições do footer SKU da direita: começa em 445 (440 + LEFT_MARGIN=5)
+    expect(zpl).toContain("^FO445,150");
+  });
+
+  it("emite QR code (BQ) ao lado do barcode (BC) pra cada etiqueta", () => {
+    const zpl = gerarZplProduto([A, B]);
+    // 2 QRs (um por etiqueta) com data MA,<sku>
+    expect(zpl.match(/\^BQN,2,\d\^FDMA,19ABC123\^FS/g)?.length).toBe(1);
+    expect(zpl.match(/\^BQN,2,\d\^FDMA,EWXYZ\^FS/g)?.length).toBe(1);
+    // 2 barcodes (um por etiqueta)
+    expect(zpl.match(/\^BCN,/g)?.length).toBe(2);
+  });
+
+  it("QR e barcode são centralizados como grupo (QR.X < Barcode.X, mesma metade)", () => {
+    const zpl = gerarZplProduto([A]);
+    const qrMatch = zpl.match(/\^FO(\d+),\d+\^BQN/);
+    const bcMatch = zpl.match(/\^FO(\d+),\d+\^BCN/);
+    expect(qrMatch).toBeTruthy();
+    expect(bcMatch).toBeTruthy();
+    const qrX = Number(qrMatch![1]);
+    const bcX = Number(bcMatch![1]);
+    // QR vem antes do barcode com pouco gap
+    expect(bcX).toBeGreaterThan(qrX);
+    // Grupo cabe dentro da etiqueta esquerda (0..400)
+    expect(qrX).toBeGreaterThanOrEqual(0);
+    expect(bcX).toBeLessThan(400);
   });
 
   it("limpa newlines no input pra não quebrar ZPL", () => {
@@ -110,7 +134,7 @@ describe("gerarZplProduto", () => {
 
   it("PW e LL ficam no início de cada folha", () => {
     const zpl = gerarZplProduto([A, B, A]);
-    expect(zpl.match(/\^PW800/g)?.length).toBe(2);
+    expect(zpl.match(/\^PW840/g)?.length).toBe(2);
     expect(zpl.match(/\^LL200/g)?.length).toBe(2);
   });
 });

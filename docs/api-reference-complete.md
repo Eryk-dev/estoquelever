@@ -4987,7 +4987,7 @@ RPCs: acuracidade por operador (30d) + por localização (5000 últimas).
 - amarelo: mov em loc não visitada ou em janela contagem_iniciada → contagem_finalizada
 - vermelho: mov em loc já visitada (contagem_finalizada_em < criado_em) — sistema reconcilia
 
-**Business logic:** lista as N últimas movs do galpão da sessão criadas desde `iniciada_em`. Usado pelo painel ao vivo do supervisor.
+**Business logic:** lista as N últimas movs **restritas ao pool de localizações da sessão** (`siso_inventario_localizacoes.localizacao_id`), criadas desde `iniciada_em`. Movs em locs fora da sessão são ignoradas — não fazem parte do escopo do inventário. Usado pelo painel ao vivo do supervisor.
 
 ### GET /api/wms/inventario/cleanup
 Cron-friendly. Auth: `x-worker-secret`. Detecta sessões inativas há 4h+ (alerta) e libera locks com 30min+ sem contagem nova (mov de status='pendente').

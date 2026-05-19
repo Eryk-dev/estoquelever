@@ -738,3 +738,25 @@ erros:
       Plano e spec em docs/superpowers/plans/2026-05-18-realocacao-cascateavel-fix-pack.md
       e docs/superpowers/specs/2026-05-18-realocacao-cascateavel-fix-pack-design.md.
       Fix-pack fechou 24 achados via 36 tasks — baseline pra Plano 6 (cutover WMS).
+
+  - id: inventario-feed-eventos-fora-de-escopo-2026-05-18
+    date: "2026-05-18"
+    source: src/app/api/wms/inventario/[id]/eventos/route.ts
+    category: business_logic
+    message: "Feed ao vivo do supervisor mostrava movs que não tinham relação com o inventário"
+    cause: >
+      O endpoint filtrava as movimentações apenas por galpao_id + criado_em >= iniciada_em,
+      sem restringir ao pool de localizações da sessão (siso_inventario_localizacoes).
+      Resultado: pickings de pedido, recebimentos, replenishments e transferências em locs
+      fora da sessão apareciam no feed e caíam no fallback de classificação como "amarelo —
+      mov em loc ainda não contada", semanticamente errado (a loc nem fazia parte da contagem).
+      O bug nasceu no próprio plano (docs/superpowers/plans/2026-05-18-estoque-online.md
+      linhas 1477-1484) e foi copiado literal pro código.
+    fix: >
+      Carregar os localizacao_id da sessão a partir do query de classificação que já
+      acontecia e adicionar .in("localizacao_id", locIds) na query de movs. Quando a
+      sessão não tem locs, retornar {eventos:[]} sem rodar a query principal.
+    files:
+      - src/app/api/wms/inventario/[id]/eventos/route.ts
+      - docs/api-reference-complete.md
+    tags: [wms, inventario, feed-eventos, supervisor, escopo, filtro-loc]

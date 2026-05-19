@@ -37,15 +37,22 @@ export async function GET(
       .select("localizacao_id, contagem_finalizada_em")
       .eq("sessao_id", id);
     const finalizadaMap = new Map<string, string>();
+    const locIds: string[] = [];
     for (const l of (locs ?? []) as Array<{ localizacao_id: string; contagem_finalizada_em: string | null }>) {
+      locIds.push(l.localizacao_id);
       if (l.contagem_finalizada_em) finalizadaMap.set(l.localizacao_id, l.contagem_finalizada_em);
     }
 
-    // Movs do galpão criadas após o início
+    if (locIds.length === 0) {
+      return NextResponse.json({ eventos: [] });
+    }
+
+    // Movs nas locs da sessão criadas após o início
     const { data: movs } = await sb
       .from("siso_movimentacoes")
       .select("id, localizacao_id, produto_id, empresa_dona_id, tipo, origem_tipo, origem_id, quantidade, saldo_anterior, saldo_posterior, criado_em, estorno_de, siso_produtos!inner(sku, descricao), siso_localizacoes!inner(codigo, galpao_id)")
       .eq("siso_localizacoes.galpao_id", galpaoId)
+      .in("localizacao_id", locIds)
       .gte("criado_em", inicio)
       .order("criado_em", { ascending: false })
       .limit(limit);

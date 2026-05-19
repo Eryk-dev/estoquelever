@@ -4647,7 +4647,10 @@ Todas as operações orquestram chamadas a `wms_inserir_movimentacao` (RPC com l
 
 ### POST /api/wms/receber
 
-Registra entrada de estoque (etapa 1 de 2). Sempre grava na localização tipo='recebimento' do galpão (auto-criada se necessário) e cria 1 pendência em `siso_wms_pendencias_guarda` por linha — a guarda física (decidir loc final + bipar QR + imprimir etiquetas) acontece em `/api/wms/guarda/*`.
+Registra entrada de estoque. Dois modos:
+
+- **Modo padrão (`entrada_direta=false` ou omitido)** — etapa 1 de 2. Grava na localização tipo='recebimento' do galpão (auto-criada se necessário) e cria 1 pendência em `siso_wms_pendencias_guarda` por linha. A guarda física (decidir loc final + bipar QR + imprimir etiquetas) acontece em `/api/wms/guarda/*`.
+- **Modo entrada direta (`entrada_direta=true`)** — etapa única. Grava direto na `localizacao_destino_id` de cada item. Não passa por RECEBIMENTO, não cria pendência. Exige `localizacao_destino_id` em **todos** os itens (caso contrário 500 com mensagem indicando o item faltando).
 
 **Auth:** Session + acesso de armazém (operador/admin).
 
@@ -4660,17 +4663,21 @@ Registra entrada de estoque (etapa 1 de 2). Sempre grava na localização tipo='
   "origem_tipo": "compra_manual | nf_compra | nf_devolucao_cliente | lancamento_retroativo",
   "observacoes": "string?",
   "data_recebimento": "ISO timestamp? (se no passado, vira lancamento_retroativo)",
+  "entrada_direta": "boolean? (default false — quando true, pula a guarda)",
   "itens": [
-    { "produto_id": "uuid", "qty": 50, "custo_unitario": 10.5 }
+    { "produto_id": "uuid", "qty": 50, "custo_unitario": 10.5, "localizacao_destino_id": "uuid?" }
   ]
 }
 ```
 
-> `localizacao_id` por item foi removido — sempre vai pra loc tipo='recebimento'. Body antigo é aceito (campo ignorado).
+> `localizacao_destino_id` por item é opcional no modo padrão (tablet decide depois) e **obrigatório** no modo entrada direta.
 
-**Side effects:** 1 mov `compra_manual` (ou `origem_tipo` informado) tipo `E` por item, na loc RECEBIMENTO. Se `custo_unitario` informado, recalcula `custo_medio` na quádrupla. 1 linha em `siso_wms_pendencias_guarda` por item com `qty_inicial=qty`, `status='pendente'`, FK ao `mov_entrada_id`.
+**Side effects:**
+- Modo padrão: 1 mov `origem_tipo` tipo `E` por item na loc RECEBIMENTO + 1 linha em `siso_wms_pendencias_guarda` com `qty_inicial=qty`, `status='pendente'`, FK ao `mov_entrada_id`. Se a criação da pendência falhar, a mov é estornada automaticamente (defense-in-depth — bug 2026-05-19).
+- Modo entrada direta: 1 mov `origem_tipo` tipo `E` por item **direto na `localizacao_destino_id`**, com `origem_id=lote_id` e `origem_detalhes.entrada_direta=true`. Sem pendência.
+- Em ambos: se `custo_unitario` informado, recalcula `custo_medio` na quádrupla (loc RECEBIMENTO no padrão, loc destino na entrada direta).
 
-**Response 200:** `{ ok: true, pendencia_ids: ["uuid", ...], localizacao_recebimento_id: "uuid" }`. Use `pendencia_ids` pra disparar `/api/wms/guarda/imprimir-lote` (impressão do maço pré-guarda).
+**Response 200:** `{ ok: true, pendencia_ids: ["uuid", ...] | [], localizacao_recebimento_id: "uuid" | null, lote_id: "uuid", mov_ids: ["uuid", ...] }`. `pendencia_ids` vazio e `localizacao_recebimento_id=null` em modo entrada direta. Use `pendencia_ids` em modo padrão pra disparar `/api/wms/guarda/imprimir-lote` (impressão do maço pré-guarda), ou monte `linhas` a partir dos itens enviados em modo entrada direta.
 
 ### GET /api/wms/receber
 
@@ -4732,11 +4739,15 @@ Imprime N etiquetas (1 por unidade) pra essa pendência. Não muda status — re
 
 #### POST /api/wms/guarda/imprimir-lote
 
-Imprime o maço inteiro pra uma lista de pendências (bulk). Usado pelo frontend de recebimento ao confirmar lote.
+Imprime o maço inteiro pra uma lista de itens (bulk). Usado pelo frontend de recebimento ao confirmar lote. Aceita dois modos de body (use **um** dos dois — informar os dois retorna 400):
 
-**Body:** `{ pendencia_ids: string[] }`. Todas precisam ser do mesmo galpão; canceladas/zeradas são puladas (volta em `ignorados[]`).
+**Modo guarda** — `{ pendencia_ids: string[] }`. Resolve sku/descricao/loc a partir das pendências em `siso_wms_pendencias_guarda`. Canceladas/zeradas/sem produto são puladas (voltam em `ignorados[]`). Se a pendência não tem loc destino decidida, usa como hint um candidato com saldo>0 do mesmo SKU (ou `—`).
 
-**Response 200:** `{ ok: true, ignorados, jobId, totalEtiquetas, totalFolhas, fallbackEnvelope, ... }`.
+**Modo entrada direta** — `{ linhas: [{ produto_id, galpao_id, qty, localizacao_id? }] }`. Resolve sku/descricao em `siso_produtos` e código da loc em `siso_localizacoes` (2 queries agregadas). Usado quando o recebimento foi feito em `entrada_direta=true` (sem pendências pra referenciar). `localizacao_id` opcional — se omitido, etiqueta mostra `—`.
+
+Em ambos os modos, agrupa por `galpao_id` e dispara 1 print job por galpão (impressora pode ser diferente). Falha em algum galpão não aborta os outros.
+
+**Response 200:** `{ ok: true, ignorados, jobs: [{ galpaoId, jobId, totalEtiquetas, totalFolhas, fallbackEnvelope }], erros: [{ galpaoId, error }], totalEtiquetas, totalFolhas, fallbackEnvelope }`. **502** se todos os jobs falharem. **400** se body inválido ou nenhum galpão pra imprimir.
 
 ### POST /api/wms/transferir-galpao
 

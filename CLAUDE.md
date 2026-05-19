@@ -2,7 +2,7 @@
 
 ## What This Project Is
 
-A fullstack web app that replaces an n8n workflow for processing multi-company auto parts orders. Multiple companies (Empresas) grouped by physical location (Galpao) and business affinity (Grupo) sell on marketplaces (Mercado Livre, Shopee). When an order arrives via Tiny ERP webhook, the system checks stock across all companies in the same group and either auto-approves or routes to a human operator.
+A fullstack web app that replaces an n8n workflow for processing multi-company auto parts orders. Multiple companies (Empresas) — grouped by business affinity (Grupo) and operating across multiple physical warehouses (Galpoes) — sell on marketplaces (Mercado Livre, Shopee). When an order arrives via Tiny ERP webhook, the system checks stock across all companies in the same group and either auto-approves or routes to a human operator.
 
 The system also handles the full post-approval workflow: separation (wave picking), packing, label printing, purchase orders (OC), and expedition.
 
@@ -78,19 +78,26 @@ Recebimento físico (/wms/receber + /wms/guarda)
     └─ /api/wms/guarda/*          <-- put-away (etapa 2/2) — 1 mov par S+E por confirmação
 ```
 
-### Hierarchy: Galpao > Empresa > Grupo
+### Domain Model: Empresa, Galpao, Grupo
 
-- **Galpao**: physical warehouse location (e.g., CWB, SP). Can have N empresas.
-- **Empresa**: Tiny ERP account with its own CNPJ (e.g., NetAir, NetParts). FK to galpao.
+**Importante:** empresa **não pertence** a um galpão. Toda empresa pode operar em **todos** os galpões. O que existe é **preferência** (geo-priority) via tabela N:N `siso_empresa_galpoes_preferenciais` — uma empresa pode ter 0..N galpões preferenciais.
+
+- **Galpao**: physical warehouse location (e.g., CWB, SP). Independent of empresa.
+- **Empresa**: Tiny ERP account with its own CNPJ (e.g., NetAir, NetParts, 141AIR, EasyPeasy, Bellator). Operates across all galpões; may have preferred galpões via `siso_empresa_galpoes_preferenciais` (geo-priority=0 in routing).
 - **Grupo**: business affinity grouping (e.g., Autopecas). Empresas in the same grupo check stock across each other.
 - **Tier**: deduction priority within a grupo. The empresa that received the order gets tier 1 override at runtime.
 
+> ⚠️ A coluna `siso_empresas.galpao_id` é **DEPRECADA** — fica nullable e é apenas espelho do primeiro galpão preferencial (mantido por trigger pra compat de consumidores legados). **Não usar** essa coluna em código novo; consultar `siso_empresa_galpoes_preferenciais`.
+
 ### Current Data
 
-| Galpao | Empresa | CNPJ | Grupo | Tier |
+| Empresa | CNPJ | Galpões preferenciais | Grupo | Tier |
 |---|---|---|---|---|
-| CWB | NetAir | `34857388000163` | Autopecas | 1 |
-| SP | NetParts | `34857388000244` | Autopecas | 1 |
+| NetAir   | `34857388000163` | CWB | Autopecas | 1 |
+| NetParts | `34857388000244` | SP  | Autopecas | 1 |
+| 141AIR   | `56959528000147` | CWB | —         | — |
+| EasyPeasy| `45341545000108` | CWB | —         | — |
+| Bellator | `55973586000162` | (sem preferência fixa) | — | — |
 
 ### Decision Logic (per order, not per item)
 
@@ -783,6 +790,7 @@ Failure to update documentation means the next developer or LLM will work with s
 - **WMS Inventário · Reconciliação temporal (estoque online) — implementado em 2026-05-18.** Algoritmo `reconciliarTemporal` reconstrói saldo no instante do bipe usando `siso_movimentacoes.saldo_anterior` da primeira mov após `T_ref`. Pure function testada por TDD (16+ testes em `inventario-reconciliacao.test.ts`). `computarDivergencias` agora faz snapshot `cutoff_em` e delega cálculo. Handheld ganha modal "loc vazia?" pra distinguir loc visitada-vazia de não-visitada. Supervisor ganha feed ao vivo classificado (verde/amarelo/vermelho) em `/api/wms/inventario/[id]/eventos`. Spec: `docs/superpowers/specs/2026-05-18-estoque-online-fluxo.html`. Plano: `docs/superpowers/plans/2026-05-18-estoque-online.md`.
 - **WMS Plano 5 (Exceções + dashboards) — implementado, validado em staging. Encerra Fase 0.** Devoluções classificadas A/B/C/D com recálculo de custo médio + transferência pra QUARENTENA + RMA. Troca SKU na separação (2 movs com mesma origem_id) com validação Cross opcional. Webhook NF detecta devolução (best-effort). Materialized view `siso_cobertura_estoque` com status crítico/atenção/lead_time_risco/ok/sem_giro. Dashboard geral (4 cards, refresh 30s). Shell e home reorganizados em 4 grupos. Plano: `docs/superpowers/plans/2026-06-05-wms-5-excecoes-dashboards.md`. Checklist Fase 0: `docs/superpowers/plans/wms-fase0-checklist.md`. **Próximo: Plano 6 (cutover big bang).**
 - **WMS Recebimento em 2 etapas (Recebimento + Guarda) — implementado em staging, 2026-05-14.** Quebra o recebimento em duas fases pra alinhar com o fluxo físico: dock RECEBIMENTO (chega caminhão, registra qty) → guarda no tablet (imprime etiqueta, bipa QR da loc destino, confirma). 1 pendência em `siso_wms_pendencias_guarda` por linha de recebimento. Suporta guarda parcial (qty<qty_pendente fica aberta) + cancelamento com motivo. Etiqueta de produto em ZPL pareado 2-por-folha (`gerarZplProduto` em `src/lib/wms/zpl-produto.ts`), N etiquetas por unidade. Impressora dedicada de produto (`printnode_printer_id_produto`) com fallback automático pra impressora de envio se não configurada. Migration: `supabase/migrations/20260514_wms_guarda_pendencias.sql`. APIs: `/api/wms/guarda` (lista + detalhe + iniciar/confirmar/cancelar/imprimir + imprimir-lote bulk).
+  - **Entrada direta (2026-05-19):** flag `entrada_direta` em `/api/wms/receber` (tanto no modal individual quanto no lote em `/wms/receber`) pula o dock RECEBIMENTO e grava 1 mov direto na `localizacao_destino_id` de cada item — sem criar pendência. Exige loc destino em **todos** os itens (frontend bloqueia o confirm e mostra alerta em vermelho se faltar). Impressão de etiqueta segue funcionando: `/api/wms/guarda/imprimir-lote` ganhou um modo alternativo `{ linhas: [{produto_id, galpao_id, qty, localizacao_id?}] }` pra cobrir o caso sem pendência. Pra casos onde o operador já vai guardando direto na prateleira (pequenas entradas, lançamento retroativo, achados).
 - **WMS Mini-Swap Intra-Galpão — implementado em staging, 2026-05-14.** Antes de iniciar wave de picking, consolida estoque das empresas no mesmo galpão em 1 loc canônica via swap (zero dívida) + empréstimo (limitado ao planejado pelo roteamento). Algoritmo puro em `src/lib/wms/mini-swap.ts` + RPC `wms_executar_mini_swap` aplica plano sob lock pessimista. Toggle on/off por galpão em `/wms/configuracoes/otimizacoes`. Graceful: qualquer falha → wave segue sem otimização. Foundation pra cycle count oportunista (próximo). Migration: `supabase/migrations/20260514_wms_mini_swap*.sql`. Spec: `docs/superpowers/specs/2026-05-14-mini-swap-intra-galpao-design.md`.
 
 ### Deprecated / To Remove

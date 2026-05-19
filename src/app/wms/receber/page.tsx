@@ -123,8 +123,9 @@ interface PutawayResp {
 interface ReceberResponse {
   ok: boolean;
   pendencia_ids: string[];
-  localizacao_recebimento_id: string;
+  localizacao_recebimento_id: string | null;
   lote_id: string;
+  mov_ids?: string[];
 }
 
 function makeUid() {
@@ -154,6 +155,7 @@ function TabLote() {
   ]);
   const [imprimirAuto, setImprimirAuto] = useState(false);
   const [iniciarRota, setIniciarRota] = useState(false);
+  const [entradaDireta, setEntradaDireta] = useState(false);
 
   const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
   const galpao = galpoesList.find((g) => g.id === galpaoId);
@@ -291,6 +293,7 @@ function TabLote() {
           origem_tipo: origemFinal,
           observacoes: obs || undefined,
           data_recebimento: buildTimestamp(data),
+          entrada_direta: entradaDireta,
           itens: itensOut,
         }),
       });
@@ -298,19 +301,43 @@ function TabLote() {
         const body = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error || `HTTP ${r.status}`);
       }
-      return (await r.json()) as ReceberResponse;
+      return {
+        resp: (await r.json()) as ReceberResponse,
+        itensOut,
+      };
     },
-    onSuccess: async (resp) => {
-      toast.success(
-        `Lote registrado: ${resp.pendencia_ids.length} pendência${resp.pendencia_ids.length > 1 ? "s" : ""} de guarda`,
-      );
+    onSuccess: async ({ resp, itensOut }) => {
+      if (entradaDireta) {
+        toast.success(
+          `Lote em estoque: ${itensOut.length} ite${itensOut.length > 1 ? "ns" : "m"} direto na loc destino`,
+        );
+      } else {
+        toast.success(
+          `Lote registrado: ${resp.pendencia_ids.length} pendência${resp.pendencia_ids.length > 1 ? "s" : ""} de guarda`,
+        );
+      }
 
-      // Imprime maço fire-and-forget se opção marcada
+      // Imprime maço fire-and-forget se opção marcada.
+      // Em modo guarda usa pendencia_ids; em entrada_direta monta `linhas`
+      // a partir dos itens que acabaram de ser enviados.
       if (imprimirAuto) {
+        const printBody = entradaDireta
+          ? {
+              linhas: itensOut
+                .filter((i) => !!i.localizacao_destino_id)
+                .map((i) => ({
+                  produto_id: i.produto_id,
+                  galpao_id: galpaoId,
+                  qty: i.qty,
+                  localizacao_id: i.localizacao_destino_id,
+                })),
+            }
+          : { pendencia_ids: resp.pendencia_ids };
+
         sisoFetch("/api/wms/guarda/imprimir-lote", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pendencia_ids: resp.pendencia_ids }),
+          body: JSON.stringify(printBody),
         })
           .then(async (r) => {
             if (!r.ok) {
@@ -350,8 +377,9 @@ function TabLote() {
       qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
       qc.invalidateQueries({ queryKey: ["wms-guarda"] });
 
-      // Se operador quiser iniciar a rota agora, vai direto pro tablet
-      if (iniciarRota) {
+      // Se operador quiser iniciar a rota agora, vai direto pro tablet.
+      // Não faz sentido em entrada_direta (não há pendência).
+      if (iniciarRota && !entradaDireta) {
         router.push(`/wms/guarda/rota?lote=${resp.lote_id}`);
       }
     },
@@ -361,7 +389,14 @@ function TabLote() {
   const itensValidos = itens.filter(
     (it) => !!it.produto && !!it.qty && Number(it.qty) > 0,
   );
-  const valid = !!empresaId && !!galpaoId && itensValidos.length > 0;
+  // Em entrada direta, todo item válido precisa ter loc destino resolvida
+  // (override do operador ou sugestão do putaway). Usa `totaisPlano.semLoc`
+  // como fonte da verdade — mesma métrica que a sidebar exibe.
+  const valid =
+    !!empresaId &&
+    !!galpaoId &&
+    itensValidos.length > 0 &&
+    (!entradaDireta || totaisPlano.semLoc === 0);
 
   return (
     <div
@@ -547,7 +582,8 @@ function TabLote() {
           }}
         >
           <strong style={{ fontSize: 13 }}>
-            <Icon name="box" size={12} /> Plano de guarda
+            <Icon name="box" size={12} />{" "}
+            {entradaDireta ? "Plano de entrada direta" : "Plano de guarda"}
           </strong>
           <span className="wms-td-mute" style={{ fontSize: 11 }}>
             {totaisPlano.totalLinhas} linha
@@ -644,10 +680,18 @@ function TabLote() {
         {totaisPlano.semLoc > 0 && (
           <div
             className="wms-td-mute"
-            style={{ marginTop: 10, fontSize: 11, color: "#a16207" }}
+            style={{
+              marginTop: 10,
+              fontSize: 11,
+              color: entradaDireta ? "#b91c1c" : "#a16207",
+              fontWeight: entradaDireta ? 600 : undefined,
+            }}
           >
             <Icon name="alert" size={11} /> {totaisPlano.semLoc} item
-            {totaisPlano.semLoc > 1 ? "ns" : ""} sem loc destino — tablet decide via putaway na hora de guardar
+            {totaisPlano.semLoc > 1 ? "ns" : ""} sem loc destino —{" "}
+            {entradaDireta
+              ? "defina pra confirmar (entrada direta exige loc)"
+              : "tablet decide via putaway na hora de guardar"}
           </div>
         )}
 
@@ -675,7 +719,29 @@ function TabLote() {
           >
             <input
               type="checkbox"
+              checked={entradaDireta}
+              onChange={(e) => {
+                setEntradaDireta(e.target.checked);
+                if (e.target.checked) setIniciarRota(false);
+              }}
+            />
+            <span>
+              Entrada direta <span className="wms-td-mute">(pula a guarda)</span>
+            </span>
+          </label>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              cursor: entradaDireta ? "not-allowed" : "pointer",
+              opacity: entradaDireta ? 0.5 : 1,
+            }}
+          >
+            <input
+              type="checkbox"
               checked={iniciarRota}
+              disabled={entradaDireta}
               onChange={(e) => setIniciarRota(e.target.checked)}
             />
             Já abrir a rota de guarda do lote

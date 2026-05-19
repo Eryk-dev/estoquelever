@@ -509,6 +509,7 @@ export function ReceberModal({
   const [locIdUser, setLocIdUser] = useState<string | null>(null);
   const [locCodigoUser, setLocCodigoUser] = useState<string | null>(null);
   const [obs, setObs] = useState("");
+  const [entradaDireta, setEntradaDireta] = useState(false);
   const qc = useQueryClient();
   const today = hojeISODate();
   const isRetroativo = data !== today;
@@ -569,6 +570,7 @@ export function ReceberModal({
           origem_tipo: origemFinal,
           observacoes: obs || undefined,
           data_recebimento: buildTimestamp(data),
+          entrada_direta: entradaDireta,
         }),
       });
       if (!r.ok) {
@@ -578,14 +580,21 @@ export function ReceberModal({
       return (await r.json()) as {
         ok: boolean;
         pendencia_ids: string[];
-        localizacao_recebimento_id: string;
+        localizacao_recebimento_id: string | null;
         lote_id: string;
+        mov_ids?: string[];
       };
     },
     onSuccess: () => {
-      toast.success(
-        `Entrada registrada: +${fmtNum(Number(qty))} de ${pid!.sku} (vai pra fila de guarda)`,
-      );
+      if (entradaDireta) {
+        toast.success(
+          `Entrada direta: +${fmtNum(Number(qty))} de ${pid!.sku} em ${locDestinoCodigo} (sem guarda)`,
+        );
+      } else {
+        toast.success(
+          `Entrada registrada: +${fmtNum(Number(qty))} de ${pid!.sku} (vai pra fila de guarda)`,
+        );
+      }
       qc.invalidateQueries({ queryKey: ["wms-estoque"] });
       qc.invalidateQueries({ queryKey: ["wms-ledger"] });
       qc.invalidateQueries({ queryKey: ["wms-produtos"] });
@@ -605,12 +614,20 @@ export function ReceberModal({
   });
 
   const valid =
-    !!pid && !!empresaId && !!galpaoId && Number(qty) > 0;
+    !!pid &&
+    !!empresaId &&
+    !!galpaoId &&
+    Number(qty) > 0 &&
+    (!entradaDireta || !!locDestinoId);
 
   return (
     <Modal
       title="Receber mercadoria"
-      subtitle="Entrada no dock (RECEBIMENTO). Loc final é definida em /wms/guarda."
+      subtitle={
+        entradaDireta
+          ? "Entrada direta — vai pra loc destino sem passar pelo dock RECEBIMENTO."
+          : "Entrada no dock (RECEBIMENTO). Loc final é definida em /wms/guarda."
+      }
       width={720}
       onClose={onClose}
       footer={
@@ -728,9 +745,56 @@ export function ReceberModal({
         </Field>
       </div>
 
+      <Field label="Modo">
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            cursor: "pointer",
+            fontSize: 12.5,
+            padding: "8px 10px",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-2)",
+            background: entradaDireta
+              ? "var(--wms-c-faint)"
+              : "transparent",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={entradaDireta}
+            onChange={(e) => setEntradaDireta(e.target.checked)}
+          />
+          <span>
+            <strong>Entrada direta</strong> — pula a guarda e grava direto na
+            loc destino
+          </span>
+        </label>
+        {entradaDireta && !locDestinoId && (
+          <div
+            style={{
+              fontSize: 11.5,
+              color: "#b45309",
+              marginTop: 6,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <Icon name="alert" size={11} /> Loc destino é obrigatória em
+            entrada direta
+          </div>
+        )}
+      </Field>
+
       <Field
         label="Loc destino"
-        hint="Opcional — se vazio, tablet decide na guarda via putaway"
+        hint={
+          entradaDireta
+            ? "Obrigatória — entrada vai direto aqui"
+            : "Opcional — se vazio, tablet decide na guarda via putaway"
+        }
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span

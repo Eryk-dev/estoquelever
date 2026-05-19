@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao } from "./ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
 import type { Quadrupla, Movimentacao, OrigemTipo } from "./types";
 import { criarPendencia, resolverLocRecebimento } from "./guarda";
 import { logger } from "@/lib/logger";
@@ -36,15 +36,35 @@ export interface ReceberInput {
    */
   origem_tipo?: OrigemTipo;
   observacoes?: string;
+  /**
+   * Se true, pula o dock RECEBIMENTO e escreve 1 mov direto na loc destino
+   * de cada item — sem criar pendência de guarda. Exige
+   * `localizacao_destino_id` em todos os itens; caso contrário, throw.
+   */
+  entrada_direta?: boolean;
 }
 
 export interface ReceberResult {
-  /** IDs das pendências de guarda criadas, na mesma ordem dos itens. */
+  /**
+   * IDs das pendências de guarda criadas, na mesma ordem dos itens.
+   * Array vazio quando `entrada_direta=true`.
+   */
   pendencia_ids: string[];
-  /** ID da loc RECEBIMENTO usada (uma por galpão). */
-  localizacao_recebimento_id: string;
-  /** UUID do lote — compartilhado entre todas as pendências desta chamada. */
+  /**
+   * ID da loc RECEBIMENTO usada (uma por galpão). `null` quando
+   * `entrada_direta=true` — mercadoria foi direto pra loc destino.
+   */
+  localizacao_recebimento_id: string | null;
+  /**
+   * UUID do lote — compartilhado entre todas as movs (e pendências, se houver)
+   * desta chamada. Útil pra agrupar etiquetas e auditoria.
+   */
   lote_id: string;
+  /**
+   * IDs das movs criadas (entrada), na mesma ordem dos itens. Útil pra montar
+   * payload de etiqueta em modo entrada_direta.
+   */
+  mov_ids: string[];
 }
 
 /**
@@ -64,11 +84,71 @@ export async function receberEstoque(
     (input.nf_referencia
       ? `recebimento NF ${input.nf_referencia}`
       : "recebimento sem NF");
-  const localizacaoRecebimentoId = await resolverLocRecebimento(input.galpao_id);
-  const pendenciaIds: string[] = [];
-  // 1 lote_id por chamada — agrupa todas as pendências desta confirmação
-  // pra montar a rota de guarda no tablet.
   const loteId = crypto.randomUUID();
+
+  // Modo entrada direta: pula o dock RECEBIMENTO e escreve direto na loc
+  // destino de cada item. Não cria pendência. Exige loc destino em todos.
+  if (input.entrada_direta) {
+    if (!input.itens.length) {
+      throw new Error("recebimento sem itens");
+    }
+    const semLoc = input.itens.findIndex((i) => !i.localizacao_destino_id);
+    if (semLoc !== -1) {
+      throw new Error(
+        `entrada direta exige localizacao_destino_id em todos os itens (item ${semLoc + 1} sem loc destino)`,
+      );
+    }
+    const movIds: string[] = [];
+    for (const item of input.itens) {
+      const mov = await inserirMovimentacao({
+        quadrupla: {
+          produto_id: item.produto_id,
+          empresa_dona_id: input.empresa_dona_id,
+          galpao_id: input.galpao_id,
+          localizacao_id: item.localizacao_destino_id!,
+        },
+        tipo: "E",
+        qty: item.qty,
+        origem_tipo: origemTipo,
+        origem_id: loteId,
+        origem_detalhes: {
+          nf_referencia: input.nf_referencia,
+          entrada_direta: true,
+        },
+        custo_unitario: item.custo_unitario,
+        usuario_id: input.usuario_id,
+        observacoes: obsBase,
+        criado_em: input.data_recebimento,
+      });
+      if (item.custo_unitario !== undefined) {
+        await recalcularCustoMedio(
+          {
+            produto_id: item.produto_id,
+            empresa_dona_id: input.empresa_dona_id,
+            galpao_id: input.galpao_id,
+            localizacao_id: item.localizacao_destino_id!,
+          },
+          item.qty,
+          item.custo_unitario,
+        );
+      }
+      movIds.push(mov.id);
+    }
+    return {
+      pendencia_ids: [],
+      localizacao_recebimento_id: null,
+      lote_id: loteId,
+      mov_ids: movIds,
+    };
+  }
+
+  // Modo padrão: entra em RECEBIMENTO + cria pendência de guarda.
+  const localizacaoRecebimentoId = await resolverLocRecebimento(input.galpao_id);
+  // Pré-validação ANTES de qualquer escrita no ledger. Se destino == origem
+  // (frontend bugado, race, etc), abortamos sem deixar mov órfã.
+  validarItensRecebimento(input.itens, localizacaoRecebimentoId);
+  const pendenciaIds: string[] = [];
+  const movIds: string[] = [];
 
   for (const item of input.itens) {
     const mov = await inserirMovimentacao({
@@ -99,28 +179,94 @@ export async function receberEstoque(
         item.custo_unitario,
       );
     }
-    const pendenciaId = await criarPendencia({
-      produto_id: item.produto_id,
-      empresa_dona_id: input.empresa_dona_id,
-      galpao_id: input.galpao_id,
-      localizacao_origem_id: localizacaoRecebimentoId,
-      localizacao_destino_id: item.localizacao_destino_id ?? null,
-      mov_entrada_id: mov.id,
-      qty_inicial: item.qty,
-      origem_tipo: origemTipo,
-      nf_referencia: input.nf_referencia,
-      custo_unitario: item.custo_unitario,
-      observacoes: input.observacoes,
-      lote_id: loteId,
-    });
-    pendenciaIds.push(pendenciaId);
+    // Defense-in-depth: se algo na criação da pendência falhar (FK quebrada,
+    // race de loc destino desativada entre validação e insert, falha de
+    // rede com supabase), estorna a mov da entrada pra não deixar saldo
+    // órfão na RECEBIMENTO sem pendência associada (bug 2026-05-19).
+    try {
+      const pendenciaId = await criarPendencia({
+        produto_id: item.produto_id,
+        empresa_dona_id: input.empresa_dona_id,
+        galpao_id: input.galpao_id,
+        localizacao_origem_id: localizacaoRecebimentoId,
+        localizacao_destino_id: item.localizacao_destino_id ?? null,
+        mov_entrada_id: mov.id,
+        qty_inicial: item.qty,
+        origem_tipo: origemTipo,
+        nf_referencia: input.nf_referencia,
+        custo_unitario: item.custo_unitario,
+        observacoes: input.observacoes,
+        lote_id: loteId,
+      });
+      pendenciaIds.push(pendenciaId);
+      movIds.push(mov.id);
+    } catch (err) {
+      try {
+        await estornarMovimentacao({
+          mov_id: mov.id,
+          usuario_id: input.usuario_id,
+          observacoes: `Estorno automático: criação de pendência de guarda falhou (${err instanceof Error ? err.message : String(err)})`,
+        });
+        logger.warn(
+          "wms.receber",
+          "mov de entrada estornada após falha na pendência",
+          { movId: mov.id, error: String(err) },
+        );
+      } catch (estornoErr) {
+        // Não pudemos compensar. Loga forte; a mov ficará órfã e precisará
+        // de intervenção manual (criar pendência retroativa ou estornar).
+        logger.error(
+          "wms.receber",
+          "FALHA AO ESTORNAR mov após erro na pendência — mov órfã",
+          {
+            movId: mov.id,
+            errOriginal: String(err),
+            errEstorno: String(estornoErr),
+          },
+        );
+      }
+      throw err;
+    }
   }
 
   return {
     pendencia_ids: pendenciaIds,
     localizacao_recebimento_id: localizacaoRecebimentoId,
     lote_id: loteId,
+    mov_ids: movIds,
   };
+}
+
+/**
+ * Pré-valida os itens de um recebimento ANTES de gravar movs.
+ * Pura — sem I/O — pra ser fácil de testar.
+ *
+ * Regras:
+ * - destino, se informado, não pode ser igual à loc de RECEBIMENTO
+ *   (essa é a origem do put-away; usar como destino quebra a guarda).
+ * - duplicidade de destino entre itens é OK (operador pode receber 2 SKUs
+ *   no mesmo endereço).
+ *
+ * Outras validações (loc existe, ativa, mesmo galpão) ficam em `criarPendencia`
+ * com I/O — esse JS-side checa só o invariante mais comum e barato.
+ */
+export function validarItensRecebimento(
+  itens: ItemRecebimento[],
+  localizacaoRecebimentoId: string,
+): void {
+  if (!itens.length) {
+    throw new Error("recebimento sem itens");
+  }
+  itens.forEach((item, idx) => {
+    if (
+      item.localizacao_destino_id &&
+      item.localizacao_destino_id === localizacaoRecebimentoId
+    ) {
+      throw new Error(
+        `item ${idx + 1}: loc destino não pode ser a própria área de RECEBIMENTO (escolha uma loc de picking/overstock ou deixe em branco)`,
+      );
+    }
+  });
 }
 
 /**

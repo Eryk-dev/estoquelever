@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { enviarImpressaoZpl, resolverImpressora } from "@/lib/printnode";
-import { getConfig } from "@/lib/config";
 import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
 import { splitZplLabels } from "@/lib/etiqueta-download";
 import { logger } from "@/lib/logger";
@@ -80,19 +79,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: "falhou", error: "galpao_nao_definido" }, { status: 400 });
   }
 
-  // Resolve API key + printer in parallel
-  const [printNodeApiKey, printer] = await Promise.all([
-    getConfig("PRINTNODE_API_KEY"),
-    resolverImpressora(session.id, galpaoId),
-  ]);
-
-  if (!printNodeApiKey) {
-    logger.error(LOG_SOURCE, "PRINTNODE_API_KEY não configurada");
-    return NextResponse.json({ status: "falhou", error: "impressora_nao_configurada" }, { status: 500 });
-  }
+  const printer = await resolverImpressora(session.id, galpaoId);
 
   if (!printer) {
-    logger.warn(LOG_SOURCE, "Nenhuma impressora configurada", { pedidoId, galpaoId });
+    logger.warn(LOG_SOURCE, "Nenhuma impressora configurada (ou conta PrintNode inativa)", { pedidoId, galpaoId });
     return NextResponse.json({ status: "falhou", error: "impressora_nao_encontrada" }, { status: 400 });
   }
 
@@ -101,7 +91,7 @@ export async function POST(request: NextRequest) {
     const singleLabel = splitZplLabels(pedido.etiqueta_zpl)[0] ?? pedido.etiqueta_zpl;
 
     const { jobId } = await enviarImpressaoZpl({
-      apiKey: printNodeApiKey,
+      apiKey: printer.apiKey,
       printerId: printer.printerId,
       zpl: singleLabel,
       titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId} (reimpressão)`,

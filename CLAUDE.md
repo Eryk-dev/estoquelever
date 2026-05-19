@@ -234,9 +234,10 @@ src/
         admin/grupos/[id]/route.ts         # Grupo by ID
         admin/grupos/[id]/empresas/route.ts            # Add empresa to grupo
         admin/grupos/[id]/empresas/[empresaId]/route.ts # Tier / remove
-        admin/printnode/api-key/route.ts   # PrintNode API key (GET/PUT/DELETE)
-        admin/printnode/printers/route.ts  # List printers (GET)
-        admin/printnode/test/route.ts      # Test PrintNode (POST)
+        admin/printnode/contas/route.ts            # Contas PrintNode CRUD (GET list, POST create)
+        admin/printnode/contas/[id]/route.ts       # PATCH (label/key/ativo) + DELETE
+        admin/printnode/contas/[id]/test/route.ts  # POST — testa key via /whoami (body opcional `{api_key}` pra testar antes de salvar)
+        admin/printnode/printers/route.ts          # GET — impressoras agregadas de todas contas ativas, agrupadas por conta
         admin/backfill-agrupamentos/route.ts # Backfill Tiny agrupamentos (admin)
         admin/backfill-lvr/route.ts        # Backfill LVR (admin)
         # ── Tiny OAuth ──
@@ -571,6 +572,14 @@ Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger at
 
 Ajustes em `siso_galpoes` + `siso_usuarios`: ADD `printnode_printer_id_produto bigint` + `printnode_printer_nome_produto text` — impressora dedicada pra etiqueta de produto, com fallback pra impressora de envio se vazia.
 
+### PrintNode multi-conta (2026-05-19)
+
+| Table | Purpose |
+|---|---|
+| `siso_printnode_contas` | Contas PrintNode (multi-key). `(id, label UNIQUE, api_key, ativo)`. Substitui `siso_configuracoes['PRINTNODE_API_KEY']`. |
+
+Ajustes em `siso_galpoes` + `siso_usuarios`: ADD `printnode_account_id uuid FK ON DELETE SET NULL` + `printnode_account_id_produto uuid FK ON DELETE SET NULL` — apontam pra conta dona da impressora. `resolverImpressora`/`resolverImpressoraProduto` fazem JOIN com `siso_printnode_contas` pra carregar a `api_key` certa ao enviar o print job. Migration `20260519_printnode_multi_contas` migra a key existente pra uma conta `'Default'` (zero downtime).
+
 Loc auto-criada: a migration semeia 1 `siso_localizacoes` tipo='recebimento' (`codigo='RECEBIMENTO'`) por galpão ativo se não existir uma.
 
 **Materialized view `siso_cobertura_estoque`**: agrega disponivel + giro 30d + lead time fornecedor preferencial → `status_cobertura` (ok\|atencao\|critico\|lead_time_risco\|sem_giro). Refresh via `wms_refresh_cobertura()`.
@@ -669,7 +678,7 @@ TINY_DISABLED=true       # Staging only — routes all Tiny API calls to tiny-st
 ```
 
 OAuth2 credentials for Tiny are stored in the `siso_tiny_connections` table (not env vars).
-PrintNode API key is stored in `siso_configuracoes` (key: `printnode_api_key`).
+PrintNode suporta múltiplas contas (uma key por conta) via `siso_printnode_contas`. Galpões e usuários guardam `printnode_account_id` (+ `_produto`) pra lembrar qual key usar ao imprimir. A entrada legacy `siso_configuracoes['PRINTNODE_API_KEY']` foi migrada pra uma conta `Default` em 2026-05-19.
 
 ## Development Commands
 

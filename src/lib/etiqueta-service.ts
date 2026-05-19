@@ -17,7 +17,6 @@ import { runWithEmpresa } from "@/lib/tiny-queue";
 import { baixarZpl } from "@/lib/etiqueta-download";
 import { enviarImpressaoZpl } from "@/lib/printnode";
 import { resolverImpressora } from "@/lib/printnode";
-import { getConfig } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { registrarEvento } from "@/lib/historico-service";
 
@@ -112,15 +111,14 @@ export async function buscarEImprimirEtiqueta(pedidoId: string, operadorOverride
       return { success: false, error: "Pedido sem separacao_galpao_id" };
     }
 
-    // Resolve ZPL + printer config + API key in parallel
-    // Fast path: ZPL already cached → all 3 resolve concurrently (~100ms total)
-    // Slow path: ZPL fetched from Tiny → printer/key still resolve during that wait
+    // Resolve ZPL + printer (with apiKey embutida) in parallel
+    // Fast path: ZPL already cached → both resolve concurrently (~100ms total)
+    // Slow path: ZPL fetched from Tiny → printer still resolves during that wait
     const tResolve = performance.now();
-    const [zpl, printNodeApiKey, printer] = await Promise.all([
+    const [zpl, printer] = await Promise.all([
       pedido.etiqueta_zpl
         ? Promise.resolve(pedido.etiqueta_zpl)
         : resolverZplFallback(supabase, pedido),
-      getConfig("PRINTNODE_API_KEY"),
       resolverImpressora(operadorOverrideId ?? pedido.separacao_operador_id ?? galpaoId, galpaoId),
     ]);
     const resolveMs = Math.round(performance.now() - tResolve);
@@ -140,30 +138,16 @@ export async function buscarEImprimirEtiqueta(pedidoId: string, operadorOverride
       return { success: false, error: msg };
     }
 
-    if (!printNodeApiKey) {
-      await setStatus(supabase, pedidoId, "falhou");
-      const msg = "PRINTNODE_API_KEY não configurada";
-      logger.logError({
-        error: new Error(msg),
-        source: LOG_SOURCE,
-        message: "PRINTNODE_API_KEY não configurada em siso_configuracoes",
-        category: "config",
-        severity: "critical",
-        pedidoId,
-      });
-      return { success: false, error: msg };
-    }
-
     if (!printer) {
       await setStatus(supabase, pedidoId, "falhou");
-      logger.warn(LOG_SOURCE, "Nenhuma impressora configurada", { pedidoId, galpaoId });
+      logger.warn(LOG_SOURCE, "Nenhuma impressora configurada (ou conta PrintNode inativa)", { pedidoId, galpaoId });
       return { success: false, error: "Nenhuma impressora configurada" };
     }
 
     // Send full ZPL to PrintNode (may contain multiple labels: envio + DANFE)
     const tPrint = performance.now();
     await enviarImpressaoZpl({
-      apiKey: printNodeApiKey,
+      apiKey: printer.apiKey,
       printerId: printer.printerId,
       zpl,
       titulo: `Etiqueta Pedido #${pedido.numero ?? pedidoId}`,
@@ -240,13 +224,12 @@ export async function imprimirEtiquetaDireta(data: EtiquetaPreClaimed): Promise<
       separacao_operador_id: data.separacaoOperadorId,
     };
 
-    // Resolve ZPL + printer config + API key in parallel
+    // Resolve ZPL + printer (with apiKey embutida) in parallel
     const tResolve = performance.now();
-    const [zpl, printNodeApiKey, printer] = await Promise.all([
+    const [zpl, printer] = await Promise.all([
       pedido.etiqueta_zpl
         ? Promise.resolve(pedido.etiqueta_zpl)
         : resolverZplFallback(supabase, pedido),
-      getConfig("PRINTNODE_API_KEY"),
       resolverImpressora(pedido.separacao_operador_id ?? data.separacaoGalpaoId, data.separacaoGalpaoId),
     ]);
     const resolveMs = Math.round(performance.now() - tResolve);
@@ -255,10 +238,6 @@ export async function imprimirEtiquetaDireta(data: EtiquetaPreClaimed): Promise<
       await setStatus(supabase, data.pedidoId, "falhou");
       return { success: false, error: "Não foi possível obter ZPL" };
     }
-    if (!printNodeApiKey) {
-      await setStatus(supabase, data.pedidoId, "falhou");
-      return { success: false, error: "PRINTNODE_API_KEY não configurada" };
-    }
     if (!printer) {
       await setStatus(supabase, data.pedidoId, "falhou");
       return { success: false, error: "Nenhuma impressora configurada" };
@@ -266,7 +245,7 @@ export async function imprimirEtiquetaDireta(data: EtiquetaPreClaimed): Promise<
 
     const tPrint = performance.now();
     await enviarImpressaoZpl({
-      apiKey: printNodeApiKey,
+      apiKey: printer.apiKey,
       printerId: printer.printerId,
       zpl,
       titulo: `Etiqueta Pedido #${pedido.numero ?? data.pedidoId}`,

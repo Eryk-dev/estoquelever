@@ -20,8 +20,8 @@ export async function GET() {
     .from("siso_galpoes")
     .select(`
       id, nome, descricao, ativo, cidade, estado, pais,
-      printnode_printer_id, printnode_printer_nome,
-      printnode_printer_id_produto, printnode_printer_nome_produto,
+      printnode_printer_id, printnode_printer_nome, printnode_account_id,
+      printnode_printer_id_produto, printnode_printer_nome_produto, printnode_account_id_produto,
       criado_em, atualizado_em,
       siso_empresas!siso_empresas_galpao_id_fkey (
         id, nome, cnpj, ativo, criado_em, atualizado_em,

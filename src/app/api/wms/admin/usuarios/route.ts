@@ -11,7 +11,7 @@ export async function GET() {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("siso_usuarios")
-    .select("id, nome, cargo, cargos, ativo, foto_url, criado_em, atualizado_em, printnode_printer_id, printnode_printer_nome, printnode_printer_id_produto, printnode_printer_nome_produto")
+    .select("id, nome, cargo, cargos, ativo, foto_url, criado_em, atualizado_em, printnode_printer_id, printnode_printer_nome, printnode_account_id, printnode_printer_id_produto, printnode_printer_nome_produto, printnode_account_id_produto")
     .order("criado_em", { ascending: true });
 
   if (error) {
@@ -118,8 +118,10 @@ export async function PUT(request: NextRequest) {
     galpao_ids?: string[];
     printnode_printer_id?: number | null;
     printnode_printer_nome?: string | null;
+    printnode_account_id?: string | null;
     printnode_printer_id_produto?: number | null;
     printnode_printer_nome_produto?: string | null;
+    printnode_account_id_produto?: string | null;
   };
 
   try {

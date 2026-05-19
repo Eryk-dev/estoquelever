@@ -4042,13 +4042,18 @@ OR
 - **PUT** `/api/wms/admin/grupos/[id]/empresas/[empresaId]` - Update empresa tier in grupo
 - **DELETE** `/api/wms/admin/grupos/[id]/empresas/[empresaId]` - Remove empresa from grupo
 
-### Additional Admin Routes - PrintNode
+### Additional Admin Routes - PrintNode (multi-conta)
 
-- **GET** `/api/wms/admin/printnode/api-key` - Fetch stored PrintNode API key
-- **PUT** `/api/wms/admin/printnode/api-key` - Update PrintNode API key
-- **DELETE** `/api/wms/admin/printnode/api-key` - Delete PrintNode API key
-- **GET** `/api/wms/admin/printnode/printers` - List available printers from PrintNode
-- **POST** `/api/wms/admin/printnode/test` - Test PrintNode connection
+PrintNode suporta múltiplas contas (uma API key por conta) desde 2026-05-19.
+A key fica em `siso_printnode_contas`, e galpões/usuários guardam
+`printnode_account_id` (+ `_produto`) pra lembrar qual conta usar ao imprimir.
+
+- **GET** `/api/wms/admin/printnode/contas` - Lista contas (label, masked, ativo) — nunca expõe a key real
+- **POST** `/api/wms/admin/printnode/contas` - Cria conta `{ label, api_key }` (label UNIQUE)
+- **PATCH** `/api/wms/admin/printnode/contas/[id]` - Atualiza `{ label?, api_key?, ativo? }`. Trocar api_key não invalida atribuições (galpões/usuários continuam apontando pra mesma conta com a key nova).
+- **DELETE** `/api/wms/admin/printnode/contas/[id]` - Remove conta. FKs em galpões/usuários são ON DELETE SET NULL — atribuições viram null e `resolverImpressora` retorna null.
+- **POST** `/api/wms/admin/printnode/contas/[id]/test` - Testa via `/whoami` no PrintNode. Body opcional `{ api_key }` permite testar uma key NOVA antes de salvar.
+- **GET** `/api/wms/admin/printnode/printers` - Lista impressoras agregadas de TODAS as contas ativas. Retorna `[{ accountId, accountLabel, printers[], error }]`. Contas com falha não derrubam a resposta — vêm com `error` preenchido e `printers: []`.
 
 ---
 

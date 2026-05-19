@@ -237,13 +237,27 @@ export async function enviarImpressaoZpl(params: {
 }
 
 // ─── Printer resolution cache ─────────────────────────────────────────────
+//
+// Resolvers retornam `apiKey` da conta dona da impressora (multi-key). Sem a
+// key correta o print job dá 401 — então o resolver é a única fonte da
+// verdade pra "qual key usar nessa impressora".
 
-const printerCache = new Map<string, { value: { printerId: number; printerNome: string } | null; expiresAt: number }>();
+interface ResolvedPrinter {
+  printerId: number;
+  printerNome: string;
+  apiKey: string;
+}
+
+const printerCache = new Map<string, { value: ResolvedPrinter | null; expiresAt: number }>();
 const PRINTER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Resolve which printer to use for a given user + galpao.
  * Priority: usuario.printnode_printer_id > galpao.printnode_printer_id > null
+ *
+ * Carrega também a `api_key` da conta PrintNode (siso_printnode_contas)
+ * dona daquela impressora. Se a conta estiver inativa ou tiver sido
+ * deletada (account_id virou null), retorna null.
  *
  * Results are cached in-memory for 5 minutes to avoid repeated DB lookups
  * during high-throughput packing sessions.
@@ -251,7 +265,7 @@ const PRINTER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 export async function resolverImpressora(
   usuarioId: string,
   galpaoId: string,
-): Promise<{ printerId: number; printerNome: string } | null> {
+): Promise<ResolvedPrinter | null> {
   const cacheKey = `${usuarioId}|${galpaoId}`;
   const cached = printerCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {
@@ -260,33 +274,45 @@ export async function resolverImpressora(
 
   const supabase = createServiceClient();
 
-  // Fetch user + galpao in parallel (single round-trip)
   const [userResult, galpaoResult] = await Promise.all([
     supabase
       .from("siso_usuarios")
-      .select("printnode_printer_id, printnode_printer_nome")
+      .select(
+        "printnode_printer_id, printnode_printer_nome, printnode_account_id, " +
+          "conta:siso_printnode_contas!siso_usuarios_printnode_account_id_fkey(api_key, ativo)",
+      )
       .eq("id", usuarioId)
       .single(),
     supabase
       .from("siso_galpoes")
-      .select("printnode_printer_id, printnode_printer_nome")
+      .select(
+        "printnode_printer_id, printnode_printer_nome, printnode_account_id, " +
+          "conta:siso_printnode_contas!siso_galpoes_printnode_account_id_fkey(api_key, ativo)",
+      )
       .eq("id", galpaoId)
       .single(),
   ]);
 
-  let result: { printerId: number; printerNome: string } | null = null;
+  type Row = {
+    printnode_printer_id: number | null;
+    printnode_printer_nome: string | null;
+    printnode_account_id: string | null;
+    conta: { api_key: string; ativo: boolean } | null;
+  };
 
-  if (userResult.data?.printnode_printer_id) {
-    result = {
-      printerId: userResult.data.printnode_printer_id,
-      printerNome: userResult.data.printnode_printer_nome ?? "",
+  const u = userResult.data as Row | null;
+  const g = galpaoResult.data as Row | null;
+
+  const pick = (row: Row | null): ResolvedPrinter | null => {
+    if (!row?.printnode_printer_id || !row.conta?.ativo || !row.conta?.api_key) return null;
+    return {
+      printerId: row.printnode_printer_id,
+      printerNome: row.printnode_printer_nome ?? "",
+      apiKey: row.conta.api_key,
     };
-  } else if (galpaoResult.data?.printnode_printer_id) {
-    result = {
-      printerId: galpaoResult.data.printnode_printer_id,
-      printerNome: galpaoResult.data.printnode_printer_nome ?? "",
-    };
-  }
+  };
+
+  const result = pick(u) ?? pick(g);
 
   printerCache.set(cacheKey, { value: result, expiresAt: Date.now() + PRINTER_CACHE_TTL_MS });
   return result;
@@ -297,7 +323,11 @@ export function invalidarCacheImpressora(): void {
   printerCache.clear();
 }
 
-const printerProdutoCache = new Map<string, { value: { printerId: number; printerNome: string } | null; expiresAt: number }>();
+interface ResolvedPrinterProduto extends ResolvedPrinter {
+  fallbackEnvelope: boolean;
+}
+
+const printerProdutoCache = new Map<string, { value: ResolvedPrinterProduto | null; expiresAt: number }>();
 
 /**
  * Resolve a impressora pra etiqueta de PRODUTO (recebimento/guarda).
@@ -311,17 +341,19 @@ const printerProdutoCache = new Map<string, { value: { printerId: number; printe
  *   2. galpao.printnode_printer_id_produto
  *   3. usuario.printnode_printer_id           (fallback envelope)
  *   4. galpao.printnode_printer_id            (fallback envelope)
+ *
+ * Cada candidato carrega sua própria api_key (da conta_produto pro produto,
+ * conta padrão pro fallback envelope). Se a conta estiver inativa/sumida,
+ * cai pro próximo nível.
  */
 export async function resolverImpressoraProduto(
   usuarioId: string,
   galpaoId: string,
-): Promise<{ printerId: number; printerNome: string; fallbackEnvelope: boolean } | null> {
+): Promise<ResolvedPrinterProduto | null> {
   const cacheKey = `${usuarioId}|${galpaoId}`;
   const cached = printerProdutoCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {
-    return cached.value
-      ? { ...cached.value, fallbackEnvelope: false }
-      : null;
+    return cached.value;
   }
 
   const supabase = createServiceClient();
@@ -330,68 +362,72 @@ export async function resolverImpressoraProduto(
     supabase
       .from("siso_usuarios")
       .select(
-        "printnode_printer_id, printnode_printer_nome, printnode_printer_id_produto, printnode_printer_nome_produto",
+        "printnode_printer_id, printnode_printer_nome, printnode_account_id, " +
+          "printnode_printer_id_produto, printnode_printer_nome_produto, printnode_account_id_produto, " +
+          "conta_envio:siso_printnode_contas!siso_usuarios_printnode_account_id_fkey(api_key, ativo), " +
+          "conta_produto:siso_printnode_contas!siso_usuarios_printnode_account_id_produto_fkey(api_key, ativo)",
       )
       .eq("id", usuarioId)
       .single(),
     supabase
       .from("siso_galpoes")
       .select(
-        "printnode_printer_id, printnode_printer_nome, printnode_printer_id_produto, printnode_printer_nome_produto",
+        "printnode_printer_id, printnode_printer_nome, printnode_account_id, " +
+          "printnode_printer_id_produto, printnode_printer_nome_produto, printnode_account_id_produto, " +
+          "conta_envio:siso_printnode_contas!siso_galpoes_printnode_account_id_fkey(api_key, ativo), " +
+          "conta_produto:siso_printnode_contas!siso_galpoes_printnode_account_id_produto_fkey(api_key, ativo)",
       )
       .eq("id", galpaoId)
       .single(),
   ]);
 
-  let result: { printerId: number; printerNome: string } | null = null;
-  let fallbackEnvelope = false;
+  type Row = {
+    printnode_printer_id: number | null;
+    printnode_printer_nome: string | null;
+    printnode_printer_id_produto: number | null;
+    printnode_printer_nome_produto: string | null;
+    conta_envio: { api_key: string; ativo: boolean } | null;
+    conta_produto: { api_key: string; ativo: boolean } | null;
+  };
 
-  const u = userResult.data as
-    | {
-        printnode_printer_id_produto?: number | null;
-        printnode_printer_nome_produto?: string | null;
-        printnode_printer_id?: number | null;
-        printnode_printer_nome?: string | null;
-      }
-    | null;
-  const g = galpaoResult.data as
-    | {
-        printnode_printer_id_produto?: number | null;
-        printnode_printer_nome_produto?: string | null;
-        printnode_printer_id?: number | null;
-        printnode_printer_nome?: string | null;
-      }
-    | null;
+  const u = userResult.data as Row | null;
+  const g = galpaoResult.data as Row | null;
 
-  if (u?.printnode_printer_id_produto) {
-    result = {
-      printerId: u.printnode_printer_id_produto,
-      printerNome: u.printnode_printer_nome_produto ?? "",
+  type Candidate = { resolved: ResolvedPrinter; fallback: boolean } | null;
+  const pickProduto = (row: Row | null): Candidate => {
+    if (!row?.printnode_printer_id_produto || !row.conta_produto?.ativo || !row.conta_produto?.api_key) return null;
+    return {
+      resolved: {
+        printerId: row.printnode_printer_id_produto,
+        printerNome: row.printnode_printer_nome_produto ?? "",
+        apiKey: row.conta_produto.api_key,
+      },
+      fallback: false,
     };
-  } else if (g?.printnode_printer_id_produto) {
-    result = {
-      printerId: g.printnode_printer_id_produto,
-      printerNome: g.printnode_printer_nome_produto ?? "",
+  };
+  const pickEnvio = (row: Row | null): Candidate => {
+    if (!row?.printnode_printer_id || !row.conta_envio?.ativo || !row.conta_envio?.api_key) return null;
+    return {
+      resolved: {
+        printerId: row.printnode_printer_id,
+        printerNome: row.printnode_printer_nome ?? "",
+        apiKey: row.conta_envio.api_key,
+      },
+      fallback: true,
     };
-  } else if (u?.printnode_printer_id) {
-    result = {
-      printerId: u.printnode_printer_id,
-      printerNome: u.printnode_printer_nome ?? "",
-    };
-    fallbackEnvelope = true;
-  } else if (g?.printnode_printer_id) {
-    result = {
-      printerId: g.printnode_printer_id,
-      printerNome: g.printnode_printer_nome ?? "",
-    };
-    fallbackEnvelope = true;
-  }
+  };
+
+  const candidate = pickProduto(u) ?? pickProduto(g) ?? pickEnvio(u) ?? pickEnvio(g);
+
+  const result: ResolvedPrinterProduto | null = candidate
+    ? { ...candidate.resolved, fallbackEnvelope: candidate.fallback }
+    : null;
 
   printerProdutoCache.set(cacheKey, {
     value: result,
     expiresAt: Date.now() + PRINTER_CACHE_TTL_MS,
   });
-  return result ? { ...result, fallbackEnvelope } : null;
+  return result;
 }
 
 /** Clear the produto printer cache (after config changes). */

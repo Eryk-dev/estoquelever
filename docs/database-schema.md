@@ -336,8 +336,10 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `ativo` | boolean | NO | true | Active flag |
 | `printnode_printer_id` | bigint | YES | | Default PrintNode printer ID (etiqueta de envio) |
 | `printnode_printer_nome` | text | YES | | Printer name (cached) |
+| `printnode_account_id` | uuid | YES | FK | Conta PrintNode dona da impressora de envio. ON DELETE SET NULL → `resolverImpressora` retorna null. |
 | `printnode_printer_id_produto` | bigint | YES | | Dedicated PrintNode printer pra etiqueta de produto (recebimento/guarda). NULL → fallback pra `printnode_printer_id`. |
 | `printnode_printer_nome_produto` | text | YES | | Cached name da impressora de produto |
+| `printnode_account_id_produto` | uuid | YES | FK | Conta PrintNode dona da impressora de produto. ON DELETE SET NULL. |
 | `criado_em` | timestamptz | NO | now() | Creation timestamp |
 | `atualizado_em` | timestamptz | NO | now() | Last update |
 
@@ -345,10 +347,15 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 **Unique Constraint:** `nome`
 
+**Foreign Keys:**
+- `printnode_account_id` → `siso_printnode_contas(id)` ON DELETE SET NULL
+- `printnode_account_id_produto` → `siso_printnode_contas(id)` ON DELETE SET NULL
+
 **Notes:**
 - Seeded with "CWB" and "SP" but flexible for additional locations
 - Multiple empresas can belong to one galpão
 - Migration `20260514_wms_guarda_pendencias` adicionou os campos `_produto` + auto-criou 1 `siso_localizacoes` tipo='recebimento' (codigo='RECEBIMENTO') por galpão ativo
+- Migration `20260519_printnode_multi_contas` adicionou `printnode_account_id` + `_produto` pra suportar múltiplas contas PrintNode (uma key por conta)
 
 ---
 
@@ -1122,13 +1129,36 @@ Razão: os valores `cascade_*` foram introduzidos na implementação inicial mas
 
 **Primary Key:** `chave`
 
-**Current Keys:**
-- `printnode_api_key` — PrintNode API key (secret)
-
 **Notes:**
-- Managed via `/api/wms/admin/printnode/api-key` endpoints
 - Accessed via `getConfig(chave)` and `setConfig(chave, valor)`
 - Used for credentials and system-wide settings
+- A key `PRINTNODE_API_KEY` foi migrada pra `siso_printnode_contas` em 2026-05-19
+
+---
+
+### siso_printnode_contas
+
+**Purpose:** Contas PrintNode (multi-key). Cada conta tem uma API key e expõe um conjunto próprio de impressoras (PrintNode Client instalado num computador físico distinto). Substitui a chave única em `siso_configuracoes['PRINTNODE_API_KEY']`.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | gen_random_uuid() | PK |
+| `label` | text | NO | (UNIQUE) | Nome humano (ex: "PrintNode CWB") |
+| `api_key` | text | NO | | API key da conta (sensível, nunca exposta em GET) |
+| `ativo` | boolean | NO | true | Se inativa, `resolverImpressora` ignora |
+| `criado_em` | timestamptz | NO | now() | |
+| `atualizado_em` | timestamptz | NO | now() | Touch via trigger `trg_printnode_contas_touch` |
+
+**Primary Key:** `id` · **Unique:** `label`
+
+**Referenced by:**
+- `siso_galpoes.printnode_account_id` (envelope) e `printnode_account_id_produto` (etiqueta produto) — ambas ON DELETE SET NULL
+- `siso_usuarios.printnode_account_id` e `printnode_account_id_produto` (override por usuário) — ambas ON DELETE SET NULL
+
+**Notes:**
+- Galpões/usuários guardam (printer_id + account_id). `resolverImpressora` faz JOIN pra carregar a `api_key` certa ao enviar o print job.
+- Deletar uma conta zera as atribuições — `resolverImpressora` retorna null e o caller reporta "Nenhuma impressora configurada".
+- Listagem pública via `GET /api/wms/admin/printnode/contas` devolve só `masked` (••••XXXX), nunca a key.
 
 ---
 
@@ -1241,18 +1271,25 @@ Razão: os valores `cascade_*` foram introduzidos na implementação inicial mas
 | `ativo` | boolean | NO | true | Active flag |
 | `printnode_printer_id` | bigint | YES | | Per-user PrintNode printer override (etiqueta de envio) |
 | `printnode_printer_nome` | text | YES | | Printer name (cached) |
+| `printnode_account_id` | uuid | YES | FK | Conta PrintNode dona da impressora de envio do override. ON DELETE SET NULL. |
 | `printnode_printer_id_produto` | bigint | YES | | Per-user override pra impressora de etiqueta de produto. Prioridade: user._produto > galpao._produto > user._printer_id > galpao._printer_id. |
 | `printnode_printer_nome_produto` | text | YES | | Printer name (cached) |
+| `printnode_account_id_produto` | uuid | YES | FK | Conta PrintNode dona da impressora de produto. ON DELETE SET NULL. |
 | `criado_em` | timestamptz | NO | now() | Creation |
 | `atualizado_em` | timestamptz | NO | now() | Last update |
 
 **Primary Key:** `id`
+
+**Foreign Keys:**
+- `printnode_account_id` → `siso_printnode_contas(id)` ON DELETE SET NULL
+- `printnode_account_id_produto` → `siso_printnode_contas(id)` ON DELETE SET NULL
 
 **Notes:**
 - PIN is 4 digits, unencrypted (suitable for warehouse environment)
 - `cargos` array replaces legacy `cargo` column (new code uses array)
 - Seed user: Eryk / 1234 / admin
 - `printnode_printer_id` (envio) e `printnode_printer_id_produto` (recebimento) são independentes — operador pode ter 1 impressora pra cada finalidade ou usar fallback
+- `printnode_account_id` / `_produto` adicionados em 2026-05-19 pra suportar múltiplas contas PrintNode
 
 ---
 
@@ -1753,6 +1790,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-05-18 | `20260518_realocacao_fix_pack_rpc_estorno_parcial.sql` | **Fix-pack — RPC `wms_estornar_parcial_movimentacao`:** estorna parcialmente uma mov criando contrária com qty < total da fonte e incrementando `qty_estornada` na fonte. Lock pessimista + validações (mov existe, não é estorno, qty>0, não excede saldo estornável). Atômica. Origem da contrária = `'estorno_parcial'`. |
 | 2026-05-18 | `20260518_realocacao_fix_pack_embalagem_strict.sql` | **Fix-pack — `siso_processar_bip_embalagem` extension:** adiciona parâmetro `p_strict_qty_pega boolean DEFAULT false`. Quando `true` AND item tem `separacao_parcial=true`, teto da bipagem passa a ser **qty pega real** (item.quantidade_pega + Σ realocs.quantidade_pega em 'picado'/'picado_parcial'). Excesso RAISE `'bipou_alem_do_teto'` com DETAIL `teto=N,tentado=M` (mapeado pra 422 no endpoint). |
 | 2026-05-19 | `20260519_vendas_diretas_vendedor.sql` | **Vendas Diretas + role vendedor:** adiciona `siso_pedidos.vendedor_id (uuid FK siso_usuarios ON DELETE SET NULL)`, `vendedor_nome (text)`, `origem_pedido (text NOT NULL DEFAULT 'webhook' CHECK IN ('webhook','manual'))`, `canal_venda (text)`. Cria índice parcial `idx_pedidos_vendedor_id WHERE vendedor_id IS NOT NULL` + `idx_pedidos_vendas_diretas WHERE origem_pedido='manual' OR nome_ecommerce IN ('Mercado Livre','Shopee')`. Habilita inserção manual de pedidos de venda em /wms/vendas + auto-atribuição de vendedor_nome="{marketplace} {empresa}" no webhook-processor. |
+| 2026-05-19 | `20260519_printnode_multi_contas.sql` | **PrintNode multi-conta:** cria `siso_printnode_contas (id, label UNIQUE, api_key, ativo)` + trigger `trg_printnode_contas_touch`. Adiciona `printnode_account_id` + `printnode_account_id_produto` (uuid FK ON DELETE SET NULL) em `siso_galpoes` e `siso_usuarios` com 4 índices parciais. Migra a key existente de `siso_configuracoes['PRINTNODE_API_KEY']` pra uma conta `'Default'` e backfilla `account_id` em todas as linhas com `printer_id` já preenchido. Remove entry antiga de siso_configuracoes ao final. |
 | 2026-05-18 | `20260518_realocacao_fix_pack_fila_payload.sql` | **Fix-pack — `siso_fila_execucao.payload jsonb`:** adiciona coluna `payload jsonb NOT NULL DEFAULT '{}'::jsonb` pra carregar metadata dos jobs. Usado pelos tipos `lancar_estoque` e `lancar_estoque_pos_nf` pra carregar `itens_ja_lancados: number[]` — IDs dos itens cuja saída já foi gerada via parcial/realocação, que o worker deve pular pra evitar dedução duplicada. Migration estende o CHECK de `tipo` pra incluir `'lancar_estoque_pos_nf'`. |
 
 **Key Phases:**

@@ -12,7 +12,6 @@ import {
   enviarImpressaoZpl,
   resolverImpressoraProduto,
 } from "@/lib/printnode";
-import { getConfig } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import {
   gerarZplProduto,
@@ -62,25 +61,11 @@ export async function imprimirEtiquetasProduto(
   const totalEtiquetas = etiquetas.length;
   const totalFolhas = contarFolhas(totalEtiquetas);
 
-  // Resolve impressora + chave em paralelo.
-  const [printer, apiKey] = await Promise.all([
-    resolverImpressoraProduto(input.usuarioId, input.galpaoId),
-    getConfig("PRINTNODE_API_KEY"),
-  ]);
-
-  if (!apiKey) {
-    logger.logError({
-      error: new Error("PRINTNODE_API_KEY não configurada"),
-      source: LOG_SOURCE,
-      message: "PRINTNODE_API_KEY ausente em siso_configuracoes",
-      category: "config",
-      severity: "critical",
-    });
-    return { ok: false, error: "PRINTNODE_API_KEY não configurada" };
-  }
+  // Resolve impressora (com api_key embutida da conta dona da impressora).
+  const printer = await resolverImpressoraProduto(input.usuarioId, input.galpaoId);
 
   if (!printer) {
-    logger.warn(LOG_SOURCE, "nenhuma impressora configurada", {
+    logger.warn(LOG_SOURCE, "nenhuma impressora configurada (ou conta inativa)", {
       usuarioId: input.usuarioId,
       galpaoId: input.galpaoId,
     });
@@ -98,7 +83,7 @@ export async function imprimirEtiquetasProduto(
 
   try {
     const { jobId } = await enviarImpressaoZpl({
-      apiKey,
+      apiKey: printer.apiKey,
       printerId: printer.printerId,
       zpl,
       titulo: input.titulo,

@@ -30,8 +30,10 @@ interface GalpaoConexao {
   ativo: boolean;
   printnode_printer_id: number | null;
   printnode_printer_nome: string | null;
+  printnode_account_id: string | null;
   printnode_printer_id_produto: number | null;
   printnode_printer_nome_produto: string | null;
+  printnode_account_id_produto: string | null;
   siso_empresas: Array<{ id: string; nome: string; cnpj: string; ativo: boolean }>;
 }
 
@@ -706,6 +708,22 @@ interface PrintNodePrinter {
   state: string;
 }
 
+interface PrintNodeContaResumo {
+  id: string;
+  label: string;
+  ativo: boolean;
+  masked: string;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+interface PrinterGroup {
+  accountId: string;
+  accountLabel: string;
+  printers: PrintNodePrinter[];
+  error: string | null;
+}
+
 function PrintNodeCard({
   galpoes,
   usuarios,
@@ -717,123 +735,30 @@ function PrintNodeCard({
 }) {
   const { user } = useAuth();
 
-  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
-  const [apiKeyMasked, setApiKeyMasked] = useState<string | null>(null);
-  const [apiKeyInput, setApiKeyInput] = useState("");
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [savingKey, setSavingKey] = useState(false);
-  const [loadingKey, setLoadingKey] = useState(true);
-
-  const [testing, setTesting] = useState(false);
-  const [connStatus, setConnStatus] = useState<{
-    ok: boolean;
-    email?: string;
-    error?: string;
-  } | null>(null);
-
-  const [printers, setPrinters] = useState<PrintNodePrinter[]>([]);
+  const [contas, setContas] = useState<PrintNodeContaResumo[]>([]);
+  const [loadingContas, setLoadingContas] = useState(true);
+  const [printerGroups, setPrinterGroups] = useState<PrinterGroup[]>([]);
   const [loadingPrinters, setLoadingPrinters] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  const fetchKeyStatus = useCallback(async () => {
+  const fetchContas = useCallback(async () => {
     if (!user) return;
+    setLoadingContas(true);
     try {
-      const r = await sisoFetch("/api/wms/admin/printnode/api-key", {
+      const r = await sisoFetch("/api/wms/admin/printnode/contas", {
         headers: { "x-siso-user-id": user.id },
       });
-      if (r.ok) {
-        const data = await r.json();
-        setApiKeyConfigured(data.configured);
-        setApiKeyMasked(data.masked);
-      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      setContas(Array.isArray(data) ? data : []);
     } catch {
       // silent
     } finally {
-      setLoadingKey(false);
+      setLoadingContas(false);
     }
   }, [user]);
 
-  useEffect(() => {
-    fetchKeyStatus();
-  }, [fetchKeyStatus]);
-
-  async function saveApiKey() {
-    if (!apiKeyInput.trim() || !user) return;
-    setSavingKey(true);
-    try {
-      const r = await sisoFetch("/api/wms/admin/printnode/api-key", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "x-siso-user-id": user.id,
-        },
-        body: JSON.stringify({ api_key: apiKeyInput.trim() }),
-      });
-      if (!r.ok) throw new Error("Erro ao salvar");
-      const key = apiKeyInput.trim();
-      const masked =
-        key.length > 4
-          ? "•".repeat(key.length - 4) + key.slice(-4)
-          : "•".repeat(key.length);
-      setApiKeyConfigured(true);
-      setApiKeyMasked(masked);
-      setApiKeyInput("");
-      setShowApiKey(false);
-      setConnStatus(null);
-      setPrinters([]);
-      toast.success("API Key salva");
-    } catch {
-      toast.error("Erro ao salvar API Key");
-    } finally {
-      setSavingKey(false);
-    }
-  }
-
-  async function deleteApiKey() {
-    if (!user) return;
-    if (!confirm("Remover a API Key do PrintNode?")) return;
-    try {
-      await sisoFetch("/api/wms/admin/printnode/api-key", {
-        method: "DELETE",
-        headers: { "x-siso-user-id": user.id },
-      });
-      setApiKeyConfigured(false);
-      setApiKeyMasked(null);
-      setConnStatus(null);
-      setPrinters([]);
-      toast.success("API Key removida");
-    } catch {
-      toast.error("Erro ao remover");
-    }
-  }
-
-  async function testConnection() {
-    if (!user) return;
-    setTesting(true);
-    setConnStatus(null);
-    try {
-      const r = await sisoFetch("/api/wms/admin/printnode/test", {
-        method: "POST",
-        headers: { "x-siso-user-id": user.id },
-      });
-      const data = await r.json();
-      if (!r.ok) {
-        setConnStatus({ ok: false, error: data.error ?? `HTTP ${r.status}` });
-        return;
-      }
-      setConnStatus(data);
-      if (data.ok) await fetchPrinters();
-    } catch (e) {
-      setConnStatus({
-        ok: false,
-        error: e instanceof Error ? e.message : "Erro de rede",
-      });
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  async function fetchPrinters() {
+  const fetchPrinters = useCallback(async () => {
     if (!user) return;
     setLoadingPrinters(true);
     try {
@@ -842,13 +767,23 @@ function PrintNodeCard({
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
-      setPrinters(Array.isArray(data) ? data : []);
+      setPrinterGroups(Array.isArray(data) ? data : []);
     } catch {
       toast.error("Erro ao listar impressoras");
     } finally {
       setLoadingPrinters(false);
     }
-  }
+  }, [user]);
+
+  useEffect(() => {
+    fetchContas();
+  }, [fetchContas]);
+
+  // Quando muda a lista de contas ativas, recarrega o pool de impressoras.
+  useEffect(() => {
+    if (contas.some((c) => c.ativo)) fetchPrinters();
+    else setPrinterGroups([]);
+  }, [contas, fetchPrinters]);
 
   async function patchGalpao(
     galpaoId: string,
@@ -890,120 +825,88 @@ function PrintNodeCard({
     }
   }
 
-  const hasPrinters = printers.length > 0;
+  const hasPrinters = printerGroups.some((g) => g.printers.length > 0);
   const galpoesSemImpressora = galpoes.filter(
     (g) => g.ativo && !g.printnode_printer_id,
   );
+  const hasAnyAccount = contas.length > 0;
 
   return (
-    <Card title="PrintNode (impressão térmica)">
+    <Card title={`PrintNode${contas.length > 0 ? ` (${contas.length} conta${contas.length > 1 ? "s" : ""})` : ""}`}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {/* API Key */}
+        {/* Contas */}
         <div>
-          <h4 className="wms-sec-h" style={{ marginTop: 0, fontSize: 12 }}>
-            API Key
-          </h4>
-          {loadingKey ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 8,
+            }}
+          >
+            <h4 className="wms-sec-h" style={{ margin: 0, fontSize: 12 }}>
+              Contas (API keys)
+            </h4>
+            <span className="wms-td-mute" style={{ fontSize: 11 }}>
+              cada conta carrega seu próprio conjunto de impressoras
+            </span>
+          </div>
+
+          {loadingContas ? (
             <span className="wms-td-mute" style={{ fontSize: 12 }}>
               Carregando…
             </span>
-          ) : apiKeyConfigured ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <code
-                className="wms-input wms-mono"
-                style={{ flex: "0 0 auto", maxWidth: 280 }}
-              >
-                {apiKeyMasked} <Icon name="check" size={10} />
-              </code>
-              <button
-                type="button"
-                className="wms-btn wms-btn-ghost wms-btn-sm"
-                onClick={() => setApiKeyConfigured(false)}
-              >
-                Alterar
-              </button>
-              <button
-                type="button"
-                className="wms-btn wms-btn-ghost wms-btn-sm"
-                onClick={deleteApiKey}
-                title="Remover"
-              >
-                <Icon name="trash" size={11} />
-              </button>
-            </div>
           ) : (
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <div style={{ position: "relative", flex: "0 0 auto", maxWidth: 320 }}>
-                <input
-                  className="wms-input wms-mono"
-                  type={showApiKey ? "text" : "password"}
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                  placeholder="Cole a API Key do PrintNode"
-                  onKeyDown={(e) => e.key === "Enter" && saveApiKey()}
-                  style={{ paddingRight: 30, width: 320 }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey((v) => !v)}
-                  className="wms-btn-icon"
-                  style={{
-                    position: "absolute",
-                    right: 4,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    border: "none",
-                    background: "transparent",
-                  }}
-                >
-                  <Icon name={showApiKey ? "x" : "search"} size={11} />
-                </button>
-              </div>
+            <ContasList
+              contas={contas}
+              onChanged={fetchContas}
+              onReloadPrinters={fetchPrinters}
+            />
+          )}
+        </div>
+
+        {/* Impressoras agregadas */}
+        {hasAnyAccount && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <h4 className="wms-sec-h" style={{ margin: 0, fontSize: 12 }}>
+                Impressoras disponíveis
+              </h4>
               <button
                 type="button"
-                className="wms-btn wms-btn-primary wms-btn-sm"
-                onClick={saveApiKey}
-                disabled={savingKey || !apiKeyInput.trim()}
+                className="wms-btn wms-btn-ghost wms-btn-sm"
+                onClick={fetchPrinters}
+                disabled={loadingPrinters}
               >
-                {savingKey ? "Salvando…" : "Salvar"}
+                <Icon name="rotate" size={11} />
+                {loadingPrinters ? "Recarregando…" : "Recarregar"}
               </button>
             </div>
-          )}
-        </div>
-
-        {/* Test connection */}
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button
-            type="button"
-            className="wms-btn wms-btn-primary wms-btn-sm"
-            onClick={testConnection}
-            disabled={testing || (!apiKeyConfigured && !apiKeyInput.trim())}
-          >
-            <Icon name="rotate" size={11} />
-            {testing ? "Testando…" : "Testar conexão"}
-          </button>
-          {connStatus && (
-            <span style={{ fontSize: 12 }}>
-              {connStatus.ok ? (
-                <span style={{ color: "var(--wms-c-success, #047857)" }}>
-                  <Icon name="check" size={11} /> Conectado ({connStatus.email})
-                </span>
-              ) : (
-                <span style={{ color: "var(--wms-c-danger)" }}>
-                  <Icon name="alert" size={11} /> {connStatus.error}
-                </span>
-              )}
-            </span>
-          )}
-        </div>
-
-        {loadingPrinters && (
-          <span className="wms-td-mute" style={{ fontSize: 12 }}>
-            Carregando impressoras…
-          </span>
+            {printerGroups
+              .filter((g) => g.error)
+              .map((g) => (
+                <div
+                  key={`err-${g.accountId}`}
+                  className="wms-hint-card wms-hint-warn"
+                  style={{ fontSize: 11 }}
+                >
+                  <Icon name="alert" />
+                  <span>
+                    <strong>{g.accountLabel}:</strong> {g.error}
+                  </span>
+                </div>
+              ))}
+            {hasPrinters && (
+              <span className="wms-td-mute" style={{ fontSize: 11 }}>
+                {printerGroups.reduce((sum, g) => sum + g.printers.length, 0)} impressoras
+                em {printerGroups.filter((g) => g.printers.length > 0).length} conta
+                {printerGroups.filter((g) => g.printers.length > 0).length > 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
         )}
 
-        {/* Impressoras por galpão */}
+        {/* Impressora padrão por galpão */}
         {hasPrinters && (
           <div>
             <h4 className="wms-sec-h" style={{ marginTop: 0, fontSize: 12 }}>
@@ -1027,28 +930,28 @@ function PrintNodeCard({
                     </strong>
                     <PrinterRow
                       label="Envio"
-                      printers={printers}
+                      groups={printerGroups}
                       value={g.printnode_printer_id}
                       saving={savingId === `g-envio-${g.id}`}
-                      onChange={(printerId) => {
-                        const p = printers.find((x) => x.id === printerId);
+                      onChange={(picked) => {
                         patchGalpao(g.id, `g-envio-${g.id}`, {
-                          printnode_printer_id: printerId,
-                          printnode_printer_nome: p?.name ?? null,
+                          printnode_printer_id: picked?.printer.id ?? null,
+                          printnode_printer_nome: picked?.printer.name ?? null,
+                          printnode_account_id: picked?.accountId ?? null,
                         });
                       }}
                     />
                     <PrinterRow
                       label="Produto"
                       hint="Cai pra impressora de envio se vazio"
-                      printers={printers}
+                      groups={printerGroups}
                       value={g.printnode_printer_id_produto}
                       saving={savingId === `g-prod-${g.id}`}
-                      onChange={(printerId) => {
-                        const p = printers.find((x) => x.id === printerId);
+                      onChange={(picked) => {
                         patchGalpao(g.id, `g-prod-${g.id}`, {
-                          printnode_printer_id_produto: printerId,
-                          printnode_printer_nome_produto: p?.name ?? null,
+                          printnode_printer_id_produto: picked?.printer.id ?? null,
+                          printnode_printer_nome_produto: picked?.printer.name ?? null,
+                          printnode_account_id_produto: picked?.accountId ?? null,
                         });
                       }}
                       emptyLabel="Mesma de envio (fallback)"
@@ -1091,30 +994,30 @@ function PrintNodeCard({
                   </strong>
                   <PrinterRow
                     label="Envio"
-                    printers={printers}
+                    groups={printerGroups}
                     value={u.printnode_printer_id}
                     saving={savingId === `u-envio-${u.id}`}
-                    onChange={(printerId) => {
-                      const p = printers.find((x) => x.id === printerId);
+                    onChange={(picked) => {
                       patchUsuario(`u-envio-${u.id}`, {
                         id: u.id,
-                        printnode_printer_id: printerId,
-                        printnode_printer_nome: p?.name ?? null,
+                        printnode_printer_id: picked?.printer.id ?? null,
+                        printnode_printer_nome: picked?.printer.name ?? null,
+                        printnode_account_id: picked?.accountId ?? null,
                       });
                     }}
                     emptyLabel="Nenhuma (usa padrão do galpão)"
                   />
                   <PrinterRow
                     label="Produto"
-                    printers={printers}
+                    groups={printerGroups}
                     value={u.printnode_printer_id_produto}
                     saving={savingId === `u-prod-${u.id}`}
-                    onChange={(printerId) => {
-                      const p = printers.find((x) => x.id === printerId);
+                    onChange={(picked) => {
                       patchUsuario(`u-prod-${u.id}`, {
                         id: u.id,
-                        printnode_printer_id_produto: printerId,
-                        printnode_printer_nome_produto: p?.name ?? null,
+                        printnode_printer_id_produto: picked?.printer.id ?? null,
+                        printnode_printer_nome_produto: picked?.printer.name ?? null,
+                        printnode_account_id_produto: picked?.accountId ?? null,
                       });
                     }}
                     emptyLabel="Nenhuma (usa padrão do galpão)"
@@ -1125,9 +1028,19 @@ function PrintNodeCard({
           </div>
         )}
 
-        {!hasPrinters && !loadingPrinters && !connStatus && apiKeyConfigured && (
+        {!hasPrinters && !loadingPrinters && hasAnyAccount && (
           <p className="wms-td-mute" style={{ fontSize: 12 }}>
-            Teste a conexão para listar as impressoras disponíveis.
+            Nenhuma impressora encontrada nas contas ativas. Verifique se o PrintNode
+            Client está rodando nos computadores e as impressoras aparecem em{" "}
+            <a
+              href="https://app.printnode.com/account/printers"
+              target="_blank"
+              rel="noreferrer"
+              className="wms-btn-link"
+            >
+              app.printnode.com
+            </a>
+            .
           </p>
         )}
       </div>
@@ -1135,10 +1048,396 @@ function PrintNodeCard({
   );
 }
 
+function ContasList({
+  contas,
+  onChanged,
+  onReloadPrinters,
+}: {
+  contas: PrintNodeContaResumo[];
+  onChanged: () => void;
+  onReloadPrinters: () => void;
+}) {
+  const { user } = useAuth();
+  const [creating, setCreating] = useState(false);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {contas.map((c) => (
+        <ContaRow
+          key={c.id}
+          conta={c}
+          onChanged={() => {
+            onChanged();
+            onReloadPrinters();
+          }}
+        />
+      ))}
+
+      {creating ? (
+        <ContaForm
+          onCancel={() => setCreating(false)}
+          onSaved={() => {
+            setCreating(false);
+            onChanged();
+            onReloadPrinters();
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost wms-btn-sm"
+          onClick={() => setCreating(true)}
+          disabled={!user}
+          style={{ alignSelf: "flex-start" }}
+        >
+          <Icon name="plus" size={11} />
+          Adicionar conta PrintNode
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ContaForm({
+  initial,
+  onCancel,
+  onSaved,
+}: {
+  initial?: { id: string; label: string };
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const { user } = useAuth();
+  const [label, setLabel] = useState(initial?.label ?? "");
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; email?: string; error?: string } | null>(null);
+
+  async function test() {
+    if (!user || !apiKey.trim()) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      // Quando é criação, ainda não tem id — usa rota de teste passando key no body.
+      // Quando é edição, usa o id da conta existente (testa a key DIGITADA, não a salva).
+      const url = initial
+        ? `/api/wms/admin/printnode/contas/${initial.id}/test`
+        : `/api/wms/admin/printnode/contas/${"00000000-0000-0000-0000-000000000000"}/test`;
+      const r = await sisoFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-siso-user-id": user.id },
+        body: JSON.stringify({ api_key: apiKey.trim() }),
+      });
+      const data = await r.json();
+      setTestResult(r.ok ? data : { ok: false, error: data.error ?? `HTTP ${r.status}` });
+    } catch (e) {
+      setTestResult({ ok: false, error: e instanceof Error ? e.message : "Erro de rede" });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function save() {
+    if (!user || !label.trim()) return;
+    if (!initial && !apiKey.trim()) {
+      toast.error("API key é obrigatória");
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = initial
+        ? await sisoFetch(`/api/wms/admin/printnode/contas/${initial.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", "x-siso-user-id": user.id },
+            body: JSON.stringify({
+              label: label.trim(),
+              ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+            }),
+          })
+        : await sisoFetch("/api/wms/admin/printnode/contas", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-siso-user-id": user.id },
+            body: JSON.stringify({ label: label.trim(), api_key: apiKey.trim() }),
+          });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error ?? `HTTP ${r.status}`);
+      }
+      toast.success(initial ? "Conta atualizada" : "Conta criada");
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--wms-c-border)",
+        borderRadius: "var(--wms-r-3)",
+        padding: 10,
+        background: "var(--wms-c-panel-2)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <input
+        className="wms-input"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        placeholder="Nome da conta (ex: PrintNode CWB)"
+        autoFocus
+      />
+      <div style={{ position: "relative" }}>
+        <input
+          className="wms-input wms-mono"
+          type={showKey ? "text" : "password"}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder={initial ? "Deixe vazio pra manter a key atual" : "API key do PrintNode"}
+          style={{ paddingRight: 30 }}
+        />
+        <button
+          type="button"
+          className="wms-btn-icon"
+          onClick={() => setShowKey((v) => !v)}
+          style={{
+            position: "absolute",
+            right: 4,
+            top: "50%",
+            transform: "translateY(-50%)",
+            border: "none",
+            background: "transparent",
+          }}
+        >
+          <Icon name={showKey ? "x" : "search"} size={11} />
+        </button>
+      </div>
+      {testResult && (
+        <div style={{ fontSize: 11 }}>
+          {testResult.ok ? (
+            <span style={{ color: "var(--wms-c-success, #047857)" }}>
+              <Icon name="check" size={11} /> Conectado ({testResult.email})
+            </span>
+          ) : (
+            <span style={{ color: "var(--wms-c-danger)" }}>
+              <Icon name="alert" size={11} /> {testResult.error}
+            </span>
+          )}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary wms-btn-sm"
+          onClick={save}
+          disabled={saving || !label.trim() || (!initial && !apiKey.trim())}
+        >
+          <Icon name="check" size={11} />
+          {saving ? "Salvando…" : initial ? "Salvar" : "Criar"}
+        </button>
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost wms-btn-sm"
+          onClick={test}
+          disabled={testing || !apiKey.trim()}
+          title="Testa a key digitada (não salva ainda)"
+        >
+          <Icon name="rotate" size={11} />
+          {testing ? "Testando…" : "Testar key"}
+        </button>
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost wms-btn-sm"
+          onClick={onCancel}
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ContaRow({
+  conta,
+  onChanged,
+}: {
+  conta: PrintNodeContaResumo;
+  onChanged: () => void;
+}) {
+  const { user } = useAuth();
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; email?: string; error?: string } | null>(null);
+
+  async function toggleAtivo() {
+    if (!user) return;
+    setBusy(true);
+    try {
+      const r = await sisoFetch(`/api/wms/admin/printnode/contas/${conta.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-siso-user-id": user.id },
+        body: JSON.stringify({ ativo: !conta.ativo }),
+      });
+      if (!r.ok) throw new Error();
+      toast.success(conta.ativo ? "Conta desativada" : "Conta ativada");
+      onChanged();
+    } catch {
+      toast.error("Erro ao atualizar");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!user) return;
+    if (
+      !confirm(
+        `Remover conta "${conta.label}"? Galpões e usuários que usam impressoras dessa conta ficarão sem impressora.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await sisoFetch(`/api/wms/admin/printnode/contas/${conta.id}`, {
+        method: "DELETE",
+        headers: { "x-siso-user-id": user.id },
+      });
+      if (!r.ok) throw new Error();
+      toast.success("Conta removida");
+      onChanged();
+    } catch {
+      toast.error("Erro ao remover");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function test() {
+    if (!user) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await sisoFetch(`/api/wms/admin/printnode/contas/${conta.id}/test`, {
+        method: "POST",
+        headers: { "x-siso-user-id": user.id },
+      });
+      const data = await r.json();
+      setTestResult(r.ok ? data : { ok: false, error: data.error ?? `HTTP ${r.status}` });
+    } catch (e) {
+      setTestResult({ ok: false, error: e instanceof Error ? e.message : "Erro de rede" });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <ContaForm
+        initial={{ id: conta.id, label: conta.label }}
+        onCancel={() => setEditing(false)}
+        onSaved={() => {
+          setEditing(false);
+          onChanged();
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--wms-c-border)",
+        borderRadius: "var(--wms-r-3)",
+        padding: 10,
+        background: "var(--wms-c-panel-2)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+          marginBottom: 6,
+        }}
+      >
+        <strong style={{ fontSize: 13 }}>{conta.label}</strong>
+        <code className="wms-mono wms-td-mute" style={{ fontSize: 11 }}>
+          {conta.masked}
+        </code>
+        <span
+          className={`wms-badge ${conta.ativo ? "wms-badge-ok" : "wms-badge-mute"}`}
+        >
+          {conta.ativo ? "Ativa" : "Desativada"}
+        </span>
+        {testResult && (
+          <span style={{ fontSize: 11 }}>
+            {testResult.ok ? (
+              <span style={{ color: "var(--wms-c-success, #047857)" }}>
+                <Icon name="check" size={11} /> {testResult.email}
+              </span>
+            ) : (
+              <span style={{ color: "var(--wms-c-danger)" }}>
+                <Icon name="alert" size={11} /> {testResult.error}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost wms-btn-sm"
+          onClick={test}
+          disabled={testing || !conta.ativo}
+        >
+          <Icon name="rotate" size={11} />
+          {testing ? "Testando…" : "Testar"}
+        </button>
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost wms-btn-sm"
+          onClick={() => setEditing(true)}
+          disabled={busy}
+        >
+          <Icon name="edit" size={11} />
+          Editar
+        </button>
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost wms-btn-sm"
+          onClick={toggleAtivo}
+          disabled={busy}
+        >
+          {conta.ativo ? "Desativar" : "Ativar"}
+        </button>
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost wms-btn-sm"
+          onClick={remove}
+          disabled={busy}
+          style={{ marginLeft: "auto" }}
+          title="Remover conta"
+        >
+          <Icon name="trash" size={11} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PrinterRow({
   label,
   hint,
-  printers,
+  groups,
   value,
   saving,
   onChange,
@@ -1146,12 +1445,43 @@ function PrinterRow({
 }: {
   label: string;
   hint?: string;
-  printers: PrintNodePrinter[];
+  groups: PrinterGroup[];
   value: number | null;
   saving: boolean;
-  onChange: (printerId: number | null) => void;
+  onChange: (
+    picked: { accountId: string; printer: PrintNodePrinter } | null,
+  ) => void;
   emptyLabel?: string;
 }) {
+  // value bruto = "<accountId>::<printerId>" pra desambiguar quando 2 contas
+  // têm IDs sobrepostos. Mas como `value` aqui vem só do banco (printer_id),
+  // precisamos achar a 1ª conta que tem esse printer pra reconstruir a key.
+  const selectedKey = (() => {
+    if (value === null) return "";
+    for (const g of groups) {
+      if (g.printers.some((p) => p.id === value)) {
+        return `${g.accountId}::${value}`;
+      }
+    }
+    return "";
+  })();
+
+  function handleChange(raw: string) {
+    if (!raw) {
+      onChange(null);
+      return;
+    }
+    const [accountId, printerIdStr] = raw.split("::");
+    const printerId = Number(printerIdStr);
+    const group = groups.find((g) => g.accountId === accountId);
+    const printer = group?.printers.find((p) => p.id === printerId);
+    if (!group || !printer) {
+      onChange(null);
+      return;
+    }
+    onChange({ accountId, printer });
+  }
+
   return (
     <div
       style={{
@@ -1170,17 +1500,23 @@ function PrinterRow({
       </span>
       <select
         className="wms-select"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+        value={selectedKey}
+        onChange={(e) => handleChange(e.target.value)}
         disabled={saving}
         style={{ flex: 1 }}
       >
         <option value="">{emptyLabel}</option>
-        {printers.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name} ({p.computer})
-          </option>
-        ))}
+        {groups
+          .filter((g) => g.printers.length > 0)
+          .map((g) => (
+            <optgroup key={g.accountId} label={g.accountLabel}>
+              {g.printers.map((p) => (
+                <option key={`${g.accountId}::${p.id}`} value={`${g.accountId}::${p.id}`}>
+                  {p.name} ({p.computer})
+                </option>
+              ))}
+            </optgroup>
+          ))}
       </select>
       {saving && (
         <span className="wms-td-mute" style={{ fontSize: 10 }}>

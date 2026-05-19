@@ -776,9 +776,13 @@ Pedidos de venda direta — abrange pedidos manuais inseridos por vendedores E p
 
 **File:** `src/app/api/wms/vendas/criar/route.ts`
 
-**Purpose:** Cria pedido manual de venda. Dois modos:
+**Purpose:** Cria pedido manual de venda. Vendedor escolhe **1 galpão** pro pedido inteiro — empresa dona e localização são resolvidas server-side via `resolverDisponibilidadeVenda` (`src/lib/wms/vendas-disponibilidade.ts`).
+
+Dois modos solicitados:
 - `separacao`: entra no fluxo de wave picking (pula NF), `status='executando', status_separacao='aguardando_separacao'`.
-- `baixa_direta`: gera mov `'S'` no ledger WMS via `wms_inserir_movimentacao(origem_tipo='venda_manual')` pra cada item, baixando estoque imediatamente. `status='concluido', status_separacao=NULL`.
+- `baixa_direta`: gera mov `'S'` no ledger WMS via `wms_inserir_movimentacao(origem_tipo='venda_manual')` pra cada item na quadrupla resolvida automaticamente, baixando estoque imediatamente. `status='concluido', status_separacao=NULL`.
+
+**Degradação automática**: se `modo='baixa_direta'` mas qualquer item não tem saldo suficiente no galpão escolhido, todo o pedido cai pra `modo='separacao'` (igual marketplace sem estoque). Resposta inclui `degradado:true`.
 
 **Auth:** X-Session-Id (qualquer cargo autenticado pode criar; vendedor é auto-preenchido com user.id).
 
@@ -789,14 +793,12 @@ Pedidos de venda direta — abrange pedidos manuais inseridos por vendedores E p
   "cliente_cpf_cnpj": "string|null",
   "canal_venda": "Balcão|WhatsApp|Telefone|...",
   "empresa_origem_id": "uuid (req)",
+  "galpao_id": "uuid (req) — galpão único pro pedido",
   "modo": "separacao | baixa_direta",
   "items": [
     {
       "produto_id": "uuid (siso_produtos.id)",
-      "quantidade": 1,
-      "galpao_id": "uuid (só baixa_direta)",
-      "localizacao_id": "uuid (só baixa_direta)",
-      "empresa_dona_id": "uuid (só baixa_direta)"
+      "quantidade": 1
     }
   ],
   "idempotency_key": "uuid (opcional — evita duplicação em retry)"
@@ -810,14 +812,17 @@ Pedidos de venda direta — abrange pedidos manuais inseridos por vendedores E p
   "numero": "string",
   "status": "executando | concluido",
   "status_separacao": "aguardando_separacao | null",
-  "movs_criadas": ["uuid", ...]
+  "movs_criadas": "number (qtd de movs criadas — só em baixa_direta efetiva)",
+  "degradado": "boolean (opcional, true se baixa_direta caiu pra separação)",
+  "motivo_degradacao": "falta_saldo (opcional)",
+  "skus_sem_saldo": ["SKU1", "SKU2"]
 }
 ```
 
 **Errors:**
-- 400 — validação (cliente vazio, qty inválida, baixa_direta sem loc/dona, produto não cadastrado em `siso_produto_empresas`)
-- 409 — saldo insuficiente em baixa_direta (após rollback das movs anteriores)
-- 500 — falha de DB / RPC
+- 400 — validação (cliente vazio, qty inválida, galpao_id ausente, produto não cadastrado em `siso_produto_empresas`)
+- 409 — saldo insuficiente mid-flight em baixa_direta (race condition: tinha saldo no GET disponibilidade, mas baixou entre o resolve e o insert da mov; após rollback das movs anteriores)
+- 500 — falha de DB / RPC / quadrupla não resolvida
 
 **Side Effects:**
 - Insert em `siso_pedidos` (origem_pedido='manual')
@@ -825,6 +830,51 @@ Pedidos de venda direta — abrange pedidos manuais inseridos por vendedores E p
 - Em baixa_direta: 1 mov `'S'` por item (origem_tipo='venda_manual', origem_id=pedido_id)
 - Em caso de falha de mov: estorna movs anteriores via `estornarMovimentacao` + deleta pedido/items
 - Audit: `registrarEvento('venda_criada_manual')` + (se baixa_direta) `venda_baixa_direta_executada`
+
+---
+
+### GET /api/wms/vendas/disponibilidade
+
+**File:** `src/app/api/wms/vendas/disponibilidade/route.ts`
+
+**Purpose:** Resolve a melhor `(empresa_dona, localização)` com saldo disponível pra um produto num galpão. Usado pela tela `/wms/vendas/nova` pra exibir read-only ao vendedor a localização sugerida + qty disponível por item.
+
+Ordem de preferência:
+1. `empresa_origem_id` (quem vende) com saldo — prefere baixar da própria empresa.
+2. Loc tipo `picking` antes de outros tipos.
+3. Maior `disponivel` desempata.
+
+Locs tipo `recebimento` são ignoradas (estoque em staging não pode ser vendido).
+
+**Auth:** X-Session-Id (qualquer cargo autenticado).
+
+**Query Params:**
+- `produto_id` — uuid em `siso_produtos.id` (req)
+- `galpao_id` — uuid em `siso_galpoes.id` (req)
+- `empresa_origem_id` — uuid em `siso_empresas.id` (opcional, tiebreak)
+
+**Response (200):**
+```json
+{
+  "total_disponivel": 5,
+  "sugestao": {
+    "empresa_dona_id": "uuid",
+    "empresa_dona_nome": "NetAir",
+    "localizacao_id": "uuid",
+    "localizacao_codigo": "A-01-2",
+    "localizacao_tipo": "picking",
+    "disponivel": 3
+  }
+}
+```
+
+Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
+
+**Errors:**
+- 400 — `produto_id` ou `galpao_id` ausentes
+- 500 — falha de DB
+
+**Side Effects:** nenhum (GET puro, sem side effects).
 
 ---
 

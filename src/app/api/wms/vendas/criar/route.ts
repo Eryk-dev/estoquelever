@@ -2,18 +2,31 @@
  * POST /api/wms/vendas/criar
  *
  * Cria um pedido de venda manual inserido por um vendedor (ou admin/operador).
- * Dois caminhos:
  *
- *  - modo="separacao": pedido entra no fluxo wave picking normal pulando NF
- *    (status='executando', status_separacao='aguardando_separacao').
+ * O vendedor escolhe **galpão único pro pedido** (contexto físico — ele está
+ * num balcão). Empresa dona e localização específica são **resolvidas
+ * automaticamente** server-side via `resolverDisponibilidadeVenda` (não vêm
+ * mais do request).
  *
- *  - modo="baixa_direta": pra cada item, gera mov 'S' no ledger WMS via
- *    wms_inserir_movimentacao (origem_tipo='venda_manual'). Pedido fica
- *    status='concluido' status_separacao=NULL. Vendedor escolhe quadrupla
- *    (produto + dona + galpão + localização) exata pra cada item.
+ * Modos:
  *
- * Rollback de baixa direta: se mov N falhar, estorna as anteriores via
- * estornarMovimentacao + deleta o pedido recém-criado.
+ *  - `modo="separacao"`: pedido entra no fluxo wave picking normal pulando
+ *    NF (status='executando', status_separacao='aguardando_separacao').
+ *    Operador resolve loc/qty no pick.
+ *
+ *  - `modo="baixa_direta"`: pra cada item, resolve quadrupla via
+ *    `resolverDisponibilidadeVenda` e gera mov 'S' no ledger WMS
+ *    (origem_tipo='venda_manual'). Pedido fica status='concluido'
+ *    status_separacao=NULL.
+ *
+ * **Degradação**: se vendedor pediu `baixa_direta` mas qualquer item não tem
+ * saldo suficiente no galpão escolhido, o pedido inteiro é criado em modo
+ * separação (status_separacao='aguardando_separacao') — segue o fluxo de
+ * fila como pedido de marketplace sem estoque. Resposta inclui
+ * `degradado: true, motivo_degradacao: 'falta_saldo', skus_sem_saldo: [...]`.
+ *
+ * Rollback de baixa direta: se mov N falhar mid-flight, estorna as
+ * anteriores via estornarMovimentacao + deleta o pedido recém-criado.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -22,18 +35,24 @@ import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import { registrarEvento } from "@/lib/historico-service";
-import type { CriarVendaDiretaRequest } from "@/types";
+import { resolverDisponibilidadeVenda } from "@/lib/wms/vendas-disponibilidade";
+import type {
+  CriarVendaDiretaRequest,
+  CriarVendaDiretaResponse,
+  ModoVendaDireta,
+} from "@/types";
 
-interface ItemValidado {
+interface ItemResolvido {
   produto_id: string; // uuid em siso_produtos
   tiny_produto_id: number; // bigint do mapping siso_produto_empresas
   sku: string;
   descricao: string;
   quantidade: number;
-  // Só pra baixa_direta:
-  galpao_id?: string;
-  localizacao_id?: string;
-  empresa_dona_id?: string;
+  // Resolvidos via resolverDisponibilidadeVenda (null se não tem saldo)
+  empresa_dona_id: string | null;
+  localizacao_id: string | null;
+  localizacao_codigo: string | null;
+  disponivel: number;
 }
 
 export async function POST(request: NextRequest) {
@@ -49,7 +68,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ erro: "JSON inválido" }, { status: 400 });
   }
 
-  const { cliente_nome, cliente_cpf_cnpj, canal_venda, empresa_origem_id, modo, items, idempotency_key } = body;
+  const {
+    cliente_nome,
+    cliente_cpf_cnpj,
+    canal_venda,
+    empresa_origem_id,
+    galpao_id,
+    modo,
+    items,
+    idempotency_key,
+  } = body;
 
   if (!cliente_nome?.trim()) {
     return NextResponse.json({ erro: "cliente_nome é obrigatório" }, { status: 400 });
@@ -57,8 +85,14 @@ export async function POST(request: NextRequest) {
   if (!empresa_origem_id) {
     return NextResponse.json({ erro: "empresa_origem_id é obrigatório" }, { status: 400 });
   }
+  if (!galpao_id) {
+    return NextResponse.json({ erro: "galpao_id é obrigatório" }, { status: 400 });
+  }
   if (modo !== "separacao" && modo !== "baixa_direta") {
-    return NextResponse.json({ erro: "modo deve ser 'separacao' ou 'baixa_direta'" }, { status: 400 });
+    return NextResponse.json(
+      { erro: "modo deve ser 'separacao' ou 'baixa_direta'" },
+      { status: 400 },
+    );
   }
   if (!Array.isArray(items) || items.length === 0) {
     return NextResponse.json({ erro: "items vazio" }, { status: 400 });
@@ -69,14 +103,6 @@ export async function POST(request: NextRequest) {
     }
     if (!item.quantidade || item.quantidade <= 0) {
       return NextResponse.json({ erro: `items[${i}].quantidade inválida` }, { status: 400 });
-    }
-    if (modo === "baixa_direta") {
-      if (!item.galpao_id || !item.localizacao_id || !item.empresa_dona_id) {
-        return NextResponse.json(
-          { erro: `items[${i}]: baixa_direta exige galpao_id, localizacao_id e empresa_dona_id` },
-          { status: 400 },
-        );
-      }
     }
   }
 
@@ -97,7 +123,7 @@ export async function POST(request: NextRequest) {
         status: existente.status,
         status_separacao: existente.status_separacao,
         idempotente: true,
-      });
+      } satisfies CriarVendaDiretaResponse);
     }
   }
 
@@ -133,39 +159,7 @@ export async function POST(request: NextRequest) {
     (produtos ?? []).map((p) => [String(p.id), { sku: p.sku, descricao: p.descricao }]),
   );
 
-  // Validate items: mapping exists + produto exists
-  const itensValidados: ItemValidado[] = [];
-  for (const item of items) {
-    const prod = prodMap.get(item.produto_id);
-    const tinyId = mapMap.get(item.produto_id);
-    if (!prod) {
-      return NextResponse.json(
-        { erro: `Produto ${item.produto_id} não encontrado no catálogo` },
-        { status: 400 },
-      );
-    }
-    if (!tinyId) {
-      return NextResponse.json(
-        {
-          erro: `Produto ${prod.sku} não está cadastrado na empresa origem — peça pro admin sincronizar via Tiny`,
-          sku: prod.sku,
-        },
-        { status: 400 },
-      );
-    }
-    itensValidados.push({
-      produto_id: item.produto_id,
-      tiny_produto_id: tinyId,
-      sku: prod.sku,
-      descricao: prod.descricao,
-      quantidade: item.quantidade,
-      galpao_id: item.galpao_id,
-      localizacao_id: item.localizacao_id,
-      empresa_dona_id: item.empresa_dona_id,
-    });
-  }
-
-  // Resolve empresa origem + nome do galpão preferencial
+  // Resolve empresa origem + nome do galpão escolhido
   const { data: empresa } = await supabase
     .from("siso_empresas")
     .select("id, nome")
@@ -176,38 +170,67 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ erro: "empresa_origem_id inválido" }, { status: 400 });
   }
 
-  // Resolve galpão pra separação:
-  //   - baixa_direta: usa galpão do primeiro item (não importa muito, é só pra display)
-  //   - separação: primeiro galpão preferencial da empresa
-  let separacaoGalpaoId: string | null = null;
-  let galpaoNome: string | null = null;
-  if (modo === "baixa_direta" && itensValidados[0]?.galpao_id) {
-    separacaoGalpaoId = itensValidados[0].galpao_id;
-  } else {
-    const { data: pref } = await supabase
-      .from("siso_empresa_galpoes_preferenciais")
-      .select("galpao_id, siso_galpoes!inner(id, nome)")
-      .eq("empresa_id", empresa_origem_id)
-      .limit(1)
-      .maybeSingle();
-    if (pref) {
-      separacaoGalpaoId = pref.galpao_id;
-    }
-  }
-  if (separacaoGalpaoId) {
-    const { data: g } = await supabase
-      .from("siso_galpoes")
-      .select("nome")
-      .eq("id", separacaoGalpaoId)
-      .single();
-    galpaoNome = g?.nome ?? null;
-  }
+  const { data: galpao } = await supabase
+    .from("siso_galpoes")
+    .select("id, nome")
+    .eq("id", galpao_id)
+    .single();
 
-  if (!separacaoGalpaoId || !galpaoNome) {
-    return NextResponse.json(
-      { erro: "Empresa origem sem galpão preferencial e nenhum galpão informado nos items" },
-      { status: 400 },
-    );
+  if (!galpao) {
+    return NextResponse.json({ erro: "galpao_id inválido" }, { status: 400 });
+  }
+  const galpaoNome = galpao.nome;
+
+  // Resolve disponibilidade por item — paralelo
+  const itensResolvidos: ItemResolvido[] = await Promise.all(
+    items.map(async (item) => {
+      const prod = prodMap.get(item.produto_id);
+      const tinyId = mapMap.get(item.produto_id);
+      if (!prod) {
+        throw new Error(`Produto ${item.produto_id} não encontrado no catálogo`);
+      }
+      if (!tinyId) {
+        throw new Error(
+          `Produto ${prod.sku} não está cadastrado na empresa origem — peça pro admin sincronizar via Tiny`,
+        );
+      }
+      const dispon = await resolverDisponibilidadeVenda(supabase as never, {
+        produto_id: item.produto_id,
+        galpao_id,
+        empresa_origem_id,
+      });
+      return {
+        produto_id: item.produto_id,
+        tiny_produto_id: tinyId,
+        sku: prod.sku,
+        descricao: prod.descricao,
+        quantidade: item.quantidade,
+        empresa_dona_id: dispon.sugestao?.empresa_dona_id ?? null,
+        localizacao_id: dispon.sugestao?.localizacao_id ?? null,
+        localizacao_codigo: dispon.sugestao?.localizacao_codigo ?? null,
+        disponivel: dispon.total_disponivel,
+      };
+    }),
+  ).catch((err) => {
+    throw err;
+  });
+
+  // Detecta falta de saldo: items cuja quantidade pedida excede o disponível
+  // total no galpão escolhido (independente de qual loc/dona).
+  const itensSemSaldo = itensResolvidos.filter((i) => i.quantidade > i.disponivel);
+  const todasComSaldo = itensSemSaldo.length === 0;
+
+  // Decisão final de modo (degradação automática)
+  let modoEfetivo: ModoVendaDireta = modo;
+  let degradado = false;
+  if (modo === "baixa_direta" && !todasComSaldo) {
+    modoEfetivo = "separacao";
+    degradado = true;
+    logger.warn("vendas.criar", "Baixa direta degradada pra separação por falta de saldo", {
+      empresa_origem_id,
+      galpao_id,
+      skus_sem_saldo: itensSemSaldo.map((i) => i.sku),
+    });
   }
 
   // Gera ID do pedido com prefixo MAN-
@@ -231,10 +254,12 @@ export async function POST(request: NextRequest) {
     tipo_resolucao: "manual",
     decisao_final: "propria",
     nome_ecommerce: null,
-    separacao_galpao_id: separacaoGalpaoId,
+    separacao_galpao_id: galpao_id,
     marcadores: ["LVR", "VENDA_DIRETA"],
-    payload_original: idempotency_key ? { idempotency_key, manual: true } : { manual: true },
-    ...(modo === "separacao"
+    payload_original: idempotency_key
+      ? { idempotency_key, manual: true, modo_solicitado: modo, degradado }
+      : { manual: true, modo_solicitado: modo, degradado },
+    ...(modoEfetivo === "separacao"
       ? { status: "executando", status_separacao: "aguardando_separacao" }
       : { status: "concluido", status_separacao: null, processado_em: agora }),
   };
@@ -242,11 +267,14 @@ export async function POST(request: NextRequest) {
   const { error: pedidoErr } = await supabase.from("siso_pedidos").insert(pedidoRow);
   if (pedidoErr) {
     logger.error("vendas.criar", "Falha ao inserir pedido", { error: pedidoErr.message, pedidoId });
-    return NextResponse.json({ erro: "Falha ao criar pedido", detalhe: pedidoErr.message }, { status: 500 });
+    return NextResponse.json(
+      { erro: "Falha ao criar pedido", detalhe: pedidoErr.message },
+      { status: 500 },
+    );
   }
 
   // 2) Insert siso_pedido_itens (bulk)
-  const itensRows = itensValidados.map((i) => ({
+  const itensRows = itensResolvidos.map((i) => ({
     pedido_id: pedidoId,
     produto_id: i.tiny_produto_id,
     sku: i.sku,
@@ -258,23 +286,49 @@ export async function POST(request: NextRequest) {
 
   const { error: itensErr } = await supabase.from("siso_pedido_itens").insert(itensRows);
   if (itensErr) {
-    // Rollback pedido
     await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
     logger.error("vendas.criar", "Falha ao inserir itens", { error: itensErr.message, pedidoId });
-    return NextResponse.json({ erro: "Falha ao inserir itens", detalhe: itensErr.message }, { status: 500 });
+    return NextResponse.json(
+      { erro: "Falha ao inserir itens", detalhe: itensErr.message },
+      { status: 500 },
+    );
   }
 
-  // 3) Se baixa_direta, gera movs 'S' no ledger com rollback manual
+  // 3) Se modoEfetivo === 'baixa_direta', gera movs 'S' no ledger com rollback manual
   const movsCriadas: string[] = [];
-  if (modo === "baixa_direta") {
-    for (const item of itensValidados) {
+  if (modoEfetivo === "baixa_direta") {
+    for (const item of itensResolvidos) {
+      // Aqui já garantimos que tem saldo (senão modoEfetivo seria 'separacao').
+      // Mas localizacao_id/empresa_dona_id devem existir — se não, é bug interno.
+      if (!item.empresa_dona_id || !item.localizacao_id) {
+        logger.error("vendas.criar", "Item sem quadrupla resolvida em baixa_direta — inconsistência", {
+          pedidoId,
+          sku: item.sku,
+        });
+        for (const movId of movsCriadas) {
+          try {
+            await estornarMovimentacao({
+              mov_id: movId,
+              usuario_id: user.id,
+              observacoes: `Rollback de venda manual ${pedidoId} (quadrupla inconsistente)`,
+            });
+          } catch {}
+        }
+        await supabase.from("siso_pedido_itens").delete().eq("pedido_id", pedidoId);
+        await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
+        return NextResponse.json(
+          { erro: `Falha interna: quadrupla não resolvida pra ${item.sku}` },
+          { status: 500 },
+        );
+      }
+
       try {
         const mov = await inserirMovimentacao({
           quadrupla: {
             produto_id: item.produto_id,
-            empresa_dona_id: item.empresa_dona_id!,
-            galpao_id: item.galpao_id!,
-            localizacao_id: item.localizacao_id!,
+            empresa_dona_id: item.empresa_dona_id,
+            galpao_id: galpao_id,
+            localizacao_id: item.localizacao_id,
           },
           tipo: "S",
           qty: item.quantidade,
@@ -287,6 +341,7 @@ export async function POST(request: NextRequest) {
             vendedor_nome: user.nome,
             cliente_nome,
             canal_venda: canal_venda ?? null,
+            loc_codigo: item.localizacao_codigo,
           },
           usuario_id: user.id,
           observacoes: `Venda manual ${pedidoId} — ${cliente_nome}`,
@@ -341,16 +396,20 @@ export async function POST(request: NextRequest) {
     usuarioId: user.id,
     usuarioNome: user.nome,
     detalhes: {
-      modo,
+      modo_solicitado: modo,
+      modo_efetivo: modoEfetivo,
+      degradado,
       cliente_nome,
       empresa_origem_id,
+      galpao_id,
       galpao: galpaoNome,
-      items_count: itensValidados.length,
+      items_count: itensResolvidos.length,
       canal_venda: canal_venda ?? null,
+      ...(degradado ? { skus_sem_saldo: itensSemSaldo.map((i) => i.sku) } : {}),
     },
   }).catch(() => {});
 
-  if (modo === "baixa_direta") {
+  if (modoEfetivo === "baixa_direta") {
     registrarEvento({
       pedidoId,
       evento: "venda_baixa_direta_executada",
@@ -360,11 +419,20 @@ export async function POST(request: NextRequest) {
     }).catch(() => {});
   }
 
-  return NextResponse.json({
+  const response: CriarVendaDiretaResponse = {
     pedido_id: pedidoId,
     numero,
-    status: modo === "separacao" ? "executando" : "concluido",
-    status_separacao: modo === "separacao" ? "aguardando_separacao" : null,
-    movs_criadas: movsCriadas.length > 0 ? movsCriadas : undefined,
-  });
+    status: modoEfetivo === "separacao" ? "executando" : "concluido",
+    status_separacao: modoEfetivo === "separacao" ? "aguardando_separacao" : null,
+    movs_criadas: movsCriadas.length > 0 ? movsCriadas.length : undefined,
+    ...(degradado
+      ? {
+          degradado: true,
+          motivo_degradacao: "falta_saldo" as const,
+          skus_sem_saldo: itensSemSaldo.map((i) => i.sku),
+        }
+      : {}),
+  };
+
+  return NextResponse.json(response);
 }

@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { sisoFetch, useAuth } from "@/lib/auth-context";
 import { PageHeader, Icon, Pagination, StatusBadge } from "@/components/wms/ui/wms-ui";
-import { FormCriarPedidoModal } from "@/components/wms/vendas/form-criar-pedido";
 import { getMarketplaceName, formatRelativeTime } from "@/lib/domain-helpers";
 
 type Tab = "pendentes" | "em_separacao" | "baixados" | "concluidos";
@@ -66,7 +65,6 @@ export default function VendasPage() {
   const buscaParam = sp?.get("busca") ?? "";
 
   const [busca, setBusca] = useState(buscaParam);
-  const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
     setBusca(buscaParam);
@@ -105,7 +103,7 @@ export default function VendasPage() {
     enabled: !!user,
   });
 
-  const { data, isLoading, refetch } = useQuery<VendasResponse>({
+  const { data, isLoading } = useQuery<VendasResponse>({
     queryKey: ["vendas-lista", tab, vendedorParam, marketplace, buscaParam, page],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -130,7 +128,7 @@ export default function VendasPage() {
         subtitle="Pedidos manuais inseridos por vendedores + marketplaces (ML / Shopee)."
       >
         <button
-          onClick={() => setModalOpen(true)}
+          onClick={() => router.push("/wms/vendas/nova")}
           className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
         >
           <Icon name="plus" size={12} />
@@ -287,17 +285,6 @@ export default function VendasPage() {
         </div>
       )}
 
-      {modalOpen && (
-        <FormCriarPedidoModal
-          open={modalOpen}
-          onClose={() => setModalOpen(false)}
-          onCreated={(pedidoId) => {
-            setModalOpen(false);
-            refetch();
-            router.push(`/wms/vendas/${encodeURIComponent(pedidoId)}`);
-          }}
-        />
-      )}
     </div>
   );
 }

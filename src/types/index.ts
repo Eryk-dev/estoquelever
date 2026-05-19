@@ -129,15 +129,30 @@ export interface CriarVendaDiretaRequest {
   cliente_cpf_cnpj?: string | null;
   canal_venda?: string | null;
   empresa_origem_id: string;
+  /** Galpão único onde a venda acontece (sobe pro top-level — vendedor está num balcão). */
+  galpao_id: string;
   modo: ModoVendaDireta;
   items: Array<{
     produto_id: string;
     quantidade: number;
-    galpao_id?: string;
-    localizacao_id?: string;
-    empresa_dona_id?: string;
   }>;
   idempotency_key?: string;
+}
+
+/** Response shape for POST /api/wms/vendas/criar */
+export interface CriarVendaDiretaResponse {
+  pedido_id: string;
+  numero: string;
+  status: string;
+  status_separacao: string | null;
+  movs_criadas?: number;
+  /** True se o vendedor pediu baixa_direta mas algum item sem saldo forçou ir pra separação. */
+  degradado?: boolean;
+  /** Motivo da degradação (quando degradado=true). */
+  motivo_degradacao?: "falta_saldo";
+  /** SKUs que ficaram sem saldo (quando degradado=true). */
+  skus_sem_saldo?: string[];
+  idempotente?: boolean;
 }
 
 // ─── Separacao / Embalagem ──────────────────────────────────────────────────

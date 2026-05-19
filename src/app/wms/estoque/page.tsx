@@ -103,11 +103,17 @@ export default function EstoquePage() {
       wmsApi<{ rows: LinhaCobertura[] }>(`/api/wms/cobertura`),
   });
 
-  // Busca paralela de kits cujos componentes casam com `q`. Só dispara
-  // quando há query. Mostra-os como linhas adicionais abaixo da tabela
-  // (kits não têm saldo direto — só disponibilidade derivada).
-  const kitsQuery = useQuery({
-    queryKey: ["wms-estoque-kits-por-componente", q],
+  // Busca paralela em `siso_produtos` quando há query (≥2 chars). Cobre 3
+  // casos que o cache de saldo (`siso_estoque` filtrado por saldo>0) não
+  // pega sozinho:
+  //   • Kit que casa pelo próprio SKU/descrição (kit nunca tem linha em
+  //     siso_estoque — saldo é derivado dos componentes).
+  //   • Kit cujos componentes casam com `q` (mostrado como "kits que
+  //     contêm X como componente").
+  //   • Produto simples que casa mas está zerado — operador precisa ver
+  //     pra confirmar fisicamente a ausência.
+  const buscaQuery = useQuery({
+    queryKey: ["wms-estoque-busca-produtos", q],
     queryFn: () =>
       wmsApi<{
         rows: Produto[];
@@ -118,12 +124,25 @@ export default function EstoquePage() {
       ),
     enabled: q.trim().length >= 2,
   });
-  const kitsExtras = useMemo<Produto[]>(() => {
-    const d = kitsQuery.data;
+  // `rows` da API vem com matches diretos primeiro e kits-por-componente
+  // anexados ao final. `kits_por_componente` indica quantos linhas no fim
+  // são "via componente".
+  const matchesDiretos = useMemo<Produto[]>(() => {
+    const d = buscaQuery.data;
+    if (!d) return [];
+    const n = d.kits_por_componente ?? 0;
+    return d.rows.slice(0, d.rows.length - n);
+  }, [buscaQuery.data]);
+  const kitsDiretos = useMemo<Produto[]>(
+    () => matchesDiretos.filter((p) => p.eh_kit),
+    [matchesDiretos],
+  );
+  const kitsViaComponente = useMemo<Produto[]>(() => {
+    const d = buscaQuery.data;
     const n = d?.kits_por_componente ?? 0;
     if (!d || n === 0) return [];
     return d.rows.slice(d.rows.length - n);
-  }, [kitsQuery.data]);
+  }, [buscaQuery.data]);
 
   // Map cobertura por produto. Quando filtra por galpão, considera só
   // cobertura desse galpão; caso contrário agrega o pior status do produto.
@@ -243,6 +262,22 @@ export default function EstoquePage() {
     filterStatus,
     sortBy,
   ]);
+
+  // Produtos simples que casaram com `q` mas não estão em `rows` (não têm
+  // saldo no escopo filtrado — galpão/status/busca). Renderizados como
+  // linhas "Sem estoque" pro operador confirmar fisicamente.
+  const produtosSemEstoque = useMemo<Produto[]>(() => {
+    if (matchesDiretos.length === 0) return [];
+    const comEstoqueIds = new Set(rows.map((r) => r.produtoId));
+    return matchesDiretos.filter((p) => !p.eh_kit && !comEstoqueIds.has(p.id));
+  }, [matchesDiretos, rows]);
+
+  // Indica se a busca trouxe ALGO renderizável (kit/sem-estoque), pra não
+  // mostrar "Nenhum produto encontrado" quando os extras existem.
+  const buscaTemExtras =
+    kitsDiretos.length > 0 ||
+    kitsViaComponente.length > 0 ||
+    produtosSemEstoque.length > 0;
 
   const totalRows = rows.length;
   // Derive-during-render: se a página atual está além do total filtrado,
@@ -377,91 +412,27 @@ export default function EstoquePage() {
                 </td>
               </tr>
             )}
-            {!estoqueQuery.isLoading && rows.length === 0 && (
-              <tr>
-                <td colSpan={11} className="wms-td-empty">
-                  Nenhum produto encontrado.
-                </td>
-              </tr>
+            {!estoqueQuery.isLoading &&
+              rows.length === 0 &&
+              !buscaTemExtras && (
+                <tr>
+                  <td colSpan={11} className="wms-td-empty">
+                    Nenhum produto encontrado.
+                  </td>
+                </tr>
+              )}
+            {kitsDiretos.length > 0 && currentPage === 1 && (
+              <>
+                <SectionHeaderRow>Kits encontrados</SectionHeaderRow>
+                {kitsDiretos.map((kit) => (
+                  <KitLiteRow
+                    key={`kit-direct-${kit.id}`}
+                    kit={kit}
+                    onOpenDrawer={openDrawer}
+                  />
+                ))}
+              </>
             )}
-            {kitsExtras.length > 0 && currentPage === 1 && (
-              <tr>
-                <td colSpan={11} style={{
-                  padding: "8px 12px",
-                  background: "var(--wms-c-panel-2)",
-                  fontSize: 11.5,
-                  textTransform: "uppercase",
-                  letterSpacing: ".06em",
-                  color: "var(--wms-c-mute)",
-                  fontWeight: 600,
-                  borderTop: "1px solid var(--wms-c-border)",
-                  borderBottom: "1px solid var(--wms-c-border)",
-                }}>
-                  Kits que contêm “{q}” como componente
-                </td>
-              </tr>
-            )}
-            {kitsExtras.length > 0 && currentPage === 1 && kitsExtras.map((kit) => (
-              <tr
-                key={`kit-${kit.id}`}
-                className="wms-tr-clickable"
-                onClick={() => openDrawer(kit.id)}
-              >
-                <td></td>
-                <td>
-                  {kit.imagem_url && (
-                    <img
-                      src={kit.imagem_url}
-                      alt=""
-                      loading="lazy"
-                      className="wms-thumb wms-thumb-sm"
-                    />
-                  )}
-                </td>
-                <td className="wms-mono">
-                  <a className="wms-link-row">{kit.sku}</a>
-                </td>
-                <td className="wms-td-desc">
-                  <span style={{
-                    display: "inline-block",
-                    fontSize: 10,
-                    padding: "1px 6px",
-                    borderRadius: 3,
-                    background: "var(--wms-c-info-bg)",
-                    color: "var(--wms-c-info)",
-                    border: "1px solid var(--wms-c-info-bd)",
-                    marginRight: 6,
-                    textTransform: "uppercase",
-                    letterSpacing: ".04em",
-                    fontWeight: 600,
-                    verticalAlign: "middle",
-                  }}>
-                    Kit
-                  </span>
-                  <a className="wms-link-row">{kit.descricao}</a>
-                </td>
-                <td className="wms-tar wms-mono wms-td-mute" title="Kit virtual — sem saldo próprio">—</td>
-                <td className="wms-tar wms-mono wms-td-mute">—</td>
-                <td className="wms-tar wms-mono wms-td-mute" title="Veja o detalhe pra disponibilidade derivada">—</td>
-                <td className="wms-tar wms-td-mute">—</td>
-                <td className="wms-td-mute" style={{ fontSize: 12 }}>
-                  Disponibilidade derivada dos componentes
-                </td>
-                <td className="wms-tar wms-td-mute">—</td>
-                <td className="wms-td-actions">
-                  <button
-                    className="wms-btn-icon"
-                    title="Abrir detalhe do kit"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openDrawer(kit.id);
-                    }}
-                  >
-                    <Icon name="chevron-r" size={11} />
-                  </button>
-                </td>
-              </tr>
-            ))}
             {pagedRows.map((r) => {
               const isExpanded = expanded === r.produtoId;
               return (
@@ -511,6 +482,34 @@ export default function EstoquePage() {
                 />
               );
             })}
+            {produtosSemEstoque.length > 0 && currentPage === 1 && (
+              <>
+                <SectionHeaderRow>
+                  Sem estoque — confirme fisicamente
+                </SectionHeaderRow>
+                {produtosSemEstoque.map((p) => (
+                  <SemEstoqueRow
+                    key={`zero-${p.id}`}
+                    produto={p}
+                    onOpenDrawer={openDrawer}
+                  />
+                ))}
+              </>
+            )}
+            {kitsViaComponente.length > 0 && currentPage === 1 && (
+              <>
+                <SectionHeaderRow>
+                  Kits que contêm “{q}” como componente
+                </SectionHeaderRow>
+                {kitsViaComponente.map((kit) => (
+                  <KitLiteRow
+                    key={`kit-comp-${kit.id}`}
+                    kit={kit}
+                    onOpenDrawer={openDrawer}
+                  />
+                ))}
+              </>
+            )}
           </tbody>
         </table>
       </div>
@@ -800,6 +799,145 @@ function ExpandableRow({
         </tr>
       )}
     </>
+  );
+}
+
+function SectionHeaderRow({ children }: { children: React.ReactNode }) {
+  return (
+    <tr>
+      <td
+        colSpan={11}
+        style={{
+          padding: "8px 12px",
+          background: "var(--wms-c-panel-2)",
+          fontSize: 11.5,
+          textTransform: "uppercase",
+          letterSpacing: ".06em",
+          color: "var(--wms-c-mute)",
+          fontWeight: 600,
+          borderTop: "1px solid var(--wms-c-border)",
+          borderBottom: "1px solid var(--wms-c-border)",
+        }}
+      >
+        {children}
+      </td>
+    </tr>
+  );
+}
+
+function KitLiteRow({
+  kit,
+  onOpenDrawer,
+}: {
+  kit: Produto;
+  onOpenDrawer: (id: string) => void;
+}) {
+  return (
+    <tr className="wms-tr-clickable" onClick={() => onOpenDrawer(kit.id)}>
+      <td></td>
+      <td>
+        {kit.imagem_url && (
+          <img
+            src={kit.imagem_url}
+            alt=""
+            loading="lazy"
+            className="wms-thumb wms-thumb-sm"
+          />
+        )}
+      </td>
+      <td className="wms-mono">
+        <a className="wms-link-row">{kit.sku}</a>
+      </td>
+      <td className="wms-td-desc">
+        <span className="wms-badge wms-badge-info" style={{ marginRight: 6 }}>
+          Kit
+        </span>
+        <a className="wms-link-row">{kit.descricao}</a>
+      </td>
+      <td
+        className="wms-tar wms-mono wms-td-mute"
+        title="Kit virtual — sem saldo próprio"
+      >
+        —
+      </td>
+      <td className="wms-tar wms-mono wms-td-mute">—</td>
+      <td
+        className="wms-tar wms-mono wms-td-mute"
+        title="Veja o detalhe pra disponibilidade derivada"
+      >
+        —
+      </td>
+      <td className="wms-tar wms-td-mute">—</td>
+      <td className="wms-td-mute" style={{ fontSize: 12 }}>
+        Disponibilidade derivada dos componentes
+      </td>
+      <td className="wms-tar wms-td-mute">—</td>
+      <td className="wms-td-actions">
+        <button
+          className="wms-btn-icon"
+          title="Abrir detalhe do kit"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenDrawer(kit.id);
+          }}
+        >
+          <Icon name="chevron-r" size={11} />
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function SemEstoqueRow({
+  produto,
+  onOpenDrawer,
+}: {
+  produto: Produto;
+  onOpenDrawer: (id: string) => void;
+}) {
+  return (
+    <tr
+      className="wms-tr-clickable"
+      onClick={() => onOpenDrawer(produto.id)}
+    >
+      <td></td>
+      <td>
+        {produto.imagem_url && (
+          <img
+            src={produto.imagem_url}
+            alt=""
+            loading="lazy"
+            className="wms-thumb wms-thumb-sm"
+          />
+        )}
+      </td>
+      <td className="wms-mono">
+        <a className="wms-link-row">{produto.sku}</a>
+      </td>
+      <td className="wms-td-desc">
+        <a className="wms-link-row">{produto.descricao}</a>
+      </td>
+      <td className="wms-tar wms-mono wms-td-mute">0</td>
+      <td className="wms-tar wms-mono wms-td-mute">0</td>
+      <td className="wms-tar wms-mono wms-td-mute">0</td>
+      <td className="wms-tar wms-td-mute">0</td>
+      <td>
+        <span className="wms-badge wms-badge-warn">Sem estoque</span>
+      </td>
+      <td className="wms-tar wms-td-mute">—</td>
+      <td className="wms-td-actions">
+        <button
+          className="wms-btn-icon"
+          title="Abrir produto"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenDrawer(produto.id);
+          }}
+        >
+          <Icon name="chevron-r" size={11} />
+        </button>
+      </td>
+    </tr>
   );
 }
 

@@ -484,6 +484,31 @@ function TabLote() {
           </div>
         </Field>
 
+        <Field
+          label="Entrada direta"
+          hint="pula a guarda — exige loc destino em todos os itens"
+        >
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              cursor: "pointer",
+              fontSize: 12.5,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={entradaDireta}
+              onChange={(e) => {
+                setEntradaDireta(e.target.checked);
+                if (e.target.checked) setIniciarRota(false);
+              }}
+            />
+            <span>Gravar saldo direto na loc destino, sem passar pela fila de guarda</span>
+          </label>
+        </Field>
+
         <Field label="Observações" hint="opcional">
           <input
             className="wms-input"
@@ -713,21 +738,6 @@ function TabLote() {
               onChange={(e) => setImprimirAuto(e.target.checked)}
             />
             Imprimir etiquetas ao confirmar
-          </label>
-          <label
-            style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
-          >
-            <input
-              type="checkbox"
-              checked={entradaDireta}
-              onChange={(e) => {
-                setEntradaDireta(e.target.checked);
-                if (e.target.checked) setIniciarRota(false);
-              }}
-            />
-            <span>
-              Entrada direta <span className="wms-td-mute">(pula a guarda)</span>
-            </span>
           </label>
           <label
             style={{

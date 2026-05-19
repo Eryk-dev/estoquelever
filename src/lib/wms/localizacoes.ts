@@ -52,14 +52,12 @@ export function gerarCodigosLote(input: LoteCodigosInput): LoteCodigosResult {
   }
 
   const hPad = Math.max(2, String(h_fim).length);
-  const vPad = String(v_fim).length;
 
   const codigos: string[] = [];
   for (let h = h_inicio; h <= h_fim; h++) {
     const hStr = String(h).padStart(hPad, "0");
     for (let v = v_inicio; v <= v_fim; v++) {
-      const vStr = String(v).padStart(vPad, "0");
-      codigos.push(`${prefixo}${separador}${hStr}${separador}${vStr}`);
+      codigos.push(`${prefixo}${separador}${hStr}${separador}${v}`);
     }
   }
 

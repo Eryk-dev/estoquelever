@@ -12,7 +12,7 @@ describe("gerarCodigosLote", () => {
     });
     expect(r.total).toBe(100);
     expect(r.codigos).toHaveLength(100);
-    expect(r.codigos[0]).toBe("A-01-01");
+    expect(r.codigos[0]).toBe("A-01-1");
     expect(r.codigos[r.codigos.length - 1]).toBe("A-10-10");
   });
 
@@ -59,7 +59,7 @@ describe("gerarCodigosLote", () => {
     expect(r.total).toBe(500);
   });
 
-  it("andar > 9 vira 2 dígitos naturalmente", () => {
+  it("andar nunca recebe zero à esquerda, mesmo quando fim > 9", () => {
     const r = gerarCodigosLote({
       prefixo: "B",
       h_inicio: 1,
@@ -67,7 +67,8 @@ describe("gerarCodigosLote", () => {
       v_inicio: 1,
       v_fim: 100,
     });
-    expect(r.codigos[0]).toBe("B-01-001");
+    expect(r.codigos[0]).toBe("B-01-1");
+    expect(r.codigos[9]).toBe("B-01-10");
     expect(r.codigos[r.codigos.length - 1]).toBe("B-10-100");
   });
 

@@ -22,7 +22,7 @@ export async function GET(
       .from("siso_inventario_operadores")
       .select("*, usuario:siso_usuarios(nome, foto_url)")
       .eq("sessao_id", id)
-      .order("slot", { ascending: true }),
+      .order("entrou_em", { ascending: true }),
     sb
       .from("siso_inventario_localizacoes")
       .select(

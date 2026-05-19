@@ -282,8 +282,8 @@ function NovaVendaBody() {
         </Field>
       </section>
 
-      {/* Itens */}
-      <section className="wms-card" style={{ padding: 14 }}>
+      {/* Itens — overflow visible pra não clipar dropdown do ProdutoCombo */}
+      <section className="wms-card" style={{ padding: 14, overflow: "visible" }}>
         <div
           style={{
             display: "flex",

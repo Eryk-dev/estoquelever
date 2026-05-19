@@ -439,5 +439,5 @@ export function deriveMlRedirectUri(request: {
     request.headers.get("x-forwarded-host") ??
     request.headers.get("host") ??
     request.url.host;
-  return `${proto}://${host}/api/ml/oauth/callback`;
+  return `${proto}://${host}/api/wms/ml/oauth/callback`;
 }

@@ -1,5 +1,5 @@
 /**
- * GET /api/ml/oauth/callback — recebe code do ML
+ * GET /api/wms/ml/oauth/callback — recebe code do ML
  *
  * Fluxo:
  *   1. Valida state (cookie HttpOnly)
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
   const app = await getMlAppConfig();
   if (!app) return fail("app_not_configured");
 
-  const redirectUri = app.redirect_uri ?? `${publicOrigin}/api/ml/oauth/callback`;
+  const redirectUri = app.redirect_uri ?? `${publicOrigin}/api/wms/ml/oauth/callback`;
 
   let tokens;
   try {

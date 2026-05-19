@@ -1650,7 +1650,7 @@ function MlAppSection({
 
   const redirectUri =
     typeof window !== "undefined"
-      ? `${window.location.origin}/api/ml/oauth/callback`
+      ? `${window.location.origin}/api/wms/ml/oauth/callback`
       : "";
 
   async function copyRedirect() {

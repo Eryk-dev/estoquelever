@@ -1,5 +1,5 @@
 /**
- * GET /api/ml/oauth — inicia OAuth2 do ML
+ * GET /api/wms/ml/oauth — inicia OAuth2 do ML
  *
  * Redireciona pra https://auth.mercadolivre.com.br/authorization com state
  * único. O state é guardado num cookie HttpOnly e validado no callback.
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     request.headers.get("host") ??
     request.nextUrl.host;
   const origin = `${forwardedProto}://${forwardedHost}`;
-  const redirectUri = app.redirect_uri ?? `${origin}/api/ml/oauth/callback`;
+  const redirectUri = app.redirect_uri ?? `${origin}/api/wms/ml/oauth/callback`;
 
   const state = crypto.randomUUID();
   const url = buildMlAuthorizeUrl({

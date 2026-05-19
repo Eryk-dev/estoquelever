@@ -44,16 +44,19 @@ export async function PATCH(
   const auth = await requireWarehouseAccess(req);
   if (!auth.ok) return auth.response;
 
-  const { id: _sessaoId } = await params;
-  void _sessaoId;
+  const { id: sessaoId } = await params;
   const body = await req.json();
-  if (!body.divergencia_id || !body.acao) {
+
+  const ids: string[] = Array.isArray(body.divergencia_ids)
+    ? body.divergencia_ids.filter((x: unknown): x is string => typeof x === "string")
+    : [];
+  if (ids.length === 0) {
     return NextResponse.json(
-      { error: "divergencia_id e acao obrigatórios" },
+      { error: "divergencia_ids obrigatório (array com ≥1 id)" },
       { status: 400 },
     );
   }
-  const sb = createServiceClient();
+
   // Sem "recontagem" no novo fluxo — supervisor decide só aprovar/rejeitar
   // a divergência depois da contagem encerrada.
   const novoStatus =
@@ -69,15 +72,29 @@ export async function PATCH(
     );
   }
 
-  await sb
+  const sb = createServiceClient();
+  const { data, error } = await sb
     .from("siso_inventario_divergencias")
     .update({
       status: novoStatus,
       resolucao_por: auth.user.id,
       resolucao_em: new Date().toISOString(),
-      observacoes_resolucao: body.observacoes,
+      observacoes_resolucao: body.observacoes ?? null,
     })
-    .eq("id", body.divergencia_id);
+    .in("id", ids)
+    .eq("sessao_id", sessaoId)
+    .eq("status", "pendente")
+    .select("id");
 
-  return NextResponse.json({ ok: true });
+  if (error) {
+    return wmsErrorResponse({
+      source: "wms.inventario.divergencias",
+      error,
+      requestPath: `/api/wms/inventario/${sessaoId}/divergencias`,
+      requestMethod: "PATCH",
+      metadata: { sessao_id: sessaoId, acao: body.acao, ids_count: ids.length },
+    });
+  }
+
+  return NextResponse.json({ ok: true, atualizadas: data?.length ?? 0 });
 }

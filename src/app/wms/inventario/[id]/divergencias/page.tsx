@@ -1,10 +1,11 @@
 "use client";
-import { use } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   Icon,
+  Modal,
   PageHeader,
   StatusBadge,
   fmtBRL,
@@ -39,34 +40,134 @@ export default function DivergenciasPage({
       ),
   });
 
-  const resolver = useMutation({
-    mutationFn: ({
-      divergencia_id,
-      acao,
-    }: {
-      divergencia_id: string;
-      acao: "aprovar" | "rejeitar";
-    }) =>
-      wmsApi<{ ok: true }>(`/api/wms/inventario/${id}/divergencias`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ divergencia_id, acao }),
-      }),
-    onSuccess: () => {
-      toast.success("Divergência atualizada");
-      queryClient.invalidateQueries({ queryKey: ["wms-inv-div", id] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const rows = data?.rows ?? [];
-  const pendentes = rows.filter((r) => r.status === "pendente").length;
+  const rows = useMemo(() => data?.rows ?? [], [data]);
+  const pendentesRows = useMemo(
+    () => rows.filter((r) => r.status === "pendente"),
+    [rows],
+  );
+  const pendentes = pendentesRows.length;
   const aprovadas = rows.filter((r) => r.status === "aprovada").length;
   const rejeitadas = rows.filter((r) => r.status === "rejeitada").length;
   const valorTotal = rows.reduce(
     (s, r) => s + Math.abs(Number(r.valor_financeiro ?? 0)),
     0,
   );
+
+  const [rawSelectedIds, setRawSelectedIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [confirmAcao, setConfirmAcao] = useState<
+    "aprovar" | "rejeitar" | null
+  >(null);
+  const lastCheckedIdxRef = useRef<number | null>(null);
+  const headerCbRef = useRef<HTMLInputElement | null>(null);
+
+  // Derivação: descarta IDs que já não estão pendentes (outro supervisor
+  // resolveu, query invalidou, etc.). rawSelectedIds é só o que o usuário
+  // clicou — selectedIds é o que vale.
+  const pendenteIdSet = useMemo(
+    () => new Set(pendentesRows.map((r) => r.id)),
+    [pendentesRows],
+  );
+  const selectedIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const id of rawSelectedIds) if (pendenteIdSet.has(id)) s.add(id);
+    return s;
+  }, [rawSelectedIds, pendenteIdSet]);
+
+  // Indeterminate no header checkbox
+  useEffect(() => {
+    if (!headerCbRef.current) return;
+    headerCbRef.current.indeterminate =
+      selectedIds.size > 0 && selectedIds.size < pendentes;
+  }, [selectedIds, pendentes]);
+
+  const allPendentesSelecionadas =
+    pendentes > 0 && selectedIds.size === pendentes;
+
+  const toggleAll = () => {
+    if (allPendentesSelecionadas) {
+      setRawSelectedIds(new Set());
+    } else {
+      setRawSelectedIds(new Set(pendentesRows.map((r) => r.id)));
+    }
+    lastCheckedIdxRef.current = null;
+  };
+
+  const toggleOne = (rowId: string, idx: number, shift: boolean) => {
+    setRawSelectedIds((prev) => {
+      const next = new Set(prev);
+      // Shift+click — range select entre lastCheckedIdx e idx,
+      // restrito a linhas pendentes.
+      if (shift && lastCheckedIdxRef.current !== null) {
+        const [a, b] = [lastCheckedIdxRef.current, idx].sort(
+          (x, y) => x - y,
+        );
+        const targetChecked = !prev.has(rowId);
+        for (let i = a; i <= b; i++) {
+          const r = rows[i];
+          if (!r || r.status !== "pendente") continue;
+          if (targetChecked) next.add(r.id);
+          else next.delete(r.id);
+        }
+      } else if (next.has(rowId)) {
+        next.delete(rowId);
+      } else {
+        next.add(rowId);
+      }
+      return next;
+    });
+    lastCheckedIdxRef.current = idx;
+  };
+
+  const clearSelection = () => {
+    setRawSelectedIds(new Set());
+    lastCheckedIdxRef.current = null;
+  };
+
+  const valorImpactoSelecionado = useMemo(
+    () =>
+      rows
+        .filter((r) => selectedIds.has(r.id))
+        .reduce(
+          (s, r) => s + Math.abs(Number(r.valor_financeiro ?? 0)),
+          0,
+        ),
+    [rows, selectedIds],
+  );
+
+  const bulkAction = useMutation({
+    mutationFn: ({
+      ids,
+      acao,
+    }: {
+      ids: string[];
+      acao: "aprovar" | "rejeitar";
+    }) =>
+      wmsApi<{ ok: true; atualizadas: number }>(
+        `/api/wms/inventario/${id}/divergencias`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ divergencia_ids: ids, acao }),
+        },
+      ),
+    onSuccess: (res, vars) => {
+      const total = vars.ids.length;
+      const atualizadas = res.atualizadas;
+      if (atualizadas === total) {
+        toast.success(`${atualizadas} divergência(s) atualizada(s)`);
+      } else {
+        toast.success(
+          `${atualizadas} de ${total} atualizada(s) — as demais já não estavam pendentes`,
+        );
+      }
+      clearSelection();
+      setConfirmAcao(null);
+      queryClient.invalidateQueries({ queryKey: ["wms-inv-div", id] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   return (
     <>
@@ -98,6 +199,66 @@ export default function DivergenciasPage({
         </div>
       )}
 
+      {/* Selection bar inline — padrão de /wms/separacao */}
+      {selectedIds.size > 0 && (
+        <div
+          style={{
+            marginTop: 10,
+            marginBottom: 10,
+            padding: "8px 12px",
+            background: "var(--wms-c-info-bg)",
+            border: "1px solid var(--wms-c-info-bd)",
+            borderRadius: "var(--wms-r-2)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            flexWrap: "wrap",
+            fontSize: 12,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              color: "var(--wms-c-info)",
+              fontWeight: 500,
+            }}
+          >
+            <strong>{selectedIds.size}</strong> selecionada(s)
+            <span className="wms-td-mute">
+              · {fmtBRL(valorImpactoSelecionado)} impacto
+            </span>
+            <button
+              type="button"
+              className="wms-btn wms-btn-ghost wms-btn-sm"
+              onClick={clearSelection}
+            >
+              <Icon name="x" size={11} /> Limpar
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              className="wms-btn wms-btn-sm wms-btn-primary"
+              onClick={() => setConfirmAcao("aprovar")}
+              disabled={bulkAction.isPending}
+            >
+              <Icon name="check" size={11} /> Aprovar {selectedIds.size}
+            </button>
+            <button
+              type="button"
+              className="wms-btn wms-btn-sm wms-btn-danger"
+              onClick={() => setConfirmAcao("rejeitar")}
+              disabled={bulkAction.isPending}
+            >
+              <Icon name="x" size={11} /> Rejeitar {selectedIds.size}
+            </button>
+          </div>
+        </div>
+      )}
+
       {isLoading && (
         <div className="wms-loading-pane">Carregando divergências…</div>
       )}
@@ -119,6 +280,16 @@ export default function DivergenciasPage({
           <table>
             <thead>
               <tr>
+                <th style={{ width: 36 }}>
+                  <input
+                    ref={headerCbRef}
+                    type="checkbox"
+                    aria-label="Selecionar todas as pendentes"
+                    checked={allPendentesSelecionadas}
+                    disabled={pendentes === 0}
+                    onChange={toggleAll}
+                  />
+                </th>
                 <th>SKU</th>
                 <th>Produto</th>
                 <th>Localização</th>
@@ -132,15 +303,29 @@ export default function DivergenciasPage({
               </tr>
             </thead>
             <tbody>
-              {rows.map((d) => {
+              {rows.map((d, idx) => {
                 const deltaCls =
                   d.delta > 0
                     ? "wms-td-ok"
                     : d.delta < 0
                       ? "wms-td-danger"
                       : "wms-td-mute";
+                const pendente = d.status === "pendente";
+                const isSel = selectedIds.has(d.id);
                 return (
                   <tr key={d.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`Selecionar ${d.produto?.sku ?? "linha"}`}
+                        checked={isSel}
+                        disabled={!pendente}
+                        onChange={(e) => {
+                          const native = e.nativeEvent as MouseEvent;
+                          toggleOne(d.id, idx, !!native.shiftKey);
+                        }}
+                      />
+                    </td>
                     <td className="wms-mono">{d.produto?.sku ?? "—"}</td>
                     <td className="wms-td-desc wms-td-mute">
                       {d.produto?.descricao ?? "—"}
@@ -169,7 +354,7 @@ export default function DivergenciasPage({
                       <StatusBadge status={d.status} />
                     </td>
                     <td className="wms-td-actions">
-                      {d.status === "pendente" && (
+                      {pendente && (
                         <div
                           style={{
                             display: "flex",
@@ -180,11 +365,11 @@ export default function DivergenciasPage({
                           <button
                             type="button"
                             className="wms-btn wms-btn-sm wms-btn-ghost"
-                            disabled={resolver.isPending}
+                            disabled={bulkAction.isPending}
                             title="Aprovar"
                             onClick={() =>
-                              resolver.mutate({
-                                divergencia_id: d.id,
+                              bulkAction.mutate({
+                                ids: [d.id],
                                 acao: "aprovar",
                               })
                             }
@@ -194,11 +379,11 @@ export default function DivergenciasPage({
                           <button
                             type="button"
                             className="wms-btn wms-btn-sm wms-btn-ghost"
-                            disabled={resolver.isPending}
+                            disabled={bulkAction.isPending}
                             title="Rejeitar"
                             onClick={() =>
-                              resolver.mutate({
-                                divergencia_id: d.id,
+                              bulkAction.mutate({
+                                ids: [d.id],
                                 acao: "rejeitar",
                               })
                             }
@@ -214,6 +399,53 @@ export default function DivergenciasPage({
             </tbody>
           </table>
         </div>
+      )}
+
+      {confirmAcao && (
+        <Modal
+          title={
+            confirmAcao === "aprovar"
+              ? `Aprovar ${selectedIds.size} divergência(s)?`
+              : `Rejeitar ${selectedIds.size} divergência(s)?`
+          }
+          subtitle={
+            confirmAcao === "aprovar"
+              ? `Impacto financeiro: ${fmtBRL(valorImpactoSelecionado)}. As divergências ficam marcadas como aprovadas — os ajustes só vão pro ledger quando você clicar em "Aplicar sessão".`
+              : `As divergências ficam marcadas como rejeitadas. O saldo do sistema permanece como está.`
+          }
+          onClose={() => setConfirmAcao(null)}
+          footer={
+            <>
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                onClick={() => setConfirmAcao(null)}
+                disabled={bulkAction.isPending}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className={
+                  confirmAcao === "aprovar"
+                    ? "wms-btn wms-btn-primary"
+                    : "wms-btn wms-btn-danger"
+                }
+                disabled={bulkAction.isPending}
+                onClick={() =>
+                  bulkAction.mutate({
+                    ids: Array.from(selectedIds),
+                    acao: confirmAcao,
+                  })
+                }
+              >
+                Confirmar
+              </button>
+            </>
+          }
+        >
+          <div />
+        </Modal>
       )}
     </>
   );

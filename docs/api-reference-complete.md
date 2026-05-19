@@ -5104,7 +5104,13 @@ Libera lock. Status='contada'.
 Lista divergências da sessão. Query: `status`.
 
 ### PATCH /api/wms/inventario/[id]/divergencias
-Body: `{ divergencia_id, acao: 'aprovar'|'rejeitar'|'recontar', observacoes? }`. 'recontar' devolve a localização pra fila com status='recontagem'.
+Atualiza status de divergências em lote (single-id é caso particular com `[id]`).
+
+**Auth:** `requireWarehouseAccess`
+**Body:** `{ divergencia_ids: string[], acao: 'aprovar'|'rejeitar', observacoes? }`
+**Response:** `{ ok: true, atualizadas: number }`
+
+Defesas: o UPDATE filtra por `sessao_id` (impede IDs de outra sessão) e `status='pendente'` (idempotente — re-aplicar é no-op). `atualizadas` pode ser menor que `divergencia_ids.length` se algum ID já não estava pendente.
 
 ### GET /api/wms/inventario/metricas
 RPCs: acuracidade por operador (30d) + por localização (5000 últimas).

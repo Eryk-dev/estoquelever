@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       .from("siso_pedido_item_realocacoes")
       .select(`
         id, pedido_item_id, empresa_dona_id, galpao_id, localizacao_id,
-        quantidade, is_emprestimo, empresa_devedora_id, status
+        quantidade, status
       `)
       .eq("id", body.realocacao_id)
       .single();
@@ -65,21 +65,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "pedido não encontrado" }, { status: 404 });
     }
 
+    // 3D: empréstimo deixou de existir. Saída sempre nf_venda taggeada com a
+    // empresa vendedora (origem do pedido). Mantemos empresa_dona_id da realoc
+    // apenas como ownership lógica do pedido — não chave de estoque.
+    const empresaVendedoraId = pedido.empresa_origem_id as string | null;
     const produtoWmsId = await resolverProdutoWms(
       realoc.empresa_dona_id,
       String(item.produto_id),
     );
 
     const mov = await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         produto_id: produtoWmsId,
-        empresa_dona_id: realoc.empresa_dona_id,
         galpao_id: realoc.galpao_id,
         localizacao_id: realoc.localizacao_id,
       },
       tipo: "S",
       qty: realoc.quantidade,
-      origem_tipo: realoc.is_emprestimo ? "emprestimo" : "nf_venda",
+      origem_tipo: "nf_venda",
       origem_id: `pedido:${pedido.id}`,
       origem_detalhes: {
         pedido_numero: pedido.numero,
@@ -88,12 +91,9 @@ export async function POST(request: NextRequest) {
         sku: item.sku,
         contexto: "realocacao",
       },
-      emprestimo_devedora_id: realoc.is_emprestimo
-        ? realoc.empresa_devedora_id ?? undefined
-        : undefined,
-      observacoes: realoc.is_emprestimo
-        ? `Picking pedido #${pedido.numero} — empréstimo`
-        : `Picking pedido #${pedido.numero} — realocação`,
+      empresa_vendedora_id: empresaVendedoraId,
+      pedido_id: pedido.id,
+      motivo: `Picking pedido #${pedido.numero} — realocação`,
       usuario_id: session.id,
     });
 
@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
         await estornarMovimentacao({
           mov_id: mov.id,
           usuario_id: session.id,
-          observacoes: "Race condition — outro operador picou primeiro",
+          motivo: "Race condition — outro operador picou primeiro",
         });
       } catch (e: unknown) {
         logger.warn("separacao-marcar-realocacao", "rollback estorno falhou", {
@@ -189,7 +189,6 @@ export async function POST(request: NextRequest) {
         realocacao_id: realoc.id,
         sku: item.sku,
         quantidade: realoc.quantidade,
-        is_emprestimo: realoc.is_emprestimo,
       },
       usuarioId: session.id,
     });

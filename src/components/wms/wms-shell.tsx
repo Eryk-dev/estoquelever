@@ -132,6 +132,16 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    id: "relatorios",
+    label: "Relatórios",
+    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"],
+    itens: [
+      { href: "/wms/relatorios/movs-por-empresa", icon: "columns", label: "Movs por Empresa" },
+      { href: "/wms/relatorios/historico-custo", icon: "history", label: "Histórico de Custo" },
+      { href: "/wms/relatorios/saldos-por-empresa", icon: "box", label: "Saldos por Empresa" },
+    ],
+  },
+  {
     id: "cadastros",
     label: "Cadastros",
     visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"],
@@ -140,7 +150,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/wms/cross", icon: "sparkle", label: "Cross" },
       { href: "/wms/localizacoes", icon: "pin", label: "Localizações" },
       { href: "/wms/fornecedores", icon: "truck", label: "Fornecedores" },
-      { href: "/wms/emprestimos", icon: "handshake", label: "Empréstimos" },
     ],
   },
   {

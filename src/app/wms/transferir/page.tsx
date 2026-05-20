@@ -1,8 +1,8 @@
 "use client";
 
-// Decisão D4: operador nunca vê empresa em transferências inter-galpão.
-// O campo empresa_dona_id continua no schema (metadado contábil),
-// mas é OCULTO da UI. Empresa de origem == empresa de destino (sticky).
+// 3D: transferência inter-galpão é neutra em empresa. O par S+E carrega
+// só produto + galpão + localização — não há mais campo empresa_dona
+// no schema nem na UI.
 
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -36,7 +36,6 @@ interface TransferenciaItem {
 
 interface Transferencia {
   id: string;
-  empresa_dona_id: string;
   galpao_origem_id: string;
   galpao_destino_id: string;
   status: "em_transito" | "recebida" | "cancelada";
@@ -44,7 +43,6 @@ interface Transferencia {
   recebida_em: string | null;
   cancelada_em: string | null;
   observacoes: string | null;
-  empresa?: { nome: string };
   galpao_origem?: { nome: string };
   galpao_destino?: { nome: string };
   criada_por_user?: { nome: string };

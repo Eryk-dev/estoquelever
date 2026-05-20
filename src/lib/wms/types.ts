@@ -1,5 +1,7 @@
-// Reflete schema de docs/superpowers/specs/2026-05-07-wms-design.md §3
-// e migration supabase/migrations/20260508_wms_foundation.sql.
+// Reflete schema 3D pós-simplificação (Fase 2 do plano
+// docs/superpowers/plans/2026-05-20-ledger-simplificado-3d.md):
+// estoque/movimentações são chaveados por (produto, galpão, localização).
+// Custo médio vive em tabela separada (`siso_produto_custo_medio`).
 
 export type TipoLocalizacao =
   | "picking"
@@ -11,25 +13,24 @@ export type TipoLocalizacao =
 export type TipoMov = "E" | "S" | "R" | "L";
 
 export type OrigemTipo =
-  | "compra_manual"
-  | "lancamento_retroativo"
+  | "nf_compra"
+  | "devolucao_cliente_integra"
+  | "devolucao_cliente_avariada"
+  | "devolucao_fornecedor_recebida"
   | "nf_venda"
   | "venda_manual"
-  | "nf_devolucao_cliente"
-  | "nf_devolucao_avariada"
-  | "nf_devolucao_fornecedor"
+  | "devolucao_fornecedor_enviada"
+  | "ajuste_manual"
+  | "ajuste_pick_zerou"
+  | "inventario_perda"
+  | "inventario_ganho"
+  | "inventario_inicial"
   | "transferencia_galpao"
   | "transferencia_localizacao"
-  | "emprestimo"
   | "reserva_pedido"
   | "liberacao_reserva"
-  | "ajuste_manual"
-  | "inventario"
-  | "inventario_inicial"
-  | "estorno"
-  | "cancelamento_nf"
-  | "swap"
-  | "ajuste_pick_zerou";
+  | "lancamento_retroativo"
+  | "estorno";
 
 export interface Produto {
   id: string;
@@ -88,20 +89,17 @@ export interface Localizacao {
 export interface EstoqueLinha {
   id: string;
   produto_id: string;
-  empresa_dona_id: string;
   galpao_id: string;
   localizacao_id: string;
   saldo: number;
   reservado: number;
   disponivel: number;
-  custo_medio: number;
   atualizado_em: string;
 }
 
 export interface Movimentacao {
   id: string;
   produto_id: string;
-  empresa_dona_id: string;
   galpao_id: string;
   localizacao_id: string;
   tipo: TipoMov;
@@ -113,11 +111,19 @@ export interface Movimentacao {
   origem_tipo: OrigemTipo;
   origem_id: string | null;
   origem_detalhes: Record<string, unknown>;
-  emprestimo_devedora_id: string | null;
+  empresa_compradora_id?: string | null;
+  empresa_vendedora_id?: string | null;
+  empresa_referencia_id?: string | null;
+  fornecedor_id?: string | null;
+  motivo?: string | null;
+  cliente_nome?: string | null;
+  custo_unitario?: number | null;
+  custo_medio_anterior?: number | null;
+  custo_medio_posterior?: number | null;
   expira_em: string | null;
-  nota_fiscal_id: number | null;
-  chave_acesso_nf: string | null;
-  custo_unitario: number | null;
+  pedido_id?: string | null;
+  nota_fiscal_id?: string | null;
+  chave_acesso_nf?: string | null;
   usuario_id: string | null;
   observacoes: string | null;
   estorno_de: string | null;
@@ -125,13 +131,23 @@ export interface Movimentacao {
 }
 
 /**
- * Quádrupla — chave única que identifica uma posição de estoque.
+ * Tripla — chave única que identifica uma posição de estoque (3D).
  */
-export interface Quadrupla {
+export interface Tripla {
   produto_id: string;
-  empresa_dona_id: string;
   galpao_id: string;
   localizacao_id: string;
 }
 
-export type PerspectivaEstoque = "dono" | "galpao" | "localizacao" | "produto";
+export type PerspectivaEstoque = "galpao" | "localizacao" | "produto";
+
+/**
+ * Custo médio por produto (siso_produto_custo_medio).
+ * Tabela separada do ledger — produto tem custo único e global.
+ */
+export interface CustoMedio {
+  produto_id: string;
+  custo_medio: number;
+  ultima_movimentacao_id: string | null;
+  atualizado_em: string;
+}

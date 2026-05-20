@@ -3,13 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export interface DisponibilidadeContext {
   produto_id: string;
   galpao_id: string;
-  /** Empresa que vende — usada como tiebreak: se ela tem saldo, prefere baixar dela. */
-  empresa_origem_id?: string;
 }
 
 export interface DisponibilidadeSugestao {
-  empresa_dona_id: string;
-  empresa_dona_nome: string;
   localizacao_id: string;
   localizacao_codigo: string;
   localizacao_tipo: string;
@@ -22,24 +18,35 @@ export interface DisponibilidadeResult {
 }
 
 interface EstoqueRow {
-  empresa_dona_id: string;
   localizacao_id: string;
   disponivel: number;
-  empresa?: { nome?: string };
   localizacao?: { codigo?: string; tipo?: string };
 }
 
+// Ordem de preferência de tipo de localização — picking primeiro pra
+// minimizar caminhada do separador, depois overstock pra esgotar overflow,
+// recebimento como último recurso (estoque ainda não guardado), e qualquer
+// outro tipo abaixo.
+const TIPO_RANK: Record<string, number> = {
+  picking: 0,
+  overstock: 1,
+  recebimento: 2,
+};
+function rankTipo(tipo?: string): number {
+  return TIPO_RANK[tipo ?? ""] ?? 3;
+}
+
 /**
- * Resolve a melhor (empresa_dona, localização) com saldo disponível pra
- * baixar a venda de um produto num galpão. Ordem de preferência:
+ * Resolve a melhor localização com saldo disponível pra baixar a venda de
+ * um produto num galpão. Em 3D, estoque é fungível dentro do galpão — não
+ * há mais ordenação por empresa dona.
  *
- * 1. Se a empresa_origem_id (quem vende) tem saldo, prefere ela (evita
- *    pegar emprestado de outra empresa quando a própria tem estoque).
- * 2. Loc tipo='picking' antes de overstock/outros tipos.
- * 3. Maior `disponivel` desempata.
+ * Ordem de preferência:
+ *   1. Tipo da loc: picking > overstock > recebimento > outros
+ *   2. Maior `disponivel` desempata
  *
- * Locs tipo='recebimento' são **ignoradas** — estoque em recebimento ainda
- * não foi guardado e não deve ser sugerido como origem de venda.
+ * Retorna uma única resolução (loc_id + qty disponível) — o caller decide
+ * o que fazer quando `total_disponivel < qty pedida`.
  */
 export async function resolverDisponibilidadeVenda(
   sb: SupabaseClient,
@@ -49,8 +56,7 @@ export async function resolverDisponibilidadeVenda(
     .from("siso_estoque")
     .select(
       `
-        empresa_dona_id, localizacao_id, disponivel,
-        empresa:siso_empresas(nome),
+        localizacao_id, disponivel,
         localizacao:siso_localizacoes(codigo, tipo)
       `,
     )
@@ -60,9 +66,7 @@ export async function resolverDisponibilidadeVenda(
   if (error) throw error;
 
   const rows = ((data ?? []) as unknown as EstoqueRow[]).filter(
-    (r) =>
-      !!r.localizacao?.codigo &&
-      r.localizacao?.tipo !== "recebimento",
+    (r) => !!r.localizacao?.codigo,
   );
 
   const total = rows.reduce((acc, r) => acc + Number(r.disponivel), 0);
@@ -72,12 +76,9 @@ export async function resolverDisponibilidadeVenda(
   }
 
   rows.sort((a, b) => {
-    const aMatch = ctx.empresa_origem_id && a.empresa_dona_id === ctx.empresa_origem_id ? 0 : 1;
-    const bMatch = ctx.empresa_origem_id && b.empresa_dona_id === ctx.empresa_origem_id ? 0 : 1;
-    if (aMatch !== bMatch) return aMatch - bMatch;
-    const aPick = a.localizacao?.tipo === "picking" ? 0 : 1;
-    const bPick = b.localizacao?.tipo === "picking" ? 0 : 1;
-    if (aPick !== bPick) return aPick - bPick;
+    const aRank = rankTipo(a.localizacao?.tipo);
+    const bRank = rankTipo(b.localizacao?.tipo);
+    if (aRank !== bRank) return aRank - bRank;
     return Number(b.disponivel) - Number(a.disponivel);
   });
 
@@ -85,8 +86,6 @@ export async function resolverDisponibilidadeVenda(
   return {
     total_disponivel: total,
     sugestao: {
-      empresa_dona_id: top.empresa_dona_id,
-      empresa_dona_nome: top.empresa?.nome ?? "",
       localizacao_id: top.localizacao_id,
       localizacao_codigo: top.localizacao!.codigo!,
       localizacao_tipo: top.localizacao!.tipo ?? "picking",

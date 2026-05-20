@@ -55,6 +55,11 @@ interface MovComposite extends Movimentacao {
   produto?: { sku: string; descricao: string };
   galpao?: { nome: string };
   localizacao?: { codigo: string };
+  // Joins novos (3D) do /api/wms/ledger.
+  compradora?: { nome: string } | null;
+  vendedora?: { nome: string } | null;
+  referencia?: { nome: string } | null;
+  fornecedor?: { nome: string } | null;
 }
 
 interface ProdutoWithCusto extends Produto {
@@ -1927,6 +1932,40 @@ export function LedgerRow({ m }: { m: MovComposite }) {
           {m.galpao?.nome ?? ""} ·{" "}
           <span className="wms-mono">{m.localizacao?.codigo ?? ""}</span>
         </div>
+        {(m.compradora ||
+          m.vendedora ||
+          m.referencia ||
+          m.fornecedor) && (
+          <div className="wms-lr-where wms-td-mute">
+            {m.compradora && (
+              <>
+                <span style={{ opacity: 0.7 }}>compradora:</span>{" "}
+                <strong>{m.compradora.nome}</strong>
+                {" · "}
+              </>
+            )}
+            {m.vendedora && (
+              <>
+                <span style={{ opacity: 0.7 }}>vendedora:</span>{" "}
+                <strong>{m.vendedora.nome}</strong>
+                {" · "}
+              </>
+            )}
+            {m.referencia && (
+              <>
+                <span style={{ opacity: 0.7 }}>referência:</span>{" "}
+                <strong>{m.referencia.nome}</strong>
+                {" · "}
+              </>
+            )}
+            {m.fornecedor && (
+              <>
+                <span style={{ opacity: 0.7 }}>fornecedor:</span>{" "}
+                <strong>{m.fornecedor.nome}</strong>
+              </>
+            )}
+          </div>
+        )}
         {m.custo_unitario != null && (
           <div className="wms-lr-where wms-td-mute">
             <span className="wms-mono">

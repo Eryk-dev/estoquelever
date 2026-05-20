@@ -858,3 +858,36 @@ flowchart TD
 ### Transicao de estado
 
 `aguardando_compra` → `embalado` (pula picking inteiro)
+
+---
+
+## 14. Custo Medio Global (3D — 2026-05-20)
+
+Custo medio deixou de ser por (produto, dona, galpao, loc) e virou global por produto, em `siso_custo_medio` (PK `produto_id`). RPC `wms_inserir_movimentacao` recalcula via media ponderada em toda entrada com `custo_unitario`.
+
+```mermaid
+flowchart TD
+    A["POST /api/wms/receber<br/>itens: [{produto, qty, custo_unitario}]"] --> B["wms_inserir_movimentacao<br/>tipo=E, custo_unitario=10.50"]
+    B --> C{"custo_unitario > 0 ?"}
+    C -->|sim| D["Le siso_custo_medio<br/>WHERE produto_id = X"]
+    C -->|nao| H["Nao recalcula"]
+    D --> E["Calcula media ponderada:<br/>novo_custo = (saldo * custo_atual + qty * custo_novo) / (saldo + qty)"]
+    E --> F["Grava custo_medio_anterior + custo_medio_posterior na mov"]
+    F --> G["UPSERT siso_custo_medio<br/>produto_id, custo_medio, ultima_movimentacao_id, atualizado_em"]
+    G --> I["Retorna mov_id"]
+    H --> I
+```
+
+### Side effects
+
+- Update atomico em `siso_custo_medio` (Postgres ON CONFLICT DO UPDATE) dentro da mesma transacao da mov.
+- Mov grava o "antes" e "depois" do custo medio em `custo_medio_anterior` / `custo_medio_posterior` pra rastreio historico via `GET /api/wms/relatorios/historico-custo`.
+- Transferencias inter-galpao e intra-galpao (origem_tipo `transferencia_galpao` / `transferencia_localizacao`) NAO recalculam — sao neutras em valor.
+- Saidas (tipo S) NAO mexem no custo medio — apenas reduzem saldo.
+
+### Relacionado
+
+- Tabela: `siso_custo_medio` (PK produto_id, NOT NULL custo_medio >= 0)
+- RPC: `wms_inserir_movimentacao` (3D — reescrita em 2026-05-20)
+- Report: `GET /api/wms/relatorios/historico-custo?produto_id=X&desde=...&ate=...`
+

@@ -2,20 +2,25 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao } from "./ledger";
 import { logger } from "@/lib/logger";
 
+// Modelo 3D (Fase 5 Batch C):
+// - Não há mais "dona destino" — saldo entra na (produto, galpão, loc) e ponto.
+// - Empresa associada à NF original (vendedora) vira **tag** via
+//   `empresa_referencia_id`, não chave física.
+// - Fornecedor (devolução fornecedor) vira tag via `fornecedor_id`.
+
 export type Classificacao = "integro" | "avariado" | "garantia" | "troca_sku";
 
+/** Tag de empresa extraída da mov original da venda, pra anexar como
+ *  `empresa_referencia_id` no movimento de devolução. */
 export interface MovOrigemVenda {
   origem_tipo: string;
-  empresa_dona_id: string;
-  emprestimo_devedora_id: string | null;
+  empresa_vendedora_id: string | null;
 }
 
-export function resolverDonaDestino(mov: MovOrigemVenda): {
-  dona_id: string;
-  quita_emprestimo: boolean;
-} {
-  const quita = mov.origem_tipo === "emprestimo";
-  return { dona_id: mov.empresa_dona_id, quita_emprestimo: quita };
+/** Resolve empresa de referência destino. Retorna a vendedora original
+ *  (do pedido) ou null se a mov não tiver tag. */
+export function resolverEmpresaReferencia(mov: MovOrigemVenda): string | null {
+  return mov.empresa_vendedora_id ?? null;
 }
 
 export interface RegistrarDevolucaoInput {
@@ -64,7 +69,12 @@ export interface ClassificarInput {
   galpao_id: string;
   localizacao_id: string;
   produto_id: string;
-  empresa_dona_destino_id?: string;
+  /** Empresa vendedora da NF original (tag em empresa_referencia_id).
+   *  Auto-resolvido da mov de saída original quando omitido. */
+  empresa_referencia_id?: string;
+  /** Fornecedor pra devoluções de garantia (Classe C). Obrigatório quando
+   *  classificacao='garantia'. */
+  fornecedor_id?: string;
   qty: number;
   observacoes?: string;
   usuario_id: string;
@@ -86,30 +96,28 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
   const d = dev as DevRow;
   if (d.status !== "aguardando_classificacao") throw new Error("já classificada");
 
-  let donaId = input.empresa_dona_destino_id;
-  if (!donaId && d.pedido_origem_mov_id) {
+  let empresaReferenciaId = input.empresa_referencia_id ?? null;
+  if (!empresaReferenciaId && d.pedido_origem_mov_id) {
     const { data: mov } = await sb
       .from("siso_movimentacoes")
-      .select("origem_tipo, empresa_dona_id, emprestimo_devedora_id")
+      .select("origem_tipo, empresa_vendedora_id")
       .eq("id", d.pedido_origem_mov_id)
       .single();
-    if (mov) donaId = resolverDonaDestino(mov as MovOrigemVenda).dona_id;
-  }
-  if (!donaId) {
-    throw new Error(
-      "não foi possível resolver dona destino; informe empresa_dona_destino_id",
-    );
+    if (mov) {
+      empresaReferenciaId = resolverEmpresaReferencia(mov as MovOrigemVenda);
+    }
   }
 
-  const quadrupla = {
+  const tripla = {
     produto_id: input.produto_id,
-    empresa_dona_id: donaId,
     galpao_id: input.galpao_id,
     localizacao_id: input.localizacao_id,
   };
 
   switch (input.classificacao) {
     case "integro": {
+      // Classe A — íntegra do cliente. Custo unitário herdado da venda
+      // original ativa o recálculo de custo médio global.
       let custoUnitarioOriginal: number | undefined;
       if (d.pedido_origem_mov_id) {
         const { data: movOriginal } = await sb
@@ -122,29 +130,30 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         if (cu) custoUnitarioOriginal = Number(cu);
       }
       await inserirMovimentacao({
-        quadrupla,
+        tripla,
         tipo: "E",
         qty: input.qty,
-        origem_tipo: "nf_devolucao_cliente",
-        nota_fiscal_id: d.nota_fiscal_id ?? undefined,
+        origem_tipo: "devolucao_cliente_integra",
+        nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
+        empresa_referencia_id: empresaReferenciaId,
         custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
-        observacoes: input.observacoes,
+        motivo: input.observacoes,
       });
-      if (custoUnitarioOriginal !== undefined) {
-        const { recalcularCustoMedio } = await import("./movimentacoes");
-        await recalcularCustoMedio(quadrupla, input.qty, custoUnitarioOriginal);
-      }
       break;
     }
     case "avariado": {
+      // Classe B — avariada do cliente. Entra na loc indicada, transfere
+      // imediatamente pra quarentena (par S+E no físico).
       await inserirMovimentacao({
-        quadrupla,
+        tripla,
         tipo: "E",
         qty: input.qty,
-        origem_tipo: "nf_devolucao_avariada",
-        nota_fiscal_id: d.nota_fiscal_id ?? undefined,
+        origem_tipo: "devolucao_cliente_avariada",
+        nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
+        empresa_referencia_id: empresaReferenciaId,
         usuario_id: input.usuario_id,
+        motivo: input.observacoes,
       });
       const { data: quarentena } = await sb
         .from("siso_localizacoes")
@@ -156,27 +165,28 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         })
         .limit(1)
         .maybeSingle();
-      const locDestinoQuarentena =
-        (quarentena as { id: string } | null)?.id ?? input.localizacao_id;
-      if (quarentena) {
+      const locDestinoQuarentena = (quarentena as { id: string } | null)?.id;
+      if (locDestinoQuarentena) {
         await inserirMovimentacao({
-          quadrupla,
+          tripla,
           tipo: "S",
           qty: input.qty,
           origem_tipo: "transferencia_localizacao",
           usuario_id: input.usuario_id,
-          observacoes: `avaria → quarentena: ${input.observacoes ?? ""}`,
+          motivo: `avaria → quarentena: ${input.observacoes ?? ""}`,
         });
         await inserirMovimentacao({
-          quadrupla: { ...quadrupla, localizacao_id: locDestinoQuarentena },
+          tripla: { ...tripla, localizacao_id: locDestinoQuarentena },
           tipo: "E",
           qty: input.qty,
           origem_tipo: "transferencia_localizacao",
           usuario_id: input.usuario_id,
         });
       } else {
+        // Sem quarentena no galpão — ajuste manual pra remover saldo
+        // (entra avariado e some no mesmo evento — preserva trilha).
         await inserirMovimentacao({
-          quadrupla,
+          tripla,
           tipo: "S",
           qty: input.qty,
           origem_tipo: "ajuste_manual",
@@ -186,31 +196,45 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
       }
       break;
     }
-    case "garantia":
+    case "garantia": {
+      // Classes A+C combo: entra do cliente, sai pro fornecedor (garantia).
+      if (!input.fornecedor_id) {
+        throw new Error(
+          "classificacao='garantia' exige fornecedor_id (Classe C — devolução pro fornecedor)",
+        );
+      }
       await inserirMovimentacao({
-        quadrupla,
+        tripla,
         tipo: "E",
         qty: input.qty,
-        origem_tipo: "nf_devolucao_cliente",
+        origem_tipo: "devolucao_cliente_integra",
+        nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
+        empresa_referencia_id: empresaReferenciaId,
         usuario_id: input.usuario_id,
       });
       await inserirMovimentacao({
-        quadrupla,
+        tripla,
         tipo: "S",
         qty: input.qty,
-        origem_tipo: "nf_devolucao_fornecedor",
+        origem_tipo: "devolucao_fornecedor_enviada",
+        fornecedor_id: input.fornecedor_id,
         usuario_id: input.usuario_id,
-        observacoes: `garantia: ${input.observacoes ?? ""}`,
+        motivo: `garantia: ${input.observacoes ?? ""}`,
       });
       break;
+    }
     case "troca_sku":
+      // Classe A — apenas entra. Troca de SKU vira fluxo separado em
+      // separacao (já existe `compras-equivalencia`). Aqui só reintegra.
       await inserirMovimentacao({
-        quadrupla,
+        tripla,
         tipo: "E",
         qty: input.qty,
-        origem_tipo: "nf_devolucao_cliente",
+        origem_tipo: "devolucao_cliente_integra",
+        nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
+        empresa_referencia_id: empresaReferenciaId,
         usuario_id: input.usuario_id,
-        observacoes: `troca SKU: ${input.observacoes ?? ""}`,
+        motivo: `troca SKU: ${input.observacoes ?? ""}`,
       });
       break;
   }
@@ -229,6 +253,52 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
   logger.info("wms.devolucoes", "classificada", {
     devolucao_id: input.devolucao_id,
     classificacao: input.classificacao,
+  });
+}
+
+/**
+ * Devolução pro fornecedor SEM passar por venda anterior (Classe C standalone).
+ * Ex: lote defeituoso, troca direta com fornecedor.
+ */
+export async function devolverParaFornecedor(input: {
+  tripla: { produto_id: string; galpao_id: string; localizacao_id: string };
+  qty: number;
+  fornecedor_id: string;
+  motivo?: string;
+  usuario_id: string;
+}): Promise<void> {
+  await inserirMovimentacao({
+    tripla: input.tripla,
+    tipo: "S",
+    qty: input.qty,
+    origem_tipo: "devolucao_fornecedor_enviada",
+    fornecedor_id: input.fornecedor_id,
+    usuario_id: input.usuario_id,
+    motivo: input.motivo,
+  });
+}
+
+/**
+ * Entrada de devolução vinda do fornecedor (Classe D — produto que enviamos
+ * pro fornecedor volta pra nossa prateleira). Ex: fornecedor recusou conserto.
+ */
+export async function receberDevolucaoFornecedor(input: {
+  tripla: { produto_id: string; galpao_id: string; localizacao_id: string };
+  qty: number;
+  fornecedor_id: string;
+  custo_unitario?: number;
+  motivo?: string;
+  usuario_id: string;
+}): Promise<void> {
+  await inserirMovimentacao({
+    tripla: input.tripla,
+    tipo: "E",
+    qty: input.qty,
+    origem_tipo: "devolucao_fornecedor_recebida",
+    fornecedor_id: input.fornecedor_id,
+    custo_unitario: input.custo_unitario,
+    usuario_id: input.usuario_id,
+    motivo: input.motivo,
   });
 }
 

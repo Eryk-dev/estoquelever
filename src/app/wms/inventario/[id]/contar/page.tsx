@@ -14,13 +14,14 @@ import type {
   EsperadoItem,
 } from "@/lib/wms/inventario";
 
+// Plano ledger simplificado 3D (2026-05-20): contagem agora é por (produto, galpão, loc).
+// Sem `empresa_dona_id` em sessão nem em cada bipe — operador conta o total da loc.
 interface SessaoDetail {
   sessao?: {
     id: string;
     nome?: string;
     tipo: string;
     modo_contagem: "aberto" | "blind";
-    empresa_dona_id?: string | null;
     status: string;
   };
 }
@@ -41,7 +42,6 @@ interface ContagemLocal {
   imagens?: string[];
   qty: number;
   esperado?: number;
-  empresa_dona_id: string | null;
 }
 
 type Etapa = "entering" | "standby" | "confirming-loc" | "counting" | "pool-vazio";
@@ -189,7 +189,6 @@ export default function ContarPage({
           imagens: e.imagens,
           qty: 0,
           esperado: e.saldo_esperado,
-          empresa_dona_id: e.empresa_dona_id,
         })),
       );
       setEtapa("confirming-loc");
@@ -264,7 +263,6 @@ export default function ContarPage({
     );
 
     let produto: ProdutoMin;
-    let empresaDona: string | null;
 
     if (esperadoMatch) {
       produto = {
@@ -274,8 +272,6 @@ export default function ContarPage({
         imagem_url: esperadoMatch.imagem_url,
         imagens: esperadoMatch.imagens,
       };
-      empresaDona =
-        sessao.empresa_dona_id ?? esperadoMatch.empresa_dona_id ?? null;
     } else {
       // Fallback: produto não está nos esperados — busca no servidor
       let lookup: ProdutoMin | undefined;
@@ -292,14 +288,6 @@ export default function ContarPage({
         return;
       }
       produto = lookup;
-      empresaDona = sessao.empresa_dona_id ?? null;
-    }
-
-    if (!empresaDona) {
-      toast.error(
-        "Não foi possível identificar a empresa dona. Configure a sessão com empresa_dona_id.",
-      );
-      return;
     }
 
     // 2) Optimistic UI update ANTES do POST — UI responde imediatamente
@@ -313,7 +301,6 @@ export default function ContarPage({
             ? {
                 ...c,
                 qty: modo === "incremental" ? c.qty + qty : qty,
-                empresa_dona_id: c.empresa_dona_id ?? empresaDona,
                 imagem_url: c.imagem_url ?? produto.imagem_url ?? null,
                 imagens:
                   c.imagens && c.imagens.length > 0
@@ -332,7 +319,6 @@ export default function ContarPage({
           imagem_url: produto.imagem_url ?? null,
           imagens: produto.imagens ?? [],
           qty,
-          empresa_dona_id: empresaDona,
         },
       ];
     });
@@ -345,7 +331,6 @@ export default function ContarPage({
         body: JSON.stringify({
           localizacao_id: locAtual.loc_id,
           produto_id: produto.id,
-          empresa_dona_id: empresaDona,
           qty_contada: qty,
           modo,
         }),
@@ -388,13 +373,6 @@ export default function ContarPage({
     }
     if (novaQty === c.qty) return;
 
-    const empresaDona = c.empresa_dona_id ?? sessao.empresa_dona_id ?? null;
-    if (!empresaDona) {
-      toast.error(
-        "Não foi possível identificar a empresa dona deste SKU.",
-      );
-      return;
-    }
     const qtyAnterior = c.qty;
     // Atualização otimista
     setContagens((prev) =>
@@ -409,7 +387,6 @@ export default function ContarPage({
         body: JSON.stringify({
           localizacao_id: locAtual.loc_id,
           produto_id: c.produto_id,
-          empresa_dona_id: empresaDona,
           qty_contada: novaQty,
           modo: "absoluto",
         }),

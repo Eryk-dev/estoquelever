@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import Link from "next/link";
 import { wmsApi } from "@/lib/wms/api-client";
 import { useGalpoes, useLocalizacoes } from "@/components/wms/ui/modals";
+// Plano ledger simplificado 3D (2026-05-20): pool agora vive em (produto, galpão, loc)
+// sem dona — drop do select "Empresa dona" e dos params empresa_dona_id na criação/sugestão.
 import {
   Icon,
   Modal,
@@ -176,7 +178,6 @@ function NovaSessaoModal({
   const [tipoCriacao, setTipoCriacao] = useState<TipoCriacao>(tipoInicial);
   const [nome, setNome] = useState("");
   const [galpaoId, setGalpaoId] = useState("");
-  const [empresaDonaId, setEmpresaDonaId] = useState("");
   const [modo, setModo] = useState<ModoContagem>("blind");
   const [toleranciaPct, setToleranciaPct] = useState(2);
   const [exigeAprovacaoValor, setExigeAprovacaoValor] = useState(1000);
@@ -189,11 +190,6 @@ function NovaSessaoModal({
 
   const galpoesQuery = useGalpoes();
   const locsQuery = useLocalizacoes(galpaoId || null);
-  const empresasDoGalpao = useMemo(
-    () =>
-      galpoesQuery.data?.find((g) => g.id === galpaoId)?.empresas ?? [],
-    [galpoesQuery.data, galpaoId],
-  );
 
   // Estatística informativa pra UI: quantas ruas distintas o pool toca.
   // Não afeta criação — distribuição é runtime (claim hierárquico).
@@ -226,7 +222,6 @@ function NovaSessaoModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           galpao_id: galpaoId,
-          empresa_dona_id: empresaDonaId || null,
           tamanho: tamanhoPool,
         }),
       }),
@@ -302,7 +297,6 @@ function NovaSessaoModal({
       tipo,
       nome: nome || undefined,
       galpao_id: galpaoId,
-      empresa_dona_id: empresaDonaId || null,
       modo_contagem: modo,
       tolerancia_pct: toleranciaPct,
       exige_aprovacao_acima_valor: exigeAprovacaoValor,
@@ -388,7 +382,6 @@ function NovaSessaoModal({
             value={galpaoId}
             onChange={(e) => {
               setGalpaoId(e.target.value);
-              setEmpresaDonaId("");
               setSugestao(null);
               setLocsManual(new Set());
               setAnchorManualId(null);
@@ -399,24 +392,6 @@ function NovaSessaoModal({
             {galpoesQuery.data?.map((g) => (
               <option key={g.id} value={g.id}>
                 {g.nome}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field
-          label="Empresa dona"
-          hint="opcional · filtra produtos desta dona"
-        >
-          <select
-            className="wms-select"
-            value={empresaDonaId}
-            onChange={(e) => setEmpresaDonaId(e.target.value)}
-            disabled={!galpaoId}
-          >
-            <option value="">todas</option>
-            {empresasDoGalpao.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.nome}
               </option>
             ))}
           </select>

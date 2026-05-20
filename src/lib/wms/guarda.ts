@@ -6,12 +6,16 @@
 // uma mov par S+E (replenishment intra-galpão) saindo da loc RECEBIMENTO
 // e entrando na loc final.
 //
+// Em 3D, o par S+E é NEUTRO (sem empresa) — a empresa que comprou viajou
+// na mov de entrada como tag (`empresa_compradora_id`), e o put-away
+// apenas reposiciona o saldo dentro do pool físico do galpão.
+//
 // Guarda parcial é suportada: se a pendência tem qty_pendente=5 e o operador
 // guarda só 3, a pendência fica com qty_pendente=2 (status volta pra pendente)
 // e a próxima operação zera o restante.
 
 import { createServiceClient } from "@/lib/supabase-server";
-import { replenishmentIntraGalpao, recalcularCustoMedio } from "./movimentacoes";
+import { replenishmentIntraGalpao } from "./movimentacoes";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "wms.guarda";
@@ -21,7 +25,6 @@ export type StatusPendencia = "pendente" | "em_guarda" | "guardada" | "cancelada
 export interface PendenciaGuarda {
   id: string;
   produto_id: string;
-  empresa_dona_id: string;
   galpao_id: string;
   localizacao_origem_id: string;
   /**
@@ -57,7 +60,6 @@ export interface PendenciaGuarda {
 
 export interface PendenciaJoined extends PendenciaGuarda {
   produto: { sku: string; descricao: string; imagem_url: string | null } | null;
-  empresa: { nome: string } | null;
   galpao: { nome: string } | null;
   localizacao_origem: { codigo: string } | null;
   localizacao_destino: { codigo: string; tipo: string } | null;
@@ -98,7 +100,6 @@ export async function resolverLocRecebimento(galpaoId: string): Promise<string> 
 
 export interface CriarPendenciaInput {
   produto_id: string;
-  empresa_dona_id: string;
   galpao_id: string;
   localizacao_origem_id: string;
   /**
@@ -139,7 +140,6 @@ export async function criarPendencia(input: CriarPendenciaInput): Promise<string
     .from("siso_wms_pendencias_guarda")
     .insert({
       produto_id: input.produto_id,
-      empresa_dona_id: input.empresa_dona_id,
       galpao_id: input.galpao_id,
       localizacao_origem_id: input.localizacao_origem_id,
       localizacao_destino_id: input.localizacao_destino_id ?? null,
@@ -161,7 +161,6 @@ export async function criarPendencia(input: CriarPendenciaInput): Promise<string
 
 export interface ListarPendenciasFiltros {
   galpao_id?: string;
-  empresa_dona_id?: string;
   status?: StatusPendencia[];
   q?: string;
   limit?: number;
@@ -178,7 +177,6 @@ export async function listarPendencias(
       `
         *,
         produto:siso_produtos(sku, descricao, imagem_url),
-        empresa:siso_empresas!empresa_dona_id(nome),
         galpao:siso_galpoes(nome),
         localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo),
         localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo)
@@ -188,8 +186,6 @@ export async function listarPendencias(
     .order("criada_em", { ascending: true })
     .limit(filtros.limit ?? 200);
   if (filtros.galpao_id) query = query.eq("galpao_id", filtros.galpao_id);
-  if (filtros.empresa_dona_id)
-    query = query.eq("empresa_dona_id", filtros.empresa_dona_id);
 
   const { data, error } = await query;
   if (error) throw error;
@@ -222,10 +218,9 @@ export async function listarRotaPendencias(input: {
   lote_id?: string;
   pendencia_ids?: string[];
   galpao_id?: string;
-  empresa_dona_id?: string;
   todas?: boolean;
 }): Promise<PendenciaJoined[]> {
-  const { lote_id, pendencia_ids, galpao_id, empresa_dona_id, todas } = input;
+  const { lote_id, pendencia_ids, galpao_id, todas } = input;
   if (!lote_id && !pendencia_ids?.length && !todas) {
     throw new Error("informe lote_id, pendencia_ids, ou todas=true");
   }
@@ -237,7 +232,6 @@ export async function listarRotaPendencias(input: {
       `
         *,
         produto:siso_produtos(sku, descricao, imagem_url),
-        empresa:siso_empresas!empresa_dona_id(nome),
         galpao:siso_galpoes(nome),
         localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo),
         localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo)
@@ -248,7 +242,6 @@ export async function listarRotaPendencias(input: {
   if (lote_id) q = q.eq("lote_id", lote_id);
   if (pendencia_ids?.length) q = q.in("id", pendencia_ids);
   if (galpao_id) q = q.eq("galpao_id", galpao_id);
-  if (empresa_dona_id) q = q.eq("empresa_dona_id", empresa_dona_id);
 
   const { data, error } = await q.limit(500);
   if (error) throw error;
@@ -280,7 +273,6 @@ export async function obterPendencia(id: string): Promise<PendenciaJoined | null
       `
         *,
         produto:siso_produtos(sku, descricao, imagem_url),
-        empresa:siso_empresas!empresa_dona_id(nome),
         galpao:siso_galpoes(nome),
         localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo),
         localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo)
@@ -348,13 +340,16 @@ export interface ConfirmarGuardaResult {
 }
 
 /**
- * Confirma uma guarda (parcial ou total). Faz a mov par S+E
+ * Confirma uma guarda (parcial ou total). Faz a mov par S+E NEUTRO
  * (replenishment_intra) saindo da loc RECEBIMENTO e entrando na loc destino.
  *
  * Validações:
  *   - pendência existe e não está terminal
  *   - qty > 0 e <= qty_pendente
  *   - loc destino existe, é do mesmo galpão e ≠ loc origem (recebimento)
+ *
+ * Em 3D, o custo médio é global por produto (siso_custo_medio) — não precisa
+ * mais propagar `custo_medio` entre locs no put-away.
  *
  * Idempotência aproximada: race entre 2 confirmações da mesma pendência
  * pode causar over-decremento. Esperado raro porque cada pendência fica
@@ -397,42 +392,14 @@ export async function confirmarGuarda(
     throw new Error("localização destino é de outro galpão");
   }
 
-  // Carrega custo médio da RECEBIMENTO antes da mov pra propagar pra loc destino.
-  // Sem isso, a peça "perde" o custo no replenishment.
-  const { data: estoqueOrigem } = await sb
-    .from("siso_estoque")
-    .select("custo_medio")
-    .match({
-      produto_id: pend.produto_id,
-      empresa_dona_id: pend.empresa_dona_id,
-      galpao_id: pend.galpao_id,
-      localizacao_id: pend.localizacao_origem_id,
-    })
-    .maybeSingle();
-  const custoMedio = estoqueOrigem ? Number(estoqueOrigem.custo_medio) : 0;
-
-  // Movimentação par S+E.
+  // Movimentação par S+E neutra.
   const { origem_id } = await replenishmentIntraGalpao({
-    empresa_id: pend.empresa_dona_id,
     galpao_id: pend.galpao_id,
     localizacao_origem_id: pend.localizacao_origem_id,
     localizacao_destino_id: input.localizacao_destino_id,
     itens: [{ produto_id: pend.produto_id, qty: input.qty }],
     usuario_id: input.usuario_id,
   });
-
-  if (custoMedio > 0) {
-    await recalcularCustoMedio(
-      {
-        produto_id: pend.produto_id,
-        empresa_dona_id: pend.empresa_dona_id,
-        galpao_id: pend.galpao_id,
-        localizacao_id: input.localizacao_destino_id,
-      },
-      input.qty,
-      custoMedio,
-    );
-  }
 
   const novaQtyGuardada = Number(pend.qty_guardada) + Number(input.qty);
   const totalmenteGuardada = novaQtyGuardada >= Number(pend.qty_inicial);
@@ -480,7 +447,7 @@ export interface CancelarPendenciaInput {
  * Cancela pendência sem mover estoque. A peça continua na loc RECEBIMENTO
  * (saldo intacto). Útil pra registrar "peça sumiu" / "devolvida ao
  * fornecedor" — a saída do estoque deve ser feita em outro fluxo (ajuste
- * ou nf_devolucao_fornecedor). Cancelamento aqui = "tirar da fila".
+ * ou devolucao_fornecedor_enviada). Cancelamento aqui = "tirar da fila".
  */
 export async function cancelarPendencia(
   input: CancelarPendenciaInput,

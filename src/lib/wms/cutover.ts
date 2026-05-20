@@ -190,7 +190,7 @@ export async function reverterCutoverSeRetrocedeu(
   // Busca todas as S do pedido (origem_tipo='nf_venda')
   const { data: saidas, error: saidasErr } = await sb
     .from("siso_movimentacoes")
-    .select("id, produto_id, empresa_dona_id, galpao_id, localizacao_id, quantidade")
+    .select("id, produto_id, galpao_id, localizacao_id, quantidade")
     .eq("origem_id", pedidoId)
     .eq("origem_tipo", "nf_venda")
     .eq("tipo", "S");
@@ -206,7 +206,6 @@ export async function reverterCutoverSeRetrocedeu(
   const saidasArr = (saidas ?? []) as Array<{
     id: string;
     produto_id: string;
-    empresa_dona_id: string;
     galpao_id: string;
     localizacao_id: string;
     quantidade: number;
@@ -242,24 +241,25 @@ export async function reverterCutoverSeRetrocedeu(
   for (const s of saidasArr) {
     if (estornadasSet.has(s.id)) continue;
 
-    const quadrupla = {
+    const tripla = {
       produto_id: s.produto_id,
-      empresa_dona_id: s.empresa_dona_id,
       galpao_id: s.galpao_id,
       localizacao_id: s.localizacao_id,
     };
 
     try {
       await inserirMovimentacao({
-        quadrupla,
+        tripla,
         tipo: "E",
         qty: Number(s.quantidade),
-        origem_tipo: "cancelamento_nf",
+        // 3D: origem_tipo 'cancelamento_nf' não existe mais (lista enxuta).
+        // Estorno explícito via estorno_de + origem_tipo 'estorno'.
+        origem_tipo: "estorno",
         origem_id: pedidoId,
         origem_detalhes: { motivo, reversal: true },
         estorno_de: s.id,
         usuario_id: usuarioId,
-        observacoes: `Reversal por ${motivo}`,
+        motivo: `Reversal por ${motivo}`,
       });
       saidasEstornadas++;
     } catch (err) {
@@ -273,7 +273,7 @@ export async function reverterCutoverSeRetrocedeu(
 
     try {
       await reservarAtomico({
-        quadrupla,
+        tripla,
         qty: Number(s.quantidade),
         pedido_id: pedidoId,
         ttl_horas: 24 * 30,
@@ -283,7 +283,7 @@ export async function reverterCutoverSeRetrocedeu(
     } catch (err) {
       logger.warn("wms.cutover", "Falha ao recriar reserva no reversal", {
         pedidoId,
-        quadrupla,
+        tripla,
         qty: s.quantidade,
         err: err instanceof Error ? err.message : String(err),
       });

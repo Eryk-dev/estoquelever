@@ -759,10 +759,15 @@ export function AjusteModal({
 // ──────────────────────────────────────────────────────────────────
 // Transferência inter-galpão
 
+interface TransferLocSel {
+  localizacao_id: string;
+  qty: string;
+}
+
 interface TransferItem {
   produto: Produto | null;
-  qty: string;
-  locOrigem: string;
+  /** Locs origem (1+) — qty é split por loc; total = sum(locs.qty). */
+  locs: TransferLocSel[];
 }
 
 interface LocalSaldo {
@@ -810,22 +815,57 @@ function TransferItemRow({
     [sugQuery.data],
   );
 
-  // Auto-seleciona a primeira (maior saldo em picking) quando o produto muda
-  // e ainda não há escolha manual. onChange é estável (useCallback no parent).
-  // Quando há apenas uma loc, também auto-preenche qty (conveniência).
+  // Auto-seleciona a primeira loc (maior saldo em picking) com qty = saldo
+  // quando o produto muda e ainda não há nenhuma loc escolhida.
+  // onChange é estável (useCallback no parent).
   useEffect(() => {
-    if (item.produto && !item.locOrigem && locais.length > 0) {
-      const patch: Partial<TransferItem> = { locOrigem: locais[0].localizacao_id };
-      if (locais.length === 1 && !item.qty) {
-        patch.qty = String(Number(locais[0].saldo));
-      }
-      onChange(patch);
+    if (item.produto && item.locs.length === 0 && locais.length > 0) {
+      onChange({
+        locs: [
+          {
+            localizacao_id: locais[0].localizacao_id,
+            qty: String(Number(locais[0].saldo)),
+          },
+        ],
+      });
     }
-  }, [item.produto, item.locOrigem, item.qty, locais, onChange]);
+  }, [item.produto, item.locs.length, locais, onChange]);
 
-  const locSel = locais.find((l) => l.localizacao_id === item.locOrigem);
-  const qtyNum = Number(item.qty);
-  const overQty = !!locSel && qtyNum > Number(locSel.saldo);
+  const totalQty = item.locs.reduce(
+    (s, l) => s + (Number(l.qty) || 0),
+    0,
+  );
+  const locsComErro = item.locs.filter((l) => {
+    const sl = locais.find((x) => x.localizacao_id === l.localizacao_id);
+    return !!sl && Number(l.qty) > Number(sl.saldo);
+  });
+
+  function toggleLoc(l: LocalSaldo) {
+    const existsIdx = item.locs.findIndex(
+      (s) => s.localizacao_id === l.localizacao_id,
+    );
+    if (existsIdx >= 0) {
+      onChange({ locs: item.locs.filter((_, i) => i !== existsIdx) });
+    } else {
+      onChange({
+        locs: [
+          ...item.locs,
+          {
+            localizacao_id: l.localizacao_id,
+            qty: String(Number(l.saldo)),
+          },
+        ],
+      });
+    }
+  }
+
+  function updateLocQty(locId: string, qty: string) {
+    onChange({
+      locs: item.locs.map((l) =>
+        l.localizacao_id === locId ? { ...l, qty } : l,
+      ),
+    });
+  }
 
   return (
     <div
@@ -839,48 +879,52 @@ function TransferItemRow({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 90px 1fr 32px",
-          gap: 8,
+          gridTemplateColumns: "1fr auto 32px",
+          gap: 12,
           alignItems: "end",
         }}
       >
         <Field label={idx === 0 ? "Produto" : undefined} required>
           <ProdutoCombo
             value={item.produto}
-            onChange={(p) =>
-              onChange({ produto: p, locOrigem: "" })
-            }
+            onChange={(p) => onChange({ produto: p, locs: [] })}
           />
         </Field>
-        <Field
-          label={idx === 0 ? "Qty" : undefined}
-          required
-          hint={
-            locSel
-              ? `disp: ${fmtNum(Number(locSel.saldo))}`
-              : undefined
-          }
-        >
-          <input
-            className={`wms-input wms-mono wms-tar ${overQty ? "wms-input-danger" : ""}`}
-            type="number"
-            min="1"
-            value={item.qty}
-            onChange={(e) => onChange({ qty: e.target.value })}
-            placeholder="0"
-          />
-        </Field>
-        <Field
-          label={idx === 0 ? "Localização origem" : undefined}
-          required
-        >
-          <LocalizacaoCombo
-            galpaoId={galOrig || null}
-            value={item.locOrigem}
-            onChange={(v) => onChange({ locOrigem: v })}
-            allowCreate={false}
-          />
-        </Field>
+        <div style={{ marginBottom: 6, textAlign: "right", minWidth: 110 }}>
+          {item.locs.length > 0 ? (
+            <>
+              <div
+                className="wms-td-mute"
+                style={{ fontSize: 10.5, lineHeight: 1 }}
+              >
+                Total a transferir
+              </div>
+              <div
+                className="wms-mono"
+                style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.3 }}
+              >
+                {fmtNum(totalQty)} un
+              </div>
+              {item.locs.length > 1 && (
+                <div
+                  className="wms-td-mute"
+                  style={{ fontSize: 10.5, lineHeight: 1 }}
+                >
+                  {item.locs.length} locs
+                </div>
+              )}
+            </>
+          ) : (
+            ready && (
+              <div
+                className="wms-td-mute"
+                style={{ fontSize: 11, lineHeight: 1.2 }}
+              >
+                Clique 1+ locs abaixo
+              </div>
+            )
+          )}
+        </div>
         <button
           type="button"
           className="wms-btn-icon"
@@ -908,20 +952,91 @@ function TransferItemRow({
             className="wms-td-mute"
             style={{ fontSize: 11, alignSelf: "center", marginRight: 2 }}
           >
-            <Icon name="box" size={10} /> Onde tem saldo:
+            <Icon name="box" size={10} /> Onde tem saldo · clique pra
+            selecionar (pode escolher mais de uma):
           </span>
           {locais.map((l) => {
-            const isSelected = l.localizacao_id === item.locOrigem;
+            const sel = item.locs.find(
+              (s) => s.localizacao_id === l.localizacao_id,
+            );
+            if (sel) {
+              const qn = Number(sel.qty);
+              const over = qn > Number(l.saldo);
+              return (
+                <div
+                  key={l.localizacao_id}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "4px 4px 4px 8px",
+                    background: "var(--wms-c-fg)",
+                    color: "var(--wms-c-bg)",
+                    border: "1px solid var(--wms-c-fg)",
+                    borderRadius: "var(--wms-r-2)",
+                    fontSize: 11,
+                  }}
+                >
+                  <span className="wms-mono">{l.codigo}</span>
+                  <span style={{ opacity: 0.7, fontSize: 10.5 }}>
+                    {l.tipo}
+                  </span>
+                  <input
+                    type="number"
+                    min="1"
+                    max={l.saldo}
+                    value={sel.qty}
+                    onChange={(e) =>
+                      updateLocQty(l.localizacao_id, e.target.value)
+                    }
+                    onClick={(e) => e.stopPropagation()}
+                    className="wms-mono wms-tar"
+                    style={{
+                      width: 52,
+                      padding: "2px 4px",
+                      fontSize: 12,
+                      borderRadius: "var(--wms-r-1)",
+                      border: over
+                        ? "1px solid #f87171"
+                        : "1px solid rgba(255,255,255,0.25)",
+                      background: over
+                        ? "#dc2626"
+                        : "rgba(255,255,255,0.12)",
+                      color: "var(--wms-c-bg)",
+                    }}
+                  />
+                  <span style={{ opacity: 0.7, fontSize: 10.5 }}>
+                    / {fmtNum(Number(l.saldo))}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => toggleLoc(l)}
+                    title="Remover esta loc"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 18,
+                      height: 18,
+                      border: "none",
+                      background: "transparent",
+                      color: "var(--wms-c-bg)",
+                      opacity: 0.8,
+                      cursor: "pointer",
+                      borderRadius: "var(--wms-r-1)",
+                    }}
+                  >
+                    <Icon name="x" size={11} />
+                  </button>
+                </div>
+              );
+            }
             return (
               <button
                 key={l.localizacao_id}
                 type="button"
-                onClick={() =>
-                  onChange({ locOrigem: l.localizacao_id })
-                }
-                className={`wms-btn wms-btn-sm ${
-                  isSelected ? "wms-btn-primary" : "wms-btn-ghost"
-                }`}
+                onClick={() => toggleLoc(l)}
+                className="wms-btn wms-btn-sm wms-btn-ghost"
                 style={{ fontSize: 11 }}
               >
                 <span className="wms-mono">{l.codigo}</span>
@@ -950,13 +1065,13 @@ function TransferItemRow({
           origem.
         </div>
       )}
-      {overQty && (
-        <div
-          className="wms-td-warn"
-          style={{ fontSize: 11, marginTop: 6 }}
-        >
-          <Icon name="alert" size={10} /> Qty maior que o saldo disponível na
-          localização ({fmtNum(Number(locSel!.saldo))}).
+      {locsComErro.length > 0 && (
+        <div className="wms-td-warn" style={{ fontSize: 11, marginTop: 6 }}>
+          <Icon name="alert" size={10} /> Qty maior que saldo em{" "}
+          {locsComErro.length === 1
+            ? "1 localização"
+            : `${locsComErro.length} localizações`}
+          .
         </div>
       )}
     </div>
@@ -979,7 +1094,7 @@ export function TransferModal({
   const [galDestUser, setGalDestUser] = useState<string | null>(null);
   const [obs, setObs] = useState("");
   const [itens, setItens] = useState<TransferItem[]>(() => [
-    { produto: seed?.produto ?? null, qty: "", locOrigem: "" },
+    { produto: seed?.produto ?? null, locs: [] },
   ]);
   const qc = useQueryClient();
 
@@ -995,13 +1110,29 @@ export function TransferModal({
     );
   }, []);
   const addItem = useCallback(() => {
-    setItens((prev) => [...prev, { produto: null, qty: "", locOrigem: "" }]);
+    setItens((prev) => [...prev, { produto: null, locs: [] }]);
   }, []);
   const removeItem = useCallback((idx: number) => {
     setItens((prev) =>
       prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev,
     );
   }, []);
+
+  // Cada item × cada loc origem vira uma entrada no payload. A API
+  // aceita várias entradas com o mesmo produto_id (uma por loc origem).
+  const payloadItens = useMemo(
+    () =>
+      itens.flatMap((it) =>
+        it.produto
+          ? it.locs.map((l) => ({
+              produto_id: it.produto!.id,
+              qty: Number(l.qty),
+              localizacao_origem_id: l.localizacao_id,
+            }))
+          : [],
+      ),
+    [itens],
+  );
 
   const mut = useMutation({
     mutationFn: async () => {
@@ -1011,11 +1142,7 @@ export function TransferModal({
         body: JSON.stringify({
           galpao_origem_id: galOrig,
           galpao_destino_id: galDest,
-          itens: itens.map((it) => ({
-            produto_id: it.produto!.id,
-            qty: Number(it.qty),
-            localizacao_origem_id: it.locOrigem,
-          })),
+          itens: payloadItens,
           observacoes: obs || undefined,
         }),
       });
@@ -1046,7 +1173,10 @@ export function TransferModal({
 
   const sameGalpao = galOrig === galDest;
   const itensValidos = itens.every(
-    (it) => !!it.produto && !!it.locOrigem && Number(it.qty) > 0,
+    (it) =>
+      !!it.produto &&
+      it.locs.length > 0 &&
+      it.locs.every((l) => Number(l.qty) > 0),
   );
   const valid =
     !!galOrig &&
@@ -1086,9 +1216,7 @@ export function TransferModal({
             value={galOrig}
             onChange={(e) => {
               setGalOrigUser(e.target.value);
-              setItens((prev) =>
-                prev.map((it) => ({ ...it, locOrigem: "" })),
-              );
+              setItens((prev) => prev.map((it) => ({ ...it, locs: [] })));
             }}
           >
             {galpoesList.map((g) => (

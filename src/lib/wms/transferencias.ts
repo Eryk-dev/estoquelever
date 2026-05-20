@@ -4,7 +4,6 @@ import { inserirMovimentacao } from "./ledger";
 // ─── Tipos ────────────────────────────────────────────────────────────────
 
 export interface CriarTransferenciaInput {
-  empresa_dona_id: string;
   galpao_origem_id: string;
   galpao_destino_id: string;
   itens: Array<{
@@ -43,7 +42,6 @@ interface TransferenciaItemRow {
 
 interface TransferenciaRow {
   id: string;
-  empresa_dona_id: string;
   galpao_origem_id: string;
   galpao_destino_id: string;
   status: StatusTransferencia;
@@ -51,7 +49,6 @@ interface TransferenciaRow {
   recebida_em: string | null;
   cancelada_em: string | null;
   observacoes: string | null;
-  empresa?: { nome: string };
   galpao_origem?: { nome: string };
   galpao_destino?: { nome: string };
   criada_por_user?: { nome: string };
@@ -60,6 +57,10 @@ interface TransferenciaRow {
 
 // ─── Criar ────────────────────────────────────────────────────────────────
 
+/**
+ * Cria transferência inter-galpão. Em 3D, par S+E NEUTRO (sem empresa) —
+ * estoque migra dum galpão pra outro sem carregar dona.
+ */
 export async function criarTransferencia(
   input: CriarTransferenciaInput,
 ): Promise<{ id: string }> {
@@ -77,7 +78,6 @@ export async function criarTransferencia(
   const { data: header, error: errHeader } = await sb
     .from("siso_transferencias_galpao")
     .insert({
-      empresa_dona_id: input.empresa_dona_id,
       galpao_origem_id: input.galpao_origem_id,
       galpao_destino_id: input.galpao_destino_id,
       criada_por: input.usuario_id,
@@ -109,9 +109,8 @@ export async function criarTransferencia(
       const itemId = (itemRow as { id: string }).id;
 
       const mov = await inserirMovimentacao({
-        quadrupla: {
+        tripla: {
           produto_id: item.produto_id,
-          empresa_dona_id: input.empresa_dona_id,
           galpao_id: input.galpao_origem_id,
           localizacao_id: item.localizacao_origem_id,
         },
@@ -136,9 +135,8 @@ export async function criarTransferencia(
       try {
         const item = input.itens[itensCriados.indexOf(c)];
         await inserirMovimentacao({
-          quadrupla: {
+          tripla: {
             produto_id: item.produto_id,
-            empresa_dona_id: input.empresa_dona_id,
             galpao_id: input.galpao_origem_id,
             localizacao_id: item.localizacao_origem_id,
           },
@@ -169,7 +167,6 @@ export interface ListarFiltros {
   status?: StatusTransferencia;
   galpao_origem_id?: string;
   galpao_destino_id?: string;
-  empresa_dona_id?: string;
   limit?: number;
 }
 
@@ -181,9 +178,8 @@ export async function listarTransferencias(
     .from("siso_transferencias_galpao")
     .select(
       `
-        id, empresa_dona_id, galpao_origem_id, galpao_destino_id, status,
+        id, galpao_origem_id, galpao_destino_id, status,
         criada_em, recebida_em, cancelada_em, observacoes,
-        empresa:siso_empresas!empresa_dona_id(nome),
         galpao_origem:siso_galpoes!galpao_origem_id(nome),
         galpao_destino:siso_galpoes!galpao_destino_id(nome),
         criada_por_user:siso_usuarios!criada_por(nome),
@@ -202,7 +198,6 @@ export async function listarTransferencias(
   if (filtros.status) q = q.eq("status", filtros.status);
   if (filtros.galpao_origem_id) q = q.eq("galpao_origem_id", filtros.galpao_origem_id);
   if (filtros.galpao_destino_id) q = q.eq("galpao_destino_id", filtros.galpao_destino_id);
-  if (filtros.empresa_dona_id) q = q.eq("empresa_dona_id", filtros.empresa_dona_id);
 
   const { data, error } = await q;
   if (error) throw error;
@@ -212,16 +207,13 @@ export async function listarTransferencias(
 export async function getTransferencia(
   id: string,
 ): Promise<TransferenciaRow | null> {
-  const rows = await listarTransferencias({ limit: 1 });
-  // Fallback simples: refaz query filtrando por id pra reuso da projeção
   const sb = createServiceClient();
   const { data, error } = await sb
     .from("siso_transferencias_galpao")
     .select(
       `
-        id, empresa_dona_id, galpao_origem_id, galpao_destino_id, status,
+        id, galpao_origem_id, galpao_destino_id, status,
         criada_em, recebida_em, cancelada_em, observacoes,
-        empresa:siso_empresas!empresa_dona_id(nome),
         galpao_origem:siso_galpoes!galpao_origem_id(nome),
         galpao_destino:siso_galpoes!galpao_destino_id(nome),
         criada_por_user:siso_usuarios!criada_por(nome),
@@ -237,7 +229,6 @@ export async function getTransferencia(
     .eq("id", id)
     .maybeSingle();
   if (error) throw error;
-  void rows;
   return (data ?? null) as unknown as TransferenciaRow | null;
 }
 
@@ -250,16 +241,13 @@ export async function receberTransferencia(
 
   const { data: transf, error: errHeader } = await sb
     .from("siso_transferencias_galpao")
-    .select(
-      "id, status, empresa_dona_id, galpao_destino_id",
-    )
+    .select("id, status, galpao_destino_id")
     .eq("id", input.transferencia_id)
     .single();
   if (errHeader || !transf) throw new Error("transferência não encontrada");
   const t = transf as {
     id: string;
     status: StatusTransferencia;
-    empresa_dona_id: string;
     galpao_destino_id: string;
   };
   if (t.status !== "em_transito") {
@@ -301,9 +289,8 @@ export async function receberTransferencia(
     if (item.mov_entrada_id) continue; // já recebido — idempotência
 
     const mov = await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         produto_id: item.produto_id,
-        empresa_dona_id: t.empresa_dona_id,
         galpao_id: t.galpao_destino_id,
         localizacao_id: sel.localizacao_destino_id,
       },
@@ -342,14 +329,13 @@ export async function cancelarTransferencia(
   const sb = createServiceClient();
   const { data: transf, error } = await sb
     .from("siso_transferencias_galpao")
-    .select("id, status, empresa_dona_id, galpao_origem_id")
+    .select("id, status, galpao_origem_id")
     .eq("id", transferenciaId)
     .single();
   if (error || !transf) throw new Error("transferência não encontrada");
   const t = transf as {
     id: string;
     status: StatusTransferencia;
-    empresa_dona_id: string;
     galpao_origem_id: string;
   };
   if (t.status !== "em_transito") {
@@ -375,9 +361,8 @@ export async function cancelarTransferencia(
   for (const it of (itens ?? []) as ItemRow[]) {
     if (it.mov_estorno_id || !it.mov_saida_id) continue;
     const mov = await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         produto_id: it.produto_id,
-        empresa_dona_id: t.empresa_dona_id,
         galpao_id: t.galpao_origem_id,
         localizacao_id: it.localizacao_origem_id,
       },

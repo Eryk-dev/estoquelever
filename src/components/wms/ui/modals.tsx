@@ -456,17 +456,21 @@ export const RECEBER_ORIGEM_OPTS: { id: ReceberOrigem; label: string }[] = [
 // Mapeia escolha do UI pro tipo canônico de origem usado no ledger.
 // Retroativo não é uma opção: é inferido da data escolhida (data < hoje).
 //
-// 3D: 'nf_compra' agora viaja explícito (não colapsa em compra_manual) —
-// a API exige empresa_compradora_id quando origem='nf_compra'.
+// 3D (2026-05-20): valores precisam estar no CHECK siso_movimentacoes_origem_tipo_check.
+// - 'nf_compra' viaja explícito — API exige empresa_compradora_id.
+// - 'compra_manual' (compra sem NF) vira 'ajuste_manual' no ledger — entrada
+//   manual com motivo, sem documento fiscal.
+// - 'devolucao' vira 'devolucao_cliente_integra' — caso comum (avariada tem
+//   fluxo dedicado em /wms/devolucoes).
 export function origemToBackend(o: ReceberOrigem): string {
   switch (o) {
     case "devolucao":
-      return "nf_devolucao_cliente";
+      return "devolucao_cliente_integra";
     case "nf_compra":
       return "nf_compra";
     case "compra_manual":
     default:
-      return "compra_manual";
+      return "ajuste_manual";
   }
 }
 

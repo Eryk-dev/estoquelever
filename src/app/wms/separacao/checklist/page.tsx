@@ -18,19 +18,17 @@ import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 // ──────────────────────────────────────────────────────────────────
 // Types
 
+// Plano ledger simplificado 3D (2026-05-20): pool fungível por (produto, galpão).
+// API não devolve mais empresa_dona/devedora/is_emprestimo — Realocação aponta só pra loc.
 interface Realocacao {
   id: string;
   parent_realocacao_id: string | null;
-  empresa_dona_id: string;
-  empresa_nome: string | null;
   localizacao_id: string;
   localizacao_codigo: string;
   quantidade: number;
   quantidade_pega: number | null;
   parcial: boolean;
   parcial_motivo: string | null;
-  is_emprestimo: boolean;
-  empresa_devedora_id: string | null;
   status: "aguardando_picking" | "picado" | "picado_parcial" | "cancelado";
   criado_em: string;
 }
@@ -934,7 +932,8 @@ export default function WmsChecklistPage() {
             }
             if (realocacaoLinhas.length === 0) return null;
 
-            // Agrupa por chave (sku + loc + is_emprestimo + status group + empresa)
+            // Agrupa por chave (sku + loc + status group)
+            // Plano ledger simplificado 3D: sem is_emprestimo/empresa no key — pool fungível.
             // Status group: "ativa" (aguardando_picking) | "picada" (picado/picado_parcial) | "cancelada"
             type Grupo = {
               key: string;
@@ -943,8 +942,6 @@ export default function WmsChecklistPage() {
               realocs: Realocacao[];
               status_group: "ativa" | "picada" | "cancelada";
               localizacao_codigo: string;
-              is_emprestimo: boolean;
-              empresa_nome: string | null;
               qty_sugerida_total: number;
               qty_pega_total: number;
               criado_em_primeiro: string;
@@ -959,13 +956,9 @@ export default function WmsChecklistPage() {
                     ? "cancelada"
                     : "picada"; // picado + picado_parcial juntos no histórico
 
-              const key = [
-                item.sku,
-                r.localizacao_codigo,
-                r.is_emprestimo ? "emp" : "own",
-                r.empresa_dona_id,
-                statusGroup,
-              ].join("|");
+              const key = [item.sku, r.localizacao_codigo, statusGroup].join(
+                "|",
+              );
 
               const existente = grupos.get(key);
               if (existente) {
@@ -983,8 +976,6 @@ export default function WmsChecklistPage() {
                   realocs: [r],
                   status_group: statusGroup,
                   localizacao_codigo: r.localizacao_codigo,
-                  is_emprestimo: r.is_emprestimo,
-                  empresa_nome: r.empresa_nome,
                   qty_sugerida_total: r.quantidade,
                   qty_pega_total: r.quantidade_pega ?? 0,
                   criado_em_primeiro: r.criado_em,
@@ -1497,24 +1488,9 @@ function RealocacaoRow({
           >
             Realocada
           </span>
-          {r.is_emprestimo && (
-            <span
-              className="wms-badge"
-              style={{
-                fontSize: 10,
-                background: "var(--wms-c-info-faint, #cffafe)",
-                color: "var(--wms-c-info-text, #164e63)",
-              }}
-            >
-              Empréstimo
-            </span>
-          )}
         </div>
         <div style={{ fontSize: 11, marginTop: 2 }}>
           <span className="wms-hand-item-loc">{r.localizacao_codigo}</span>
-          {r.is_emprestimo && r.empresa_nome && (
-            <span className="wms-td-mute"> · {r.empresa_nome}</span>
-          )}
           <span className="wms-td-mute"> ← de {item.localizacao ?? "sem loc"}</span>
         </div>
       </div>

@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
-import { QuadruplaPicker } from "@/components/wms/quadrupla-picker";
+import { TriplaPicker } from "@/components/wms/tripla-picker";
 import {
   Icon,
   PageHeader,
@@ -79,7 +79,6 @@ export default function ClassificarPage({
   const [sku, setSku] = useState("");
   const [qty, setQty] = useState(1);
   const [q, setQ] = useState<{
-    empresa_id?: string;
     galpao_id?: string;
     localizacao_id?: string;
   }>({});
@@ -118,7 +117,6 @@ export default function ClassificarPage({
           qty,
           galpao_id: q.galpao_id,
           localizacao_id: q.localizacao_id,
-          empresa_dona_destino_id: q.empresa_id,
           observacoes,
         }),
       }),
@@ -225,7 +223,7 @@ export default function ClassificarPage({
 
       <h3 className="wms-sec-h">Destino do estoque</h3>
       <div style={{ marginBottom: 16 }}>
-        <QuadruplaPicker value={q} onChange={setQ} />
+        <TriplaPicker value={q} onChange={setQ} />
       </div>
 
       <Field label="Produto" required>

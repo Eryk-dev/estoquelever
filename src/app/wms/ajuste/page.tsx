@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
-import { QuadruplaPicker } from "@/components/wms/quadrupla-picker";
+import { TriplaPicker } from "@/components/wms/tripla-picker";
 import { Icon, PageHeader, Field } from "@/components/wms/ui/wms-ui";
 
 interface ProdutoMin {
@@ -14,7 +14,6 @@ interface ProdutoMin {
 export default function AjustePage() {
   const queryClient = useQueryClient();
   const [q, setQ] = useState<{
-    empresa_id?: string;
     galpao_id?: string;
     localizacao_id?: string;
   }>({});
@@ -46,7 +45,7 @@ export default function AjustePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          quadrupla: { produto_id, ...q },
+          tripla: { produto_id, ...q },
           qty,
           direcao,
           motivo,
@@ -80,7 +79,7 @@ export default function AjustePage() {
 
       <h3 className="wms-sec-h">Localização do ajuste</h3>
       <div style={{ marginBottom: 16 }}>
-        <QuadruplaPicker value={q} onChange={setQ} />
+        <TriplaPicker value={q} onChange={setQ} />
       </div>
 
       <Field label="Produto" required>

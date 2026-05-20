@@ -110,7 +110,7 @@ export async function executarSnapshotInicial(
           qty: totalSaldo,
           origem_tipo: "inventario_inicial",
           empresa_compradora_id: par.empresa_id,
-          observacoes: "snapshot inicial Fase 0",
+          motivo: "snapshot inicial Fase 0",
         });
       }
       criados++;

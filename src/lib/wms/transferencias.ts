@@ -119,7 +119,7 @@ export async function criarTransferencia(
         origem_tipo: "transferencia_galpao",
         origem_id: transferenciaId,
         usuario_id: input.usuario_id,
-        observacoes: input.observacoes,
+        motivo: input.observacoes,
       });
 
       await sb
@@ -145,7 +145,7 @@ export async function criarTransferencia(
           origem_tipo: "estorno",
           estorno_de: c.mov_id,
           usuario_id: input.usuario_id,
-          observacoes: "rollback de criação de transferência",
+          motivo: "rollback de criação de transferência",
         });
       } catch {
         // best-effort
@@ -299,7 +299,7 @@ export async function receberTransferencia(
       origem_tipo: "transferencia_galpao",
       origem_id: t.id,
       usuario_id: input.usuario_id,
-      observacoes: "recebimento de transferência inter-galpão",
+      motivo: "recebimento de transferência inter-galpão",
     });
     await sb
       .from("siso_transferencia_galpao_itens")
@@ -371,7 +371,7 @@ export async function cancelarTransferencia(
       origem_tipo: "estorno",
       estorno_de: it.mov_saida_id,
       usuario_id: usuarioId,
-      observacoes: "cancelamento de transferência inter-galpão",
+      motivo: "cancelamento de transferência inter-galpão",
     });
     await sb
       .from("siso_transferencia_galpao_itens")

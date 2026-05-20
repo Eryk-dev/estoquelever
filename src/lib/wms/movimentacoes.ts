@@ -95,11 +95,6 @@ export async function receberEstoque(
   input: ReceberInput,
 ): Promise<ReceberResult> {
   const origemTipo = input.origem_tipo ?? "nf_compra";
-  const obsBase =
-    input.observacoes ??
-    (input.nf_referencia
-      ? `recebimento NF ${input.nf_referencia}`
-      : "recebimento sem NF");
   const loteId = crypto.randomUUID();
 
   const origemDetalhesBase: Record<string, unknown> = {
@@ -144,7 +139,6 @@ export async function receberEstoque(
         custo_unitario: item.custo_unitario,
         motivo: input.motivo ?? null,
         usuario_id: input.usuario_id,
-        observacoes: obsBase,
       });
       movIds.push(mov.id);
     }
@@ -183,7 +177,6 @@ export async function receberEstoque(
       custo_unitario: item.custo_unitario,
       motivo: input.motivo ?? null,
       usuario_id: input.usuario_id,
-      observacoes: obsBase,
     });
     // Defense-in-depth: se algo na criação da pendência falhar (FK quebrada,
     // race de loc destino desativada entre validação e insert, falha de
@@ -210,7 +203,7 @@ export async function receberEstoque(
         await estornarMovimentacao({
           mov_id: mov.id,
           usuario_id: input.usuario_id,
-          observacoes: `Estorno automático: criação de pendência de guarda falhou (${err instanceof Error ? err.message : String(err)})`,
+          motivo: `Estorno automático: criação de pendência de guarda falhou (${err instanceof Error ? err.message : String(err)})`,
         });
         logger.warn(
           "wms.receber",
@@ -315,7 +308,7 @@ export async function transferirInterGalpao(
       origem_tipo: "transferencia_galpao",
       origem_id,
       usuario_id: input.usuario_id,
-      observacoes: input.observacoes,
+      motivo: input.observacoes,
     });
     await inserirMovimentacao({
       tripla: {
@@ -328,7 +321,7 @@ export async function transferirInterGalpao(
       origem_tipo: "transferencia_galpao",
       origem_id,
       usuario_id: input.usuario_id,
-      observacoes: input.observacoes,
+      motivo: input.observacoes,
     });
   }
   return { origem_id };
@@ -374,7 +367,7 @@ export async function replenishmentIntraGalpao(
       origem_tipo: "transferencia_localizacao",
       origem_id,
       usuario_id: input.usuario_id,
-      observacoes: input.observacoes,
+      motivo: input.observacoes,
     });
     await inserirMovimentacao({
       tripla: {
@@ -387,7 +380,7 @@ export async function replenishmentIntraGalpao(
       origem_tipo: "transferencia_localizacao",
       origem_id,
       usuario_id: input.usuario_id,
-      observacoes: input.observacoes,
+      motivo: input.observacoes,
     });
   }
   return { origem_id };
@@ -417,7 +410,6 @@ export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
     origem_detalhes: { direcao: input.direcao },
     motivo: input.motivo.trim(),
     usuario_id: input.usuario_id,
-    observacoes: input.motivo,
   });
 }
 
@@ -457,7 +449,6 @@ export async function lancarRetroativo(
     custo_unitario: input.custo_unitario,
     motivo: input.motivo.trim(),
     usuario_id: input.usuario_id,
-    observacoes: `emergência: ${input.motivo}`,
   });
 }
 
@@ -534,7 +525,7 @@ export async function reconciliarRetroativo(
     origem_tipo: "estorno",
     estorno_de: m.id,
     usuario_id: input.usuario_id,
-    observacoes: `reconciliado com mov ${input.compra_mov_id}`,
+    motivo: `reconciliado com mov ${input.compra_mov_id}`,
   });
   logger.info("wms.movs", "lançamento retroativo reconciliado", {
     retro: m.id,

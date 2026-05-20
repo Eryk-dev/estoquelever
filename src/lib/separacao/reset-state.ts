@@ -133,7 +133,7 @@ export async function resetarEstadoSeparacaoItens(opts: {
       await estornar({
         mov_id: movId,
         usuario_id: usuarioId,
-        observacoes: `Reset de separação (motivo=${motivo})`,
+        motivo: `Reset de separação (motivo=${motivo})`,
       });
       estornadas.push(movId);
     } catch (err) {

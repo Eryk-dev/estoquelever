@@ -1,3 +1,6 @@
+// ARCHIVED 2026-05-20 — see docs/superpowers/archive/README.md
+// This module is no longer imported anywhere. Kept as reference for the
+// 4D ownership model in case it gets resurrected.
 /**
  * Mini-swap intra-galpão — tipos compartilhados entre algoritmo, orchestrator e RPC.
  *

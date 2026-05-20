@@ -1,3 +1,6 @@
+// ARCHIVED 2026-05-20 — see docs/superpowers/archive/README.md
+// This module is no longer imported anywhere. Kept as reference for the
+// 4D ownership model in case it gets resurrected.
 import type {
   EstadoEstoqueSku, Demanda, PlanoMiniSwap,
   OperacaoSwap, OperacaoEmprestimo,

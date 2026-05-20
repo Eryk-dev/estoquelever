@@ -18,20 +18,18 @@ export async function GET(
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
-  const empresa = req.nextUrl.searchParams.get("empresa_dona_id") ?? undefined;
   const galpao = req.nextUrl.searchParams.get("galpao_id") ?? undefined;
 
   try {
     const [composicao, disponivel] = await Promise.all([
       listarComposicaoKit(id),
       calcularDisponivel(id, {
-        empresa_dona_id: empresa,
         galpao_id: galpao,
       }),
     ]);
     const estoquePorComponente = await listarEstoqueComponentes(
       composicao.map((c) => c.componente_produto_id),
-      { empresa_dona_id: empresa, galpao_id: galpao },
+      { galpao_id: galpao },
     );
     const composicaoComEstoque = composicao.map((c) => ({
       ...c,

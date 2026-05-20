@@ -70,6 +70,8 @@ erros:
 
   - id: wms-galpoes-dropdown-vazio-shape-mismatch
     date: "2026-05-11"
+    obsoleto_a_partir_de: "2026-05-20"
+    obsoleto_motivo: "/wms/emprestimos foi removida + QuadruplaPicker renomeado pra TriplaPicker no ledger simplificado 3D — apenas 3 dos 5 consumidores listados ainda existem (inventario, localizacoes, replenishment)."
     source: wms.galpoes-fetch
     category: business_logic
     message: "Dropdowns de galpão/empresa vazios em /wms/inventario, /wms/localizacoes, /wms/replenishment, /wms/emprestimos e QuadruplaPicker — bloqueia criar inventário, escolher localização etc."
@@ -126,6 +128,8 @@ erros:
 
   - id: wms-ledger-empresa-fk-ambiguity
     date: "2026-05-11"
+    obsoleto_a_partir_de: "2026-05-20"
+    obsoleto_motivo: "Ledger simplificado 3D dropou empresa_dona_id e emprestimo_devedora_id de siso_movimentacoes e adicionou empresa_compradora_id/empresa_vendedora_id/empresa_referencia_id como tags. A ambiguidade não pode mais ocorrer pelos mesmos motivos (multi-FK pra siso_empresas continua existindo, agora com 3 colunas, então embed implícito ainda precisa qualificar — mas as queries foram reescritas em 2026-05-20 nos commits 0676d7d e seguintes)."
     source: wms.ledger
     category: database
     message: "Could not embed because more than one relationship was found for 'siso_movimentacoes' and 'siso_empresas'"
@@ -797,3 +801,57 @@ erros:
       - src/lib/wms/putaway.test.ts
       - src/lib/wms/movimentacoes.test.ts
     tags: [wms, receber, guarda, putaway, mov-orfa, pendencia, atomicidade, defense-in-depth]
+
+  - id: 2026-05-20-empresa-dona-dropada
+    date: "2026-05-20"
+    source: arquitetura
+    category: business_logic
+    message: "empresa_dona deixou de ser coordenada física"
+    cause: >
+      Modelo 4D (produto × dona × galpão × loc) não refletia a realidade
+      operacional — peças idênticas de empresas diferentes são indistinguíveis
+      no físico, mas o schema forçava separação. Resultava em fragmentação
+      artificial do estoque, mini-swap necessário antes de cada wave, e
+      empréstimo/swap N×N como mecanismos de "conserto" do problema que o
+      próprio schema criava. Custo médio quadruplicado (1 por quádrupla) era
+      contábilmente errado — auditoria pede 1 custo médio global por SKU.
+    fix: >
+      Migration 20260520_ledger_simplificado (+ 8 follow-ups a-i) dropou
+      empresa_dona_id de siso_estoque e siso_movimentacoes; adicionou
+      empresa_compradora_id, empresa_vendedora_id, empresa_referencia_id e
+      fornecedor_id como TAGS em movs (apuração contábil via report). Criou
+      siso_custo_medio (PK produto_id) como cache global. Dropou tabelas
+      siso_emprestimo_regras + siso_wms_mini_swap_config + RPCs
+      wms_executar_mini_swap/swap/saldos_devedores. Reescreveu
+      wms_inserir_movimentacao (lock por tripla + recalcula custo médio),
+      wms_reservar_atomico, wms_inventario_proxima_loc/sugerir,
+      wms_detectar_divergencias_estoque, wms_rebuild_linha_estoque. Recriou
+      MVs siso_curva_abc + siso_cobertura_estoque em 3D. Frontend:
+      QuadruplaPicker → TriplaPicker, deletou /wms/emprestimos +
+      /wms/configuracoes/otimizacoes, adicionou /wms/relatorios/* (3
+      endpoints + páginas: movs-por-empresa, historico-custo,
+      saldos-por-empresa). Lib: 6 arquivos movidos pra _archive/
+      (emprestimos.ts, mini-swap.ts, mini-swap-types.ts, etc), types
+      Quadrupla → Tripla, novo custo-medio.ts.
+    files:
+      - supabase/migrations/20260520_ledger_simplificado.sql
+      - supabase/migrations/20260520b_rpc_inserir_movimentacao.sql
+      - supabase/migrations/20260520c_rpc_reservar.sql
+      - supabase/migrations/20260520d_rpc_reconciliacao.sql
+      - supabase/migrations/20260520e_rpc_inventario.sql
+      - supabase/migrations/20260520f_mviews.sql
+      - supabase/migrations/20260520g_drop_dona_pendencias.sql
+      - supabase/migrations/20260520h_drop_dona_transferencias.sql
+      - supabase/migrations/20260520i_drop_dona_inventario.sql
+      - src/lib/wms/types.ts
+      - src/lib/wms/ledger.ts
+      - src/lib/wms/custo-medio.ts
+      - src/lib/wms/_archive/
+    tags: [migracao, schema-3d, ledger, custo-medio, empresa-dona, emprestimo-arquivado, mini-swap-arquivado, relatorios]
+    notes: >
+      Plano completo: docs/superpowers/plans/2026-05-20-ledger-simplificado-3d.md.
+      Spec: docs/superpowers/specs/2026-05-20-ledger-simplificado-design.md.
+      Mudança arquitetural — não é "bug fix" tradicional, mas entra no
+      catálogo pra documentar a transição (lookup futuro vai pesquisar por
+      "empresa_dona" ou "quadrupla" e precisa achar a mensagem clara de
+      que isso foi descontinuado).

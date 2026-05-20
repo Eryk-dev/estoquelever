@@ -9,16 +9,8 @@ import { fmtBRL } from "@/components/wms/ui/wms-ui";
 import { InsightsStrip } from "@/components/wms/insights/insights-strip";
 import type { FinanceiroValor, InsightAtivo } from "@/lib/wms/insights/types";
 
-interface Emprestimo {
-  credora_id: string;
-  devedora_id: string;
-  produto_id: string;
-  devido: number;
-}
-
 interface Response {
   valor: FinanceiroValor[];
-  emprestimos: Emprestimo[];
   ajustes_recentes: Array<{
     usuario_id: string | null;
     tipo: string;
@@ -59,21 +51,21 @@ export default function FinanceiroPage() {
       <div>
         <h1 className="text-xl font-bold tracking-tight text-ink">Financeiro</h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Valor do estoque, empréstimos entre empresas, ajustes manuais (admin only).
+          Valor do estoque por galpão e ajustes manuais (admin only).
         </p>
       </div>
 
       <InsightsStrip insights={data.insights} emptyMessage="Sem alertas financeiros." />
 
       <section className="rounded-xl border border-line bg-paper p-4">
-        <h2 className="text-sm font-semibold text-ink">Valor de estoque por empresa × galpão</h2>
+        <h2 className="text-sm font-semibold text-ink">Valor de estoque por galpão</h2>
         <p className="mt-1 text-xs text-ink-faint">Total geral: {fmtBRL(totalGeral)}</p>
         <table className="mt-3 w-full text-sm">
           <thead className="text-[11px] uppercase tracking-[0.16em] text-ink-faint">
             <tr>
-              <th className="py-2 text-left">Empresa</th>
               <th className="py-2 text-left">Galpão</th>
               <th className="py-2 text-right">SKUs</th>
+              <th className="py-2 text-right">Saldo total</th>
               <th className="py-2 text-right">Valor total</th>
               <th className="py-2 text-right">Curva A</th>
               <th className="py-2 text-right">Curva B</th>
@@ -82,10 +74,10 @@ export default function FinanceiroPage() {
           </thead>
           <tbody className="divide-y divide-line">
             {data.valor.map((v) => (
-              <tr key={`${v.empresa_dona_id}-${v.galpao_id}`} className="hover:bg-surface/60">
-                <td className="py-2 font-semibold">{v.empresa_nome}</td>
-                <td className="py-2 text-ink-muted">{v.galpao_nome}</td>
+              <tr key={v.galpao_id} className="hover:bg-surface/60">
+                <td className="py-2 font-semibold">{v.galpao_nome}</td>
                 <td className="py-2 text-right font-mono tabular-nums">{v.qtd_skus}</td>
+                <td className="py-2 text-right font-mono tabular-nums">{v.saldo_total}</td>
                 <td className="py-2 text-right font-mono tabular-nums">{fmtBRL(v.valor_total)}</td>
                 <td className="py-2 text-right font-mono tabular-nums">{fmtBRL(v.valor_curva_a)}</td>
                 <td className="py-2 text-right font-mono tabular-nums">{fmtBRL(v.valor_curva_b)}</td>
@@ -96,39 +88,8 @@ export default function FinanceiroPage() {
         </table>
       </section>
 
-      <section className="rounded-xl border border-line bg-paper p-4">
-        <h2 className="text-sm font-semibold text-ink">Empréstimos entre empresas (saldo devedor)</h2>
-        <p className="mt-1 text-xs text-ink-faint">
-          Quantidade líquida que cada empresa deve pra outra, agrupado por produto.
-        </p>
-        <table className="mt-3 w-full text-sm">
-          <thead className="text-[11px] uppercase tracking-[0.16em] text-ink-faint">
-            <tr>
-              <th className="py-2 text-left">Devedora</th>
-              <th className="py-2 text-left">Credora</th>
-              <th className="py-2 text-right">Produto</th>
-              <th className="py-2 text-right">Qty devida</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {data.emprestimos.length === 0 && (
-              <tr>
-                <td colSpan={4} className="py-4 text-center text-ink-faint">
-                  Sem saldos devedores.
-                </td>
-              </tr>
-            )}
-            {data.emprestimos.map((e, i) => (
-              <tr key={i} className="hover:bg-surface/60">
-                <td className="py-2 font-mono text-xs">{e.devedora_id.slice(0, 8)}</td>
-                <td className="py-2 font-mono text-xs">{e.credora_id.slice(0, 8)}</td>
-                <td className="py-2 text-right font-mono text-xs">{e.produto_id.slice(0, 8)}</td>
-                <td className="py-2 text-right font-mono tabular-nums">{e.devido}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+      {/* 3D: secção "Empréstimos entre empresas" removida — pool fungível
+          por galpão não tem credora/devedora. */}
 
       <section className="rounded-xl border border-line bg-paper p-4">
         <h2 className="text-sm font-semibold text-ink">Ajustes manuais (últimos 30d)</h2>

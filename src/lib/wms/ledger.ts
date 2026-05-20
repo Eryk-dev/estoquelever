@@ -1,4 +1,4 @@
-import type { TipoMov, OrigemTipo, Quadrupla, Movimentacao } from "./types";
+import type { TipoMov, OrigemTipo, Tripla, Movimentacao } from "./types";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 
@@ -48,25 +48,35 @@ export function validarCoerencia(input: CalcInput): void {
 }
 
 interface InserirMovInput {
-  quadrupla: Quadrupla;
+  tripla: Tripla;
   tipo: TipoMov;
   qty: number;
   origem_tipo: OrigemTipo;
   origem_id?: string;
   origem_detalhes?: Record<string, unknown>;
-  emprestimo_devedora_id?: string;
+  /** Tags de empresa (metadata, não chave de coordenada). */
+  empresa_compradora_id?: string | null;
+  empresa_vendedora_id?: string | null;
+  empresa_referencia_id?: string | null;
+  /** Fornecedor associado (ex: nf_compra, devolucao_fornecedor_*). */
+  fornecedor_id?: string | null;
+  /** Motivo livre — usado por ajuste_manual, devolucao_*, inventario_*. */
+  motivo?: string | null;
+  /** Cliente associado (ex: devolucao_cliente_*). */
+  cliente_nome?: string | null;
+  /** Pedido associado (FK lógica pra siso_pedidos). */
+  pedido_id?: string | null;
+  /** NF fiscal associada (uuid em siso_notas_fiscais). */
+  nota_fiscal_id?: string | null;
+  /** Chave de acesso (44 dígitos) da NF — backup quando nota_fiscal_id ainda não foi populado. */
+  chave_acesso_nf?: string | null;
+  /** Expiração da reserva (tipo R apenas). */
   expira_em?: string;
-  nota_fiscal_id?: number;
+  /** Custo unitário da entrada — alimenta recálculo do custo médio global. */
   custo_unitario?: number;
   usuario_id?: string;
   observacoes?: string;
   estorno_de?: string;
-  /**
-   * Data/hora da movimentação. Se omitido, usa now() no DB.
-   * Permite registrar movimentações retroativas (data no passado) sem fluxo
-   * separado — ex: receber mercadoria que chegou ontem.
-   */
-  criado_em?: string;
 }
 
 /**
@@ -78,13 +88,13 @@ interface InserirMovInput {
  */
 export async function inserirMovimentacao(input: InserirMovInput): Promise<Movimentacao> {
   const sb = createServiceClient();
-  const { quadrupla, tipo, qty } = input;
+  const { tripla, tipo, qty } = input;
 
   // Validação client-side (early fail; RPC valida de novo no DB com FOR UPDATE)
   const { data: estoqueAtual } = await sb
     .from("siso_estoque")
     .select("saldo, reservado")
-    .match(quadrupla)
+    .match(tripla)
     .maybeSingle();
   validarCoerencia({
     tipo,
@@ -93,28 +103,47 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
     reservadoAnterior: Number(estoqueAtual?.reservado ?? 0),
   });
 
-  const { data: mov, error } = await sb.rpc("wms_inserir_movimentacao", {
-    p_produto: quadrupla.produto_id,
-    p_dona: quadrupla.empresa_dona_id,
-    p_galpao: quadrupla.galpao_id,
-    p_localizacao: quadrupla.localizacao_id,
+  // RPC retorna apenas o uuid da movimentação criada. Carregamos a linha
+  // completa em seguida pra manter compat com o tipo `Movimentacao`.
+  const { data: movId, error } = await sb.rpc("wms_inserir_movimentacao", {
+    p_produto_id: tripla.produto_id,
+    p_galpao_id: tripla.galpao_id,
+    p_localizacao_id: tripla.localizacao_id,
     p_tipo: tipo,
-    p_qty: qty,
+    p_quantidade: qty,
     p_origem_tipo: input.origem_tipo,
     p_origem_id: input.origem_id ?? null,
-    p_origem_detalhes: input.origem_detalhes ?? {},
-    p_emprestimo_devedora: input.emprestimo_devedora_id ?? null,
+    p_origem_detalhes: input.origem_detalhes ?? null,
+    p_usuario_id: input.usuario_id ?? null,
     p_expira_em: input.expira_em ?? null,
-    p_nota_fiscal_id: input.nota_fiscal_id ?? null,
-    p_custo_unitario: input.custo_unitario ?? null,
-    p_usuario: input.usuario_id ?? null,
-    p_observacoes: input.observacoes ?? null,
     p_estorno_de: input.estorno_de ?? null,
-    p_criado_em: input.criado_em ?? null,
+    p_empresa_compradora_id: input.empresa_compradora_id ?? null,
+    p_empresa_vendedora_id: input.empresa_vendedora_id ?? null,
+    p_empresa_referencia_id: input.empresa_referencia_id ?? null,
+    p_fornecedor_id: input.fornecedor_id ?? null,
+    p_motivo: input.motivo ?? null,
+    p_cliente_nome: input.cliente_nome ?? null,
+    p_pedido_id: input.pedido_id ?? null,
+    p_nota_fiscal_id: input.nota_fiscal_id ?? null,
+    p_chave_acesso_nf: input.chave_acesso_nf ?? null,
+    p_custo_unitario: input.custo_unitario ?? null,
   });
   if (error) {
     logger.error("wms.ledger", "falha ao inserir mov", { error, input });
     throw error;
+  }
+
+  const { data: mov, error: errMov } = await sb
+    .from("siso_movimentacoes")
+    .select("*")
+    .eq("id", movId as unknown as string)
+    .single();
+  if (errMov || !mov) {
+    logger.error("wms.ledger", "falha ao recarregar mov", {
+      mov_id: movId,
+      errMov,
+    });
+    throw errMov ?? new Error("mov recém-criada não encontrada");
   }
   return mov as unknown as Movimentacao;
 }
@@ -127,19 +156,21 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
  * como um único evento de venda.
  *
  * Pré-requisitos:
- * - produto na quadrupla precisa ser um kit (eh_kit=true)
+ * - produto na tripla precisa ser um kit (eh_kit=true)
  * - precisa ter composição cadastrada em siso_produto_kits
- * - estoque dos componentes na MESMA empresa_dona+galpao+localizacao da
- *   quadrupla do kit (limitação: kit "vendido" tem que ter os componentes
- *   no mesmo local físico — ou o chamador passa quadruplas alternativas)
+ * - estoque dos componentes na MESMA galpao+localizacao da tripla do kit
+ *   (limitação: kit "vendido" tem que ter os componentes no mesmo local
+ *   físico — ou o chamador passa triplas alternativas)
  */
 export async function venderKit(input: {
-  kit: Quadrupla;
+  kit: Tripla;
   qtyKits: number;
   origem_tipo: OrigemTipo;
   origem_id?: string;
   origem_detalhes?: Record<string, unknown>;
-  nota_fiscal_id?: number;
+  pedido_id?: string | null;
+  nota_fiscal_id?: string | null;
+  empresa_vendedora_id?: string | null;
   custo_unitario?: number;
   usuario_id?: string;
   observacoes?: string;
@@ -174,7 +205,7 @@ export async function venderKit(input: {
     quantidade: number;
   }>) {
     const mov = await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         ...input.kit,
         produto_id: c.componente_produto_id,
       },
@@ -189,7 +220,9 @@ export async function venderKit(input: {
         kit_qty: input.qtyKits,
         kit_componente: true,
       },
-      nota_fiscal_id: input.nota_fiscal_id,
+      pedido_id: input.pedido_id ?? null,
+      nota_fiscal_id: input.nota_fiscal_id ?? null,
+      empresa_vendedora_id: input.empresa_vendedora_id ?? null,
       custo_unitario: input.custo_unitario,
       usuario_id: input.usuario_id,
       observacoes:
@@ -247,9 +280,8 @@ export async function estornarMovimentacao(input: {
     throw new Error(`tipo desconhecido na mov original: ${original.tipo}`);
 
   return inserirMovimentacao({
-    quadrupla: {
+    tripla: {
       produto_id: original.produto_id,
-      empresa_dona_id: original.empresa_dona_id,
       galpao_id: original.galpao_id,
       localizacao_id: original.localizacao_id,
     },

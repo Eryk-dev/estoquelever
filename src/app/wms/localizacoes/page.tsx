@@ -41,11 +41,9 @@ type LoteResponse = {
 
 type SaldoLinha = {
   produto_id: string;
-  empresa_dona_id: string;
   saldo: number;
   sku: string | null;
   descricao: string | null;
-  empresa_nome: string | null;
 };
 
 type SaldosResponse = {
@@ -216,7 +214,6 @@ export default function LocalizacoesPage() {
         ok: true;
         origem_codigo: string;
         destino_codigo: string;
-        donas_movidas: number;
         itens_movidos: number;
       }>(`/api/wms/localizacoes/${excluindo!.id}/substituir-e-excluir`, {
         method: "POST",
@@ -1074,7 +1071,7 @@ function ExcluirLocModal({
                   <tr style={{ color: "var(--wms-c-fg-3)" }}>
                     <th style={{ textAlign: "left", paddingBottom: 4 }}>SKU</th>
                     <th style={{ textAlign: "left", paddingBottom: 4 }}>
-                      Empresa
+                      Descrição
                     </th>
                     <th style={{ textAlign: "right", paddingBottom: 4 }}>
                       Saldo
@@ -1083,12 +1080,12 @@ function ExcluirLocModal({
                 </thead>
                 <tbody>
                   {saldos.rows.map((s) => (
-                    <tr key={`${s.produto_id}-${s.empresa_dona_id}`}>
+                    <tr key={s.produto_id}>
                       <td className="wms-mono" style={{ paddingRight: 8 }}>
                         {s.sku ?? s.produto_id.slice(0, 8)}
                       </td>
                       <td style={{ color: "var(--wms-c-fg-2)" }}>
-                        {s.empresa_nome ?? "—"}
+                        {s.descricao ?? "—"}
                       </td>
                       <td
                         className="wms-mono"

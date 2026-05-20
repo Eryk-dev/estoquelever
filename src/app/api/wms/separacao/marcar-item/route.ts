@@ -86,9 +86,8 @@ export async function POST(request: NextRequest) {
           const locId = await resolverLocalizacaoWms(galpaoId, (estoque?.localizacao as string | null | undefined) ?? null);
 
           const mov = await inserirMovimentacao({
-            quadrupla: {
+            tripla: {
               produto_id: produtoWmsId,
-              empresa_dona_id: empresaOrigemId,
               galpao_id: galpaoId,
               localizacao_id: locId,
             },
@@ -102,7 +101,9 @@ export async function POST(request: NextRequest) {
               sku: item.sku,
               contexto: "checkbox",
             },
-            observacoes: `Picking pedido #${pedido.numero} — checkbox completo`,
+            empresa_vendedora_id: empresaOrigemId,
+            pedido_id: pedido.id,
+            motivo: `Picking pedido #${pedido.numero} — checkbox completo`,
             usuario_id: session.id,
           });
           movSaidaId = mov.id;
@@ -135,7 +136,7 @@ export async function POST(request: NextRequest) {
           await estornarMovimentacao({
             mov_id: item.mov_saida_id,
             usuario_id: session.id,
-            observacoes: "Desmarcar checkbox",
+            motivo: "Desmarcar checkbox",
           });
         } catch (estornoErr) {
           logger.warn("separacao-marcar-item", "Estorno WMS falhou", {

@@ -48,8 +48,8 @@ interface ItemResolvido {
   sku: string;
   descricao: string;
   quantidade: number;
-  // Resolvidos via resolverDisponibilidadeVenda (null se não tem saldo)
-  empresa_dona_id: string | null;
+  // Resolvidos via resolverDisponibilidadeVenda (null se não tem saldo).
+  // Em 3D estoque é fungível dentro do galpão — não há mais empresa dona.
   localizacao_id: string | null;
   localizacao_codigo: string | null;
   disponivel: number;
@@ -197,7 +197,6 @@ export async function POST(request: NextRequest) {
       const dispon = await resolverDisponibilidadeVenda(supabase as never, {
         produto_id: item.produto_id,
         galpao_id,
-        empresa_origem_id,
       });
       return {
         produto_id: item.produto_id,
@@ -205,7 +204,6 @@ export async function POST(request: NextRequest) {
         sku: prod.sku,
         descricao: prod.descricao,
         quantidade: item.quantidade,
-        empresa_dona_id: dispon.sugestao?.empresa_dona_id ?? null,
         localizacao_id: dispon.sugestao?.localizacao_id ?? null,
         localizacao_codigo: dispon.sugestao?.localizacao_codigo ?? null,
         disponivel: dispon.total_disponivel,
@@ -299,9 +297,9 @@ export async function POST(request: NextRequest) {
   if (modoEfetivo === "baixa_direta") {
     for (const item of itensResolvidos) {
       // Aqui já garantimos que tem saldo (senão modoEfetivo seria 'separacao').
-      // Mas localizacao_id/empresa_dona_id devem existir — se não, é bug interno.
-      if (!item.empresa_dona_id || !item.localizacao_id) {
-        logger.error("vendas.criar", "Item sem quadrupla resolvida em baixa_direta — inconsistência", {
+      // Mas localizacao_id deve existir — se não, é bug interno.
+      if (!item.localizacao_id) {
+        logger.error("vendas.criar", "Item sem tripla resolvida em baixa_direta — inconsistência", {
           pedidoId,
           sku: item.sku,
         });
@@ -310,23 +308,22 @@ export async function POST(request: NextRequest) {
             await estornarMovimentacao({
               mov_id: movId,
               usuario_id: user.id,
-              observacoes: `Rollback de venda manual ${pedidoId} (quadrupla inconsistente)`,
+              motivo: `Rollback de venda manual ${pedidoId} (tripla inconsistente)`,
             });
           } catch {}
         }
         await supabase.from("siso_pedido_itens").delete().eq("pedido_id", pedidoId);
         await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
         return NextResponse.json(
-          { erro: `Falha interna: quadrupla não resolvida pra ${item.sku}` },
+          { erro: `Falha interna: tripla não resolvida pra ${item.sku}` },
           { status: 500 },
         );
       }
 
       try {
         const mov = await inserirMovimentacao({
-          quadrupla: {
+          tripla: {
             produto_id: item.produto_id,
-            empresa_dona_id: item.empresa_dona_id,
             galpao_id: galpao_id,
             localizacao_id: item.localizacao_id,
           },
@@ -335,16 +332,17 @@ export async function POST(request: NextRequest) {
           origem_tipo: "venda_manual",
           origem_id: pedidoId,
           origem_detalhes: {
-            pedido_id: pedidoId,
             sku: item.sku,
             vendedor_id: user.id,
             vendedor_nome: user.nome,
-            cliente_nome,
             canal_venda: canal_venda ?? null,
             loc_codigo: item.localizacao_codigo,
           },
+          empresa_vendedora_id: empresa_origem_id,
+          cliente_nome,
+          pedido_id: pedidoId,
           usuario_id: user.id,
-          observacoes: `Venda manual ${pedidoId} — ${cliente_nome}`,
+          motivo: `Venda manual ${pedidoId} — ${cliente_nome}`,
         });
         movsCriadas.push(mov.id);
       } catch (err) {
@@ -362,7 +360,7 @@ export async function POST(request: NextRequest) {
             await estornarMovimentacao({
               mov_id: movId,
               usuario_id: user.id,
-              observacoes: `Rollback de venda manual ${pedidoId} (falha em outro item)`,
+              motivo: `Rollback de venda manual ${pedidoId} (falha em outro item)`,
             });
           } catch (estornoErr) {
             logger.error("vendas.criar", "Falha no rollback de mov — DADOS POSSIVELMENTE INCONSISTENTES", {

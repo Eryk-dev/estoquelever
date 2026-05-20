@@ -4,7 +4,7 @@ import { requireWarehouseAccess } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 // POST /api/wms/inventario/sugerir
-// Body: { galpao_id, empresa_dona_id?, tamanho? }
+// Body: { galpao_id, tamanho? }
 // Resp: { localizacoes: SugestaoLoc[] }
 //
 // Roda o algoritmo de sugestão inteligente (mix 50/30/20 — curva A +
@@ -24,7 +24,6 @@ export async function POST(req: NextRequest) {
   try {
     const localizacoes = await sugerirLocalizacoes({
       galpao_id: body.galpao_id,
-      empresa_dona_id: body.empresa_dona_id ?? null,
       tamanho: body.tamanho ?? 30,
     });
     return NextResponse.json({ localizacoes });

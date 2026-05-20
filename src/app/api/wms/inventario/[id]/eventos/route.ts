@@ -50,7 +50,7 @@ export async function GET(
     // Movs nas locs da sessão criadas após o início
     const { data: movs } = await sb
       .from("siso_movimentacoes")
-      .select("id, localizacao_id, produto_id, empresa_dona_id, tipo, origem_tipo, origem_id, quantidade, saldo_anterior, saldo_posterior, criado_em, estorno_de, siso_produtos!inner(sku, descricao), siso_localizacoes!inner(codigo, galpao_id)")
+      .select("id, localizacao_id, produto_id, tipo, origem_tipo, origem_id, quantidade, saldo_anterior, saldo_posterior, criado_em, estorno_de, siso_produtos!inner(sku, descricao), siso_localizacoes!inner(codigo, galpao_id)")
       .eq("siso_localizacoes.galpao_id", galpaoId)
       .in("localizacao_id", locIds)
       .gte("criado_em", inicio)
@@ -61,7 +61,6 @@ export async function GET(
       id: string;
       localizacao_id: string;
       produto_id: string;
-      empresa_dona_id: string;
       tipo: string;
       origem_tipo: string;
       origem_id: string | null;
@@ -77,8 +76,8 @@ export async function GET(
     const eventos = ((movs ?? []) as MovRow[]).map((m) => {
       const finalizadaEm = finalizadaMap.get(m.localizacao_id);
       let cor: "verde" | "amarelo" | "vermelho" = "verde";
-      if (m.origem_tipo === "inventario") {
-        cor = "verde"; // contagem normal
+      if (m.origem_tipo === "inventario_ganho" || m.origem_tipo === "inventario_perda") {
+        cor = "verde"; // ajuste de inventário (perda ou ganho)
       } else if (finalizadaEm && m.criado_em > finalizadaEm) {
         cor = "vermelho"; // mov em loc já contada — sistema reconcilia
       } else if (finalizadaEm) {

@@ -37,7 +37,6 @@ interface PostBody {
   tipo?: "cycle_count" | "completo";
   nome?: string;
   galpao_id?: string;
-  empresa_dona_id?: string | null;
   modo_contagem?: "aberto" | "blind";
   tolerancia_pct?: number;
   tolerancia_qty_min?: number;
@@ -70,7 +69,6 @@ export async function POST(req: NextRequest) {
       tipo: body.tipo,
       nome: body.nome,
       galpao_id: body.galpao_id,
-      empresa_dona_id: body.empresa_dona_id,
       modo_contagem: body.modo_contagem,
       tolerancia_pct: body.tolerancia_pct,
       tolerancia_qty_min: body.tolerancia_qty_min,

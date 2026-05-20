@@ -20,10 +20,13 @@ interface ParRow {
 }
 
 /**
- * Bulk-load idempotente: pra cada (produto, empresa) com mapeamento, busca saldo atual no Tiny
- * e cria mov 'inventario_inicial' na localização DEFAULT-PICKING.
+ * Bulk-load idempotente: pra cada (produto, empresa) com mapeamento, busca
+ * saldo atual no Tiny e cria mov 'inventario_inicial' na localização
+ * DEFAULT-PICKING. A empresa do Tiny vai como TAG histórica
+ * (`empresa_compradora_id`) — não é mais coordenada do estoque.
  *
- * Idempotência: se já existe mov 'inventario_inicial' pra essa quádrupla, pula.
+ * Idempotência: se já existe mov 'inventario_inicial' pra essa tripla
+ * (produto, galpao, localizacao) com a mesma `empresa_compradora_id`, pula.
  *
  * Roda 1x na Fase 0. Pode levar horas (3000+ chamadas Tiny).
  */
@@ -62,18 +65,19 @@ export async function executarSnapshotInicial(
         .single();
       if (!loc) continue;
 
-      const quadrupla = {
+      const tripla = {
         produto_id: par.produto_id,
-        empresa_dona_id: par.empresa_id,
         galpao_id: galpaoId,
         localizacao_id: loc.id,
       };
 
+      // Idempotência: pula se já tem snapshot com a mesma tag de empresa
       const { data: jaExiste } = await sb
         .from("siso_movimentacoes")
         .select("id")
-        .match(quadrupla)
+        .match(tripla)
         .eq("origem_tipo", "inventario_inicial")
+        .eq("empresa_compradora_id", par.empresa_id)
         .limit(1);
       if (jaExiste && jaExiste.length > 0) {
         pulados++;
@@ -101,10 +105,11 @@ export async function executarSnapshotInicial(
 
       if (!opts.dryRun) {
         await inserirMovimentacao({
-          quadrupla,
+          tripla,
           tipo: "E",
           qty: totalSaldo,
           origem_tipo: "inventario_inicial",
+          empresa_compradora_id: par.empresa_id,
           observacoes: "snapshot inicial Fase 0",
         });
       }

@@ -348,6 +348,12 @@ async function handleListProdutos<T>(query: URLSearchParams): Promise<T> {
  * shaped as a TinyEstoque with one synthetic deposito per (empresa, galpão)
  * combo. Deposito IDs come from siso_tiny_connections so the caller's
  * pickDeposito(depositos, configured_deposito_id) logic still works.
+ *
+ * Fase 5 (3D): siso_estoque deixou de ter empresa_dona_id — estoque é
+ * fungível por (produto, galpão, localização). O stub agora agrega todas
+ * as linhas do produto e expõe o total como "saldo da empresa". A
+ * empresa segue determinando qual deposito_id é apresentado (vem de
+ * siso_tiny_connections).
  */
 async function handleGetEstoque<T>(produtoIdTiny: string): Promise<T> {
   const supabase = createServiceClient();
@@ -364,12 +370,13 @@ async function handleGetEstoque<T>(produtoIdTiny: string): Promise<T> {
     return { localizacao: null, depositos: [] } as T;
   }
 
-  // Aggregate saldo + reservado across all linhas for this produto+empresa
+  // Aggregate saldo + reservado across all linhas for this produto (3D —
+  // fungível por (produto, galpão, loc); a empresa só determina qual
+  // deposito_id é apresentado ao caller Tiny-legacy).
   const { data: linhas } = await supabase
     .from("siso_estoque")
     .select("saldo, reservado, localizacao_id, siso_localizacoes(codigo)")
-    .eq("produto_id", mapping.produto_id)
-    .eq("empresa_dona_id", mapping.empresa_id);
+    .eq("produto_id", mapping.produto_id);
 
   let totalSaldo = 0;
   let totalReservado = 0;

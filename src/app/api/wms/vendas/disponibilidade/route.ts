@@ -7,16 +7,16 @@ import { resolverDisponibilidadeVenda } from "@/lib/wms/vendas-disponibilidade";
 /**
  * GET /api/wms/vendas/disponibilidade
  *
- * Resolve a melhor (empresa_dona, localização) com saldo disponível pra
- * baixar a venda de um produto num galpão. Usado pela tela /wms/vendas/nova
- * pra exibir a sugestão read-only ao vendedor (ele não precisa escolher
- * empresa dona nem loc).
+ * Resolve a melhor localização com saldo disponível pra baixar a venda
+ * de um produto num galpão. Usado pela tela /wms/vendas/nova pra exibir
+ * a sugestão read-only ao vendedor (ele não precisa escolher loc).
+ *
+ * Em 3D, estoque é fungível dentro do galpão — não há mais coordenada
+ * por empresa dona, então o caller só passa (produto, galpão).
  *
  * Query params:
  *   - produto_id (uuid, obrigatório)
  *   - galpao_id (uuid, obrigatório)
- *   - empresa_origem_id (uuid, opcional) — tiebreak: prefere baixar da
- *     empresa que vende se ela tem saldo.
  *
  * Resposta: { total_disponivel, sugestao | null }
  */
@@ -27,7 +27,6 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const produto_id = sp.get("produto_id");
   const galpao_id = sp.get("galpao_id");
-  const empresa_origem_id = sp.get("empresa_origem_id") ?? undefined;
 
   if (!produto_id || !galpao_id) {
     return NextResponse.json(
@@ -41,7 +40,6 @@ export async function GET(req: NextRequest) {
     const result = await resolverDisponibilidadeVenda(sb as never, {
       produto_id,
       galpao_id,
-      empresa_origem_id,
     });
     return NextResponse.json(result);
   } catch (e) {
@@ -50,7 +48,7 @@ export async function GET(req: NextRequest) {
       error: e,
       requestPath: "/api/wms/vendas/disponibilidade",
       requestMethod: "GET",
-      metadata: { produto_id, galpao_id, empresa_origem_id },
+      metadata: { produto_id, galpao_id },
     });
   }
 }

@@ -458,9 +458,14 @@ interface RetroativoPendente {
   quantidade: number;
   observacoes: string | null;
   origem_detalhes: Record<string, unknown>;
+  motivo: string | null;
+  custo_unitario: number | null;
   produto: { sku: string; descricao: string } | null;
   galpao: { nome: string } | null;
   localizacao: { codigo: string } | null;
+  // Tags 3D: compradora histórica (NF que não chegou) e fornecedor.
+  compradora: { nome: string } | null;
+  fornecedor: { nome: string } | null;
 }
 
 export async function listarRetroativosPendentes(): Promise<RetroativoPendente[]> {
@@ -470,9 +475,12 @@ export async function listarRetroativosPendentes(): Promise<RetroativoPendente[]
     .select(
       `
         id, criado_em, quantidade, observacoes, origem_detalhes,
+        motivo, custo_unitario,
         produto:siso_produtos(sku, descricao),
         galpao:siso_galpoes(nome),
-        localizacao:siso_localizacoes(codigo)
+        localizacao:siso_localizacoes(codigo),
+        compradora:siso_empresas!empresa_compradora_id(nome),
+        fornecedor:siso_fornecedores(nome)
       `,
     )
     .eq("origem_tipo", "lancamento_retroativo")

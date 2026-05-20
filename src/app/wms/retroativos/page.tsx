@@ -7,6 +7,7 @@ import {
   Icon,
   PageHeader,
   StatusBadge,
+  fmtBRL,
   fmtDateTime,
   fmtNum,
 } from "@/components/wms/ui/wms-ui";
@@ -16,10 +17,14 @@ interface RetroativoRow {
   criado_em: string;
   quantidade: number;
   observacoes: string | null;
+  motivo: string | null;
+  custo_unitario: number | null;
   produto: { sku: string; descricao: string } | null;
-  empresa: { nome: string } | null;
   galpao: { nome: string } | null;
   localizacao: { codigo: string } | null;
+  // Tags 3D opcionais: compradora histórica + fornecedor.
+  compradora: { nome: string } | null;
+  fornecedor: { nome: string } | null;
   status?: string;
 }
 
@@ -91,7 +96,9 @@ export default function RetroativosPage() {
                 <th>SKU</th>
                 <th>Produto</th>
                 <th className="wms-tar">Qty</th>
+                <th className="wms-tar">Custo un.</th>
                 <th>Localização</th>
+                <th>Tags 3D</th>
                 <th>Status</th>
                 <th>Reconciliar com</th>
               </tr>
@@ -105,11 +112,32 @@ export default function RetroativosPage() {
                   <td className="wms-tar wms-mono">
                     {fmtNum(Number(r.quantidade))}
                   </td>
+                  <td className="wms-tar wms-mono wms-td-mute">
+                    {r.custo_unitario != null ? fmtBRL(Number(r.custo_unitario)) : "—"}
+                  </td>
                   <td className="wms-td-mute">
-                    {r.empresa?.nome ?? "—"} · {r.galpao?.nome ?? "—"} ·{" "}
+                    {r.galpao?.nome ?? "—"} ·{" "}
                     <span className="wms-mono">
                       {r.localizacao?.codigo ?? "—"}
                     </span>
+                  </td>
+                  <td
+                    className="wms-td-mute"
+                    style={{ fontSize: 11, lineHeight: 1.5 }}
+                  >
+                    {r.compradora?.nome && (
+                      <div>
+                        <span style={{ opacity: 0.7 }}>compradora:</span>{" "}
+                        {r.compradora.nome}
+                      </div>
+                    )}
+                    {r.fornecedor?.nome && (
+                      <div>
+                        <span style={{ opacity: 0.7 }}>fornecedor:</span>{" "}
+                        {r.fornecedor.nome}
+                      </div>
+                    )}
+                    {!r.compradora?.nome && !r.fornecedor?.nome && "—"}
                   </td>
                   <td>
                     <StatusBadge status={r.status ?? "pendente"} />
@@ -147,12 +175,12 @@ export default function RetroativosPage() {
                         Reconciliar
                       </button>
                     </div>
-                    {r.observacoes && (
+                    {(r.motivo || r.observacoes) && (
                       <div
                         className="wms-td-mute"
                         style={{ fontSize: 11, marginTop: 4 }}
                       >
-                        {r.observacoes}
+                        {r.motivo ?? r.observacoes}
                       </div>
                     )}
                   </td>

@@ -64,8 +64,11 @@ export default function AjustePage() {
   });
 
   const motivoTooShort = motivo.length > 0 && motivo.length < 3;
+  // 3D: API exige tripla completa {produto_id, galpao_id, localizacao_id}
+  // + qty>0 + motivo>=3. Sem empresa dona.
   const valid =
     !!produto_id &&
+    !!q.galpao_id &&
     !!q.localizacao_id &&
     motivo.length >= 3 &&
     qty > 0;

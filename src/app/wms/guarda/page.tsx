@@ -22,7 +22,6 @@ interface Grupo {
   lote_id: string | null;
   galpao_id: string;
   galpao_nome: string;
-  empresa_nome: string;
   nf_referencia: string | null;
   origem_tipo: string;
   criada_em: string;
@@ -93,7 +92,6 @@ export default function GuardaListaPage() {
         lote_id,
         galpao_id: first.galpao_id,
         galpao_nome: first.galpao?.nome ?? "—",
-        empresa_nome: first.empresa?.nome ?? "—",
         nf_referencia: first.nf_referencia,
         origem_tipo: first.origem_tipo,
         criada_em: first.criada_em,
@@ -399,8 +397,8 @@ function LoteCard({
             )}
           </div>
           <div className="wms-td-mute" style={{ fontSize: 11, marginTop: 2 }}>
-            <span className="wms-mono">{grupo.empresa_nome}</span> · {grupo.galpao_nome}{" "}
-            · {grupo.origem_tipo} · recebido {fmtRelative(grupo.criada_em)}
+            {grupo.galpao_nome} · {grupo.origem_tipo} · recebido{" "}
+            {fmtRelative(grupo.criada_em)}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

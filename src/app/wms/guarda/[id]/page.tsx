@@ -301,9 +301,6 @@ export default function GuardaTabletPage() {
             style={{ fontSize: 11.5, display: "flex", gap: 14, flexWrap: "wrap" }}
           >
             <span>
-              <Icon name="box" size={10} /> {pend.empresa?.nome ?? "—"}
-            </span>
-            <span>
               <Icon name="pin" size={10} /> {pend.galpao?.nome ?? "—"}
             </span>
             {pend.nf_referencia && (

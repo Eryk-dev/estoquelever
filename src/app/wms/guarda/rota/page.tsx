@@ -573,7 +573,7 @@ function PendenciaCard({
             className="wms-td-mute"
             style={{ fontSize: 11, display: "flex", gap: 10, flexWrap: "wrap", marginTop: 2 }}
           >
-            <span>{pendencia.empresa?.nome ?? "—"}</span>
+            {pendencia.galpao?.nome && <span>{pendencia.galpao.nome}</span>}
             {pendencia.nf_referencia && (
               <span>
                 NF <span className="wms-mono">{pendencia.nf_referencia}</span>

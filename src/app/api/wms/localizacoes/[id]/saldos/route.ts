@@ -4,7 +4,9 @@ import { requireAuth } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 /**
- * Lista saldos > 0 da localização, agrupados por (produto, dona).
+ * Lista saldos > 0 da localização, agrupados por produto.
+ * Em 3D estoque é fungível dentro da loc — sem coluna dona.
+ *
  * Usado no fluxo de exclusão: a UI mostra o que precisa ser movido
  * antes de pedir a loc destino.
  */
@@ -22,9 +24,8 @@ export async function GET(
     const { data, error } = await sb
       .from("siso_estoque")
       .select(
-        "produto_id, empresa_dona_id, saldo, " +
-          "produto:siso_produtos(sku, descricao), " +
-          "empresa:siso_empresas(nome)",
+        "produto_id, saldo, " +
+          "produto:siso_produtos(sku, descricao)",
       )
       .eq("localizacao_id", id)
       .gt("saldo", 0)
@@ -33,18 +34,14 @@ export async function GET(
 
     type SaldoRow = {
       produto_id: string;
-      empresa_dona_id: string;
       saldo: number;
       produto: { sku: string; descricao: string } | null;
-      empresa: { nome: string } | null;
     };
     const linhas = ((data ?? []) as unknown as SaldoRow[]).map((r) => ({
       produto_id: r.produto_id,
-      empresa_dona_id: r.empresa_dona_id,
       saldo: r.saldo,
       sku: r.produto?.sku ?? null,
       descricao: r.produto?.descricao ?? null,
-      empresa_nome: r.empresa?.nome ?? null,
     }));
 
     return NextResponse.json({

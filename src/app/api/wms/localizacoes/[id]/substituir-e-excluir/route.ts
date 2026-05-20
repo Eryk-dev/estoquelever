@@ -6,8 +6,10 @@ import { replenishmentIntraGalpao } from "@/lib/wms/movimentacoes";
 import { desativarLocalizacao } from "@/lib/wms/localizacoes";
 
 /**
- * Move TODO o saldo > 0 da loc origem pra loc destino (mesmo galpão),
- * agrupado por empresa_dona, e desativa a origem.
+ * Move TODO o saldo > 0 da loc origem pra loc destino (mesmo galpão) e
+ * desativa a origem.
+ *
+ * Em 3D estoque é fungível dentro da loc — par S+E NEUTRO (sem dona).
  *
  * Não é 100% atômico — cada par S+E é atômico via wms_inserir_movimentacao,
  * mas se falhar mid-flight, alguns SKUs já moveram e a loc origem não foi
@@ -72,35 +74,29 @@ export async function POST(
       );
     }
 
-    // Carrega saldos > 0 da origem, agrupa por empresa_dona.
+    // Carrega saldos > 0 da origem (3D — sem coluna dona).
     const { data: estoques, error: errEst } = await sb
       .from("siso_estoque")
-      .select("produto_id, empresa_dona_id, saldo")
+      .select("produto_id, saldo")
       .eq("localizacao_id", origemId)
       .gt("saldo", 0);
     if (errEst) throw errEst;
 
-    const porDona = new Map<string, { produto_id: string; qty: number }[]>();
-    for (const e of estoques ?? []) {
-      const lista = porDona.get(e.empresa_dona_id) ?? [];
-      lista.push({ produto_id: e.produto_id, qty: Number(e.saldo) });
-      porDona.set(e.empresa_dona_id, lista);
-    }
+    const itens = (estoques ?? []).map((e) => ({
+      produto_id: e.produto_id,
+      qty: Number(e.saldo),
+    }));
 
-    // Move cada grupo (empresa_dona) — 1 chamada de replenishment por dona.
-    let donasMovidas = 0;
     let itensMovidos = 0;
-    for (const [empresa_id, itens] of porDona.entries()) {
+    if (itens.length > 0) {
       await replenishmentIntraGalpao({
-        empresa_id,
         galpao_id: origem.galpao_id,
         localizacao_origem_id: origemId,
         localizacao_destino_id: destinoId,
         itens,
         usuario_id: auth.user.id,
       });
-      donasMovidas += 1;
-      itensMovidos += itens.length;
+      itensMovidos = itens.length;
     }
 
     // Desativa a origem. Reusa o helper que valida saldo=0 (já é o caso agora).
@@ -110,7 +106,6 @@ export async function POST(
       ok: true,
       origem_codigo: origem.codigo,
       destino_codigo: destino.codigo,
-      donas_movidas: donasMovidas,
       itens_movidos: itensMovidos,
     });
   } catch (e) {

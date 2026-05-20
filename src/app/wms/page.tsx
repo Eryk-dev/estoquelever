@@ -86,6 +86,17 @@ const GROUPS: Group[] = [
     ],
   },
   {
+    titulo: "Relatórios",
+    cards: [
+      {
+        href: "/wms/relatorios/movs-por-empresa",
+        icon: "columns",
+        title: "Movs por Empresa",
+        desc: "Compras / vendas / referência por período",
+      },
+    ],
+  },
+  {
     titulo: "Cadastros",
     cards: [
       {
@@ -106,12 +117,6 @@ const GROUPS: Group[] = [
         title: "Fornecedores",
         desc: "CRUD + lead times",
       },
-      {
-        href: "/wms/emprestimos",
-        icon: "handshake",
-        title: "Empréstimos",
-        desc: "Matriz N×N + saldos devedores",
-      },
     ],
   },
 ];
@@ -123,7 +128,7 @@ export default function WmsHome() {
     <>
       <PageHeader
         title="WMS"
-        subtitle="Operações de estoque · 4D (produto × dona × galpão × localização)"
+        subtitle="Operações de estoque · 3D (produto × galpão × localização)"
       >
         <button
           className="wms-btn wms-btn-ghost"

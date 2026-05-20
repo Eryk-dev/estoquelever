@@ -7,9 +7,12 @@ export type StatusCobertura =
   | "sem_giro"
   | "lead_time_risco";
 
+/**
+ * Linha da materialized view `siso_cobertura_estoque` (3D — Fase 2 Task 2.5).
+ * Agregada por (produto, galpão); empresa deixou de ser dimensão física.
+ */
 export interface LinhaCobertura {
   produto_id: string;
-  empresa_dona_id: string;
   galpao_id: string;
   disponivel_total: number;
   giro_diario: number;
@@ -18,7 +21,6 @@ export interface LinhaCobertura {
   status_cobertura: StatusCobertura;
   produto?: { sku: string; descricao: string };
   galpao?: { nome: string };
-  empresa?: { nome: string };
 }
 
 export async function listarCobertura(
@@ -31,8 +33,7 @@ export async function listarCobertura(
       `
         *,
         produto:siso_produtos(sku, descricao),
-        galpao:siso_galpoes(nome),
-        empresa:siso_empresas(nome)
+        galpao:siso_galpoes(nome)
       `,
     )
     .order("dias_cobertura", { ascending: true, nullsFirst: false })

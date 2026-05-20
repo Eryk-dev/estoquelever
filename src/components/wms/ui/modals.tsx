@@ -499,21 +499,17 @@ export function AjusteModal({
 }) {
   const { data: galpoes } = useGalpoes();
   const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
-  const defaultGalpao = galpoesList.find((g) => g.empresas.length > 0);
+  const defaultGalpao = galpoesList[0];
 
   const [pid, setPid] = useState<Produto | null>(seed?.produto ?? null);
   const [qty, setQty] = useState("");
   const [direcao, setDirecao] = useState<"entrada" | "saida">("saida");
   const [motivo, setMotivo] = useState("");
-  const [empresaIdUser, setEmpresaIdUser] = useState<string | null>(null);
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
   const [locIdUser, setLocIdUser] = useState<string | null>(null);
   const qc = useQueryClient();
 
   const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
-  const galpao = galpoesList.find((g) => g.id === galpaoId);
-  const empresasGalpao = galpao?.empresas ?? [];
-  const empresaId = empresaIdUser ?? empresasGalpao[0]?.id ?? "";
   const locId = locIdUser ?? "";
 
   const mut = useMutation({
@@ -522,9 +518,8 @@ export function AjusteModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          quadrupla: {
+          tripla: {
             produto_id: pid!.id,
-            empresa_dona_id: empresaId,
             galpao_id: galpaoId,
             localizacao_id: locId,
           },
@@ -558,7 +553,6 @@ export function AjusteModal({
 
   const valid =
     !!pid &&
-    !!empresaId &&
     !!galpaoId &&
     !!locId &&
     Number(qty) > 0 &&
@@ -567,7 +561,7 @@ export function AjusteModal({
   return (
     <Modal
       title="Ajuste de estoque"
-      subtitle="Entrada ou saída avulsa, sem NF. Motivo obrigatório."
+      subtitle="Entrada ou saída avulsa, sem NF. Motivo obrigatório (mín. 3 chars)."
       onClose={onClose}
       footer={
         <>
@@ -609,33 +603,19 @@ export function AjusteModal({
         </div>
       </Field>
 
-      <div className="wms-row-3">
+      <div className="wms-row-2">
         <Field label="Galpão">
           <select
             className="wms-select"
             value={galpaoId}
             onChange={(e) => {
               setGalpaoIdUser(e.target.value);
-              setEmpresaIdUser(null);
               setLocIdUser(null);
             }}
           >
             {galpoesList.map((g) => (
               <option key={g.id} value={g.id}>
                 {g.nome}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Empresa (dona)">
-          <select
-            className="wms-select"
-            value={empresaId}
-            onChange={(e) => setEmpresaIdUser(e.target.value)}
-          >
-            {empresasGalpao.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.nome}
               </option>
             ))}
           </select>
@@ -692,7 +672,6 @@ function TransferItemRow({
   item,
   idx,
   galOrig,
-  empresaId,
   canRemove,
   onChange,
   onRemove,
@@ -700,16 +679,15 @@ function TransferItemRow({
   item: TransferItem;
   idx: number;
   galOrig: string;
-  empresaId: string;
   canRemove: boolean;
   onChange: (patch: Partial<TransferItem>) => void;
   onRemove: () => void;
 }) {
   // Busca localizações onde o SKU já tem saldo no galpão origem.
-  // Reusa o GET /api/wms/receber que já agrega esse dado.
-  const ready = !!item.produto && !!galOrig && !!empresaId;
+  // Reusa o GET /api/wms/receber que já agrega esse dado (3D: sem empresa).
+  const ready = !!item.produto && !!galOrig;
   const sugQuery = useQuery({
-    queryKey: ["wms-putaway", item.produto?.id, empresaId, galOrig],
+    queryKey: ["wms-putaway", item.produto?.id, galOrig],
     queryFn: () =>
       wmsApi<{
         localizacao_id: string;
@@ -717,7 +695,7 @@ function TransferItemRow({
         razao: string;
         locaisExistentes: LocalSaldo[];
       } | null>(
-        `/api/wms/receber?produto_id=${item.produto!.id}&empresa_id=${empresaId}&galpao_id=${galOrig}`,
+        `/api/wms/receber?produto_id=${item.produto!.id}&galpao_id=${galOrig}`,
       ),
     enabled: ready,
     staleTime: 30 * 1000,
@@ -730,11 +708,16 @@ function TransferItemRow({
 
   // Auto-seleciona a primeira (maior saldo em picking) quando o produto muda
   // e ainda não há escolha manual. onChange é estável (useCallback no parent).
+  // Quando há apenas uma loc, também auto-preenche qty (conveniência).
   useEffect(() => {
     if (item.produto && !item.locOrigem && locais.length > 0) {
-      onChange({ locOrigem: locais[0].localizacao_id });
+      const patch: Partial<TransferItem> = { locOrigem: locais[0].localizacao_id };
+      if (locais.length === 1 && !item.qty) {
+        patch.qty = String(Number(locais[0].saldo));
+      }
+      onChange(patch);
     }
-  }, [item.produto, item.locOrigem, locais, onChange]);
+  }, [item.produto, item.locOrigem, item.qty, locais, onChange]);
 
   const locSel = locais.find((l) => l.localizacao_id === item.locOrigem);
   const qtyNum = Number(item.qty);
@@ -885,12 +868,9 @@ export function TransferModal({
 }) {
   const { data: galpoes } = useGalpoes();
   const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
-  const defaultPrimary = galpoesList.find((g) => g.empresas.length > 0);
-  const defaultSecondary = galpoesList.find(
-    (g) => g.id !== defaultPrimary?.id && g.empresas.length > 0,
-  );
+  const defaultPrimary = galpoesList[0];
+  const defaultSecondary = galpoesList.find((g) => g.id !== defaultPrimary?.id);
 
-  const [empresaIdUser, setEmpresaIdUser] = useState<string | null>(null);
   const [galOrigUser, setGalOrigUser] = useState<string | null>(null);
   const [galDestUser, setGalDestUser] = useState<string | null>(null);
   const [obs, setObs] = useState("");
@@ -901,12 +881,6 @@ export function TransferModal({
 
   const galOrig = galOrigUser ?? defaultPrimary?.id ?? "";
   const galDest = galDestUser ?? defaultSecondary?.id ?? "";
-
-  const empresasOrig = useMemo(
-    () => galpoesList.find((g) => g.id === galOrig)?.empresas ?? [],
-    [galpoesList, galOrig],
-  );
-  const empresaId = empresaIdUser ?? empresasOrig[0]?.id ?? "";
 
   // useCallback pra estabilidade — TransferItemRow tem useEffect que depende
   // dessa função; sem useCallback, ela mudaria toda render e o effect rodaria
@@ -931,7 +905,6 @@ export function TransferModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          empresa_dona_id: empresaId,
           galpao_origem_id: galOrig,
           galpao_destino_id: galDest,
           itens: itens.map((it) => ({
@@ -972,7 +945,6 @@ export function TransferModal({
     (it) => !!it.produto && !!it.locOrigem && Number(it.qty) > 0,
   );
   const valid =
-    !!empresaId &&
     !!galOrig &&
     !!galDest &&
     !sameGalpao &&
@@ -1010,7 +982,6 @@ export function TransferModal({
             value={galOrig}
             onChange={(e) => {
               setGalOrigUser(e.target.value);
-              setEmpresaIdUser(null);
               setItens((prev) =>
                 prev.map((it) => ({ ...it, locOrigem: "" })),
               );
@@ -1037,20 +1008,6 @@ export function TransferModal({
           </select>
         </Field>
       </div>
-
-      <Field label="Empresa (dona)">
-        <select
-          className="wms-select"
-          value={empresaId}
-          onChange={(e) => setEmpresaIdUser(e.target.value)}
-        >
-          {empresasOrig.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.nome}
-            </option>
-          ))}
-        </select>
-      </Field>
 
       {sameGalpao && galOrig && galDest && (
         <div className="wms-hint-card wms-hint-danger">
@@ -1081,7 +1038,6 @@ export function TransferModal({
             item={it}
             idx={idx}
             galOrig={galOrig}
-            empresaId={empresaId}
             canRemove={itens.length > 1}
             onChange={(patch) => updateItem(idx, patch)}
             onRemove={() => removeItem(idx)}
@@ -1115,7 +1071,6 @@ export function TransferModal({
 
 interface RealocarSeed {
   produto?: Produto;
-  empresa_id?: string;
   galpao_id?: string;
   localizacao_origem_id?: string;
   localizacao_destino_id?: string;
@@ -1128,7 +1083,6 @@ interface EstoqueLocLinha {
   reservado: number;
   disponivel: number;
   localizacao: { id: string; codigo: string; tipo: string };
-  empresa: { id: string };
   galpao: { id: string };
 }
 
@@ -1145,13 +1099,10 @@ export function RealocarModal({
 }) {
   const { data: galpoes } = useGalpoes();
   const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
-  const defaultGalpao = galpoesList.find((g) => g.empresas.length > 0);
+  const defaultGalpao = galpoesList[0];
 
   const [pid, setPid] = useState<Produto | null>(seed?.produto ?? null);
   const [qty, setQty] = useState(seed?.qty ? String(seed.qty) : "");
-  const [empresaIdUser, setEmpresaIdUser] = useState<string | null>(
-    seed?.empresa_id ?? null,
-  );
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(
     seed?.galpao_id ?? null,
   );
@@ -1163,16 +1114,13 @@ export function RealocarModal({
   const qc = useQueryClient();
 
   const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
-  const galpao = galpoesList.find((g) => g.id === galpaoId);
-  const empresasGalpao = galpao?.empresas ?? [];
-  const empresaId = empresaIdUser ?? empresasGalpao[0]?.id ?? "";
 
-  // Trocar produto/empresa/galpão limpa origem/destino (a menos que seed force).
+  // Trocar produto/galpão limpa origem/destino (a menos que seed force).
   useEffect(() => {
     if (!seed?.localizacao_origem_id) setOrigem("");
     if (!seed?.localizacao_destino_id) setDestino("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pid?.id, empresaId, galpaoId]);
+  }, [pid?.id, galpaoId]);
 
   // Estoque do produto: lista de localizações com saldo (origem) e qualquer loc do galpão (destino).
   const estoqueQuery = useQuery({
@@ -1189,12 +1137,8 @@ export function RealocarModal({
     const rows = estoqueQuery.data?.rows ?? [];
     const agg = rows[0];
     if (!agg) return [] as EstoqueLocLinha[];
-    return agg.itens.filter(
-      (l) =>
-        (!empresaId || l.empresa.id === empresaId) &&
-        (!galpaoId || l.galpao.id === galpaoId),
-    );
-  }, [estoqueQuery.data, empresaId, galpaoId]);
+    return agg.itens.filter((l) => !galpaoId || l.galpao.id === galpaoId);
+  }, [estoqueQuery.data, galpaoId]);
 
   const origensDisp = linhasProduto.filter(
     (l) => Number(l.disponivel) > 0,
@@ -1210,7 +1154,6 @@ export function RealocarModal({
   const sameLoc = !!origem && !!destino && origem === destino;
   const valid =
     !!pid &&
-    !!empresaId &&
     !!galpaoId &&
     !!origem &&
     !!destino &&
@@ -1224,7 +1167,6 @@ export function RealocarModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          empresa_id: empresaId,
           galpao_id: galpaoId,
           localizacao_origem_id: origem,
           localizacao_destino_id: destino,
@@ -1281,37 +1223,19 @@ export function RealocarModal({
         />
       </Field>
 
-      <div className="wms-row-2">
-        <Field label="Empresa">
-          <select
-            className="wms-select"
-            value={empresaId}
-            onChange={(e) => setEmpresaIdUser(e.target.value)}
-          >
-            {empresasGalpao.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.nome}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Galpão" hint="Realocar é sempre no mesmo galpão">
-          <select
-            className="wms-select"
-            value={galpaoId}
-            onChange={(e) => {
-              setGalpaoIdUser(e.target.value);
-              setEmpresaIdUser(null);
-            }}
-          >
-            {galpoesList.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.nome}
-              </option>
-            ))}
-          </select>
-        </Field>
-      </div>
+      <Field label="Galpão" hint="Realocar é sempre no mesmo galpão">
+        <select
+          className="wms-select"
+          value={galpaoId}
+          onChange={(e) => setGalpaoIdUser(e.target.value)}
+        >
+          {galpoesList.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.nome}
+            </option>
+          ))}
+        </select>
+      </Field>
 
       <div className="wms-trans-grid">
         <div className="wms-trans-side">

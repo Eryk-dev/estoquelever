@@ -33,7 +33,6 @@ type ModalKind = "receber" | "ajuste" | "transferir" | "realocar" | null;
 
 interface RealocarSeedExt {
   produto?: Produto;
-  empresa_id?: string;
   galpao_id?: string;
   localizacao_origem_id?: string;
   localizacao_destino_id?: string;

@@ -2,14 +2,13 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 
 interface DivergenciaRow {
-  id: string;
+  estoque_id: string;
   produto_id: string;
-  empresa_dona_id: string;
   galpao_id: string;
   localizacao_id: string;
-  saldo_estoque: number;
-  saldo_calculado: number;
-  divergencia: number;
+  saldo_cache: number;
+  saldo_ledger: number;
+  delta: number;
 }
 
 interface ReconciliacaoResult {
@@ -33,7 +32,7 @@ export async function reconciliarEstoqueComLedger(
   if (opts.autoFix) {
     for (const d of divergencias) {
       const { error: errFix } = await sb.rpc("wms_rebuild_linha_estoque", {
-        p_id: d.id,
+        p_id: d.estoque_id,
       });
       if (!errFix) corrigidas++;
     }

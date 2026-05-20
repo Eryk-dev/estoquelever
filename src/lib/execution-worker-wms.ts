@@ -10,6 +10,11 @@
  *   3. Transita status_separacao aguardando_nf → aguardando_separacao
  *      (em WMS_AS_SOURCE não existe NF webhook real pra disparar essa transição)
  *
+ * Fase 5 (ledger 3D): chave da mov é (produto, galpão, localização). A
+ * empresa vendedora vira tag em `empresa_vendedora_id`. Sem ordem por tier,
+ * sem empréstimo — quem cobre o pedido é a linha de estoque do galpão da
+ * reserva, fungivelmente.
+ *
  * Idempotente: se pedido.estoque_lancado já é true, retorna sem alterar nada.
  */
 
@@ -21,7 +26,6 @@ import { criarAgrupamentoFase1 } from "./agrupamento-service";
 interface ReservaRow {
   id: string;
   produto_id: string;
-  empresa_dona_id: string;
   galpao_id: string;
   localizacao_id: string;
   quantidade: number;
@@ -36,7 +40,7 @@ export async function executarEstoquePosNfWms(job: {
 
   const { data: pedido, error: pedidoErr } = await sb
     .from("siso_pedidos")
-    .select("id, status_separacao, estoque_lancado, nota_fiscal_id")
+    .select("id, status_separacao, estoque_lancado, nota_fiscal_id, empresa_origem_id")
     .eq("id", job.pedido_id)
     .single();
 
@@ -49,12 +53,13 @@ export async function executarEstoquePosNfWms(job: {
     return;
   }
 
+  // Empresa vendedora = origem do pedido (tag, não chave).
+  const empresaVendedoraId = pedido.empresa_origem_id ?? job.empresa_id;
+
   // 1. Buscar reservas ativas do pedido
   const { data: reservasRaw, error: reservasErr } = await sb
     .from("siso_movimentacoes")
-    .select(
-      "id, produto_id, empresa_dona_id, galpao_id, localizacao_id, quantidade",
-    )
+    .select("id, produto_id, galpao_id, localizacao_id, quantidade")
     .eq("origem_id", job.pedido_id)
     .eq("origem_tipo", "reserva_pedido")
     .eq("tipo", "R");
@@ -109,35 +114,37 @@ export async function executarEstoquePosNfWms(job: {
 
   for (const r of reservasPendentes) {
     try {
-      const quadrupla = {
+      const tripla = {
         produto_id: r.produto_id,
-        empresa_dona_id: r.empresa_dona_id,
         galpao_id: r.galpao_id,
         localizacao_id: r.localizacao_id,
       };
 
       // L — libera a reserva (estorno_de=R.id marca idempotência)
       await inserirMovimentacao({
-        quadrupla,
+        tripla,
         tipo: "L",
         qty: Number(r.quantidade),
         origem_tipo: "liberacao_reserva",
         origem_id: job.pedido_id,
         origem_detalhes: { motivo: "convertida_em_saida" },
         estorno_de: r.id,
-        observacoes: "Conversão reserva→saída (NF emitida)",
+        pedido_id: job.pedido_id,
+        motivo: "Conversão reserva→saída (NF emitida)",
       });
 
-      // S — lança saída
+      // S — lança saída (nf_venda). Empresa vendedora vira tag.
       await inserirMovimentacao({
-        quadrupla,
+        tripla,
         tipo: "S",
         qty: Number(r.quantidade),
         origem_tipo: "nf_venda",
         origem_id: job.pedido_id,
         origem_detalhes: { reserva_origem: r.id, decisao: job.decisao },
+        empresa_vendedora_id: empresaVendedoraId,
+        pedido_id: job.pedido_id,
         nota_fiscal_id: pedido.nota_fiscal_id ?? undefined,
-        observacoes: "Saída via WMS (cutover Plano 2)",
+        motivo: "Saída via WMS (cutover Plano 2)",
       });
       convertidas++;
     } catch (err) {

@@ -652,11 +652,7 @@ export async function processWebhook(
           pedidoId: pedidoTinyId,
           legado: sugestao,
           novo: novaDecisao.decisao,
-          match:
-            (sugestao === "propria" && novaDecisao.decisao === "propria") ||
-            (sugestao === "transferencia" &&
-              novaDecisao.decisao === "emprestimo") ||
-            (sugestao === "oc" && novaDecisao.decisao === "oc"),
+          match: sugestao === novaDecisao.decisao,
           motivo_novo:
             novaDecisao.decisao === "oc" ? novaDecisao.motivo : undefined,
         });

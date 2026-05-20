@@ -13,6 +13,10 @@
  *     null/0 nesse fluxo — UI já lê do siso_pedido_item_estoques)
  *   - siso_pedido_item_estoques (uma linha por (pedido, produto, empresa))
  *   - reservas: uma mov tipo='R' por item via wms_reservar_atomico
+ *
+ * Fase 5 (ledger simplificado 3D): roteamento devolve apenas
+ * `propria | transferencia | oc` (sem empréstimo). Estoque é fungível
+ * por (produto, galpão, localização) — não há mais filtro por dona.
  */
 
 import { createServiceClient } from "./supabase-server";
@@ -90,9 +94,18 @@ async function resolverItensWms(
   });
 }
 
-/** Lê siso_estoque agregado por (produto, empresa_dona) pra todos os itens. */
+/** Lê siso_estoque agregado por (produto, galpão) — 3D, sem dona. */
 async function lerEstoquesDoWms(itens: ResolvedItem[]): Promise<
-  Map<string, Array<{ empresa_dona_id: string; galpao_id: string; saldo: number; reservado: number; disponivel: number; localizacao: string | null }>>
+  Map<
+    string,
+    Array<{
+      galpao_id: string;
+      saldo: number;
+      reservado: number;
+      disponivel: number;
+      localizacao: string | null;
+    }>
+  >
 > {
   const sb = createServiceClient();
   const produtoIds = itens.map((i) => i.produtoIdWms).filter((id): id is string => !!id);
@@ -101,14 +114,13 @@ async function lerEstoquesDoWms(itens: ResolvedItem[]): Promise<
   const { data: linhas } = await sb
     .from("siso_estoque")
     .select(
-      "produto_id, empresa_dona_id, galpao_id, saldo, reservado, disponivel, siso_localizacoes(codigo)",
+      "produto_id, galpao_id, saldo, reservado, disponivel, siso_localizacoes(codigo)",
     )
     .in("produto_id", produtoIds);
 
   const map = new Map<
     string,
     Array<{
-      empresa_dona_id: string;
       galpao_id: string;
       saldo: number;
       reservado: number;
@@ -117,14 +129,12 @@ async function lerEstoquesDoWms(itens: ResolvedItem[]): Promise<
     }>
   >();
 
-  // Aggregate by (produto_id, empresa_dona_id, galpao_id) — many localizações virar 1 linha
-  const aggKey = (produto: string, empresa: string, galpao: string) =>
-    `${produto}|${empresa}|${galpao}`;
+  // Aggregate by (produto_id, galpao_id) — many localizações viram 1 linha
+  const aggKey = (produto: string, galpao: string) => `${produto}|${galpao}`;
   const agg = new Map<
     string,
     {
       produto_id: string;
-      empresa_dona_id: string;
       galpao_id: string;
       saldo: number;
       reservado: number;
@@ -135,20 +145,18 @@ async function lerEstoquesDoWms(itens: ResolvedItem[]): Promise<
 
   for (const linha of (linhas ?? []) as Array<{
     produto_id: string;
-    empresa_dona_id: string;
     galpao_id: string;
     saldo: number | null;
     reservado: number | null;
     disponivel: number | null;
     siso_localizacoes?: { codigo?: string | null } | null;
   }>) {
-    const k = aggKey(linha.produto_id, linha.empresa_dona_id, linha.galpao_id);
+    const k = aggKey(linha.produto_id, linha.galpao_id);
     const cur = agg.get(k);
     const loc = linha.siso_localizacoes?.codigo ?? null;
     if (!cur) {
       agg.set(k, {
         produto_id: linha.produto_id,
-        empresa_dona_id: linha.empresa_dona_id,
         galpao_id: linha.galpao_id,
         saldo: Number(linha.saldo ?? 0),
         reservado: Number(linha.reservado ?? 0),
@@ -166,7 +174,6 @@ async function lerEstoquesDoWms(itens: ResolvedItem[]): Promise<
   for (const v of agg.values()) {
     const arr = map.get(v.produto_id) ?? [];
     arr.push({
-      empresa_dona_id: v.empresa_dona_id,
       galpao_id: v.galpao_id,
       saldo: v.saldo,
       reservado: v.reservado,
@@ -232,6 +239,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       : { decisao: "oc", motivo: "sem_cobertura" };
 
   // 4. Mapear WMS decisao → legacy Decisao
+  // Em 3D só temos propria | transferencia | oc — não há empréstimo.
   let sugestao: LegacyDecisao;
   let separacaoGalpaoId: string;
   let motivo: string;
@@ -242,10 +250,10 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       separacaoGalpaoId = rota.galpao_id;
       motivo = "Estoque próprio no galpão origem";
       break;
-    case "emprestimo":
+    case "transferencia":
       sugestao = "transferencia";
       separacaoGalpaoId = rota.galpao_id;
-      motivo = "Empréstimo entre empresas no galpão";
+      motivo = "Estoque em outro galpão — transferência";
       break;
     case "oc":
       sugestao = "oc";
@@ -377,8 +385,10 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     );
   }
 
-  // 7. Grava siso_pedido_item_estoques — uma linha por (pedido, produto, empresa)
-  //    Itens sem mapeamento ficam de fora (não temos como representar estoque WMS deles).
+  // 7. Grava siso_pedido_item_estoques — pool fungível por galpão.
+  //    Mantemos uma linha por (pedido, produto, empresa_origem) só pra alimentar
+  //    a UI legada — não há mais snapshot por dona em 3D.
+  //    Itens sem mapeamento ficam de fora.
   const estoqueRows: Array<{
     pedido_id: string;
     produto_id: number;
@@ -395,11 +405,13 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   for (const item of itensResolvidos) {
     if (!item.produtoIdWms) continue;
     const estoques = estoquesPorProduto.get(item.produtoIdWms) ?? [];
+    // Em 3D agregamos uma linha por galpão. O "empresa_id" da tabela legada
+    // recebe sempre a empresa origem do pedido como tag — saldo é fungível.
     for (const e of estoques) {
       estoqueRows.push({
         pedido_id: pedido.id,
         produto_id: item.tinyProdutoId,
-        empresa_id: e.empresa_dona_id,
+        empresa_id: empresaOrigemId,
         deposito_id: null,
         deposito_nome: "WMS",
         saldo: e.saldo,
@@ -418,15 +430,13 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   }
 
   // 8. Criar reservas (apenas pra propria/transferencia — OC não reserva)
-  if (rota.decisao === "propria" || rota.decisao === "emprestimo") {
+  if (rota.decisao === "propria" || rota.decisao === "transferencia") {
     for (const r of rota.rotas) {
       try {
-        // Busca a linha de estoque pra pegar localizacao_id certa.
         // rotearPedidoDoBanco já retorna localizacao_id no RotaItem.
         await reservarAtomico({
-          quadrupla: {
+          tripla: {
             produto_id: r.produto_id,
-            empresa_dona_id: r.empresa_dona_id,
             galpao_id: r.galpao_id,
             localizacao_id: r.localizacao_id,
           },

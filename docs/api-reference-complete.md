@@ -776,11 +776,11 @@ Pedidos de venda direta — abrange pedidos manuais inseridos por vendedores E p
 
 **File:** `src/app/api/wms/vendas/criar/route.ts`
 
-**Purpose:** Cria pedido manual de venda. Vendedor escolhe **1 galpão** pro pedido inteiro — empresa dona e localização são resolvidas server-side via `resolverDisponibilidadeVenda` (`src/lib/wms/vendas-disponibilidade.ts`).
+**Purpose:** Cria pedido manual de venda. Vendedor escolhe **1 galpão** pro pedido inteiro — localização é resolvida server-side via `resolverDisponibilidadeVenda` (`src/lib/wms/vendas-disponibilidade.ts`). *(3D — refactor 2026-05-20: não resolve mais empresa dona, só loc.)*
 
 Dois modos solicitados:
 - `separacao`: entra no fluxo de wave picking (pula NF), `status='executando', status_separacao='aguardando_separacao'`.
-- `baixa_direta`: gera mov `'S'` no ledger WMS via `wms_inserir_movimentacao(origem_tipo='venda_manual')` pra cada item na quadrupla resolvida automaticamente, baixando estoque imediatamente. `status='concluido', status_separacao=NULL`.
+- `baixa_direta`: gera mov `'S'` no ledger WMS via `wms_inserir_movimentacao(origem_tipo='venda_manual', empresa_vendedora_id=...)` pra cada item na tripla resolvida automaticamente, baixando estoque imediatamente. `status='concluido', status_separacao=NULL`. A empresa vendedora (`empresa_origem_id`) viaja como tag na mov.
 
 **Degradação automática**: se `modo='baixa_direta'` mas qualquer item não tem saldo suficiente no galpão escolhido, todo o pedido cai pra `modo='separacao'` (igual marketplace sem estoque). Resposta inclui `degradado:true`.
 
@@ -822,12 +822,12 @@ Dois modos solicitados:
 **Errors:**
 - 400 — validação (cliente vazio, qty inválida, galpao_id ausente, produto não cadastrado em `siso_produto_empresas`)
 - 409 — saldo insuficiente mid-flight em baixa_direta (race condition: tinha saldo no GET disponibilidade, mas baixou entre o resolve e o insert da mov; após rollback das movs anteriores)
-- 500 — falha de DB / RPC / quadrupla não resolvida
+- 500 — falha de DB / RPC / tripla não resolvida
 
 **Side Effects:**
 - Insert em `siso_pedidos` (origem_pedido='manual')
 - Bulk insert em `siso_pedido_itens`
-- Em baixa_direta: 1 mov `'S'` por item (origem_tipo='venda_manual', origem_id=pedido_id)
+- Em baixa_direta: 1 mov `'S'` por item (origem_tipo='venda_manual', origem_id=pedido_id, `empresa_vendedora_id`=empresa_origem_id, `cliente_nome` populado da request)
 - Em caso de falha de mov: estorna movs anteriores via `estornarMovimentacao` + deleta pedido/items
 - Audit: `registrarEvento('venda_criada_manual')` + (se baixa_direta) `venda_baixa_direta_executada`
 
@@ -837,12 +837,11 @@ Dois modos solicitados:
 
 **File:** `src/app/api/wms/vendas/disponibilidade/route.ts`
 
-**Purpose:** Resolve a melhor `(empresa_dona, localização)` com saldo disponível pra um produto num galpão. Usado pela tela `/wms/vendas/nova` pra exibir read-only ao vendedor a localização sugerida + qty disponível por item.
+**Purpose:** Resolve a melhor localização com saldo disponível pra um produto num galpão (3D — refactor 2026-05-20). Usado pela tela `/wms/vendas/nova` pra exibir read-only ao vendedor a localização sugerida + qty disponível por item.
 
-Ordem de preferência:
-1. `empresa_origem_id` (quem vende) com saldo — prefere baixar da própria empresa.
-2. Loc tipo `picking` antes de outros tipos.
-3. Maior `disponivel` desempata.
+Ordem de preferência (sem mais empresa dona como critério):
+1. Loc tipo `picking` antes de outros tipos.
+2. Maior `disponivel` desempata.
 
 Locs tipo `recebimento` são ignoradas (estoque em staging não pode ser vendido).
 
@@ -851,15 +850,14 @@ Locs tipo `recebimento` são ignoradas (estoque em staging não pode ser vendido
 **Query Params:**
 - `produto_id` — uuid em `siso_produtos.id` (req)
 - `galpao_id` — uuid em `siso_galpoes.id` (req)
-- `empresa_origem_id` — uuid em `siso_empresas.id` (opcional, tiebreak)
+
+> Param `empresa_origem_id` removido em 2026-05-20 — não há mais "preferir empresa origem" porque o estoque é fungível por galpão. A empresa vendedora viaja como tag na mov.
 
 **Response (200):**
 ```json
 {
   "total_disponivel": 5,
   "sugestao": {
-    "empresa_dona_id": "uuid",
-    "empresa_dona_nome": "NetAir",
     "localizacao_id": "uuid",
     "localizacao_codigo": "A-01-2",
     "localizacao_tipo": "picking",
@@ -1136,7 +1134,7 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
 - Updates `siso_pedidos.status_separacao`, `separacao_operador_id`, `separacao_iniciada_em`
 - Inserts to `siso_pedido_historico`
 - Fire-and-forget: calls `preCriarAgrupamentosEmLote` (creates agrupamentos in Tiny, downloads ZPL)
-- Após transição para `em_separacao`, chama `executarMiniSwap()` se mini-swap estiver ativo no galpão da operadora (graceful — falha silenciosa se RPC falhar). Registra evento `mini_swap_executado` no histórico do pedido se aplicável.
+- *(Removido em 2026-05-20)* O passo de `executarMiniSwap()` antes de `em_separacao` foi descontinuado com o ledger simplificado 3D.
 - Logs to `siso_logs`
 
 **Rate Limiting:** None
@@ -1600,13 +1598,13 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
       "realocacoes": [
         {
           "id": "uuid",
-          "empresa_dona_id": "uuid",
-          "empresa_nome": "string",
+          "empresa_dona_id": "uuid (LEGACY 3D — não populado em inserts novos)",
+          "empresa_nome": "string (LEGACY 3D)",
           "localizacao_id": "uuid",
           "localizacao_codigo": "string",
           "quantidade": "number",
-          "is_emprestimo": "boolean",
-          "empresa_devedora_id": "uuid | null",
+          "is_emprestimo": "boolean (LEGACY 3D — sempre false em inserts novos)",
+          "empresa_devedora_id": "uuid | null (LEGACY 3D — sempre null em inserts novos)",
           "status": "aguardando_picking",
           "criado_em": "ISO datetime"
         }
@@ -1711,7 +1709,7 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
 > **Fix-pack 2026-05-18 (I3):** o modo realocação agora aceita `realocacao_ids: string[]` (array, não singular). Necessário pra suportar wave consolidado onde a mesma loc pode atender múltiplas realocações de pedidos diferentes (uma única mov S compartilhada, registrada em N linhas via `siso_pedido_item_mov_links`). O endpoint ainda aceita `realocacao_id: string` (singular) como fallback de compatibilidade, mas o frontend sempre envia array.
 
 **Side effects (ambos os modos):**
-- Gera mov S no ledger pela qty pega (origem `nf_venda` ou `emprestimo` em realocação que é empréstimo). Wave consolidado: 1 mov S compartilhada por todas as realocações apontando pra mesma quádrupla.
+- Gera mov S no ledger pela qty pega com `origem_tipo='nf_venda'` (origem `emprestimo` foi removida em 2026-05-20). Wave consolidado: 1 mov S compartilhada por todas as realocações apontando pra mesma tripla (produto, galpão, loc). A mov carrega `empresa_vendedora_id` = empresa origem do pedido (tag para apuração).
 - Insere 1 linha em `siso_pedido_item_mov_links` por (item, realocação?, mov, tipo_link) — bridge N:M item↔mov pra estorno proporcional posterior.
 - Se `loc_zerou` e `saldo > qty_pega`, gera mov S de ajuste `ajuste_pick_zerou` pra delta (também registrada na bridge).
 - Marca registro como parcial:
@@ -1739,7 +1737,7 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
   - Item já processado / realocação não-`aguardando_picking` (versões anteriores ao fix-pack — agora coberto pelos códigos acima).
 
 **Side Effects (resumo):**
-- Inserts 1-2 rows in `siso_movimentacoes` (origem_tipo=`nf_venda` ou `emprestimo` + optionally `ajuste_pick_zerou`).
+- Inserts 1-2 rows in `siso_movimentacoes` (origem_tipo=`nf_venda` + optionally `ajuste_pick_zerou`). *(origem `emprestimo` removida em 2026-05-20.)*
 - Modo item: updates `siso_pedido_itens` (`separacao_parcial`, `quantidade_pega`, `parcial_em`, `parcial_por`, `parcial_motivo`, `mov_saida_id`, `mov_ajuste_loc_zerou_id`, `separacao_marcado=true`).
 - Modo realocação: updates `siso_pedido_item_realocacoes` da raiz (`status`, `quantidade_pega`, `parcial`, `parcial_motivo`, `parcial_em`, `parcial_por`, `mov_id`, `mov_ajuste_loc_zerou_id`); acumula `quantidade_pega` no `siso_pedido_itens` pai.
 - Inserts rows in `siso_pedido_item_realocacoes` (status=`aguardando_picking`, `parent_realocacao_id` setado no modo realocação).
@@ -1794,7 +1792,7 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
 **Business Logic:**
 - Fetches realocacao row from `siso_pedido_item_realocacoes`
 - Validates status = `aguardando_picking`
-- Creates WMS movement: tipo=S, origem_tipo=`nf_venda` (regular stock) or `emprestimo` (if `is_emprestimo=true`)
+- Creates WMS movement: tipo=S, origem_tipo=`nf_venda` *(3D — empresa_vendedora_id na mov; flag `is_emprestimo` ignorada em inserts novos desde 2026-05-20)*
 - Updates realocacao com lock pessimista: `UPDATE … SET status='picado', mov_id=… WHERE id=… AND status='aguardando_picking'`. Se `rowCount=0`, estorna a mov e devolve 409 `realocacao_ja_picada`.
 - Adds `quantidade` to parent item's `quantidade_pega` via RPC `wms_acumular_qty_pega` (UPDATE atômico).
 - Insere 1 linha em `siso_pedido_item_mov_links` (tipo_link='saida') pra bridge item↔mov.
@@ -4600,7 +4598,7 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ## WMS — Foundation (Plano 1)
 
-Schema 4D: cada posição de estoque é única por **(produto_id, empresa_dona_id, galpao_id, localizacao_id)**. Toda escrita no ledger passa pela RPC `wms_inserir_movimentacao` (lock pessimista no Postgres).
+Schema 3D (a partir de 2026-05-20): cada posição de estoque é única por **(produto_id, galpao_id, localizacao_id)**. Empresa virou TAG em movs com NF (`empresa_compradora_id` / `empresa_vendedora_id` / `empresa_referencia_id`). Toda escrita no ledger passa pela RPC `wms_inserir_movimentacao` (lock pessimista no Postgres, recalcula `siso_custo_medio` em entradas com `custo_unitario`).
 
 ### GET /api/wms/produtos
 
@@ -4650,11 +4648,11 @@ Força sincronização com Tiny via mapeamento ativo. Atualiza descricao, gtin, 
 
 ### GET /api/wms/produtos/[id]/ultimas-contagens
 
-Retorna a última contagem de inventário desse produto agrupada por (localização + empresa dona). Inclui contagens de sessões em qualquer status menos `cancelada` — útil pra mostrar "conferido em X" mesmo quando a contagem não gerou divergência (e portanto não há mov no ledger). Usado pela aba "Movimentações" do produto.
+Retorna a última contagem de inventário desse produto agrupada por localização (3D — refactor 2026-05-20: sem mais agrupar por empresa dona). Inclui contagens de sessões em qualquer status menos `cancelada` — útil pra mostrar "conferido em X" mesmo quando a contagem não gerou divergência (e portanto não há mov no ledger). Usado pela aba "Movimentações" do produto.
 
 **Auth:** `requireAuth` (qualquer usuário autenticado).
 
-**RPC:** `wms_produto_ultimas_contagens(p_produto_id uuid)` faz `DISTINCT ON (localizacao_id, empresa_dona_id)` ordenado por `criado_em DESC`. Joina com `siso_localizacoes`, `siso_galpoes`, `siso_empresas`, `siso_usuarios`, `siso_inventario_sessoes` e `siso_estoque` (LEFT) pra trazer o saldo atual da quádrupla.
+**RPC:** `wms_produto_ultimas_contagens(p_produto_id uuid)` faz `DISTINCT ON (localizacao_id)` ordenado por `criado_em DESC`. Joina com `siso_localizacoes`, `siso_galpoes`, `siso_usuarios`, `siso_inventario_sessoes` e `siso_estoque` (LEFT) pra trazer o saldo atual da tripla.
 
 **Response 200:**
 ```json
@@ -4666,8 +4664,6 @@ Retorna a última contagem de inventário desse produto agrupada por (localizaç
       "loc_tipo": "picking",
       "galpao_id": "uuid",
       "galpao_nome": "CWB",
-      "empresa_dona_id": "uuid",
-      "empresa_nome": "NetAir",
       "qty_contada": 10,
       "contada_por": "uuid",
       "contada_por_nome": "Eryk",
@@ -4754,7 +4750,7 @@ Desativa logicamente. Falha com 400 se houver saldo>0.
 
 ### GET /api/wms/localizacoes/[id]/saldos
 
-Lista saldos > 0 da localização, agrupados por (produto, empresa_dona). Usado no fluxo de exclusão pra mostrar o que precisa ser movido antes da remoção.
+Lista saldos > 0 da localização agrupados por produto (3D — refactor 2026-05-20: sem mais agrupamento por empresa_dona). Usado no fluxo de exclusão pra mostrar o que precisa ser movido antes da remoção.
 
 **Auth:** `requireAuth`.
 
@@ -4764,11 +4760,9 @@ Lista saldos > 0 da localização, agrupados por (produto, empresa_dona). Usado 
   "rows": [
     {
       "produto_id": "uuid",
-      "empresa_dona_id": "uuid",
       "saldo": 12,
       "sku": "ABC-123",
-      "descricao": "Produto X",
-      "empresa_nome": "NetParts"
+      "descricao": "Produto X"
     }
   ],
   "total_qty": 12,
@@ -4778,7 +4772,7 @@ Lista saldos > 0 da localização, agrupados por (produto, empresa_dona). Usado 
 
 ### POST /api/wms/localizacoes/[id]/substituir-e-excluir
 
-Move todo o saldo > 0 da loc origem pra loc destino (mesmo galpão), agrupado por `empresa_dona`, e desativa a origem.
+Move todo o saldo > 0 da loc origem pra loc destino (mesmo galpão) e desativa a origem (3D — refactor 2026-05-20: par S+E neutro em empresa, sem mais loop por dona).
 
 **Auth:** `requireAdmin`.
 
@@ -4786,7 +4780,7 @@ Move todo o saldo > 0 da loc origem pra loc destino (mesmo galpão), agrupado po
 
 **Validações:** origem e destino existem; destino está ativo; mesma `galpao_id`; `destino_id !== id`.
 
-**Comportamento:** carrega saldos > 0 da origem, agrupa por `empresa_dona`, chama `replenishmentIntraGalpao` (par S+E por SKU com `origem_tipo='transferencia_localizacao'`) uma vez por dona, depois `desativarLocalizacao(origem)`.
+**Comportamento:** carrega saldos > 0 da origem por produto, chama `replenishmentIntraGalpao` (par S+E por SKU com `origem_tipo='transferencia_localizacao'`), depois `desativarLocalizacao(origem)`.
 
 **Atomicidade:** cada par S+E é atômico via `wms_inserir_movimentacao`, mas a sequência não tem rollback. Se falhar mid-flight, alguns SKUs já moveram e a loc origem não foi desativada — rodar de novo é seguro (o já-movido fica em saldo=0 e é ignorado).
 
@@ -4794,21 +4788,21 @@ Move todo o saldo > 0 da loc origem pra loc destino (mesmo galpão), agrupado po
 
 ### GET /api/wms/estoque
 
-Saldos agregados por perspectiva.
+Saldos agregados por perspectiva (3D — refactor 2026-05-20).
 
 **Query params:**
-- `view` — `dono|galpao|localizacao|produto` (default `produto`)
-- `produto_id`, `empresa_id`, `galpao_id` — filtros opcionais
+- `view` — `galpao|localizacao|produto` (default `produto`). *Tab `dono` removida em 2026-05-20.*
+- `produto_id`, `galpao_id` — filtros opcionais. *`empresa_id` removido — não é mais coordenada de estoque.*
 
-**Response 200:** `{ rows: [{ chave, nome, saldo, reservado, disponivel, itens: [...] }] }` ordenado por saldo desc.
+**Response 200:** `{ rows: [{ chave, nome, saldo, reservado, disponivel, itens: [...] }] }` ordenado por saldo desc. Linhas trazem `custo_medio` global do produto (de `siso_custo_medio`) quando aplicável.
 
 ### GET /api/wms/ledger
 
-Lista movimentações (mais recentes primeiro).
+Lista movimentações (mais recentes primeiro). Response inclui as novas colunas de metadata por empresa/fornecedor desde 2026-05-20.
 
-**Query params:** `produto_id`, `empresa_id`, `galpao_id`, `localizacao_id`, `origem_tipo`, `desde`, `ate`, `limit` (default 100).
+**Query params:** `produto_id`, `galpao_id`, `localizacao_id`, `origem_tipo`, `desde`, `ate`, `limit` (default 100). Filtros novos: `empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`, `fornecedor_id`. *`empresa_id` legacy descontinuado.*
 
-**Response 200:** `{ rows: Movimentacao[] }` com joins (produto, empresa, galpao, localizacao).
+**Response 200:** `{ rows: Movimentacao[] }` com joins (produto, galpao, localizacao) + 9 colunas novas: `empresa_compradora_id/nome`, `empresa_vendedora_id/nome`, `empresa_referencia_id/nome`, `fornecedor_id/nome`, `motivo`, `cliente_nome`, `custo_unitario`, `custo_medio_anterior`, `custo_medio_posterior`.
 
 ### POST /api/wms/snapshot-inicial
 
@@ -4820,7 +4814,7 @@ Bulk-load idempotente do Tiny pra popular `siso_estoque` (Fase 0).
 
 **Response 200:** `{ total, criados, pulados, erros }`.
 
-**Side Effects:** Chama Tiny `/estoque/{id}` por cada (produto, empresa) com mapeamento ativo, cria mov `inventario_inicial` na DEFAULT-PICKING. Idempotente (pula se já existe mov inventario_inicial pra a quádrupla).
+**Side Effects:** Chama Tiny `/estoque/{id}` por cada (produto, empresa) com mapeamento ativo, cria mov `inventario_inicial` na DEFAULT-PICKING. Idempotente (pula se já existe mov inventario_inicial pra a tripla produto+galpão+loc). A mov ganha `empresa_referencia_id` = a empresa Tiny que originou o snapshot (apuração histórica via report).
 
 ### GET /api/wms/reconciliacao
 
@@ -4847,13 +4841,14 @@ Registra entrada de estoque. Dois modos:
 
 **Auth:** Session + acesso de armazém (operador/admin).
 
-**Request body:**
+**Request body (3D — refactor 2026-05-20):**
 ```json
 {
-  "empresa_dona_id": "uuid",
   "galpao_id": "uuid",
+  "empresa_compradora_id": "uuid? (NF de compra/devolução)",
+  "fornecedor_id": "uuid? (mapeia pra cadastro de fornecedor)",
   "nf_referencia": "string?",
-  "origem_tipo": "compra_manual | nf_compra | nf_devolucao_cliente | lancamento_retroativo",
+  "origem_tipo": "nf_compra | devolucao_cliente_integra | devolucao_cliente_avariada | devolucao_fornecedor_recebida | lancamento_retroativo",
   "observacoes": "string?",
   "data_recebimento": "ISO timestamp? (se no passado, vira lancamento_retroativo)",
   "entrada_direta": "boolean? (default false — quando true, pula a guarda)",
@@ -4863,12 +4858,13 @@ Registra entrada de estoque. Dois modos:
 }
 ```
 
+> Body **não tem mais `empresa_dona_id`** desde 2026-05-20 — empresa não é coordenada física. `empresa_compradora_id` e `fornecedor_id` viajam como tags na mov (lookup via `/api/wms/relatorios/movs-por-empresa`).
 > `localizacao_destino_id` por item é opcional no modo padrão (tablet decide depois) e **obrigatório** no modo entrada direta.
 
 **Side effects:**
 - Modo padrão: 1 mov `origem_tipo` tipo `E` por item na loc RECEBIMENTO + 1 linha em `siso_wms_pendencias_guarda` com `qty_inicial=qty`, `status='pendente'`, FK ao `mov_entrada_id`. Se a criação da pendência falhar, a mov é estornada automaticamente (defense-in-depth — bug 2026-05-19).
 - Modo entrada direta: 1 mov `origem_tipo` tipo `E` por item **direto na `localizacao_destino_id`**, com `origem_id=lote_id` e `origem_detalhes.entrada_direta=true`. Sem pendência.
-- Em ambos: se `custo_unitario` informado, recalcula `custo_medio` na quádrupla (loc RECEBIMENTO no padrão, loc destino na entrada direta).
+- Em ambos: se `custo_unitario` informado, RPC `wms_inserir_movimentacao` recalcula `siso_custo_medio` (cache global por produto) por média ponderada, grava `custo_medio_anterior`/`custo_medio_posterior` na mov, e popula `empresa_compradora_id` + `fornecedor_id` na mov pra apuração por empresa via report.
 
 **Response 200:** `{ ok: true, pendencia_ids: ["uuid", ...] | [], localizacao_recebimento_id: "uuid" | null, lote_id: "uuid", mov_ids: ["uuid", ...] }`. `pendencia_ids` vazio e `localizacao_recebimento_id=null` em modo entrada direta. Use `pendencia_ids` em modo padrão pra disparar `/api/wms/guarda/imprimir-lote` (impressão do maço pré-guarda), ou monte `linhas` a partir dos itens enviados em modo entrada direta.
 
@@ -4888,9 +4884,9 @@ Fila consumida no tablet. Operador imprime etiquetas → cola nas peças → lev
 
 #### GET /api/wms/guarda
 
-Lista pendências. **Query:** `galpao_id?`, `empresa_dona_id?`, `status=pendente,em_guarda` (CSV, default ativas), `q?`, `limit=200`.
+Lista pendências. **Query:** `galpao_id?`, `status=pendente,em_guarda` (CSV, default ativas), `q?`, `limit=200`. *(Filtro `empresa_dona_id` removido em 2026-05-20 — coluna não existe mais na tabela.)*
 
-**Response 200:** `{ rows: PendenciaJoined[] }` com produto/empresa/galpao/localizacao_origem populados.
+**Response 200:** `{ rows: PendenciaJoined[] }` com produto/galpao/localizacao_origem populados.
 
 #### GET /api/wms/guarda/[id]
 
@@ -4944,12 +4940,11 @@ Em ambos os modos, agrupa por `galpao_id` e dispara 1 print job por galpão (imp
 
 ### POST /api/wms/transferir-galpao
 
-Transferência inter-galpão. Galpões devem ser diferentes (caso contrário use `replenishment`).
+Transferência inter-galpão **neutra em empresa** (3D — refactor 2026-05-20). Galpões devem ser diferentes (caso contrário use `replenishment`).
 
 **Request body:**
 ```json
 {
-  "empresa_id": "uuid",
   "galpao_origem_id": "uuid",
   "localizacao_origem_id": "uuid",
   "galpao_destino_id": "uuid",
@@ -4959,7 +4954,9 @@ Transferência inter-galpão. Galpões devem ser diferentes (caso contrário use
 }
 ```
 
-**Side effects:** Por item, 2 movs (S na origem + E no destino) com mesmo `origem_id` (uuid), `origem_tipo='transferencia_galpao'`.
+> Body **não tem mais `empresa_id`** desde 2026-05-20 — o estoque físico é único por (produto, galpão, loc) e a mov não carrega dona.
+
+**Side effects:** Por item, 2 movs (S na origem + E no destino) com mesmo `origem_id` (uuid), `origem_tipo='transferencia_galpao'`. Custo médio global do produto (em `siso_custo_medio`) não muda — transferência é neutra em valor.
 
 **Response 200:** `{ origem_id }`.
 
@@ -4967,29 +4964,40 @@ Transferência inter-galpão. Galpões devem ser diferentes (caso contrário use
 
 ### POST /api/wms/replenishment
 
-Movimenta entre localizações **dentro do mesmo galpão+empresa**.
+Movimenta entre localizações **dentro do mesmo galpão** (3D — refactor 2026-05-20). Antes era escopado por empresa+galpão; agora apenas galpão.
 
-**Request body:** mesma estrutura mas com `galpao_id` único e `localizacao_origem_id`/`localizacao_destino_id`.
+**Request body:**
+```json
+{
+  "galpao_id": "uuid",
+  "localizacao_origem_id": "uuid",
+  "localizacao_destino_id": "uuid",
+  "itens": [{ "produto_id": "uuid", "qty": 10 }],
+  "observacoes": "string?"
+}
+```
 
-**Side effects:** 2 movs (S+E) com `origem_tipo='transferencia_localizacao'` e mesmo `origem_id`.
+**Side effects:** 2 movs (S+E) com `origem_tipo='transferencia_localizacao'` e mesmo `origem_id`. Neutro em empresa.
 
 **Erros:** 400 se origem_loc == destino_loc.
 
 ### POST /api/wms/ajuste
 
-Ajuste manual de estoque (avaria, perda, encontro, erro de contagem).
+Ajuste manual de estoque (avaria, perda, encontro, erro de contagem). **`motivo` agora é obrigatório** (3D — refactor 2026-05-20).
 
 **Request body:**
 ```json
 {
-  "quadrupla": { "produto_id", "empresa_dona_id", "galpao_id", "localizacao_id" },
+  "tripla": { "produto_id", "galpao_id", "localizacao_id" },
   "qty": 5,
   "direcao": "entrada | saida",
   "motivo": "avaria caixa amassada"
 }
 ```
 
-**Validação:** `motivo.trim().length >= 3`. Mov gravada com `origem_tipo='ajuste_manual'`, motivo em `origem_detalhes` + `observacoes`.
+> Campo renomeado `quadrupla` → `tripla`; `empresa_dona_id` removido (não é mais coordenada).
+
+**Validação:** `motivo.trim().length >= 3` (era opcional, agora obrigatório). Mov gravada com `origem_tipo='ajuste_manual'`, motivo em `siso_movimentacoes.motivo` (coluna nova) + `observacoes`.
 
 ### POST /api/wms/lancamento-retroativo
 
@@ -5054,23 +5062,9 @@ Cria vínculo. **Body:** `{ produto_id, fornecedor_id, lead_time_dias_*?, custo_
 ### PATCH/DELETE /api/wms/produto-fornecedores/[id]
 Atualiza/desativa.
 
-### GET /api/wms/emprestimo-regras
-Lista regras ativas da matriz N×N.
+### Empréstimos API (REMOVIDA em 2026-05-20)
 
-### POST /api/wms/emprestimo-regras
-Cria regra. **Body:** `{ empresa_credora_id, empresa_devedora_id, limite_max_por_produto?, observacoes? }`. **400** se credora == devedora.
-
-### PATCH/DELETE /api/wms/emprestimo-regras/[id]
-Atualiza/desativa.
-
-### GET /api/wms/emprestimo-regras/[id]/limites
-**Response:** `{ limites: Record<produto_id, qty> }`.
-
-### PATCH /api/wms/emprestimo-regras/[id]/limites
-Adiciona/altera/remove uma entrada do jsonb. **Body:** `{ produto_id, qty }` (qty=null remove).
-
-### GET /api/wms/emprestimos/saldos
-Saldo devedor líquido por par credora↔devedora por produto (RPC `wms_saldos_devedores`).
+> Os endpoints `/api/wms/emprestimo-regras/*` e `/api/wms/emprestimos/saldos` foram **removidos** com o ledger simplificado 3D. Empresa não é mais coordenada física, não há débito/crédito entre empresas. Para apuração por empresa, use os reports em `/api/wms/relatorios/*` (ver seção "WMS — Relatórios" abaixo).
 
 ### POST /api/wms/rotear
 Testa o algoritmo (debug + integração futura).
@@ -5078,7 +5072,7 @@ Testa o algoritmo (debug + integração futura).
 **Body:** `{ empresa_vendedora_id, itens: [{ produto_id, qty }] }`.
 
 **Response 200:** `RotaResult`:
-- `{ decisao: 'propria' | 'emprestimo', galpao_id, rotas: [{ produto_id, qty, empresa_dona_id, galpao_id, localizacao_id, tipo }] }`
+- `{ decisao: 'propria', galpao_id, rotas: [{ produto_id, qty, galpao_id, localizacao_id }] }` *(decisão `emprestimo` removida em 2026-05-20)*
 - ou `{ decisao: 'oc', motivo: 'sem_cobertura' | 'split_galpoes' }`
 
 ### GET /api/wms/reservas/cleanup
@@ -5096,7 +5090,9 @@ Lista sessões. Query: `status`, `galpao_id`.
 ### POST /api/wms/inventario
 Cria sessão (v2 — pool compartilhado + party dinâmica de operadores, sem cap rígido).
 
-**Body:** `{ tipo: 'cycle_count'|'completo', galpao_id, nome?, empresa_dona_id?, modo_contagem?: 'blind'|'aberto', tolerancia_pct?, tolerancia_qty_min?, exige_aprovacao_acima_valor?, observacoes?, localizacoes: [{ localizacao_id, motivo? }] }`.
+**Body (3D — refactor 2026-05-20):** `{ tipo: 'cycle_count'|'completo', galpao_id, nome?, modo_contagem?: 'blind'|'aberto', tolerancia_pct?, tolerancia_qty_min?, exige_aprovacao_acima_valor?, observacoes?, localizacoes: [{ localizacao_id, motivo? }] }`.
+
+> Body **não tem mais `empresa_dona_id`** desde 2026-05-20 — sessão escopa por galpão+locs, não por dona.
 
 Defaults: blind, 2%, R$1000.
 
@@ -5139,10 +5135,10 @@ Computa divergências + aprova sessão. **400** se há divergências `pendente`.
 Gera movs `origem_tipo='inventario'` no ledger pra cada divergência aprovada (E ou S conforme delta). Marca divergências como `aplicada` e libera locks. **Response:** `{ movsGeradas }`.
 
 ### POST /api/wms/inventario/[id]/contagens
-Registra contagem. Body: `{ localizacao_id, produto_id, empresa_dona_id, qty_contada, modo? }`.
+Registra contagem. **Body (3D — refactor 2026-05-20):** `{ localizacao_id, produto_id, qty_contada, modo? }`. *Campo `empresa_dona_id` removido — bipe é por tripla (produto, galpão da sessão, loc).*
 - `modo='incremental'` (default): soma na contagem do operador (cada bipe = +qty).
 - `modo='absoluto'`: substitui contagem prévia.
-Mesma quádrupla por outro operador gera nova rodada (suporta duplo blind).
+Mesma tripla por outro operador gera nova rodada (suporta duplo blind).
 
 ### POST /api/wms/inventario/[id]/localizacoes/[locId]/bloquear
 Pega localização atomicamente (RPC). **409** se já bloqueada por outro operador.
@@ -5210,13 +5206,15 @@ Cron-friendly. Auth: `x-worker-secret`. Detecta sessões inativas há 4h+ (alert
 Lista devoluções aguardando classificação física. **Response:** `{ rows: [...] }`.
 
 ### POST /api/wms/devolucoes/[id]/classificar
-**Body:** `{ classificacao: 'integro'|'avariado'|'garantia'|'troca_sku', produto_id, qty, galpao_id, localizacao_id, empresa_dona_destino_id?, observacoes? }`.
+**Body (3D — refactor 2026-05-20):** `{ classificacao: 'A'|'B'|'C'|'D', produto_id, qty, galpao_id, localizacao_id, empresa_referencia_id?, fornecedor_id?, observacoes? }`.
 
-**Side effects por modo:**
-- `integro`: E `nf_devolucao_cliente` + recalcula custo médio (média ponderada)
-- `avariado`: E `nf_devolucao_avariada` + transferência interna pra QUARENTENA
-- `garantia`: E `nf_devolucao_cliente` + S `nf_devolucao_fornecedor` (RMA)
-- `troca_sku`: E `nf_devolucao_cliente` (a troca real é feita no SISO por enquanto)
+> `empresa_dona_destino_id` foi renomeado pra `empresa_referencia_id` (apenas tag na mov, não muda coordenada física) e `fornecedor_id` foi adicionado (necessário pra classificação D / RMA). Classificação A/B/C/D substitui os nomes antigos integro/avariado/garantia/troca_sku.
+
+**Side effects por classificação:**
+- `A` (íntegro): E `devolucao_cliente_integra` + RPC recalcula `siso_custo_medio` (média ponderada). `empresa_referencia_id` populado.
+- `B` (avariado): E `devolucao_cliente_avariada` + transferência interna pra QUARENTENA. Custo médio NÃO recalcula.
+- `C` (garantia): E `devolucao_cliente_integra` + S `devolucao_fornecedor_enviada` (RMA) com `fornecedor_id` populado em ambas.
+- `D` (troca SKU): E `devolucao_cliente_integra` (a troca real é feita no SISO por enquanto).
 
 ### GET /api/wms/cobertura
 Lista linhas da matview de cobertura. **Query:** `status` (critico|atencao|ok|sem_giro|lead_time_risco), `galpao_id`. Limit 500, ordenado por dias_cobertura asc.
@@ -5227,115 +5225,146 @@ Cron-friendly diário 03h. **Auth:** `x-worker-secret`. Chama RPC `wms_refresh_c
 ### GET /api/wms/dashboard-geral
 Agrega contadores cross-módulo numa resposta única (refetch 30s no client).
 
-**Response:**
+**Response (3D — refactor 2026-05-20):**
 ```json
 {
   "cobertura": { "critico": 5, "atencao": 12, "ok": 200, "sem_giro": 8, "lead_time_risco": 3 },
   "inventario": { "sessoesAtivas": 1, "divergenciasPend": 0, "locksAntigos": 0 },
   "reservas": { "expiraEm6h": 2 },
-  "retroativosOrfaos": 0,
-  "emprestimos": { "paresComSaldo": 1 }
+  "retroativosOrfaos": 0
 }
 ```
 
+> Contador `emprestimos.paresComSaldo` removido em 2026-05-20 — empréstimo entre empresas foi arquivado.
+
 ---
 
-## WMS — Mini-Swap Intra-Galpão
+## WMS — Mini-Swap / Swap (REMOVIDO em 2026-05-20)
 
-### GET /api/wms/mini-swap/config
+> Endpoints `/api/wms/mini-swap/config[*]`, `/api/wms/mini-swap/simular`, `/api/wms/swap/detectar` e `/api/wms/swap/executar` foram **removidos** com o ledger simplificado 3D. Empresa não é mais coordenada física, não há mais o que swappear. Frontend `/wms/configuracoes/otimizacoes` também foi removido. Código TypeScript preservado em `src/lib/wms/_archive/`.
 
-**File:** `src/app/api/wms/mini-swap/config/route.ts`
+---
 
-**Purpose:** Lista configuração de mini-swap por galpão (toggle ativo/inativo).
+## WMS — Relatórios (novo em 2026-05-20)
+
+Com o ledger simplificado, apuração por empresa virou **report sobre tags em movs** em vez de coordenada física. 3 endpoints novos, todos read-only.
+
+### GET /api/wms/relatorios/movs-por-empresa
+
+**File:** `src/app/api/wms/relatorios/movs-por-empresa/route.ts`
+
+**Purpose:** Lista movs filtradas por uma das três tags de empresa.
 
 **Auth:** X-Session-Id (required)
 
+**Query params:**
+- `empresa_id` (required) — empresa alvo
+- `tipo` (required) — `compradora` | `vendedora` | `referencia` (qual coluna FK filtrar)
+- `desde`, `ate` — intervalo ISO 8601
+- `origem_tipo` — filtra por enum de origem
+- `limit` (default 200, max 1000)
+
 **Response (200):**
 ```json
-[
-  {
-    "galpao_id": "string",
-    "galpao_nome": "string",
-    "ativo": true,
-    "atualizado_em": "2026-05-14T00:00:00Z",
-    "atualizado_por_nome": "string | null"
-  }
-]
-```
-
-**Side Effects:** None
-
----
-
-### PATCH /api/wms/mini-swap/config/[galpaoId]
-
-**File:** `src/app/api/wms/mini-swap/config/[galpaoId]/route.ts`
-
-**Purpose:** Toggle ativo/inativo do mini-swap para um galpão específico. Admin only.
-
-**Auth:** X-Session-Id (required, cargo=admin)
-
-**Request Body:**
-```json
 {
-  "ativo": true
+  "rows": [
+    {
+      "id": "uuid",
+      "criado_em": "ISO",
+      "tipo": "E|S|R|L",
+      "origem_tipo": "string",
+      "produto_sku": "string",
+      "produto_descricao": "string",
+      "galpao_nome": "string",
+      "localizacao_codigo": "string",
+      "quantidade": 10,
+      "custo_unitario": 12.5,
+      "empresa_compradora_nome": "string|null",
+      "empresa_vendedora_nome": "string|null",
+      "empresa_referencia_nome": "string|null",
+      "fornecedor_nome": "string|null"
+    }
+  ]
 }
 ```
 
-**Response (200):**
-```json
-{ "ok": true }
-```
-
-**Response (403):**
-```json
-{ "error": "acesso negado" }
-```
-
-**Side Effects:**
-- Upsert em `siso_wms_mini_swap_config` (galpao_id, ativo, atualizado_em, atualizado_por)
+**Side Effects:** None.
 
 ---
 
-### POST /api/wms/mini-swap/simular
+### GET /api/wms/relatorios/historico-custo
 
-**File:** `src/app/api/wms/mini-swap/simular/route.ts`
+**File:** `src/app/api/wms/relatorios/historico-custo/route.ts`
 
-**Purpose:** Dry-run do mini-swap: calcula o plano de consolidação de estoque intra-galpão sem aplicar nenhuma movimentação no banco.
+**Purpose:** Série temporal de custo médio por produto, reconstruída a partir de `custo_medio_anterior` → `custo_medio_posterior` nas movs de entrada com `custo_unitario`.
 
 **Auth:** X-Session-Id (required)
 
-**Request Body:**
-```json
-{
-  "pedido_ids": ["string"],
-  "galpao_id": "string"
-}
-```
+**Query params:**
+- `produto_id` (required)
+- `desde`, `ate` — intervalo ISO 8601 (default últimos 90 dias)
 
 **Response (200):**
 ```json
 {
-  "plano": {
-    "demandas": [
-      {
-        "produto_id": "string",
-        "sku": "string",
-        "qty_necessaria": 10,
-        "movimentacoes": []
-      }
-    ],
-    "total_swaps": 2,
-    "total_emprestimos": 1
-  }
+  "produto": { "id": "uuid", "sku": "string", "descricao": "string" },
+  "custo_atual": 12.5,
+  "atualizado_em": "ISO",
+  "serie": [
+    {
+      "mov_id": "uuid",
+      "criado_em": "ISO",
+      "origem_tipo": "nf_compra",
+      "quantidade": 50,
+      "custo_unitario": 11.0,
+      "custo_medio_anterior": 10.0,
+      "custo_medio_posterior": 10.8,
+      "empresa_compradora_nome": "string|null",
+      "fornecedor_nome": "string|null"
+    }
+  ]
 }
 ```
 
-**Side Effects:** None (pure computation, no DB writes)
+**Side Effects:** None.
+
+---
+
+### GET /api/wms/relatorios/saldos-por-empresa
+
+**File:** `src/app/api/wms/relatorios/saldos-por-empresa/route.ts`
+
+**Purpose:** Recompõe saldo "virtual" por empresa a partir das tags em movs. **Não é coordenada física** — é um corte contábil pra apuração de NF: Σ entradas com `empresa_compradora_id=X` − Σ saídas com `empresa_vendedora_id=X` (estornos descontados).
+
+**Auth:** X-Session-Id (required)
+
+**Query params:**
+- `empresa_id` (required) — empresa alvo
+- `galpao_id` — opcional, filtra por galpão
+- `produto_id` — opcional, filtra por produto
+
+**Response (200):**
+```json
+{
+  "rows": [
+    {
+      "produto_id": "uuid",
+      "produto_sku": "string",
+      "produto_descricao": "string",
+      "saldo_virtual": 42,
+      "entradas": 100,
+      "saidas": 58
+    }
+  ],
+  "total_skus": 1
+}
+```
+
+**Side Effects:** None.
 
 **Notes:**
-- Útil para debugging e para a UI de "Otimizações" mostrar preview antes de confirmar
-- O algoritmo `planejarMiniSwap()` é idêntico ao usado em produção
+- Cálculo é caro (full scan filtrado de `siso_movimentacoes`). Limit no client/UI.
+- Saldo virtual ≠ saldo físico (que é em `siso_estoque` por galpão+loc). Útil pra contabilidade fiscal.
 
 ---
 

@@ -7,26 +7,37 @@ import {
   type StatusTransferencia,
 } from "@/lib/wms/transferencias";
 
+/**
+ * POST /api/wms/transferencias
+ *
+ * 3D body shape:
+ *   - galpao_origem_id (required)
+ *   - galpao_destino_id (required)
+ *   - itens: [{ produto_id, localizacao_origem_id, qty }]  (required)
+ *   - observacoes (optional)
+ */
 export async function POST(req: NextRequest) {
   const auth = await requireWarehouseAccess(req);
   if (!auth.ok) return auth.response;
 
   const body = await req.json();
   if (
-    !body.empresa_dona_id ||
     !body.galpao_origem_id ||
     !body.galpao_destino_id ||
     !Array.isArray(body.itens) ||
     body.itens.length === 0
   ) {
     return NextResponse.json(
-      { error: "campos obrigatórios: empresa_dona_id, galpao_origem_id, galpao_destino_id, itens[]" },
+      { error: "campos obrigatórios: galpao_origem_id, galpao_destino_id, itens[]" },
       { status: 400 },
     );
   }
   try {
     const r = await criarTransferencia({
-      ...body,
+      galpao_origem_id: body.galpao_origem_id,
+      galpao_destino_id: body.galpao_destino_id,
+      itens: body.itens,
+      observacoes: body.observacoes,
       usuario_id: auth.user.id,
     });
     return NextResponse.json(r, { status: 201 });
@@ -38,7 +49,6 @@ export async function POST(req: NextRequest) {
       requestPath: "/api/wms/transferencias",
       requestMethod: "POST",
       metadata: {
-        empresa_dona_id: body.empresa_dona_id,
         galpao_origem_id: body.galpao_origem_id,
         galpao_destino_id: body.galpao_destino_id,
         n_itens: Array.isArray(body.itens) ? body.itens.length : 0,
@@ -57,7 +67,6 @@ export async function GET(req: NextRequest) {
       status: status ?? undefined,
       galpao_origem_id: sp.get("galpao_origem_id") ?? undefined,
       galpao_destino_id: sp.get("galpao_destino_id") ?? undefined,
-      empresa_dona_id: sp.get("empresa_dona_id") ?? undefined,
       limit: sp.get("limit") ? Number(sp.get("limit")) : undefined,
     });
     return NextResponse.json({ rows });

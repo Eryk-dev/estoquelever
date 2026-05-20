@@ -15,9 +15,11 @@ export async function GET(req: NextRequest) {
   }
   const galpaoId = req.nextUrl.searchParams.get("galpao_id");
   const sb = createServiceClient();
-  const [valor, emprestimos, ajustes, insights] = await Promise.all([
+  // 3D: KPIs de empréstimo/saldos devedores removidos — pool fungível por
+  // galpão não tem credora/devedora. Resta só valor de estoque, ajustes
+  // recentes e insights da categoria financeira.
+  const [valor, ajustes, insights] = await Promise.all([
     getEstoqueValorAtual(galpaoId),
-    sb.rpc("wms_saldos_devedores"),
     sb
       .from("siso_movimentacoes")
       .select("usuario_id, origem_detalhes, criado_em, tipo, quantidade, custo_unitario")
@@ -30,7 +32,6 @@ export async function GET(req: NextRequest) {
   ]);
   return NextResponse.json({
     valor,
-    emprestimos: emprestimos.data ?? [],
     ajustes_recentes: ajustes.data ?? [],
     insights,
   });

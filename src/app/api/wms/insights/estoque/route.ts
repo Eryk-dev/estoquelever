@@ -12,11 +12,11 @@ export async function GET(req: NextRequest) {
   }
   const sp = req.nextUrl.searchParams;
   const galpaoId = sp.get("galpao_id");
-  const empresaId = sp.get("empresa_id");
+  // 3D: filtro por empresa_id removido — pool fungível por galpão.
 
   const sb = createServiceClient();
   const [quadrante, insights, statusAgg, slowMovers] = await Promise.all([
-    getEstoqueQuadrante(galpaoId, empresaId, 500),
+    getEstoqueQuadrante(galpaoId, 500),
     getInsightsAtivos("estoque", galpaoId, 6),
     // Distribuição por status_cobertura
     sb.from("siso_cobertura_estoque").select("status_cobertura"),

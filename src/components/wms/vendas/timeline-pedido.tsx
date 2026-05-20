@@ -36,7 +36,6 @@ const EVENTO_LABELS: Record<string, string> = {
   cancelado: "Pedido cancelado",
   erro: "Erro no processamento",
   observacao: "Observação adicionada",
-  mini_swap_executado: "Mini-swap executado",
 };
 
 const EVENTO_TONE: Record<string, EventoTone> = {
@@ -55,7 +54,6 @@ const EVENTO_TONE: Record<string, EventoTone> = {
   compra_recebida: "info",
   nf_emitida: "info",
   separacao_iniciada: "info",
-  mini_swap_executado: "info",
 };
 
 function truncate(text: string, max: number): string {

@@ -258,19 +258,21 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 ### siso_pedido_item_realocacoes
 
-**Purpose:** Re-allocation candidates created when a short pick zeroes a location. Each row points to an alternate location (possibly in another empresa via empréstimo) where remaining qty can be picked.
+**Purpose:** Re-allocation candidates created when a short pick zeroes a location. Each row points to an alternate location where the remaining qty can be picked.
+
+> **3D refactor (2026-05-20):** as colunas `empresa_dona_id`, `empresa_nome`, `is_emprestimo` e `empresa_devedora_id` foram preservadas no schema mas **deixaram de ser populadas** — empresa não é mais coordenada física e empréstimo entre empresas foi arquivado. Inserts novos via `POST /api/wms/separacao/parcial` deixam esses campos como NULL/false/legacy.
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
 | `id` | uuid | NO | (PK) | Realocacao ID |
 | `pedido_item_id` | bigint | NO | FK | Parent item in `siso_pedido_itens` |
-| `empresa_dona_id` | uuid | NO | FK | Empresa that owns the stock in the alternate location |
-| `empresa_nome` | text | NO | | Empresa name (denormalized for display) |
+| `empresa_dona_id` | uuid | NO | FK | **LEGACY (3D)** — não populado em inserts novos. |
+| `empresa_nome` | text | NO | | **LEGACY (3D)** — denormalizado, não populado em inserts novos. |
 | `localizacao_id` | uuid | NO | FK | WMS location UUID |
 | `localizacao_codigo` | text | NO | | Location code (e.g., "A1-2-3") — denormalized for display |
 | `quantidade` | integer | NO | | Qty to be picked from this location (CHECK > 0) |
-| `is_emprestimo` | boolean | NO | false | Whether this requires an inter-empresa empréstimo movement |
-| `empresa_devedora_id` | uuid | YES | FK | Empresa that will owe stock if empréstimo (required iff is_emprestimo=true) |
+| `is_emprestimo` | boolean | NO | false | **LEGACY (3D)** — sempre `false` em inserts novos (empréstimo arquivado). |
+| `empresa_devedora_id` | uuid | YES | FK | **LEGACY (3D)** — sempre NULL em inserts novos. |
 | `status` | text | NO | 'aguardando_picking' | Status: `aguardando_picking`, `picado`, `picado_parcial`, `cancelado` |
 | `mov_id` | uuid | YES | FK | WMS movement ID after picking (set on `marcar-realocacao` or modo realocação do parcial) |
 | `operador_id` | uuid | YES | FK | User who picked this realocacao |
@@ -742,22 +744,23 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 ## WMS — Guarda (put-away)
 
-Tabela introduzida em 2026-05-14 pelo split do recebimento em 2 etapas (dock + guarda). As outras tabelas WMS (siso_produtos, siso_estoque, siso_movimentacoes, siso_localizacoes, etc.) estão documentadas em [`CLAUDE.md`](../CLAUDE.md) na seção "WMS Tables".
+Tabela introduzida em 2026-05-14 pelo split do recebimento em 2 etapas (dock + guarda). As outras tabelas WMS (siso_produtos, siso_estoque, siso_movimentacoes, siso_localizacoes, siso_custo_medio, etc.) estão documentadas em [`CLAUDE.md`](../CLAUDE.md) na seção "WMS Tables".
 
 ### siso_wms_pendencias_guarda
 
 **Purpose:** Fila de pendências de put-away. 1 linha por linha de recebimento (preserva rastreio NF/lote). Criada pelo `POST /api/wms/receber`, consumida pela tela `/wms/guarda` (tablet).
 
+> **3D (2026-05-20):** coluna `empresa_dona_id` foi dropada (migration `20260520g_drop_dona_pendencias.sql`). Empresa compradora vive em `siso_movimentacoes.empresa_compradora_id` da `mov_entrada_id`. Índice `idx_pendencias_guarda_produto` recriado sem dona como `(produto_id, galpao_id)`.
+
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
 | `id` | uuid | NO | gen_random_uuid() | PK |
 | `produto_id` | uuid | NO | FK | → `siso_produtos(id)` |
-| `empresa_dona_id` | uuid | NO | FK | → `siso_empresas(id)` |
 | `galpao_id` | uuid | NO | FK | → `siso_galpoes(id)` |
 | `localizacao_origem_id` | uuid | NO | FK | → `siso_localizacoes(id)` — loc tipo='recebimento' (dock) |
 | `mov_entrada_id` | uuid | NO | FK | → `siso_movimentacoes(id)` da entrada que gerou a pendência |
 | `nf_referencia` | text | YES | | NF de origem (rastreio) |
-| `origem_tipo` | text | NO | | Herdado da mov: `compra_manual`, `nf_compra`, `nf_devolucao_cliente`, `lancamento_retroativo` etc. |
+| `origem_tipo` | text | NO | | Herdado da mov (CHECK: enum de 18 valores em `siso_movimentacoes_origem_tipo_check`). |
 | `custo_unitario` | numeric(14,4) | YES | | Custo unitário declarado no recebimento |
 | `qty_inicial` | numeric(14,4) | NO | | Quantidade original a guardar (CHECK > 0) |
 | `qty_guardada` | numeric(14,4) | NO | 0 | Quantidade já guardada (CHECK ≥ 0, ≤ qty_inicial) |
@@ -775,12 +778,12 @@ Tabela introduzida em 2026-05-14 pelo split do recebimento em 2 etapas (dock + g
 
 **Primary Key:** `id`
 
-**Foreign Keys:** `produto_id`, `empresa_dona_id`, `galpao_id`, `localizacao_origem_id`, `mov_entrada_id`, `iniciada_por`, `cancelada_por`
+**Foreign Keys:** `produto_id`, `galpao_id`, `localizacao_origem_id`, `mov_entrada_id`, `iniciada_por`, `cancelada_por`
 
 **Indexes:**
 - `idx_pendencias_guarda_fila` (galpao_id, status, criada_em) WHERE status IN ('pendente','em_guarda') — feed da lista ativa
 - `idx_pendencias_guarda_mov` (mov_entrada_id) — rastreio inverso (mov → pendência)
-- `idx_pendencias_guarda_produto` (produto_id, empresa_dona_id, galpao_id) — dashboards por produto
+- `idx_pendencias_guarda_produto` (produto_id, galpao_id) — dashboards por produto (recriado sem dona em 2026-05-20)
 
 **Check Constraints:**
 - `qty_inicial > 0`
@@ -806,50 +809,11 @@ pendente ──iniciar──> em_guarda ──confirmar (parcial)──> pendent
 
 ---
 
-## WMS — Mini-Swap Intra-Galpão
+## WMS — Mini-Swap / Swap Inter-Empresa (ARQUIVADO em 2026-05-20)
 
-### siso_wms_mini_swap_config
-
-**Purpose:** Toggle on/off do mini-swap intra-galpão por galpão. Criada em 2026-05-14 junto com `src/lib/wms/mini-swap.ts`.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `galpao_id` | uuid | NO | | PK + FK → `siso_galpoes(id)` ON DELETE CASCADE |
-| `ativo` | boolean | NO | true | Mini-swap habilitado para este galpão |
-| `atualizado_em` | timestamptz | NO | now() | Última atualização |
-| `atualizado_por` | uuid | YES | FK → `siso_usuarios(id)` | Usuário que alterou |
-
-**Primary Key:** `galpao_id`
-
-**Foreign Keys:** `galpao_id` → `siso_galpoes(id)`, `atualizado_por` → `siso_usuarios(id)`
-
-**Seed:** 1 row por galpão ativo, todos com `ativo=true`.
-
-**Notes:**
-- Lida por `executarMiniSwap()` antes de cada wave picking (via `POST /api/wms/separacao/iniciar`)
-- Toggle via `PATCH /api/wms/mini-swap/config/[galpaoId]` (admin only)
-
-### RPC `wms_executar_mini_swap`
-
-```sql
-wms_executar_mini_swap(
-  p_plano   jsonb,       -- PlanoMiniSwap serializado (output de planejarMiniSwap)
-  p_pedido_ids uuid[],   -- IDs dos pedidos da wave
-  p_galpao_id  uuid,     -- Galpão onde o mini-swap ocorre
-  p_usuario_id uuid DEFAULT NULL
-) RETURNS jsonb
-```
-
-**Purpose:** Aplica o plano pré-computado pelo TypeScript de forma atômica.
-
-**Behavior:**
-- Lock pessimista via `SELECT FOR UPDATE` em `siso_estoque` do galpão para os SKUs do plano
-- Cancela reservas existentes dos pedidos (mov tipo='L' — liberação)
-- Executa swaps (par S+E via `wms_inserir_movimentacao` com origem_tipo='swap')
-- Recria reservas (mov tipo='R') já na nova posição consolidada
-- Retorna jsonb array dos planos executados com IDs das movimentações geradas
-
-**Atomicity:** Toda a operação ocorre numa única transação Postgres. Falha em qualquer mov reverte tudo.
+> Tabela `siso_wms_mini_swap_config` **dropada** com o ledger simplificado 3D (migration `20260520_ledger_simplificado.sql`). RPCs `wms_executar_mini_swap`, `wms_executar_swap` e `wms_saldos_devedores` também foram dropadas. Razão: empresa deixou de ser coordenada física — não há mais "trocar dona" no estoque. Apuração por empresa virou report (`/api/wms/relatorios/*`) sobre tags de movs. Código TypeScript preservado em `src/lib/wms/_archive/` pra referência histórica.
+>
+> O valor `'swap'` foi também **removido** do CHECK constraint `siso_movimentacoes_origem_tipo_check` (lista de 18 valores válidos agora — ver descrição de `siso_movimentacoes` em CLAUDE.md).
 
 ---
 
@@ -1513,7 +1477,6 @@ erDiagram
     PEDIDO_ITEM ||--o{ PEDIDO_ITEM_REALOCACAO : has_realocacoes
 
     PEDIDO_ITEM_ESTOQUE }o--|| EMPRESA : per_empresa
-    PEDIDO_ITEM_REALOCACAO }o--|| EMPRESA : dona_stock
 
     USUARIO ||--o{ PEDIDO : approves
     USUARIO ||--o{ PEDIDO_HISTORICO : records
@@ -1779,12 +1742,12 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-03-24 | `compras_v2_missing_columns.sql` | Additional purchase columns (compra_quantidade_comprada, comprado_por_nome, prioridade) |
 | 2026-03-26 | `add_encaminhado_de.sql` | Forward tracking: origin galpão name when order manually transferred |
 | 2026-05-06 | `20260506_create_cross_module.sql` | Cross module: siso_produtos_catalogo, siso_produto_oems, siso_produto_veiculos, siso_cross_logs + triggers de denormalização |
-| 2026-05-08 | `20260508_wms_foundation.sql` | WMS Fase 0: siso_produtos, siso_localizacoes, siso_estoque (4D), siso_movimentacoes (ledger) + RPC wms_inserir_movimentacao |
-| 2026-05-22 | `20260522_wms_roteamento.sql` | WMS Plano 3: siso_fornecedores, siso_produto_fornecedores, siso_emprestimo_regras, siso_localizacao_locks + RPC wms_reservar_atomico + wms_saldos_devedores |
-| 2026-05-12 | `20260512_wms_receber_oc_atomico.sql` | **WMS Plano 3:** RPC `wms_receber_oc_atomico(p_produto, p_dona, p_galpao, p_localizacao, p_qty, p_pedido, p_ttl_horas, p_custo_unitario, p_usuario, p_observacoes) RETURNS TABLE(mov_entrada_id uuid, mov_reserva_id uuid)` — entrada + reserva atômicas no recebimento de OC. Delega a `wms_inserir_movimentacao` duas vezes na mesma transação (atomicidade garantida pelo Postgres) |
-| 2026-05-13 | `20260513_wms_swap.sql` | **WMS Plano 4:** adiciona `'swap'` ao CHECK constraint `siso_movimentacoes_origem_tipo_check`. RPC `wms_executar_swap(p_produto, p_empresa_a, p_empresa_b, p_galpao_a, p_galpao_b, p_localizacao_a, p_localizacao_b, p_qty, p_pedido, p_usuario, p_observacoes) RETURNS TABLE(4 mov uuids)` — 4 movs (S+E em galpao_a, S+E em galpao_b) numa transação trocando dona entre 2 galpões. Saldo total por empresa preservado, sem saldo devedor (vs empréstimo). |
+| 2026-05-08 | `20260508_wms_foundation.sql` | WMS Fase 0: siso_produtos, siso_localizacoes, siso_estoque (4D original), siso_movimentacoes (ledger) + RPC wms_inserir_movimentacao |
+| 2026-05-22 | `20260522_wms_roteamento.sql` | WMS Plano 3: siso_fornecedores, siso_produto_fornecedores, siso_emprestimo_regras (dropada em 2026-05-20), siso_localizacao_locks + RPC wms_reservar_atomico + wms_saldos_devedores (dropada em 2026-05-20) |
+| 2026-05-12 | `20260512_wms_receber_oc_atomico.sql` | **WMS Plano 3:** RPC `wms_receber_oc_atomico` — entrada + reserva atômicas no recebimento de OC. Delega a `wms_inserir_movimentacao` duas vezes na mesma transação (assinatura simplificada em 2026-05-20 com a remoção de dona). |
+| 2026-05-13 | `20260513_wms_swap.sql` | **WMS Plano 4 (REVERTIDO em 2026-05-20):** adicionava `'swap'` ao CHECK + RPC `wms_executar_swap`. Reverso pela `20260520_ledger_simplificado.sql` — empresa não é mais coordenada física. |
 | 2026-05-14 | `20260514_wms_guarda_pendencias.sql` | **Recebimento em 2 etapas:** cria `siso_wms_pendencias_guarda` (fila de put-away), adiciona `printnode_printer_id_produto`/`printnode_printer_nome_produto` em `siso_galpoes` e `siso_usuarios` (impressora dedicada pra etiqueta de produto, com fallback pra impressora de envio), auto-cria 1 `siso_localizacoes` tipo='recebimento' (codigo='RECEBIMENTO') por galpão ativo que não tenha. Trigger `trg_pendencias_guarda_touch` atualiza `atualizada_em` a cada UPDATE. |
-| 2026-05-14 | `20260514_wms_mini_swap*.sql` | **Mini-Swap Intra-Galpão:** cria `siso_wms_mini_swap_config` (toggle por galpão, seed `ativo=true` para todos os galpões ativos) + RPC `wms_executar_mini_swap` (aplica plano sob lock pessimista: libera reservas → executa swaps → recria reservas, tudo atômico). |
+| 2026-05-14 | `20260514_wms_mini_swap*.sql` | **Mini-Swap Intra-Galpão (REVERTIDO em 2026-05-20):** criava `siso_wms_mini_swap_config` + RPC `wms_executar_mini_swap`. Tabela e RPC dropadas pela `20260520_ledger_simplificado.sql`. |
 | 2026-05-18 | `20260518_realocacao_fix_pack_foundation.sql` | **Fix-pack realocação cascateável — foundation:** cria tabela ponte `siso_pedido_item_mov_links` (N:M item↔mov, com `realocacao_id` nullable e `tipo_link IN ('saida','ajuste_loc_zerou')`); adiciona `siso_movimentacoes.qty_estornada numeric NOT NULL DEFAULT 0 CHECK >= 0` com backfill `qty_estornada=quantidade` pra movs com par `estorno_de` existente; adiciona `siso_pedido_item_realocacoes` à publication `supabase_realtime`; backfill normaliza `parcial_motivo`: `cascade_loc_zerou`→`loc_zerou`, `cascade_parcial`→`qty_diferente`. |
 | 2026-05-18 | `20260518_realocacao_fix_pack_rpc_acumular.sql` | **Fix-pack — RPC `wms_acumular_qty_pega`:** UPDATE atômico de `siso_pedido_itens.quantidade_pega += p_delta` com lock pessimista (`SELECT FOR UPDATE`). Substitui read-modify-write vulnerável a race em wave consolidado. Raises `'item_nao_encontrado'` ou `'quantidade_pega_negativa'`. |
 | 2026-05-18 | `20260518_realocacao_fix_pack_rpc_estorno_parcial.sql` | **Fix-pack — RPC `wms_estornar_parcial_movimentacao`:** estorna parcialmente uma mov criando contrária com qty < total da fonte e incrementando `qty_estornada` na fonte. Lock pessimista + validações (mov existe, não é estorno, qty>0, não excede saldo estornável). Atômica. Origem da contrária = `'estorno_parcial'`. |
@@ -1792,6 +1755,15 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-05-19 | `20260519_vendas_diretas_vendedor.sql` | **Vendas Diretas + role vendedor:** adiciona `siso_pedidos.vendedor_id (uuid FK siso_usuarios ON DELETE SET NULL)`, `vendedor_nome (text)`, `origem_pedido (text NOT NULL DEFAULT 'webhook' CHECK IN ('webhook','manual'))`, `canal_venda (text)`. Cria índice parcial `idx_pedidos_vendedor_id WHERE vendedor_id IS NOT NULL` + `idx_pedidos_vendas_diretas WHERE origem_pedido='manual' OR nome_ecommerce IN ('Mercado Livre','Shopee')`. Habilita inserção manual de pedidos de venda em /wms/vendas + auto-atribuição de vendedor_nome="{marketplace} {empresa}" no webhook-processor. |
 | 2026-05-19 | `20260519_printnode_multi_contas.sql` | **PrintNode multi-conta:** cria `siso_printnode_contas (id, label UNIQUE, api_key, ativo)` + trigger `trg_printnode_contas_touch`. Adiciona `printnode_account_id` + `printnode_account_id_produto` (uuid FK ON DELETE SET NULL) em `siso_galpoes` e `siso_usuarios` com 4 índices parciais. Migra a key existente de `siso_configuracoes['PRINTNODE_API_KEY']` pra uma conta `'Default'` e backfilla `account_id` em todas as linhas com `printer_id` já preenchido. Remove entry antiga de siso_configuracoes ao final. |
 | 2026-05-18 | `20260518_realocacao_fix_pack_fila_payload.sql` | **Fix-pack — `siso_fila_execucao.payload jsonb`:** adiciona coluna `payload jsonb NOT NULL DEFAULT '{}'::jsonb` pra carregar metadata dos jobs. Usado pelos tipos `lancar_estoque` e `lancar_estoque_pos_nf` pra carregar `itens_ja_lancados: number[]` — IDs dos itens cuja saída já foi gerada via parcial/realocação, que o worker deve pular pra evitar dedução duplicada. Migration estende o CHECK de `tipo` pra incluir `'lancar_estoque_pos_nf'`. |
+| 2026-05-20 | `20260520_ledger_simplificado.sql` | **Ledger Simplificado 3D — main migration.** (1) DROP `siso_emprestimo_regras` + `siso_wms_mini_swap_config`. (2) DROP RPCs `wms_executar_mini_swap`, `wms_executar_swap`, `wms_saldos_devedores`. (3) DROP MVs `siso_cobertura_estoque` + `siso_curva_abc` (recriadas em 3D na `20260520f_mviews`). (4) TRUNCATE caches operacionais (estoque, movimentações, pendências, inventário, realocações). (5) ALTER `siso_estoque`: DROP `empresa_dona_id` + `custo_medio`, ADD UNIQUE `siso_estoque_unique_3d (produto_id, galpao_id, localizacao_id)`. (6) ALTER `siso_movimentacoes`: DROP `empresa_dona_id` + `emprestimo_devedora_id`; ADD 9 colunas (`empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`, `fornecedor_id`, `motivo`, `cliente_nome`, `custo_unitario`, `custo_medio_anterior`, `custo_medio_posterior`). (7) UPDATE CHECK `siso_movimentacoes_origem_tipo_check`: enum agora com 18 valores (`nf_compra`, `devolucao_cliente_integra/avariada`, `devolucao_fornecedor_recebida/enviada`, `nf_venda`, `venda_manual`, `ajuste_manual`, `ajuste_pick_zerou`, `inventario_perda/ganho/inicial`, `transferencia_galpao/localizacao`, `reserva_pedido`, `liberacao_reserva`, `lancamento_retroativo`, `estorno`). (8) CREATE `siso_custo_medio (produto_id PK, custo_medio NUMERIC NOT NULL ≥ 0, ultima_movimentacao_id FK, atualizado_em)`. (9) Realtime publication: ADD `siso_custo_medio`. |
+| 2026-05-20 | `20260520b_rpc_inserir_movimentacao.sql` | RPC `wms_inserir_movimentacao` reescrita pra 3D: lock pessimista por (produto, galpão, loc), recalcula `siso_custo_medio` em entradas com `custo_unitario`, grava `custo_medio_anterior/posterior` na mov. |
+| 2026-05-20 | `20260520c_rpc_reservar.sql` | RPC `wms_reservar_atomico` reescrita pra 3D (drop p_empresa_dona). |
+| 2026-05-20 | `20260520d_rpc_reconciliacao.sql` | RPCs `wms_detectar_divergencias_estoque` + `wms_rebuild_linha_estoque` reescritas pra 3D (drop `empresa_dona_id` de todos os JOINs). |
+| 2026-05-20 | `20260520e_rpc_inventario.sql` | RPCs do inventário em 3D: `wms_inventario_proxima_loc` (drop dona de SELECT/UPDATE/JSON) + `wms_inventario_sugerir` (drop param `p_empresa_dona` e filtros). |
+| 2026-05-20 | `20260520f_mviews.sql` | MVs `siso_cobertura_estoque` + `siso_curva_abc` recriadas em 3D (drop dona de saldo_agregado/giro_30d e do GROUP BY). |
+| 2026-05-20 | `20260520g_drop_dona_pendencias.sql` | DROP `empresa_dona_id` de `siso_wms_pendencias_guarda` + recria índice `idx_pendencias_guarda_produto` sem dona. |
+| 2026-05-20 | `20260520h_drop_dona_transferencias.sql` | DROP `empresa_dona_id` de `siso_transferencias_galpao` (header). |
+| 2026-05-20 | `20260520i_drop_dona_inventario.sql` | DROP `empresa_dona_id` de `siso_inventario_sessoes/localizacoes/contagens/divergencias`. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging
@@ -1806,6 +1778,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 10. **Phase 10 (May 14 — Recebimento em 2 etapas):** dock RECEBIMENTO + tabela `siso_wms_pendencias_guarda` + impressora dedicada de etiqueta de produto. `/wms/receber` registra entradas na loc tipo='recebimento' (auto-criada por galpão) e cria pendências; `/wms/guarda` (tablet) consome a fila com bipe de QR + impressão 2-por-folha + replenishment_intra pra loc destino.
 11. **Phase 11 (May 14 — Mini-Swap Intra-Galpão):** antes de iniciar wave picking, consolida estoque das empresas no mesmo galpão via swap (zero dívida) + empréstimo. `siso_wms_mini_swap_config` + RPC `wms_executar_mini_swap`. Toggle por galpão. Graceful failure.
 12. **Phase 12 (May 18 — Realocação Fix-Pack):** 24 achados de auditoria pós-realocação cascateável fechados em 36 tasks. Foundation: tabela ponte `siso_pedido_item_mov_links` (item↔mov N:M com tipo_link), `siso_movimentacoes.qty_estornada` (estorno proporcional), `siso_fila_execucao.payload` (carrega `itens_ja_lancados`). RPCs: `wms_acumular_qty_pega` (UPDATE atômico) e `wms_estornar_parcial_movimentacao` (estorno proporcional de mov compartilhada). `siso_processar_bip_embalagem` ganha `p_strict_qty_pega` (teto = qty pega real em itens parciais). Realtime: `siso_pedido_item_realocacoes` entra na publication. Backfill normaliza `parcial_motivo` legado.
+13. **Phase 13 (May 20 — Ledger Simplificado 3D):** schema 4D (produto × dona × galpão × loc) → 3D (produto × galpão × loc). `siso_estoque` perde `empresa_dona_id` + `custo_medio` e ganha UNIQUE (produto, galpão, loc). `siso_movimentacoes` perde `empresa_dona_id` + `emprestimo_devedora_id` e ganha 9 colunas de metadata (empresa_compradora/vendedora/referencia/fornecedor/motivo/cliente_nome/custo_unitario/custo_medio_anterior/posterior). Nova tabela `siso_custo_medio` (PK produto_id, cache global). CHECK `origem_tipo` enumera 18 valores. DROP `siso_emprestimo_regras`, `siso_wms_mini_swap_config`, RPCs `wms_executar_mini_swap/swap`, `wms_saldos_devedores`. RPCs `wms_inserir_movimentacao`, `wms_reservar_atomico`, `wms_inventario_*` reescritas. MVs `siso_curva_abc` + `siso_cobertura_estoque` recriadas em 3D. `siso_pedido_item_realocacoes.empresa_dona_id/empresa_devedora_id/is_emprestimo` viram legacy (nunca populadas). Migrações 9-fold: `20260520[a-i]`.
 
 ---
 
@@ -1871,7 +1844,7 @@ This writes to both `siso_logs` and `siso_erros`.
 
 ---
 
-**Schema Last Updated:** 2026-05-18 (Realocação Fix-Pack — Phase 12)
+**Schema Last Updated:** 2026-05-20 (Ledger Simplificado 3D — Phase 13)
 **Database Version:** PostgreSQL 14+ (Supabase)
 **Supabase Project:** `wrbrbhuhsaaupqsimkqz`
 

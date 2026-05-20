@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProduto, atualizarProduto } from "@/lib/wms/produtos";
+import { obterCustoMedio } from "@/lib/wms/custo-medio";
 import { requireAuth, requireAdmin } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import type { Produto } from "@/lib/wms/types";
@@ -13,7 +14,10 @@ export async function GET(
   const { id } = await params;
   const p = await getProduto(id);
   if (!p) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json(p);
+  // 3D: custo médio é global por SKU (siso_custo_medio). Embute na resposta
+  // pra evitar round-trip extra do client.
+  const custo_medio_global = await obterCustoMedio(id);
+  return NextResponse.json({ ...p, custo_medio_global });
 }
 
 function pickPatchFields(body: unknown): Partial<Produto> {

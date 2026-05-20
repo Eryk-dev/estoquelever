@@ -31,12 +31,13 @@ type TabId =
   | "kit"
   | "fotos";
 
+// 3D: saldo é por (produto, galpão, localização) — sem dimensão de empresa.
+// Custo médio é global por SKU (siso_custo_medio), recebido via endpoint
+// /api/wms/produtos/[id] como `custo_medio_global`.
 interface EstoqueLinhaItem {
   saldo: number;
   reservado: number;
   disponivel: number;
-  custo_medio: number;
-  empresa: { id: string; nome: string };
   galpao: { id: string; nome: string };
   localizacao: { id: string; codigo: string; tipo: string };
 }
@@ -52,9 +53,12 @@ interface EstoqueAgregadoProduto {
 
 interface MovComposite extends Movimentacao {
   produto?: { sku: string; descricao: string };
-  empresa?: { nome: string };
   galpao?: { nome: string };
   localizacao?: { codigo: string };
+}
+
+interface ProdutoWithCusto extends Produto {
+  custo_medio_global?: number;
 }
 
 export function ProdutoDrawer({
@@ -88,7 +92,7 @@ export function ProdutoDrawer({
 
   const produtoQuery = useQuery({
     queryKey: ["wms-produto", produtoId],
-    queryFn: () => wmsApi<Produto>(`/api/wms/produtos/${produtoId}`),
+    queryFn: () => wmsApi<ProdutoWithCusto>(`/api/wms/produtos/${produtoId}`),
   });
 
   const estoqueQuery = useQuery({
@@ -138,13 +142,9 @@ export function ProdutoDrawer({
   const saldo = agregado ? Number(agregado.saldo) : 0;
   const reservado = agregado ? Number(agregado.reservado) : 0;
   const disponivel = agregado ? Number(agregado.disponivel) : 0;
-  const custoMedio =
-    saldo > 0
-      ? linhas.reduce(
-          (s, i) => s + Number(i.custo_medio) * Number(i.saldo),
-          0,
-        ) / saldo
-      : 0;
+  // Custo médio é GLOBAL por SKU (3D): siso_custo_medio. Vem do endpoint
+  // /api/wms/produtos/[id] como `custo_medio_global`.
+  const custoMedio = Number(produto?.custo_medio_global ?? 0);
 
   function openAction(
     kind: "receber" | "ajuste" | "transferir" | "realocar",
@@ -410,7 +410,7 @@ function Overview({
   reservado,
   onTab,
 }: {
-  produto: Produto;
+  produto: ProdutoWithCusto;
   linhas: EstoqueLinhaItem[];
   movs: MovComposite[];
   cobertura?: LinhaCobertura;
@@ -621,7 +621,6 @@ function EstoquePorLocal({
       <table className="wms-full-tbl wms-tbl-grouped">
       <thead>
         <tr>
-          <th>Empresa</th>
           <th>Galpão</th>
           <th>Localização</th>
           <th>Tipo</th>
@@ -634,7 +633,7 @@ function EstoquePorLocal({
       {grupos.map((g) => (
         <tbody key={g.galpao_id} className="wms-tbl-group">
           <tr className="wms-tbl-group-hd">
-            <td colSpan={4}>
+            <td colSpan={3}>
               <span className="wms-tbl-group-name">{g.galpao_nome}</span>
               <span className="wms-tbl-group-count">
                 {g.itens.length} {g.itens.length === 1 ? "local" : "locais"}
@@ -651,12 +650,6 @@ function EstoquePorLocal({
           </tr>
           {g.itens.map((l, idx) => (
             <tr key={`${g.galpao_id}-${idx}`}>
-              <td>
-                <span className="wms-chip-emp">
-                  {l.empresa.nome.slice(0, 3).toUpperCase()}
-                </span>{" "}
-                <span className="wms-td-mute">{l.empresa.nome}</span>
-              </td>
               <td className="wms-td-mute">{l.galpao.nome}</td>
               <td>
                 <span className="wms-mono">{l.localizacao.codigo}</span>
@@ -768,10 +761,7 @@ function ContagensInventario({
         style={{ display: "flex", flexDirection: "column", gap: 0 }}
       >
         {contagens.map((c) => (
-          <ContagemRow
-            key={`${c.localizacao_id}-${c.empresa_dona_id}`}
-            c={c}
-          />
+          <ContagemRow key={c.localizacao_id} c={c} />
         ))}
       </div>
     </Card>
@@ -802,9 +792,6 @@ function ContagemRow({ c }: { c: UltimaContagemProduto }) {
           flex: 1,
         }}
       >
-        <span className="wms-chip-emp">
-          {c.empresa_nome.slice(0, 3).toUpperCase()}
-        </span>
         <span className="wms-td-mute" style={{ fontSize: 12 }}>
           {c.galpao_nome}
         </span>
@@ -878,7 +865,7 @@ function Cobertura({ c }: { c?: LinhaCobertura }) {
           <p>
             <strong>Cobertura crítica.</strong> Estoque cobre menos do que o
             lead time — risco de stockout. Considere abrir pedido de compra
-            ou empréstimo entre empresas.
+            ou transferência entre galpões.
           </p>
         )}
         {c.status_cobertura === "atencao" && (
@@ -1358,7 +1345,6 @@ interface KitComposicaoRow {
     saldo_total: number;
     reservado_total: number;
     posicoes: Array<{
-      empresa: { id: string; nome: string };
       galpao: { id: string; nome: string };
       localizacao: { id: string; codigo: string };
       saldo: number;
@@ -1375,7 +1361,6 @@ interface KitDisponivelPorGalpao {
   gargalo_componente_id: string | null;
   gargalo_componente_sku: string | null;
   gargalo_disponivel: number | null;
-  empresas_contribuindo: string | null;
 }
 
 interface KitDisponivelInfo {
@@ -1495,7 +1480,6 @@ function KitTab({ produto }: { produto: Produto }) {
                     <th className="wms-tar">Kits montáveis</th>
                     <th>Gargalo</th>
                     <th className="wms-tar">Saldo do gargalo</th>
-                    <th>Empresas contribuindo</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1512,9 +1496,6 @@ function KitTab({ produto }: { produto: Produto }) {
                         {g.gargalo_disponivel != null
                           ? fmtNum(g.gargalo_disponivel)
                           : "—"}
-                      </td>
-                      <td className="wms-td-mute" style={{ fontSize: 12 }}>
-                        {g.empresas_contribuindo ?? "—"}
                       </td>
                     </tr>
                   ))}
@@ -1905,7 +1886,9 @@ function LedgerMini({ m }: { m: MovComposite }) {
           <span className="wms-lm-time">{fmtRelative(m.criado_em)}</span>
         </div>
         <div className="wms-lm-obs">
-          {m.observacoes ?? `${m.empresa?.nome ?? ""} · ${m.localizacao?.codigo ?? ""}`}
+          {m.motivo ??
+            m.observacoes ??
+            `${m.galpao?.nome ?? ""} · ${m.localizacao?.codigo ?? ""}`}
         </div>
       </div>
     </div>
@@ -1941,7 +1924,7 @@ export function LedgerRow({ m }: { m: MovComposite }) {
           <span className="wms-td-mute">{m.produto?.descricao ?? ""}</span>
         </div>
         <div className="wms-lr-where wms-td-mute">
-          {m.empresa?.nome ?? ""} · {m.galpao?.nome ?? ""} ·{" "}
+          {m.galpao?.nome ?? ""} ·{" "}
           <span className="wms-mono">{m.localizacao?.codigo ?? ""}</span>
         </div>
         {m.custo_unitario != null && (
@@ -1959,7 +1942,9 @@ export function LedgerRow({ m }: { m: MovComposite }) {
             </span>
           </div>
         )}
-        {m.observacoes && <div className="wms-lr-obs">{m.observacoes}</div>}
+        {(m.motivo || m.observacoes) && (
+          <div className="wms-lr-obs">{m.motivo ?? m.observacoes}</div>
+        )}
       </div>
       <div className="wms-lr-saldo">
         <div className="wms-lr-saldo-lbl">saldo</div>

@@ -1,7 +1,20 @@
 /**
- * Resolves grupo membership and deduction order for multi-empresa stock logic.
+ * Resolves grupo membership for multi-empresa display flows.
  *
- * Caches grupo data with 5min TTL.
+ * Fase 5 (ledger 3D): grupo deixou de ser eixo de roteamento/dedução de
+ * estoque. Em 3D, estoque é fungível por (produto, galpão, localização) —
+ * não há mais "ordem de dedução por tier de grupo" nem "agregação cross-
+ * empresa dentro do grupo". O roteamento vive em `wms/roteamento.ts` e usa
+ * preferências geográficas da empresa vendedora, não filiação de grupo.
+ *
+ * Este módulo agora serve apenas pra LOOKUP DE MEMBROS de grupo, usado por:
+ *  - Admin pages (CRUD de grupos)
+ *  - Display em compras/cross para listar empresas afins
+ *  - Tiny legacy path (webhook-processor.ts / execution-worker.ts) pra
+ *    escolher empresa-deposito de saída no Tiny (até Plano 6 deprecar essa
+ *    rota).
+ *
+ * Caches mantém TTL 5min.
  */
 
 import { createServiceClient } from "./supabase-server";
@@ -24,6 +37,15 @@ const cache = new Map<string, CacheEntry>();
 
 /**
  * Get all active empresas in a grupo, ordered by tier then name.
+ *
+ * Continua usado por:
+ *  - Admin pages (/wms/configuracoes — CRUD de grupos)
+ *  - APIs admin/grupos/* (lookup de membros)
+ *  - Display em compras/cross/pedidos (filtros visuais)
+ *  - Tiny legacy path (escolha de empresa-suporte pra saída no Tiny)
+ *
+ * NÃO use isso pra decisão de roteamento/dedução do ledger — esse caminho
+ * saiu da Fase 5 (3D). Roteamento vive em `wms/roteamento.ts`.
  */
 export async function getEmpresasDoGrupo(
   grupoId: string,
@@ -73,7 +95,25 @@ export async function getEmpresasDoGrupo(
 }
 
 /**
+ * Lookup do grupo que uma empresa pertence (ou null se não pertence).
+ * Função "afinidade" — usada pra display em compras/cross.
+ */
+export async function getGrupoByEmpresa(
+  empresaId: string,
+): Promise<{ grupoId: string; tier: number } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("siso_grupo_empresas")
+    .select("grupo_id, tier")
+    .eq("empresa_id", empresaId)
+    .maybeSingle();
+  if (!data) return null;
+  return { grupoId: data.grupo_id, tier: data.tier };
+}
+
+/**
  * Get active empresas of a grupo within a specific galpao.
+ * Pure display helper — não usar pra dedução de estoque.
  */
 export async function getEmpresasPorGalpao(
   grupoId: string,
@@ -81,91 +121,6 @@ export async function getEmpresasPorGalpao(
 ): Promise<EmpresaGrupo[]> {
   const todas = await getEmpresasDoGrupo(grupoId);
   return todas.filter((e) => e.galpaoId === galpaoId);
-}
-
-/**
- * Get ordered list of empresas for stock deduction.
- *
- * Order:
- * 1. The empresa that received the order (always first, tier 1 override)
- * 2. Other empresas in the same galpao, by tier
- * 3. Empresas in other galpoes, by tier
- */
-export async function getOrdemDeducao(
-  grupoId: string,
-  empresaOrigemId: string,
-): Promise<EmpresaGrupo[]> {
-  const todas = await getEmpresasDoGrupo(grupoId);
-
-  const origem = todas.find((e) => e.empresaId === empresaOrigemId);
-  if (!origem) return todas;
-
-  const galpaoOrigemId = origem.galpaoId;
-
-  // Split into: origin empresa, same galpao (others), other galpoes
-  const mesmoGalpao = todas.filter(
-    (e) => e.galpaoId === galpaoOrigemId && e.empresaId !== empresaOrigemId,
-  );
-  const outrosGalpoes = todas.filter(
-    (e) => e.galpaoId !== galpaoOrigemId,
-  );
-
-  return [origem, ...mesmoGalpao, ...outrosGalpoes];
-}
-
-/**
- * Aggregate stock data by galpao from per-empresa data.
- */
-export function agregarEstoquePorGalpao(
-  estoques: Array<{
-    empresaId: string;
-    galpaoId: string;
-    galpaoNome: string;
-    disponivel: number;
-    saldo: number;
-    reservado: number;
-    depositoId: number | null;
-    depositoNome: string | null;
-  }>,
-): Map<
-  string,
-  {
-    galpaoId: string;
-    galpaoNome: string;
-    disponivel: number;
-    saldo: number;
-    reservado: number;
-  }
-> {
-  const porGalpao = new Map<
-    string,
-    {
-      galpaoId: string;
-      galpaoNome: string;
-      disponivel: number;
-      saldo: number;
-      reservado: number;
-    }
-  >();
-
-  for (const est of estoques) {
-    const existing = porGalpao.get(est.galpaoId);
-    if (existing) {
-      existing.disponivel += est.disponivel;
-      existing.saldo += est.saldo;
-      existing.reservado += est.reservado;
-    } else {
-      porGalpao.set(est.galpaoId, {
-        galpaoId: est.galpaoId,
-        galpaoNome: est.galpaoNome,
-        disponivel: est.disponivel,
-        saldo: est.saldo,
-        reservado: est.reservado,
-      });
-    }
-  }
-
-  return porGalpao;
 }
 
 /** Clear cache */

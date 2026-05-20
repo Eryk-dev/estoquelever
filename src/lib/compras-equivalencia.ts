@@ -2,7 +2,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { buscarProdutoPorSku, getEstoque, getProdutoDetalhe, type TinyDeposito } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
-import { agregarEstoquePorGalpao, getEmpresasDoGrupo } from "@/lib/grupo-resolver";
+import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 
 function pickDeposito(
@@ -172,18 +172,27 @@ export async function carregarDadosEquivalentePorSku(params: {
     });
   }
 
-  const porGalpao = agregarEstoquePorGalpao(
-    estoquesPorEmpresa.map((estoque) => ({
-      empresaId: estoque.empresa_id,
-      galpaoId: estoque.galpao_id,
-      galpaoNome: estoque.galpao_nome,
-      disponivel: estoque.disponivel,
-      saldo: estoque.saldo,
-      reservado: estoque.reservado,
-      depositoId: estoque.deposito_id,
-      depositoNome: estoque.deposito_nome,
-    })),
-  );
+  // Aggregate por galpão (inlined — agregarEstoquePorGalpao removido em Fase 5)
+  const porGalpao = new Map<
+    string,
+    { galpaoId: string; galpaoNome: string; disponivel: number; saldo: number; reservado: number }
+  >();
+  for (const estoque of estoquesPorEmpresa) {
+    const existing = porGalpao.get(estoque.galpao_id);
+    if (existing) {
+      existing.disponivel += estoque.disponivel;
+      existing.saldo += estoque.saldo;
+      existing.reservado += estoque.reservado;
+    } else {
+      porGalpao.set(estoque.galpao_id, {
+        galpaoId: estoque.galpao_id,
+        galpaoNome: estoque.galpao_nome,
+        disponivel: estoque.disponivel,
+        saldo: estoque.saldo,
+        reservado: estoque.reservado,
+      });
+    }
+  }
 
   const estoques: Record<string, CompraEquivalenteGalpaoEstoque> = {};
 

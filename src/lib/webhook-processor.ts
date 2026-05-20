@@ -4,7 +4,7 @@ import { getFornecedorBySku } from "./sku-fornecedor";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
 import { kickWorker } from "./execution-worker";
-import { getEmpresasDoGrupo, agregarEstoquePorGalpao } from "./grupo-resolver";
+import { getEmpresasDoGrupo } from "./grupo-resolver";
 import type { EmpresaGrupo } from "./grupo-resolver";
 import { logger, getCorrelationId } from "./logger";
 import { registrarEvento } from "./historico-service";
@@ -800,13 +800,27 @@ async function enrichItemMultiEmpresa(
   }
 
   // Aggregate by galpao for legacy CWB/SP columns
-  const porGalpao = agregarEstoquePorGalpao(
-    estoquesPorEmpresa.map((e) => ({
-      ...e,
-      depositoId: e.depositoId,
-      depositoNome: e.depositoNome,
-    })),
-  );
+  // (inlined — was previously agregarEstoquePorGalpao, dropped in Fase 5)
+  const porGalpao = new Map<
+    string,
+    { galpaoId: string; galpaoNome: string; disponivel: number; saldo: number; reservado: number }
+  >();
+  for (const est of estoquesPorEmpresa) {
+    const existing = porGalpao.get(est.galpaoId);
+    if (existing) {
+      existing.disponivel += est.disponivel;
+      existing.saldo += est.saldo;
+      existing.reservado += est.reservado;
+    } else {
+      porGalpao.set(est.galpaoId, {
+        galpaoId: est.galpaoId,
+        galpaoNome: est.galpaoNome,
+        disponivel: est.disponivel,
+        saldo: est.saldo,
+        reservado: est.reservado,
+      });
+    }
+  }
 
   // Find CWB and SP aggregates (by galpao name for backwards compat)
   let cwbAgg = { disponivel: 0, saldo: 0, reservado: 0 };

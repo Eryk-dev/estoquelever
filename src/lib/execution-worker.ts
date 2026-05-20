@@ -35,7 +35,7 @@ import {
 } from "./tiny-api";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
-import { getOrdemDeducao } from "./grupo-resolver";
+import { getEmpresasDoGrupo } from "./grupo-resolver";
 import { getEmpresaById } from "./empresa-lookup";
 import { logger } from "./logger";
 import { criarAgrupamentoFase1 } from "./agrupamento-service";
@@ -953,8 +953,12 @@ async function executarEstoquePosNfTransferencia(job: FilaJob): Promise<void> {
     throw new Error(`Empresa suporte ${job.empresa_id} sem grupo — não é possível transferir`);
   }
 
-  const ordemDeducao = await getOrdemDeducao(empresaSuporte.grupoId, job.empresa_id);
-  const empresasDeducao = ordemDeducao.filter((e) => e.galpaoId !== empresaOrigem.galpaoId);
+  // Lookup empresas do grupo. Em 3D não há mais "ordem de dedução por tier" —
+  // qualquer empresa do grupo serve como suporte; o critério é "cobre 100% dos
+  // itens?". Ordenação determinística: tier asc + nome asc (já vem de
+  // getEmpresasDoGrupo).
+  const empresasGrupo = await getEmpresasDoGrupo(empresaSuporte.grupoId);
+  const empresasDeducao = empresasGrupo.filter((e) => e.galpaoId !== empresaOrigem.galpaoId);
 
   let empresaEscolhida: typeof empresasDeducao[0] | null = null;
   for (const emp of empresasDeducao) {

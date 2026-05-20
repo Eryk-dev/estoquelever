@@ -83,6 +83,16 @@ function makeUid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+interface EmpresaLite {
+  id: string;
+  nome: string;
+}
+
+interface FornecedorLite {
+  id: string;
+  nome: string;
+}
+
 function ReceberBody() {
   const qc = useQueryClient();
   const router = useRouter();
@@ -95,11 +105,27 @@ function ReceberBody() {
     descricao: string;
   } | null>(null);
   const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
-  const defaultGalpao = galpoesList.find((g) => g.empresas.length > 0);
+  const defaultGalpao = galpoesList[0];
+
+  const empresasQuery = useQuery({
+    queryKey: ["wms-empresas-lite"],
+    queryFn: () => wmsApi<EmpresaLite[]>(`/api/wms/admin/empresas`),
+  });
+  const fornecedoresQuery = useQuery({
+    queryKey: ["wms-fornecedores-lite"],
+    queryFn: () =>
+      wmsApi<{ rows: FornecedorLite[] }>(`/api/wms/fornecedores`),
+  });
+  const empresas = empresasQuery.data ?? [];
+  const fornecedores = fornecedoresQuery.data?.rows ?? [];
 
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
-  const [empresaIdUser, setEmpresaIdUser] = useState<string | null>(null);
+  // Empresa compradora — exigida apenas em origem='nf_compra' (NF de compra).
+  const [empresaCompradoraId, setEmpresaCompradoraId] = useState<string>("");
+  // Fornecedor — sempre exigido pela API.
+  const [fornecedorId, setFornecedorId] = useState<string>("");
   const [nf, setNf] = useState("");
+  const [motivo, setMotivo] = useState("");
   const [origem, setOrigem] = useState<ReceberOrigem>("compra_manual");
   const [data, setData] = useState<string>(hojeISODate());
   const [obs, setObs] = useState("");
@@ -138,9 +164,6 @@ function ReceberBody() {
   }, [seedQuery.data, router]);
 
   const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
-  const galpao = galpoesList.find((g) => g.id === galpaoId);
-  const empresasGalpao = galpao?.empresas ?? [];
-  const empresaId = empresaIdUser ?? empresasGalpao[0]?.id ?? "";
   const today = hojeISODate();
   const isRetroativo = data !== today;
 
@@ -153,15 +176,15 @@ function ReceberBody() {
     return m;
   }, [locsResp]);
 
-  // Putaway por item resolvido
+  // Putaway por item resolvido — 3D: só produto_id + galpao_id (sem empresa).
   const putawayQueries = useQueries({
     queries: itens.map((it) => ({
-      queryKey: ["wms-receber-lote-putaway", it.produto?.id, empresaId, galpaoId],
+      queryKey: ["wms-receber-lote-putaway", it.produto?.id, galpaoId],
       queryFn: () =>
         wmsApi<PutawayResp>(
-          `/api/wms/receber?produto_id=${it.produto!.id}&empresa_id=${empresaId}&galpao_id=${galpaoId}`,
+          `/api/wms/receber?produto_id=${it.produto!.id}&galpao_id=${galpaoId}`,
         ),
-      enabled: !!(it.produto?.id && empresaId && galpaoId),
+      enabled: !!(it.produto?.id && galpaoId),
       staleTime: 30 * 1000,
     })),
   });
@@ -246,7 +269,7 @@ function ReceberBody() {
       const itensOut: Array<{
         produto_id: string;
         qty: number;
-        custo_unitario?: number;
+        custo_unitario: number;
         localizacao_destino_id?: string;
       }> = [];
       const printIndices: number[] = [];
@@ -254,12 +277,14 @@ function ReceberBody() {
         if (!it.produto) return;
         const qtyN = Number(it.qty);
         if (!qtyN || qtyN <= 0) return;
+        const custoN = Number(it.custo);
+        if (!Number.isFinite(custoN) || custoN < 0) return;
         const sug = putawayQueries[idx]?.data;
         const locId = it.locIdOverride ?? sug?.localizacao_id ?? undefined;
         itensOut.push({
           produto_id: it.produto.id,
           qty: qtyN,
-          custo_unitario: it.custo ? Number(it.custo) : undefined,
+          custo_unitario: custoN,
           localizacao_destino_id: locId,
         });
         if (it.imprimir) {
@@ -267,18 +292,23 @@ function ReceberBody() {
         }
       });
       if (itensOut.length === 0) {
-        throw new Error("nenhum item válido pra enviar");
+        throw new Error("nenhum item válido pra enviar (qty>0 e custo>=0)");
       }
       const origemFinal = isRetroativo
         ? "lancamento_retroativo"
         : origemToBackend(origem);
+      // 3D body shape — sem empresa_dona_id; com empresa_compradora_id,
+      // fornecedor_id e motivo opcionais (compradora vira obrigatória na
+      // API quando origem='nf_compra').
       const r = await sisoFetch("/api/wms/receber", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          empresa_dona_id: empresaId,
           galpao_id: galpaoId,
+          empresa_compradora_id: empresaCompradoraId || undefined,
+          fornecedor_id: fornecedorId || undefined,
           nf_referencia: nf || undefined,
+          motivo: motivo || undefined,
           origem_tipo: origemFinal,
           observacoes: obs || undefined,
           data_recebimento: buildTimestamp(data),
@@ -363,10 +393,12 @@ function ReceberBody() {
         }
       }
 
-      // Limpa form
+      // Limpa form (preserva compradora/fornecedor — lotes seguidos
+      // tendem a vir da mesma NF).
       setItens([{ uid: makeUid(), produto: null, qty: "1", custo: "", locIdOverride: null, locCodigoOverride: null, imprimir: true }]);
       setNf("");
       setObs("");
+      setMotivo("");
 
       qc.invalidateQueries({ queryKey: ["wms-estoque"] });
       qc.invalidateQueries({ queryKey: ["wms-ledger"] });
@@ -386,15 +418,25 @@ function ReceberBody() {
   });
 
   const itensValidos = itens.filter(
-    (it) => !!it.produto && !!it.qty && Number(it.qty) > 0,
+    (it) =>
+      !!it.produto &&
+      !!it.qty &&
+      Number(it.qty) > 0 &&
+      it.custo !== "" &&
+      Number.isFinite(Number(it.custo)) &&
+      Number(it.custo) >= 0,
   );
-  // Em entrada direta, todo item válido precisa ter loc destino resolvida
-  // (override do operador ou sugestão do putaway). Usa `totaisPlano.semLoc`
-  // como fonte da verdade — mesma métrica que a sidebar exibe.
+  // 3D: fornecedor sempre obrigatório; compradora obrigatória só em NF
+  // de compra. Em entrada direta, todo item válido precisa ter loc
+  // destino resolvida.
+  const compradoraOk =
+    origem !== "nf_compra" || !!empresaCompradoraId;
   const valid =
-    !!empresaId &&
     !!galpaoId &&
+    !!fornecedorId &&
+    compradoraOk &&
     itensValidos.length > 0 &&
+    itensValidos.length === itens.filter((it) => !!it.produto).length &&
     (!entradaDireta || totaisPlano.semLoc === 0);
 
   return (
@@ -416,7 +458,6 @@ function ReceberBody() {
               value={galpaoId}
               onChange={(e) => {
                 setGalpaoIdUser(e.target.value);
-                setEmpresaIdUser(null);
                 // Loc override depende do galpão — limpa
                 setItens((prev) =>
                   prev.map((it) => ({ ...it, locIdOverride: null, locCodigoOverride: null })),
@@ -430,41 +471,19 @@ function ReceberBody() {
               ))}
             </select>
           </Field>
-          <Field label="Empresa (dona)">
+          <Field label="Fornecedor" hint="obrigatório">
             <select
               className="wms-select"
-              value={empresaId}
-              onChange={(e) => setEmpresaIdUser(e.target.value)}
+              value={fornecedorId}
+              onChange={(e) => setFornecedorId(e.target.value)}
             >
-              {empresasGalpao.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.nome}
+              <option value="">Escolha um fornecedor…</option>
+              {fornecedores.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.nome}
                 </option>
               ))}
             </select>
-          </Field>
-        </div>
-
-        <div className="wms-row-2">
-          <Field label="NF de referência" hint="opcional">
-            <input
-              className="wms-input"
-              value={nf}
-              onChange={(e) => setNf(e.target.value)}
-              placeholder="ex.: NF-7821"
-            />
-          </Field>
-          <Field
-            label="Data do recebimento"
-            hint={isRetroativo ? "Retroativo" : "Hoje"}
-          >
-            <input
-              className="wms-input"
-              type="date"
-              value={data}
-              max={today}
-              onChange={(e) => setData(e.target.value || today)}
-            />
           </Field>
         </div>
 
@@ -482,6 +501,57 @@ function ReceberBody() {
             ))}
           </div>
         </Field>
+
+        <div className="wms-row-2">
+          <Field
+            label="Empresa compradora"
+            hint={origem === "nf_compra" ? "obrigatório em NF de compra" : "opcional"}
+          >
+            <select
+              className="wms-select"
+              value={empresaCompradoraId}
+              onChange={(e) => setEmpresaCompradoraId(e.target.value)}
+            >
+              <option value="">— sem compradora —</option>
+              {empresas.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.nome}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="NF de referência" hint="opcional">
+            <input
+              className="wms-input"
+              value={nf}
+              onChange={(e) => setNf(e.target.value)}
+              placeholder="ex.: NF-7821"
+            />
+          </Field>
+        </div>
+
+        <div className="wms-row-2">
+          <Field
+            label="Data do recebimento"
+            hint={isRetroativo ? "Retroativo" : "Hoje"}
+          >
+            <input
+              className="wms-input"
+              type="date"
+              value={data}
+              max={today}
+              onChange={(e) => setData(e.target.value || today)}
+            />
+          </Field>
+          <Field label="Motivo" hint="opcional">
+            <input
+              className="wms-input"
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder="ex.: compra antecipada"
+            />
+          </Field>
+        </div>
 
         <Field label="Observações" hint="opcional">
           <input
@@ -504,7 +574,7 @@ function ReceberBody() {
               isFetching={!!putawayQueries[idx]?.isFetching}
               galpaoId={galpaoId}
               locsById={locsById}
-              canResolve={!!empresaId && !!galpaoId}
+              canResolve={!!galpaoId}
               onImageClick={(p) =>
                 setLightbox({
                   imagens:
@@ -915,7 +985,7 @@ function ItemLoteRow({
           }}
         >
           {!canResolve && (
-            <span className="wms-td-mute">Escolha empresa+galpão acima</span>
+            <span className="wms-td-mute">Escolha galpão acima</span>
           )}
           {canResolve && isFetching && (
             <span className="wms-td-mute">Buscando localização…</span>

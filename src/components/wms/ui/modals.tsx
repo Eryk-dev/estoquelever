@@ -455,12 +455,16 @@ export const RECEBER_ORIGEM_OPTS: { id: ReceberOrigem; label: string }[] = [
 
 // Mapeia escolha do UI pro tipo canônico de origem usado no ledger.
 // Retroativo não é uma opção: é inferido da data escolhida (data < hoje).
+//
+// 3D: 'nf_compra' agora viaja explícito (não colapsa em compra_manual) —
+// a API exige empresa_compradora_id quando origem='nf_compra'.
 export function origemToBackend(o: ReceberOrigem): string {
   switch (o) {
     case "devolucao":
       return "nf_devolucao_cliente";
-    case "compra_manual":
     case "nf_compra":
+      return "nf_compra";
+    case "compra_manual":
     default:
       return "compra_manual";
   }

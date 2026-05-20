@@ -51,11 +51,10 @@ function downloadCsv(filename: string, rows: string[][]) {
 }
 
 export default function MovsPorEmpresaPage() {
-  const today = isoDate(new Date());
-  const thirtyAgo = isoDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
-
-  const [dataInicio, setDataInicio] = useState(thirtyAgo);
-  const [dataFim, setDataFim] = useState(today);
+  const [dataInicio, setDataInicio] = useState(() =>
+    isoDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+  );
+  const [dataFim, setDataFim] = useState(() => isoDate(new Date()));
   const [galpaoId, setGalpaoId] = useState<string>("all");
   const [empresaId, setEmpresaId] = useState<string>("all");
   const [produtoQ, setProdutoQ] = useState("");
@@ -160,7 +159,7 @@ export default function MovsPorEmpresaPage() {
         r.valor_total.toFixed(2),
       ];
     });
-    const stamp = today.replace(/-/g, "");
+    const stamp = isoDate(new Date()).replace(/-/g, "");
     downloadCsv(`movs-por-empresa-${stamp}.csv`, [header, ...lines]);
   };
 
@@ -194,7 +193,6 @@ export default function MovsPorEmpresaPage() {
           type="date"
           value={dataFim}
           min={dataInicio}
-          max={today}
           onChange={(e) => setDataFim(e.target.value)}
           style={{ width: 150 }}
         />

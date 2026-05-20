@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
       await estornarMovimentacao({
         mov_id: item.mov_saida_id,
         usuario_id: session.id,
-        observacoes: "Desfazer parcial — operador (legacy path)",
+        motivo: "Desfazer parcial — operador (legacy path)",
       });
     }
 

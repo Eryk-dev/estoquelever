@@ -112,7 +112,6 @@ export default function CoberturaPage() {
               <th>SKU</th>
               <th>Produto</th>
               <th>Galpão</th>
-              <th>Empresa</th>
               <th className="wms-tar">Disponível</th>
               <th className="wms-tar">Giro/dia</th>
               <th className="wms-tar">Lead time</th>
@@ -123,21 +122,21 @@ export default function CoberturaPage() {
           <tbody>
             {query.isLoading && (
               <tr>
-                <td colSpan={10} className="wms-td-empty">
+                <td colSpan={9} className="wms-td-empty">
                   Carregando…
                 </td>
               </tr>
             )}
             {query.isError && (
               <tr>
-                <td colSpan={10} className="wms-td-empty wms-td-danger">
+                <td colSpan={9} className="wms-td-empty wms-td-danger">
                   Erro: {(query.error as Error).message}
                 </td>
               </tr>
             )}
             {!query.isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={10} className="wms-td-empty">
+                <td colSpan={9} className="wms-td-empty">
                   Sem produtos para esse filtro.
                 </td>
               </tr>
@@ -156,7 +155,6 @@ export default function CoberturaPage() {
                 </td>
                 <td className="wms-td-desc">{r.produto?.descricao}</td>
                 <td className="wms-td-mute">{r.galpao?.nome}</td>
-                <td className="wms-td-mute">{r.empresa?.nome}</td>
                 <td className="wms-tar wms-mono">
                   {fmtNum(Number(r.disponivel_total))}
                 </td>

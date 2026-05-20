@@ -7,95 +7,115 @@
 
 ---
 
-## Wave Picking + Mini-Swap Intra-Galpão
+## Ledger Simplificado 3D (2026-05-20)
 
-### Overview
+Estoque deixou de ser 4D (produto × dona × galpão × loc) e virou **3D** (produto × galpão × loc). Empresa não é mais coordenada física — viaja como TAG na movimentação quando há NF (compradora/vendedora/referência), permitindo apuração contábil por empresa via report sem fragmentar o estoque físico.
 
-When an operator selects orders for a wave and calls `POST /api/wms/separacao/iniciar`, the system:
+### Propriedades
 
-1. Transitions the orders to `em_separacao`
-2. Optionally runs the **mini-swap** optimization (if enabled for the operator's galpão)
-3. Returns the consolidated product checklist for wave picking
+- **`siso_estoque.UNIQUE (produto_id, galpao_id, localizacao_id)`** — peças idênticas no mesmo endereço são fungíveis. Não há mais "estoque da NetAir" vs "estoque da NetParts" na mesma loc.
+- **`siso_movimentacoes`** carrega 9 colunas de metadata (todas nullable): `empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`, `fornecedor_id`, `motivo`, `cliente_nome`, `custo_unitario`, `custo_medio_anterior`, `custo_medio_posterior`.
+- **`siso_custo_medio`** — cache global por produto (PK `produto_id`). Atualizado pelo RPC `wms_inserir_movimentacao` em toda entrada com `custo_unitario` via média ponderada.
+- **Empréstimo entre empresas, swap N×N e mini-swap intra-galpão foram arquivados.** Código preservado em `src/lib/wms/_archive/`. Algoritmos não fazem sentido sem dona física.
+- **Apuração por empresa = report** em `/api/wms/relatorios/*` (3 endpoints: movs-por-empresa, historico-custo, saldos-por-empresa).
 
-The mini-swap step consolidates stock from multiple empresas in the same galpão into a single canonical location before the operator starts picking. This eliminates in-wave stock fragmentation without creating inter-galpão debt.
+### Stock check no pedido (cross-empresa do mesmo grupo)
 
-### Sequence Diagram
+Quando o webhook chega:
+
+1. Identifica empresa pelo CNPJ → resolve grupo (via `siso_grupo_empresas`).
+2. **NÃO** itera por empresa — pool físico é fungível por galpão. Consulta `siso_estoque` agregado por (produto, galpão).
+3. Decide entre `propria` (mesmo galpão da origem) / `transferencia` (galpão diferente, todos os itens cobertos) / `oc` (sem cobertura).
+4. Auto-aprova apenas `propria`; demais vão pro operador.
+5. Na dedução pós-aprovação, a mov S vai com `empresa_vendedora_id` = empresa origem do pedido (a empresa que emite a NF).
+
+---
+
+## Recebimento (entrada com NF + metadata 3D)
 
 ```mermaid
 sequenceDiagram
   participant Op as Operador
-  participant API as /api/wms/separacao/iniciar
-  participant MS as executarMiniSwap (TS)
-  participant RPC as wms_executar_mini_swap
-  participant DB as siso_estoque
+  participant API as POST /api/wms/receber
+  participant RPC as wms_inserir_movimentacao
+  participant Cache as siso_custo_medio
+  participant Pend as siso_wms_pendencias_guarda
 
-  Op->>API: POST { pedido_ids }
-  API->>API: transição em_separacao
-  API->>MS: executarMiniSwap()
-  MS->>DB: lê estoque + reservas
-  MS->>MS: planejarMiniSwap (puro)
-  alt plano vazio
-    MS-->>API: ok=true, demandas=[]
-  else plano não-vazio
-    MS->>RPC: wms_executar_mini_swap(plano)
-    RPC->>DB: SELECT FOR UPDATE
-    RPC->>DB: libera reservas (mov L)
-    RPC->>DB: executa swaps (par S+E)
-    RPC->>DB: recria reservas (mov R)
-    RPC-->>MS: executado
-    MS-->>API: ok=true, demandas=[...]
+  Op->>API: { galpao_id, empresa_compradora_id, fornecedor_id, itens: [{ produto, qty, custo_unitario }] }
+  loop por item
+    API->>RPC: mov E (loc=RECEBIMENTO no modo padrão, ou loc=destino no modo entrada_direta)
+    RPC->>RPC: lock pessimista (produto, galpão, loc)
+    alt custo_unitario > 0
+      RPC->>Cache: lê custo médio atual
+      RPC->>RPC: média ponderada (saldo_atual * custo_atual + qty * custo_novo) / (saldo + qty)
+      RPC->>Cache: UPSERT custo_medio + ultima_movimentacao_id
+      RPC->>RPC: grava custo_medio_anterior/posterior na mov
+    end
+    RPC->>RPC: insere mov com empresa_compradora_id + fornecedor_id (tags)
+    RPC->>RPC: atualiza siso_estoque cache
+    RPC-->>API: mov_id
+    opt modo padrão (entrada_direta=false)
+      API->>Pend: cria pendencia (qty_inicial, mov_entrada_id, status=pendente)
+    end
   end
-  API->>DB: registra mini_swap_executado em historico
-  API-->>Op: checklist consolidada
+  API-->>Op: { mov_ids, pendencia_ids? }
 ```
 
-### Key Properties
+### Side effects do RPC
 
-- **Disparo:** 1× por wave, síncrono dentro de `POST /api/wms/separacao/iniciar`, antes de retornar a checklist.
-- **Falha graceful:** qualquer exceção no mini-swap é capturada silenciosamente — a wave segue normalmente sem otimização. O evento `mini_swap_executado` só é registrado se o RPC completar com sucesso.
-- **Toggle por galpão:** configurável em `/wms/configuracoes/otimizacoes` (admin only). Lido de `siso_wms_mini_swap_config`.
-- **Atomicidade:** o RPC `wms_executar_mini_swap` aplica liberar-reservas + swaps + recriar-reservas numa única transação Postgres com lock pessimista em `siso_estoque`.
-- **Sem dívida:** swaps (origem_tipo='swap') são trocas simétricas — saldo total por empresa preservado. Empréstimos (origem_tipo='emprestimo') são limitados ao que o algoritmo de roteamento planejou para o pedido.
-
-### Files
-
-| File | Purpose |
-|---|---|
-| `src/lib/wms/mini-swap-types.ts` | Tipos: `SaldoLinha`, `Demanda`, `PlanoMiniSwap`, `MiniSwapConfig` |
-| `src/lib/wms/mini-swap.ts` | `planejarMiniSwap()` (algoritmo puro, sem I/O) + `executarMiniSwap()` (orchestrator) |
-| `src/app/api/wms/separacao/iniciar/route.ts` | Ponto de integração — chama `executarMiniSwap()` após transição |
-| `src/app/api/wms/mini-swap/config/route.ts` | `GET` lista config por galpão |
-| `src/app/api/wms/mini-swap/config/[galpaoId]/route.ts` | `PATCH` toggle ativo (admin) |
-| `src/app/api/wms/mini-swap/simular/route.ts` | `POST` dry-run sem DB writes |
-| `src/app/wms/configuracoes/otimizacoes/page.tsx` | UI de toggle por galpão |
-| `supabase/migrations/20260514_wms_mini_swap*.sql` | Schema: `siso_wms_mini_swap_config` + RPC `wms_executar_mini_swap` |
-
-### Related
-
-- Spec completa: `docs/superpowers/specs/2026-05-14-mini-swap-intra-galpao-design.md`
-- Fluxo de separação: `docs/fluxos/05-separacao-wave-picking.md`
-- RPC de swap base: `wms_executar_swap` (documentada em `docs/database-schema.md`)
+- Lock pessimista por (produto, galpão, loc) — bloqueia até resolver.
+- Atualiza saldo no `siso_estoque` (UNIQUE 3D).
+- Em E com `custo_unitario`: recalcula `siso_custo_medio` globalmente e populates `custo_medio_anterior/posterior` na mov pra rastreio histórico.
+- Tags `empresa_compradora_id` + `fornecedor_id` ficam na mov pra apuração via `/api/wms/relatorios/movs-por-empresa`.
 
 ---
 
-*Last updated: 2026-05-18 — paths atualizados pra refletir cutover `/api/wms/*` (commit f8b7dbb).*
+## Devolução de Cliente (classificação A/B/C/D, 3D)
 
-### Reconciliação temporal (estoque online)
+```mermaid
+flowchart TD
+  NFe[NF de devolução chega via webhook] --> Pend[siso_devolucoes_pendentes status=aguardando_classificacao]
+  Pend --> UI[Operador abre /wms/devolucoes/[id]]
+  UI -->|Body: { classificacao, produto_id, qty, galpao_id, localizacao_id, empresa_referencia_id?, fornecedor_id? }| API[POST /api/wms/devolucoes/[id]/classificar]
+  API --> Branch{classificacao}
+
+  Branch -->|A — íntegro| A[mov E origem=devolucao_cliente_integra<br/>+ empresa_referencia_id<br/>+ RPC recalcula siso_custo_medio]
+  Branch -->|B — avariado| B[mov E origem=devolucao_cliente_avariada<br/>+ par S+E transferindo pra QUARENTENA<br/>custo médio NÃO recalcula]
+  Branch -->|C — garantia/RMA| C[mov E origem=devolucao_cliente_integra<br/>+ mov S origem=devolucao_fornecedor_enviada<br/>+ fornecedor_id em ambas]
+  Branch -->|D — troca SKU| D[mov E origem=devolucao_cliente_integra<br/>+ troca real fica no SISO por enquanto]
+
+  A --> Fim[siso_devolucoes_pendentes.status=classificada]
+  B --> Fim
+  C --> Fim
+  D --> Fim
+```
+
+### Notas
+
+- `empresa_referencia_id` (tag) substitui o antigo `empresa_dona_destino_id` — não muda coordenada física, só registra qual empresa "originou" a devolução pra apuração.
+- `fornecedor_id` é obrigatório em classificação `C` (garantia → RMA) pra emissão da NF de saída pro fornecedor.
+- Custo médio só recalcula em entrada com peça íntegra (A, C-entry). Avaria não entra na média.
+
+---
+
+## Reconciliação temporal (estoque online, 3D)
 
 Inventário roda em paralelo com operação (picking, recebimento, ajustes). Não há freeze. Cada contagem grava `criado_em` em `siso_inventario_contagens`. No fechamento da sessão, `computarDivergencias` faz:
 
 1. Snapshot `cutoff_em = now()` (imutável durante a execução).
-2. Para cada quádrupla `(loc, produto, dona)` contada, calcula `T_ref = max(contado_em)`.
-3. Busca em `siso_movimentacoes` a primeira mov "efetiva" na quádrupla com `criado_em > T_ref AND criado_em <= cutoff_em`. "Efetiva" = não estornada (nem é estorno) e não é da própria sessão.
+2. Para cada **tripla** `(loc, produto, galpão)` contada (3D — não há mais `dona` no DISTINCT), calcula `T_ref = max(contado_em)`.
+3. Busca em `siso_movimentacoes` a primeira mov "efetiva" na tripla com `criado_em > T_ref AND criado_em <= cutoff_em`. "Efetiva" = não estornada (nem é estorno) e não é da própria sessão.
 4. `saldo_esperado` = `saldo_anterior` dessa mov, ou `saldo_atual` se não houver.
 5. `delta = qty_contada - saldo_esperado`.
 
-Locs visitadas (operador confirmou no modal "está vazia" ou bipou ao menos uma peça) com saldo > 0 mas sem contagens geram divergência `qty=0` **apenas se** o saldo já existia antes de `contagem_finalizada_em`. Entrada após a visita não conta.
-
-Locs não visitadas (`contagem_finalizada_em IS NULL`) são totalmente ignoradas.
+Locs visitadas com saldo > 0 mas sem contagens geram divergência `qty=0` apenas se o saldo já existia antes de `contagem_finalizada_em`. Entrada após a visita não conta.
 
 Movs criadas após `cutoff_em` ficam para a próxima sessão (princípio: aprovação congela o universo).
 
 Implementação:
 - Função pura: `src/lib/wms/inventario-reconciliacao.ts` (testada em `inventario-reconciliacao.test.ts`)
 - Wrapper com I/O: `src/lib/wms/inventario.ts::computarDivergencias`
+
+---
+
+*Last updated: 2026-05-20 — Ledger Simplificado 3D rollout (drop dona física, empresa como tag em movs).*

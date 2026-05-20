@@ -18,6 +18,7 @@ export interface AgregadoSaldo {
   saldo: number;
   reservado: number;
   disponivel: number;
+  custo_medio: number;
   itens: EstoqueRow[];
 }
 
@@ -44,10 +45,29 @@ export async function saldosPorPerspectiva(
   const { data, error } = await q.limit(500);
   if (error) throw error;
 
-  return agruparPor((data ?? []) as unknown as EstoqueRow[], view);
+  const rows = (data ?? []) as unknown as EstoqueRow[];
+  // 3D: custo médio é global por SKU. Carrega o lote dos produtos em jogo
+  // pra anexar ao agregado.
+  const produtoIds = Array.from(new Set(rows.map((r) => r.produto.id)));
+  const custoMap = new Map<string, number>();
+  if (produtoIds.length > 0) {
+    const { data: custos } = await sb
+      .from("siso_custo_medio")
+      .select("produto_id, custo_medio")
+      .in("produto_id", produtoIds);
+    for (const c of custos ?? []) {
+      custoMap.set(c.produto_id, Number(c.custo_medio));
+    }
+  }
+
+  return agruparPor(rows, view, custoMap);
 }
 
-function agruparPor(rows: EstoqueRow[], view: PerspectivaEstoque): AgregadoSaldo[] {
+function agruparPor(
+  rows: EstoqueRow[],
+  view: PerspectivaEstoque,
+  custoMap: Map<string, number>,
+): AgregadoSaldo[] {
   const map = new Map<string, AgregadoSaldo>();
   for (const r of rows) {
     const key =
@@ -68,6 +88,11 @@ function agruparPor(rows: EstoqueRow[], view: PerspectivaEstoque): AgregadoSaldo
       saldo: 0,
       reservado: 0,
       disponivel: 0,
+      // Em view=produto, custo é único por agregado. Nas demais views
+      // (galpao/localizacao) o "custo médio" do agregado fica indefinido
+      // já que mistura SKUs — mantemos 0 e o frontend não usa.
+      custo_medio:
+        view === "produto" ? (custoMap.get(r.produto.id) ?? 0) : 0,
       itens: [],
     };
     existing.saldo += Number(r.saldo);

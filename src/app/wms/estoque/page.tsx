@@ -20,10 +20,10 @@ import type { LinhaCobertura } from "@/lib/wms/cobertura";
 import { useAuth } from "@/lib/auth-context";
 
 interface EstoqueItem {
+  id: string;
   saldo: number;
   reservado: number;
   disponivel: number;
-  custo_medio: number;
   atualizado_em: string;
   produto: {
     id: string;
@@ -32,7 +32,6 @@ interface EstoqueItem {
     imagem_url: string | null;
     imagens: string[];
   };
-  empresa: { id: string; nome: string };
   galpao: { id: string; nome: string };
   localizacao: { id: string; codigo: string; tipo: string };
 }
@@ -43,6 +42,8 @@ interface EstoqueAgregado {
   saldo: number;
   reservado: number;
   disponivel: number;
+  // 3D: custo médio é global por SKU. Vem direto do agregado em view=produto.
+  custo_medio: number;
   itens: EstoqueItem[];
 }
 
@@ -168,11 +169,8 @@ export default function EstoquePage() {
       const imagemUrl = r.itens[0]?.produto.imagem_url ?? null;
       const imagens = r.itens[0]?.produto.imagens ?? [];
       const cobertura = coberturaMap.get(r.chave);
-      const custoMedio =
-        r.itens.reduce(
-          (s, i) => s + Number(i.custo_medio) * Number(i.saldo),
-          0,
-        ) / Math.max(r.saldo, 1);
+      // 3D: custo médio é global por SKU — vem do agregado.
+      const custoMedio = Number(r.custo_medio ?? 0);
       const atualizadoEm = r.itens.reduce((max, i) => {
         const t = i.atualizado_em ? new Date(i.atualizado_em).getTime() : 0;
         return t > max ? t : max;
@@ -220,11 +218,8 @@ export default function EstoquePage() {
             (s, i) => s + Number(i.disponivel),
             0,
           );
-          const custoMedio =
-            itens.reduce(
-              (s, i) => s + Number(i.custo_medio) * Number(i.saldo),
-              0,
-            ) / Math.max(saldo, 1);
+          // 3D: custo médio global do produto — não muda ao filtrar galpão.
+          const custoMedio = r.custoMedio;
           const atualizadoEm = itens.reduce((max, i) => {
             const t = i.atualizado_em
               ? new Date(i.atualizado_em).getTime()
@@ -297,13 +292,22 @@ export default function EstoquePage() {
     (r) => r.cobertura?.status_cobertura === "critico",
   ).length;
 
+  // Quando o filtro narrowou pra 1 produto, mostra custo médio global no
+  // subtitle do header — é informação chave pra esse modo de leitura.
+  const subtitle =
+    rows.length === 1
+      ? `${rows[0].sku} · ${fmtNum(rows[0].saldo)} un · custo médio ${fmtBRL(
+          rows[0].custoMedio,
+        )} · ${fmtBRL(rows[0].saldo * rows[0].custoMedio)} em estoque`
+      : `${rows.length} produtos · ${fmtNum(totalSaldo)} unidades · ${fmtBRL(
+          totalValor,
+        )} em estoque`;
+
   return (
     <>
       <PageHeader
         title="Estoque"
-        subtitle={`${rows.length} produtos · ${fmtNum(totalSaldo)} unidades · ${fmtBRL(
-          totalValor,
-        )} em estoque`}
+        subtitle={subtitle}
         backHref="/wms"
         backLabel="Voltar ao WMS"
       >
@@ -694,7 +698,6 @@ function ExpandableRow({
                   <table className="wms-mini-tbl">
                     <thead>
                       <tr>
-                        <th>Empresa</th>
                         <th>Galpão</th>
                         <th>Localização</th>
                         <th className="wms-tar">Saldo</th>
@@ -705,11 +708,6 @@ function ExpandableRow({
                     <tbody>
                       {row.itens.map((i, idx) => (
                         <tr key={idx}>
-                          <td>
-                            <span className="wms-chip-emp">
-                              {i.empresa.nome.slice(0, 3).toUpperCase()}
-                            </span>
-                          </td>
                           <td className="wms-td-mute">{i.galpao.nome}</td>
                           <td className="wms-mono">{i.localizacao.codigo}</td>
                           <td className="wms-tar wms-mono">

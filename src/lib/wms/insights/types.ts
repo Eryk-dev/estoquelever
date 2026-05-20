@@ -137,9 +137,13 @@ export interface DevolucaoAgregado {
   qtd_pendentes: number;
 }
 
+/**
+ * Valor financeiro agregado por galpão (3D: pool fungível por galpão,
+ * sem dimensão empresa_dona). KPI por-empresa virou KPI por-galpao —
+ * RPC `wms_insights_estoque_valor_atual` foi reescrita pra agrupar
+ * por galpao_id apenas (Fase 2 Task 2.5).
+ */
 export interface FinanceiroValor {
-  empresa_dona_id: string;
-  empresa_nome: string;
   galpao_id: string;
   galpao_nome: string;
   qtd_skus: number;

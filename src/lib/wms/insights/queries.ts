@@ -118,12 +118,13 @@ export async function getThroughputHora(
 
 export async function getEstoqueQuadrante(
   galpaoId: string | null,
-  empresaDonaId: string | null,
   limit = 500,
 ): Promise<EstoqueQuadrantePonto[]> {
+  // 3D: filtro empresa_dona caiu — pool fungível por galpão. RPC ainda
+  // aceita p_empresa_dona_id por compat com schema antigo; passamos null.
   const { data, error } = await sb().rpc("wms_insights_estoque_quadrante", {
     p_galpao_id: galpaoId,
-    p_empresa_dona_id: empresaDonaId,
+    p_empresa_dona_id: null,
     p_limit: limit,
   });
   if (error) throw new Error(error.message);

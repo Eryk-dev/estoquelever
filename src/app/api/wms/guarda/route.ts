@@ -17,7 +17,6 @@ const STATUS_VALIDOS: StatusPendencia[] = [
  *
  * Query:
  *   ?galpao_id=uuid          (opcional)
- *   ?empresa_dona_id=uuid    (opcional)
  *   ?status=pendente,em_guarda  (CSV; default: pendente,em_guarda)
  *   ?q=termo                 (busca em sku/descrição)
  *   ?limit=N                 (default 200)
@@ -51,7 +50,6 @@ export async function GET(req: NextRequest) {
   try {
     const rows = await listarPendencias({
       galpao_id: sp.get("galpao_id") ?? undefined,
-      empresa_dona_id: sp.get("empresa_dona_id") ?? undefined,
       status,
       q: sp.get("q") ?? undefined,
       limit,

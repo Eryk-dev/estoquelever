@@ -11,7 +11,6 @@ import { listarRotaPendencias } from "@/lib/wms/guarda";
  *   - ?lote=UUID — todas as pendências do mesmo recebimento
  *   - ?ids=a,b,c — seleção ad-hoc
  *   - ?galpao=UUID&todas=true — todas ativas do galpão (botão "Guardar tudo")
- *   - &empresa=UUID — filtra dona (opcional)
  */
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -24,7 +23,6 @@ export async function GET(req: NextRequest) {
     ? idsParam.split(",").map((s) => s.trim()).filter(Boolean)
     : undefined;
   const galpao = sp.get("galpao") ?? undefined;
-  const empresa = sp.get("empresa") ?? undefined;
   const todas = sp.get("todas") === "true";
 
   try {
@@ -32,7 +30,6 @@ export async function GET(req: NextRequest) {
       lote_id: lote,
       pendencia_ids: ids,
       galpao_id: galpao,
-      empresa_dona_id: empresa,
       todas,
     });
     return NextResponse.json({ rows });

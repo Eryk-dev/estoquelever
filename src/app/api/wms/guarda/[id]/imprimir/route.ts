@@ -81,7 +81,6 @@ export async function POST(
         .select("localizacao:siso_localizacoes(codigo, tipo)")
         .match({
           produto_id: pend.produto_id,
-          empresa_dona_id: pend.empresa_dona_id,
           galpao_id: pend.galpao_id,
         })
         .gt("saldo", 0)

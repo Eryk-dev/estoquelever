@@ -34,12 +34,10 @@ export async function GET(
     const [sugestao, locaisExistentes] = await Promise.all([
       sugerirLocalizacaoPutaway(sb as never, {
         produto_id: pend.produto_id,
-        empresa_id: pend.empresa_dona_id,
         galpao_id: pend.galpao_id,
       }),
       listarLocaisExistentesProduto(sb as never, {
         produto_id: pend.produto_id,
-        empresa_id: pend.empresa_dona_id,
         galpao_id: pend.galpao_id,
       }),
     ]);

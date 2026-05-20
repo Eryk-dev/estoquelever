@@ -2,8 +2,12 @@ import { createServiceClient } from "@/lib/supabase-server";
 import type { TipoLocalizacao } from "@/lib/wms/types";
 import { naturalLocCompare } from "@/lib/wms/loc-compare";
 
+// 3D (Fase 5 Batch C):
+// Cascade de realocação opera no pool físico do galpão — sem empresa_dona.
+// Próxima loc = qualquer loc no mesmo (produto, galpao) com saldo > 0,
+// excluindo as já tentadas.
+
 export interface EstoqueCandidato {
-  empresa_dona_id: string;
   localizacao_id: string;
   localizacao_codigo: string;
   localizacao_tipo: TipoLocalizacao;
@@ -12,7 +16,6 @@ export interface EstoqueCandidato {
 
 export interface ResolverInput {
   produto_id: string;
-  empresa_origem_id: string;
   galpao_id: string;
   /** Loc original do item (compat com chamadas legacy — usado quando localizacoes_excluir não é passado). */
   localizacao_id_original?: string;
@@ -22,12 +25,9 @@ export interface ResolverInput {
 }
 
 export interface RealocacaoSugerida {
-  empresa_dona_id: string;
   localizacao_id: string;
   localizacao_codigo: string;
   quantidade: number;
-  is_emprestimo: boolean;
-  empresa_devedora_id: string | null;
 }
 
 export interface ResolverResult {
@@ -36,14 +36,9 @@ export interface ResolverResult {
 }
 
 export interface ResolverDeps {
-  listarEmpresasDoGrupoMesmoGalpao: (
-    empresaOrigemId: string,
-    galpaoId: string,
-  ) => Promise<string[]>;
   listarSaldoCandidato: (input: {
     produto_id: string;
     galpao_id: string;
-    empresas_grupo: string[];
     /** @deprecated use `localizacoes_excluir`. Mantido por compat. */
     localizacao_id_excluir?: string;
     localizacoes_excluir?: string[];
@@ -62,11 +57,6 @@ export async function resolverRealocacao(
   input: ResolverInput,
   deps: ResolverDeps = defaultDeps(),
 ): Promise<ResolverResult> {
-  const empresas = await deps.listarEmpresasDoGrupoMesmoGalpao(
-    input.empresa_origem_id,
-    input.galpao_id,
-  );
-
   const excluir =
     input.localizacoes_excluir && input.localizacoes_excluir.length > 0
       ? input.localizacoes_excluir
@@ -77,7 +67,6 @@ export async function resolverRealocacao(
   const candidatos = await deps.listarSaldoCandidato({
     produto_id: input.produto_id,
     galpao_id: input.galpao_id,
-    empresas_grupo: empresas,
     localizacoes_excluir: excluir,
     // Mantém legacy pra deps que ainda lêem só localizacao_id_excluir
     localizacao_id_excluir: excluir[0],
@@ -88,20 +77,15 @@ export async function resolverRealocacao(
   }
 
   const ordenado = [...candidatos].sort((a, b) => {
-    // 1. mesma empresa primeiro
-    const aMesma = a.empresa_dona_id === input.empresa_origem_id ? 0 : 1;
-    const bMesma = b.empresa_dona_id === input.empresa_origem_id ? 0 : 1;
-    if (aMesma !== bMesma) return aMesma - bMesma;
-
-    // 2. tipo de localização (picking > overstock > recebimento > expedicao > quarentena)
+    // 1. tipo de localização (picking > overstock > recebimento > expedicao > quarentena)
     const aTipo = TIPO_PRIORIDADE[a.localizacao_tipo] ?? 99;
     const bTipo = TIPO_PRIORIDADE[b.localizacao_tipo] ?? 99;
     if (aTipo !== bTipo) return aTipo - bTipo;
 
-    // 3. maior disponivel primeiro
+    // 2. maior disponivel primeiro
     if (a.disponivel !== b.disponivel) return b.disponivel - a.disponivel;
 
-    // 4. código ASC (desempate) — natural sort (A-2 < A-10)
+    // 3. código ASC (desempate) — natural sort (A-2 < A-10)
     return naturalLocCompare(a.localizacao_codigo, b.localizacao_codigo);
   });
 
@@ -118,13 +102,9 @@ export async function resolverRealocacao(
     if (faltando <= 0) break;
     const qty = Math.min(c.disponivel, faltando);
     realocacoes.push({
-      empresa_dona_id: c.empresa_dona_id,
       localizacao_id: c.localizacao_id,
       localizacao_codigo: c.localizacao_codigo,
       quantidade: qty,
-      is_emprestimo: c.empresa_dona_id !== input.empresa_origem_id,
-      empresa_devedora_id:
-        c.empresa_dona_id !== input.empresa_origem_id ? input.empresa_origem_id : null,
     });
     faltando -= qty;
   }
@@ -134,34 +114,9 @@ export async function resolverRealocacao(
 
 function defaultDeps(): ResolverDeps {
   return {
-    listarEmpresasDoGrupoMesmoGalpao: async (empresaOrigemId, galpaoId) => {
-      const supabase = createServiceClient();
-      const { data: ge } = await supabase
-        .from("siso_grupo_empresas")
-        .select("grupo_id")
-        .eq("empresa_id", empresaOrigemId)
-        .maybeSingle();
-      if (!ge?.grupo_id) return [empresaOrigemId];
-
-      const { data: empresas } = await supabase
-        .from("siso_grupo_empresas")
-        .select("empresa_id, siso_empresas!inner(galpao_id, ativo)")
-        .eq("grupo_id", ge.grupo_id);
-
-      const filtradas = (empresas ?? [])
-        .filter((e) => {
-          const emp = e.siso_empresas as unknown as { galpao_id: string; ativo: boolean };
-          return emp.galpao_id === galpaoId && emp.ativo;
-        })
-        .map((e) => e.empresa_id);
-
-      return filtradas.length > 0 ? filtradas : [empresaOrigemId];
-    },
-
     listarSaldoCandidato: async ({
       produto_id,
       galpao_id,
-      empresas_grupo,
       localizacoes_excluir,
       localizacao_id_excluir,
     }) => {
@@ -173,11 +128,11 @@ function defaultDeps(): ResolverDeps {
             ? [localizacao_id_excluir]
             : [];
 
+      // 3D: pool fungível por (produto, galpao) — sem filtro por dona.
       let query = supabase
         .from("siso_estoque")
         .select(
           `
-          empresa_dona_id,
           localizacao_id,
           disponivel,
           siso_localizacoes!inner(codigo, tipo)
@@ -185,7 +140,6 @@ function defaultDeps(): ResolverDeps {
         )
         .eq("produto_id", produto_id)
         .eq("galpao_id", galpao_id)
-        .in("empresa_dona_id", empresas_grupo)
         .gt("disponivel", 0);
 
       if (excluir.length > 0) {
@@ -200,7 +154,6 @@ function defaultDeps(): ResolverDeps {
           tipo: TipoLocalizacao;
         };
         return {
-          empresa_dona_id: row.empresa_dona_id as string,
           localizacao_id: row.localizacao_id as string,
           localizacao_codigo: loc.codigo,
           localizacao_tipo: loc.tipo,

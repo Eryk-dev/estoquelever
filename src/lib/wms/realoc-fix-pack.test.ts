@@ -102,28 +102,26 @@ describe("wms_estornar_parcial_movimentacao", () => {
   const movTag = `${TEST_TAG}-MOV`;
 
   beforeEach(async () => {
-    // Cria mov de entrada de 10 unidades via RPC oficial
+    // Cria mov de entrada de 10 unidades via RPC oficial (3D)
     const { data, error } = await sb.rpc("wms_inserir_movimentacao", {
-      p_produto: STAGING.produto_uuid,
-      p_dona: STAGING.empresa_uuid,
-      p_galpao: STAGING.galpao_uuid,
-      p_localizacao: STAGING.loc_uuid,
+      p_produto_id: STAGING.produto_uuid,
+      p_galpao_id: STAGING.galpao_uuid,
+      p_localizacao_id: STAGING.loc_uuid,
       p_tipo: "E",
-      p_qty: 10,
+      p_quantidade: 10,
       p_origem_tipo: "ajuste_manual",
-      p_origem_id: movTag,
-      p_origem_detalhes: { test: true, tag: TEST_TAG },
-      p_emprestimo_devedora: null,
+      // origem_id agora é uuid em vez de text → não setamos (mantém null).
+      p_origem_detalhes: { test: true, tag: TEST_TAG, mov_tag: movTag },
       p_expira_em: null,
       p_nota_fiscal_id: null,
       p_custo_unitario: null,
-      p_usuario: STAGING.usuario_uuid,
-      p_observacoes: `fixture ${TEST_TAG}`,
+      p_usuario_id: STAGING.usuario_uuid,
+      p_motivo: `fixture ${TEST_TAG}`,
       p_estorno_de: null,
     });
     if (error) throw error;
-    // RPC retorna a row de siso_movimentacoes
-    movId = (data as { id: string }).id;
+    // RPC agora retorna apenas o uuid da mov criada (não a row completa).
+    movId = data as unknown as string;
   });
 
   afterEach(async () => {

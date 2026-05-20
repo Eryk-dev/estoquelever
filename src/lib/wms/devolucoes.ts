@@ -305,7 +305,9 @@ export async function receberDevolucaoFornecedor(input: {
 interface DevolucaoPendenteRow {
   id: string;
   nota_fiscal_id: number | null;
-  empresa: { nome: string } | null;
+  /** Vendedora da NF original — tag de referência (não chave física).
+   *  Em 3D não há mais "dona destino"; saldo entra na (produto, galpão, loc). */
+  empresa_referencia: { nome: string } | null;
   criado_em: string;
 }
 
@@ -313,7 +315,7 @@ export async function listarDevolucoesPendentes(): Promise<DevolucaoPendenteRow[
   const sb = createServiceClient();
   const { data, error } = await sb
     .from("siso_devolucoes_pendentes")
-    .select("*, empresa:siso_empresas(nome)")
+    .select("*, empresa_referencia:siso_empresas!empresa_id(nome)")
     .eq("status", "aguardando_classificacao")
     .order("criado_em", { ascending: false });
   if (error) throw error;

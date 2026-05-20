@@ -127,16 +127,6 @@ export default function DashboardPage() {
           },
         ]}
       />
-      <Card
-        titulo="Empréstimos"
-        href="/wms/emprestimos"
-        items={[
-          {
-            label: "Pares com saldo devedor",
-            valor: data.emprestimos.paresComSaldo,
-          },
-        ]}
-      />
     </div>
   );
 }

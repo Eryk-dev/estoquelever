@@ -19,6 +19,7 @@ O app foi unificado sob o módulo **WMS**. Decisões arquiteturais não-negociá
 - **Fluxos físicos são eventos timestamped.** Recebimento e putaway são passos separados — saldo entra em `RECEBIMENTO` (staging), e a mov de transferência pra localização final só acontece quando o operador confirma o putaway. Cada movimentação é evento auditável no ledger.
 - **Concorrência via reconciliação temporal.** Operações continuam durante inventário; aprovação de divergências calcula `saldo_esperado = saldo_no_bipe + Σ(movs entre contado_em e aprovado_em)` e só sinaliza divergência real se `qty_contada ≠ saldo_esperado`.
 - **Realtime é cross-module.** Toda tabela que afeta operação ao vivo (`siso_estoque`, `siso_movimentacoes`, `siso_pedidos`, `siso_pedido_itens`, `siso_fila_execucao`, `siso_localizacao_locks`) entra na publication `supabase_realtime`. Clientes reagem por subscrição, não por polling.
+- **Empresa dona deixou de ser coordenada física em 2026-05-20.** Estoque é 3D (produto × galpão × localização). Ledger carrega empresa como TAG em movs com NF (`empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`) + `fornecedor_id` + `custo_unitario`. Apuração por empresa = report (`/wms/relatorios/*`). Custo médio é global por produto (`siso_custo_medio`). Empréstimo/swap/mini-swap arquivados. Detalhes: `docs/superpowers/specs/2026-05-20-ledger-simplificado-design.md`.
 
 **Cutover de superfície concluído em 2026-05-18 (commit `f8b7dbb`):** todas as páginas SISO legadas (`/siso`, `/separacao`, `/compras`, `/pedidos`, `/cross`, `/inventario`, `/transferencias`, `/configuracoes`, `/painel`, `/monitoramento`, `/etiquetas`, `/admin`) e suas APIs foram apagadas ou migradas pra `/api/wms/*`. Restam apenas pendências externas (URL do webhook no Tiny ERP, callbacks OAuth) e o cutover lógico (Plano 6) — que troca `webhook-processor.ts` → `webhook-processor-wms.ts` e `execution-worker.ts` → `execution-worker-wms.ts` pra escrever só no ledger.
 
@@ -290,18 +291,18 @@ src/
         ajuste/route.ts                    # POST — ajuste manual com motivo
         lancamento-retroativo/route.ts                   # POST/GET — registrar + listar
         lancamento-retroativo/[id]/reconciliar/route.ts  # POST — reconcilia com mov real
-        # ── WMS fornecedores + empréstimos ──
+        # ── WMS fornecedores ──
         fornecedores/route.ts              # GET, POST
         fornecedores/[id]/route.ts         # PATCH, DELETE (soft)
         fornecedores/auto-cadastro/route.ts # POST (admin) — semeia mapeamento canônico
         produto-fornecedores/route.ts      # GET (?produto_id=), POST
         produto-fornecedores/[id]/route.ts # PATCH, DELETE (soft)
-        emprestimo-regras/route.ts         # GET, POST
-        emprestimo-regras/[id]/route.ts    # PATCH, DELETE
-        emprestimo-regras/[id]/limites/route.ts # GET, PATCH limites_por_produto
-        emprestimos/saldos/route.ts        # GET — saldo devedor líquido
         rotear/route.ts                    # POST — testa algoritmo de roteamento
         reservas/cleanup/route.ts          # GET (worker secret) — libera reservas expiradas
+        # ── WMS relatórios (apuração por empresa via tags em movs) ──
+        relatorios/movs-por-empresa/route.ts    # GET — filtra movs por empresa_compradora|vendedora|referencia
+        relatorios/historico-custo/route.ts     # GET — série temporal custo_medio_anterior/posterior por produto
+        relatorios/saldos-por-empresa/route.ts  # GET — recompõe saldo "virtual" por empresa a partir das movs
         # ── WMS inventário (v2 pull queue) ──
         inventario/route.ts                # GET (lista), POST (criar)
         inventario/sugerir/route.ts        # POST — sugestão inteligente
@@ -324,11 +325,6 @@ src/
         cobertura/route.ts                 # GET (filtros)
         cobertura/refresh/route.ts         # GET (worker secret) — refresh MV
         dashboard-geral/route.ts           # GET — agrega 7 contadores
-        mini-swap/config/route.ts          # GET — lista config por galpão
-        mini-swap/config/[galpaoId]/route.ts # PATCH (admin)
-        mini-swap/simular/route.ts         # POST — dry-run
-        swap/detectar/route.ts             # POST — detecta swap N×N
-        swap/executar/route.ts             # POST — executa swap
         insights/hub/route.ts              # GET — dashboard hub de insights
         insights/pessoas/route.ts          # GET — lista pessoas + KPIs
         insights/pessoas/[id]/route.ts     # GET — detalhe pessoa
@@ -361,14 +357,17 @@ src/
       ajuste/page.tsx                      # Ajuste manual com motivo
       retroativos/page.tsx                 # Pendências de reconciliação retroativa
       fornecedores/page.tsx                # CRUD fornecedores
-      emprestimos/page.tsx                 # Saldos devedores (read-only)
       cobertura/page.tsx                   # Cobertura por giro
       devolucoes/page.tsx + [id]/page.tsx  # Classificação A/B/C/D
       dashboard/page.tsx                   # Dashboard geral (4 cards, refresh 30s)
       inventario/page.tsx + [id]/...       # Sessões + supervisor + handheld + divergências
       inventario/metricas/page.tsx         # Acuracidade por operador/localização
       insights/page.tsx + subrotas         # Hub + pessoas + fluxo + estoque + financeiro + ...
-      configuracoes/page.tsx + conexoes + otimizacoes  # Settings + OAuth + mini-swap toggle
+      relatorios/                          # Apuração por empresa (3D)
+        movs-por-empresa/page.tsx          # Movs filtradas por compradora/vendedora/referência
+        historico-custo/page.tsx           # Série temporal de custo médio por produto
+        saldos-por-empresa/page.tsx        # Saldo "virtual" recomposto por empresa
+      configuracoes/page.tsx + conexoes    # Settings + OAuth (aba "otimizações" removida em 2026-05-20)
   components/
     app-shell.tsx, app-header.tsx          # Shell wrappers (auth + header)
     galpao-selector.tsx                    # Dropdown filtro galpão
@@ -379,8 +378,8 @@ src/
       wms-shell.tsx                        # Sidebar de navegação (6 grupos: Vendas/Visibilidade/Operações/Inventário/Insights/Cadastros)
       sidebar-galpao-switcher.tsx          # Trocador de galpão na sidebar
       produto-drawer.tsx                   # Drawer de detalhe de produto
-      saldo-perspectiva-tabs.tsx           # Tabs entre as 4 perspectivas
-      quadrupla-picker.tsx                 # Seletor empresa+localização
+      saldo-perspectiva-tabs.tsx           # Tabs entre as 3 perspectivas (galpão/loc/produto)
+      tripla-picker.tsx                    # Seletor galpão+localização (3D, renomeado em 2026-05-20)
       scan-contagem.tsx                    # Input de bipe pro inventário
       configuracoes-types.ts               # Types compartilhados das telas de config
       ml-anuncios-block.tsx                # Bloco de anúncios ML
@@ -449,19 +448,19 @@ scripts/
 
 # ─── WMS library (src/lib/wms/) — toda lógica de negócio WMS ────────────
 src/lib/wms/
-    types.ts                       # Produto, Localizacao, EstoqueLinha, Movimentacao, Quadrupla, PerspectivaEstoque
-    ledger.ts                      # inserirMovimentacao() + validarCoerencia()
+    types.ts                       # Produto, Localizacao, EstoqueLinha, Movimentacao, Tripla, PerspectivaEstoque
+    ledger.ts                      # inserirMovimentacao() + validarCoerencia() (3D, metadata por empresa em movs)
     ledger.test.ts                 # Unit tests da lógica do ledger
+    custo-medio.ts                 # Cache global de custo médio por produto (siso_custo_medio)
     produtos.ts                    # CRUD do catálogo unificado
     localizacoes.ts                # CRUD de localizações por galpão
-    estoque.ts                     # Queries de saldos com 4 perspectivas
+    estoque.ts                     # Queries de saldos com 3 perspectivas (galpão / loc / produto)
     sync-tiny.ts                   # Sincroniza siso_produtos com Tiny
     snapshot-inicial.ts            # Bulk-load idempotente do Tiny (Fase 0)
     reconciliacao.ts               # Detecta + corrige divergências ledger↔cache
     putaway.ts                     # Heurística de sugestão de localização
     movimentacoes.ts               # Helpers: receber, transferir, replenishment, ajuste, retroativo
     fornecedores.ts                # CRUD fornecedores + auto-cadastro mapeamento sku-fornecedor
-    emprestimos.ts                 # Regras N×N + saldos devedores via RPC
     roteamento.ts                  # Algoritmo PURO (geo-priority) + rotearPedidoDoBanco
     reservas.ts                    # Reservas atômicas com TTL + cleanup
     inventario.ts                  # v2 pull queue (slots + claim hierárquico)
@@ -473,9 +472,9 @@ src/lib/wms/
     guarda.ts                      # Lógica de put-away (resolverLocRecebimento + confirmar)
     zpl-produto.ts                 # ZPL pra etiqueta de produto (PW800, 2-por-folha)
     etiqueta-produto-service.ts    # ZPL + PrintNode (fire-and-forget no recebimento)
-    mini-swap-types.ts             # Tipos do mini-swap intra-galpão
-    mini-swap.ts                   # planejarMiniSwap() + executarMiniSwap()
     api-client.ts                  # Cliente fetch wrapper consumido pelas páginas /wms
+    _archive/                      # Código histórico — arquivado em 2026-05-20 com o ledger simplificado 3D
+      emprestimos.ts, mini-swap.ts, mini-swap-types.ts, mini-swap.test.ts (e correlatos)
 ```
 
 ## Database Tables (Supabase)
@@ -512,19 +511,20 @@ All tables are prefixed with `siso_`:
 
 ### WMS Tables (Plano 1 — Foundation)
 
-Schema 4D: cada posição de estoque é única por **(produto, dona, galpão, localização)**.
+Schema 3D (a partir de 2026-05-20): cada posição de estoque é única por **(produto, galpão, localização)**. Empresa deixou de ser coordenada física — passa a viajar como TAG em movs com NF (`empresa_compradora_id` / `empresa_vendedora_id` / `empresa_referencia_id`).
 
 | Table | Purpose |
 |---|---|
 | `siso_produtos` | **Catálogo unificado.** id, sku unique, descricao, gtin, imagem_url, unidade, ncm, cest, origem_fiscal, sincronizado_em, ativo |
 | `siso_produto_empresas` | Mapeamento N:N produto↔empresa com tiny_produto_id (PK composto produto_id+empresa_id, UNIQUE empresa_id+tiny_produto_id) |
 | `siso_localizacoes` | Localizações dentro do galpão (id, galpao_id FK, codigo, tipo: picking/overstock/recebimento/expedicao/quarentena, ativo). UNIQUE(galpao_id, codigo) |
-| `siso_estoque` | **Cache materializado** da posição atual. saldo, reservado, disponivel (GENERATED saldo-reservado), custo_medio. UNIQUE(produto, dona, galpão, localização). CHECK reservado<=saldo |
-| `siso_movimentacoes` | **Ledger imutável.** Tipo (E/S/R/L) + saldo_anterior/posterior + reservado_anterior/posterior + origem_tipo (compra_manual, nf_venda, emprestimo, reserva_pedido, …) + observacoes + estorno_de. CHECKs garantem coerência aritmética. |
+| `siso_estoque` | **Cache materializado** da posição atual. saldo, reservado, disponivel (GENERATED saldo-reservado). UNIQUE `siso_estoque_unique_3d (produto_id, galpao_id, localizacao_id)`. CHECK reservado<=saldo. Sem `empresa_dona_id` e sem `custo_medio` (custo migrou pra `siso_custo_medio`). |
+| `siso_movimentacoes` | **Ledger imutável.** Tipo (E/S/R/L) + saldo_anterior/posterior + reservado_anterior/posterior + `origem_tipo` (CHECK enumera 18 valores: nf_compra, devolucao_cliente_integra/avariada, devolucao_fornecedor_recebida/enviada, nf_venda, venda_manual, ajuste_manual, ajuste_pick_zerou, inventario_perda/ganho/inicial, transferencia_galpao/localizacao, reserva_pedido, liberacao_reserva, lancamento_retroativo, estorno) + observacoes + estorno_de. **Metadata por empresa/fornecedor**: `empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`, `fornecedor_id`, `motivo`, `cliente_nome`, `custo_unitario`, `custo_medio_anterior`, `custo_medio_posterior` (todos nullable). CHECKs garantem coerência aritmética. |
+| `siso_custo_medio` | **Cache global de custo médio por produto.** PK `produto_id`, `custo_medio numeric NOT NULL CHECK ≥ 0` (default 0), `ultima_movimentacao_id` FK pra `siso_movimentacoes`, `atualizado_em`. Atualizado pelo RPC em toda entrada com `custo_unitario`. Substitui `siso_estoque.custo_medio` (4D). Tabela entra na publication `supabase_realtime`. |
 
-**RPC `wms_inserir_movimentacao(...)`**: única forma de escrever no ledger. Lock pessimista via `SELECT FOR UPDATE`, valida saldo/reservado, insere mov, atualiza cache atomicamente.
+**RPC `wms_inserir_movimentacao(...)`** (3D): única forma de escrever no ledger. Lock pessimista via `SELECT FOR UPDATE`, valida saldo/reservado, insere mov, atualiza cache atomicamente. Em entradas com `custo_unitario`, recalcula custo médio ponderado e grava `custo_medio_anterior`/`custo_medio_posterior` na mov + atualiza `siso_custo_medio`.
 
-**RPC `wms_detectar_divergencias_estoque()` / `wms_rebuild_linha_estoque(p_id)`**: reconciliação ledger↔cache. Endpoint `/api/wms/reconciliacao` (worker-secret) é cron-friendly.
+**RPC `wms_detectar_divergencias_estoque()` / `wms_rebuild_linha_estoque(p_id)`** (3D): reconciliação ledger↔cache. Endpoint `/api/wms/reconciliacao` (worker-secret) é cron-friendly.
 
 ### WMS Tables (Plano 3 — Roteamento)
 
@@ -532,12 +532,11 @@ Schema 4D: cada posição de estoque é única por **(produto, dona, galpão, lo
 |---|---|
 | `siso_fornecedores` | Fornecedores únicos (nome unique, prefixo_sku, cnpj, lead_time_dias_min/medio/max nullable). 11 cadastrados via auto-cadastro do mapeamento canônico. Lead time aqui é **default**: ao vincular um produto via `vincularProdutoFornecedor`/`upsertProdutoFornecedor` (sync Tiny) sem lead_time explícito, herda esses valores. |
 | `siso_produto_fornecedores` | Relação produto↔fornecedor com lead_time min/medio/max + custo_unitario + qty_minima_pedido + multiplo_compra + flag preferencial. UNIQUE(produto, fornecedor). Lead time pode ser sobrescrito por produto; defaults vêm de `siso_fornecedores` no insert. |
-| `siso_emprestimo_regras` | Matriz N×N direcional credora→devedora (UNIQUE par + CHECK credora ≠ devedora). Tem `limites_por_produto jsonb` pra limite por SKU + `limite_max_por_produto numeric` global. |
 | `siso_localizacao_locks` | Locks operacionais de localização (cycle_count, contagem_completa, manutencao). UNIQUE parcial WHERE finalizado_em IS NULL. |
 
-**RPC `wms_reservar_atomico(...)`**: wrapper sobre `wms_inserir_movimentacao` com tipo='R', expira_em=now()+ttl_horas. Retorna mov_id.
+> Tabela `siso_emprestimo_regras` **dropada em 2026-05-20** com o ledger simplificado 3D. Empresas não são mais coordenada física — não há débito/crédito entre elas. Apuração por empresa = report sobre tags de movs (`/api/wms/relatorios/*`).
 
-**RPC `wms_saldos_devedores()`**: saldo líquido bidirecional credora↔devedora por produto, considerando movs origem_tipo='emprestimo' não-estornadas. Filtrada (devido > 0).
+**RPC `wms_reservar_atomico(...)`** (3D): wrapper sobre `wms_inserir_movimentacao` com tipo='R', expira_em=now()+ttl_horas. Retorna mov_id.
 
 ### WMS Tables (Plano 4 — Inventário v2: pull queue + slots)
 
@@ -548,8 +547,8 @@ Schema 4D: cada posição de estoque é única por **(produto, dona, galpão, lo
 | `siso_inventario_sessoes` | Sessão master. nome (opcional), tipo cycle_count\|completo, modo aberto\|blind (default blind, sem duplo_blind), tolerancia_pct, exige_aprovacao_acima_valor, tamanho_pool. Status workflow: planejada→em_andamento→revisao→aprovada→aplicada\|cancelada. |
 | `siso_inventario_operadores` | Party dinâmica de operadores ativos. **Sem slot numerado** — identidade = `usuario_id`. UNIQUE parcial (sessao_id, usuario_id) WHERE finalizado_em IS NULL evita duplicação. Reentrada (após `sairParty`) reativa registro existente: zera `finalizado_em`, seta `ultima_reentrada_em`, preserva `locs_contadas`. **+ Claim hierárquico ativo**: `claim_tipo` (rua\|predio\|colisao\|NULL), `claim_codigo` (ex: 'A' ou 'A-03'), `claim_direcao` (asc\|desc), `claim_atualizado_em`. Trigger BEFORE UPDATE limpa claim quando `finalizado_em` é setado (sairParty). |
 | `siso_inventario_localizacoes` | Pool de locs da sessão (sem area_id, sem slot_atribuido). status pendente\|em_contagem\|contada\|divergente\|aprovada (sem recontagem). motivo (curva_a\|divergente_recente\|sem_contagem_recente\|manual\|completo). bloqueada_por + bloqueada_em pra lock atômico por operador. contagem_iniciada_em + contagem_finalizada_em pra cálculo de tempo médio. |
-| `siso_inventario_contagens` | Cada bipe individual. Sem `rodada` (1 contagem por loc). Indexada por quádrupla. Múltiplos operadores podem contar a mesma loc (caso edge: sairSlot mid-loc), `computarDivergencias` soma todas as contagens da quádrupla. |
-| `siso_inventario_divergencias` | Saldo sistema vs contagem final por quádrupla. delta + delta_pct GENERATED. Status: pendente\|aprovada\|rejeitada\|aplicada (sem recontagem_solicitada). mov_aplicada_id liga ao ledger ao aplicar. |
+| `siso_inventario_contagens` | Cada bipe individual. Sem `rodada` (1 contagem por loc). Indexada por tripla (produto, galpão, localização) — sem empresa_dona desde 2026-05-20. Múltiplos operadores podem contar a mesma loc (caso edge: sairSlot mid-loc), `computarDivergencias` soma todas as contagens da tripla. |
+| `siso_inventario_divergencias` | Saldo sistema vs contagem final por tripla. delta + delta_pct GENERATED. Status: pendente\|aprovada\|rejeitada\|aplicada (sem recontagem_solicitada). mov_aplicada_id liga ao ledger ao aplicar. |
 
 Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger atualiza em cada bipe — usado pela sugestão inteligente) + `zona text` (override manual pro roteamento; default = prefixo antes do "-").
 
@@ -565,11 +564,7 @@ Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger at
 |---|---|
 | `siso_wms_pendencias_guarda` | Fila de pendências de put-away. 1 linha por linha de recebimento (preserva NF/lote). `qty_pendente = qty_inicial - qty_guardada` GENERATED. Status: pendente → em_guarda → guardada\|cancelada. Indexada por (galpao_id, status, criada_em). Trigger atualiza `atualizada_em`. CHECK garante coerência (guardada exige qty_guardada=qty_inicial+guardada_em). |
 
-### WMS Tables (Mini-Swap Intra-Galpão — 2026-05-14)
-
-| Table | Purpose |
-|---|---|
-| `siso_wms_mini_swap_config` | Toggle on/off do mini-swap intra-galpão por galpão. PK galpao_id. |
+> Tabela `siso_wms_mini_swap_config` e RPCs `wms_executar_mini_swap` / `wms_executar_swap` **dropadas em 2026-05-20** com o ledger simplificado 3D. Mini-swap intra-galpão e swap N×N entre empresas perderam o sentido — não há mais empresa dona física a consolidar. Código arquivado em `src/lib/wms/_archive/mini-swap*.ts`.
 
 Ajustes em `siso_galpoes` + `siso_usuarios`: ADD `printnode_printer_id_produto bigint` + `printnode_printer_nome_produto text` — impressora dedicada pra etiqueta de produto, com fallback pra impressora de envio se vazia.
 
@@ -583,7 +578,7 @@ Ajustes em `siso_galpoes` + `siso_usuarios`: ADD `printnode_account_id uuid FK O
 
 Loc auto-criada: a migration semeia 1 `siso_localizacoes` tipo='recebimento' (`codigo='RECEBIMENTO'`) por galpão ativo se não existir uma.
 
-**Materialized view `siso_cobertura_estoque`**: agrega disponivel + giro 30d + lead time fornecedor preferencial → `status_cobertura` (ok\|atencao\|critico\|lead_time_risco\|sem_giro). Refresh via `wms_refresh_cobertura()`.
+**Materialized view `siso_cobertura_estoque`** (3D — recriada em 2026-05-20): agrega disponivel por (produto, galpão) + giro 30d + lead time fornecedor preferencial → `status_cobertura` (ok\|atencao\|critico\|lead_time_risco\|sem_giro). Refresh via `wms_refresh_cobertura()`.
 
 **RPC `wms_inventario_proxima_loc(p_sessao, p_user)`**: pull queue com **claim hierárquico**. Endereço = rua-prédio-andar (3 segmentos do código). Operador "reivindica" uma unidade e desce nela até esgotar. Algoritmo:
 1. **FASE 1**: tem claim ativo (`claim_tipo` IS NOT NULL)? Procura próxima loc dentro do claim respeitando `claim_direcao` (asc default, desc só em colisão).
@@ -595,11 +590,11 @@ Loc auto-criada: a migration semeia 1 `siso_localizacoes` tipo='recebimento' (`c
 
 Helpers: `wms_loc_rua(codigo)` ('A-03-02' → 'A'), `wms_loc_predio(codigo)` ('A-03-02' → 'A-03'), `wms_loc_horizontal_int(codigo)` ('A-03-02' → 3). Lock atômico via `FOR UPDATE OF inv_loc SKIP LOCKED`. Retorna `claim_tipo`/`claim_codigo`/`claim_direcao` no payload pra UI mostrar status do operador. Em modo aberto, anexa SKUs esperados.
 
-**RPC `wms_inventario_sugerir(p_galpao, p_empresa_dona?, p_tamanho)`**: algoritmo de sugestão inteligente. Mix 50% locs com produtos curva A (giro 30d via `siso_curva_abc`) + 30% locs com divergências aplicadas nos últimos 60d + 20% locs sem contagem em 30d+ (ou nunca contadas). Filtra apenas locs com saldo > 0. Dedupe automático (loc só aparece em uma categoria, priorizada por peso).
+**RPC `wms_inventario_sugerir(p_galpao, p_tamanho)`** (3D — assinatura sem `p_empresa_dona` desde 2026-05-20): algoritmo de sugestão inteligente. Mix 50% locs com produtos curva A (giro 30d via `siso_curva_abc`) + 30% locs com divergências aplicadas nos últimos 60d + 20% locs sem contagem em 30d+ (ou nunca contadas). Filtra apenas locs com saldo > 0. Dedupe automático (loc só aparece em uma categoria, priorizada por peso).
 
 **RPCs métricas**: `wms_metricas_operador()` (acuracidade 30d por user) + `wms_metricas_localizacao()` (cobertura+erro 5000 últimas localizações).
 
-**Materialized view `siso_curva_abc`**: ranking ABC automático via giro 30d (movs origem nf_venda+emprestimo, não-estornadas). Função `wms_refresh_curva_abc()` pra cron job de refresh.
+**Materialized view `siso_curva_abc`** (3D — recriada em 2026-05-20): ranking ABC automático via giro 30d (movs origem `nf_venda` + `venda_manual`, não-estornadas). Função `wms_refresh_curva_abc()` pra cron job de refresh.
 
 ### Infrastructure Tables
 
@@ -622,6 +617,16 @@ Helpers: `wms_loc_rua(codigo)` ('A-03-02' → 'A'), `wms_loc_predio(codigo)` ('A
 | `siso_cross_logs` | Telemetria de buscas no Cross |
 
 > **Note:** `siso_pedido_itens` still has deprecated `estoque_cwb_*` / `estoque_sp_*` columns. The API reads from `siso_pedido_item_estoques` (normalized). The webhook processor writes to both for backwards compat. Legacy columns will be removed in a future migration.
+
+## Reports (Apuração por Empresa — 3D)
+
+Com o ledger simplificado, apuração por empresa virou **report sobre tags de movs** em vez de coordenada física. 3 endpoints + 3 páginas:
+
+| Endpoint | Page | Purpose |
+|---|---|---|
+| `GET /api/wms/relatorios/movs-por-empresa` | `/wms/relatorios/movs-por-empresa` | Movs filtradas por `empresa_compradora_id` / `empresa_vendedora_id` / `empresa_referencia_id` + intervalo de data + origem_tipo |
+| `GET /api/wms/relatorios/historico-custo` | `/wms/relatorios/historico-custo` | Série temporal de `custo_medio_anterior` → `custo_medio_posterior` por produto, reconstruída a partir das entradas com `custo_unitario` |
+| `GET /api/wms/relatorios/saldos-por-empresa` | `/wms/relatorios/saldos-por-empresa` | Saldo "virtual" por empresa recomposto a partir das movs: Σ entradas com `empresa_compradora_id=X` − Σ saídas com `empresa_vendedora_id=X`. Não é coordenada física, é um corte contábil sobre o ledger. |
 
 ## Key Domain Concepts
 
@@ -797,7 +802,7 @@ Failure to update documentation means the next developer or LLM will work with s
 ### In Progress / Minor
 - Real-time notifications for new pending orders (polling at 30s for now)
 - PWA service worker registration (basic structure in place)
-- **WMS Fase 0 (Foundation) — implementado, validado em staging** (projeto Supabase `ehbxpbeijofxtsbezwxd`). Schema 4D + ledger imutável + RPC com lock + 4 telas de visualização (catálogo, localizações, saldos por 4 perspectivas, ledger). Dependente de promoção pra prod (Fase 1+ ainda pendente). Spec: `docs/superpowers/specs/2026-05-07-wms-design.md`. Plano executado: `docs/superpowers/plans/2026-05-08-wms-1-foundation.md`.
+- **WMS Fase 0 (Foundation) — implementado, validado em staging** (projeto Supabase `ehbxpbeijofxtsbezwxd`). Schema 4D original + ledger imutável + RPC com lock + 4 telas de visualização (catálogo, localizações, saldos por 4 perspectivas, ledger). Dependente de promoção pra prod (Fase 1+ ainda pendente). Spec: `docs/superpowers/specs/2026-05-07-wms-design.md`. Plano executado: `docs/superpowers/plans/2026-05-08-wms-1-foundation.md`. > **Nota 2026-05-20**: schema migrado pra 3D — ver bullet "WMS Ledger Simplificado 3D" abaixo.
 - **WMS Plano 2 (Movimentações operacionais) — implementado, validado em staging.** 5 fluxos (receber, transferir inter-galpão, replenishment intra-galpão, ajuste manual com motivo, lançamento retroativo + reconciliação) + sugestão automática de putaway + recálculo de custo médio em entradas com custo. Validação E2E: receber 50 + ajustar -10 = saldo 40, 0 divergências. Plano: `docs/superpowers/plans/2026-05-15-wms-2-movimentacoes.md`.
 - **WMS Plano 3 (Roteamento) — implementado, validado em staging.** Schema fornecedores + matriz de empréstimos N×N (com limites por par+produto) + algoritmo de roteamento puro com geo-priority (home=0, mesma_cidade=1, mesmo_estado=2, outro=3) + reservas atômicas com TTL 48h + cleanup cron-friendly + shadow logging no webhook (legado vs novo, sem mudar comportamento). 9 testes de roteamento + 3 de reservas. Plano: `docs/superpowers/plans/2026-05-22-wms-3-roteamento.md`.
 - **WMS Plano 4 v1 (Inventário robusto) — substituído por v2 em 2026-05-12.** Schema original tinha divisão estática por "áreas" (1 área = 1 operador, locs pré-atribuídas), o que causava operador ocioso quando um terminava antes dos outros. Plano original: `docs/superpowers/plans/2026-05-29-wms-4-inventario.md`.
@@ -809,7 +814,8 @@ Failure to update documentation means the next developer or LLM will work with s
 - **WMS Plano 5 (Exceções + dashboards) — implementado, validado em staging. Encerra Fase 0.** Devoluções classificadas A/B/C/D com recálculo de custo médio + transferência pra QUARENTENA + RMA. Troca SKU na separação (2 movs com mesma origem_id) com validação Cross opcional. Webhook NF detecta devolução (best-effort). Materialized view `siso_cobertura_estoque` com status crítico/atenção/lead_time_risco/ok/sem_giro. Dashboard geral (4 cards, refresh 30s). Shell e home reorganizados em 4 grupos. Plano: `docs/superpowers/plans/2026-06-05-wms-5-excecoes-dashboards.md`. Checklist Fase 0: `docs/superpowers/plans/wms-fase0-checklist.md`. **Próximo: Plano 6 (cutover big bang).**
 - **WMS Recebimento em 2 etapas (Recebimento + Guarda) — implementado em staging, 2026-05-14.** Quebra o recebimento em duas fases pra alinhar com o fluxo físico: dock RECEBIMENTO (chega caminhão, registra qty) → guarda no tablet (imprime etiqueta, bipa QR da loc destino, confirma). 1 pendência em `siso_wms_pendencias_guarda` por linha de recebimento. Suporta guarda parcial (qty<qty_pendente fica aberta) + cancelamento com motivo. Etiqueta de produto em ZPL pareado 2-por-folha (`gerarZplProduto` em `src/lib/wms/zpl-produto.ts`), N etiquetas por unidade. Impressora dedicada de produto (`printnode_printer_id_produto`) com fallback automático pra impressora de envio se não configurada. Migration: `supabase/migrations/20260514_wms_guarda_pendencias.sql`. APIs: `/api/wms/guarda` (lista + detalhe + iniciar/confirmar/cancelar/imprimir + imprimir-lote bulk).
   - **Entrada direta (2026-05-19):** flag `entrada_direta` em `/api/wms/receber` (tanto no modal individual quanto no lote em `/wms/receber`) pula o dock RECEBIMENTO e grava 1 mov direto na `localizacao_destino_id` de cada item — sem criar pendência. Exige loc destino em **todos** os itens (frontend bloqueia o confirm e mostra alerta em vermelho se faltar). Impressão de etiqueta segue funcionando: `/api/wms/guarda/imprimir-lote` ganhou um modo alternativo `{ linhas: [{produto_id, galpao_id, qty, localizacao_id?}] }` pra cobrir o caso sem pendência. Pra casos onde o operador já vai guardando direto na prateleira (pequenas entradas, lançamento retroativo, achados).
-- **WMS Mini-Swap Intra-Galpão — implementado em staging, 2026-05-14.** Antes de iniciar wave de picking, consolida estoque das empresas no mesmo galpão em 1 loc canônica via swap (zero dívida) + empréstimo (limitado ao planejado pelo roteamento). Algoritmo puro em `src/lib/wms/mini-swap.ts` + RPC `wms_executar_mini_swap` aplica plano sob lock pessimista. Toggle on/off por galpão em `/wms/configuracoes/otimizacoes`. Graceful: qualquer falha → wave segue sem otimização. Foundation pra cycle count oportunista (próximo). Migration: `supabase/migrations/20260514_wms_mini_swap*.sql`. Spec: `docs/superpowers/specs/2026-05-14-mini-swap-intra-galpao-design.md`.
+- **WMS Mini-Swap Intra-Galpão** — **arquivado em 2026-05-20** com o ledger simplificado 3D. Empresa deixou de ser coordenada física, não há mais o que swappear/consolidar entre empresas no mesmo galpão. Código preservado em `src/lib/wms/_archive/mini-swap*.ts` pra referência histórica.
+- **WMS Ledger Simplificado 3D — rollout em 2026-05-20.** Substitui o schema 4D (produto × dona × galpão × loc) por 3D (produto × galpão × loc). Empresa passa a ser TAG em movs com NF (`empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`) + `fornecedor_id` + `custo_unitario`. Custo médio migrou pra cache global `siso_custo_medio` (PK produto_id). 3 RPCs reescritas (`wms_inserir_movimentacao`, `wms_reservar_atomico`, `wms_inventario_proxima_loc/sugerir`), 2 MVs recriadas (`siso_cobertura_estoque`, `siso_curva_abc`), 2 tabelas dropadas (`siso_emprestimo_regras`, `siso_wms_mini_swap_config`), 3 RPCs dropadas (`wms_executar_mini_swap`, `wms_executar_swap`, `wms_saldos_devedores`). Apuração por empresa virou report (`/wms/relatorios/movs-por-empresa`, `/historico-custo`, `/saldos-por-empresa`). Frontend: páginas `/wms/emprestimos` e `/wms/configuracoes/otimizacoes` removidas; `QuadruplaPicker` → `TriplaPicker`; sidebar com novo grupo "Relatórios". Migration: `supabase/migrations/20260520_ledger_simplificado*.sql`. Spec: `docs/superpowers/specs/2026-05-20-ledger-simplificado-design.md`. Plano: `docs/superpowers/plans/2026-05-20-ledger-simplificado-3d.md`.
 - **Vendas Diretas + role vendedor — implementado em 2026-05-19.** Nova aba `/wms/vendas` agregando pedidos manuais inseridos por vendedores + marketplaces rastreados (ML, Shopee). Cargo `vendedor` adicionado à whitelist. 2 modos de criação: (a) `separacao` — pula NF e entra direto em `status_separacao='aguardando_separacao'`; (b) `baixa_direta` — sistema gera mov `'S'` no ledger via `wms_inserir_movimentacao(origem_tipo='venda_manual')` com rollback manual em caso de falha. `webhook-processor.ts` auto-atribui `vendedor_nome='{nome_ecommerce} {empresa_nome}'` pra ML/Shopee, preservando atribuição manual em re-entregas (SELECT-then-update). Sidebar com visibility por cargo (vendedor só vê Vendas Diretas). Migration: `supabase/migrations/20260519_vendas_diretas_vendedor.sql`. Rotas: `POST /api/wms/vendas/criar`, `GET /api/wms/vendas`, `GET /api/wms/vendas/[id]`, `PATCH /api/wms/vendas/[id]/vendedor`. Funciona em ambiente WMS (staging hoje); em prod só funciona modo `separacao` até promoção das tabelas WMS.
   - **Auto-resolve loc + page completa (2026-05-19):** criação de venda saiu do modal e virou page completa em `/wms/vendas/nova`. Vendedor não escolhe mais empresa dona nem localização — escolhe **1 galpão** pro pedido inteiro e o sistema resolve via novo helper `resolverDisponibilidadeVenda` em `src/lib/wms/vendas-disponibilidade.ts` (ordem: empresa origem com saldo > tipo='picking' > maior disponivel). Novo endpoint `GET /api/wms/vendas/disponibilidade?produto_id=X&galpao_id=Y&empresa_origem_id=Z` alimenta a UI mostrando "Loc sugerida + qty disponível" read-only por item. `POST /api/wms/vendas/criar` mudou contrato: `galpao_id` no top-level, `items[]` só carrega `{produto_id, quantidade}`. **Degradação automática**: se vendedor pediu `baixa_direta` mas algum item não tem saldo no galpão, pedido inteiro vira `aguardando_separacao` (igual marketplace sem estoque); resposta inclui `degradado:true, motivo_degradacao:'falta_saldo', skus_sem_saldo:[]`. Modal antigo `src/components/wms/vendas/form-criar-pedido.tsx` deletado.
 

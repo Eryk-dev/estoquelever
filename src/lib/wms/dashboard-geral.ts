@@ -1,5 +1,11 @@
 import { createServiceClient } from "@/lib/supabase-server";
 
+// Modelo 3D (Fase 5 Batch C):
+// - Empréstimos (saldos devedores entre empresas) deixaram de existir —
+//   pool fungível por galpão. Counter `emprestimos.paresComSaldo` removido,
+//   RPC `wms_saldos_devedores` foi dropada na Fase 1.
+// - Swap/mini-swap também não existem mais.
+
 export interface DashboardGeralResult {
   cobertura: Record<string, number>;
   inventario: {
@@ -11,9 +17,6 @@ export interface DashboardGeralResult {
     expiraEm6h: number;
   };
   retroativosOrfaos: number;
-  emprestimos: {
-    paresComSaldo: number;
-  };
 }
 
 export async function dashboardGeral(): Promise<DashboardGeralResult> {
@@ -30,7 +33,6 @@ export async function dashboardGeral(): Promise<DashboardGeralResult> {
     reservasExp,
     retroativos,
     locks,
-    saldosDevedores,
   ] = await Promise.all([
     sb.from("siso_cobertura_estoque").select("status_cobertura"),
     sb.from("siso_inventario_sessoes").select("id").eq("status", "em_andamento"),
@@ -54,7 +56,6 @@ export async function dashboardGeral(): Promise<DashboardGeralResult> {
       .select("id")
       .is("finalizado_em", null)
       .lt("iniciado_em", ha1h),
-    sb.rpc("wms_saldos_devedores"),
   ]);
 
   const cobByStatus = ((cobertura.data ?? []) as Array<{ status_cobertura: string }>).reduce<
@@ -94,8 +95,5 @@ export async function dashboardGeral(): Promise<DashboardGeralResult> {
       expiraEm6h: reservasExp.data?.length ?? 0,
     },
     retroativosOrfaos,
-    emprestimos: {
-      paresComSaldo: (saldosDevedores.data ?? []).length,
-    },
   };
 }

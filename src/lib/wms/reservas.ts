@@ -1,6 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import type { Quadrupla } from "./types";
+import type { Tripla } from "./types";
 import { inserirMovimentacao } from "./ledger";
 
 export function calcularExpiraEm(opts: { now?: Date; horas?: number } = {}): Date {
@@ -10,7 +10,7 @@ export function calcularExpiraEm(opts: { now?: Date; horas?: number } = {}): Dat
 }
 
 export interface ReservarInput {
-  quadrupla: Quadrupla;
+  tripla: Tripla;
   qty: number;
   pedido_id: string;
   ttl_horas?: number;
@@ -20,14 +20,13 @@ export interface ReservarInput {
 export async function reservarAtomico(input: ReservarInput): Promise<string> {
   const sb = createServiceClient();
   const { data, error } = await sb.rpc("wms_reservar_atomico", {
-    p_produto: input.quadrupla.produto_id,
-    p_dona: input.quadrupla.empresa_dona_id,
-    p_galpao: input.quadrupla.galpao_id,
-    p_localizacao: input.quadrupla.localizacao_id,
-    p_qty: input.qty,
-    p_pedido: input.pedido_id,
+    p_produto_id: input.tripla.produto_id,
+    p_galpao_id: input.tripla.galpao_id,
+    p_localizacao_id: input.tripla.localizacao_id,
+    p_quantidade: input.qty,
+    p_pedido_id: input.pedido_id,
     p_ttl_horas: input.ttl_horas ?? 48,
-    p_usuario: input.usuario_id ?? null,
+    p_usuario_id: input.usuario_id ?? null,
   });
   if (error) {
     logger.error("wms.reservas", "falha ao reservar", { error, input });
@@ -44,9 +43,7 @@ export async function liberarReserva(input: {
   const sb = createServiceClient();
   const { data: reservas, error } = await sb
     .from("siso_movimentacoes")
-    .select(
-      "id, produto_id, empresa_dona_id, galpao_id, localizacao_id, quantidade",
-    )
+    .select("id, produto_id, galpao_id, localizacao_id, quantidade")
     .eq("origem_id", input.pedido_id)
     .eq("origem_tipo", "reserva_pedido")
     .eq("tipo", "R");
@@ -63,16 +60,14 @@ export async function liberarReserva(input: {
   for (const r of (reservas ?? []) as Array<{
     id: string;
     produto_id: string;
-    empresa_dona_id: string;
     galpao_id: string;
     localizacao_id: string;
     quantidade: number;
   }>) {
     if (temLiberacao) continue;
     await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         produto_id: r.produto_id,
-        empresa_dona_id: r.empresa_dona_id,
         galpao_id: r.galpao_id,
         localizacao_id: r.localizacao_id,
       },
@@ -93,7 +88,6 @@ interface ReservaExpirada {
   id: string;
   origem_id: string | null;
   produto_id: string;
-  empresa_dona_id: string;
   galpao_id: string;
   localizacao_id: string;
   quantidade: number;
@@ -111,9 +105,7 @@ export async function cleanupReservasExpiradas(): Promise<{
   const sb = createServiceClient();
   const { data: expiradas, error } = await sb
     .from("siso_movimentacoes")
-    .select(
-      "id, origem_id, produto_id, empresa_dona_id, galpao_id, localizacao_id, quantidade",
-    )
+    .select("id, origem_id, produto_id, galpao_id, localizacao_id, quantidade")
     .eq("tipo", "R")
     .eq("origem_tipo", "reserva_pedido")
     .lt("expira_em", new Date().toISOString());
@@ -135,9 +127,8 @@ export async function cleanupReservasExpiradas(): Promise<{
       }
 
       await inserirMovimentacao({
-        quadrupla: {
+        tripla: {
           produto_id: r.produto_id,
-          empresa_dona_id: r.empresa_dona_id,
           galpao_id: r.galpao_id,
           localizacao_id: r.localizacao_id,
         },

@@ -855,3 +855,43 @@ erros:
       catálogo pra documentar a transição (lookup futuro vai pesquisar por
       "empresa_dona" ou "quadrupla" e precisa achar a mensagem clara de
       que isso foi descontinuado).
+
+  - id: wms-inventario-divergencias-upsert-silent-fail
+    date: "2026-05-20"
+    source: wms.inventario.aprovar
+    category: database
+    message: "Sessão de inventário fecha com status='aplicada' mas 0 divergências persistidas e 0 movs no ledger, mesmo com contagens registradas"
+    cause: >
+      A migration 20260520i_drop_dona_inventario.sql dropou a coluna
+      empresa_dona_id de siso_inventario_divergencias. O ALTER TABLE DROP
+      COLUMN do Postgres descarta automaticamente qualquer constraint que
+      cita a coluna — incluindo o UNIQUE(sessao_id, localizacao_id,
+      produto_id, empresa_dona_id) criado na 20260529_wms_inventario.sql.
+      Mas o constraint **nunca foi recriado** sem empresa_dona_id.
+      computarDivergencias() em src/lib/wms/inventario.ts faz upsert com
+      `{ onConflict: "sessao_id,localizacao_id,produto_id" }`. PostgreSQL
+      respondia com erro 42P10 "there is no unique or exclusion constraint
+      matching the ON CONFLICT specification". O supabase-js NÃO encadeava
+      .select(), então o erro vinha em `error` ignorado — falha silenciosa.
+      Resultado: reconciliarTemporal() emite N divergências corretas, mas
+      0 são persistidas. Sessão vai pra "revisao" → sem pendentes →
+      aprovarSessao() OK → aplicarSessao() encontra 0 aprovadas → movsGeradas=0.
+    fix: >
+      (1) Migration 20260520j_fix_divergencias_unique.sql recria UNIQUE
+      (sessao_id, localizacao_id, produto_id) como
+      siso_inventario_divergencias_tripla_unique. (2) Hardening em
+      inventario.ts: upsert agora encadeia .select("id") e throw em erro —
+      qualquer falha futura de constraint mismatch (ou outra) explode
+      visível no log + tela do operador em vez de virar 0 movs misteriosos.
+    files:
+      - supabase/migrations/20260520j_fix_divergencias_unique.sql
+      - src/lib/wms/inventario.ts
+    tags: [wms, inventario, divergencias, upsert, on-conflict, 42P10, silent-fail, supabase-js, drop-column]
+    notes: >
+      Sessão be1c0fa8-424f-4d16-904d-ce77a6f94e3e (CWB, cycle blind) ficou
+      como evidência: 3 contagens (SKUs 007672 qty 10×2 + LD023041 qty 4),
+      status='aplicada' mas zero divergencias e zero movs. Sessão fica como
+      lixo histórico — não é reaproveitável (já 'aplicada'); operador precisa
+      criar nova sessão pra ajustar saldo se for o caso.
+      Lição geral: sempre encadear .select() em upsert/update do supabase-js
+      e checar `error` — caso contrário PostgrestError fica invisível.

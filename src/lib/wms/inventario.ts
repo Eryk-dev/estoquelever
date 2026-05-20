@@ -719,19 +719,28 @@ export async function computarDivergencias(
     const status: "aprovada" | "pendente" =
       dentroTol && !acimaValor ? "aprovada" : "pendente";
 
-    await sb.from("siso_inventario_divergencias").upsert(
-      {
-        sessao_id: sessaoId,
-        localizacao_id: d.localizacao_id,
-        produto_id: d.produto_id,
-        // NOTA: saldo_sistema agora guarda o saldo_esperado_no_bipe (reconciliação temporal) — nome mantido por compat
-        saldo_sistema: d.saldo_esperado,
-        qty_contada_final: d.qty_contada_final,
-        valor_financeiro: d.valor_financeiro,
-        status,
-      },
-      { onConflict: "sessao_id,localizacao_id,produto_id" },
-    );
+    // .select() força supabase-js a expor erro PostgREST — sem isso, falha
+    // silenciosa (ex.: ON CONFLICT sem constraint match → erro 42P10
+    // descartado e 0 divergências persistidas). Bug histórico: sessão
+    // be1c0fa8 (2026-05-20) gerou movs=0 porque o UNIQUE constraint sumiu
+    // junto com empresa_dona_id em 20260520i — corrigido em 20260520j.
+    const { error: upErr } = await sb
+      .from("siso_inventario_divergencias")
+      .upsert(
+        {
+          sessao_id: sessaoId,
+          localizacao_id: d.localizacao_id,
+          produto_id: d.produto_id,
+          // NOTA: saldo_sistema agora guarda o saldo_esperado_no_bipe (reconciliação temporal) — nome mantido por compat
+          saldo_sistema: d.saldo_esperado,
+          qty_contada_final: d.qty_contada_final,
+          valor_financeiro: d.valor_financeiro,
+          status,
+        },
+        { onConflict: "sessao_id,localizacao_id,produto_id" },
+      )
+      .select("id");
+    if (upErr) throw upErr;
   }
 
   await sb

@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Empresa Dona como Camada Contábil — Exemplos Concretos</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --blue: #2563eb;
+    --blue-bg: #dbeafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.55; margin: 0; padding: 0; }
+  .container { max-width: 1280px; margin: 0 auto; padding: 40px 28px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 40px; }
+  h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px; }
+  h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  h3 { font-size: 17px; font-weight: 600; margin: 28px 0 10px; color: var(--zinc-800); }
+  h4 { font-size: 13px; font-weight: 700; margin: 16px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  p { margin: 0 0 14px; }
+  .subtitle { color: var(--muted); font-size: 15px; margin: 4px 0 0; }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 12px; }
+
+  .callout { border-left: 4px solid; padding: 14px 18px; margin: 20px 0; border-radius: 0 8px 8px 0; font-size: 14px; }
+  .callout-info { background: var(--blue-bg); border-color: var(--blue); }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 700; margin-bottom: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* Side-by-side comparison */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0 24px; }
+  .compare-col { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+  .compare-col.hoje { border-top: 4px solid var(--amber); }
+  .compare-col.proposto { border-top: 4px solid var(--green); }
+  .compare-tag { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 8px; border-radius: 4px; margin-bottom: 8px; }
+  .compare-tag.hoje { background: var(--amber-bg); color: #92400e; }
+  .compare-tag.proposto { background: var(--green-bg); color: #166534; }
+
+  /* Shelf visual */
+  .shelf { background: var(--zinc-100); border: 2px solid var(--zinc-200); border-radius: 8px; padding: 14px; margin: 10px 0; }
+  .shelf-label { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+  .shelf-pieces { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .piece { width: 28px; height: 36px; border-radius: 4px; background: var(--zinc-700); position: relative; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: 700; }
+  .piece.netair { background: #1e40af; }
+  .piece.airaire { background: #7c2d12; }
+  .piece.netparts { background: #166534; }
+  .piece.unmarked { background: var(--zinc-700); }
+  .piece-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 10px; flex-wrap: wrap; }
+  .piece-legend-item { display: flex; align-items: center; gap: 6px; }
+  .piece-dot { width: 12px; height: 12px; border-radius: 3px; }
+
+  /* DB lines */
+  .db-line { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin: 6px 0; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: var(--zinc-800); }
+  .db-line.bad { background: var(--red-bg); border-color: var(--red); }
+  .db-line.good { background: var(--green-bg); border-color: var(--green); }
+  .db-line strong { color: var(--zinc-900); }
+
+  /* Ledger entries */
+  .ledger { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 10px 0; }
+  .ledger-row { display: grid; grid-template-columns: 110px 80px 70px 1fr 80px; gap: 10px; padding: 8px 12px; font-size: 12px; align-items: center; border-bottom: 1px solid var(--zinc-100); font-family: ui-monospace, monospace; }
+  .ledger-row:last-child { border-bottom: none; }
+  .ledger-row.header { background: var(--zinc-100); color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; font-family: -apple-system, sans-serif; }
+  .ledger-row.entrada { background: #f0fdf4; }
+  .ledger-row.saida { background: #fef2f2; }
+  .ledger-cell-empresa { font-weight: 700; }
+
+  /* Badges */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+  .badge-entrada { background: var(--green-bg); color: #166534; }
+  .badge-saida { background: var(--red-bg); color: #991b1b; }
+  .badge-fisico { background: var(--zinc-200); color: var(--zinc-800); }
+  .badge-contabil { background: var(--blue-bg); color: #1e40af; }
+  .badge-netair { background: #dbeafe; color: #1e40af; }
+  .badge-airaire { background: #fed7aa; color: #7c2d12; }
+  .badge-netparts { background: var(--green-bg); color: #166534; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 8px 12px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--zinc-100); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  td.num { font-family: ui-monospace, monospace; font-weight: 600; text-align: right; }
+  td.neg { color: var(--red); }
+  td.pos { color: var(--green); }
+
+  .scene-step { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin: 8px 0; font-size: 13px; }
+  .scene-step strong { display: block; margin-bottom: 4px; font-size: 13px; }
+  .scene-step .when { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; margin-bottom: 4px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; margin: 20px 0 32px; }
+  .toc-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; }
+  .toc a { color: var(--text); text-decoration: none; font-size: 14px; line-height: 1.9; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .arrow { font-size: 18px; color: var(--muted); }
+  .formula { background: var(--zinc-100); padding: 10px 14px; border-radius: 6px; font-family: ui-monospace, monospace; font-size: 13px; margin: 10px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Empresa Dona como Camada Contábil</h1>
+  <p class="subtitle">Exemplos concretos comparando o modelo atual (dona = coordenada física) com a proposta (dona = ledger contábil separado do físico).</p>
+  <p class="meta">Brainstorm visual · 19/05/2026 · pra revisão e refinamento</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#setup">O cenário base (galpão CWB, NetAir + 141AIR)</a></li>
+    <li><a href="#shelf">A prateleira nos dois modelos</a></li>
+    <li><a href="#cenario-recebimento">Cenário 1 — Recebimento</a></li>
+    <li><a href="#cenario-inventario">Cenário 2 — Inventário</a></li>
+    <li><a href="#cenario-venda-manual">Cenário 3 — Venda manual</a></li>
+    <li><a href="#cenario-marketplace">Cenário 4 — Pedido marketplace (irmã usa o pool)</a></li>
+    <li><a href="#apuracao">Apuração de fim de período — quem deve pra quem</a></li>
+    <li><a href="#impactos">O que muda em conceitos atuais (empréstimo, swap, reserva)</a></li>
+  </ol>
+</div>
+
+<h2 id="setup">1. O cenário base</h2>
+
+<div class="callout callout-info">
+  <div class="callout-title">Personagens fixos</div>
+  <strong>Galpão:</strong> CWB · <strong>Prateleira:</strong> A-03-02 · <strong>SKU:</strong> EW123 (pastilha de freio)<br/>
+  <strong>Empresas operando no mesmo galpão:</strong> NetAir, 141AIR, NetParts. Cada uma tem CNPJ próprio.<br/>
+  <strong>Realidade física:</strong> as pastilhas são idênticas. Não tem etiqueta de CNPJ na peça.
+</div>
+
+<h2 id="shelf">2. A mesma prateleira nos dois modelos</h2>
+
+<div class="compare">
+  <div class="compare-col hoje">
+    <span class="compare-tag hoje">Modelo HOJE — 4D (produto, dona, galpão, loc)</span>
+    <h3>O banco "vê" duas filas paralelas</h3>
+    <div class="shelf">
+      <div class="shelf-label">Prateleira CWB · A-03-02</div>
+      <div class="shelf-pieces">
+        <div class="piece netair">N</div><div class="piece netair">N</div><div class="piece netair">N</div><div class="piece netair">N</div>
+        <div class="piece netair">N</div><div class="piece netair">N</div><div class="piece netair">N</div><div class="piece netair">N</div>
+        <div class="piece airaire">1</div><div class="piece airaire">1</div><div class="piece airaire">1</div><div class="piece airaire">1</div><div class="piece airaire">1</div>
+      </div>
+      <div class="piece-legend">
+        <div class="piece-legend-item"><span class="piece-dot" style="background:#1e40af"></span> NetAir (8)</div>
+        <div class="piece-legend-item"><span class="piece-dot" style="background:#7c2d12"></span> 141AIR (5)</div>
+      </div>
+    </div>
+    <h4>Como aparece no banco</h4>
+    <div class="db-line">produto=<strong>EW123</strong>, dona=<strong>NetAir</strong>, galpão=CWB, loc=A-03-02 → saldo=<strong>8</strong></div>
+    <div class="db-line">produto=<strong>EW123</strong>, dona=<strong>141AIR</strong>, galpão=CWB, loc=A-03-02 → saldo=<strong>5</strong></div>
+    <div class="callout callout-danger" style="margin-top:14px">
+      <div class="callout-title">Problema</div>
+      A coloração das peças no diagrama só existe no banco. <strong>Na vida real, todas as 13 peças são indistinguíveis.</strong> O operador olha pra cesta e vê 13 pastilhas iguais.
+    </div>
+  </div>
+
+  <div class="compare-col proposto">
+    <span class="compare-tag proposto">Modelo PROPOSTO — 3D físico + ledger contábil</span>
+    <h3>Físico é UM saldo. Propriedade vive em ledger lateral.</h3>
+    <div class="shelf">
+      <div class="shelf-label">Prateleira CWB · A-03-02 — saldo físico</div>
+      <div class="shelf-pieces">
+        <div class="piece unmarked">·</div><div class="piece unmarked">·</div><div class="piece unmarked">·</div><div class="piece unmarked">·</div>
+        <div class="piece unmarked">·</div><div class="piece unmarked">·</div><div class="piece unmarked">·</div><div class="piece unmarked">·</div>
+        <div class="piece unmarked">·</div><div class="piece unmarked">·</div><div class="piece unmarked">·</div><div class="piece unmarked">·</div><div class="piece unmarked">·</div>
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-top:8px">Total: <strong style="color:var(--text);font-size:18px">13 peças</strong> — sem dona física</div>
+    </div>
+    <h4>Como aparece no banco (camada física)</h4>
+    <div class="db-line good">produto=<strong>EW123</strong>, galpão=CWB, loc=A-03-02 → saldo=<strong>13</strong></div>
+    <h4>Camada contábil (ledger de propriedade, separado)</h4>
+    <div class="ledger">
+      <div class="ledger-row header"><div>Data</div><div>Tipo</div><div>Qty</div><div>Origem</div><div>Empresa</div></div>
+      <div class="ledger-row entrada"><div>15/04</div><div><span class="badge badge-entrada">Entrada</span></div><div>+8</div><div>NF compra #1234</div><div class="ledger-cell-empresa"><span class="badge badge-netair">NetAir</span></div></div>
+      <div class="ledger-row entrada"><div>22/04</div><div><span class="badge badge-entrada">Entrada</span></div><div>+5</div><div>NF compra #5678</div><div class="ledger-cell-empresa"><span class="badge badge-airaire">141AIR</span></div></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;font-size:13px">
+      <div style="flex:1;background:var(--blue-bg);padding:8px 12px;border-radius:6px;text-align:center"><strong>NetAir:</strong> +8 <span style="color:var(--muted)">(saldo contábil)</span></div>
+      <div style="flex:1;background:#fff7ed;padding:8px 12px;border-radius:6px;text-align:center"><strong>141AIR:</strong> +5 <span style="color:var(--muted)">(saldo contábil)</span></div>
+    </div>
+    <div class="callout callout-success" style="margin-top:14px">
+      <div class="callout-title">Bonito</div>
+      Operador opera o número físico (13). Contabilidade vê quem comprou o quê. As duas verdades vivem em camadas separadas.
+    </div>
+  </div>
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">Regra de coerência</div>
+  Saldo físico do pool = Σ(saldos contábeis de todas empresas naquele SKU+galpão). <strong>13 = 8 + 5.</strong> Bate sempre.
+</div>
+
+<h2 id="cenario-recebimento">3. Cenário 1 — Recebimento</h2>
+<p>Chega NF #9999 de fornecedor com 10 pastilhas EW123 pra <strong>NetParts</strong>. Operador no dock recebe.</p>
+
+<div class="compare">
+  <div class="compare-col hoje">
+    <span class="compare-tag hoje">Hoje</span>
+    <div class="scene-step">
+      <div class="when">No banco</div>
+      <strong>Sistema cria uma 3ª "fila" no banco</strong>
+      <div class="db-line" style="margin-top:8px">produto=EW123, dona=<strong>NetParts</strong>, galpão=CWB, loc=A-03-02 → saldo=<strong>10</strong></div>
+      <p style="margin-top:8px;color:var(--muted)">Agora a prateleira tem 23 peças identificadas como 3 donas no banco — mas fisicamente são 23 pastilhas idênticas.</p>
+    </div>
+  </div>
+  <div class="compare-col proposto">
+    <span class="compare-tag proposto">Proposto</span>
+    <div class="scene-step">
+      <div class="when">Camada física</div>
+      <strong>Pool físico sobe de 13 → 23</strong>
+      <div class="db-line good">produto=EW123, galpão=CWB, loc=A-03-02 → saldo=<strong>23</strong></div>
+    </div>
+    <div class="scene-step">
+      <div class="when">Ledger contábil</div>
+      <strong>Registra entrada da NetParts</strong>
+      <div class="ledger" style="margin-top:6px">
+        <div class="ledger-row entrada"><div>19/05</div><div><span class="badge badge-entrada">Entrada</span></div><div>+10</div><div>NF compra #9999</div><div class="ledger-cell-empresa"><span class="badge badge-netparts">NetParts</span></div></div>
+      </div>
+      <p style="margin-top:8px;color:var(--muted)">Saldos contábeis agora: NetAir +8, 141AIR +5, NetParts +10. Soma = 23 = físico. ✓</p>
+    </div>
+  </div>
+</div>
+
+<div class="callout callout-success">
+  <div class="callout-title">Observação</div>
+  Recebimento é o ÚNICO momento em que ownership é registrado — porque é o único momento em que dá pra saber (a NF de compra diz).
+</div>
+
+<h2 id="cenario-inventario">4. Cenário 2 — Inventário</h2>
+<p>Operadora Maria faz cycle count na prateleira A-03-02 às 9h32. Conta as pastilhas uma a uma.</p>
+
+<div class="compare">
+  <div class="compare-col hoje">
+    <span class="compare-tag hoje">Hoje</span>
+    <div class="scene-step">
+      <div class="when">Maria vê</div>
+      <strong>23 pastilhas iguais na cesta</strong>
+      <p style="color:var(--muted)">Sistema pede que ela conte "produtos da NetAir, produtos da 141AIR, produtos da NetParts" separadamente.</p>
+    </div>
+    <div class="scene-step">
+      <div class="when">O que ela faz na prática</div>
+      <strong>Conta 23 e bipa tudo como uma só dona (chuta NetAir)</strong>
+    </div>
+    <div class="scene-step">
+      <div class="when">Resultado no sistema</div>
+      <div class="db-line bad">NetAir: contado=23, esperado=8 → <strong>divergência +15</strong></div>
+      <div class="db-line bad">141AIR: contado=0, esperado=5 → <strong>divergência −5</strong></div>
+      <div class="db-line bad">NetParts: contado=0, esperado=10 → <strong>divergência −10</strong></div>
+      <p style="margin-top:8px;color:var(--red)"><strong>Três divergências fictícias.</strong> Físico bate (23=23), mas o sistema acusa caos contábil.</p>
+    </div>
+  </div>
+  <div class="compare-col proposto">
+    <span class="compare-tag proposto">Proposto</span>
+    <div class="scene-step">
+      <div class="when">Maria vê</div>
+      <strong>23 pastilhas — conta total</strong>
+      <p style="color:var(--muted)">Sistema pede apenas o total da prateleira.</p>
+    </div>
+    <div class="scene-step">
+      <div class="when">O que ela bipa</div>
+      <strong>Total contado = 23</strong>
+    </div>
+    <div class="scene-step">
+      <div class="when">Resultado no sistema</div>
+      <div class="db-line good">Físico contado=23, físico esperado=23 → <strong>sem divergência</strong></div>
+      <p style="margin-top:8px;color:var(--green)">Camada contábil intacta (NetAir +8, 141AIR +5, NetParts +10). Físico confirmado.</p>
+    </div>
+  </div>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">E se houvesse divergência real?</div>
+  Suponha que Maria contou só 21 (faltam 2). No proposto: <strong>físico cai pra 21, soma contábil ainda é 23 → delta de −2 na camada contábil</strong>. Como atribuir? Regra a definir: pró-rata, FIFO (sai do mais antigo), por última saída, ou por curva ABC. <em>Esta é a decisão de regra de negócio mais importante do design — vou perguntar adiante.</em>
+</div>
+
+<h2 id="cenario-venda-manual">5. Cenário 3 — Venda manual</h2>
+<p>Vendedor Pedro vendeu 3 pastilhas pra cliente João, pela conta <strong>NetParts</strong>. Ele vai buscar fisicamente.</p>
+
+<div class="compare">
+  <div class="compare-col hoje">
+    <span class="compare-tag hoje">Hoje</span>
+    <div class="scene-step">
+      <div class="when">Tela do Pedro</div>
+      <strong>"Escolha a empresa dona da peça que você vai pegar"</strong>
+      <p style="color:var(--muted)">Opções: NetAir (8), 141AIR (5), NetParts (10). Pedro chuta NetParts porque "é a empresa que vendeu".</p>
+    </div>
+    <div class="scene-step">
+      <div class="when">Resultado</div>
+      <div class="db-line">NetParts: 10 → 7</div>
+      <p style="color:var(--muted)">Funciona se ainda houver saldo da NetParts. Mas e se NetParts já estiver em 0?</p>
+    </div>
+    <div class="scene-step">
+      <div class="when">Caso NetParts=0</div>
+      <div class="db-line bad">Sistema obriga Pedro a "escolher outra dona" → empréstimo manual</div>
+      <p style="color:var(--muted)">Decisão arbitrária. Pedro não sabe regras de empréstimo. Cria saldo devedor que ele nem sabia que existia.</p>
+    </div>
+  </div>
+  <div class="compare-col proposto">
+    <span class="compare-tag proposto">Proposto</span>
+    <div class="scene-step">
+      <div class="when">Tela do Pedro</div>
+      <strong>"Vendendo pela: NetParts (sua conta). Qty: 3."</strong>
+      <p style="color:var(--muted)">Pedro só confirma a empresa que ELE representa. Nenhuma escolha sobre "dona da peça".</p>
+    </div>
+    <div class="scene-step">
+      <div class="when">Camada física</div>
+      <div class="db-line good">Pool físico: 23 → <strong>20</strong></div>
+    </div>
+    <div class="scene-step">
+      <div class="when">Ledger contábil</div>
+      <div class="ledger" style="margin-top:6px">
+        <div class="ledger-row saida"><div>19/05</div><div><span class="badge badge-saida">Saída</span></div><div>−3</div><div>Venda manual #VD-321</div><div class="ledger-cell-empresa"><span class="badge badge-netparts">NetParts</span></div></div>
+      </div>
+      <p style="margin-top:8px;color:var(--muted)">Saldo contábil NetParts: +10 −3 = <strong>+7</strong>. Ainda positivo. Sem dívida.</p>
+    </div>
+    <div class="scene-step">
+      <div class="when">E se NetParts já estivesse em 0?</div>
+      <div class="db-line">Saldo contábil NetParts: 0 → <strong>−3</strong> (negativo)</div>
+      <p style="margin-top:6px;color:var(--green)"><strong>Tudo bem.</strong> Físico cobre (23 peças disponíveis no pool). O saldo contábil negativo simplesmente sinaliza: "NetParts vendeu 3 peças que ainda não comprou — deve 3 ao pool". Apuração de fim de período acerta com quem.</p>
+    </div>
+  </div>
+</div>
+
+<h2 id="cenario-marketplace">6. Cenário 4 — Pedido marketplace, irmã usa o pool</h2>
+<p>Pedido #12345 chega via Mercado Livre pela conta da <strong>NetParts</strong>. 5 unidades de EW123 pra entregar em Curitiba. NetParts tem saldo contábil de apenas +2 (já usou as outras 8).</p>
+
+<div class="compare">
+  <div class="compare-col hoje">
+    <span class="compare-tag hoje">Hoje</span>
+    <div class="scene-step">
+      <div class="when">Roteamento</div>
+      <strong>Calcula: "NetParts só tem 2 em CWB, falta 3"</strong>
+      <p style="color:var(--muted)">Procura irmã com regra de empréstimo + limite OK. NetAir tem 8, regra permite até 10. Decisão: empréstimo de 3 unidades NetAir→NetParts.</p>
+    </div>
+    <div class="scene-step">
+      <div class="when">Reservas (4D)</div>
+      <div class="db-line">Reserva 2 unid em (EW123, NetParts, CWB, A-03-02)</div>
+      <div class="db-line">Reserva 3 unid em (EW123, NetAir, CWB, A-03-02) — devedora: NetParts</div>
+    </div>
+    <div class="scene-step">
+      <div class="when">Operador na separação</div>
+      <strong>Vê 2 linhas pra separar</strong>
+      <p style="color:var(--muted)">Sistema pode rodar mini-swap pra consolidar. Ainda assim, 2 movs com "dona diferente" no ledger.</p>
+    </div>
+  </div>
+  <div class="compare-col proposto">
+    <span class="compare-tag proposto">Proposto</span>
+    <div class="scene-step">
+      <div class="when">Roteamento</div>
+      <strong>Calcula: "pool físico em CWB tem 20 unid, cobre 5. OK"</strong>
+      <p style="color:var(--muted)">Empréstimo deixou de ser uma decisão. O pool cobre. Vendedor é NetParts.</p>
+    </div>
+    <div class="scene-step">
+      <div class="when">Reserva (3D)</div>
+      <div class="db-line good">Reserva 5 unid em (EW123, CWB, A-03-02) — vendedora: NetParts</div>
+    </div>
+    <div class="scene-step">
+      <div class="when">Operador na separação</div>
+      <strong>1 linha só: vai em A-03-02, pega 5, bipa</strong>
+      <p style="color:var(--muted)">Sem mini-swap. Sem decisão de dona. Operação pura.</p>
+    </div>
+    <div class="scene-step">
+      <div class="when">Pós-NF emitida</div>
+      <div class="db-line good">Pool físico: 20 → 15</div>
+      <div class="ledger" style="margin-top:6px">
+        <div class="ledger-row saida"><div>19/05</div><div><span class="badge badge-saida">Saída</span></div><div>−5</div><div>NF venda ML #12345</div><div class="ledger-cell-empresa"><span class="badge badge-netparts">NetParts</span></div></div>
+      </div>
+      <p style="margin-top:6px;color:var(--muted)">Saldo contábil NetParts: +2 −5 = <strong>−3</strong>. Sinaliza dívida. Apuração vai resolver.</p>
+    </div>
+  </div>
+</div>
+
+<h2 id="apuracao">7. Apuração de fim de período — quem deve pra quem</h2>
+
+<p>Suponha um mês de operação. Mesma prateleira, mesmo SKU. Vamos somar entradas + saídas no ledger contábil:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Empresa</th>
+      <th>Entradas (NFs de compra)</th>
+      <th>Saídas (NFs de venda)</th>
+      <th>Saldo contábil</th>
+      <th>Interpretação</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-netair">NetAir</span></td>
+      <td class="num pos">+18</td>
+      <td class="num neg">−3</td>
+      <td class="num pos"><strong>+15</strong></td>
+      <td>Comprou mais do que vendeu — tem <strong>crédito de 15</strong></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-airaire">141AIR</span></td>
+      <td class="num pos">+5</td>
+      <td class="num neg">−12</td>
+      <td class="num neg"><strong>−7</strong></td>
+      <td>Vendeu mais do que comprou — <strong>deve 7</strong></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-netparts">NetParts</span></td>
+      <td class="num pos">+10</td>
+      <td class="num neg">−14</td>
+      <td class="num neg"><strong>−4</strong></td>
+      <td>Vendeu mais do que comprou — <strong>deve 4</strong></td>
+    </tr>
+    <tr style="background:var(--zinc-100);font-weight:700">
+      <td>Pool total</td>
+      <td class="num">+33</td>
+      <td class="num">−29</td>
+      <td class="num"><strong>+4</strong></td>
+      <td>Físico final na prateleira = 4 peças ✓</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-success">
+  <div class="callout-title">Saldo devedor líquido (apuração)</div>
+  <strong>Devedoras:</strong> 141AIR (−7) + NetParts (−4) = devem 11 unidades juntas.<br/>
+  <strong>Credora:</strong> NetAir (+15), mas só 4 peças existem fisicamente — a diferença (15 − 4 = 11) é o que ela "cedeu" pra as irmãs. Bate com a dívida.<br/>
+  <strong>Conclusão:</strong> 141AIR deve 7 unidades pra NetAir; NetParts deve 4 unidades pra NetAir. Ou em valor, multiplicando pelo custo médio do SKU.
+</div>
+
+<div class="formula">
+  Saldo contábil(empresa) = Σ entradas(empresa) − Σ saídas(empresa)<br/>
+  Físico(pool) = Σ saldos contábeis de todas empresas<br/>
+  Saldo devedor(empresa) = −min(0, saldo contábil)<br/>
+  Crédito(empresa) = max(0, saldo contábil)
+</div>
+
+<p><strong>O empréstimo deixa de ser uma decisão explícita</strong> tomada no momento do roteamento — vira <strong>consequência automática</strong> da operação. Toda venda decrementa o pool físico e registra saída pela empresa vendedora. Quando uma empresa vendeu mais do que comprou, ela aparece como devedora na apuração. Quem precisa quitar, quita; quem recebe, recebe — é negociação financeira, fora do WMS.</p>
+
+<h2 id="impactos">8. O que muda em conceitos atuais</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Conceito hoje</th>
+      <th>O que era</th>
+      <th>O que vira</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Empresa dona na quádrupla</strong></td>
+      <td>Coordenada física de cada posição</td>
+      <td>Sai do físico. Vai pro ledger contábil.</td>
+    </tr>
+    <tr>
+      <td><strong>Reserva</strong></td>
+      <td>Trava (produto, dona, galpão, loc) — 4D</td>
+      <td>Trava (produto, galpão, loc) — 3D. Vendedora vai no log.</td>
+    </tr>
+    <tr>
+      <td><strong>Empréstimo explícito</strong></td>
+      <td>Decisão do roteamento (cria mov com devedora_id)</td>
+      <td><strong>Some.</strong> Vira consequência natural via apuração.</td>
+    </tr>
+    <tr>
+      <td><strong>Swap (inter-galpão)</strong></td>
+      <td>4 movs casadas pra trocar saldo entre empresas</td>
+      <td><strong>Some.</strong> Não há "saldo por empresa na loc" pra trocar.</td>
+    </tr>
+    <tr>
+      <td><strong>Mini-swap pré-onda</strong></td>
+      <td>Consolida saldo de várias empresas em uma loc</td>
+      <td><strong>Some.</strong> Estoque físico já é unitário por loc.</td>
+    </tr>
+    <tr>
+      <td><strong>Roteamento "propria/transferência/oc"</strong></td>
+      <td>Compara saldo da empresa origem</td>
+      <td>Compara <strong>pool físico</strong> (tem peça?) e opcionalmente saldo contábil da empresa origem (tem crédito? se não, vai gerar dívida — talvez aceite, talvez não, depende da regra).</td>
+    </tr>
+    <tr>
+      <td><strong>Inventário</strong></td>
+      <td>Conta por dona — divergência fictícia</td>
+      <td>Conta total. Divergência só se físico ≠ soma contábil esperada.</td>
+    </tr>
+    <tr>
+      <td><strong>Custo médio</strong></td>
+      <td>Por (produto, dona, galpão, loc)</td>
+      <td>Decisão: por pool (1 só, mais simples) ou por empresa (apurar custo de cada uma). <em>A definir.</em></td>
+    </tr>
+    <tr>
+      <td><strong>Tabela siso_emprestimo_regras</strong></td>
+      <td>Matriz N×N credora→devedora com limites por SKU</td>
+      <td>Vira opcional. Pode usar pra <em>alertar</em> quando uma empresa vai virar devedora além do limite, mas não bloqueia operação. Ou pode ser deletada.</td>
+    </tr>
+    <tr>
+      <td><strong>Recebimento + put-away</strong></td>
+      <td>Mantém dona no par S+E</td>
+      <td>Par S+E sem dona no físico; ledger contábil registra <strong>1 entrada</strong> só no momento do recebimento (não na guarda).</td>
+    </tr>
+    <tr>
+      <td><strong>Transferência inter-galpão</strong></td>
+      <td>Move (produto, dona, galpão A) → (produto, dona, galpão B)</td>
+      <td>Move pool físico A → pool físico B. Ledger contábil precisa decidir: a propriedade "viaja" junto (todos os saldos contábeis transferem proporcionalmente)? Ou é evento neutro contábil (não muda saldos por empresa)? <em>A definir.</em></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>9. Perguntas em aberto pra você refinar</h2>
+
+<div class="callout callout-warn">
+  <div class="callout-title">P1 — Regra de quem "absorve" divergência negativa de inventário</div>
+  Se prateleira tinha 23 contábil e contou 21 (perda física de 2), qual saldo contábil cai? Opções:<br/>
+  (a) <strong>Pró-rata</strong> — cada empresa perde proporcional ao seu saldo (NetAir −0,7, 141AIR −0,4, NetParts −0,9)<br/>
+  (b) <strong>FIFO</strong> — perda sai da entrada mais antiga (NetAir perde 2 porque entrou primeiro)<br/>
+  (c) <strong>LIFO</strong> — perda sai da entrada mais recente (NetParts perde 2)<br/>
+  (d) <strong>Por curva ABC ou regra custom</strong>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">P2 — O que fazer com regras de empréstimo existentes</div>
+  Apagar `siso_emprestimo_regras` completamente? Manter como "alerta" (quando uma empresa vai virar devedora além do limite, sistema notifica gestor mas não bloqueia)? Manter como "trava" (sistema recusa venda quando empresa vai exceder o limite de dívida)?
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">P3 — Custo médio é por pool ou por empresa?</div>
+  <strong>Por pool:</strong> 1 custo médio global por (produto, galpão, loc). Simples, mas perde nuance fiscal — empresa A pode ter comprado a R$ 10 e empresa B a R$ 15, mas todas saídas usam o blended.<br/>
+  <strong>Por empresa:</strong> ledger contábil rastreia custo por entrada e calcula custo médio por empresa. Mais fiel à realidade contábil, mais complexo.
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">P4 — Transferência inter-galpão: a propriedade viaja?</div>
+  Cenário: 20 unidades em CWB (NetAir +12, 141AIR +8). Sistema transfere 10 unidades pra SP. Como fica o ledger contábil?<br/>
+  (a) <strong>Pró-rata viaja</strong> — 10 unidades em SP ficam como NetAir +6 + 141AIR +4 (espelha proporção)<br/>
+  (b) <strong>Físico é por galpão, contábil é global</strong> — saldos contábeis não mudam, só o pool físico de cada galpão. Empresa pode "ter direito" a peças que estão num galpão diferente.
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">P5 — Migração</div>
+  Big bang (recalcula tudo, dropa colunas dona dos físicos) ou incremental (toggle por SKU/galpão "modo fungível"). O atual já tem ledger e regra de coerência — base sólida pra migrar.
+</div>
+
+</div>
+</body>
+</html>

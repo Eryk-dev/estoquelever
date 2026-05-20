@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lançamentos, Empresa Dona, Empréstimos e Swaps — Fluxo</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+
+  .stepper { counter-reset: step; margin: 24px 0; }
+  .stepper-item { position: relative; padding: 16px 16px 16px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 12px 0; }
+  .scenario-title { font-weight: 600; margin-bottom: 6px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--muted); }
+  .scenario-flow strong { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Lançamentos, Empresa Dona, Empréstimos e Swaps</h1>
+  <p class="subtitle">Como toda mudança de saldo vira um evento auditável — e como duas empresas que dividem o mesmo galpão se ajudam sem se perder.</p>
+  <p class="meta">Validação de fluxo · 19/05/2026 · linguagem de negócio (sem detalhe técnico)</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#fluxo">Fluxo principal</a></li>
+    <li><a href="#exemplo">Exemplo passo-a-passo</a></li>
+    <li><a href="#estados">Tipos de lançamento</a></li>
+    <li><a href="#cenarios">Cenários alternativos</a></li>
+  </ol>
+</div>
+
+<h2 id="resumo">1. Resumo</h2>
+<p>
+  No sistema, <strong>nada de estoque muda em silêncio</strong>. Cada vez que uma peça entra, sai, é reservada, é liberada, é emprestada ou trocada entre empresas, isso vira uma <strong>linha nova num livro-caixa</strong> que nunca apaga nem reescreve. Esse livro guarda o saldo de antes e o saldo de depois, então a gente sempre consegue voltar no tempo e ver o que estava lá. O saldo que aparece nas telas é apenas a "fotografia atual" — calculada somando o livro inteiro. As empresas (NetAir, NetParts, 141AIR, EasyPeasy, Bellator) dividem os mesmos galpões físicos, mas cada peça tem uma <strong>dona</strong>: três unidades do SKU EW123 numa prateleira podem ser da NetAir e cinco da NetParts, lado a lado, contabilmente separadas. Quando falta peça pra uma empresa e a irmã tem sobrando, dá pra <strong>emprestar</strong> (vira uma dívida que fica anotada) ou <strong>trocar</strong> (uma cede aqui, a outra cede lá, e a conta zera).
+</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Pra que serve</div>
+  Garantir que o saldo de cada empresa, em cada galpão, em cada prateleira, está sempre auditável, reconstruível e legalmente separado — mesmo quando as empresas se ajudam pra atender pedidos.
+</div>
+
+<h2 id="fluxo">2. Fluxo principal</h2>
+<p>
+  Todo lançamento nasce de uma ação física ou comercial — alguém recebeu mercadoria, alguém bipou peça na separação, o operador ajustou um saldo errado, o roteamento aprovou um pedido. O caminho que ele percorre é sempre o mesmo:
+</p>
+
+<div class="diagram">
+  <div class="diagram-title">Caminho feliz · de um evento físico ao livro-caixa</div>
+  <pre class="mermaid">
+flowchart TD
+  A[Evento dispara<br/>chega mercadoria, bipa peça,<br/>aprova pedido, conta inventário] --> B{Tipo do<br/>lançamento?}
+  B -->|Entrada| C[Soma na prateleira<br/>saldo sobe]
+  B -->|Saída| D[Tira da prateleira<br/>saldo desce]
+  B -->|Reserva| E[Trava pra um pedido<br/>disponível cai, saldo intacto]
+  B -->|Liberação| F[Destrava a reserva<br/>disponível volta]
+  C --> G[Confere coerência<br/>saldo nunca fica negativo,<br/>reserva nunca passa do saldo]
+  D --> G
+  E --> G
+  F --> G
+  G --> H[Grava linha nova no livro-caixa<br/>com saldo de antes + saldo de depois +<br/>quem causou + por que + horário]
+  H --> I[Atualiza a foto atual<br/>tela exibe novo saldo<br/>em até 1 segundo]
+  style C fill:#dcfce7
+  style D fill:#fef3c7
+  style E fill:#cffafe
+  style F fill:#cffafe
+  style H fill:#f4f4f5
+  </pre>
+</div>
+
+<div class="callout callout-success">
+  <div class="callout-title">A regra de ouro</div>
+  Toda escrita de saldo passa pelo mesmo "guichê": trava a prateleira (ninguém escreve junto), confere coerência, grava o evento, atualiza a foto. Não existe atalho — nem um robô interno, nem uma correção de banco. Isso garante que o livro-caixa nunca "mente" sobre o saldo atual.
+</div>
+
+<h3>Quando o evento físico mexe em duas posições</h3>
+<p>
+  Sempre que a peça <strong>muda de lugar</strong> (transferência entre galpões, guarda do dock pra prateleira, abastecimento entre prateleiras, troca de dona num empréstimo, swap), o sistema grava <strong>duas linhas no livro-caixa com o mesmo número de protocolo</strong>: uma Saída na origem e uma Entrada no destino. Assim, mesmo que algo dê errado no meio, a auditoria sempre encontra o "par".
+</p>
+
+<h2 id="exemplo">3. Exemplo passo-a-passo</h2>
+<p>Vamos seguir um pedido real que envolve empréstimo entre empresas e ver cada lançamento que ele gera:</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  Pedido #12345 chega pela conta da <strong>NetParts</strong>, comprado por cliente em Curitiba. São 5 unidades do SKU EW123. A NetParts tem só 2 unidades em CWB, na prateleira A-03-02. A irmã <strong>NetAir</strong> (mesmo grupo, com regra de empréstimo bidirecional ativa) tem 8 unidades em CWB, na prateleira A-05-01. A regra de empréstimo NetAir → NetParts permite até 10 unidades por SKU. O mini-swap de consolidação está ligado no galpão CWB.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>14h02 — Pedido entra pela conta da NetParts</strong>
+    <p>O marketplace avisa o sistema. O motor de roteamento procura a melhor forma de atender: vê 2 unidades próprias da NetParts em CWB-A-03-02 + 3 unidades da NetAir em CWB-A-05-01 (limite da regra: 10, então cabem 3 emprestadas). Decisão: rota mista, mesmo galpão.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h02 — Reservas travam o saldo</strong>
+    <p>O sistema grava no livro-caixa <strong>duas reservas</strong> com validade de 48h: "2 unidades reservadas pra NetParts na prateleira A-03-02" e "3 unidades reservadas pra NetParts na prateleira A-05-01 (saldo da NetAir, devedora NetParts)". O <em>disponível</em> nas duas prateleiras cai, mas o saldo bruto ainda não mexeu — a peça continua lá fisicamente.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h05 — Mini-swap antes da onda</strong>
+    <p>Antes do operador começar a separar, o sistema percebe que as 5 unidades estão em duas prateleiras diferentes e que dá pra consolidar. Plano: NetAir cede 2 unidades em A-03-02 (a prateleira da NetParts) ficando "dona NetParts ali", e NetParts cede 2 unidades em A-05-01 (a prateleira da NetAir) ficando "dona NetAir lá". Saldo devedor entre elas: zero. As reservas existentes são realocadas pra apontar 5 unidades em A-05-01 todas como NetParts (3 emprestadas + 2 consolidadas via swap).</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h05 — Quatro lançamentos do swap entram no livro-caixa</strong>
+    <p>Em A-03-02: Saída de 2 (dona NetAir) + Entrada de 2 (dona NetParts) — saldo da NetParts ali sobe pra 4, saldo da NetAir cai pra 0. Em A-05-01: Saída de 2 (dona NetParts) + Entrada de 2 (dona NetAir) — espelho oposto. As 4 linhas carregam o mesmo número de protocolo do swap. Saldo devedor líquido entre as empresas: 0.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h12 — Operador João inicia a onda em CWB</strong>
+    <p>A tela do João mostra: "Pedido #12345, ir a A-05-01, pegar 5 unidades de EW123". Sem split, sem caminhar duas prateleiras. Ele bipa o QR da prateleira, conta as 5 unidades, bipa o código do produto. As 5 unidades viram <strong>Saídas no livro-caixa</strong>: 3 com motivo "empréstimo NetAir→NetParts" (carregam a marca da devedora) e 2 com motivo "venda" (já são da NetParts pós-swap). Disponível da prateleira: 3.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h12 — Reservas viram Liberações + Saídas</strong>
+    <p>Cada reserva que existia é "honrada" automaticamente: o livro grava uma Liberação (destrava o reservado) seguida de uma Saída efetiva (tira do saldo). É a transição "do prometido pro entregue". O <em>reservado</em> da prateleira volta a zero; o <em>saldo</em> caiu pra valer.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h15 — Operador embala e expede</strong>
+    <p>Pedido vai pra mesa de embalagem, etiqueta de envio é impressa, transportadora pega. O livro-caixa não muda mais — a história da movimentação do estoque já está fechada. O resto vira só status do pedido (separado, embalado, expedido).</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Final do dia — Painel de empréstimos da NetParts</strong>
+    <p>O painel "Empréstimos" mostra: "NetParts deve 3 unidades de EW123 pra NetAir". Esse saldo devedor fica vivo até que, num pedido futuro, a NetAir precise pegar emprestado da NetParts — quando isso acontecer, o sistema soma direções opostas e o saldo líquido vai diminuindo até zerar (ou até inverter, se a NetParts ceder mais do que pegou).</p>
+  </div>
+</div>
+
+<div class="callout callout-success">
+  <div class="callout-title">O que aconteceu no fim das contas</div>
+  Pedido atendido sem operador caminhar duas prateleiras. Quatro empresas físicas se cruzaram no mesmo galpão sem se misturar contabilmente. Toda mudança de saldo virou linha rastreável no livro-caixa, com horário, autor e motivo. A dívida residual entre NetParts e NetAir está anotada e visível.
+</div>
+
+<h2 id="estados">4. Tipos de lançamento</h2>
+<p>O livro-caixa só conhece quatro verbos. Tudo o que acontece no mundo (recebimento, venda, ajuste, devolução, transferência, empréstimo, swap, inventário) vira combinação desses quatro:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Lançamento</th>
+      <th>O que faz no saldo</th>
+      <th>Quem dispara</th>
+      <th>Para onde vai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-success">Entrada</span></td>
+      <td>Saldo sobe na prateleira.</td>
+      <td>Recebimento do fornecedor, devolução do cliente (peça volta), inventário corrigindo pra cima, lado "ganhador" de transferência ou swap, lançamento retroativo de peça que entrou no físico antes do registro.</td>
+      <td>Fica como saldo vendável (em prateleira de picking ou overstock), exceto devolução avariada que vai pra QUARENTENA.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">Saída</span></td>
+      <td>Saldo cai na prateleira.</td>
+      <td>Bipe na separação (venda), nota fiscal emitida, lado "doador" de transferência ou swap, ajuste corrigindo pra baixo, devolução pra fornecedor (RMA de garantia), troca de SKU dentro da separação.</td>
+      <td>Some do saldo. Se for venda, vira parte do pedido despachado.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">Reserva</span></td>
+      <td>Saldo intacto, mas <em>disponível</em> cai (outro pedido não vê aquele estoque).</td>
+      <td>Roteamento aprova um pedido e trava as peças escolhidas. Sempre tem prazo de validade (48h).</td>
+      <td>Vira Liberação + Saída quando a venda se concretiza, ou Liberação solta quando o pedido cai ou o prazo expira.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-neutral">Liberação</span></td>
+      <td>Saldo intacto, <em>disponível</em> volta (peça volta a ser ofertável).</td>
+      <td>Emissão da nota fiscal (junto com a Saída), cancelamento do pedido, prazo da reserva venceu, mini-swap precisou tirar reserva da prateleira velha pra recriar na consolidada.</td>
+      <td>O saldo "livre" volta a aparecer em outros pedidos.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">Estorno</span></td>
+      <td>Cancela uma linha anterior gerando uma nova com sinal oposto.</td>
+      <td>Operador desfaz bipe, cancela parcial, anula ajuste. A linha original NÃO é apagada — fica lá pra auditoria, com a marca "estornada pela linha X".</td>
+      <td>Inverte o efeito: se a original era Saída de 3, o estorno é Entrada de 3 no mesmo lugar.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Motivos que aparecem no lançamento (a "narrativa")</h3>
+<p>Cada linha do livro-caixa carrega um <em>motivo</em> que explica de onde ela veio. Os principais:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Motivo</th>
+      <th>Em palavras de operação</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><span class="badge badge-neutral">compra manual</span></td><td>Operador registrou chegada de mercadoria do fornecedor (recebimento normal).</td></tr>
+    <tr><td><span class="badge badge-neutral">lançamento retroativo</span></td><td>Peça entrou no físico no passado mas o registro está sendo feito agora. Fica pendente pra reconciliação quando a NF real chegar.</td></tr>
+    <tr><td><span class="badge badge-neutral">venda</span></td><td>Saída pra cliente final (nota fiscal de venda).</td></tr>
+    <tr><td><span class="badge badge-neutral">venda manual</span></td><td>Saída de pedido criado direto pelo vendedor em "Vendas Diretas", sem marketplace.</td></tr>
+    <tr><td><span class="badge badge-neutral">devolução cliente íntegra</span></td><td>Cliente devolveu sem dano — peça volta como saldo vendável.</td></tr>
+    <tr><td><span class="badge badge-neutral">devolução cliente avariada</span></td><td>Cliente devolveu mas peça veio danificada — entra como saldo e em seguida muda pra QUARENTENA.</td></tr>
+    <tr><td><span class="badge badge-neutral">devolução pra fornecedor</span></td><td>Garantia ou RMA — peça sai pro fornecedor.</td></tr>
+    <tr><td><span class="badge badge-neutral">transferência entre galpões</span></td><td>Peça muda fisicamente de CWB pra SP (ou vice-versa), mesma dona.</td></tr>
+    <tr><td><span class="badge badge-neutral">transferência entre prateleiras</span></td><td>Guarda do dock pra prateleira, abastecimento de overstock pra picking, mov interna.</td></tr>
+    <tr><td><span class="badge badge-neutral">empréstimo</span></td><td>Uma empresa cede saldo pra outra. Gera dívida que fica anotada no painel de empréstimos.</td></tr>
+    <tr><td><span class="badge badge-neutral">swap</span></td><td>Duas empresas trocam saldos em locais diferentes. Cada uma ganha onde precisa e cede onde sobra. Não gera dívida.</td></tr>
+    <tr><td><span class="badge badge-neutral">ajuste manual</span></td><td>Operador corrigiu uma divergência fora do fluxo de inventário. Exige motivo escrito.</td></tr>
+    <tr><td><span class="badge badge-neutral">inventário</span></td><td>Divergência aprovada em sessão de contagem virou ajuste oficial.</td></tr>
+    <tr><td><span class="badge badge-neutral">ajuste pick zerou</span></td><td>Operador bipou na separação e relatou que a prateleira não tinha o saldo registrado — gera ajuste no momento do pick.</td></tr>
+    <tr><td><span class="badge badge-neutral">snapshot inicial</span></td><td>Carga inicial do estoque importado do ERP (Fase 0).</td></tr>
+  </tbody>
+</table>
+
+<h2 id="cenarios">5. Cenários alternativos</h2>
+<p>O caminho feliz cobre a maioria dos casos, mas a operação real tem muitas variações. Veja como o sistema reage:</p>
+
+<div class="scenario">
+  <div class="scenario-title">Empréstimo puro (sem swap)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Pedido da NetParts em SP, 5 unidades de SKU EW123. NetParts tem 0 em SP. NetAir tem 5 em SP (mesma cidade). A regra NetAir → NetParts permite empréstimo de até 10 unidades desse SKU.<br/>
+    <strong>O que o sistema faz:</strong> Reserva as 5 unidades como "saldo da NetAir cedido pra NetParts". Quando a separação acontece, gera 5 Saídas marcadas como "empréstimo, devedora NetParts". O painel de empréstimos passa a mostrar: "NetParts deve 5 unidades de EW123 pra NetAir".<br/>
+    <strong>O usuário vê:</strong> Operador separa normal (não precisa saber que é empréstimo — pra ele é "tira da prateleira X, qty Y"). Gestor abre painel de empréstimos e enxerga a dívida pendente.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Tentativa de empréstimo bloqueada por limite</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Pedido da NetParts pede 8 unidades de EW123 em SP. NetAir tem saldo de sobra, mas a regra NetAir → NetParts limita esse SKU a 5 unidades de empréstimo simultâneo, e a NetParts já deve 4 da última vez (capacidade restante = 1).<br/>
+    <strong>O que o sistema faz:</strong> Calcula que só pode emprestar 1 unidade. Falta saldo pras 7 restantes. Pedido sai do auto-aprovar e vai pra fila do operador, decisão sugerida "transferência" ou "compra de fornecedor".<br/>
+    <strong>O usuário vê:</strong> Pedido aparece no painel de pendências em vez de cair direto na separação. Operador decide se aceita transferir de outro galpão ou abrir ordem de compra.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Swap consolidando antes da onda (mini-swap intra-galpão)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Pedido da NetParts em CWB, 4 unidades de EW123. NetParts tem 1 unidade em A-03-02, 1 em B-01-04 e 1 em C-02-07 (espalhadas). NetAir tem 6 concentradas em A-03-02. Regra de swap NetAir↔NetParts ativa.<br/>
+    <strong>O que o sistema faz:</strong> Antes do operador iniciar, planeja: NetParts cede suas 3 unidades nas três prateleiras espalhadas, NetAir cede 3 unidades concentradas em A-03-02. Resultado: A-03-02 passa a ter 4 da NetParts (1 original + 3 swapadas). As outras prateleiras passam a ter saldo da NetAir. Saldo devedor entre elas: zero.<br/>
+    <strong>O usuário vê:</strong> Operador caminha 1 prateleira em vez de 3. Tela já mostra o destino consolidado. Painel de empréstimos não acende (não é empréstimo — é swap, dívida zerada).
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Mini-swap falha — onda segue sem otimização</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Mini-swap começou a planejar mas a prateleira de destino acabou de ser desativada por outro operador, ou a regra entre as empresas foi removida no meio.<br/>
+    <strong>O que o sistema faz:</strong> Captura o erro, registra log, e <strong>não bloqueia</strong> a onda. A separação prossegue no modo "spread" — operador caminha pelas 3 prateleiras originais.<br/>
+    <strong>O usuário vê:</strong> Nada de diferente do que veria se o mini-swap não existisse. Onda funciona, só sem o ganho de eficiência. Gestor vê no log o motivo da degradação.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Reserva venceu antes da nota fiscal sair</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Pedido aprovado às 14h de segunda travou reservas com prazo de 48h. NF não foi emitida até quarta às 14h por algum atraso do ERP.<br/>
+    <strong>O que o sistema faz:</strong> Rotina automática varre reservas vencidas. Gera Liberações pra cada uma. As prateleiras voltam a ter <em>disponível</em>. Marca o pedido com alerta "reserva expirada".<br/>
+    <strong>O usuário vê:</strong> Pedido aparece destacado com alerta vermelho na lista. Operador precisa re-reservar manualmente ou cancelar. Saldo da prateleira está livre pra outros pedidos enquanto isso.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Operador bipou e a prateleira "zerou" (faltava peça)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Pedido reserva 5 unidades em A-03-02. Operador chega na prateleira e só encontra 3 unidades fisicamente. O sistema dizia 5.<br/>
+    <strong>O que o sistema faz:</strong> Operador clica "Parcial: peguei 3, prateleira zerou". Sistema gera: Saída de 3 (venda) + Saída de 2 com motivo "ajuste pick zerou" (corrige o saldo errado). Depois busca em cascata a próxima prateleira do galpão pra cobrir as 2 unidades faltantes.<br/>
+    <strong>O usuário vê:</strong> Tela mostra "próxima prateleira: B-04-09, qty 2". Se a cascade esgotar e nenhuma prateleira do galpão cobrir, abre modal "encaminhar pra outro galpão ou abrir ordem de compra".
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Operador desfaz um bipe (estorno)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Operador bipou 5 unidades no pedido errado. Percebeu antes de embalar.<br/>
+    <strong>O que o sistema faz:</strong> Clica "desfazer". Sistema NÃO apaga a Saída original do livro-caixa — insere uma <strong>Entrada de estorno</strong> de 5 unidades na mesma prateleira, marcada como "estornando a linha X". Saldo volta ao que era.<br/>
+    <strong>O usuário vê:</strong> Saldo retorna na tela em até 1 segundo. Histórico do pedido mostra "bipe desfeito por João às 14h22". Auditoria mantém os dois eventos pra eternidade.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Inventário detecta divergência depois de movs concorrentes</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Operador contou 7 unidades numa prateleira às 9h. Outro operador, no mesmo dia às 10h, separou 2 unidades dessa prateleira pra um pedido. Supervisor só foi aprovar a sessão de inventário às 11h.<br/>
+    <strong>O que o sistema faz:</strong> Ao aprovar, calcula o saldo esperado no <strong>instante da contagem</strong> (9h): pega o saldo atual (5) e soma as 2 que saíram entre 9h e 11h, totalizando 7. Compara: contou 7, esperado 7 → <strong>sem divergência</strong>. Operações concorrentes não geram falso positivo.<br/>
+    <strong>O usuário vê:</strong> Sessão fecha limpa. Saldo do estoque online não foi congelado. Operações rodaram normalmente durante a contagem.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Devolução de cliente com peça danificada</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Cliente devolve 1 unidade de EW123, peça veio com a caixa amassada e o item arranhado.<br/>
+    <strong>O que o sistema faz:</strong> Operador no painel de devoluções classifica como "B - avariada". Sistema gera Entrada de 1 unidade na prateleira original (volta como saldo) + par Saída/Entrada movendo essa unidade pra QUARENTENA. Não entra mais em pedido de venda automaticamente.<br/>
+    <strong>O usuário vê:</strong> Saldo de QUARENTENA sobe. Saldo vendável da prateleira não muda. Gestor decide depois se reaproveita, descarta ou devolve pro fornecedor.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Reconciliação automática (livro-caixa vs. foto)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Rotina de madrugada compara, pra cada combinação produto+dona+galpão+prateleira, o saldo da foto atual com a soma de todas as entradas e saídas no livro-caixa.<br/>
+    <strong>O que o sistema faz:</strong> Se achar diferença, alerta o gestor. Quando rodada com permissão de correção, recalcula a foto a partir do livro (que é a verdade absoluta).<br/>
+    <strong>O usuário vê:</strong> Dashboard de saúde do estoque marca "OK" ou "X divergências detectadas". Se houver, link pra investigação.
+  </div>
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

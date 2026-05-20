@@ -2,7 +2,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface PutawayContext {
   produto_id: string;
-  empresa_id: string;
   galpao_id: string;
 }
 
@@ -24,6 +23,8 @@ export interface LocalExistente {
  * Usado no modal de Receber pra destacar locs onde o operador pode
  * empilhar mercadoria nova em vez de criar nova posição. Ordenado por
  * saldo desc com picking antes de overstock.
+ *
+ * Em 3D, estoque é fungível dentro do galpão — não filtra por empresa.
  */
 export async function listarLocaisExistentesProduto(
   sb: SupabaseClient,
@@ -36,7 +37,6 @@ export async function listarLocaisExistentesProduto(
     )
     .match({
       produto_id: ctx.produto_id,
-      empresa_dona_id: ctx.empresa_id,
       galpao_id: ctx.galpao_id,
     })
     .gt("saldo", 0);
@@ -72,6 +72,8 @@ export async function listarLocaisExistentesProduto(
  * 2. Galpão tem DEFAULT-PICKING? sugere ela.
  * 3. Senão retorna null → frontend mostra "decida no tablet" e a pendência
  *    nasce sem destino (operador escolhe ao guardar).
+ *
+ * Em 3D, drop filtro por empresa — estoque é fungível dentro do galpão.
  */
 export async function sugerirLocalizacaoPutaway(
   sb: SupabaseClient,
@@ -82,7 +84,6 @@ export async function sugerirLocalizacaoPutaway(
     .select("localizacao_id, saldo, localizacao:siso_localizacoes(codigo, tipo)")
     .match({
       produto_id: ctx.produto_id,
-      empresa_dona_id: ctx.empresa_id,
       galpao_id: ctx.galpao_id,
     })
     .gt("saldo", 0)

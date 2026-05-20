@@ -50,7 +50,6 @@ describe("sugerirLocalizacaoPutaway", () => {
     ]);
     const r = await sugerirLocalizacaoPutaway(sb as never, {
       produto_id: "p1",
-      empresa_id: "e1",
       galpao_id: "g1",
     });
     expect(r?.localizacao_id).toBe("loc-A12");
@@ -72,7 +71,6 @@ describe("sugerirLocalizacaoPutaway", () => {
     ]);
     const r = await sugerirLocalizacaoPutaway(sb as never, {
       produto_id: "p1",
-      empresa_id: "e1",
       galpao_id: "g1",
     });
     expect(r?.localizacao_id).toBe("loc-picking");
@@ -93,7 +91,6 @@ describe("sugerirLocalizacaoPutaway", () => {
     );
     const r = await sugerirLocalizacaoPutaway(sb as never, {
       produto_id: "p2",
-      empresa_id: "e1",
       galpao_id: "g1",
     });
     expect(r?.localizacao_id).toBe("loc-default");
@@ -103,7 +100,6 @@ describe("sugerirLocalizacaoPutaway", () => {
     const sb = mockSb([], []);
     const r = await sugerirLocalizacaoPutaway(sb as never, {
       produto_id: "p2",
-      empresa_id: "e1",
       galpao_id: "g1",
     });
     expect(r).toBeNull();
@@ -116,7 +112,6 @@ describe("sugerirLocalizacaoPutaway", () => {
     );
     const r = await sugerirLocalizacaoPutaway(sb as never, {
       produto_id: "p2",
-      empresa_id: "e1",
       galpao_id: "g1",
     });
     expect(r?.localizacao_id).toBe("loc-default");

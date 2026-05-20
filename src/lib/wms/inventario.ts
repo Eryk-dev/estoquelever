@@ -32,7 +32,6 @@ export interface CriarSessaoInput {
   tipo: TipoSessao;
   nome?: string;
   galpao_id: string;
-  empresa_dona_id?: string | null;
   modo_contagem?: ModoContagem;
   tolerancia_pct?: number;
   tolerancia_qty_min?: number;
@@ -53,7 +52,6 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
       tipo: input.tipo,
       nome: input.nome ?? null,
       galpao_id: input.galpao_id,
-      empresa_dona_id: input.empresa_dona_id ?? null,
       modo_contagem: input.modo_contagem ?? "blind",
       tolerancia_pct: input.tolerancia_pct ?? 2.0,
       tolerancia_qty_min: input.tolerancia_qty_min ?? 0,
@@ -92,7 +90,6 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
 
 export interface SugerirInput {
   galpao_id: string;
-  empresa_dona_id?: string | null;
   tamanho?: number;
 }
 
@@ -109,7 +106,6 @@ export async function sugerirLocalizacoes(
   const sb = createServiceClient();
   const { data, error } = await sb.rpc("wms_inventario_sugerir", {
     p_galpao: input.galpao_id,
-    p_empresa_dona: input.empresa_dona_id ?? null,
     p_tamanho: input.tamanho ?? 30,
   });
   if (error) throw error;
@@ -276,7 +272,6 @@ export interface EsperadoItem {
   imagem_url: string | null;
   imagens: string[];
   saldo_esperado: number;
-  empresa_dona_id: string;
 }
 
 export type ClaimTipo = "rua" | "predio" | "colisao";
@@ -439,11 +434,10 @@ export interface RegistrarContagemInput {
   sessao_id: string;
   localizacao_id: string;
   produto_id: string;
-  empresa_dona_id: string;
   qty_contada: number;
   contada_por: string;
   /**
-   * - "incremental" (default): soma +qty na contagem deste operador na mesma quádrupla.
+   * - "incremental" (default): soma +qty na contagem deste operador na mesma tripla.
    * - "absoluto": substitui contagem prévia.
    */
   modo?: "incremental" | "absoluto";
@@ -499,11 +493,10 @@ async function registrarContagemSimples(
     sessao_id: input.sessao_id,
     localizacao_id: input.localizacao_id,
     produto_id: input.produto_id,
-    empresa_dona_id: input.empresa_dona_id,
     contada_por: input.contada_por,
   };
 
-  // Procura contagem prévia deste operador na mesma quádrupla
+  // Procura contagem prévia deste operador na mesma tripla
   const { data: existente } = await sb
     .from("siso_inventario_contagens")
     .select("id, qty_contada")
@@ -530,7 +523,6 @@ async function registrarContagemSimples(
     sessao_id: input.sessao_id,
     localizacao_id: input.localizacao_id,
     produto_id: input.produto_id,
-    empresa_dona_id: input.empresa_dona_id,
     qty_contada: input.qty_contada,
     contada_por: input.contada_por,
   });
@@ -597,60 +589,66 @@ export async function computarDivergencias(
       contagem_finalizada_em: l.contagem_finalizada_em as string,
     }));
 
-  // 2. Contagens
+  // 2. Contagens (3D: produto + galpao + loc; sem empresa_dona)
   const { data: contagensRaw } = await sb
     .from("siso_inventario_contagens")
-    .select("localizacao_id, produto_id, empresa_dona_id, qty_contada, criado_em")
+    .select("localizacao_id, produto_id, qty_contada, criado_em")
     .eq("sessao_id", sessaoId);
 
   const contagens = ((contagensRaw ?? []) as Array<{
     localizacao_id: string;
     produto_id: string;
-    empresa_dona_id: string;
     qty_contada: number;
     criado_em: string;
   }>).map((c) => ({
     localizacao_id: c.localizacao_id,
     produto_id: c.produto_id,
-    empresa_dona_id: c.empresa_dona_id,
     qty_contada: Number(c.qty_contada),
     contado_em: c.criado_em,
   }));
 
-  // 3. Saldos atuais (filtra por empresa_dona da sessão se houver)
+  // 3. Saldos atuais (3D: produto + galpao + loc)
   const { data: sessao } = await sb
     .from("siso_inventario_sessoes")
-    .select("empresa_dona_id, tolerancia_pct, tolerancia_qty_min, exige_aprovacao_acima_valor")
+    .select("tolerancia_pct, tolerancia_qty_min, exige_aprovacao_acima_valor")
     .eq("id", sessaoId)
     .single();
   const s = sessao as {
-    empresa_dona_id: string | null;
     tolerancia_pct: number;
     tolerancia_qty_min: number;
     exige_aprovacao_acima_valor: number | null;
   } | null;
 
-  let saldoQuery = sb
+  const { data: saldosRaw } = await sb
     .from("siso_estoque")
-    .select("produto_id, empresa_dona_id, localizacao_id, saldo, custo_medio")
+    .select("produto_id, localizacao_id, saldo")
     .in("localizacao_id", locIds.length > 0 ? locIds : ["00000000-0000-0000-0000-000000000000"])
     .gt("saldo", 0);
-  if (s?.empresa_dona_id) {
-    saldoQuery = saldoQuery.eq("empresa_dona_id", s.empresa_dona_id);
+
+  // Custo médio é global por produto (Fase 1 Task 1.x). Carrega só os produtos vistos.
+  const produtosSaldo = ((saldosRaw ?? []) as Array<{ produto_id: string }>).map(
+    (r) => r.produto_id,
+  );
+  const custoMap = new Map<string, number>();
+  if (produtosSaldo.length > 0) {
+    const { data: cmRaw } = await sb
+      .from("siso_custo_medio")
+      .select("produto_id, custo_medio")
+      .in("produto_id", produtosSaldo);
+    for (const r of (cmRaw ?? []) as Array<{ produto_id: string; custo_medio: number }>) {
+      custoMap.set(r.produto_id, Number(r.custo_medio));
+    }
   }
-  const { data: saldosRaw } = await saldoQuery;
+
   const saldos_atuais = ((saldosRaw ?? []) as Array<{
     produto_id: string;
-    empresa_dona_id: string;
     localizacao_id: string;
     saldo: number;
-    custo_medio: number;
   }>).map((r) => ({
     localizacao_id: r.localizacao_id,
     produto_id: r.produto_id,
-    empresa_dona_id: r.empresa_dona_id,
     saldo: Number(r.saldo),
-    custo_medio: Number(r.custo_medio),
+    custo_medio: custoMap.get(r.produto_id) ?? 0,
   }));
 
   // 4. Movs ledger nas locs da sessão, criadas após a contagem mais antiga
@@ -663,7 +661,6 @@ export async function computarDivergencias(
     id: string;
     localizacao_id: string;
     produto_id: string;
-    empresa_dona_id: string;
     criado_em: string;
     saldo_anterior: number;
     saldo_posterior: number;
@@ -674,7 +671,7 @@ export async function computarDivergencias(
   if (locIds.length > 0 && minContado) {
     const { data: movsRaw } = await sb
       .from("siso_movimentacoes")
-      .select("id, localizacao_id, produto_id, empresa_dona_id, criado_em, saldo_anterior, saldo_posterior, origem_tipo, origem_id, estorno_de")
+      .select("id, localizacao_id, produto_id, criado_em, saldo_anterior, saldo_posterior, origem_tipo, origem_id, estorno_de")
       .in("localizacao_id", locIds)
       .gte("criado_em", dataLimiteInferior)
       .lte("criado_em", cutoff_em);
@@ -696,7 +693,7 @@ export async function computarDivergencias(
   });
 
   // 6. Persiste divergências aplicando tolerância
-  // Primeiro, limpa divergências não-aplicadas pra essas quádruplas (re-run)
+  // Primeiro, limpa divergências não-aplicadas pra essas triplas (re-run)
   for (const d of divergencias) {
     await sb
       .from("siso_inventario_divergencias")
@@ -705,7 +702,6 @@ export async function computarDivergencias(
         sessao_id: sessaoId,
         localizacao_id: d.localizacao_id,
         produto_id: d.produto_id,
-        empresa_dona_id: d.empresa_dona_id,
       })
       .neq("status", "aplicada");
   }
@@ -728,14 +724,13 @@ export async function computarDivergencias(
         sessao_id: sessaoId,
         localizacao_id: d.localizacao_id,
         produto_id: d.produto_id,
-        empresa_dona_id: d.empresa_dona_id,
         // NOTA: saldo_sistema agora guarda o saldo_esperado_no_bipe (reconciliação temporal) — nome mantido por compat
         saldo_sistema: d.saldo_esperado,
         qty_contada_final: d.qty_contada_final,
         valor_financeiro: d.valor_financeiro,
         status,
       },
-      { onConflict: "sessao_id,localizacao_id,produto_id,empresa_dona_id" },
+      { onConflict: "sessao_id,localizacao_id,produto_id" },
     );
   }
 
@@ -821,7 +816,6 @@ export async function aplicarSessao(
   type DivRow = {
     id: string;
     produto_id: string;
-    empresa_dona_id: string;
     localizacao_id: string;
     delta: number;
     delta_pct: number | null;
@@ -833,19 +827,19 @@ export async function aplicarSessao(
     const tipo: TipoMov = Number(d.delta) > 0 ? "E" : "S";
     const qty = Math.abs(Number(d.delta));
     const mov = await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         produto_id: d.produto_id,
-        empresa_dona_id: d.empresa_dona_id,
         galpao_id: s.galpao_id,
         localizacao_id: d.localizacao_id,
       },
       tipo,
       qty,
-      origem_tipo: "inventario",
+      // 3D: separa ganho de perda (origem_tipo discrimina sinal do ajuste de inventário)
+      origem_tipo: tipo === "E" ? "inventario_ganho" : "inventario_perda",
       origem_id: sessaoId,
       origem_detalhes: { divergencia_id: d.id, delta_pct: d.delta_pct },
       usuario_id: usuarioId,
-      observacoes: `inventário sessão ${sessaoId}`,
+      motivo: `inventário sessão ${sessaoId}`,
     });
     await sb
       .from("siso_inventario_divergencias")
@@ -894,8 +888,6 @@ export interface UltimaContagemProduto {
   loc_tipo: string;
   galpao_id: string;
   galpao_nome: string;
-  empresa_dona_id: string;
-  empresa_nome: string;
   qty_contada: number;
   contada_por: string;
   contada_por_nome: string | null;

@@ -20,7 +20,6 @@ interface MovHistorico {
   origem_id: string | null;
   criado_em: string;
   produto?: { sku: string; descricao: string };
-  empresa?: { nome: string };
   galpao?: { nome: string };
   localizacao?: { codigo: string };
 }
@@ -31,7 +30,6 @@ interface ParRealocacao {
   qty: number;
   produto: { sku: string; descricao: string };
   galpao: string;
-  empresa: string;
   locOrigem: string;
   locDestino: string;
 }
@@ -57,7 +55,6 @@ function agruparPares(movs: MovHistorico[]): ParRealocacao[] {
         descricao: g.s.produto?.descricao ?? "",
       },
       galpao: g.s.galpao?.nome ?? "—",
-      empresa: g.s.empresa?.nome ?? "—",
       locOrigem: g.s.localizacao?.codigo ?? "—",
       locDestino: g.e.localizacao?.codigo ?? "—",
     });
@@ -150,12 +147,7 @@ export default function RealocarPage() {
                   <span className="wms-mono">{p.produto.sku}</span>{" "}
                   <span className="wms-td-mute">{p.produto.descricao}</span>
                 </td>
-                <td>
-                  <span className="wms-chip-emp">
-                    {p.empresa.slice(0, 3).toUpperCase()}
-                  </span>{" "}
-                  {p.galpao}
-                </td>
+                <td>{p.galpao}</td>
                 <td>
                   <span className="wms-mono">{p.locOrigem}</span>
                 </td>

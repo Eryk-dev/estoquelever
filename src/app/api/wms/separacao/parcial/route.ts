@@ -209,12 +209,11 @@ async function processarParcialItem(
     const locCodigo = (estoque?.localizacao as string | null | undefined) ?? null;
     const locOriginalId = await resolverLocalizacaoWms(galpaoId, locCodigo);
 
-    // 6. Saldo / reservado
+    // 6. Saldo / reservado (3D: produto + galpao + loc)
     const { data: estoqueWms } = await supabase
       .from("siso_estoque")
       .select("saldo, reservado, disponivel")
       .eq("produto_id", produtoWmsId)
-      .eq("empresa_dona_id", empresaOrigemId)
       .eq("galpao_id", galpaoId)
       .eq("localizacao_id", locOriginalId)
       .maybeSingle();
@@ -246,9 +245,8 @@ async function processarParcialItem(
     let movSaidaId: string | null = null;
     if (quantidade_pega > 0) {
       const mov = await inserirMovimentacao({
-        quadrupla: {
+        tripla: {
           produto_id: produtoWmsId,
-          empresa_dona_id: empresaOrigemId,
           galpao_id: galpaoId,
           localizacao_id: locOriginalId,
         },
@@ -262,7 +260,9 @@ async function processarParcialItem(
           sku: primeiroItem.sku,
           contexto: itemsRaw.length > 1 ? "parcial_consolidado" : "parcial",
         },
-        observacoes:
+        empresa_vendedora_id: empresaOrigemId,
+        pedido_id: primeiroPedido.id,
+        motivo:
           itemsRaw.length > 1
             ? `Picking parcial wave — ${itemsRaw.length} items (pedido #${primeiroPedido.numero}…)`
             : `Picking parcial pedido #${primeiroPedido.numero}`,
@@ -276,9 +276,8 @@ async function processarParcialItem(
       const delta = saldoWms - quantidade_pega;
       if (delta > 0) {
         const movAj = await inserirMovimentacao({
-          quadrupla: {
+          tripla: {
             produto_id: produtoWmsId,
-            empresa_dona_id: empresaOrigemId,
             galpao_id: galpaoId,
             localizacao_id: locOriginalId,
           },
@@ -292,7 +291,7 @@ async function processarParcialItem(
             saldo_anterior: saldoWms,
             qty_pega: quantidade_pega,
           },
-          observacoes: `Loc zerou no picking — ajuste ${delta} (sistema dizia ${saldoWms}, real ${quantidade_pega})`,
+          motivo: "loc zerou no bipe",
           usuario_id: session.id,
         });
         movAjusteId = movAj.id;
@@ -525,7 +524,7 @@ async function processarParcialItem(
           await estornarMovimentacao({
             mov_id: movSaidaId,
             usuario_id: session.id,
-            observacoes: "Race condition — outro operador marcou primeiro",
+            motivo: "Race condition — outro operador marcou primeiro",
           });
         } catch (e: unknown) {
           logger.warn("separacao-parcial", "rollback estorno falhou", {
@@ -538,7 +537,7 @@ async function processarParcialItem(
           await estornarMovimentacao({
             mov_id: movAjusteId,
             usuario_id: session.id,
-            observacoes: "Race condition (ajuste)",
+            motivo: "Race condition (ajuste)",
           });
         } catch (e: unknown) {
           logger.warn("separacao-parcial", "rollback ajuste falhou", {
@@ -599,11 +598,9 @@ async function processarParcialItem(
       });
     }
 
-    // I8: agrupa items residuais por empresa_origem_id pra evitar atribuição
-    // de empresa errada quando wave junta items de empresas distintas. Hoje
-    // a validação upstream já barra multi-empresa em modo item; o grupamento
-    // aqui é defesa-em-profundidade + paralelo com modo realoc (que SÓ aceita
-    // multi-empresa).
+    // 3D: cascade no pool físico do galpão. Empresa origem do pedido vira
+    // empresa_dona da realocacao (tag de "ownership lógica" do pedido) — é
+    // metadado do pedido, não chave de coordenada de estoque.
     type LinhaInsert = {
       pedido_item_id: number;
       empresa_dona_id: string;
@@ -671,7 +668,6 @@ async function processarParcialItem(
 
       const resolver = await resolverRealocacao({
         produto_id: produtoWmsGrupo,
-        empresa_origem_id: empOrigem,
         galpao_id: galpaoId,
         localizacoes_excluir: excluir,
         qty_residual: totalResidualGrupo,
@@ -701,7 +697,9 @@ async function processarParcialItem(
         continue;
       }
 
-      // Distribui as realocações desse grupo entre items dele (FCFS)
+      // Distribui as realocações desse grupo entre items dele (FCFS).
+      // 3D: pool fungível por (produto, galpao). empresa_dona da realoc é
+      // a empresa origem do pedido (ownership lógica, sem semântica física).
       let idxItemResid = 0;
       let restanteItemAtual = grupo[0]?.qty_residual ?? 0;
       for (const r of resolver.realocacoes) {
@@ -713,12 +711,12 @@ async function processarParcialItem(
           if (slice > 0) {
             linhasInsertTotais.push({
               pedido_item_id: Number(u.item.id),
-              empresa_dona_id: r.empresa_dona_id,
+              empresa_dona_id: empOrigem,
               galpao_id: galpaoId,
               localizacao_id: r.localizacao_id,
               quantidade: slice,
-              is_emprestimo: r.is_emprestimo,
-              empresa_devedora_id: r.empresa_devedora_id,
+              is_emprestimo: false,
+              empresa_devedora_id: null,
               motivo: "loc_zerou",
               criado_por: session.id,
             });
@@ -898,12 +896,11 @@ async function processarParcialRealocacao(
     const produtoTinyId = String(primeiroItem.produto_id);
     const produtoWmsId = await resolverProdutoWms(empresaDonaId, produtoTinyId);
 
-    // 6. Saldo / reservado
+    // 6. Saldo / reservado (3D: produto + galpao + loc)
     const { data: estoqueWms } = await supabase
       .from("siso_estoque")
       .select("saldo, reservado, disponivel")
       .eq("produto_id", produtoWmsId)
-      .eq("empresa_dona_id", empresaDonaId)
       .eq("galpao_id", galpaoId)
       .eq("localizacao_id", localizacaoId)
       .maybeSingle();
@@ -928,20 +925,25 @@ async function processarParcialRealocacao(
       );
     }
 
-    // 7. Gera mov S única (qty_pega total) e mov ajuste (se loc_zerou) — vinculadas ao primeiro pedido
+    // 7. Gera mov S única (qty_pega total) e mov ajuste (se loc_zerou) — vinculadas ao primeiro pedido.
+    // 3D: empréstimo deixou de existir; saída sempre `nf_venda` taggeada com a
+    // empresa vendedora (origem do pedido). Eventual "dívida" entre empresas
+    // que essa picada gerou não é mais rastreada pelo ledger físico.
     const realocIdsList = realocs.map((r) => r.id);
+    void empresaDonaId;
+    void isEmprestimo;
+    void empresaDevedoraId;
     let movSaidaId: string | null = null;
     if (quantidade_pega > 0) {
       const mov = await inserirMovimentacao({
-        quadrupla: {
+        tripla: {
           produto_id: produtoWmsId,
-          empresa_dona_id: empresaDonaId,
           galpao_id: galpaoId,
           localizacao_id: localizacaoId,
         },
         tipo: "S",
         qty: quantidade_pega,
-        origem_tipo: isEmprestimo ? "emprestimo" : "nf_venda",
+        origem_tipo: "nf_venda",
         origem_id: `pedido:${primeiroPedido.id}`,
         origem_detalhes: {
           pedido_numero: primeiroPedido.numero,
@@ -951,13 +953,12 @@ async function processarParcialRealocacao(
           contexto:
             realocs.length > 1 ? "realocacao_parcial_consolidado" : "realocacao_parcial",
         },
-        emprestimo_devedora_id: isEmprestimo ? empresaDevedoraId ?? undefined : undefined,
-        observacoes:
+        empresa_vendedora_id: empresaOrigemPrimeiroPedido,
+        pedido_id: primeiroPedido.id,
+        motivo:
           realocs.length > 1
             ? `Picking parcial wave realocada — ${realocs.length} realocações (pedido #${primeiroPedido.numero}…)`
-            : isEmprestimo
-              ? `Picking parcial pedido #${primeiroPedido.numero} — empréstimo`
-              : `Picking parcial pedido #${primeiroPedido.numero} — realocação`,
+            : `Picking parcial pedido #${primeiroPedido.numero} — realocação`,
         usuario_id: session.id,
       });
       movSaidaId = mov.id;
@@ -968,9 +969,8 @@ async function processarParcialRealocacao(
       const delta = saldoWms - quantidade_pega;
       if (delta > 0) {
         const movAj = await inserirMovimentacao({
-          quadrupla: {
+          tripla: {
             produto_id: produtoWmsId,
-            empresa_dona_id: empresaDonaId,
             galpao_id: galpaoId,
             localizacao_id: localizacaoId,
           },
@@ -985,7 +985,7 @@ async function processarParcialRealocacao(
             saldo_anterior: saldoWms,
             qty_pega: quantidade_pega,
           },
-          observacoes: `Loc zerou na realocação — ajuste ${delta} (sistema dizia ${saldoWms}, real ${quantidade_pega})`,
+          motivo: "loc zerou no bipe",
           usuario_id: session.id,
         });
         movAjusteId = movAj.id;
@@ -1226,7 +1226,7 @@ async function processarParcialRealocacao(
           await estornarMovimentacao({
             mov_id: movSaidaId,
             usuario_id: session.id,
-            observacoes: "Race condition — outro operador picou primeiro",
+            motivo: "Race condition — outro operador picou primeiro",
           });
         } catch (e: unknown) {
           logger.warn("separacao-parcial-realoc", "rollback estorno falhou", {
@@ -1239,7 +1239,7 @@ async function processarParcialRealocacao(
           await estornarMovimentacao({
             mov_id: movAjusteId,
             usuario_id: session.id,
-            observacoes: "Race condition (ajuste)",
+            motivo: "Race condition (ajuste)",
           });
         } catch (e: unknown) {
           logger.warn("separacao-parcial-realoc", "rollback ajuste falhou", {
@@ -1374,7 +1374,6 @@ async function processarParcialRealocacao(
 
       const resolver = await resolverRealocacao({
         produto_id: produtoWmsGrupo,
-        empresa_origem_id: empOrigem,
         galpao_id: galpaoId,
         localizacoes_excluir: excluir,
         qty_residual: totalResidualGrupo,
@@ -1404,6 +1403,7 @@ async function processarParcialRealocacao(
 
       // Distribui realocações encontradas entre os realocs residuais desse grupo (FCFS).
       // parent_realocacao_id = realoc residual atual (mantém a chain).
+      // 3D: empresa_dona da nova realoc é a empresa origem do pedido (ownership lógica).
       let idxRes = 0;
       let restanteAtual = grupo[0]?.qty_residual ?? 0;
       for (const r of resolver.realocacoes) {
@@ -1416,12 +1416,12 @@ async function processarParcialRealocacao(
             linhasInsertTotais.push({
               pedido_item_id: Number(u.realoc.pedido_item_id),
               parent_realocacao_id: u.realoc.id,
-              empresa_dona_id: r.empresa_dona_id,
+              empresa_dona_id: empOrigem,
               galpao_id: galpaoId,
               localizacao_id: r.localizacao_id,
               quantidade: slice,
-              is_emprestimo: r.is_emprestimo,
-              empresa_devedora_id: r.empresa_devedora_id,
+              is_emprestimo: false,
+              empresa_devedora_id: null,
               motivo: loc_zerou ? "cascade_loc_zerou" : "cascade_parcial",
               criado_por: session.id,
             });

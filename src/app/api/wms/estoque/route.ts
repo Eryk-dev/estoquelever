@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import type { PerspectivaEstoque } from "@/lib/wms/types";
 
-const VIEWS = new Set<PerspectivaEstoque>(["dono", "galpao", "localizacao", "produto"]);
+const VIEWS = new Set<PerspectivaEstoque>(["galpao", "localizacao", "produto"]);
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -18,7 +18,6 @@ export async function GET(req: NextRequest) {
   try {
     const rows = await saldosPorPerspectiva(view, {
       produto_id: sp.get("produto_id") ?? undefined,
-      empresa_id: sp.get("empresa_id") ?? undefined,
       galpao_id: sp.get("galpao_id") ?? undefined,
     });
     return NextResponse.json({ rows });

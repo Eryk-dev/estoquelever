@@ -35,7 +35,6 @@ export type EventoPedido =
   | "oc_item_encontrado"
   | "oc_item_desfazer_encontrado"
   | "oc_item_confirmado"
-  | "mini_swap_executado"
   | "parcial_loc_zerou"
   | "realocacao_picada"
   | "realocacao_parcial"

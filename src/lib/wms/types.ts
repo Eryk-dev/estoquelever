@@ -125,6 +125,7 @@ export interface Movimentacao {
   nota_fiscal_id?: string | null;
   chave_acesso_nf?: string | null;
   usuario_id: string | null;
+  /** @deprecated use motivo. Column kept for historical reads only. */
   observacoes: string | null;
   estorno_de: string | null;
   criado_em: string;

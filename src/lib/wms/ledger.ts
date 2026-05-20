@@ -75,7 +75,6 @@ interface InserirMovInput {
   /** Custo unitário da entrada — alimenta recálculo do custo médio global. */
   custo_unitario?: number;
   usuario_id?: string;
-  observacoes?: string;
   estorno_de?: string;
 }
 
@@ -173,7 +172,7 @@ export async function venderKit(input: {
   empresa_vendedora_id?: string | null;
   custo_unitario?: number;
   usuario_id?: string;
-  observacoes?: string;
+  motivo?: string;
 }): Promise<Movimentacao[]> {
   if (input.qtyKits <= 0) {
     throw new Error("qtyKits deve ser positivo");
@@ -225,8 +224,8 @@ export async function venderKit(input: {
       empresa_vendedora_id: input.empresa_vendedora_id ?? null,
       custo_unitario: input.custo_unitario,
       usuario_id: input.usuario_id,
-      observacoes:
-        input.observacoes ??
+      motivo:
+        input.motivo ??
         `Venda de ${input.qtyKits} kit ${(prod as { sku: string }).sku}`,
     });
     movs.push(mov);
@@ -246,7 +245,7 @@ export async function venderKit(input: {
 export async function estornarMovimentacao(input: {
   mov_id: string;
   usuario_id: string;
-  observacoes?: string;
+  motivo?: string;
 }): Promise<Movimentacao> {
   const sb = createServiceClient();
 
@@ -293,7 +292,7 @@ export async function estornarMovimentacao(input: {
       estorno_de: input.mov_id,
       mov_original_origem: original.origem_tipo,
     },
-    observacoes: input.observacoes ?? `Estorno de mov ${input.mov_id}`,
+    motivo: input.motivo ?? `Estorno de mov ${input.mov_id}`,
     usuario_id: input.usuario_id,
     estorno_de: input.mov_id,
   });

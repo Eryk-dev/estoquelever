@@ -77,7 +77,7 @@ export async function liberarReserva(input: {
       origem_id: input.pedido_id,
       origem_detalhes: { motivo: input.motivo },
       usuario_id: input.usuario_id,
-      observacoes: `liberada por ${input.motivo}`,
+      motivo: `liberada por ${input.motivo}`,
     });
     liberados++;
   }
@@ -137,7 +137,7 @@ export async function cleanupReservasExpiradas(): Promise<{
         origem_tipo: "liberacao_reserva",
         origem_id: r.origem_id ?? undefined,
         origem_detalhes: { motivo: "expirado" },
-        observacoes: `expirado: reserva sem NF/cancelamento, pedido ${r.origem_id ?? "?"}`,
+        motivo: `expirado: reserva sem NF/cancelamento, pedido ${r.origem_id ?? "?"}`,
       });
       // Marca pedido com status_alerta se a tabela siso_pedidos suportar
       if (r.origem_id) {

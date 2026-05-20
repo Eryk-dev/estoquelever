@@ -17,7 +17,6 @@ export interface Contagem {
   id: string;
   localizacao_id: string;
   produto_id: string;
-  empresa_dona_id: string;
   qty_contada: number;
   criado_em: string;
   contada_por: string;

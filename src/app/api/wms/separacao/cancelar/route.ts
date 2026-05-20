@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
         await estornarMovimentacao({
           mov_id: movId,
           usuario_id: session.id,
-          observacoes: "Cancelar separação — estorno automático",
+          motivo: "Cancelar separação — estorno automático",
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
           await estornarMovimentacao({
             mov_id: r.mov_saida_id,
             usuario_id: session.id,
-            observacoes: `Cancelar separação — estorno realocação ${r.status}`,
+            motivo: `Cancelar separação — estorno realocação ${r.status}`,
           });
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);

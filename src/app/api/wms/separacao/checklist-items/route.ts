@@ -146,21 +146,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 3c. Fetch realocacoes (todos os status) para todos os itens
+    // 3c. Fetch realocacoes (todos os status) para todos os itens.
+    // 3D: pool fungível por (produto, galpao) — não expomos empresa_dona/devedora/is_emprestimo.
     const itemIds = (items ?? []).map((i) => i.id);
     let realocacoes: Array<{
       id: string;
       pedido_item_id: number;
       parent_realocacao_id: string | null;
-      empresa_dona_id: string;
       galpao_id: string | null;
       localizacao_id: string | null;
       quantidade: number;
       quantidade_pega: number | null;
       parcial: boolean;
       parcial_motivo: string | null;
-      is_emprestimo: boolean;
-      empresa_devedora_id: string | null;
       status: string;
       criado_em: string;
     }> = [];
@@ -169,7 +167,7 @@ export async function GET(request: NextRequest) {
       const { data: realocacoesRaw } = await supabase
         .from("siso_pedido_item_realocacoes")
         .select(
-          "id, pedido_item_id, parent_realocacao_id, empresa_dona_id, galpao_id, localizacao_id, quantidade, quantidade_pega, parcial, parcial_motivo, is_emprestimo, empresa_devedora_id, status, criado_em",
+          "id, pedido_item_id, parent_realocacao_id, galpao_id, localizacao_id, quantidade, quantidade_pega, parcial, parcial_motivo, status, criado_em",
         )
         .in("pedido_item_id", itemIds);
       realocacoes = realocacoesRaw ?? [];
@@ -187,21 +185,6 @@ export async function GET(request: NextRequest) {
         .in("id", localizacaoIds);
       for (const loc of locs ?? []) {
         localizacaoCodigoMap.set(loc.id, loc.codigo);
-      }
-    }
-
-    // Fetch empresa names for realocacoes (empresa_dona_id)
-    const realocacaoEmpresaIds = [
-      ...new Set(realocacoes.map((r) => r.empresa_dona_id).filter(Boolean) as string[]),
-    ];
-    const realocacaoEmpresaNomeMap = new Map<string, string>();
-    if (realocacaoEmpresaIds.length > 0) {
-      const { data: empNomes } = await supabase
-        .from("siso_empresas")
-        .select("id, nome")
-        .in("id", realocacaoEmpresaIds);
-      for (const emp of empNomes ?? []) {
-        realocacaoEmpresaNomeMap.set(emp.id, emp.nome);
       }
     }
 
@@ -236,8 +219,6 @@ export async function GET(request: NextRequest) {
       const itemRealocacoes = (realocacoesPorItem.get(String(item.id)) ?? []).map((r) => ({
         id: r.id,
         parent_realocacao_id: r.parent_realocacao_id,
-        empresa_dona_id: r.empresa_dona_id,
-        empresa_nome: realocacaoEmpresaNomeMap.get(r.empresa_dona_id) ?? null,
         localizacao_id: r.localizacao_id,
         localizacao_codigo: r.localizacao_id
           ? (localizacaoCodigoMap.get(r.localizacao_id) ?? null)
@@ -246,8 +227,6 @@ export async function GET(request: NextRequest) {
         quantidade_pega: r.quantidade_pega,
         parcial: r.parcial,
         parcial_motivo: r.parcial_motivo,
-        is_emprestimo: r.is_emprestimo,
-        empresa_devedora_id: r.empresa_devedora_id,
         status: r.status,
         criado_em: r.criado_em,
       }));

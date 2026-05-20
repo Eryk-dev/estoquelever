@@ -518,7 +518,36 @@ export function AjusteModal({
   const qc = useQueryClient();
 
   const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
-  const locId = locIdUser ?? "";
+
+  // Em saída: lista locs com saldo > 0 pro produto+galpão (reusa /receber).
+  // Em entrada qualquer loc serve, então não puxa.
+  const locaisQuery = useQuery({
+    queryKey: ["wms-putaway", pid?.id, galpaoId],
+    queryFn: () =>
+      wmsApi<{
+        localizacao_id: string | null;
+        codigo: string | null;
+        razao: string | null;
+        locaisExistentes: LocalSaldo[];
+      }>(`/api/wms/receber?produto_id=${pid!.id}&galpao_id=${galpaoId}`),
+    enabled: direcao === "saida" && !!pid && !!galpaoId,
+    staleTime: 30 * 1000,
+  });
+  const locaisDisp = useMemo(
+    () => locaisQuery.data?.locaisExistentes ?? [],
+    [locaisQuery.data],
+  );
+
+  // Em saída, se o operador ainda não escolheu manualmente uma loc, cai na
+  // 1ª disponível (a query já ordena: picking primeiro, maior saldo desc).
+  // Eliminamos o useEffect+setState pra evitar cascading renders.
+  const locId =
+    locIdUser ??
+    (direcao === "saida" ? locaisDisp[0]?.localizacao_id ?? "" : "");
+  const locSelDisp = locaisDisp.find((l) => l.localizacao_id === locId);
+  const qtyNum = Number(qty);
+  const overSaldo =
+    direcao === "saida" && !!locSelDisp && qtyNum > Number(locSelDisp.saldo);
 
   const mut = useMutation({
     mutationFn: async () => {
@@ -594,7 +623,14 @@ export function AjusteModal({
       }
     >
       <Field label="Produto" required>
-        <ProdutoCombo value={pid} onChange={setPid} autoFocus={!seed?.produto} />
+        <ProdutoCombo
+          value={pid}
+          onChange={(p) => {
+            setPid(p);
+            setLocIdUser(null);
+          }}
+          autoFocus={!seed?.produto}
+        />
       </Field>
 
       <Field label="Direção">
@@ -603,7 +639,10 @@ export function AjusteModal({
             <button
               key={d}
               className={`wms-seg-btn ${direcao === d ? "is-active" : ""}`}
-              onClick={() => setDirecao(d)}
+              onClick={() => {
+                setDirecao(d);
+                setLocIdUser(null);
+              }}
             >
               {d === "saida" ? "Saída (−)" : "Entrada (+)"}
             </button>
@@ -637,9 +676,66 @@ export function AjusteModal({
         </Field>
       </div>
 
-      <Field label="Quantidade" required>
+      {direcao === "saida" && !!pid && !!galpaoId && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            marginTop: -4,
+            marginBottom: 4,
+          }}
+        >
+          <span
+            className="wms-td-mute"
+            style={{ fontSize: 11, alignSelf: "center", marginRight: 2 }}
+          >
+            <Icon name="box" size={10} /> Onde tem saldo:
+          </span>
+          {locaisQuery.isLoading && (
+            <span className="wms-td-mute" style={{ fontSize: 11, alignSelf: "center" }}>
+              carregando…
+            </span>
+          )}
+          {!locaisQuery.isLoading && locaisDisp.length === 0 && (
+            <span className="wms-td-mute" style={{ fontSize: 11, alignSelf: "center" }}>
+              sem saldo nesse galpão
+            </span>
+          )}
+          {locaisDisp.map((l) => {
+            const isSelected = l.localizacao_id === locId;
+            return (
+              <button
+                key={l.localizacao_id}
+                type="button"
+                onClick={() => setLocIdUser(l.localizacao_id)}
+                className={`wms-btn wms-btn-sm ${
+                  isSelected ? "wms-btn-primary" : "wms-btn-ghost"
+                }`}
+                style={{ fontSize: 11 }}
+              >
+                <span className="wms-mono">{l.codigo}</span>
+                <span
+                  className="wms-td-mute"
+                  style={{ marginLeft: 5, fontSize: 10.5 }}
+                >
+                  {fmtNum(Number(l.saldo))} un · {l.tipo}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <Field
+        label="Quantidade"
+        required
+        hint={
+          locSelDisp ? `disp na loc: ${fmtNum(Number(locSelDisp.saldo))}` : undefined
+        }
+      >
         <input
-          className="wms-input"
+          className={`wms-input ${overSaldo ? "wms-input-danger" : ""}`}
           type="number"
           min="1"
           value={qty}

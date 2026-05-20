@@ -7,18 +7,19 @@ import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, PageHeader } from "@/components/wms/ui/wms-ui";
 import { AbaGalpoes } from "@/components/wms/configuracoes/aba-galpoes";
 import { AbaEmpresas } from "@/components/wms/configuracoes/aba-empresas";
-import { AbaEmprestimos } from "@/components/wms/configuracoes/aba-emprestimos";
 import { AbaFuncionarios } from "@/components/wms/configuracoes/aba-funcionarios";
 import type { GalpaoHierarquiaWms } from "@/components/wms/configuracoes/types";
 import { useAuth } from "@/lib/auth-context";
 
-type AbaId = "galpoes" | "empresas" | "funcionarios" | "emprestimos";
+// 3D: aba "Empréstimos & Swaps" e link "Otimizações" removidos —
+// pool fungível por galpão dispensa empréstimos N×N e mini-swap.
+
+type AbaId = "galpoes" | "empresas" | "funcionarios";
 
 const ABAS: { id: AbaId; label: string }[] = [
   { id: "galpoes", label: "Galpões" },
   { id: "empresas", label: "Empresas" },
   { id: "funcionarios", label: "Funcionários" },
-  { id: "emprestimos", label: "Empréstimos & Swaps" },
 ];
 
 export default function WmsConfiguracoesPage() {
@@ -46,7 +47,6 @@ export default function WmsConfiguracoesPage() {
       galpoes.flatMap((g) => g.siso_empresas.map((e) => e.id)),
     ).size,
     funcionarios: funcionariosCountQuery.data?.length ?? ("—" as const),
-    emprestimos: "—" as const,
   };
 
   if (!isAdmin) {
@@ -65,7 +65,7 @@ export default function WmsConfiguracoesPage() {
     <>
       <PageHeader
         title="Configurações"
-        subtitle="Galpões, empresas, funcionários e regras de empréstimo/swap"
+        subtitle="Galpões, empresas e funcionários"
       >
         <Link
           href="/wms/configuracoes/conexoes"
@@ -74,14 +74,6 @@ export default function WmsConfiguracoesPage() {
         >
           <Icon name="sliders" size={12} />
           Conexões &amp; impressoras
-        </Link>
-        <Link
-          href="/wms/configuracoes/otimizacoes"
-          className="wms-btn wms-btn-ghost"
-          title="Mini-swap, cycle count e outras otimizações WMS"
-        >
-          <Icon name="sparkle" size={12} />
-          Otimizações
         </Link>
       </PageHeader>
 
@@ -118,12 +110,6 @@ export default function WmsConfiguracoesPage() {
         <AbaEmpresas galpoes={galpoes} isLoading={galpoesQuery.isLoading} />
       )}
       {aba === "funcionarios" && <AbaFuncionarios galpoes={galpoes} />}
-      {aba === "emprestimos" && (
-        <AbaEmprestimos
-          galpoes={galpoes}
-          isLoading={galpoesQuery.isLoading}
-        />
-      )}
     </>
   );
 }

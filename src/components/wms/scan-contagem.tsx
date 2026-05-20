@@ -1,4 +1,8 @@
 "use client";
+// Input de bipe usado no inventário (e em qualquer fluxo de scan). 3D:
+// não carrega dimensão de empresa — operador só bipa SKU/GTIN. Saldo
+// é por (produto, galpão, localização); a galpão/loc vem do contexto
+// da página (ex: inventário tem sessão + claim de loc), não desse input.
 import { useEffect, useRef } from "react";
 
 export function ScanContagem({

@@ -14,8 +14,6 @@ export interface KitDisponivelPorGalpao {
   gargalo_componente_id: string | null;
   gargalo_componente_sku: string | null;
   gargalo_disponivel: number | null;
-  /** Lista das empresas que têm estoque dos componentes neste galpão. */
-  empresas_contribuindo: string | null;
 }
 
 export interface KitDisponivel {
@@ -26,12 +24,11 @@ export interface KitDisponivel {
   gargalo_produto_id: string | null;
   gargalo_sku: string | null;
   gargalo_disponivel: number | null;
-  /** Breakdown por (empresa_dona, galpão). */
+  /** Breakdown por galpão (3D: pool fungível, sem dimensão empresa). */
   por_galpao: KitDisponivelPorGalpao[];
 }
 
 export interface ComponentePosicao {
-  empresa: { id: string; nome: string };
   galpao: { id: string; nome: string };
   localizacao: { id: string; codigo: string };
   saldo: number;
@@ -48,12 +45,13 @@ export interface ComponenteEstoque {
 
 /**
  * Para uma lista de produtos, retorna o saldo agregado e as posições
- * (empresa × galpão × localização) onde cada produto tem saldo > 0.
+ * (galpão × localização) onde cada produto tem saldo > 0. 3D — pool
+ * fungível, sem dimensão empresa_dona.
  * Usado pelo KitTab pra mostrar onde cada componente está.
  */
 export async function listarEstoqueComponentes(
   produtoIds: string[],
-  filtros: { empresa_dona_id?: string; galpao_id?: string } = {},
+  filtros: { galpao_id?: string } = {},
 ): Promise<Map<string, ComponenteEstoque>> {
   const map = new Map<string, ComponenteEstoque>();
   if (produtoIds.length === 0) return map;
@@ -63,15 +61,11 @@ export async function listarEstoqueComponentes(
     .from("siso_estoque")
     .select(
       `produto_id, saldo, reservado, disponivel,
-       empresa:siso_empresas(id, nome),
        galpao:siso_galpoes(id, nome),
        localizacao:siso_localizacoes(id, codigo)`,
     )
     .in("produto_id", produtoIds)
     .gt("saldo", 0);
-  if (filtros.empresa_dona_id) {
-    q = q.eq("empresa_dona_id", filtros.empresa_dona_id);
-  }
   if (filtros.galpao_id) {
     q = q.eq("galpao_id", filtros.galpao_id);
   }
@@ -84,7 +78,6 @@ export async function listarEstoqueComponentes(
       saldo: number;
       reservado: number;
       disponivel: number;
-      empresa: { id: string; nome: string };
       galpao: { id: string; nome: string };
       localizacao: { id: string; codigo: string };
     };
@@ -103,7 +96,6 @@ export async function listarEstoqueComponentes(
     existing.saldo_total += saldo;
     existing.reservado_total += res;
     existing.posicoes.push({
-      empresa: row.empresa,
       galpao: row.galpao,
       localizacao: row.localizacao,
       saldo,
@@ -292,20 +284,23 @@ export async function removerComponente(input: {
  */
 export async function calcularDisponivel(
   kitProdutoId: string,
-  filtros: { empresa_dona_id?: string; galpao_id?: string } = {},
+  filtros: { galpao_id?: string } = {},
 ): Promise<KitDisponivel> {
   const sb = createServiceClient();
 
+  // RPCs ainda aceitam p_empresa_dona_id (default NULL) — passar null
+  // mantém o pool fungível, sem filtro por dona. Drop do param sai numa
+  // migration futura junto com a reescrita das RPCs (fora do escopo 5.19).
   const [{ data: dispData, error: errRpc }, { data: brkData, error: errBrk }] =
     await Promise.all([
       sb.rpc("wms_kit_disponivel", {
         p_kit_id: kitProdutoId,
-        p_empresa_dona_id: filtros.empresa_dona_id ?? null,
+        p_empresa_dona_id: null,
         p_galpao_id: filtros.galpao_id ?? null,
       }),
       sb.rpc("wms_kit_disponivel_por_galpao", {
         p_kit_id: kitProdutoId,
-        p_empresa_dona_id: filtros.empresa_dona_id ?? null,
+        p_empresa_dona_id: null,
       }),
     ]);
   if (errRpc) throw errRpc;
@@ -320,7 +315,6 @@ export async function calcularDisponivel(
       gargalo_componente_id: string | null;
       gargalo_componente_sku: string | null;
       gargalo_disponivel: number | null;
-      empresas_contribuindo: string | null;
     }> | null) ?? [];
 
   // Se filtro de galpão estiver setado, restringe o breakdown também (a RPC
@@ -338,7 +332,6 @@ export async function calcularDisponivel(
       gargalo_componente_sku: r.gargalo_componente_sku,
       gargalo_disponivel:
         r.gargalo_disponivel != null ? Number(r.gargalo_disponivel) : null,
-      empresas_contribuindo: r.empresas_contribuindo,
     }));
 
   // Gargalo "global": o componente que mais frequentemente é gargalo nos

@@ -1,6 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
-import type { Quadrupla, Movimentacao, OrigemTipo } from "./types";
+import type { Tripla, Movimentacao, OrigemTipo } from "./types";
 import { criarPendencia, resolverLocRecebimento } from "./guarda";
 import { logger } from "@/lib/logger";
 
@@ -17,22 +17,35 @@ interface ItemRecebimento {
 }
 
 export interface ReceberInput {
-  empresa_dona_id: string;
   galpao_id: string;
   itens: ItemRecebimento[];
+  /**
+   * Tag histórica: empresa que fez a compra (quem assina a NF de entrada).
+   * Apenas metadata — não é coordenada do estoque.
+   */
+  empresa_compradora_id?: string | null;
+  /** Tag histórica: fornecedor da NF de entrada. */
+  fornecedor_id?: string | null;
   nf_referencia?: string;
+  /** UUID da NF em siso_notas_fiscais (quando já cadastrada). */
+  nota_fiscal_id?: string | null;
+  /** Chave de acesso de 44 dígitos (fallback quando nota_fiscal_id ainda não foi populado). */
+  chave_acesso_nf?: string | null;
+  /** Motivo livre — útil pra lançamento_retroativo e ajustes. */
+  motivo?: string | null;
   usuario_id: string;
   /**
-   * ISO timestamp da data do recebimento. Se omitido, usa now().
-   * Permite lançamento retroativo direto pelo modal de Receber sem fluxo
-   * separado em /wms/retroativos.
+   * ISO timestamp da data do recebimento (passado). Quando informado, a mov
+   * é registrada com origem `lancamento_retroativo` (a menos que `origem_tipo`
+   * sobrescreva) e a data viaja em `origem_detalhes.data_recebimento` —
+   * o ledger sempre carimba `criado_em` com now(); a info histórica é apenas
+   * informativa.
    */
   data_recebimento?: string;
   /**
-   * Tipo de origem. Default "compra_manual". O modal de Receber pode passar
-   * "lancamento_retroativo" (data no passado) ou "nf_devolucao_cliente"
-   * (devolução). Não validamos contra OrigemTipo aqui — o RPC do ledger
-   * aceita qualquer string e a constraint da tabela rejeita inválidos.
+   * Tipo de origem. Default `nf_compra`. O modal de Receber pode passar
+   * `lancamento_retroativo` (data no passado) ou `devolucao_cliente_integra`
+   * (devolução íntegra que volta pro estoque). RPC do ledger valida.
    */
   origem_tipo?: OrigemTipo;
   observacoes?: string;
@@ -74,17 +87,27 @@ export interface ReceberResult {
  * a mercadoria fica na loc tipo='recebimento' (dock de chegada). Cada linha
  * vira uma `siso_wms_pendencias_guarda`, que será consumida pela tela
  * /wms/guarda no tablet (operador imprime etiq, bipa loc destino, confirma).
+ *
+ * Em 3D, a empresa que comprou viaja como tag (`empresa_compradora_id`),
+ * não como coordenada de estoque.
  */
 export async function receberEstoque(
   input: ReceberInput,
 ): Promise<ReceberResult> {
-  const origemTipo = input.origem_tipo ?? "compra_manual";
+  const origemTipo = input.origem_tipo ?? "nf_compra";
   const obsBase =
     input.observacoes ??
     (input.nf_referencia
       ? `recebimento NF ${input.nf_referencia}`
       : "recebimento sem NF");
   const loteId = crypto.randomUUID();
+
+  const origemDetalhesBase: Record<string, unknown> = {
+    nf_referencia: input.nf_referencia,
+  };
+  if (input.data_recebimento) {
+    origemDetalhesBase.data_recebimento = input.data_recebimento;
+  }
 
   // Modo entrada direta: pula o dock RECEBIMENTO e escreve direto na loc
   // destino de cada item. Não cria pendência. Exige loc destino em todos.
@@ -101,9 +124,8 @@ export async function receberEstoque(
     const movIds: string[] = [];
     for (const item of input.itens) {
       const mov = await inserirMovimentacao({
-        quadrupla: {
+        tripla: {
           produto_id: item.produto_id,
-          empresa_dona_id: input.empresa_dona_id,
           galpao_id: input.galpao_id,
           localizacao_id: item.localizacao_destino_id!,
         },
@@ -112,26 +134,18 @@ export async function receberEstoque(
         origem_tipo: origemTipo,
         origem_id: loteId,
         origem_detalhes: {
-          nf_referencia: input.nf_referencia,
+          ...origemDetalhesBase,
           entrada_direta: true,
         },
+        empresa_compradora_id: input.empresa_compradora_id ?? null,
+        fornecedor_id: input.fornecedor_id ?? null,
+        nota_fiscal_id: input.nota_fiscal_id ?? null,
+        chave_acesso_nf: input.chave_acesso_nf ?? null,
         custo_unitario: item.custo_unitario,
+        motivo: input.motivo ?? null,
         usuario_id: input.usuario_id,
         observacoes: obsBase,
-        criado_em: input.data_recebimento,
       });
-      if (item.custo_unitario !== undefined) {
-        await recalcularCustoMedio(
-          {
-            produto_id: item.produto_id,
-            empresa_dona_id: input.empresa_dona_id,
-            galpao_id: input.galpao_id,
-            localizacao_id: item.localizacao_destino_id!,
-          },
-          item.qty,
-          item.custo_unitario,
-        );
-      }
       movIds.push(mov.id);
     }
     return {
@@ -152,33 +166,25 @@ export async function receberEstoque(
 
   for (const item of input.itens) {
     const mov = await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         produto_id: item.produto_id,
-        empresa_dona_id: input.empresa_dona_id,
         galpao_id: input.galpao_id,
         localizacao_id: localizacaoRecebimentoId,
       },
       tipo: "E",
       qty: item.qty,
       origem_tipo: origemTipo,
-      origem_detalhes: { nf_referencia: input.nf_referencia },
+      origem_id: loteId,
+      origem_detalhes: origemDetalhesBase,
+      empresa_compradora_id: input.empresa_compradora_id ?? null,
+      fornecedor_id: input.fornecedor_id ?? null,
+      nota_fiscal_id: input.nota_fiscal_id ?? null,
+      chave_acesso_nf: input.chave_acesso_nf ?? null,
       custo_unitario: item.custo_unitario,
+      motivo: input.motivo ?? null,
       usuario_id: input.usuario_id,
       observacoes: obsBase,
-      criado_em: input.data_recebimento,
     });
-    if (item.custo_unitario !== undefined) {
-      await recalcularCustoMedio(
-        {
-          produto_id: item.produto_id,
-          empresa_dona_id: input.empresa_dona_id,
-          galpao_id: input.galpao_id,
-          localizacao_id: localizacaoRecebimentoId,
-        },
-        item.qty,
-        item.custo_unitario,
-      );
-    }
     // Defense-in-depth: se algo na criação da pendência falhar (FK quebrada,
     // race de loc destino desativada entre validação e insert, falha de
     // rede com supabase), estorna a mov da entrada pra não deixar saldo
@@ -186,7 +192,6 @@ export async function receberEstoque(
     try {
       const pendenciaId = await criarPendencia({
         produto_id: item.produto_id,
-        empresa_dona_id: input.empresa_dona_id,
         galpao_id: input.galpao_id,
         localizacao_origem_id: localizacaoRecebimentoId,
         localizacao_destino_id: item.localizacao_destino_id ?? null,
@@ -269,39 +274,7 @@ export function validarItensRecebimento(
   });
 }
 
-/**
- * Recalcula custo médio (média ponderada) ao adicionar uma entrada com custo conhecido.
- * Exportado pra uso em outros fluxos (ex: devolução íntegra recalcula custo no Plano 5).
- *
- * Trade-off conhecido: leitura+escrita em duas chamadas (sem lock). Aceitável pra v1
- * porque custo_medio é informativo e racing entre 2 entradas simultâneas pra mesma
- * quádrupla é raro na operação real.
- */
-export async function recalcularCustoMedio(
-  q: Quadrupla,
-  qtyEntrada: number,
-  custoNovo: number,
-): Promise<void> {
-  const sb = createServiceClient();
-  const { data: e } = await sb
-    .from("siso_estoque")
-    .select("saldo, custo_medio")
-    .match(q)
-    .single();
-  if (!e) return;
-  const saldoAnterior = Number(e.saldo) - qtyEntrada;
-  if (saldoAnterior < 0) return;
-  const custoAnterior = Number(e.custo_medio);
-  const novoCusto =
-    saldoAnterior > 0
-      ? (saldoAnterior * custoAnterior + qtyEntrada * custoNovo) /
-        (saldoAnterior + qtyEntrada)
-      : custoNovo;
-  await sb.from("siso_estoque").update({ custo_medio: novoCusto }).match(q);
-}
-
 export interface TransferirGalpaoInput {
-  empresa_id: string;
   galpao_origem_id: string;
   localizacao_origem_id: string;
   galpao_destino_id: string;
@@ -309,8 +282,18 @@ export interface TransferirGalpaoInput {
   itens: { produto_id: string; qty: number }[];
   usuario_id: string;
   observacoes?: string;
+  /**
+   * UUID compartilhado entre os dois lados da transferência. Quando omitido,
+   * é gerado aqui. Use pra correlacionar com `siso_transferencias_galpao` se
+   * a transferência tem header próprio.
+   */
+  origem_id?: string;
 }
 
+/**
+ * Par S+E NEUTRO (sem empresa) — em 3D a transferência entre galpões não
+ * carrega dona; estoque é fungível dentro do pool físico.
+ */
 export async function transferirInterGalpao(
   input: TransferirGalpaoInput,
 ): Promise<{ origem_id: string }> {
@@ -319,12 +302,11 @@ export async function transferirInterGalpao(
       "transferência inter-galpão exige galpões diferentes (use replenishment)",
     );
   }
-  const origem_id = crypto.randomUUID();
+  const origem_id = input.origem_id ?? crypto.randomUUID();
   for (const item of input.itens) {
     await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         produto_id: item.produto_id,
-        empresa_dona_id: input.empresa_id,
         galpao_id: input.galpao_origem_id,
         localizacao_id: input.localizacao_origem_id,
       },
@@ -336,9 +318,8 @@ export async function transferirInterGalpao(
       observacoes: input.observacoes,
     });
     await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         produto_id: item.produto_id,
-        empresa_dona_id: input.empresa_id,
         galpao_id: input.galpao_destino_id,
         localizacao_id: input.localizacao_destino_id,
       },
@@ -354,12 +335,13 @@ export async function transferirInterGalpao(
 }
 
 export interface ReplenishmentInput {
-  empresa_id: string;
   galpao_id: string;
   localizacao_origem_id: string;
   localizacao_destino_id: string;
   itens: { produto_id: string; qty: number }[];
   usuario_id: string;
+  observacoes?: string;
+  origem_id?: string;
 }
 
 export function validarTransferenciaIntraGalpao(input: {
@@ -371,16 +353,19 @@ export function validarTransferenciaIntraGalpao(input: {
   }
 }
 
+/**
+ * Par S+E NEUTRO intra-galpão (replenishment / put-away). Em 3D não há
+ * empresa — estoque migra de uma loc física pra outra.
+ */
 export async function replenishmentIntraGalpao(
   input: ReplenishmentInput,
 ): Promise<{ origem_id: string }> {
   validarTransferenciaIntraGalpao(input);
-  const origem_id = crypto.randomUUID();
+  const origem_id = input.origem_id ?? crypto.randomUUID();
   for (const item of input.itens) {
     await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         produto_id: item.produto_id,
-        empresa_dona_id: input.empresa_id,
         galpao_id: input.galpao_id,
         localizacao_id: input.localizacao_origem_id,
       },
@@ -389,11 +374,11 @@ export async function replenishmentIntraGalpao(
       origem_tipo: "transferencia_localizacao",
       origem_id,
       usuario_id: input.usuario_id,
+      observacoes: input.observacoes,
     });
     await inserirMovimentacao({
-      quadrupla: {
+      tripla: {
         produto_id: item.produto_id,
-        empresa_dona_id: input.empresa_id,
         galpao_id: input.galpao_id,
         localizacao_id: input.localizacao_destino_id,
       },
@@ -402,53 +387,75 @@ export async function replenishmentIntraGalpao(
       origem_tipo: "transferencia_localizacao",
       origem_id,
       usuario_id: input.usuario_id,
+      observacoes: input.observacoes,
     });
   }
   return { origem_id };
 }
 
 export interface AjusteManualInput {
-  quadrupla: Quadrupla;
+  tripla: Tripla;
   qty: number;
   motivo: string;
   direcao: "entrada" | "saida";
   usuario_id: string;
 }
 
+/**
+ * Ajuste manual de saldo numa tripla. `motivo` é obrigatório (>=3 chars) —
+ * ajuste sem justificativa não passa.
+ */
 export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
   if (!input.motivo || input.motivo.trim().length < 3) {
     throw new Error("motivo do ajuste é obrigatório (≥3 caracteres)");
   }
   await inserirMovimentacao({
-    quadrupla: input.quadrupla,
+    tripla: input.tripla,
     tipo: input.direcao === "entrada" ? "E" : "S",
     qty: input.qty,
     origem_tipo: "ajuste_manual",
-    origem_detalhes: { motivo: input.motivo, direcao: input.direcao },
+    origem_detalhes: { direcao: input.direcao },
+    motivo: input.motivo.trim(),
     usuario_id: input.usuario_id,
     observacoes: input.motivo,
   });
 }
 
 export interface LancamentoRetroativoInput {
-  quadrupla: Quadrupla;
+  tripla: Tripla;
   qty: number;
-  fornecedor_id?: string;
-  pedido_id?: string;
   motivo: string;
   usuario_id: string;
+  /** Tag histórica: empresa compradora da NF que não chegou. */
+  empresa_compradora_id?: string | null;
+  /** Custo unitário (alimenta recálculo do custo médio global). */
+  custo_unitario?: number;
+  fornecedor_id?: string | null;
+  /** Pedido associado (opcional — quando o retroativo vem dum pedido específico). */
+  pedido_id?: string | null;
 }
 
+/**
+ * Lançamento retroativo: registra uma entrada que "já aconteceu" mas não
+ * foi capturada no momento. Origem `lancamento_retroativo` permite
+ * reconciliar depois quando a NF/compra real chegar.
+ */
 export async function lancarRetroativo(
   input: LancamentoRetroativoInput,
 ): Promise<void> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo do lançamento retroativo é obrigatório (≥3 caracteres)");
+  }
   await inserirMovimentacao({
-    quadrupla: input.quadrupla,
+    tripla: input.tripla,
     tipo: "E",
     qty: input.qty,
     origem_tipo: "lancamento_retroativo",
-    origem_id: input.pedido_id,
-    origem_detalhes: { motivo: input.motivo, fornecedor_id: input.fornecedor_id },
+    pedido_id: input.pedido_id ?? null,
+    empresa_compradora_id: input.empresa_compradora_id ?? null,
+    fornecedor_id: input.fornecedor_id ?? null,
+    custo_unitario: input.custo_unitario,
+    motivo: input.motivo.trim(),
     usuario_id: input.usuario_id,
     observacoes: `emergência: ${input.motivo}`,
   });
@@ -461,7 +468,6 @@ interface RetroativoPendente {
   observacoes: string | null;
   origem_detalhes: Record<string, unknown>;
   produto: { sku: string; descricao: string } | null;
-  empresa: { nome: string } | null;
   galpao: { nome: string } | null;
   localizacao: { codigo: string } | null;
 }
@@ -474,7 +480,6 @@ export async function listarRetroativosPendentes(): Promise<RetroativoPendente[]
       `
         id, criado_em, quantidade, observacoes, origem_detalhes,
         produto:siso_produtos(sku, descricao),
-        empresa:siso_empresas!empresa_dona_id(nome),
         galpao:siso_galpoes(nome),
         localizacao:siso_localizacoes(codigo)
       `,
@@ -519,9 +524,8 @@ export async function reconciliarRetroativo(
     throw new Error("mov não é um lançamento retroativo");
   }
   await inserirMovimentacao({
-    quadrupla: {
+    tripla: {
       produto_id: m.produto_id,
-      empresa_dona_id: m.empresa_dona_id,
       galpao_id: m.galpao_id,
       localizacao_id: m.localizacao_id,
     },

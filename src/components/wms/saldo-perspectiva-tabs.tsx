@@ -4,7 +4,6 @@ import type { PerspectivaEstoque } from "@/lib/wms/types";
 
 const TABS: { v: PerspectivaEstoque; label: string }[] = [
   { v: "produto", label: "Por produto" },
-  { v: "dono", label: "Por dono fiscal" },
   { v: "galpao", label: "Por galpão" },
   { v: "localizacao", label: "Por localização" },
 ];

@@ -28,11 +28,11 @@ interface ItemForm {
   quantidade: number;
 }
 
+// Plano ledger simplificado 3D (2026-05-20): estoque fungível dentro do galpão.
+// API /disponibilidade não devolve mais empresa_dona — só loc + qty.
 interface DisponibilidadeResp {
   total_disponivel: number;
   sugestao: {
-    empresa_dona_id: string;
-    empresa_dona_nome: string;
     localizacao_id: string;
     localizacao_codigo: string;
     localizacao_tipo: string;
@@ -93,20 +93,20 @@ function NovaVendaBody() {
     setItems((arr) => (arr.length > 1 ? arr.filter((_, i) => i !== idx) : arr));
 
   // Resolve disponibilidade por item (paralelo, cacheado por React Query).
+  // Em 3D, estoque é fungível dentro do galpão — empresa_origem_id não
+  // influencia a sugestão, então fica fora do query key.
   const dispQueries = useQueries({
     queries: items.map((it) => ({
       queryKey: [
         "wms-vendas-disponibilidade",
         it.produto?.id,
         galpaoId,
-        empresaOrigemId,
       ],
       queryFn: () => {
         const sp = new URLSearchParams({
           produto_id: it.produto!.id,
           galpao_id: galpaoId,
         });
-        if (empresaOrigemId) sp.set("empresa_origem_id", empresaOrigemId);
         return wmsApi<DisponibilidadeResp>(
           `/api/wms/vendas/disponibilidade?${sp.toString()}`,
         );

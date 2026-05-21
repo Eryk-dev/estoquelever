@@ -12,7 +12,10 @@ export default {
   },
 
   run: async (ctx, { sku }) => {
-    const pend = await ctx.lancamentoRetroativo({ sku, galpao: "CWB", loc: "A-01-01", qty: 5, tipo: "E" });
+    // Passa custo no retroativo pra manter coerência com I3 (custo médio).
+    // Sem custo, a recalcula da RPC mistura saldo retroativo "a 0" com a
+    // entrada nf_compra a 10 → cache fica em 5 e invariante quebra.
+    const pend = await ctx.lancamentoRetroativo({ sku, galpao: "CWB", loc: "A-01-01", qty: 5, tipo: "E", custo: 10 });
     // Mov "real" chega via receber direto
     await ctx.receber({
       galpao: "CWB",

@@ -10,15 +10,29 @@ export default {
     await ctx.criarProduto({ sku, descricao: "Devol B 11" });
     await ctx.semearSaldo({ produto: sku, galpao: "CWB", loc: "A-01-09", qty: 5, custo: 10 });
 
+    // Tabela `siso_devolucoes_pendentes` em 3D só carrega metadata da NF.
+    // Quantidade, produto, galpão e localização viajam no `payload_webhook`
+    // — helper `classificarDevolucao` lê esse jsonb e injeta no body do
+    // request pra rota /classificar.
     const { data: prod } = await ctx.sb.from("siso_produtos").select("id").eq("sku", sku).single();
+    const { data: loc } = await ctx.sb
+      .from("siso_localizacoes")
+      .select("id")
+      .eq("galpao_id", ctx.staging.galpoes.cwb.id)
+      .eq("codigo", "A-01-09")
+      .single();
     const { data: dev } = await ctx.sb.from("siso_devolucoes_pendentes").insert({
-      galpao_id: ctx.staging.galpoes.cwb.id,
-      produto_id: prod!.id,
-      quantidade: 1,
-      valor_unitario: 10,
-      cliente_nome: "Cliente avariada",
+      empresa_id: ctx.staging.empresas.netair.id,
       status: "aguardando_classificacao",
       chave_acesso_nf: `TEST-NF-B-${ctx.skuUnico("nf")}`,
+      payload_webhook: {
+        produto_id: prod!.id,
+        galpao_id: ctx.staging.galpoes.cwb.id,
+        localizacao_id: loc!.id,
+        qty: 1,
+        valor_unitario: 10,
+        cliente_nome: "Cliente avariada",
+      },
     }).select("id").single();
     return { sku, devolucaoId: dev!.id as string };
   },

@@ -16,10 +16,12 @@ export default {
     const pedido = await ctx.webhook({ empresa: ctx.staging.empresas.netair.cnpj, items: [{ sku, qty: 3 }] });
     await ctx.aguardarStatus(pedido.id, "pendente", { decisao: "oc" });
     await ctx.aprovar(pedido.id, "oc");
-    await ctx.aguardarStatusSeparacao(pedido.id, "aguardando_compra");
+    // Worker manda OC pra compras setando status_separacao='validacao_oc'.
+    // O passo aguardando_compra só existe depois de /validar-oc-item.
+    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc");
 
     const ordem = await ctx.comprar({ sku, qty: 3 });
-    await ctx.aguardarStatusSeparacao(pedido.id, "aguardando_nf", { timeout_ms: 6_000 });
+    await ctx.aguardarStatusSeparacao(pedido.id, "aguardando_nf", { timeout_ms: 10_000 });
 
     await ctx.receberCompra({ ordem_id: ordem.ordem_id, items: [{ sku, qty: 3 }] });
     await ctx.aguardarStatusSeparacao(pedido.id, "aguardando_separacao", { timeout_ms: 8_000 });

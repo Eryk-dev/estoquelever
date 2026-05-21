@@ -13,12 +13,13 @@ export default {
   },
 
   run: async (ctx, { sku }) => {
-    const t = await ctx.transferirGalpao({
+    // /api/wms/transferir-galpao já dispara par S+E atômico — não há
+    // segundo passo de "receber" (esse só existe pra transferências com
+    // header em siso_transferencias_galpao, que esse fluxo 3D não usa).
+    await ctx.transferirGalpao({
       origem: "CWB", destino: "SP",
       items: [{ sku, qty: 10 }],
     });
-    // Confirma recebimento via endpoint
-    await ctx.http.post(`/api/wms/transferencias/${t.id}/receber`);
   },
 
   assertEsperado: async (ctx, { sku }) => {

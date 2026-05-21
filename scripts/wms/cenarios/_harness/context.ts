@@ -222,7 +222,23 @@ export function createContext(opts: {
   }
 
   async function aprovar(pedidoId: string, decisao?: "propria" | "transferencia" | "oc") {
-    await http.post("/api/wms/pedidos/aprovar", { pedido_id: pedidoId, decisao });
+    // Default a decisao quando o cenário não passa — o webhook-processor já gravou
+    // sugestao em siso_pedidos, então recuperamos pra mandar como decisao explícita
+    // (a rota /aprovar exige `decisao` obrigatório).
+    let decisaoFinal: "propria" | "transferencia" | "oc" | undefined = decisao;
+    if (!decisaoFinal) {
+      const { data } = await sb
+        .from("siso_pedidos")
+        .select("sugestao")
+        .eq("id", pedidoId)
+        .maybeSingle();
+      const sug = (data as { sugestao?: string } | null)?.sugestao;
+      if (sug === "propria" || sug === "transferencia" || sug === "oc") {
+        decisaoFinal = sug;
+      }
+    }
+    // Rota espera camelCase `pedidoId` + `decisao` (snake_case foi rejeitado em 400).
+    await http.post("/api/wms/pedidos/aprovar", { pedidoId, decisao: decisaoFinal });
   }
 
   async function iniciarSeparacao(pedidoId: string) {
@@ -262,7 +278,33 @@ export function createContext(opts: {
   }
 
   async function parcial(p: { pedido: string; item: string; qty: number; loc_zerou: boolean }) {
-    await http.post("/api/wms/separacao/parcial", { pedido_id: p.pedido, sku: p.item, quantidade: p.qty, loc_zerou: p.loc_zerou });
+    // Rota espera pedido_item_id (não pedido_id+sku). Resolve via siso_pedido_itens
+    // pelo SKU. Também usa galpao header e session — getSessionUser exige X-Session-Id
+    // que já vem do http client. Quantidade vai como `quantidade_pega` (int).
+    const { data: ped } = await sb
+      .from("siso_pedidos")
+      .select("separacao_galpao_id")
+      .eq("id", p.pedido)
+      .maybeSingle();
+    const galpaoId = (ped as { separacao_galpao_id?: string } | null)?.separacao_galpao_id;
+    const headers: Record<string, string> = galpaoId ? { "X-Galpao-Id": galpaoId } : {};
+
+    const { data: items } = await sb
+      .from("siso_pedido_itens")
+      .select("id, sku")
+      .eq("pedido_id", p.pedido);
+    const item = (items as Array<{ id: string | number; sku: string }> | null)?.find((i) => i.sku === p.item);
+    if (!item) throw new Error(`parcial: item ${p.item} não encontrado no pedido ${p.pedido}`);
+
+    await http.post(
+      "/api/wms/separacao/parcial",
+      {
+        pedido_item_id: item.id,
+        quantidade_pega: p.qty,
+        loc_zerou: p.loc_zerou,
+      },
+      headers,
+    );
   }
 
   async function desfazerParcial(p: { pedido: string; item: string }) {
@@ -455,22 +497,28 @@ export function createContext(opts: {
       .select("id")
       .eq("nome", "TestSupplier-Default")
       .single();
-    const res = await http.post<{ pendencias: string[] }>("/api/wms/receber", {
-      galpao_id,
-      itens,
-      empresa_compradora_id: staging.empresas.netair.id,
-      fornecedor_id: fornecedor!.id,
-      entrada_direta: p.entrada_direta ?? false,
-    });
-    return res;
+    const res = await http.post<{ ok: boolean; pendencia_ids: string[]; localizacao_recebimento_id: string | null; lote_id: string; mov_ids: string[] }>(
+      "/api/wms/receber",
+      {
+        galpao_id,
+        itens,
+        empresa_compradora_id: staging.empresas.netair.id,
+        fornecedor_id: fornecedor!.id,
+        entrada_direta: p.entrada_direta ?? false,
+      },
+    );
+    // Normaliza pra forma exposta pelo Ctx (pendencias é o alias usado pelos cenários).
+    return { ...res, pendencias: res.pendencia_ids };
   }
 
   async function guardar(p: { pendencia_id: string; loc_destino: string; qty?: number }) {
-    const { data: pend } = await sb.from("siso_wms_pendencias_guarda").select("galpao_id").eq("id", p.pendencia_id).single();
-    const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", (pend as { galpao_id: string }).galpao_id).eq("codigo", p.loc_destino).single();
+    const { data: pend } = await sb.from("siso_wms_pendencias_guarda").select("galpao_id, qty_pendente").eq("id", p.pendencia_id).single();
+    const pendRow = pend as { galpao_id: string; qty_pendente?: number };
+    const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", pendRow.galpao_id).eq("codigo", p.loc_destino).single();
+    // Rota usa `qty` (não `quantidade`); default = qty_pendente atual.
     await http.post(`/api/wms/guarda/${p.pendencia_id}/confirmar`, {
       localizacao_destino_id: loc!.id,
-      quantidade: p.qty,
+      qty: p.qty ?? pendRow.qty_pendente,
     });
   }
 
@@ -487,13 +535,41 @@ export function createContext(opts: {
 
   // ── movs operacionais ──
   async function transferirGalpao(p: { origem: "CWB" | "SP"; destino: "CWB" | "SP"; items: { sku: string; qty: number }[] }) {
-    const origem_id = staging.galpoes[p.origem.toLowerCase() as "cwb" | "sp"].id;
-    const destino_id = staging.galpoes[p.destino.toLowerCase() as "cwb" | "sp"].id;
-    const itens = await Promise.all(p.items.map(async (it) => {
+    const galpao_origem_id = staging.galpoes[p.origem.toLowerCase() as "cwb" | "sp"].id;
+    const galpao_destino_id = staging.galpoes[p.destino.toLowerCase() as "cwb" | "sp"].id;
+    // Pré-resolve loc origem (qualquer loc com saldo > 0 do produto) e loc
+    // destino (a loc RECEBIMENTO do galpão destino — comportamento padrão).
+    // Em 3D não há mais transferência por header; é par S+E direto.
+    const itens: { produto_id: string; qty: number }[] = [];
+    let locOrigemId: string | null = null;
+    for (const it of p.items) {
       const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", it.sku).single();
-      return { produto_id: prod!.id, qty: it.qty };
-    }));
-    return http.post<{ id: string }>("/api/wms/transferir-galpao", { origem_id, destino_id, itens });
+      itens.push({ produto_id: prod!.id, qty: it.qty });
+      if (!locOrigemId) {
+        const { data: linha } = await sb
+          .from("siso_estoque")
+          .select("localizacao_id, saldo")
+          .eq("produto_id", prod!.id)
+          .eq("galpao_id", galpao_origem_id)
+          .gt("saldo", 0)
+          .order("saldo", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        locOrigemId = (linha as { localizacao_id?: string } | null)?.localizacao_id ?? null;
+      }
+    }
+    if (!locOrigemId) throw new Error("transferirGalpao: nenhuma loc com saldo no galpão origem");
+
+    const locDestinoId = staging.galpoes[p.destino.toLowerCase() as "cwb" | "sp"].recebimento_loc_id;
+    const res = await http.post<{ ok: boolean; origem_id: string }>("/api/wms/transferir-galpao", {
+      galpao_origem_id,
+      localizacao_origem_id: locOrigemId,
+      galpao_destino_id,
+      localizacao_destino_id: locDestinoId,
+      itens,
+    });
+    // Compat com cenários que esperam {id} — usa origem_id como handle.
+    return { id: res.origem_id };
   }
 
   async function replenishment(p: { sku: string; galpao: "CWB" | "SP"; origem_loc: string; destino_loc: string; qty: number }) {
@@ -525,21 +601,63 @@ export function createContext(opts: {
     });
   }
 
-  async function lancamentoRetroativo(p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; tipo: "E" | "S" }) {
+  async function lancamentoRetroativo(p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; tipo: "E" | "S"; custo?: number }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
     const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.loc).single();
-    return http.post<{ id: string }>("/api/wms/lancamento-retroativo", {
-      produto_id: prod!.id,
-      galpao_id,
-      localizacao_id: loc!.id,
-      quantidade: p.qty,
-      tipo: p.tipo,
+    // Rota espera body { tripla, qty, motivo (≥3) }. Endpoint não retorna id da
+    // pendência criada, mas o cenário precisa do id pra reconciliar — buscamos
+    // do banco logo após o POST (a row mais recente do produto+loc+galpão).
+    await http.post("/api/wms/lancamento-retroativo", {
+      tripla: { produto_id: prod!.id, galpao_id, localizacao_id: loc!.id },
+      qty: p.qty,
+      motivo: `harness retroativo [${correlationId.slice(0, 8)}]`,
+      custo_unitario: p.custo,
     });
+    // O lançamento retroativo é uma mov 'E' em siso_movimentacoes com
+    // origem_tipo='lancamento_retroativo'. Busca a mais recente do trio.
+    const { data: row } = await sb
+      .from("siso_movimentacoes")
+      .select("id")
+      .eq("produto_id", prod!.id)
+      .eq("galpao_id", galpao_id)
+      .eq("localizacao_id", loc!.id)
+      .eq("origem_tipo", "lancamento_retroativo")
+      .order("criado_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const id = (row as { id?: string } | null)?.id;
+    if (!id) throw new Error("lancamentoRetroativo: mov recém-criada não encontrada");
+    return { id, produto_id: prod!.id, galpao_id, localizacao_id: loc!.id };
   }
 
-  async function reconciliarRetroativo(id: string) {
-    await http.post(`/api/wms/lancamento-retroativo/${id}/reconciliar`);
+  async function reconciliarRetroativo(id: string, compra_mov_id?: string) {
+    // Rota exige `compra_mov_id`. Se não vier, busca a mov de compra mais
+    // recente desse produto (fluxo de cenários: lança retroativo, depois
+    // chega NF/receber).
+    let compraMovId = compra_mov_id;
+    if (!compraMovId) {
+      // Pega o produto_id da mov retroativa
+      const { data: retro } = await sb
+        .from("siso_movimentacoes")
+        .select("produto_id")
+        .eq("id", id)
+        .maybeSingle();
+      const produtoId = (retro as { produto_id?: string } | null)?.produto_id;
+      if (produtoId) {
+        const { data: compra } = await sb
+          .from("siso_movimentacoes")
+          .select("id")
+          .eq("produto_id", produtoId)
+          .in("origem_tipo", ["nf_compra"])
+          .order("criado_em", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        compraMovId = (compra as { id?: string } | null)?.id;
+      }
+    }
+    if (!compraMovId) throw new Error("reconciliarRetroativo: compra_mov_id não encontrada");
+    await http.post(`/api/wms/lancamento-retroativo/${id}/reconciliar`, { compra_mov_id: compraMovId });
   }
 
   // ── vendas ──
@@ -552,7 +670,15 @@ export function createContext(opts: {
     }));
     return http.post<{ id: string; degradado: boolean; motivo_degradacao?: string; skus_sem_saldo?: string[] }>(
       "/api/wms/vendas/criar",
-      { galpao_id, empresa_origem_id, items: itens, modo: p.modo },
+      {
+        cliente_nome: "Cliente Teste Harness",
+        cliente_cpf_cnpj: null,
+        canal_venda: "balcao",
+        galpao_id,
+        empresa_origem_id,
+        items: itens,
+        modo: p.modo,
+      },
     );
   }
 
@@ -593,18 +719,57 @@ export function createContext(opts: {
 
   // ── devoluções ──
   async function classificarDevolucao(p: { devolucao_id: string; classificacao: "A" | "B" | "C" | "D" }) {
-    await http.post(`/api/wms/devolucoes/${p.devolucao_id}/classificar`, { classificacao: p.classificacao });
+    // Mapeamento legado A/B/C/D → strings que a rota aceita (3D).
+    const mapa = {
+      A: "integro",
+      B: "avariado",
+      C: "garantia",
+      D: "troca_sku",
+    } as const;
+    const classificacaoStr = mapa[p.classificacao];
+
+    // Rota exige produto_id, galpao_id, localizacao_id, qty no body.
+    // Inferimos do payload da devolução pendente em DB (cenários injetam isso
+    // no `payload_webhook` ou em colunas; rotina é flexível pra ambos).
+    const { data: dev } = await sb
+      .from("siso_devolucoes_pendentes")
+      .select("payload_webhook, empresa_id")
+      .eq("id", p.devolucao_id)
+      .maybeSingle();
+    const payload = (dev as { payload_webhook?: Record<string, unknown> } | null)
+      ?.payload_webhook ?? {};
+    const produto_id = (payload as { produto_id?: string }).produto_id;
+    const galpao_id = (payload as { galpao_id?: string }).galpao_id;
+    const localizacao_id = (payload as { localizacao_id?: string }).localizacao_id;
+    const qty = (payload as { qty?: number }).qty;
+    if (!produto_id || !galpao_id || !localizacao_id || !qty) {
+      throw new Error(
+        `classificarDevolucao: payload_webhook precisa de produto_id/galpao_id/localizacao_id/qty (recebido: ${JSON.stringify(payload)})`,
+      );
+    }
+    await http.post(`/api/wms/devolucoes/${p.devolucao_id}/classificar`, {
+      classificacao: classificacaoStr,
+      produto_id,
+      galpao_id,
+      localizacao_id,
+      qty,
+    });
   }
 
   // ── inventário ──
   async function criarSessaoInventario(p: { galpao: "CWB" | "SP"; locs: string[]; modo?: "blind" | "aberto"; tipo?: "cycle_count" | "completo" }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const { data: locs } = await sb.from("siso_localizacoes").select("id, codigo").eq("galpao_id", galpao_id).in("codigo", p.locs);
-    const loc_ids = (locs ?? []).map((l: { id: string }) => l.id);
+    // Rota espera `localizacoes: [{ localizacao_id, motivo? }]` (LocSessaoInput[]),
+    // não array de ids planos. `modo` → `modo_contagem` per route body shape.
+    const localizacoes = (locs ?? []).map((l: { id: string }) => ({
+      localizacao_id: l.id,
+      motivo: "manual" as const,
+    }));
     const res = await http.post<{ id: string }>("/api/wms/inventario", {
       galpao_id,
-      localizacoes_ids: loc_ids,
-      modo: p.modo ?? "blind",
+      localizacoes,
+      modo_contagem: p.modo ?? "blind",
       tipo: p.tipo ?? "cycle_count",
     });
     await http.post(`/api/wms/inventario/${res.id}/iniciar`);
@@ -623,17 +788,28 @@ export function createContext(opts: {
     const { data: sess } = await sb.from("siso_inventario_sessoes").select("galpao_id").eq("id", p.sessao_id).single();
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
     const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", (sess as { galpao_id: string }).galpao_id).eq("codigo", p.loc).single();
+    // Rota lê `qty_contada` (não `quantidade`) — schema 3D.
     await http.post(`/api/wms/inventario/${p.sessao_id}/contagens`, {
       produto_id: prod!.id,
       localizacao_id: loc!.id,
-      quantidade: p.qty,
+      qty_contada: p.qty,
     });
   }
 
   async function finalizarLocInventario(p: { sessao_id: string; loc: string }) {
+    // O parâmetro [locId] da rota é o id da row em `siso_inventario_localizacoes`
+    // (não em `siso_localizacoes`). Resolve via JOIN no codigo.
     const { data: sess } = await sb.from("siso_inventario_sessoes").select("galpao_id").eq("id", p.sessao_id).single();
     const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", (sess as { galpao_id: string }).galpao_id).eq("codigo", p.loc).single();
-    await http.post(`/api/wms/inventario/${p.sessao_id}/localizacoes/${loc!.id}/finalizar`);
+    const { data: invLoc } = await sb
+      .from("siso_inventario_localizacoes")
+      .select("id")
+      .eq("sessao_id", p.sessao_id)
+      .eq("localizacao_id", loc!.id)
+      .maybeSingle();
+    const invLocId = (invLoc as { id?: string } | null)?.id;
+    if (!invLocId) throw new Error(`finalizarLocInventario: row em siso_inventario_localizacoes não encontrada (sessao=${p.sessao_id}, loc=${p.loc})`);
+    await http.post(`/api/wms/inventario/${p.sessao_id}/localizacoes/${invLocId}/finalizar`);
   }
 
   async function aprovarInventario(sessaoId: string) {

@@ -16,6 +16,9 @@ export default {
     // 1. Cria sessão de inventário em A-01-04
     const sess = await ctx.criarSessaoInventario({ galpao: "CWB", locs: ["A-01-04"], modo: "blind", tipo: "cycle_count" });
     await ctx.entrarParty(sess.id);
+    // Reivindica a loc via pull queue — sem isso a loc não fica bloqueada
+    // pelo operador e o finalizar dá 400 ("apenas o operador que bloqueou…").
+    await ctx.proximaLoc(sess.id);
 
     // 2. Pedido bipa 3 unidades — acontece DEPOIS de criar a sessão mas ANTES de o operador contar
     const pedido = await ctx.webhook({ empresa: ctx.staging.empresas.netair.cnpj, items: [{ sku, qty: 3 }] });

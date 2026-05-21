@@ -5239,6 +5239,44 @@ Agrega contadores cross-módulo numa resposta única (refetch 30s no client).
 
 ---
 
+### `GET /api/wms/dashboard-tarefas`
+
+Retorna o estado das 6 filas operacionais que o quadro de tarefas pendentes da home `/wms` exibe.
+
+**Auth:** sessão válida (`X-Session-Id`).
+
+**Query string:**
+
+| Param | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `galpao_id` | uuid | não | Quando ausente, agrega todos os galpões. Quando presente, filtra pedidos (`separacao_galpao_id`), guarda (`galpao_id`) e inventário (`galpao_id`). Compras é cross-galpão sempre. |
+
+**Resposta 200:**
+
+```json
+{
+  "galpao_id": "uuid-or-null",
+  "aprovacao":  { "count": 0 },
+  "separacao":  { "count": 0, "executores": [{ "id": "uuid", "nome": "…", "foto_url": "…|null" }] },
+  "embalagem":  { "count": 0, "executores": [] },
+  "guarda":     { "count": 0, "executores": [] },
+  "compras":    { "aComprar": 0, "aReceber": 0 },
+  "inventario": { "sessoesAtivas": 0, "executores": [] }
+}
+```
+
+**Side effects:** nenhum (read-only).
+
+**Notas:**
+- `executores` em Separação = `separacao_operador_id` de pedidos em `em_separacao`.
+- `executores` em Embalagem = `embalagem_operador_id` quando setado.
+- `executores` em Guarda = `iniciada_por` de pendências em `em_guarda`.
+- `executores` em Inventário = `siso_inventario_operadores` ativos (party) das sessões em andamento.
+- Compras "a receber" usa `siso_ordens_compra.status IN ('comprado', 'parcialmente_recebido')`.
+- Aprovação e Compras não têm executor (são filas de espera).
+
+---
+
 ## WMS — Mini-Swap / Swap (REMOVIDO em 2026-05-20)
 
 > Endpoints `/api/wms/mini-swap/config[*]`, `/api/wms/mini-swap/simular`, `/api/wms/swap/detectar` e `/api/wms/swap/executar` foram **removidos** com o ledger simplificado 3D. Empresa não é mais coordenada física, não há mais o que swappear. Frontend `/wms/configuracoes/otimizacoes` também foi removido. Código TypeScript preservado em `src/lib/wms/_archive/`.

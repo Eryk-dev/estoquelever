@@ -33,6 +33,8 @@ const _isMain = (() => {
   catch { return false; }
 })();
 if (_isMain) {
-  const mod = await import(import.meta.url);
-  await runStandalone(mod.default);
+  void (async () => {
+    const mod = await import(import.meta.url);
+    await runStandalone(mod.default);
+  })();
 }

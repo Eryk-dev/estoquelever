@@ -2,8 +2,10 @@
 -- Roles & Permissões — substitui controle de acesso baseado em cargos[]
 -- ──────────────────────────────────────────────────────────────────────
 
+BEGIN;
+
 -- 1. Schema
-create table siso_roles (
+create table if not exists siso_roles (
   id            uuid primary key default gen_random_uuid(),
   codigo        text not null unique,
   nome          text not null,
@@ -14,20 +16,20 @@ create table siso_roles (
   atualizado_em timestamptz not null default now()
 );
 
-create table siso_role_permissoes (
+create table if not exists siso_role_permissoes (
   role_id          uuid not null references siso_roles(id) on delete cascade,
   permissao_codigo text not null,
   primary key (role_id, permissao_codigo)
 );
 
-create table siso_usuario_roles (
+create table if not exists siso_usuario_roles (
   usuario_id uuid not null references siso_usuarios(id) on delete cascade,
   role_id    uuid not null references siso_roles(id) on delete cascade,
   primary key (usuario_id, role_id)
 );
 
-create index siso_role_permissoes_codigo_idx on siso_role_permissoes(permissao_codigo);
-create index siso_usuario_roles_role_idx on siso_usuario_roles(role_id);
+create index if not exists siso_role_permissoes_codigo_idx on siso_role_permissoes(permissao_codigo);
+create index if not exists siso_usuario_roles_role_idx on siso_usuario_roles(role_id);
 
 -- 2. Seed das 6 roles sistema
 insert into siso_roles (codigo, nome, descricao, sistema) values
@@ -36,7 +38,8 @@ insert into siso_roles (codigo, nome, descricao, sistema) values
   ('operador_cwb', 'Operador CWB', 'Operador alocado em CWB',                         true),
   ('operador_sp',  'Operador SP',  'Operador alocado em SP',                          true),
   ('comprador',    'Comprador',    'Acesso ao módulo de compras e relatórios',       true),
-  ('vendedor',     'Vendedor',     'Acesso a Vendas Diretas',                         true);
+  ('vendedor',     'Vendedor',     'Acesso a Vendas Diretas',                         true)
+on conflict (codigo) do nothing;
 
 -- 3. Seed das permissões iniciais por role
 -- admin: TODAS as 30
@@ -56,7 +59,8 @@ with all_perms(p) as (values
   ('sistema.usuarios'), ('sistema.roles'), ('sistema.conexoes'), ('sistema.galpoes_empresas')
 )
 insert into siso_role_permissoes (role_id, permissao_codigo)
-select r.id, p from siso_roles r cross join all_perms where r.codigo = 'admin';
+select r.id, p from siso_roles r cross join all_perms where r.codigo = 'admin'
+on conflict (role_id, permissao_codigo) do nothing;
 
 -- operador (todos galpões), operador_cwb, operador_sp — mesmo set
 with op_perms(p) as (values
@@ -76,7 +80,8 @@ with op_perms(p) as (values
 insert into siso_role_permissoes (role_id, permissao_codigo)
 select r.id, p
 from siso_roles r cross join op_perms
-where r.codigo in ('operador', 'operador_cwb', 'operador_sp');
+where r.codigo in ('operador', 'operador_cwb', 'operador_sp')
+on conflict (role_id, permissao_codigo) do nothing;
 
 -- comprador
 with comp_perms(p) as (values
@@ -86,20 +91,24 @@ with comp_perms(p) as (values
   ('relatorios.ver')
 )
 insert into siso_role_permissoes (role_id, permissao_codigo)
-select r.id, p from siso_roles r cross join comp_perms where r.codigo = 'comprador';
+select r.id, p from siso_roles r cross join comp_perms where r.codigo = 'comprador'
+on conflict (role_id, permissao_codigo) do nothing;
 
 -- vendedor
 with vend_perms(p) as (values
   ('vendas.ver'), ('vendas.criar')
 )
 insert into siso_role_permissoes (role_id, permissao_codigo)
-select r.id, p from siso_roles r cross join vend_perms where r.codigo = 'vendedor';
+select r.id, p from siso_roles r cross join vend_perms where r.codigo = 'vendedor'
+on conflict (role_id, permissao_codigo) do nothing;
 
 -- 4. Backfill siso_usuario_roles a partir de siso_usuarios.cargos[] (ou .cargo)
 insert into siso_usuario_roles (usuario_id, role_id)
 select u.id, r.id
 from siso_usuarios u
-cross join lateral unnest(coalesce(u.cargos, ARRAY[u.cargo])) c
+cross join lateral unnest(
+  case when cardinality(u.cargos) = 0 then ARRAY[u.cargo] else u.cargos end
+) c
 join siso_roles r on r.codigo = c
 on conflict do nothing;
 
@@ -127,6 +136,7 @@ begin
   return null;
 end; $$ language plpgsql;
 
+drop trigger if exists trg_sync_cargos_after_roles on siso_usuario_roles;
 create trigger trg_sync_cargos_after_roles
   after insert or delete on siso_usuario_roles
   for each row execute function wms_sync_cargos_from_roles();
@@ -161,6 +171,9 @@ create or replace function siso_roles_touch_atualizado_em() returns trigger as $
 begin new.atualizado_em := now(); return new; end;
 $$ language plpgsql;
 
+drop trigger if exists trg_siso_roles_touch on siso_roles;
 create trigger trg_siso_roles_touch
   before update on siso_roles
   for each row execute function siso_roles_touch_atualizado_em();
+
+COMMIT;

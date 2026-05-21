@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 const MAX_BYTES = 2 * 1024 * 1024; // 2MB
 const ALLOWED_MIME = [
@@ -44,9 +45,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ erro: "file é obrigatório" }, { status: 400 });
   }
 
-  const cargos = user.cargos?.length ? user.cargos : [user.cargo];
-  const isAdmin = cargos.includes("admin");
-  if (!isAdmin && user.id !== id) {
+  const podeGerenciarOutros = userCan(user, "sistema.usuarios");
+  if (!podeGerenciarOutros && user.id !== id) {
     return NextResponse.json(
       { erro: "só admin pode trocar foto de outro usuário" },
       { status: 403 },
@@ -133,9 +133,8 @@ export async function DELETE(req: NextRequest) {
   if (!id) {
     return NextResponse.json({ erro: "id é obrigatório" }, { status: 400 });
   }
-  const cargos = user.cargos?.length ? user.cargos : [user.cargo];
-  const isAdmin = cargos.includes("admin");
-  if (!isAdmin && user.id !== id) {
+  const podeGerenciarOutros = userCan(user, "sistema.usuarios");
+  if (!podeGerenciarOutros && user.id !== id) {
     return NextResponse.json(
       { erro: "só admin pode remover foto de outro usuário" },
       { status: 403 },

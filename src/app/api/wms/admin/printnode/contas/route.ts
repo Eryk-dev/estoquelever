@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * GET /api/wms/admin/printnode/contas
@@ -13,21 +15,15 @@ import { createServiceClient } from "@/lib/supabase-server";
  * Headers: x-siso-user-id (admin only)
  */
 export async function GET(request: NextRequest) {
-  const userId = request.headers.get("x-siso-user-id");
-  if (!userId) {
+  const session = await getSessionUser(request);
+  if (!session) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  }
+  if (!userCan(session, "sistema.conexoes")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 
   const supabase = createServiceClient();
-  const { data: user } = await supabase
-    .from("siso_usuarios")
-    .select("cargo, cargos")
-    .eq("id", userId)
-    .single();
-
-  if (!user || !(user.cargos ?? [user.cargo]).includes("admin")) {
-    return NextResponse.json({ error: "Acesso restrito" }, { status: 403 });
-  }
 
   const { data, error } = await supabase
     .from("siso_printnode_contas")
@@ -55,21 +51,15 @@ export async function GET(request: NextRequest) {
  * Body: { label: string, api_key: string }
  */
 export async function POST(request: NextRequest) {
-  const userId = request.headers.get("x-siso-user-id");
-  if (!userId) {
+  const session = await getSessionUser(request);
+  if (!session) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  }
+  if (!userCan(session, "sistema.conexoes")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 
   const supabase = createServiceClient();
-  const { data: user } = await supabase
-    .from("siso_usuarios")
-    .select("cargo, cargos")
-    .eq("id", userId)
-    .single();
-
-  if (!user || !(user.cargos ?? [user.cargo]).includes("admin")) {
-    return NextResponse.json({ error: "Acesso restrito" }, { status: 403 });
-  }
 
   const body = await request.json().catch(() => null);
   const label = typeof body?.label === "string" ? body.label.trim() : "";

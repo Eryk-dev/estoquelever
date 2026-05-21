@@ -1,3 +1,18 @@
+export const MODULOS_ORDEM = [
+  "vendas",
+  "visibilidade",
+  "operacoes",
+  "inventario",
+  "insights",
+  "relatorios",
+  "cadastros",
+  "sistema",
+] as const;
+
+export type ModuloId = (typeof MODULOS_ORDEM)[number];
+
+type PermissionEntry = { modulo: ModuloId; label: string };
+
 export const PERMISSIONS = {
   // ── Vendas ──
   "vendas.ver":           { modulo: "vendas",        label: "Ver Vendas Diretas" },
@@ -42,13 +57,22 @@ export const PERMISSIONS = {
   "sistema.roles":            { modulo: "sistema",  label: "Gerenciar roles e permissões" },
   "sistema.conexoes":         { modulo: "sistema",  label: "Gerenciar conexões Tiny/ML/PrintNode" },
   "sistema.galpoes_empresas": { modulo: "sistema",  label: "Gerenciar galpões/empresas/grupos" },
-} as const;
+} as const satisfies Record<string, PermissionEntry>;
 
 export type PermissaoCodigo = keyof typeof PERMISSIONS;
 export const PERMISSAO_CODIGOS = Object.keys(PERMISSIONS) as PermissaoCodigo[];
 
 export type PermissoesPort = { permissoes: Set<string> };
 
+/**
+ * Check that the session has ALL of the given permissions.
+ *
+ * - Returns `false` when session is null (no auth).
+ * - Returns `true` when `required` is empty (vacuously satisfied — useful
+ *   for filtering nav items where an empty `requires` means "show to any
+ *   authenticated user").
+ * - Returns `true` only when EVERY required code is in the session set.
+ */
 export function userCan(
   session: PermissoesPort | null,
   ...required: PermissaoCodigo[]
@@ -57,6 +81,15 @@ export function userCan(
   return required.every((p) => session.permissoes.has(p));
 }
 
+/**
+ * Check that the session has AT LEAST ONE of the given permissions.
+ *
+ * - Returns `false` when session is null OR `required` is empty.
+ * - Returns `true` when at least one required code is in the session set.
+ *
+ * Note: asymmetric with `userCan` on empty `required` (this returns false,
+ * `userCan` returns true). Empty OR-of-nothing is vacuously false.
+ */
 export function userCanAny(
   session: PermissoesPort | null,
   ...required: PermissaoCodigo[]
@@ -65,19 +98,6 @@ export function userCanAny(
   if (required.length === 0) return false;
   return required.some((p) => session.permissoes.has(p));
 }
-
-export const MODULOS_ORDEM = [
-  "vendas",
-  "visibilidade",
-  "operacoes",
-  "inventario",
-  "insights",
-  "relatorios",
-  "cadastros",
-  "sistema",
-] as const;
-
-export type ModuloId = (typeof MODULOS_ORDEM)[number];
 
 export const MODULOS_LABEL: Record<ModuloId, string> = {
   vendas: "Vendas",

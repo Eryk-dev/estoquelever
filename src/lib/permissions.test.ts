@@ -4,7 +4,6 @@ import {
   PERMISSAO_CODIGOS,
   userCan,
   userCanAny,
-  type PermissaoCodigo,
 } from "./permissions";
 
 describe("PERMISSIONS registry", () => {
@@ -42,7 +41,7 @@ describe("userCan", () => {
   });
 
   it("retorna false quando alguma permissão falta", () => {
-    expect(userCan(session, "compras.ver", "pedidos.aprovar" as PermissaoCodigo)).toBe(false);
+    expect(userCan(session, "compras.ver", "pedidos.aprovar")).toBe(false);
   });
 
   it("retorna true quando required é vazio (vacuosamente verdadeiro)", () => {
@@ -54,11 +53,11 @@ describe("userCanAny", () => {
   const session = { permissoes: new Set(["compras.ver"]) };
 
   it("retorna true quando qualquer permissão está no Set", () => {
-    expect(userCanAny(session, "compras.ver", "pedidos.aprovar" as PermissaoCodigo)).toBe(true);
+    expect(userCanAny(session, "compras.ver", "pedidos.aprovar")).toBe(true);
   });
 
   it("retorna false quando nenhuma permissão está no Set", () => {
-    expect(userCanAny(session, "pedidos.aprovar" as PermissaoCodigo)).toBe(false);
+    expect(userCanAny(session, "pedidos.aprovar")).toBe(false);
   });
 
   it("retorna false quando session é null", () => {

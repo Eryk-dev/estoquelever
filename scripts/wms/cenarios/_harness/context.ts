@@ -570,7 +570,9 @@ export function createContext(opts: {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
     const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.loc).single();
-    const ttl_horas = p.ttl_horas ?? (p.ttl_segundos ? p.ttl_segundos / 3600 : 48);
+    // wms_reservar_atomico.p_ttl_horas é integer. Pra TTL em segundos, força
+    // ttl_horas=0 (expira_em = now()) e o caller faz aguardar() antes do cleanup.
+    const ttl_horas = p.ttl_horas !== undefined ? p.ttl_horas : (p.ttl_segundos !== undefined ? 0 : 48);
     const { data, error } = await sb.rpc("wms_reservar_atomico", {
       p_produto_id: prod!.id,
       p_galpao_id: galpao_id,
@@ -584,7 +586,9 @@ export function createContext(opts: {
   }
 
   async function cleanupReservas() {
-    return http.get<{ liberadas: number }>("/api/wms/reservas/cleanup");
+    return http.get<{ liberadas: number }>("/api/wms/reservas/cleanup", {
+      "x-worker-secret": process.env.WORKER_SECRET ?? "test-worker-secret",
+    });
   }
 
   // ── devoluções ──

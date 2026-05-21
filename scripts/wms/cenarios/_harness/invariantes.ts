@@ -90,14 +90,16 @@ async function i4ReservasOrfas(sb: SupabaseClient): Promise<InvariantResult> {
   const orfas: unknown[] = [];
   for (const r of data ?? []) {
     if (r.expira_em && r.expira_em > agora) continue; // ainda válida
-    // Procura mov L correspondente (mesmo origem_id)
-    const { data: lib } = await sb
-      .from("siso_movimentacoes")
-      .select("id")
-      .eq("tipo", "L")
-      .eq("origem_id", r.origem_id)
-      .maybeSingle();
-    if (!lib) orfas.push(r);
+    // Procura mov L correspondente (mesmo origem_id). origem_id pode ser null
+    // em reservas avulsas (harness/teste sem pedido); usar .is() pra match com null.
+    let q = sb.from("siso_movimentacoes").select("id").eq("tipo", "L");
+    if (r.origem_id === null || r.origem_id === undefined) {
+      q = q.is("origem_id", null);
+    } else {
+      q = q.eq("origem_id", r.origem_id);
+    }
+    const { data: lib } = await q.limit(1);
+    if (!lib || lib.length === 0) orfas.push(r);
   }
   return {
     nome: "I4: reservas órfãs",

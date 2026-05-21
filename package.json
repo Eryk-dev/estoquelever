@@ -13,7 +13,8 @@
     "seed:cenarios": "tsx scripts/wms/seed-cenarios.ts",
     "verificar:saldos": "tsx scripts/wms/verificar-saldos.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:integration": "vitest run -c vitest.integration.config.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",

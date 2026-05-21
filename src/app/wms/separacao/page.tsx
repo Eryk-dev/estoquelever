@@ -24,7 +24,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
-import { sisoFetch, useAuth } from "@/lib/auth-context";
+import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import {
   Icon,
@@ -253,9 +253,12 @@ export default function WmsSeparacaoPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, activeGalpaoId } = useAuth();
+  const { can } = usePermissoes();
   const queryClient = useQueryClient();
   const isAdmin =
     (user?.cargos ?? []).includes("admin") || user?.cargo === "admin";
+  // Botões admin de separação (forçar pendente, voltar etapa, reimprimir, tags)
+  const podeAdministrar = can("separacao.administrar");
 
   const tab = parseTab(searchParams?.get("tab"));
   const busca = searchParams?.get("busca") ?? "";
@@ -894,7 +897,8 @@ export default function WmsSeparacaoPage() {
               Limpar
             </button>
 
-            {/* Tag */}
+            {/* Tag — gerenciar tags é ação admin de separação */}
+            {podeAdministrar && (
             <div style={{ position: "relative" }}>
               <button
                 className="wms-btn wms-btn-ghost wms-btn-sm"
@@ -929,9 +933,10 @@ export default function WmsSeparacaoPage() {
                 />
               )}
             </div>
+            )}
 
             {/* Mover etapa (admin) */}
-            {isAdmin && moveTargets && (
+            {podeAdministrar && moveTargets && (
               <div style={{ position: "relative" }}>
                 <button
                   className="wms-btn wms-btn-ghost wms-btn-sm"
@@ -1028,7 +1033,7 @@ export default function WmsSeparacaoPage() {
 
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             {/* Ações específicas por tab que requerem selection */}
-            {tab === "aguardando_nf" && isAdmin && (
+            {tab === "aguardando_nf" && podeAdministrar && (
               <button
                 className="wms-btn wms-btn-ghost wms-btn-sm"
                 onClick={() => forcarPendenteMut.mutate(selectedArr)}

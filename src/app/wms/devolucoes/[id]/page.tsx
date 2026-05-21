@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
+import { usePermissoes } from "@/lib/auth-context";
 import { TriplaPicker } from "@/components/wms/tripla-picker";
 import {
   Icon,
@@ -74,6 +75,8 @@ export default function ClassificarPage({
   const { id } = use(params);
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { can } = usePermissoes();
+  const podeClassificar = can("operacoes.devolucoes");
   const [classificacao, setClassificacao] =
     useState<Classificacao>("integro");
   const [produto_id, setProduto] = useState<string>();
@@ -290,7 +293,8 @@ export default function ClassificarPage({
         <button
           type="button"
           className="wms-btn wms-btn-primary"
-          disabled={!valid || submit.isPending}
+          disabled={!valid || submit.isPending || !podeClassificar}
+          title={!podeClassificar ? "Sem permissão pra classificar devolução" : ""}
           onClick={() => submit.mutate()}
         >
           <Icon name="check" size={11} />

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { sisoFetch, useAuth } from "@/lib/auth-context";
+import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
 import {
   PageHeader,
   Icon,
@@ -66,6 +66,8 @@ export default function WmsPedidosPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, activeGalpaoId, activeGalpaoNome } = useAuth();
+  const { can } = usePermissoes();
+  const podeAprovar = can("pedidos.aprovar");
   const queryClient = useQueryClient();
 
   const cargos = useMemo(
@@ -459,6 +461,7 @@ export default function WmsPedidosPage() {
               toCardPedido={toCardPedido}
               onAprovar={aprovarPedido}
               onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
+              podeAprovar={podeAprovar}
             />
           )}
 
@@ -502,11 +505,13 @@ function TabPendente({
   toCardPedido,
   onAprovar,
   onClickPedido,
+  podeAprovar,
 }: {
   pedidos: Pedido[];
   toCardPedido: (p: Pedido) => Parameters<typeof PedidoCardWms>[0]["pedido"];
   onAprovar: (p: Pedido, decisao: Decisao) => Promise<void> | void;
   onClickPedido: (id: string) => void;
+  podeAprovar: boolean;
 }) {
   // Estado local de loading por pedido (impede aprovações duplas)
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -551,26 +556,30 @@ function TabPendente({
           <PedidoCardWms
             pedido={toCardPedido(p)}
             onClick={() => onClickPedido(p.id)}
-            interactive={{
-              loading: loadingId === p.id,
-              onApprove: async (decisao) => {
-                if (
-                  !window.confirm(
-                    `Aprovar pedido #${p.numero} com a decisão "${decisao}"?`,
-                  )
-                )
-                  return;
-                setLoadingId(p.id);
-                try {
-                  await onAprovar(p, decisao);
-                } finally {
-                  setLoadingId(null);
-                }
-              },
-              onReject: () => {
-                toast.info("Recusar: implementação pendente");
-              },
-            }}
+            interactive={
+              podeAprovar
+                ? {
+                    loading: loadingId === p.id,
+                    onApprove: async (decisao) => {
+                      if (
+                        !window.confirm(
+                          `Aprovar pedido #${p.numero} com a decisão "${decisao}"?`,
+                        )
+                      )
+                        return;
+                      setLoadingId(p.id);
+                      try {
+                        await onAprovar(p, decisao);
+                      } finally {
+                        setLoadingId(null);
+                      }
+                    },
+                    onReject: () => {
+                      toast.info("Recusar: implementação pendente");
+                    },
+                  }
+                : undefined
+            }
           />
         </div>
       ))}

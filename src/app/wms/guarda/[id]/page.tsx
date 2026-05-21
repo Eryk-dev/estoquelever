@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { sisoFetch } from "@/lib/auth-context";
+import { sisoFetch, usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   Icon,
@@ -32,6 +32,8 @@ export default function GuardaTabletPage() {
   const params = useParams();
   const router = useRouter();
   const qc = useQueryClient();
+  const { can } = usePermissoes();
+  const podeGuardar = can("operacoes.guarda");
   const id = String(params?.id ?? "");
   const [qtyInput, setQtyInput] = useState("");
   const [destinoOverride, setDestinoOverride] = useState<{
@@ -525,8 +527,10 @@ export default function GuardaTabletPage() {
                 disabled={
                   confirmar.isPending ||
                   !destinoEscolhido.id ||
-                  !Number(qtyInput)
+                  !Number(qtyInput) ||
+                  !podeGuardar
                 }
+                title={!podeGuardar ? "Sem permissão pra confirmar guarda" : ""}
                 style={{ padding: "14px 12px", fontSize: 14 }}
               >
                 <Icon name="check" size={14} />

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
+import { usePermissoes } from "@/lib/auth-context";
 import { TriplaPicker } from "@/components/wms/tripla-picker";
 import { Icon, PageHeader, Field } from "@/components/wms/ui/wms-ui";
 
@@ -13,6 +14,8 @@ interface ProdutoMin {
 
 export default function AjustePage() {
   const queryClient = useQueryClient();
+  const { can } = usePermissoes();
+  const podeAjustar = can("operacoes.ajuste_manual");
   const [q, setQ] = useState<{
     galpao_id?: string;
     localizacao_id?: string;
@@ -159,7 +162,8 @@ export default function AjustePage() {
         <button
           type="button"
           className="wms-btn wms-btn-primary"
-          disabled={!valid || submit.isPending}
+          disabled={!valid || submit.isPending || !podeAjustar}
+          title={!podeAjustar ? "Sem permissão pra aplicar ajuste manual" : ""}
           onClick={() => submit.mutate()}
         >
           <Icon name="sliders" size={11} />

@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useRouter, useSearchParams } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
+import { usePermissoes } from "@/lib/auth-context";
 import {
   Icon,
   PageHeader,
@@ -18,6 +19,8 @@ type TipoFiltro = "todos" | "kit" | "simples";
 type OrdemProdutos = "sku_asc" | "sincronizado_desc" | "sincronizado_asc";
 
 export default function ProdutosPage() {
+  const { can } = usePermissoes();
+  const podeEditar = can("produtos.editar");
   const [q, setQ] = useState("");
   const [tipoFiltro, setTipoFiltro] = useState<TipoFiltro>("todos");
   const [ordem, setOrdem] = useState<OrdemProdutos>("sku_asc");
@@ -258,8 +261,8 @@ export default function ProdutosPage() {
                     <button
                       type="button"
                       className="wms-btn-icon"
-                      title="Sincronizar com Tiny"
-                      disabled={sync.isPending}
+                      title={!podeEditar ? "Sem permissão pra sincronizar" : "Sincronizar com Tiny"}
+                      disabled={sync.isPending || !podeEditar}
                       onClick={(e) => {
                         e.stopPropagation();
                         sync.mutate(p.id);

@@ -4,7 +4,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { sisoFetch } from "@/lib/auth-context";
+import { sisoFetch, usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   ExcecoesBannerWms,
@@ -127,6 +127,8 @@ export default function WmsComprasPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  const { can } = usePermissoes();
+  const podeExecutar = can("compras.executar");
 
   const tab = ((searchParams?.get("tab") as Tab) ?? "comprar") as Tab;
 
@@ -228,10 +230,15 @@ export default function WmsComprasPage() {
         <TabComprar
           query={comprarQuery}
           onMutated={invalidateAll}
+          podeExecutar={podeExecutar}
         />
       )}
       {tab === "receber" && (
-        <TabReceber query={receberQuery} onMutated={invalidateAll} />
+        <TabReceber
+          query={receberQuery}
+          onMutated={invalidateAll}
+          podeExecutar={podeExecutar}
+        />
       )}
       {tab === "historico" && <TabHistorico query={historicoQuery} />}
     </>
@@ -243,9 +250,11 @@ export default function WmsComprasPage() {
 function TabComprar({
   query,
   onMutated,
+  podeExecutar,
 }: {
   query: ReturnType<typeof useQuery<ComprarResponse>>;
   onMutated: () => void;
+  podeExecutar: boolean;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -775,7 +784,8 @@ function TabComprar({
             </button>
             <button
               className="wms-btn wms-btn-primary"
-              disabled={comprarMut.isPending}
+              disabled={comprarMut.isPending || !podeExecutar}
+              title={!podeExecutar ? "Sem permissão pra marcar compras" : ""}
               onClick={onMarcarComprados}
               type="button"
             >
@@ -876,9 +886,11 @@ function ItemKebab({
 function TabReceber({
   query,
   onMutated,
+  podeExecutar,
 }: {
   query: ReturnType<typeof useQuery<ReceberResponse>>;
   onMutated: () => void;
+  podeExecutar: boolean;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [receberOverrides, setReceberOverrides] = useState<
@@ -1114,7 +1126,8 @@ function TabReceber({
                   </button>
                   <button
                     className="wms-btn wms-btn-sm wms-btn-primary"
-                    disabled={receberMut.isPending}
+                    disabled={receberMut.isPending || !podeExecutar}
+                    title={!podeExecutar ? "Sem permissão pra receber compras" : ""}
                     onClick={() => confirmarRecebimento(f)}
                     type="button"
                   >

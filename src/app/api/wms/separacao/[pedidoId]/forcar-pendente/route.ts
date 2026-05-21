@@ -28,11 +28,9 @@ export async function PATCH(
   }
 
   // AUTH check: ação admin-only (forçar pendente bypassa validação de NF).
-  // Proxy: sistema.usuarios — só admin tem no seed.
-  // TODO: criar perm separacao.administrar dedicada quando Task 20a sair.
-  if (!userCan(session, "sistema.usuarios")) {
+  if (!userCan(session, "separacao.administrar")) {
     return NextResponse.json(
-      { error: "apenas admin pode forçar pendente" },
+      { error: "sem permissão pra forçar pendente" },
       { status: 403 },
     );
   }

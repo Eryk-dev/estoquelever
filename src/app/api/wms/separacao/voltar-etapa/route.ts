@@ -35,10 +35,8 @@ export async function POST(request: NextRequest) {
   }
 
   // AUTH check: ação admin-only (pode pular validações e estornar mov_saida).
-  // Proxy: sistema.usuarios — só admin tem no seed.
-  // TODO: criar perm separacao.administrar dedicada quando Task 20a sair.
-  if (!userCan(session, "sistema.usuarios")) {
-    return NextResponse.json({ error: "apenas admin pode alterar etapa" }, { status: 403 });
+  if (!userCan(session, "separacao.administrar")) {
+    return NextResponse.json({ error: "sem permissão pra alterar etapa" }, { status: 403 });
   }
 
   const body = await request.json().catch(() => null);

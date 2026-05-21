@@ -21,6 +21,7 @@ export const PERMISSIONS = {
   "pedidos.aprovar":      { modulo: "vendas",        label: "Aprovar/rejeitar pedido" },
   "separacao.ver":        { modulo: "vendas",        label: "Ver Separação" },
   "separacao.executar":   { modulo: "vendas",        label: "Bipar/separar pedidos" },
+  "separacao.administrar": { modulo: "vendas",       label: "Forçar status / voltar etapa / reimprimir" },
   "compras.ver":          { modulo: "vendas",        label: "Ver Compras" },
   "compras.executar":     { modulo: "vendas",        label: "Comprar/receber/cancelar OC" },
 

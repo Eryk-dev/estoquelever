@@ -78,6 +78,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
 
+  // AUTH check: editar tags de pedidos é ação admin de separação.
+  if (!userCan(session, "separacao.administrar")) {
+    return NextResponse.json(
+      { error: "sem permissão pra gerenciar tags de separação" },
+      { status: 403 },
+    );
+  }
+
   let body: { pedido_ids?: string[]; tags?: string[]; action?: string };
   try {
     body = await request.json();

@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { wmsApi } from "@/lib/wms/api-client";
+import { usePermissoes } from "@/lib/auth-context";
 import { useWmsModals } from "@/components/wms/wms-shell";
 import {
   Card,
@@ -67,6 +68,7 @@ function agruparPares(movs: MovHistorico[]): ParRealocacao[] {
 
 export default function RealocarPage() {
   const modals = useWmsModals();
+  const { can } = usePermissoes();
 
   const histQuery = useQuery({
     queryKey: [
@@ -91,13 +93,15 @@ export default function RealocarPage() {
         title="Realocar intra-galpão"
         subtitle="Mover entre localizações no mesmo galpão (overstock → picking)"
       >
-        <button
-          className="wms-btn wms-btn-primary"
-          onClick={() => modals.open("realocar")}
-        >
-          <Icon name="plus" size={12} />
-          Nova realocação
-        </button>
+        {can("operacoes.replenishment") && (
+          <button
+            className="wms-btn wms-btn-primary"
+            onClick={() => modals.open("realocar")}
+          >
+            <Icon name="plus" size={12} />
+            Nova realocação
+          </button>
+        )}
       </PageHeader>
 
       <Card title="Sugestões automáticas">

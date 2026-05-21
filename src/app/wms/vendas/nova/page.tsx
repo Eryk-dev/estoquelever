@@ -4,7 +4,7 @@ import { Suspense, useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { sisoFetch, useAuth } from "@/lib/auth-context";
+import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import { PageHeader, Field, Icon } from "@/components/wms/ui/wms-ui";
 import {
@@ -67,6 +67,8 @@ export default function NovaVendaPage() {
 function NovaVendaBody() {
   const router = useRouter();
   const { user } = useAuth();
+  const { can } = usePermissoes();
+  const podeCriar = can("vendas.criar");
   const { data: galpoes } = useGalpoes();
 
   const empresas = useMemo<EmpresaLite[]>(
@@ -442,7 +444,8 @@ function NovaVendaBody() {
         <button
           className="wms-btn wms-btn-primary"
           onClick={submit}
-          disabled={!valido || enviando}
+          disabled={!valido || enviando || !podeCriar}
+          title={!podeCriar ? "Sem permissão pra criar venda" : ""}
           type="button"
         >
           {enviando

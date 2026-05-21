@@ -435,12 +435,20 @@ export function createContext(opts: {
           const { data: l } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", it.loc_destino).single();
           loc_destino_id = l?.id ?? null;
         }
-        return { produto_id: prod!.id, qty: it.qty, localizacao_destino_id: loc_destino_id };
+        return { produto_id: prod!.id, qty: it.qty, custo_unitario: 10, localizacao_destino_id: loc_destino_id };
       }),
     );
+    // Resolve default fornecedor (TestSupplier-Default seeded em seed.ts)
+    const { data: fornecedor } = await sb
+      .from("siso_fornecedores")
+      .select("id")
+      .eq("nome", "TestSupplier-Default")
+      .single();
     const res = await http.post<{ pendencias: string[] }>("/api/wms/receber", {
       galpao_id,
       itens,
+      empresa_compradora_id: staging.empresas.netair.id,
+      fornecedor_id: fornecedor!.id,
       entrada_direta: p.entrada_direta ?? false,
     });
     return res;

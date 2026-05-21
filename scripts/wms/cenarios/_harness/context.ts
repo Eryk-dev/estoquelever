@@ -427,14 +427,25 @@ export function createContext(opts: {
   }
 
   async function aguardarRealocacao(pedidoId: string, sku: string, locEsperada: string, opts: { timeout_ms?: number } = {}) {
+    // `siso_pedido_item_realocacoes` não tem `pedido_id` (só `pedido_item_id`).
+    // Resolve via JOIN com siso_pedido_itens.
     const timeout = opts.timeout_ms ?? 5_000;
     const deadline = Date.now() + timeout;
+    // Pré-resolve os pedido_item_ids deste pedido + sku
+    const { data: itens } = await sb
+      .from("siso_pedido_itens")
+      .select("id")
+      .eq("pedido_id", pedidoId)
+      .eq("sku", sku);
+    const itemIds = (itens ?? []).map((i: { id: number | string }) => i.id);
+    if (itemIds.length === 0) {
+      throw new Error(`aguardarRealocacao: nenhum item do pedido ${pedidoId} pra sku ${sku}`);
+    }
     while (Date.now() < deadline) {
       const { data } = await sb
         .from("siso_pedido_item_realocacoes")
-        .select("id, localizacao:siso_localizacoes!inner(codigo), produto:siso_produtos!inner(sku)")
-        .eq("pedido_id", pedidoId)
-        .eq("siso_produtos.sku", sku)
+        .select("id, localizacao:siso_localizacoes!inner(codigo)")
+        .in("pedido_item_id", itemIds)
         .eq("status", "aguardando_picking");
       const match = (data as Array<{ localizacao: { codigo: string } }> | null)?.find((r) => r.localizacao.codigo === locEsperada);
       if (match) return;

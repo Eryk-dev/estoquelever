@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
-import { buildCompraFieldReset, cancelOcIfEmpty, hasComprasAccess } from "@/lib/compras-utils";
+import { buildCompraFieldReset, cancelOcIfEmpty } from "@/lib/compras-utils";
+import { userCan } from "@/lib/permissions";
 
 /**
  * POST /api/compras/itens/[itemId]/devolver
@@ -16,7 +17,7 @@ export async function POST(
 ) {
   const session = await getSessionUser(request);
   if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
-  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  if (!userCan(session, "compras.executar")) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
   const { itemId } = await params;
   const supabase = createServiceClient();

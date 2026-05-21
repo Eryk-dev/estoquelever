@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
-import { sisoFetch } from "@/lib/auth-context";
+import { sisoFetch, usePermissoes } from "@/lib/auth-context";
 import { useWmsModals } from "@/components/wms/wms-shell";
 import { LocalizacaoCombo } from "@/components/wms/ui/modals";
 import {
@@ -54,6 +54,8 @@ type Aba = "em_transito" | "historico";
 export default function TransferirPage() {
   const modals = useWmsModals();
   const queryClient = useQueryClient();
+  const { can } = usePermissoes();
+  const podeTransferir = can("operacoes.transferir");
   const [aba, setAba] = useState<Aba>("em_transito");
   const [receberId, setReceberId] = useState<string | null>(null);
 
@@ -123,13 +125,15 @@ export default function TransferirPage() {
         title="Transferências entre galpões"
         subtitle="Fluxo 2-etapas: origem envia, destino confirma a localização"
       >
-        <button
-          className="wms-btn wms-btn-primary"
-          onClick={() => modals.open("transferir")}
-        >
-          <Icon name="plus" size={12} />
-          Nova transferência
-        </button>
+        {podeTransferir && (
+          <button
+            className="wms-btn wms-btn-primary"
+            onClick={() => modals.open("transferir")}
+          >
+            <Icon name="plus" size={12} />
+            Nova transferência
+          </button>
+        )}
       </PageHeader>
 
       <div className="wms-seg" style={{ marginBottom: 16 }}>
@@ -152,6 +156,7 @@ export default function TransferirPage() {
         <EmTransitoList
           rows={emTransito}
           isLoading={emTransitoQuery.isLoading}
+          podeAgir={podeTransferir}
           onReceber={(id) => setReceberId(id)}
           onCancelar={(id) => {
             if (!confirm("Cancelar e estornar saídas da origem?")) return;
@@ -189,11 +194,13 @@ export default function TransferirPage() {
 function EmTransitoList({
   rows,
   isLoading,
+  podeAgir,
   onReceber,
   onCancelar,
 }: {
   rows: Transferencia[];
   isLoading: boolean;
+  podeAgir: boolean;
   onReceber: (id: string) => void;
   onCancelar: (id: string) => void;
 }) {
@@ -266,6 +273,8 @@ function EmTransitoList({
             <div style={{ display: "flex", gap: 6 }}>
               <button
                 className="wms-btn wms-btn-ghost wms-btn-sm"
+                disabled={!podeAgir}
+                title={!podeAgir ? "Sem permissão pra cancelar transferência" : ""}
                 onClick={() => onCancelar(t.id)}
               >
                 <Icon name="x" size={11} />
@@ -273,6 +282,8 @@ function EmTransitoList({
               </button>
               <button
                 className="wms-btn wms-btn-primary wms-btn-sm"
+                disabled={!podeAgir}
+                title={!podeAgir ? "Sem permissão pra receber transferência" : ""}
                 onClick={() => onReceber(t.id)}
               >
                 <Icon name="check" size={11} />

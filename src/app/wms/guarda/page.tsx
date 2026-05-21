@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { wmsApi } from "@/lib/wms/api-client";
+import { usePermissoes } from "@/lib/auth-context";
 import {
   Icon,
   PageHeader,
@@ -32,6 +33,8 @@ interface Grupo {
 
 export default function GuardaListaPage() {
   const router = useRouter();
+  const { can } = usePermissoes();
+  const podeGuardar = can("operacoes.guarda");
   const { data: galpoes } = useGalpoes();
   const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
 
@@ -238,14 +241,16 @@ export default function GuardaListaPage() {
               )}
             </div>
           </div>
-          <button
-            type="button"
-            className="wms-btn wms-btn-primary"
-            onClick={abrirRotaTudo}
-            style={{ padding: "10px 18px", fontSize: 14 }}
-          >
-            <Icon name="arrow-right" size={12} /> Iniciar rota com tudo
-          </button>
+          {podeGuardar && (
+            <button
+              type="button"
+              className="wms-btn wms-btn-primary"
+              onClick={abrirRotaTudo}
+              style={{ padding: "10px 18px", fontSize: 14 }}
+            >
+              <Icon name="arrow-right" size={12} /> Iniciar rota com tudo
+            </button>
+          )}
         </div>
       )}
 
@@ -279,7 +284,7 @@ export default function GuardaListaPage() {
           }}
         >
           {lotes.map((g) => (
-            <LoteCard key={g.key} grupo={g} onIniciar={abrirRotaLote} />
+            <LoteCard key={g.key} grupo={g} onIniciar={abrirRotaLote} podeGuardar={podeGuardar} />
           ))}
         </div>
       )}
@@ -313,15 +318,17 @@ export default function GuardaListaPage() {
                 Recebimentos individuais ou pendências antigas sem lote
               </div>
             </div>
-            <button
-              type="button"
-              className="wms-btn wms-btn-primary wms-btn-sm"
-              onClick={abrirRotaAvulsas}
-              style={{ fontSize: 12 }}
-            >
-              <Icon name="arrow-right" size={11} /> Guardar avulsas (
-              {avulsasAtivas.length})
-            </button>
+            {podeGuardar && (
+              <button
+                type="button"
+                className="wms-btn wms-btn-primary wms-btn-sm"
+                onClick={abrirRotaAvulsas}
+                style={{ fontSize: 12 }}
+              >
+                <Icon name="arrow-right" size={11} /> Guardar avulsas (
+                {avulsasAtivas.length})
+              </button>
+            )}
           </div>
           <div className="wms-tbl">
             <table>
@@ -354,9 +361,11 @@ export default function GuardaListaPage() {
 function LoteCard({
   grupo,
   onIniciar,
+  podeGuardar,
 }: {
   grupo: Grupo;
   onIniciar: (lote_id: string) => void;
+  podeGuardar: boolean;
 }) {
   const ativas = grupo.pendencias.filter(
     (p) => p.status === "pendente" || p.status === "em_guarda",
@@ -411,15 +420,19 @@ function LoteCard({
             </div>
           </div>
           {ativas.length > 0 ? (
-            <button
-              type="button"
-              className="wms-btn wms-btn-primary"
-              onClick={() => onIniciar(grupo.lote_id!)}
-              style={{ padding: "10px 14px", fontSize: 13 }}
-            >
-              <Icon name="arrow-right" size={12} />{" "}
-              {algumaEmGuarda ? "Continuar rota" : "Iniciar rota"}
-            </button>
+            podeGuardar ? (
+              <button
+                type="button"
+                className="wms-btn wms-btn-primary"
+                onClick={() => onIniciar(grupo.lote_id!)}
+                style={{ padding: "10px 14px", fontSize: 13 }}
+              >
+                <Icon name="arrow-right" size={12} />{" "}
+                {algumaEmGuarda ? "Continuar rota" : "Iniciar rota"}
+              </button>
+            ) : (
+              <StatusBadge status={algumaEmGuarda ? "em_guarda" : "pendente"} />
+            )
           ) : (
             <StatusBadge status="guardada" />
           )}

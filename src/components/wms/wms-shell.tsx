@@ -14,7 +14,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2, LogOut } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth, usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, type IconName } from "@/components/wms/ui/wms-ui";
 import {
@@ -24,7 +24,7 @@ import {
 } from "@/components/wms/ui/modals";
 import { SidebarGalpaoSwitcher } from "@/components/wms/sidebar-galpao-switcher";
 import type { Produto } from "@/lib/wms/types";
-import type { Cargo } from "@/types";
+import { type PermissaoCodigo } from "@/lib/permissions";
 
 // ──────────────────────────────────────────────────────────────────
 // Modal Context — qualquer página pode disparar abertura de modal.
@@ -64,15 +64,15 @@ interface NavItem {
   icon: IconName;
   label: string;
   badge?: number;
-  /** Se definido, item só aparece pra cargos listados. Vazio/undefined = todos. */
-  visibleFor?: Cargo[];
+  /** OR-set: usuário com pelo menos uma das permissões vê o item. */
+  requires?: PermissaoCodigo[];
 }
 interface NavSection {
   id: string;
   label: string;
   itens: NavItem[];
-  /** Se definido, seção inteira só aparece pra cargos listados. */
-  visibleFor?: Cargo[];
+  /** OR-set: usuário com pelo menos uma das permissões vê a seção (e seus items respeitam o próprio requires). */
+  requires?: PermissaoCodigo[];
 }
 
 const NAV_SECTIONS: NavSection[] = [
@@ -80,107 +80,98 @@ const NAV_SECTIONS: NavSection[] = [
     id: "vendas",
     label: "Vendas",
     itens: [
-      { href: "/wms/vendas", icon: "handshake", label: "Vendas Diretas" },
-      { href: "/wms/pedidos", icon: "clipboard", label: "Pedidos", visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"] },
-      { href: "/wms/separacao", icon: "list", label: "Separação", visibleFor: ["admin", "operador", "operador_cwb", "operador_sp"] },
-      { href: "/wms/compras", icon: "truck", label: "Compras", visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"] },
+      { href: "/wms/vendas", icon: "handshake", label: "Vendas Diretas", requires: ["vendas.ver"] },
+      { href: "/wms/pedidos", icon: "clipboard", label: "Pedidos", requires: ["pedidos.ver"] },
+      { href: "/wms/separacao", icon: "list", label: "Separação", requires: ["separacao.ver"] },
+      { href: "/wms/compras", icon: "truck", label: "Compras", requires: ["compras.ver"] },
     ],
   },
   {
     id: "principal",
     label: "Visibilidade",
-    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"],
+    requires: ["estoque.ver", "cobertura.ver"],
     itens: [
-      { href: "/wms/estoque", icon: "box", label: "Estoque" },
-      { href: "/wms/cobertura", icon: "gauge", label: "Cobertura" },
+      { href: "/wms/estoque", icon: "box", label: "Estoque", requires: ["estoque.ver"] },
+      { href: "/wms/cobertura", icon: "gauge", label: "Cobertura", requires: ["cobertura.ver"] },
     ],
   },
   {
     id: "operacoes",
     label: "Operações",
-    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp"],
+    requires: ["operacoes.transferir", "operacoes.replenishment", "operacoes.devolucoes", "operacoes.receber", "operacoes.guarda"],
     itens: [
-      { href: "/wms/transferir", icon: "arrows", label: "Transferências" },
-      { href: "/wms/replenishment", icon: "shuffle", label: "Realocar" },
-      { href: "/wms/devolucoes", icon: "rotate", label: "Devoluções" },
-      { href: "/wms/receber", icon: "plus", label: "Receber" },
-      { href: "/wms/guarda", icon: "box", label: "Guarda" },
+      { href: "/wms/transferir", icon: "arrows", label: "Transferências", requires: ["operacoes.transferir"] },
+      { href: "/wms/replenishment", icon: "shuffle", label: "Realocar", requires: ["operacoes.replenishment"] },
+      { href: "/wms/devolucoes", icon: "rotate", label: "Devoluções", requires: ["operacoes.devolucoes"] },
+      { href: "/wms/receber", icon: "plus", label: "Receber", requires: ["operacoes.receber"] },
+      { href: "/wms/guarda", icon: "box", label: "Guarda", requires: ["operacoes.guarda"] },
     ],
   },
   {
     id: "inventario",
     label: "Inventário",
-    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp"],
+    requires: ["inventario.ver"],
     itens: [
-      { href: "/wms/inventario", icon: "clipboard", label: "Sessões" },
-      { href: "/wms/inventario/metricas", icon: "gauge", label: "Métricas" },
+      { href: "/wms/inventario", icon: "clipboard", label: "Sessões", requires: ["inventario.ver"] },
+      { href: "/wms/inventario/metricas", icon: "gauge", label: "Métricas", requires: ["inventario.ver"] },
     ],
   },
   {
     id: "insights",
     label: "Insights",
-    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp"],
+    requires: ["insights.ver"],
     itens: [
-      { href: "/wms/insights", icon: "sparkle", label: "Hub" },
-      { href: "/wms/insights/pessoas", icon: "handshake", label: "Pessoas" },
-      { href: "/wms/insights/fluxo", icon: "arrows", label: "Fluxo" },
-      { href: "/wms/insights/estoque", icon: "gauge", label: "Estoque" },
-      { href: "/wms/insights/financeiro", icon: "building", label: "Financeiro" },
-      { href: "/wms/insights/devolucoes", icon: "rotate", label: "Devoluções" },
-      { href: "/wms/insights/regras", icon: "sliders", label: "Regras" },
+      { href: "/wms/insights", icon: "sparkle", label: "Hub", requires: ["insights.ver"] },
+      { href: "/wms/insights/pessoas", icon: "handshake", label: "Pessoas", requires: ["insights.ver"] },
+      { href: "/wms/insights/fluxo", icon: "arrows", label: "Fluxo", requires: ["insights.ver"] },
+      { href: "/wms/insights/estoque", icon: "gauge", label: "Estoque", requires: ["insights.ver"] },
+      { href: "/wms/insights/financeiro", icon: "building", label: "Financeiro", requires: ["insights.financeiro"] },
+      { href: "/wms/insights/devolucoes", icon: "rotate", label: "Devoluções", requires: ["insights.ver"] },
+      { href: "/wms/insights/regras", icon: "sliders", label: "Regras", requires: ["insights.regras"] },
     ],
   },
   {
     id: "relatorios",
     label: "Relatórios",
-    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"],
+    requires: ["relatorios.ver"],
     itens: [
-      { href: "/wms/relatorios/movs-por-empresa", icon: "columns", label: "Movs por Empresa" },
-      { href: "/wms/relatorios/historico-custo", icon: "history", label: "Histórico de Custo" },
-      { href: "/wms/relatorios/saldos-por-empresa", icon: "box", label: "Saldos por Empresa" },
+      { href: "/wms/relatorios/movs-por-empresa", icon: "columns", label: "Movs por Empresa", requires: ["relatorios.ver"] },
+      { href: "/wms/relatorios/historico-custo", icon: "history", label: "Histórico de Custo", requires: ["relatorios.ver"] },
+      { href: "/wms/relatorios/saldos-por-empresa", icon: "box", label: "Saldos por Empresa", requires: ["relatorios.ver"] },
     ],
   },
   {
     id: "cadastros",
     label: "Cadastros",
-    visibleFor: ["admin", "operador", "operador_cwb", "operador_sp", "comprador"],
+    requires: ["produtos.editar", "localizacoes.editar", "fornecedores.editar"],
     itens: [
-      { href: "/wms/produtos", icon: "tag", label: "Produtos" },
-      { href: "/wms/cross", icon: "sparkle", label: "Cross" },
-      { href: "/wms/localizacoes", icon: "pin", label: "Localizações" },
-      { href: "/wms/fornecedores", icon: "truck", label: "Fornecedores" },
+      { href: "/wms/produtos", icon: "tag", label: "Produtos", requires: ["produtos.editar"] },
+      { href: "/wms/cross", icon: "sparkle", label: "Cross", requires: ["produtos.editar"] },
+      { href: "/wms/localizacoes", icon: "pin", label: "Localizações", requires: ["localizacoes.editar"] },
+      { href: "/wms/fornecedores", icon: "truck", label: "Fornecedores", requires: ["fornecedores.editar"] },
     ],
   },
   {
     id: "sistema",
     label: "Sistema",
-    visibleFor: ["admin"],
+    requires: ["sistema.usuarios", "sistema.roles", "sistema.conexoes", "sistema.galpoes_empresas"],
     itens: [
-      { href: "/wms/configuracoes", icon: "building", label: "Configurações" },
+      { href: "/wms/configuracoes", icon: "building", label: "Configurações", requires: ["sistema.usuarios"] },
     ],
   },
 ];
 
-/** Filtra seções e items conforme cargos do usuário. */
-function filterNavForUser(cargos: Cargo[]): NavSection[] {
-  const cargoSet = new Set(cargos);
+/** Filtra seções e items conforme permissões do usuário (OR-set). */
+function filterNavForUser(permissoes: Set<string>): NavSection[] {
+  const hasAny = (req?: PermissaoCodigo[]) =>
+    !req || req.length === 0 || req.some((p) => permissoes.has(p));
+
   return NAV_SECTIONS.flatMap<NavSection>((sec) => {
-    if (sec.visibleFor && !sec.visibleFor.some((c) => cargoSet.has(c))) {
-      return [];
-    }
-    const itens = sec.itens.filter(
-      (it) => !it.visibleFor || it.visibleFor.some((c) => cargoSet.has(c)),
-    );
+    if (!hasAny(sec.requires)) return [];
+    const itens = sec.itens.filter((it) => hasAny(it.requires));
     if (itens.length === 0) return [];
     return [{ ...sec, itens }];
   });
-}
-
-const ALL_NAV: NavItem[] = NAV_SECTIONS.flatMap((s) => s.itens);
-
-function getCargos(user: { cargo: string; cargos?: string[] | null }): Cargo[] {
-  const list = user.cargos?.length ? user.cargos : [user.cargo];
-  return list as Cargo[];
 }
 
 function isActive(pathname: string, href: string): boolean {
@@ -376,14 +367,20 @@ function CommandKInner({
 }) {
   const [q, setQ] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const { permissoes } = usePermissoes();
 
   useEffect(() => {
     const id = setTimeout(() => inputRef.current?.focus(), 30);
     return () => clearTimeout(id);
   }, []);
 
+  const filteredItens = useMemo(
+    () => filterNavForUser(permissoes).flatMap((s) => s.itens),
+    [permissoes],
+  );
+
   const ql = q.trim().toLowerCase();
-  const navResults = ALL_NAV.filter(
+  const navResults = filteredItens.filter(
     (n) => !ql || n.label.toLowerCase().includes(ql),
   );
 
@@ -542,6 +539,7 @@ export function WmsShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "/wms";
   const router = useRouter();
   const { user, loading, logout } = useAuth();
+  const { permissoes } = usePermissoes();
 
   const [ckOpen, setCkOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -689,7 +687,7 @@ export function WmsShell({ children }: { children: ReactNode }) {
             userInitials={initials}
             userName={user.nome}
             userRole={role}
-            sections={filterNavForUser(getCargos(user))}
+            sections={filterNavForUser(permissoes)}
             isOpen={sidebarOpen}
             onToggle={() => setSidebarOpen((o) => !o)}
             onLogout={() => {

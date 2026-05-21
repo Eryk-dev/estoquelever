@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { clearEmpresaCache } from "@/lib/empresa-lookup";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * GET /api/admin/empresas
@@ -10,7 +12,13 @@ import { clearEmpresaCache } from "@/lib/empresa-lookup";
  * de preferenciais, usar GET /api/admin/galpoes (nested) ou a tabela
  * siso_empresa_galpoes_preferenciais diretamente.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  if (!userCan(session, "sistema.galpoes_empresas")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("siso_empresas")
@@ -35,6 +43,12 @@ export async function GET() {
  * Cria também a entrada base em siso_tiny_connections.
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  if (!userCan(session, "sistema.galpoes_empresas")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   const body = await request.json();
   const { nome, cnpj } = body;
   const galpoesInput = normalizePreferenciais(body);

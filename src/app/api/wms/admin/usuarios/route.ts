@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 const VALID_CARGOS = ["admin", "operador", "operador_cwb", "operador_sp", "comprador", "vendedor"];
 
@@ -7,7 +9,13 @@ const VALID_CARGOS = ["admin", "operador", "operador_cwb", "operador_sp", "compr
  * GET /api/admin/usuarios
  * Lists all users with their galpão associations (without exposing PIN).
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  if (!userCan(session, "sistema.usuarios")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("siso_usuarios")
@@ -48,6 +56,12 @@ export async function GET() {
  * Body: { nome, pin, cargos, galpao_ids? } or legacy { nome, pin, cargo }
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  if (!userCan(session, "sistema.usuarios")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   let body: { nome?: string; pin?: string; cargo?: string; cargos?: string[]; galpao_ids?: string[] };
 
   try {
@@ -108,6 +122,12 @@ export async function POST(request: NextRequest) {
  * Body: { id, nome?, pin?, cargos?, cargo?, ativo?, galpao_ids?, printnode_printer_id?, printnode_printer_nome? }
  */
 export async function PUT(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  if (!userCan(session, "sistema.usuarios")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   let body: {
     id?: string;
     nome?: string;
@@ -193,6 +213,12 @@ export async function PUT(request: NextRequest) {
  * siso_movimentacoes, inventário, pedidos etc. sem ON DELETE).
  */
 export async function DELETE(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  if (!userCan(session, "sistema.usuarios")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   const id = request.nextUrl.searchParams.get("id");
   if (!id) {
     return NextResponse.json({ erro: "id é obrigatório" }, { status: 400 });

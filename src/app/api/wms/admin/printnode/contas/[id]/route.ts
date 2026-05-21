@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * PATCH /api/wms/admin/printnode/contas/[id]
@@ -13,21 +15,15 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const userId = request.headers.get("x-siso-user-id");
-  if (!userId) {
+  const session = await getSessionUser(request);
+  if (!session) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  }
+  if (!userCan(session, "sistema.conexoes")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 
   const supabase = createServiceClient();
-  const { data: user } = await supabase
-    .from("siso_usuarios")
-    .select("cargo, cargos")
-    .eq("id", userId)
-    .single();
-
-  if (!user || !(user.cargos ?? [user.cargo]).includes("admin")) {
-    return NextResponse.json({ error: "Acesso restrito" }, { status: 403 });
-  }
 
   const { id } = await params;
   const body = await request.json().catch(() => null);
@@ -96,21 +92,15 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const userId = request.headers.get("x-siso-user-id");
-  if (!userId) {
+  const session = await getSessionUser(request);
+  if (!session) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  }
+  if (!userCan(session, "sistema.conexoes")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 
   const supabase = createServiceClient();
-  const { data: user } = await supabase
-    .from("siso_usuarios")
-    .select("cargo, cargos")
-    .eq("id", userId)
-    .single();
-
-  if (!user || !(user.cargos ?? [user.cargo]).includes("admin")) {
-    return NextResponse.json({ error: "Acesso restrito" }, { status: 403 });
-  }
 
   const { id } = await params;
   const { error } = await supabase

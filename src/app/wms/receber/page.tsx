@@ -9,7 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { sisoFetch } from "@/lib/auth-context";
+import { sisoFetch, usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, PageHeader, Field, fmtNum } from "@/components/wms/ui/wms-ui";
 import {
@@ -97,6 +97,8 @@ function ReceberBody() {
   const qc = useQueryClient();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { can } = usePermissoes();
+  const podeReceber = can("operacoes.receber");
   const produtoIdSeed = searchParams.get("produto_id");
   const { data: galpoes } = useGalpoes();
   const [lightbox, setLightbox] = useState<{
@@ -833,7 +835,8 @@ function ReceberBody() {
           type="button"
           className="wms-btn wms-btn-primary"
           style={{ marginTop: 10, width: "100%" }}
-          disabled={!valid || submit.isPending}
+          disabled={!valid || submit.isPending || !podeReceber}
+          title={!podeReceber ? "Sem permissão pra receber mercadoria" : ""}
           onClick={() => submit.mutate()}
         >
           <Icon name="check" size={11} />

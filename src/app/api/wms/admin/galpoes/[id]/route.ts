@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * PUT /api/admin/galpoes/[id]
@@ -8,6 +10,12 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  if (!userCan(session, "sistema.galpoes_empresas")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   const { id } = await params;
   const body = await request.json();
   const {

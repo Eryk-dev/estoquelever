@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * GET /api/separacao/tags
@@ -16,7 +17,9 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
-  const isAdmin = session.cargos.includes("admin");
+  // Filtro multi-tenant: admin vê tags de todos os galpões; outros do próprio.
+  // Proxy: sistema.usuarios = admin no seed.
+  const isAdmin = userCan(session, "sistema.usuarios");
   const activeGalpaoId = session.galpaoId;
 
   try {
@@ -73,6 +76,14 @@ export async function POST(request: NextRequest) {
   const session = await getSessionUser(request);
   if (!session) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
+  }
+
+  // AUTH check: editar tags de pedidos é ação admin de separação.
+  if (!userCan(session, "separacao.administrar")) {
+    return NextResponse.json(
+      { error: "sem permissão pra gerenciar tags de separação" },
+      { status: 403 },
+    );
   }
 
   let body: { pedido_ids?: string[]; tags?: string[]; action?: string };

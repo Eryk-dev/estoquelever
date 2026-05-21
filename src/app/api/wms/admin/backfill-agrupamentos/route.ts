@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { criarAgrupamentoFase1 } from "@/lib/agrupamento-service";
 import { logger } from "@/lib/logger";
 
@@ -23,7 +24,10 @@ const LOG_SOURCE = "admin-backfill-agrupamentos";
  */
 export async function POST(request: NextRequest) {
   const session = await getSessionUser(request);
-  if (!session || session.cargo !== "admin") {
+  if (!session) {
+    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  }
+  if (!userCan(session, "sistema.usuarios")) {
     return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 

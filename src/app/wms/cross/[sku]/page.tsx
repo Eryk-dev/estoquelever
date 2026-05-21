@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { sisoFetch } from "@/lib/auth-context";
+import { sisoFetch, usePermissoes } from "@/lib/auth-context";
 import { PageHeader, Icon, fmtNum } from "@/components/wms/ui/wms-ui";
 
 interface OemDetalhe {
@@ -44,6 +44,8 @@ export default function WmsCrossDetalhePage() {
   const params = useParams();
   const sp = useSearchParams();
   const queryClient = useQueryClient();
+  const { can } = usePermissoes();
+  const podeEditar = can("produtos.editar");
   const sku = decodeURIComponent(
     (params?.sku as string | undefined) ?? "",
   );
@@ -376,7 +378,8 @@ export default function WmsCrossDetalhePage() {
           />
           <button
             className="wms-btn wms-btn-primary"
-            disabled={!novoOem.trim() || addOemMut.isPending}
+            disabled={!novoOem.trim() || addOemMut.isPending || !podeEditar}
+            title={!podeEditar ? "Sem permissão pra editar OEM" : ""}
             onClick={() => {
               addOemMut.mutate(novoOem.trim());
               setNovoOem("");
@@ -401,6 +404,8 @@ export default function WmsCrossDetalhePage() {
               <button
                 className="wms-btn-icon"
                 style={{ marginLeft: 4, height: 18, width: 18 }}
+                disabled={!podeEditar}
+                title={!podeEditar ? "Sem permissão pra remover OEM" : "Remover OEM"}
                 onClick={() => removeOemMut.mutate(o.codigo)}
                 aria-label="Remover OEM"
               >
@@ -476,8 +481,10 @@ export default function WmsCrossDetalhePage() {
             disabled={
               !novoVeic.marca.trim() ||
               !novoVeic.modelo.trim() ||
-              addVeicMut.isPending
+              addVeicMut.isPending ||
+              !podeEditar
             }
+            title={!podeEditar ? "Sem permissão pra adicionar veículo" : ""}
             onClick={() => {
               const payload: {
                 marca: string;
@@ -535,6 +542,8 @@ export default function WmsCrossDetalhePage() {
                   <td>
                     <button
                       className="wms-btn-icon"
+                      disabled={!podeEditar}
+                      title={!podeEditar ? "Sem permissão pra remover veículo" : "Remover veículo"}
                       onClick={() => removeVeicMut.mutate(v.id)}
                       aria-label="Remover veículo"
                     >

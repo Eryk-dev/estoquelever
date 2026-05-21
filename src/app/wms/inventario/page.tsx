@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Link from "next/link";
 import { wmsApi } from "@/lib/wms/api-client";
+import { usePermissoes } from "@/lib/auth-context";
 import { useGalpoes, useLocalizacoes } from "@/components/wms/ui/modals";
 // Plano ledger simplificado 3D (2026-05-20): pool agora vive em (produto, galpão, loc)
 // sem dona — drop do select "Empresa dona" e dos params empresa_dona_id na criação/sugestão.
@@ -40,6 +41,8 @@ const MOTIVO_LABEL: Record<MotivoLoc, string> = {
 
 export default function InventarioListaPage() {
   const queryClient = useQueryClient();
+  const { can } = usePermissoes();
+  const podeSupervisar = can("inventario.supervisionar");
   const [openTipo, setOpenTipo] = useState<TipoCriacao | null>(null);
 
   const sessoesQuery = useQuery({
@@ -59,14 +62,16 @@ export default function InventarioListaPage() {
           <Icon name="gauge" size={12} />
           Métricas
         </Link>
-        <button
-          type="button"
-          className="wms-btn wms-btn-primary"
-          onClick={() => setOpenTipo("inteligente")}
-        >
-          <Icon name="plus" size={12} />
-          Nova sessão
-        </button>
+        {podeSupervisar && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-primary"
+            onClick={() => setOpenTipo("inteligente")}
+          >
+            <Icon name="plus" size={12} />
+            Nova sessão
+          </button>
+        )}
       </PageHeader>
 
       {sessoesQuery.isLoading && (
@@ -85,14 +90,16 @@ export default function InventarioListaPage() {
             Inicie um cycle count ou inventário completo para começar. A
             sugestão inteligente já chega com proposta pronta.
           </p>
-          <button
-            type="button"
-            className="wms-btn wms-btn-primary"
-            onClick={() => setOpenTipo("inteligente")}
-          >
-            <Icon name="plus" size={11} />
-            Nova sessão
-          </button>
+          {podeSupervisar && (
+            <button
+              type="button"
+              className="wms-btn wms-btn-primary"
+              onClick={() => setOpenTipo("inteligente")}
+            >
+              <Icon name="plus" size={11} />
+              Nova sessão
+            </button>
+          )}
         </div>
       )}
       {rows.length > 0 && (

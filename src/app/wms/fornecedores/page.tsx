@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useAuth } from "@/lib/auth-context";
+import { usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   Icon,
@@ -43,8 +43,8 @@ function fmtLt(f: Fornecedor): string {
 
 export default function FornecedoresPage() {
   const queryClient = useQueryClient();
-  const { user } = useAuth();
-  const isAdmin = (user?.cargos ?? [user?.cargo]).includes("admin");
+  const { can } = usePermissoes();
+  const podeEditar = can("fornecedores.editar");
   const [showForm, setShowForm] = useState(false);
   const [novo, setNovo] = useState({
     nome: "",
@@ -114,7 +114,7 @@ export default function FornecedoresPage() {
         title="Fornecedores"
         subtitle={`${rows.length} fornecedor(es) cadastrado(s)`}
       >
-        {isAdmin && (
+        {podeEditar && (
           <button
             type="button"
             className="wms-btn wms-btn-ghost"
@@ -126,14 +126,16 @@ export default function FornecedoresPage() {
             Auto-cadastrar mapeamento canônico
           </button>
         )}
-        <button
-          type="button"
-          className="wms-btn wms-btn-primary"
-          onClick={() => setShowForm((s) => !s)}
-        >
-          <Icon name="plus" size={12} />
-          Novo fornecedor
-        </button>
+        {podeEditar && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-primary"
+            onClick={() => setShowForm((s) => !s)}
+          >
+            <Icon name="plus" size={12} />
+            Novo fornecedor
+          </button>
+        )}
       </PageHeader>
 
       {showForm && (
@@ -269,7 +271,7 @@ export default function FornecedoresPage() {
       {!isLoading && rows.length === 0 && (
         <div className="wms-empty-block">
           <h3>Nenhum fornecedor cadastrado</h3>
-          {isAdmin && (
+          {podeEditar && (
             <p>
               Use o botão{" "}
               <strong>Auto-cadastrar mapeamento canônico</strong> para semear os
@@ -290,7 +292,7 @@ export default function FornecedoresPage() {
                   <th title="Lead time min / médio / máx (dias)">
                     Lead time (dias)
                   </th>
-                  {isAdmin && <th style={{ width: 80 }}></th>}
+                  {podeEditar && <th style={{ width: 80 }}></th>}
                 </tr>
               </thead>
               <tbody>
@@ -302,7 +304,7 @@ export default function FornecedoresPage() {
                     <td className="wms-mono">{f.prefixo_sku ?? "—"}</td>
                     <td className="wms-mono wms-td-mute">{f.cnpj ?? "—"}</td>
                     <td className="wms-mono">{fmtLt(f)}</td>
-                    {isAdmin && (
+                    {podeEditar && (
                       <td>
                         <button
                           type="button"

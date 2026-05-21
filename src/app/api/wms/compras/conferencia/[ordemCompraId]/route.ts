@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
-import { getCompraQuantidadeSolicitada, hasComprasAccess } from "@/lib/compras-utils";
+import { getCompraQuantidadeSolicitada } from "@/lib/compras-utils";
+import { userCan } from "@/lib/permissions";
 import type { ConferenciaItem } from "@/types";
 
 interface RawConferenciaItem {
@@ -31,7 +32,7 @@ export async function GET(
 ) {
   const session = await getSessionUser(request);
   if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
-  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  if (!userCan(session, "compras.ver")) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
   const { ordemCompraId } = await params;
   const supabase = createServiceClient();

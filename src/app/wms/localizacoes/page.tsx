@@ -11,7 +11,7 @@ import {
   Field,
 } from "@/components/wms/ui/wms-ui";
 import type { Localizacao, TipoLocalizacao } from "@/lib/wms/types";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth, usePermissoes } from "@/lib/auth-context";
 
 const TIPOS: TipoLocalizacao[] = [
   "picking",
@@ -64,6 +64,8 @@ const LOTE_DEFAULT: LoteForm = {
 export default function LocalizacoesPage() {
   const queryClient = useQueryClient();
   const { activeGalpaoId } = useAuth();
+  const { can } = usePermissoes();
+  const podeEditar = can("localizacoes.editar");
   const galpaoId = activeGalpaoId ?? "";
   const [showForm, setShowForm] = useState(false);
   const [modo, setModo] = useState<Modo>("individual");
@@ -269,18 +271,20 @@ export default function LocalizacoesPage() {
         title="Localizações"
         subtitle="Endereçamento físico por galpão"
       >
-        <button
-          type="button"
-          className="wms-btn wms-btn-primary"
-          disabled={!galpaoId}
-          onClick={() => {
-            if (showForm) fecharForm();
-            else setShowForm(true);
-          }}
-        >
-          <Icon name="plus" size={12} />
-          Nova localização
-        </button>
+        {podeEditar && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-primary"
+            disabled={!galpaoId}
+            onClick={() => {
+              if (showForm) fecharForm();
+              else setShowForm(true);
+            }}
+          >
+            <Icon name="plus" size={12} />
+            Nova localização
+          </button>
+        )}
       </PageHeader>
 
       {!galpaoId && (

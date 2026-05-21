@@ -16,7 +16,7 @@ import {
   StatusBadge,
   Kpi,
 } from "@/components/wms/ui/wms-ui";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth, usePermissoes } from "@/lib/auth-context";
 import { FeedEventos } from "@/components/wms/inventario/feed-eventos";
 import { Avatar } from "@/components/wms/ui/avatar";
 
@@ -83,6 +83,8 @@ export default function InventarioSupervisorPage({
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { can } = usePermissoes();
+  const podeSupervisar = can("inventario.supervisionar");
   const { contagens, locs, operadores } = useInventarioRealtime(id);
   const [encerrarOpen, setEncerrarOpen] = useState(false);
   const [cancelarOpen, setCancelarOpen] = useState(false);
@@ -322,7 +324,7 @@ export default function InventarioSupervisorPage({
           marginBottom: 20,
         }}
       >
-        {status === "planejada" && (
+        {status === "planejada" && podeSupervisar && (
           <button
             type="button"
             className="wms-btn wms-btn-primary"
@@ -343,7 +345,7 @@ export default function InventarioSupervisorPage({
             {meuOp ? "Continuar contando" : "Entrar na party"}
           </button>
         )}
-        {status === "em_andamento" && (
+        {status === "em_andamento" && podeSupervisar && (
           <button
             type="button"
             className="wms-btn wms-btn-primary"
@@ -366,7 +368,7 @@ export default function InventarioSupervisorPage({
             {encerrar.isPending ? "Encerrando…" : "Encerrar contagem"}
           </button>
         )}
-        {podeCancelar && (
+        {podeCancelar && podeSupervisar && (
           <button
             type="button"
             className="wms-btn wms-btn-ghost"
@@ -394,7 +396,7 @@ export default function InventarioSupervisorPage({
                 : `Divergências (${divStats.total})`}
           </Link>
         )}
-        {status === "revisao" && (
+        {status === "revisao" && podeSupervisar && (
           <button
             type="button"
             className="wms-btn wms-btn-primary"
@@ -422,7 +424,7 @@ export default function InventarioSupervisorPage({
             {aprovarSessao.isPending ? "Aprovando…" : "Aprovar sessão"}
           </button>
         )}
-        {status === "aprovada" && (
+        {status === "aprovada" && podeSupervisar && (
           <button
             type="button"
             className="wms-btn wms-btn-primary"

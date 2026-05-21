@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { clearGrupoCache } from "@/lib/grupo-resolver";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * POST /api/admin/grupos/[id]/empresas
@@ -10,6 +12,12 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  if (!userCan(session, "sistema.galpoes_empresas")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   const { id: grupoId } = await params;
   const body = await request.json();
   const { empresa_id, tier } = body;

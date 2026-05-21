@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { registrarEvento } from "@/lib/historico-service";
 
 export async function PATCH(
@@ -45,8 +46,12 @@ export async function PATCH(
     return NextResponse.json({ erro: "Pedido não encontrado" }, { status: 404 });
   }
 
-  const isAdmin = user.cargos.includes("admin");
-  const isOperador = user.cargos.some((c) => c.startsWith("operador"));
+  // Filtro de auth: admin + operadores podem re-atribuir qualquer vendedor;
+  // vendedor "dono" do pedido também pode. Proxy via permissões:
+  //   - isAdmin: sistema.usuarios.
+  //   - isOperador: separacao.executar (operadores têm; admin tem; comprador/vendedor não).
+  const isAdmin = userCan(user, "sistema.usuarios");
+  const isOperador = userCan(user, "separacao.executar");
   const isOwner = pedido.vendedor_id === user.id;
   if (!isAdmin && !isOperador && !isOwner) {
     return NextResponse.json({ erro: "Sem permissão pra alterar vendedor" }, { status: 403 });

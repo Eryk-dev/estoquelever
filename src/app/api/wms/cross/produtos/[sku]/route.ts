@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { logger } from "@/lib/logger";
 import { getProdutoDetalheCompleto } from "@/lib/cross/catalogo-queries";
 import { getEmpresaOrigemId } from "@/lib/cross/empresa-origem";
@@ -25,7 +26,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   if (!sku) {
     return NextResponse.json({ error: "SKU obrigatório" }, { status: 400 });
   }
-  const isAdmin = (session.cargos ?? [session.cargo]).includes("admin");
+  // proxy admin-equivalent: só admin tem sistema.usuarios no seed.
+  // Mantém comportamento exato (admin vê pode_remover=true em qualquer linha;
+  // operador só nas próprias).
+  const isAdmin = userCan(session, "sistema.usuarios");
 
   const empresaOrigemId = await getEmpresaOrigemId(session);
   if (!empresaOrigemId) {

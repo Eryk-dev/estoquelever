@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { logger } from "@/lib/logger";
 import { reverterCutoverSeRetrocedeu } from "@/lib/wms/cutover";
 
@@ -19,8 +20,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
 
-  // Admin pode desfazer bip de qualquer galpão (bypass ownership abaixo)
-  const isAdmin = session.cargos.includes("admin");
+  // Admin pode desfazer bip de qualquer galpão (bypass ownership abaixo).
+  // Proxy: sistema.usuarios = admin no seed.
+  const isAdmin = userCan(session, "sistema.usuarios");
 
   const body = await request.json().catch(() => null);
   if (

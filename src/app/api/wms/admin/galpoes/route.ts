@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * GET /api/admin/galpoes
@@ -9,7 +11,13 @@ import { createServiceClient } from "@/lib/supabase-server";
  * pra retrocompat do SISO legacy (/configuracoes). O WMS lê `preferenciais`,
  * que é a fonte de verdade pós-migration 20260514_wms_empresa_galpoes_preferenciais.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  if (!userCan(session, "sistema.galpoes_empresas")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   const supabase = createServiceClient();
 
   // Hint explícito `siso_empresas!siso_empresas_galpao_id_fkey` desambígua
@@ -108,6 +116,12 @@ export async function GET() {
  * do sidebar sem re-login.
  */
 export async function POST(request: NextRequest) {
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  if (!userCan(session, "sistema.galpoes_empresas")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   const body = await request.json();
   const { nome, descricao, cidade, estado, pais } = body;
 

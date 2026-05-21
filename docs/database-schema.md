@@ -1306,6 +1306,20 @@ Razão: os valores `cascade_*` foram introduzidos na implementação inicial mas
 
 ---
 
+### Tabelas de Roles & Permissões (2026-05-21)
+
+| Table | Purpose |
+|---|---|
+| `siso_roles` | Roles editáveis. `id, codigo unique, nome, descricao, sistema, ativo`. `sistema=true` impede delete/rename. Trigger atualiza `atualizado_em`. |
+| `siso_role_permissoes` | N:N role↔permissão. PK (`role_id, permissao_codigo`). Códigos validados no app layer contra `PERMISSIONS` em `src/lib/permissions.ts`. |
+| `siso_usuario_roles` | N:N usuário↔role. PK (`usuario_id, role_id`). Trigger AFTER sincroniza `siso_usuarios.cargos[]` e `.cargo`. |
+
+**RPC `wms_role_delete(p_role_id)`** — bloqueia delete de role sistema ou que deixaria usuários sem nenhuma role.
+
+**RPC `wms_sync_cargos_from_roles()`** — trigger que reconcilia `siso_usuarios.cargos[]` quando `siso_usuario_roles` muda.
+
+---
+
 ## Cross (módulo de catálogo e equivalência)
 
 Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicular como fontes de verdade em tabelas próprias e denormalização automática via trigger. Permite busca universal por SKU/OEM/nome e descoberta de equivalências entre SKUs que compartilham OEMs.

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/lib/auth-context";
+import { usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -27,7 +27,8 @@ const SEVERIDADE_COLOR: Record<string, string> = {
 };
 
 export default function RegrasAdminPage() {
-  const { user } = useAuth();
+  const { can } = usePermissoes();
+  const podeGerenciar = can("insights.regras");
   const qc = useQueryClient();
   const [testando, setTestando] = useState<string | null>(null);
   const [resultadoTeste, setResultadoTeste] = useState<unknown>(null);
@@ -35,7 +36,7 @@ export default function RegrasAdminPage() {
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["insights", "regras"],
     queryFn: () => wmsApi<RegrasResponse>("/api/wms/insights/regras"),
-    enabled: user?.cargo === "admin",
+    enabled: podeGerenciar,
   });
 
   const toggleAtiva = useMutation({
@@ -62,10 +63,10 @@ export default function RegrasAdminPage() {
     onSettled: () => setTestando(null),
   });
 
-  if (user?.cargo !== "admin") {
+  if (!podeGerenciar) {
     return (
       <div className="rounded-xl border border-line bg-paper p-6 text-center">
-        <p className="text-sm text-ink-muted">Acesso restrito a administradores.</p>
+        <p className="text-sm text-ink-muted">Sem permissão pra gerenciar regras.</p>
       </div>
     );
   }

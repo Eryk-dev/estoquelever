@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -12,12 +13,15 @@ import {
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Cargo, UserGalpao } from "@/types";
+import type { PermissaoCodigo } from "@/lib/permissions";
 
 interface AuthUser {
   id: string;
   nome: string;
   cargo: Cargo;
   cargos: Cargo[];
+  roles: Array<{ id: string; codigo: string; nome: string }>;
+  permissoes: string[];     // serializável (Set não é) — hook usePermissoes converte pra Set
   sessionId?: string;
   galpoes: UserGalpao[];
 }
@@ -159,6 +163,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       nome: data.usuario.nome,
       cargo: cargos[0],
       cargos,
+      roles: data.usuario.roles ?? [],
+      permissoes: data.usuario.permissoes ?? [],
       galpoes,
       ...(data.sessionId && { sessionId: data.sessionId }),
     };
@@ -209,6 +215,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         nome: data.usuario.nome,
         cargo: cargos[0],
         cargos,
+        roles: data.usuario.roles ?? [],
+        permissoes: data.usuario.permissoes ?? [],
         galpoes,
         sessionId: stored.sessionId,
       };
@@ -265,6 +273,22 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
+}
+
+export function usePermissoes() {
+  const { user } = useAuth();
+  const set = useMemo(() => new Set(user?.permissoes ?? []), [user?.permissoes]);
+  const can = useCallback(
+    (...required: PermissaoCodigo[]) =>
+      required.length === 0 ? true : required.every((p) => set.has(p)),
+    [set],
+  );
+  const canAny = useCallback(
+    (...required: PermissaoCodigo[]) =>
+      required.length > 0 && required.some((p) => set.has(p)),
+    [set],
+  );
+  return { can, canAny, permissoes: set };
 }
 
 /**

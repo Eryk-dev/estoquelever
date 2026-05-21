@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { loadUserRolesAndPermissions } from "@/lib/roles-loader";
 
 /**
  * POST /api/auth/login
@@ -86,13 +87,25 @@ export async function POST(request: NextRequest) {
   }
   sessionId = sessao.id;
 
+  // Roles + permissões ativas (RBAC dinâmico — 2026-05-21)
+  const { roles, permissoes: permsSet } = await loadUserRolesAndPermissions(
+    supabase,
+    usuario,
+    "auth/login",
+  );
+
   return NextResponse.json({
     ok: true,
     usuario: {
       id: usuario.id,
       nome: usuario.nome,
+      // cargo/cargos vem direto do DB — o trigger trg_sync_cargos_after_roles
+      // mantém em sincronia com siso_usuario_roles, então é equivalente a
+      // roles.map(r => r.codigo). Mantemos por compat com consumidores legados.
       cargo: usuario.cargo,
       cargos: usuario.cargos?.length ? usuario.cargos : [usuario.cargo],
+      roles,
+      permissoes: Array.from(permsSet),
       galpoes,
     },
     ...(sessionId && { sessionId }),

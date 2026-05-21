@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 export async function GET(
   request: NextRequest,
@@ -46,7 +47,10 @@ export async function GET(
     pedido.origem_pedido === "manual" ||
     pedido.nome_ecommerce === "Mercado Livre" ||
     pedido.nome_ecommerce === "Shopee";
-  const isVendedor = user.cargos.includes("vendedor");
+  // Proxy: vendedor "puro" (não admin) só pode ver venda direta.
+  // Admin tem sistema.usuarios + vendas.criar; restrição não se aplica.
+  const isAdmin = userCan(user, "sistema.usuarios");
+  const isVendedor = !isAdmin && userCan(user, "vendas.criar");
   if (isVendedor && !isVendaDireta) {
     return NextResponse.json({ erro: "Sem permissão" }, { status: 403 });
   }

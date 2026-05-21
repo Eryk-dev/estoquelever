@@ -505,7 +505,12 @@ export interface TransferenciaItem {
 
 // ─── Auth / Usuarios ────────────────────────────────────────────────────────
 
-/** User role — determines what they see */
+/**
+ * Cargo legado — mantido por compat com `siso_usuarios.cargo`/`cargos[]`.
+ * Substituído pelo modelo dinâmico de `Role` no novo RBAC. Strings
+ * continuam aceitando as 6 originais como literals; código novo deve
+ * usar `Role` + `userCan(session, "perm")` ao invés de checks por cargo.
+ */
 export type Cargo = "admin" | "operador" | "operador_cwb" | "operador_sp" | "comprador" | "vendedor";
 
 export const CARGO_LABELS: Record<Cargo, string> = {
@@ -544,6 +549,28 @@ export function userHasCargo(cargos: Cargo[], check: Cargo): boolean {
 /** Check if any of the user's cargos is in a list */
 export function userHasAnyCargo(cargos: Cargo[], allowed: string[]): boolean {
   return cargos.some((c) => allowed.includes(c));
+}
+
+// ── Roles & Permissões (dinâmico, vindo do DB) ──
+export interface Role {
+  id: string;
+  codigo: string;          // 'admin', 'operador', 'conferente'
+  nome: string;            // "Admin", "Conferente"
+  descricao?: string | null;
+  sistema: boolean;        // true = não pode deletar/renomear código
+  ativo: boolean;
+  criado_em?: string;
+  atualizado_em?: string;
+}
+
+export interface RoleComContagens extends Role {
+  n_permissoes: number;
+  n_usuarios: number;
+}
+
+export interface RoleDetalhada extends Role {
+  permissoes: string[];    // códigos
+  usuarios: Array<{ id: string; nome: string; roles: string[] }>;
 }
 
 // ─── Galpao / Empresa / Grupo ───────────────────────────────────────────────

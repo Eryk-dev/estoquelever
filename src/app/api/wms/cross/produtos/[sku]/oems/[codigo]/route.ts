@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { logger } from "@/lib/logger";
 
 interface RouteParams {
@@ -16,7 +17,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   const { sku: skuRaw, codigo: codigoRaw } = await params;
   const sku = decodeURIComponent(skuRaw).trim();
   const codigo = decodeURIComponent(codigoRaw).trim().toUpperCase();
-  const isAdmin = (session.cargos ?? [session.cargo]).includes("admin");
+  // proxy admin-equivalent: só admin tem sistema.usuarios.
+  // Operadores podem remover OEMs próprios; só admin remove os de outros.
+  const isAdmin = userCan(session, "sistema.usuarios");
 
   const supabase = createServiceClient();
 

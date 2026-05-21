@@ -68,6 +68,14 @@ export default function WmsConfiguracoesPage() {
         subtitle="Galpões, empresas e funcionários"
       >
         <Link
+          href="/wms/configuracoes/roles"
+          className="wms-btn wms-btn-ghost"
+          title="Gerencie quem pode acessar o quê"
+        >
+          <Icon name="sliders" size={12} />
+          Roles &amp; Permissões
+        </Link>
+        <Link
           href="/wms/configuracoes/conexoes"
           className="wms-btn wms-btn-ghost"
           title="Conexão Tiny OAuth2, depósitos, PrintNode e webhook"

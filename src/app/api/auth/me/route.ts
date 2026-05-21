@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { loadUserRolesAndPermissions } from "@/lib/roles-loader";
 
 /**
  * GET /api/auth/me
@@ -19,13 +20,12 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Valida sessão (sem checar expiração — alinhar com session.ts: a coluna
-  // expira_em existe mas a checagem é feita no validador legacy; aqui apenas
-  // confirma que a sessão existe e pega usuario_id).
+  // Valida sessão + checa expiração (alinhado com session.ts).
   const { data: sessao, error: sessaoError } = await supabase
     .from("siso_sessoes")
     .select("usuario_id")
     .eq("id", sessionId)
+    .gt("expira_em", new Date().toISOString())
     .maybeSingle();
 
   if (sessaoError || !sessao) {
@@ -66,12 +66,24 @@ export async function GET(request: NextRequest) {
     .filter((galpao): galpao is { id: string; nome: string } => galpao !== null)
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
+  // Roles + permissões ativas (RBAC dinâmico — 2026-05-21)
+  const { roles, permissoes: permsSet } = await loadUserRolesAndPermissions(
+    supabase,
+    usuario,
+    "auth/me",
+  );
+
   return NextResponse.json({
     usuario: {
       id: usuario.id,
       nome: usuario.nome,
+      // cargo/cargos vem direto do DB — o trigger trg_sync_cargos_after_roles
+      // mantém em sincronia com siso_usuario_roles, então é equivalente a
+      // roles.map(r => r.codigo). Mantemos por compat com consumidores legados.
       cargo: usuario.cargo,
       cargos: usuario.cargos?.length ? usuario.cargos : [usuario.cargo],
+      roles,
+      permissoes: Array.from(permsSet),
       galpoes,
     },
   });

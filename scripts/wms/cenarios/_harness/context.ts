@@ -3,6 +3,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Ctx, HttpClient, StagingFixtures } from "./types";
 import * as A from "./asserts";
 
+/**
+ * Deriva um tiny_produto_id determinístico a partir do SKU.
+ * Range: 10_000_000_000 .. 99_999_999_999 (11 dígitos, fora do range Tiny real
+ * que geralmente é 9-10 dígitos, e compatível com bigint).
+ * Determinístico permite re-rodar cenários e cair sempre no mesmo ID.
+ */
+function tinyProdutoIdFromSku(sku: string): number {
+  let h = 5381;
+  for (let i = 0; i < sku.length; i++) {
+    h = ((h << 5) + h + sku.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h) % 90_000_000_000 + 10_000_000_000;
+}
+
 export function createContext(opts: {
   sb: SupabaseClient;
   http: HttpClient;

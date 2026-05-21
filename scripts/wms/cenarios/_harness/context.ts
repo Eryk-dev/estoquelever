@@ -4,15 +4,21 @@ import type { Ctx, HttpClient, StagingFixtures } from "./types";
 import * as A from "./asserts";
 
 /**
- * Deriva um tiny_produto_id determinístico a partir do SKU.
+ * Deriva um tiny_produto_id determinístico a partir do SKU + sufixo de empresa.
  * Range: 10_000_000_000 .. 99_999_999_999 (11 dígitos, fora do range Tiny real
  * que geralmente é 9-10 dígitos, e compatível com bigint).
  * Determinístico permite re-rodar cenários e cair sempre no mesmo ID.
+ *
+ * IMPORTANTE: o suffix garante que cada empresa tenha tiny_produto_id próprio
+ * pro mesmo SKU (espelhando o fato real de que cada conta Tiny tem seu próprio
+ * id pro mesmo produto). Sem isso, o stub Tiny falha em .maybeSingle() quando
+ * múltiplas empresas mapeiam o mesmo tiny_produto_id.
  */
-function tinyProdutoIdFromSku(sku: string): number {
+function tinyProdutoIdFromSku(sku: string, empresaSuffix: string = ""): number {
+  const key = `${sku}::${empresaSuffix}`;
   let h = 5381;
-  for (let i = 0; i < sku.length; i++) {
-    h = ((h << 5) + h + sku.charCodeAt(i)) | 0;
+  for (let i = 0; i < key.length; i++) {
+    h = ((h << 5) + h + key.charCodeAt(i)) | 0;
   }
   return Math.abs(h) % 90_000_000_000 + 10_000_000_000;
 }
@@ -31,6 +37,23 @@ export function createContext(opts: {
     return `TEST-${prefix}-${randomBytes(3).toString("hex")}`;
   }
 
+  // Resolve test-runner usuario_id sob demanda. Endpoints como
+  // /separacao/iniciar exigem operador_id explícito no body — diferente do
+  // auth-context do frontend que injeta automaticamente.
+  let _testRunnerId: string | null = null;
+  async function getOperadorId(): Promise<string> {
+    if (_testRunnerId) return _testRunnerId;
+    const { data } = await sb
+      .from("siso_usuarios")
+      .select("id")
+      .eq("nome", process.env.TEST_RUNNER_NOME ?? "test-runner")
+      .maybeSingle();
+    const id = (data as { id?: string } | null)?.id;
+    if (!id) throw new Error(`getOperadorId: usuário test-runner não encontrado`);
+    _testRunnerId = id;
+    return id;
+  }
+
   async function aguardar(ms: number): Promise<void> {
     return new Promise((r) => setTimeout(r, ms));
   }
@@ -45,12 +68,15 @@ export function createContext(opts: {
     if (error) throw new Error(`criarProduto ${p.sku}: ${error.message}`);
 
     // Mapping pras 2 empresas de teste — tiny-stub usa isso pra
-    // resolver tiny_produto_id → produto_id interno em GET /estoque/{id}
-    const tinyId = tinyProdutoIdFromSku(p.sku);
+    // resolver tiny_produto_id → produto_id interno em GET /estoque/{id}.
+    // Cada empresa tem tiny_produto_id próprio (mesmo SKU, IDs distintos),
+    // refletindo a realidade do Tiny e evitando colisão em .maybeSingle().
+    const tinyIdNetair = tinyProdutoIdFromSku(p.sku, "netair");
+    const tinyIdNetparts = tinyProdutoIdFromSku(p.sku, "netparts");
     const { error: mapErr } = await sb.from("siso_produto_empresas").upsert(
       [
-        { produto_id: produto.id, empresa_id: staging.empresas.netair.id, tiny_produto_id: tinyId },
-        { produto_id: produto.id, empresa_id: staging.empresas.netparts.id, tiny_produto_id: tinyId },
+        { produto_id: produto.id, empresa_id: staging.empresas.netair.id, tiny_produto_id: tinyIdNetair },
+        { produto_id: produto.id, empresa_id: staging.empresas.netparts.id, tiny_produto_id: tinyIdNetparts },
       ],
       { onConflict: "produto_id,empresa_id" },
     );
@@ -116,6 +142,15 @@ export function createContext(opts: {
     const fakeId = p.pedidoFakeId ?? Math.floor(Math.random() * 90_000_000) + 9_000_000_000;
     const tipoFinal = p.tipo ?? "inclusao_pedido";
 
+    // Resolve empresa suffix do CNPJ pra escolher o tiny_produto_id certo
+    // (cada empresa tem seu próprio ID Tiny pro mesmo SKU).
+    const empresaSuffix =
+      p.empresa === staging.empresas.netair.cnpj
+        ? "netair"
+        : p.empresa === staging.empresas.netparts.cnpj
+          ? "netparts"
+          : "netair";
+
     // Seed do stub Tiny pro pedidoFakeId (se existir a tabela)
     try {
       const { data: empresa } = await sb.from("siso_empresas").select("id").eq("cnpj", p.empresa).single();
@@ -134,7 +169,9 @@ export function createContext(opts: {
             cliente: { cpfCnpj: p.empresa, nome: "Cliente Teste" },
             itens: p.items.map((it, i) => ({
               id: fakeId * 10 + i,
-              produto: { id: tinyProdutoIdFromSku(it.sku), codigo: it.sku, descricao: `Produto teste ${it.sku}` },
+              // sku field é o que o webhook-processor lê (TinyPedidoItem.produto.sku);
+              // codigo é mantido como alias por compat com APIs antigas.
+              produto: { id: tinyProdutoIdFromSku(it.sku, empresaSuffix), sku: it.sku, codigo: it.sku, descricao: `Produto teste ${it.sku}` },
               quantidade: it.qty,
               valorUnitario: 1,
             })),
@@ -153,20 +190,24 @@ export function createContext(opts: {
         cliente: { cnpj: p.empresa, nome: "Cliente Teste" },
         itens: p.items.map((it, i) => ({
           id: String(fakeId * 10 + i),
-          produto: { id: String(tinyProdutoIdFromSku(it.sku)), codigo: it.sku, descricao: it.sku },
+          produto: { id: String(tinyProdutoIdFromSku(it.sku, empresaSuffix)), sku: it.sku, codigo: it.sku, descricao: it.sku },
           quantidade: it.qty,
         })),
       },
       cnpj: p.empresa,
     };
     await http.post("/api/wms/webhook/tiny", body);
-    // Espera até o pedido aparecer (id = tiny pedido id na schema atual)
-    for (let attempt = 0; attempt < 20; attempt++) {
+    // Espera até o pedido aparecer. Webhook é fire-and-forget e o processor
+    // faz vários round-trips Tiny (mesmo no stub, com sleeps), então pode
+    // levar 10s+ até a row chegar em siso_pedidos.
+    const maxWaitMs = 20_000;
+    const pollMs = 250;
+    for (let attempt = 0; attempt < maxWaitMs / pollMs; attempt++) {
       const { data } = await sb.from("siso_pedidos").select("id").eq("id", fakeId).maybeSingle();
       if (data) return { id: String(data.id) };
-      await aguardar(250);
+      await aguardar(pollMs);
     }
-    throw new Error(`webhook: pedido com id=${fakeId} não apareceu em 5s`);
+    throw new Error(`webhook: pedido com id=${fakeId} não apareceu em ${maxWaitMs}ms`);
   }
 
   async function aprovar(pedidoId: string, decisao?: "propria" | "transferencia" | "oc") {
@@ -174,11 +215,39 @@ export function createContext(opts: {
   }
 
   async function iniciarSeparacao(pedidoId: string) {
-    await http.post("/api/wms/separacao/iniciar", { pedido_id: pedidoId });
+    const operador_id = await getOperadorId();
+    await http.post("/api/wms/separacao/iniciar", { pedido_ids: [pedidoId], operador_id });
   }
 
   async function bipar(p: { pedido: string; item: string; qty: number; loc?: string }) {
-    await http.post("/api/wms/separacao/bipar", { pedido_id: p.pedido, sku: p.item, quantidade: p.qty, loc: p.loc });
+    // Fluxo wave picking: marca cada item como "picado" via /marcar-item.
+    // Isso seta separacao_marcado=true, gera mov de saída no ledger e permite
+    // que /concluir transicione em_separacao → separado (que é o que o
+    // cenário 01 espera). `bipar` (com /separacao/bipar) seria barcode
+    // scanning, mas o RPC associado pula direto pra "embalado" e ignora o
+    // separacao_marcado que concluir verifica — não bate com o fluxo do
+    // cenário, então usamos marcar-item aqui.
+    const { data: ped } = await sb
+      .from("siso_pedidos")
+      .select("separacao_galpao_id")
+      .eq("id", p.pedido)
+      .maybeSingle();
+    const galpaoId = (ped as { separacao_galpao_id?: string } | null)?.separacao_galpao_id;
+    const headers: Record<string, string> = galpaoId ? { "X-Galpao-Id": galpaoId } : {};
+
+    // Resolve pedido_item_id pelo SKU
+    const { data: items } = await sb
+      .from("siso_pedido_itens")
+      .select("id, sku")
+      .eq("pedido_id", p.pedido);
+    const item = (items as Array<{ id: string | number; sku: string }> | null)?.find((i) => i.sku === p.item);
+    if (!item) throw new Error(`bipar: item ${p.item} não encontrado no pedido ${p.pedido}`);
+
+    await http.post(
+      "/api/wms/separacao/marcar-item",
+      { pedido_item_id: item.id, marcado: true },
+      headers,
+    );
   }
 
   async function parcial(p: { pedido: string; item: string; qty: number; loc_zerou: boolean }) {
@@ -195,15 +264,37 @@ export function createContext(opts: {
   }
 
   async function concluirSeparacao(pedidoId: string) {
-    await http.post("/api/wms/separacao/concluir", { pedido_id: pedidoId });
+    await http.post("/api/wms/separacao/concluir", { pedido_ids: [pedidoId] });
   }
 
   async function embalar(pedidoId: string) {
-    await http.post("/api/wms/separacao/bipar-embalagem", { pedido_id: pedidoId });
+    // /separacao/bipar-embalagem processa um SKU por chamada (com qty). Como
+    // o cenário não passa SKU pra embalar(pedidoId), levantamos os itens do
+    // pedido e bipamos cada um pela quantidade pedida.
+    const { data: ped } = await sb
+      .from("siso_pedidos")
+      .select("separacao_galpao_id")
+      .eq("id", pedidoId)
+      .maybeSingle();
+    const galpaoId = (ped as { separacao_galpao_id?: string } | null)?.separacao_galpao_id ?? null;
+    const headers: Record<string, string> = galpaoId ? { "X-Galpao-Id": galpaoId } : {};
+
+    const { data: items } = await sb
+      .from("siso_pedido_itens")
+      .select("sku, quantidade_pedida")
+      .eq("pedido_id", pedidoId);
+    const list = (items ?? []) as Array<{ sku: string; quantidade_pedida: number }>;
+    for (const it of list) {
+      await http.post(
+        "/api/wms/separacao/bipar-embalagem",
+        { sku: it.sku, galpao_id: galpaoId, quantidade: it.quantidade_pedida },
+        headers,
+      );
+    }
   }
 
   async function expedir(pedidoId: string) {
-    await http.post("/api/wms/separacao/expedir", { pedido_id: pedidoId });
+    await http.post("/api/wms/separacao/expedir", { pedido_ids: [pedidoId] });
   }
 
   // ── waits ──
@@ -220,12 +311,62 @@ export function createContext(opts: {
     throw new Error(`aguardarStatus: ${pedidoId} esperava ${status}/${expected?.decisao} em ${timeout}ms; estado final: ${JSON.stringify(data)}`);
   }
 
+  /**
+   * Simula o webhook tipo "nota_fiscal" que o Tiny dispararia após autorização
+   * da NF pelo SEFAZ. Necessário pra destravar pedidos em `aguardando_nf`
+   * durante testes — em prod isso vem assíncrono do próprio Tiny.
+   */
+  async function _simularNfWebhook(pedidoId: string): Promise<boolean> {
+    const { data: ped } = await sb
+      .from("siso_pedidos")
+      .select("nota_fiscal_id, empresa_origem_id, chave_acesso_nf")
+      .eq("id", pedidoId)
+      .maybeSingle();
+    const row = ped as { nota_fiscal_id?: string | null; empresa_origem_id?: string | null; chave_acesso_nf?: string | null } | null;
+    if (!row?.nota_fiscal_id || !row.empresa_origem_id) return false;
+
+    const { data: emp } = await sb
+      .from("siso_empresas")
+      .select("cnpj")
+      .eq("id", row.empresa_origem_id)
+      .maybeSingle();
+    const cnpj = (emp as { cnpj?: string } | null)?.cnpj;
+    if (!cnpj) return false;
+
+    const body = {
+      tipo: "nota_fiscal",
+      cnpj,
+      dados: {
+        idNotaFiscalTiny: Number(row.nota_fiscal_id),
+        numero: "1",
+        serie: "1",
+        chaveAcesso: row.chave_acesso_nf ?? `FAKE-CHAVE-${row.nota_fiscal_id}`,
+        urlDanfe: `https://staging.local/danfe-${row.nota_fiscal_id}.pdf`,
+        dataEmissao: new Date().toISOString(),
+        valorNota: 1,
+      },
+    };
+    try {
+      await http.post("/api/wms/webhook/tiny", body);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function aguardarStatusSeparacao(pedidoId: string, status: string, opts: { timeout_ms?: number } = {}) {
-    const timeout = opts.timeout_ms ?? 5_000;
+    const timeout = opts.timeout_ms ?? 8_000;
     const deadline = Date.now() + timeout;
+    let nfFired = false;
     while (Date.now() < deadline) {
       const { data } = await sb.from("siso_pedidos").select("status_separacao").eq("id", pedidoId).maybeSingle();
-      if ((data as { status_separacao?: string } | null)?.status_separacao === status) return;
+      const atual = (data as { status_separacao?: string } | null)?.status_separacao;
+      if (atual === status) return;
+      // Destrava aguardando_nf → aguardando_separacao simulando NF webhook
+      // (em prod isso viria assíncrono do Tiny).
+      if (!nfFired && atual === "aguardando_nf" && status !== "aguardando_nf") {
+        nfFired = await _simularNfWebhook(pedidoId);
+      }
       await aguardar(150);
     }
     const { data } = await sb.from("siso_pedidos").select("status_separacao").eq("id", pedidoId).maybeSingle();

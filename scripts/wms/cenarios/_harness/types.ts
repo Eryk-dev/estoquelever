@@ -12,10 +12,10 @@ export interface StagingFixtures {
 }
 
 export interface HttpClient {
-  get<T = unknown>(path: string): Promise<T>;
-  post<T = unknown>(path: string, body?: unknown): Promise<T>;
-  patch<T = unknown>(path: string, body?: unknown): Promise<T>;
-  delete<T = unknown>(path: string): Promise<T>;
+  get<T = unknown>(path: string, headers?: Record<string, string>): Promise<T>;
+  post<T = unknown>(path: string, body?: unknown, headers?: Record<string, string>): Promise<T>;
+  patch<T = unknown>(path: string, body?: unknown, headers?: Record<string, string>): Promise<T>;
+  delete<T = unknown>(path: string, headers?: Record<string, string>): Promise<T>;
 }
 
 export type Ctx = {

@@ -109,7 +109,18 @@ export async function seedInicial(sb: SupabaseClient): Promise<StagingFixtures> 
   );
 
   // Usuário test-runner
-  await upsertUsuario(sb, "test-runner", "9999", "admin");
+  const testRunnerId = await upsertUsuario(sb, "test-runner", "9999", "admin");
+
+  // test-runner precisa estar associado a TODOS os galpões pra poder usar
+  // X-Galpao-Id header em endpoints que filtram por galpão (ex: /separacao/bipar
+  // → siso_processar_bip(p_galpao_id)).
+  await sb.from("siso_usuario_galpoes").upsert(
+    [
+      { usuario_id: testRunnerId, galpao_id: cwbId },
+      { usuario_id: testRunnerId, galpao_id: spId },
+    ],
+    { onConflict: "usuario_id,galpao_id", ignoreDuplicates: true },
+  );
 
   // Fornecedor genérico pra prefixo TEST
   await upsertFornecedor(sb, "TestSupplier-Default", "TEST");

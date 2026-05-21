@@ -8,11 +8,12 @@ export class HttpError extends Error {
 }
 
 export function createHttp(opts: { baseUrl: string; sessionId: string; correlationId: string }): HttpClient {
-  async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async function request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
     const url = `${opts.baseUrl}${path}`;
     const headers: Record<string, string> = {
       "X-Session-Id": opts.sessionId,
       "X-Correlation-Id": opts.correlationId,
+      ...(extraHeaders ?? {}),
     };
     if (body !== undefined) headers["Content-Type"] = "application/json";
 
@@ -31,9 +32,9 @@ export function createHttp(opts: { baseUrl: string; sessionId: string; correlati
   }
 
   return {
-    get: (p) => request("GET", p),
-    post: (p, b) => request("POST", p, b),
-    patch: (p, b) => request("PATCH", p, b),
-    delete: (p) => request("DELETE", p),
+    get: (p, headers) => request("GET", p, undefined, headers),
+    post: (p, b, headers) => request("POST", p, b, headers),
+    patch: (p, b, headers) => request("PATCH", p, b, headers),
+    delete: (p, headers) => request("DELETE", p, undefined, headers),
   };
 }

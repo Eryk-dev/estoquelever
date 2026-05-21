@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { logger } from "@/lib/logger";
 import { registrarEventos } from "@/lib/historico-service";
 import { dispararCutoverSePronto, reverterCutoverSeRetrocedeu } from "@/lib/wms/cutover";
@@ -33,7 +34,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
 
-  if (!session.cargos.includes("admin")) {
+  // AUTH check: ação admin-only (pode pular validações e estornar mov_saida).
+  // Proxy: sistema.usuarios — só admin tem no seed.
+  // TODO: criar perm separacao.administrar dedicada quando Task 20a sair.
+  if (!userCan(session, "sistema.usuarios")) {
     return NextResponse.json({ error: "apenas admin pode alterar etapa" }, { status: 403 });
   }
 

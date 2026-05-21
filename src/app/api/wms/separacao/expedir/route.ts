@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { logger } from "@/lib/logger";
 
 /**
@@ -18,7 +19,8 @@ export async function POST(request: NextRequest) {
   }
 
   // Admin pode expedir qualquer galpão (bypass do ownership check abaixo).
-  const isAdmin = session.cargos.includes("admin");
+  // Proxy: sistema.usuarios = admin no seed.
+  const isAdmin = userCan(session, "sistema.usuarios");
 
   const body = await request.json().catch(() => null);
   if (

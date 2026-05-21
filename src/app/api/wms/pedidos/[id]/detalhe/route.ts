@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import type { GalpaoEstoque } from "@/types";
 
 /**
@@ -49,9 +50,11 @@ export async function GET(
       return NextResponse.json({ error: pedidoError?.message ?? "Erro ao buscar pedido" }, { status: 500 });
     }
 
-    // Role-based access check
-    const isAdmin = session.cargos.includes("admin");
-    const isComprador = !isAdmin && session.cargos.includes("comprador");
+    // Role-based access check (filtro/auth híbrido). Proxy via permissões:
+    //   - isAdmin: só admin tem sistema.usuarios → vê qualquer pedido.
+    //   - isComprador: tem compras.executar mas não é admin → vê só decisao_final='oc'.
+    const isAdmin = userCan(session, "sistema.usuarios");
+    const isComprador = !isAdmin && userCan(session, "compras.executar");
 
     if (isComprador && pedido.decisao_final !== "oc") {
       return NextResponse.json({ error: "Acesso negado" }, { status: 403 });

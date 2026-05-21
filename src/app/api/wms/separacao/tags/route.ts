@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * GET /api/separacao/tags
@@ -16,7 +17,9 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
-  const isAdmin = session.cargos.includes("admin");
+  // Filtro multi-tenant: admin vê tags de todos os galpões; outros do próprio.
+  // Proxy: sistema.usuarios = admin no seed.
+  const isAdmin = userCan(session, "sistema.usuarios");
   const activeGalpaoId = session.galpaoId;
 
   try {

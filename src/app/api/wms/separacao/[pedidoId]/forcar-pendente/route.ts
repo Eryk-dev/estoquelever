@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { logger } from "@/lib/logger";
 import { obterNotaFiscal } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
@@ -26,7 +27,10 @@ export async function PATCH(
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
 
-  if (!session.cargos.includes("admin")) {
+  // AUTH check: ação admin-only (forçar pendente bypassa validação de NF).
+  // Proxy: sistema.usuarios — só admin tem no seed.
+  // TODO: criar perm separacao.administrar dedicada quando Task 20a sair.
+  if (!userCan(session, "sistema.usuarios")) {
     return NextResponse.json(
       { error: "apenas admin pode forçar pendente" },
       { status: 403 },

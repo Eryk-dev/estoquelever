@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import type { SeparacaoCounts, StatusSeparacao } from "@/types";
 
@@ -64,7 +65,9 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
-  const isAdmin = session.cargos.includes("admin");
+  // Filtro multi-tenant: admin vê todos os galpões; outros precisam galpão ativo.
+  // Proxy: sistema.usuarios = admin no seed.
+  const isAdmin = userCan(session, "sistema.usuarios");
   const activeGalpaoId = session.galpaoId;
 
   if (!isAdmin && !activeGalpaoId) {

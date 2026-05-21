@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * GET /api/pedidos/tracking
@@ -55,8 +56,11 @@ export async function GET(request: NextRequest) {
   const tab = searchParams.get("tab");
 
   const supabase = createServiceClient();
-  const isAdmin = session.cargos.includes("admin");
-  const isComprador = !isAdmin && session.cargos.includes("comprador");
+  // Filtro de visibilidade (não auth check). Proxy via permissões:
+  //   - isAdmin: só admin tem sistema.usuarios → vê todos os galpões + decisões.
+  //   - isComprador: tem compras.executar mas não é admin → vê só decisao_final='oc'.
+  const isAdmin = userCan(session, "sistema.usuarios");
+  const isComprador = !isAdmin && userCan(session, "compras.executar");
 
   try {
     // Pre-fetch pedido_ids matching SKU search

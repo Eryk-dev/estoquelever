@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/agrupamento-service";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { createServiceClient } from "@/lib/supabase-server";
 
 const LOG_SOURCE = "separacao-retry-etiqueta";
@@ -124,7 +125,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const wrongGalpao = !session.cargos.includes("admin")
+    // Filtro multi-tenant: admin bypassa galpão. Proxy: sistema.usuarios = admin.
+    const wrongGalpao = !userCan(session, "sistema.usuarios")
       ? rows.filter((row) => row.separacao_galpao_id !== session.galpaoId)
       : [];
 

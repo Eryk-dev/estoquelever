@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { enviarImpressaoZpl, resolverImpressora } from "@/lib/printnode";
 import { buscarEImprimirEtiqueta } from "@/lib/etiqueta-service";
 import { splitZplLabels } from "@/lib/etiqueta-download";
@@ -48,7 +49,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "pedido_nao_encontrado" }, { status: 404 });
   }
 
-  if (!session.cargos.includes("admin") && pedido.separacao_galpao_id !== session.galpaoId) {
+  // Filtro multi-tenant: admin bypassa galpão. Proxy: sistema.usuarios = admin.
+  if (!userCan(session, "sistema.usuarios") && pedido.separacao_galpao_id !== session.galpaoId) {
     return NextResponse.json({ error: "acesso_negado" }, { status: 403 });
   }
 

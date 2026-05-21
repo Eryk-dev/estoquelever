@@ -21,6 +21,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 const PAGE_SIZE_DEFAULT = 50;
 const PAGE_SIZE_MAX = 200;
@@ -50,8 +51,12 @@ export async function GET(request: NextRequest) {
     Math.max(1, parseInt(sp.get("page_size") ?? String(PAGE_SIZE_DEFAULT), 10)),
   );
 
-  const isVendedor = user.cargos.includes("vendedor");
-  const isAdmin = user.cargos.includes("admin");
+  // Filtro de visibilidade (não auth). Proxy via permissões:
+  //   - isAdmin: tem sistema.usuarios (só admin no seed).
+  //   - isVendedor: tem vendas.criar mas NÃO é admin — preserva semântica
+  //     do cargo 'vendedor' (auto-filtro "Meus pedidos" + hide custo).
+  const isAdmin = userCan(user, "sistema.usuarios");
+  const isVendedor = !isAdmin && userCan(user, "vendas.criar");
   const hideCusto = isVendedor && !isAdmin;
 
   // Auto-filtro "Meus pedidos" — vendedor sem param explícito vê só os dele

@@ -74,7 +74,7 @@ export function createContext(opts: {
       p_origem_tipo: "inventario_inicial",
       p_origem_id: null,
       p_custo_unitario: p.custo ?? null,
-      p_observacoes: `harness seed [${correlationId.slice(0, 8)}]`,
+      p_motivo: `harness seed [${correlationId.slice(0, 8)}]`,
     });
     if (error) throw new Error(`semearSaldo rpc: ${error.message}`);
   }

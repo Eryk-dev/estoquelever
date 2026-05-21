@@ -7,6 +7,14 @@
  */
 import { ML_API_BASE, getValidMlToken } from "./ml-oauth";
 import { logger } from "./logger";
+import {
+  isMlDisabled,
+  getMlUserMeStub,
+  searchSellerItemsBySkuStub,
+  searchAndMatchItemsBySkuStub,
+  getMlItemsDetailsStub,
+  testarMlConnectionStub,
+} from "./ml-stub";
 
 // ─── Tipos ──────────────────────────────────────────────────────────
 
@@ -105,7 +113,12 @@ async function mlFetch<T>(
 
 // ─── Endpoints usados ───────────────────────────────────────────────
 
-export function getMlUserMe(connectionId: string): Promise<MlUserMe> {
+export async function getMlUserMe(connectionId: string): Promise<MlUserMe> {
+  if (isMlDisabled()) {
+    const s = await getMlUserMeStub(connectionId);
+    // Bridge: MlUserMe requires site_id; stub doesn't carry it. Default MLB.
+    return { ...s, site_id: "MLB" };
+  }
   return mlFetch<MlUserMe>(connectionId, "/users/me");
 }
 
@@ -127,6 +140,12 @@ export async function searchSellerItemsBySku(
   sellerId: number,
   sku: string,
 ): Promise<string[]> {
+  if (isMlDisabled()) {
+    // Stub retorna { results: [], total: 0 } — flatten pra string[]
+    // (contrato público da função real).
+    const s = await searchSellerItemsBySkuStub(sku);
+    return s.results;
+  }
   const enc = encodeURIComponent(sku);
   const ids = new Set<string>();
 
@@ -222,6 +241,7 @@ export async function searchAndMatchItemsBySku(
   sellerId: number,
   sku: string,
 ): Promise<MlItem[]> {
+  if (isMlDisabled()) return searchAndMatchItemsBySkuStub(sku);
   const ids = await searchSellerItemsBySku(connectionId, sellerId, sku);
   if (ids.length === 0) return [];
   const items = await getMlItemsDetails(connectionId, ids);
@@ -238,6 +258,7 @@ export async function getMlItemsDetails(
   connectionId: string,
   itemIds: string[],
 ): Promise<MlItem[]> {
+  if (isMlDisabled()) return getMlItemsDetailsStub(itemIds);
   if (itemIds.length === 0) return [];
 
   const out: MlItem[] = [];
@@ -266,6 +287,10 @@ export async function getMlItemsDetails(
 export async function testarMlConnection(
   connectionId: string,
 ): Promise<{ ok: boolean; nickname?: string; erro?: string }> {
+  if (isMlDisabled()) {
+    const s = await testarMlConnectionStub();
+    return { ok: s.ok, nickname: s.nickname };
+  }
   try {
     const me = await getMlUserMe(connectionId);
     return { ok: true, nickname: me.nickname };

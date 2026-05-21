@@ -4103,6 +4103,34 @@ A key fica em `siso_printnode_contas`, e galpões/usuários guardam
 - **POST** `/api/wms/admin/printnode/contas/[id]/test` - Testa via `/whoami` no PrintNode. Body opcional `{ api_key }` permite testar uma key NOVA antes de salvar.
 - **GET** `/api/wms/admin/printnode/printers` - Lista impressoras agregadas de TODAS as contas ativas. Retorna `[{ accountId, accountLabel, printers[], error }]`. Contas com falha não derrubam a resposta — vêm com `error` preenchido e `printers: []`.
 
+### Additional Admin Routes - Roles & Permissões (2026-05-21)
+
+### `GET /api/wms/admin/permissoes`
+Retorna catálogo do registry (30 perms / 8 módulos) agrupado por módulo. Auth: sessão válida (qualquer cargo autenticado).
+
+Response: `{ modulos: Array<{ id, label, permissoes: Array<{ codigo, label }> }>, total: number }`
+
+### `GET /api/wms/admin/roles`
+Lista todas roles + counts (n_permissoes, n_usuarios). Auth: `sistema.roles`.
+
+### `POST /api/wms/admin/roles`
+Body: `{ codigo: string, nome: string, descricao?: string }`. Codigo: `^[a-z][a-z0-9_]*$`. 409 se duplicado. Auth: `sistema.roles`.
+
+### `GET /api/wms/admin/roles/[id]`
+Detalhe da role: permissoes[] + usuarios[]. Auth: `sistema.roles`.
+
+### `PATCH /api/wms/admin/roles/[id]`
+Body: `{ nome?, descricao?, ativo? }`. Role sistema não pode ser desativada. Auth: `sistema.roles`.
+
+### `DELETE /api/wms/admin/roles/[id]`
+Chama RPC `wms_role_delete`. 400 se role sistema ou se geraria órfãos. Auth: `sistema.roles`.
+
+### `PUT /api/wms/admin/roles/[id]/permissoes`
+Body: `{ permissoes: string[] }` (replace). Role admin sempre recebe TODAS. Códigos não-existentes no registry → 400. Auth: `sistema.roles`.
+
+### `PUT /api/wms/admin/usuarios/[id]/roles`
+Body: `{ role_ids: string[] }` (replace). Anti-lockout: 400 se geraria sistema sem admin. Auth: `sistema.usuarios`.
+
 ---
 
 ## Tiny ERP API

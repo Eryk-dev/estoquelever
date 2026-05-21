@@ -119,3 +119,25 @@ Implementação:
 ---
 
 *Last updated: 2026-05-20 — Ledger Simplificado 3D rollout (drop dona física, empresa como tag em movs).*
+
+---
+
+## Roles & Permissões
+
+Controle de acesso é via RBAC dinâmico desde 2026-05-21.
+
+### Fluxo de check
+
+1. **Registry (`src/lib/permissions.ts`):** lista canônica de 30 permissões em 8 módulos. Permissões são contratos com o código — cada `userCan(session, "X")` precisa ter X no registry.
+2. **Roles (`siso_roles`):** agrupamentos editáveis pelo admin. 6 roles sistema (`admin`, `operador`, `operador_cwb`, `operador_sp`, `comprador`, `vendedor`) não-deletáveis; outras criadas dinamicamente.
+3. **Atribuição (`siso_usuario_roles`):** usuário tem 1..N roles. Permissões efetivas = união dos `siso_role_permissoes` das roles ativas.
+4. **Sessão:** `getSessionUser()` carrega `permissoes: Set<string>` em cada request (1 query JOIN, ~ms). Fallback: se usuário não tem `siso_usuario_roles`, busca por `cargos[]`.
+5. **Check:** `userCan(session, "compras.executar")` em backend; `usePermissoes().can(...)` em client.
+
+### Defesa em camadas
+- **UI esconde** items da sidebar e botões via `requires` / `can()`.
+- **API valida** todo endpoint sensível com `userCan` antes de qualquer operação.
+- **DB protege** anti-lockout via RPC `wms_role_delete` + validação no endpoint `/usuarios/[id]/roles`.
+
+### Compat legado
+`siso_usuarios.cargo` e `.cargos[]` continuam existindo (nullable, espelhados por trigger `trg_sync_cargos_after_roles`). Código novo nunca lê esses campos — só permissoes. Remoção definitiva planejada para ~1 mês após Fase 3 estabilizar.

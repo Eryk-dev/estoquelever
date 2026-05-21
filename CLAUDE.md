@@ -630,13 +630,25 @@ Com o ledger simplificado, apuração por empresa virou **report sobre tags de m
 
 ## Key Domain Concepts
 
-### User Roles (Cargos)
-- `admin` — sees everything, manages users and settings
-- `operador` — generic operator (used in newer multi-galpão setups)
-- `operador_cwb` — sees/processes CWB orders only
-- `operador_sp` — sees/processes SP orders only
-- `comprador` — sees only purchase-order-suggested orders
-- `vendedor` — sees only `/wms/vendas` (Vendas Diretas) — pode criar pedidos manuais com vendedor_id auto-preenchido + filtro padrão "Meus pedidos"
+### Roles & Permissões (dinâmico)
+
+Acesso é controlado por **roles editáveis** no UI (`/wms/configuracoes/roles`). Cada role tem um conjunto de permissões (granularidade módulo + ação) do registry em `src/lib/permissions.ts` (30 permissões em 8 módulos).
+
+**Roles padrão (sistema=true, não-deletáveis):**
+- `admin` — todas 30 permissões
+- `operador` — vendas (exceto criar), separação, compras.ver, estoque, cobertura, operações, inventário ver/executar, insights.ver, relatórios, cadastros
+- `operador_cwb` / `operador_sp` — idem `operador` (galpão é dimensão à parte, não permissão)
+- `comprador` — pedidos.ver, compras.*, estoque, cobertura, relatórios
+- `vendedor` — vendas.ver, vendas.criar
+
+**Cargo legado:** colunas `siso_usuarios.cargo` e `siso_usuarios.cargos[]` ficam nullable como espelho do `siso_usuario_roles` (trigger AFTER mantém sincronizado). Código novo **sempre** checa permissão (`userCan(session, "compras.executar")`), nunca cargo (`cargos.includes("comprador")`).
+
+**Check de acesso no código:**
+- Backend: `import { userCan } from "@/lib/permissions"; if (!userCan(session, "perm.x")) return 403;`
+- Frontend: `const { can } = usePermissoes(); if (!can("perm.x")) return <SemAcesso />;`
+- Sidebar: items em `wms-shell.tsx` têm `requires: PermissaoCodigo[]`.
+
+**Spec/plan:** `docs/superpowers/specs/2026-05-21-roles-permissoes-design.md` + `docs/superpowers/plans/2026-05-21-roles-permissoes.md`.
 
 ### Order Statuses
 - `pendente` — awaiting operator decision

@@ -36,14 +36,27 @@ export function createContext(opts: {
   }
 
   async function criarProduto(p: { sku: string; descricao: string; gtin?: string }): Promise<string> {
-    const { error } = await sb.from("siso_produtos").insert({
+    const { data: produto, error } = await sb.from("siso_produtos").insert({
       sku: p.sku,
       descricao: p.descricao,
       gtin: p.gtin ?? null,
       ativo: true,
     }).select("id").single();
     if (error) throw new Error(`criarProduto ${p.sku}: ${error.message}`);
-    return p.sku; // identifica por SKU pra leitura no harness
+
+    // Mapping pras 2 empresas de teste — tiny-stub usa isso pra
+    // resolver tiny_produto_id → produto_id interno em GET /estoque/{id}
+    const tinyId = tinyProdutoIdFromSku(p.sku);
+    const { error: mapErr } = await sb.from("siso_produto_empresas").upsert(
+      [
+        { produto_id: produto.id, empresa_id: staging.empresas.netair.id, tiny_produto_id: tinyId },
+        { produto_id: produto.id, empresa_id: staging.empresas.netparts.id, tiny_produto_id: tinyId },
+      ],
+      { onConflict: "produto_id,empresa_id" },
+    );
+    if (mapErr) throw new Error(`criarProduto mapping ${p.sku}: ${mapErr.message}`);
+
+    return p.sku;
   }
 
   async function criarLocalizacao(p: { galpao: "CWB" | "SP"; codigo: string; tipo?: "picking" | "overstock" | "quarentena" | "expedicao" }) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
@@ -11,6 +11,13 @@ import { CARGO_LABELS, type Cargo } from "@/types";
 import type { GalpaoHierarquiaWms } from "./types";
 
 const CARGOS_EDITAVEIS: Cargo[] = ["admin", "operador", "comprador"];
+
+interface RoleAtiva {
+  id: string;
+  codigo: string;
+  nome: string;
+  ativo: boolean;
+}
 
 interface GalpaoRef {
   id: string;
@@ -82,34 +89,41 @@ function GalpaoChips({ galpoes }: { galpoes: GalpaoRef[] }) {
   );
 }
 
-function CargoTogglePills({
+function RoleTogglePills({
+  roles,
   selecionados,
   onChange,
   disabled,
 }: {
-  selecionados: Cargo[];
-  onChange: (cargos: Cargo[]) => void;
+  roles: RoleAtiva[];
+  selecionados: string[];
+  onChange: (roleIds: string[]) => void;
   disabled?: boolean;
 }) {
-  function toggle(c: Cargo) {
+  function toggle(id: string) {
     if (disabled) return;
-    if (selecionados.includes(c)) {
-      if (selecionados.length <= 1) return;
-      onChange(selecionados.filter((x) => x !== c));
-    } else {
-      onChange([...selecionados, c]);
-    }
+    const next = selecionados.includes(id)
+      ? selecionados.filter((x) => x !== id)
+      : [...selecionados, id];
+    onChange(next);
+  }
+  if (roles.length === 0) {
+    return (
+      <p className="wms-td-mute" style={{ fontSize: 12 }}>
+        Nenhuma role ativa. Cadastre uma role primeiro em Permissões.
+      </p>
+    );
   }
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-      {CARGOS_EDITAVEIS.map((c) => {
-        const ativo = selecionados.includes(c);
+      {roles.map((r) => {
+        const ativo = selecionados.includes(r.id);
         return (
           <button
-            key={c}
+            key={r.id}
             type="button"
             disabled={disabled}
-            onClick={() => toggle(c)}
+            onClick={() => toggle(r.id)}
             className={`wms-toggle-pill ${ativo ? "is-on" : "is-off"}`}
             style={{
               padding: "4px 10px",
@@ -125,9 +139,10 @@ function CargoTogglePills({
               fontWeight: 600,
               cursor: disabled ? "not-allowed" : "pointer",
             }}
+            title={r.codigo}
           >
             {ativo ? "✓ " : "+ "}
-            {CARGO_LABELS[c]}
+            {r.nome}
           </button>
         );
       })}
@@ -363,6 +378,18 @@ export function AbaFuncionarios({
 
   const funcionarios = funcionariosQuery.data ?? [];
 
+  const rolesQuery = useQuery({
+    queryKey: ["wms-cfg-roles-ativas"],
+    queryFn: async () => {
+      const { roles } = await wmsApi<{ roles: RoleAtiva[] }>(
+        "/api/wms/admin/roles",
+      );
+      return roles.filter((r) => r.ativo);
+    },
+  });
+
+  const rolesAtivas = rolesQuery.data ?? [];
+
   const filtrados = useMemo(() => {
     if (!filtroCargo) return funcionarios;
     return funcionarios.filter((f) =>
@@ -426,6 +453,7 @@ export function AbaFuncionarios({
       {showForm && (
         <NovoFuncionarioForm
           galpoes={galpoesAtivos}
+          rolesAtivas={rolesAtivas}
           onCancel={() => setShowForm(false)}
           onCreated={() => {
             setShowForm(false);
@@ -474,6 +502,7 @@ export function AbaFuncionarios({
                   key={f.id}
                   funcionario={f}
                   galpoes={galpoesAtivos}
+                  rolesAtivas={rolesAtivas}
                   isSelf={f.id === user?.id}
                   editando={editando === f.id}
                   onEditar={() => setEditando(f.id)}
@@ -491,32 +520,80 @@ export function AbaFuncionarios({
 
 function NovoFuncionarioForm({
   galpoes,
+  rolesAtivas,
   onCancel,
   onCreated,
 }: {
   galpoes: GalpaoRef[];
+  rolesAtivas: RoleAtiva[];
   onCancel: () => void;
   onCreated: () => void;
 }) {
   const [nome, setNome] = useState("");
   const [pin, setPin] = useState("");
-  const [cargos, setCargos] = useState<Cargo[]>(["operador"]);
+  const [roleIds, setRoleIds] = useState<string[]>([]);
   const [galpaoIds, setGalpaoIds] = useState<string[]>([]);
 
-  const precisaGalpao = cargos.includes("operador");
+  // Default selection: role "operador" se existir
+  useEffect(() => {
+    if (roleIds.length === 0 && rolesAtivas.length > 0) {
+      const operador = rolesAtivas.find((r) => r.codigo === "operador");
+      if (operador) setRoleIds([operador.id]);
+    }
+  }, [rolesAtivas, roleIds.length]);
+
+  // Precisa de galpão se alguma role selecionada tem codigo começando com "operador"
+  const precisaGalpao = rolesAtivas.some(
+    (r) => roleIds.includes(r.id) && r.codigo.startsWith("operador"),
+  );
 
   const criar = useMutation({
-    mutationFn: () =>
-      wmsApi("/api/wms/admin/usuarios", {
+    mutationFn: async () => {
+      // 1) POST usuário com cargo placeholder derivado da primeira role
+      //    selecionada (trigger sincroniza cargos[] a partir de roles após o
+      //    PUT abaixo, então isso é só pra atender a validação da rota).
+      const VALID_CARGOS = new Set([
+        "admin",
+        "operador",
+        "operador_cwb",
+        "operador_sp",
+        "comprador",
+        "vendedor",
+      ]);
+      const primeiraRole = rolesAtivas.find((r) => r.id === roleIds[0]);
+      const cargoPlaceholder =
+        primeiraRole && VALID_CARGOS.has(primeiraRole.codigo)
+          ? primeiraRole.codigo
+          : "operador";
+
+      const novo = await wmsApi<{ id: string }>("/api/wms/admin/usuarios", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           nome: nome.trim(),
           pin,
-          cargos,
-          galpao_ids: galpaoIds,
+          cargos: [cargoPlaceholder],
         }),
-      }),
+      });
+
+      // 2) PUT roles do usuário recém-criado (trigger sincroniza cargos[])
+      await wmsApi(`/api/wms/admin/usuarios/${novo.id}/roles`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role_ids: roleIds }),
+      });
+
+      // 3) PUT galpões (se houver)
+      if (galpaoIds.length > 0) {
+        await wmsApi("/api/wms/admin/usuarios", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: novo.id, galpao_ids: galpaoIds }),
+        });
+      }
+
+      return novo;
+    },
     onSuccess: () => {
       toast.success(`Funcionário ${nome.trim()} criado`);
       onCreated();
@@ -525,7 +602,10 @@ function NovoFuncionarioForm({
   });
 
   const desabilitado =
-    !nome.trim() || pin.length !== 4 || cargos.length === 0 || criar.isPending;
+    !nome.trim() ||
+    pin.length !== 4 ||
+    roleIds.length === 0 ||
+    criar.isPending;
 
   return (
     <div
@@ -570,9 +650,13 @@ function NovoFuncionarioForm({
           className="wms-td-mute"
           style={{ fontSize: 11, fontWeight: 600, marginBottom: 6 }}
         >
-          Cargos
+          Roles
         </div>
-        <CargoTogglePills selecionados={cargos} onChange={setCargos} />
+        <RoleTogglePills
+          roles={rolesAtivas}
+          selecionados={roleIds}
+          onChange={setRoleIds}
+        />
       </div>
 
       {precisaGalpao && (
@@ -631,6 +715,7 @@ function NovoFuncionarioForm({
 function LinhaFuncionario({
   funcionario,
   galpoes,
+  rolesAtivas,
   isSelf,
   editando,
   onEditar,
@@ -639,6 +724,7 @@ function LinhaFuncionario({
 }: {
   funcionario: Funcionario;
   galpoes: GalpaoRef[];
+  rolesAtivas: RoleAtiva[];
   isSelf: boolean;
   editando: boolean;
   onEditar: () => void;
@@ -650,24 +736,50 @@ function LinhaFuncionario({
     : [funcionario.cargo];
   const cargosDisplay = normalizarCargos(cargosBase);
 
+  // Mapeia cargos[] atuais -> role IDs via lookup por codigo nas roles ativas.
+  // Heurística de compat: cargos "operador_cwb"/"operador_sp" mapeiam pra
+  // role "operador" (mesmo critério do normalizarCargos).
+  const initialRoleIds = useMemo(() => {
+    const codigosAtuais = new Set<string>(cargosDisplay);
+    return rolesAtivas
+      .filter((r) => codigosAtuais.has(r.codigo))
+      .map((r) => r.id);
+  }, [cargosDisplay, rolesAtivas]);
+
   const [form, setForm] = useState({
-    cargos: cargosDisplay,
+    roleIds: initialRoleIds,
     galpaoIds: funcionario.galpoes.map((g) => g.id),
   });
 
-  const precisaGalpao = form.cargos.includes("operador");
+  // Re-sync quando roles ativas chegam após render inicial (a query roda em
+  // paralelo). Sem isso o estado inicial ficaria vazio se a query atrasar.
+  useEffect(() => {
+    setForm((s) => ({ ...s, roleIds: initialRoleIds }));
+  }, [initialRoleIds]);
+
+  // Precisa de galpão se alguma role selecionada tem codigo começando com "operador"
+  const precisaGalpao = rolesAtivas.some(
+    (r) => form.roleIds.includes(r.id) && r.codigo.startsWith("operador"),
+  );
 
   const salvar = useMutation({
-    mutationFn: () =>
-      wmsApi("/api/wms/admin/usuarios", {
+    mutationFn: async () => {
+      // 1) PUT roles (trigger sincroniza cargos[])
+      await wmsApi(`/api/wms/admin/usuarios/${funcionario.id}/roles`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role_ids: form.roleIds }),
+      });
+      // 2) PUT galpões (sem cargos — trigger já cuidou disso)
+      await wmsApi("/api/wms/admin/usuarios", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: funcionario.id,
-          cargos: form.cargos,
           galpao_ids: form.galpaoIds,
         }),
-      }),
+      });
+    },
     onSuccess: () => {
       toast.success(`${funcionario.nome} atualizado`);
       onMudou();
@@ -818,7 +930,7 @@ function LinhaFuncionario({
             className="wms-td-mute"
             style={{ fontSize: 12, marginLeft: 8 }}
           >
-            Editar cargos e galpões
+            Editar roles e galpões
           </span>
         </div>
 
@@ -827,11 +939,12 @@ function LinhaFuncionario({
             className="wms-td-mute"
             style={{ fontSize: 11, fontWeight: 600, marginBottom: 6 }}
           >
-            Cargos
+            Roles
           </div>
-          <CargoTogglePills
-            selecionados={form.cargos}
-            onChange={(cargos) => setForm((s) => ({ ...s, cargos }))}
+          <RoleTogglePills
+            roles={rolesAtivas}
+            selecionados={form.roleIds}
+            onChange={(roleIds) => setForm((s) => ({ ...s, roleIds }))}
             disabled={salvar.isPending}
           />
         </div>
@@ -874,8 +987,13 @@ function LinhaFuncionario({
           <button
             type="button"
             className="wms-btn wms-btn-primary"
-            disabled={form.cargos.length === 0 || salvar.isPending}
+            disabled={salvar.isPending}
             onClick={() => salvar.mutate()}
+            title={
+              form.roleIds.length === 0
+                ? "Salvar sem roles deixa o usuário sem acesso"
+                : undefined
+            }
           >
             <Icon name="check" size={11} />
             {salvar.isPending ? "Salvando…" : "Salvar"}

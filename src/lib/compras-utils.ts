@@ -1,6 +1,8 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { userCan, type PermissoesPort } from "@/lib/permissions";
 
+// Mantida por compat — usada por checks legacy que recebem cargos diretamente.
 export const COMPRAS_ALLOWED_CARGOS = ["admin", "comprador"] as const;
 
 /** Fields to null when resetting an item's compra exception/equivalente/cancelamento state */
@@ -49,12 +51,33 @@ interface CompraQuantidadeBase {
 
 export type CompraPrioridade = "critica" | "alta" | "normal";
 
-export function hasComprasAccess(cargo?: string | string[] | null): boolean {
-  if (!cargo) return false;
-  const cargos = Array.isArray(cargo) ? cargo : [cargo];
-  return cargos.some(c => COMPRAS_ALLOWED_CARGOS.includes(
-    c as (typeof COMPRAS_ALLOWED_CARGOS)[number],
-  ));
+/**
+ * @deprecated Use `userCan(session, "compras.executar")` (ou `"compras.ver"` pra
+ * leitura) diretamente. Este wrapper é mantido pra compat durante a Fase 2 do
+ * RBAC dinâmico (migração mecânica dos checks). Quando aceitar uma session com
+ * `permissoes: Set<string>`, delega pra `userCan`. Quando recebe cargo string
+ * ou array (chamadas legadas que ainda não foram migradas), mantém comportamento
+ * antigo via fallback estrito (admin/comprador).
+ *
+ * Será removido após Fase 3 estabilizar (ver plano roles-permissoes).
+ */
+export function hasComprasAccess(
+  cargoOrSession?: string | string[] | PermissoesPort | null,
+): boolean {
+  if (!cargoOrSession) return false;
+  // Caso 1: recebemos uma session com permissões — delega pra userCan
+  if (
+    typeof cargoOrSession === "object" &&
+    !Array.isArray(cargoOrSession) &&
+    "permissoes" in cargoOrSession
+  ) {
+    return userCan(cargoOrSession as PermissoesPort, "compras.executar");
+  }
+  // Caso 2: legado — cargo string ou array de strings
+  const cargos = Array.isArray(cargoOrSession) ? cargoOrSession : [cargoOrSession];
+  return cargos.some((c) =>
+    COMPRAS_ALLOWED_CARGOS.includes(c as (typeof COMPRAS_ALLOWED_CARGOS)[number]),
+  );
 }
 
 export function isCompraExceptionStatus(status: string | null | undefined): boolean {

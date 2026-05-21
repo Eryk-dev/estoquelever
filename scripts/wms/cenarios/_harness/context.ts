@@ -503,10 +503,13 @@ export function createContext(opts: {
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
     const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.loc).single();
     await http.post("/api/wms/ajuste", {
-      produto_id: prod!.id,
-      galpao_id,
-      localizacao_id: loc!.id,
-      delta: p.delta,
+      tripla: {
+        produto_id: prod!.id,
+        galpao_id,
+        localizacao_id: loc!.id,
+      },
+      qty: Math.abs(p.delta),
+      direcao: p.delta >= 0 ? "entrada" : "saida",
       motivo: p.motivo,
     });
   }

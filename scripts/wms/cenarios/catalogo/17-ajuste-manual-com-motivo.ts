@@ -24,13 +24,13 @@ export default {
     // 1 E seed + 1 E ajuste + 1 S ajuste
     await ctx.assertMovsCount(sku, 3);
 
-    // Verifica que ambas têm observações preenchidas
+    // Verifica que ambas têm motivo preenchido (ajustarEstoque grava em motivo, não observacoes)
     const { data: prod } = await ctx.sb.from("siso_produtos").select("id").eq("sku", sku).single();
     const { data: movs } = await ctx.sb.from("siso_movimentacoes")
-      .select("origem_tipo, observacoes")
+      .select("origem_tipo, motivo")
       .eq("produto_id", prod!.id)
       .eq("origem_tipo", "ajuste_manual");
-    if ((movs ?? []).some((m: { observacoes: string | null }) => !m.observacoes)) throw new Error("ajuste manual sem observacoes");
+    if ((movs ?? []).some((m: { motivo: string | null }) => !m.motivo)) throw new Error("ajuste manual sem motivo");
   },
 } satisfies Cenario<{ sku: string }>;
 

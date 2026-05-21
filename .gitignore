@@ -41,6 +41,11 @@ scripts/ralph/.last-branch
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.test
+!.env.example
+
+# test harness reports (gitignored, never committed)
+/scripts/wms/cenarios/reports/
 
 # vercel
 .vercel

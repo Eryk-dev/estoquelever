@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prepararPedidosDasOcsParaEmbalagem } from "@/lib/compras-embalagem";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
-import { hasComprasAccess } from "@/lib/compras-utils";
+import { userCan } from "@/lib/permissions";
 
 interface PrepararBody {
   ordem_compra_ids?: string[];
@@ -12,7 +12,7 @@ interface PrepararBody {
 export async function POST(request: NextRequest) {
   const session = await getSessionUser(request);
   if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
-  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  if (!userCan(session, "compras.executar")) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
   let body: PrepararBody;
 

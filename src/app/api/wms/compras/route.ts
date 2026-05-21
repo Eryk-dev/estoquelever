@@ -4,12 +4,12 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import {
   COMPRA_EXCEPTION_STATUSES,
-  hasComprasAccess,
   getAgingDays,
   getCompraQuantidadeSolicitada,
 } from "@/lib/compras-utils";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
+import { userCan } from "@/lib/permissions";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
   if (!session) {
     return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
   }
-  if (!hasComprasAccess(session.cargos)) {
+  if (!userCan(session, "compras.ver")) {
     return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 

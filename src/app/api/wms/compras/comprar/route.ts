@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * POST /api/compras/comprar
@@ -21,8 +22,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
   }
 
-  const cargos = session.cargos ?? [];
-  if (!cargos.includes("admin") && !cargos.includes("comprador")) {
+  if (!userCan(session, "compras.executar")) {
     return NextResponse.json(
       { error: "Apenas compradores podem marcar como comprado" },
       { status: 403 },

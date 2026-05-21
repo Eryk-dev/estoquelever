@@ -5,8 +5,9 @@ import { getSessionUser } from "@/lib/session";
 import { buscarProdutoPorSku, getProdutoDetalhe } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
-import { cancelOcIfEmpty, hasComprasAccess } from "@/lib/compras-utils";
+import { cancelOcIfEmpty } from "@/lib/compras-utils";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
+import { userCan } from "@/lib/permissions";
 
 /**
  * POST /api/compras/itens/[itemId]/equivalente
@@ -20,7 +21,7 @@ export async function POST(
 ) {
   const session = await getSessionUser(request);
   if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
-  if (!hasComprasAccess(session.cargos)) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  if (!userCan(session, "compras.executar")) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
 
   const { itemId } = await params;
 

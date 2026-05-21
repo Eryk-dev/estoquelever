@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
+import { logger } from "@/lib/logger";
 
 /**
  * GET /api/auth/me
@@ -66,12 +67,67 @@ export async function GET(request: NextRequest) {
     .filter((galpao): galpao is { id: string; nome: string } => galpao !== null)
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
+  // Roles + permissões ativas (RBAC dinâmico — 2026-05-21)
+  const { data: rolesRows, error: rolesError } = await supabase
+    .from("siso_usuario_roles")
+    .select("siso_roles(id, codigo, nome, ativo, siso_role_permissoes(permissao_codigo))")
+    .eq("usuario_id", usuario.id);
+
+  if (rolesError) {
+    logger.error("auth/me", "Failed to load roles for me", {
+      usuarioId: usuario.id,
+      error: rolesError.message,
+    });
+  }
+
+  const roles: Array<{ id: string; codigo: string; nome: string }> = [];
+  const permsSet = new Set<string>();
+  for (const row of rolesRows ?? []) {
+    const r = (row as unknown as {
+      siso_roles: {
+        id: string;
+        codigo: string;
+        nome: string;
+        ativo: boolean;
+        siso_role_permissoes: Array<{ permissao_codigo: string }>;
+      } | null;
+    }).siso_roles;
+    if (!r || !r.ativo) continue;
+    roles.push({ id: r.id, codigo: r.codigo, nome: r.nome });
+    for (const rp of r.siso_role_permissoes ?? []) permsSet.add(rp.permissao_codigo);
+  }
+
+  // Fallback de compat: sem siso_usuario_roles ainda, busca por cargos[]
+  if (roles.length === 0 && (usuario.cargos?.length || usuario.cargo)) {
+    const codigos = usuario.cargos?.length ? usuario.cargos : [usuario.cargo];
+    const { data: fallbackRoles, error: fallbackErr } = await supabase
+      .from("siso_roles")
+      .select("id, codigo, nome, ativo, siso_role_permissoes(permissao_codigo)")
+      .in("codigo", codigos);
+    if (fallbackErr) {
+      logger.error("auth/me", "Failed to load fallback roles by cargos", {
+        usuarioId: usuario.id,
+        cargos: codigos,
+        error: fallbackErr.message,
+      });
+    }
+    for (const r of fallbackRoles ?? []) {
+      if (!r.ativo) continue;
+      roles.push({ id: r.id, codigo: r.codigo, nome: r.nome });
+      const rps = (r as unknown as { siso_role_permissoes: Array<{ permissao_codigo: string }> })
+        .siso_role_permissoes;
+      for (const rp of rps ?? []) permsSet.add(rp.permissao_codigo);
+    }
+  }
+
   return NextResponse.json({
     usuario: {
       id: usuario.id,
       nome: usuario.nome,
       cargo: usuario.cargo,
       cargos: usuario.cargos?.length ? usuario.cargos : [usuario.cargo],
+      roles,
+      permissoes: Array.from(permsSet),
       galpoes,
     },
   });

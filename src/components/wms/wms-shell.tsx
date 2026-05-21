@@ -174,8 +174,6 @@ function filterNavForUser(permissoes: Set<string>): NavSection[] {
   });
 }
 
-const ALL_NAV: NavItem[] = NAV_SECTIONS.flatMap((s) => s.itens);
-
 function isActive(pathname: string, href: string): boolean {
   if (pathname === href) return true;
   if (href === "/wms/inventario") {
@@ -369,14 +367,20 @@ function CommandKInner({
 }) {
   const [q, setQ] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const { permissoes } = usePermissoes();
 
   useEffect(() => {
     const id = setTimeout(() => inputRef.current?.focus(), 30);
     return () => clearTimeout(id);
   }, []);
 
+  const filteredItens = useMemo(
+    () => filterNavForUser(permissoes).flatMap((s) => s.itens),
+    [permissoes],
+  );
+
   const ql = q.trim().toLowerCase();
-  const navResults = ALL_NAV.filter(
+  const navResults = filteredItens.filter(
     (n) => !ql || n.label.toLowerCase().includes(ql),
   );
 

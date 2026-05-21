@@ -12,8 +12,8 @@
 
 **Rollout em 3 fases (cada fase = 1 commit deployável independente):**
 - Fase 1 (Tasks 1-5): Infra — DB + lib + session. Comportamento idêntico.
-- Fase 2 (Tasks 6-11): Migração mecânica dos checks. Comportamento ainda idêntico.
-- Fase 3 (Tasks 12-19): UI de gestão. Habilita configuração dinâmica.
+- Fase 2 (Tasks 6-11): Migração mecânica dos checks de backend + sidebar. Comportamento ainda idêntico.
+- Fase 3 (Tasks 12-20): UI de gestão + auditoria de botões de ação nas páginas. Habilita configuração dinâmica.
 
 ---
 
@@ -2417,6 +2417,152 @@ git commit -m "docs(roles): atualiza CLAUDE.md + schema + api-ref + architecture
 
 ---
 
+### Task 20a: Auditoria de botões de ação por página (defesa em camadas no client)
+
+**Por que esta task existe:** o backend já rejeita ação não-autorizada com 403 (Tasks 8-11), e a sidebar já esconde menus inteiros (Task 6). Mas dentro de páginas que o usuário **tem** acesso, ainda existem botões de ações específicas que só algumas permissões podem disparar. Se o botão fica visível e a API devolve 403, o usuário vê toast vermelho sem entender o porquê — má experiência. Esta task audita cada página e esconde (ou desabilita com tooltip) os botões que o usuário não pode usar.
+
+**Files:**
+- Modify (auditoria — pode envolver vários arquivos):
+  - `src/app/wms/inventario/page.tsx` — botão "Nova sessão"
+  - `src/app/wms/inventario/[id]/*` — botões "Aprovar", "Aplicar", "Cancelar sessão"
+  - `src/app/wms/pedidos/page.tsx` e `[id]/page.tsx` — botões "Aprovar" / "Rejeitar"
+  - `src/app/wms/separacao/**/*.tsx` — botões "Forçar pendente", "Voltar etapa", "Reimprimir" (admin-only)
+  - `src/app/wms/compras/page.tsx` — botões "Comprar", "Receber", "Cancelar OC"
+  - `src/app/wms/vendas/nova/page.tsx` — botão "Criar venda" (precisa `vendas.criar`)
+  - `src/app/wms/transferir/page.tsx` — botão "Confirmar transferência"
+  - `src/app/wms/replenishment/page.tsx` — botão "Confirmar realocação"
+  - `src/app/wms/receber/page.tsx` — botão "Receber"
+  - `src/app/wms/guarda/**/*.tsx` — botão "Confirmar guarda"
+  - `src/app/wms/ajuste/page.tsx` — botão "Aplicar ajuste"
+  - `src/app/wms/devolucoes/[id]/page.tsx` — botões de classificação A/B/C/D
+  - `src/app/wms/insights/regras/**/*.tsx` — botão "Editar regra"
+  - `src/app/wms/produtos/page.tsx` — botões "Editar" / "Sincronizar"
+  - `src/app/wms/cross/[sku]/page.tsx` — botões "Adicionar OEM", "Remover OEM", "Adicionar veículo"
+  - `src/app/wms/localizacoes/page.tsx` — botões "Nova localização", "Editar"
+  - `src/app/wms/fornecedores/page.tsx` — botões "Novo fornecedor", "Editar"
+
+- [ ] **Step 1: Mapear botão → permissão necessária**
+
+Pra cada página listada, abra o arquivo, identifique cada `<button>` ou `<Link href="...">` que dispara uma ação sensível, e mapeie a permissão correspondente (usando a mesma permissão que a API daquele botão checa — consistência absoluta):
+
+| Página | Botão / Ação | Permissão |
+|---|---|---|
+| `/wms/inventario` | "Nova sessão" | `inventario.supervisionar` |
+| `/wms/inventario/[id]` | "Aprovar sessão", "Aplicar movs", "Cancelar sessão" | `inventario.supervisionar` |
+| `/wms/inventario/[id]` (handheld) | "Próxima loc", "Confirmar contagem" | `inventario.executar` |
+| `/wms/pedidos/[id]` | "Aprovar", "Rejeitar" | `pedidos.aprovar` |
+| `/wms/separacao/*` | "Bipar", "Marcar item", "Concluir" | `separacao.executar` |
+| `/wms/separacao` | "Forçar pendente", "Voltar etapa", "Reimprimir", "Tags" | `sistema.usuarios` (proxy pra admin) ou nova perm `separacao.admin` (decisão local) |
+| `/wms/compras` | "Comprar", "Receber", "Cancelar", "Trocar SKU", "Devolver" | `compras.executar` |
+| `/wms/vendas/nova` | "Criar venda" | `vendas.criar` |
+| `/wms/transferir` | "Confirmar transferência" | `operacoes.transferir` |
+| `/wms/replenishment` | "Confirmar realocação" | `operacoes.replenishment` |
+| `/wms/receber` | "Receber" | `operacoes.receber` |
+| `/wms/guarda/*` | "Iniciar guarda", "Confirmar guarda" | `operacoes.guarda` |
+| `/wms/ajuste` | "Aplicar ajuste" | `operacoes.ajuste_manual` |
+| `/wms/devolucoes/[id]` | "Classificar A/B/C/D" | `operacoes.devolucoes` |
+| `/wms/insights/regras` | "Nova regra", "Editar", "Deletar", "Testar" | `insights.regras` |
+| `/wms/produtos` | "Editar", "Sincronizar" | `produtos.editar` |
+| `/wms/cross/[sku]` | "Adicionar/Remover OEM", "Adicionar/Remover veículo", "Adicionar/Remover link manual" | `produtos.editar` |
+| `/wms/localizacoes` | "Nova", "Editar", "Substituir e excluir" | `localizacoes.editar` |
+| `/wms/fornecedores` | "Novo", "Editar" | `fornecedores.editar` |
+
+**Decisão sobre "separacao admin" (forçar pendente, voltar etapa, reimprimir):** essas ações hoje são gateadas por `cargos.includes("admin")`. São operações sensíveis (mudam status sem passar pelo fluxo normal). Sugestão: tratar como `userCan(session, "separacao.executar")` é fraco demais — qualquer operador teria. **Adicione permissão nova ao registry:** `separacao.administrar` ("Forçar status, voltar etapas, reimprimir etiqueta"). Esta task inclui o passo de adicionar essa permissão.
+
+- [ ] **Step 2: Adicionar permissão `separacao.administrar` ao registry**
+
+Em `src/lib/permissions.ts`, na seção Vendas, adicione:
+```ts
+"separacao.administrar": { modulo: "vendas", label: "Forçar status / voltar etapa / reimprimir" },
+```
+
+Atualize o teste `permissions.test.ts` pra esperar 31 permissões (de 30) e revalide.
+
+Atualize a tabela de seed na migration **se ainda não foi aplicada** (Task 1). Se a migration já foi aplicada, crie migration nova `20260521b_add_separacao_administrar.sql`:
+```sql
+-- Adiciona permissão nova ao role admin (apenas admin tem por padrão)
+insert into siso_role_permissoes (role_id, permissao_codigo)
+select id, 'separacao.administrar' from siso_roles where codigo = 'admin'
+on conflict do nothing;
+```
+
+Atualize Task 11 backend retroativamente (separacao/forcar-pendente/voltar-etapa/reimprimir/tags) pra usar `userCan(session, "separacao.administrar")` em vez do que tiver lá.
+
+- [ ] **Step 3: Padrão de gateamento no client**
+
+Pra cada arquivo da lista do Step 1, importe o hook e gateie o JSX:
+
+```tsx
+import { usePermissoes } from "@/lib/auth-context";
+
+export default function InventarioPage() {
+  const { can } = usePermissoes();
+  // ... resto do componente ...
+
+  return (
+    <AppShell>
+      {/* ...lista de sessões... */}
+      {can("inventario.supervisionar") && (
+        <Link href="/wms/inventario/nova" className="...">Nova sessão</Link>
+      )}
+    </AppShell>
+  );
+}
+```
+
+**Critério:** se o botão só faz sentido com a permissão, ESCONDA (use `{can(...) && <Button/>}`). Se o botão é útil de mostrar mesmo sem permissão (ex: "Editar" num card visualizado por leitura), **DESABILITE com tooltip**:
+
+```tsx
+<button
+  disabled={!can("produtos.editar")}
+  title={!can("produtos.editar") ? "Sem permissão pra editar produto" : ""}
+  className="... disabled:opacity-40 disabled:cursor-not-allowed"
+>
+  Editar
+</button>
+```
+
+Padrão por convenção neste codebase: **esconder** ações primárias (criar, deletar), **desabilitar** ações inline em listas/cards (editar, ajustar inline). Decida caso a caso. Quando em dúvida, esconda.
+
+- [ ] **Step 4: Iterar página por página**
+
+Pra cada linha da tabela do Step 1:
+1. Abra o arquivo
+2. Importe `usePermissoes` se ainda não importou
+3. Adicione `const { can } = usePermissoes();` no topo do componente
+4. Envolva cada botão/link da lista com `can("perm.x")`
+5. `npm run dev` → login como operador com permissões restritas → verifica visualmente que o botão sumiu/desabilitou
+6. Próxima página
+
+Não precisa commitar entre páginas — pode commitar tudo no final da task. Se uma página tiver muita coisa (separação tem ~10 botões diferentes), commite só ela pra não inflar o diff.
+
+- [ ] **Step 5: Validação visual sistemática**
+
+Crie 5 usuários de teste no Supabase (via UI de admin, depois que Phase 3 estiver pronta), 1 pra cada role base não-admin:
+
+- `teste_operador` → role Operador
+- `teste_operador_cwb` → role Operador CWB
+- `teste_comprador` → role Comprador
+- `teste_vendedor` → role Vendedor
+- `teste_conferente` → role customizada com só `inventario.ver` + `inventario.executar`
+
+Pra cada um, faça login e navegue por TODAS as páginas que ele consegue ver. Anote em planilha simples:
+| Página | Botão | Esperado | Observado |
+|---|---|---|---|
+
+Marque ✅ ou ❌. Conserte o que estiver errado.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/lib/permissions.ts src/lib/permissions.test.ts src/app/wms supabase/migrations
+git commit -m "feat(roles): esconde/desabilita botões de ação por permissão"
+```
+
+(Se foi necessário adicionar `separacao.administrar` retroativamente, inclua a migration nova nesse commit.)
+
+---
+
 ## Validação final da Fase 3
 
 ### Task 21: Aceitação end-to-end
@@ -2462,9 +2608,10 @@ Acrescente uma entrada por bug fixado, conforme convenção do projeto.
 ## Self-Review
 
 **Spec coverage:**
-- Seção 1 (Permission registry) → Task 2 ✅
+- Seção 1 (Permission registry) → Task 2 ✅ (+ Task 20a adiciona `separacao.administrar`, total 31)
 - Seção 2 (Modelo de dados) → Task 1 ✅
 - Seção 3 (Camada de checks) → Tasks 3, 4, 6, 7, 8, 9, 10, 11 ✅
+- Seção 3.5 (Defesa em camadas no client — botões dentro de páginas) → Task 20a ✅
 - Seção 4 (UI de gestão) → Tasks 12-19 ✅
 - Seção 5 (Migração + edge cases) → Distribuído (Tasks 1, 5, 21) ✅
 - Edge case "permissão removida do código mas no DB" → tratado naturalmente (Set não tem a perm, check falha; UI mostraria nas listas mas sem warning explícito ainda) → **gap conhecido, aceito**: warning UI fica como melhoria pós-MVP (não bloqueante)

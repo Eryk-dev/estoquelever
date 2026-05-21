@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roles & Permissões — Fluxo</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+
+  .stepper { counter-reset: step; margin: 24px 0; }
+  .stepper-item { position: relative; padding: 16px 16px 16px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 12px 0; }
+  .scenario-title { font-weight: 600; margin-bottom: 6px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--muted); }
+  .scenario-flow strong { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Roles & Permissões</h1>
+  <p class="subtitle">Admin configura pelo sistema quem pode ver e fazer o quê — sem precisar mexer em código.</p>
+  <p class="meta">Validação de fluxo · 21/05/2026 · linguagem de negócio (sem detalhe técnico)</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#fluxo">Fluxo principal</a></li>
+    <li><a href="#exemplo">Exemplo passo-a-passo</a></li>
+    <li><a href="#estados">Estados de uma role</a></li>
+    <li><a href="#cenarios">Cenários alternativos</a></li>
+  </ol>
+</div>
+
+<h2 id="resumo">1. Resumo</h2>
+<p>
+Hoje, cada vez que um colaborador novo precisa de um perfil de acesso diferente — um "meio-comprador-meio-operador", ou um conferente que só faz inventário — é preciso pedir pra equipe técnica mexer no sistema e fazer um deploy. Com esta feature, o admin abre uma tela, marca caixinhas, e pronto: novo perfil criado e atribuído a quem precisar. O Eryk (admin) vira o dono da matriz de acesso.
+</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Pra que serve</div>
+  Dar autonomia pro admin pra criar novos perfis de acesso e ajustar o que cada perfil pode ver/fazer, sem depender de programador.
+</div>
+
+<h2 id="fluxo">2. Fluxo principal</h2>
+<p>
+Existem dois fluxos que se complementam: o do <strong>admin configurando</strong> e o do <strong>colaborador usando</strong>. O sistema serve de ponte: o que o admin marca, o colaborador passa a ver (ou deixa de ver) na próxima vez que entrar.
+</p>
+
+<div class="diagram">
+  <div class="diagram-title">Admin configura · Colaborador usa</div>
+  <pre class="mermaid">
+flowchart TD
+    A[Admin Eryk abre<br/>tela &quot;Roles&quot;] --> B{Quer criar<br/>nova role ou<br/>editar existente?}
+    B -->|Criar| C[Dá nome &quot;Conferente&quot;<br/>+ descrição]
+    B -->|Editar| D[Escolhe role<br/>existente]
+    C --> E[Marca caixinhas de<br/>permissão por módulo<br/>ex: Ver Inventário,<br/>Contar Inventário]
+    D --> E
+    E --> F[Clica em<br/>Salvar permissões]
+    F --> G[Vai na ficha<br/>do colaborador João]
+    G --> H[Marca a role<br/>&quot;Conferente&quot; pra ele]
+    H --> I[Salva]
+    I --> J[João faz logout<br/>e login de novo]
+    J --> K[Sistema mostra<br/>menu &quot;Inventário&quot;<br/>na barra lateral]
+    K --> L[João clica e<br/>começa a trabalhar]
+
+    style A fill:#dbeafe
+    style L fill:#dcfce7
+    style F fill:#fef3c7
+    style I fill:#fef3c7
+  </pre>
+</div>
+
+<h3>Como o sistema decide o que mostrar</h3>
+
+<div class="diagram">
+  <div class="diagram-title">Decisão de acesso · cada vez que alguém abre uma tela</div>
+  <pre class="mermaid">
+flowchart TD
+    A[Colaborador clica<br/>em algum menu] --> B[Sistema verifica<br/>quais roles ele tem]
+    B --> C[Soma todas as<br/>permissões dessas roles]
+    C --> D{Tem a permissão<br/>que essa tela exige?}
+    D -->|Sim| E[Mostra a tela<br/>normalmente]
+    D -->|Não| F[Mostra mensagem<br/>&quot;Sem acesso&quot;<br/>ou esconde o menu]
+
+    style E fill:#dcfce7
+    style F fill:#fee2e2
+  </pre>
+</div>
+
+<h2 id="exemplo">3. Exemplo passo-a-passo</h2>
+<p>Vamos seguir um caso real: o Eryk precisa criar um perfil "Conferente" pro João, que vai ajudar só no inventário.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  São 14h32 do dia 21/05/2026. O Eryk (admin) acabou de contratar o João pra fazer cycle count nas próximas semanas. O João não pode ver vendas, nem compras, nem editar produtos — só fazer inventário. Hoje o sistema só tem o perfil "Operador" (que vê quase tudo) ou "Admin" (que vê tudo). Nenhum desses serve.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Eryk abre o painel de Roles</strong>
+    <p>Entra em Configurações → Roles & Permissões. A tela mostra 6 cards: Admin, Operador, Operador CWB, Operador SP, Comprador, Vendedor. Cada um com um cadeado (são roles do sistema, não dá pra apagar) e a contagem "X permissões · Y usuários".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Eryk clica em "+ Nova role"</strong>
+    <p>Abre uma tela limpa. Eryk digita: código <strong>conferente</strong>, nome <strong>Conferente</strong>, descrição <strong>"Cycle count, sem acesso comercial"</strong>. Clica em Criar.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Eryk marca as permissões certas</strong>
+    <p>A tela mostra todos os módulos do sistema: Vendas, Visibilidade, Operações, Inventário, Insights, Relatórios, Cadastros, Sistema — cada um expandido com caixinhas de cada permissão. Eryk marca apenas <strong>Ver sessões</strong> e <strong>Contar (handheld)</strong> dentro de Inventário. Deixa tudo o resto desmarcado.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Eryk salva as permissões</strong>
+    <p>Clica em "Salvar permissões". Toast verde: "Permissões salvas". Volta na lista de roles — agora aparece "Conferente · 2 permissões · 0 usuários".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Eryk vai na ficha do João</strong>
+    <p>Em Configurações → Usuários, clica no João (que hoje é "Operador CWB"). Na seção "Roles" tem uma lista com checkboxes: Admin, Operador, Operador CWB (marcada), Operador SP, Comprador, Vendedor, Conferente.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Eryk troca a role do João</strong>
+    <p>Desmarca "Operador CWB" e marca "Conferente". Clica em Salvar. Toast verde. A ficha agora mostra "Roles: Conferente".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>João sai e entra de novo</strong>
+    <p>São 15h05. João estava com o sistema aberto numa aba antiga ainda como "Operador CWB". Ele faz logout, digita o PIN e entra de novo.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>O menu lateral do João muda</strong>
+    <p>Antes ele via 7 grupos: Vendas, Visibilidade, Operações, Inventário, Insights, Relatórios, Cadastros. Agora só vê <strong>1 grupo: Inventário</strong>, com 2 sub-itens: Sessões e Métricas. A tela inicial dele já abre direto no Inventário.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>João tenta entrar numa tela proibida pela URL</strong>
+    <p>Por curiosidade, João digita na barra de endereço a URL de "Compras". O sistema responde com uma mensagem clara: "Sem acesso a esta tela." Mesmo sabendo o endereço, ele não consegue ver os dados.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Semanas depois, o cycle count termina</strong>
+    <p>O contrato do João acaba. Eryk volta na ficha dele e desmarca "Conferente". Como ficaria sem nenhuma role, Eryk marca "Operador CWB" ou simplesmente desativa o João.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Eryk decide se mantém a role "Conferente"</strong>
+    <p>A role fica disponível pra reuso futuro. Se Eryk quiser limpar, vai em Configurações → Roles → Conferente → "Deletar role". Como tem 0 usuários atribuídos, o sistema permite. Toast: "Role deletada."</p>
+  </div>
+</div>
+
+<h2 id="estados">4. Estados de uma role</h2>
+<p>Toda role no sistema está em um destes 4 estados:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-info">Sistema · Ativa</span></td>
+      <td>Role padrão criada na fundação do sistema (Admin, Operador, Comprador, Vendedor, etc). Tem um cadeado, não pode ser deletada nem ter o código mudado, mas o admin pode editar nome, descrição e — exceto pra Admin — também as permissões.</td>
+      <td>Já nasce com o sistema. Não dá pra criar mais roles de sistema pela tela.</td>
+      <td>Não sai. É permanente.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">Customizada · Ativa</span></td>
+      <td>Role criada pelo admin (ex: "Conferente", "Supervisor Picking"). Pode ser editada à vontade, atribuída a usuários, ou deletada se ninguém estiver usando.</td>
+      <td>Admin cria pelo botão "+ Nova role" na tela de Roles.</td>
+      <td>Admin clica em "Deletar role" (botão só aparece se zero usuários têm a role).</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">Customizada · Inativa</span></td>
+      <td>Role criada mas desligada temporariamente. Usuários que tinham essa role mantêm o vínculo, mas as permissões dela <strong>não</strong> contam mais — é como se eles não tivessem essa role. Não aparece em listas pra atribuir.</td>
+      <td>Admin desmarca a caixinha "Ativa" na tela da role.</td>
+      <td>Admin marca "Ativa" de novo, ou deleta a role.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">Admin</span></td>
+      <td>Caso especial da role Admin: sempre tem TODAS as permissões marcadas, sempre fica ativa, sempre tem pelo menos 1 usuário. O sistema impede qualquer ação que pudesse "fechar a porta da casa".</td>
+      <td>Já nasce com o sistema.</td>
+      <td>Não sai. Garante que sempre exista um admin no sistema.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="cenarios">5. Cenários alternativos</h2>
+<p>O que acontece quando alguma coisa fora do roteiro feliz acontece:</p>
+
+<div class="scenario">
+  <div class="scenario-title">Colaborador entra numa tela que vê, mas não pode agir nela</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> João tem a role "Conferente" — pode <strong>ver</strong> sessões de inventário e <strong>contar</strong> no handheld, mas <strong>não</strong> pode criar nem aprovar sessão (isso é só de supervisor). João abre a tela "Sessões de Inventário".<br/>
+    <strong>O que o sistema faz:</strong> Mostra a lista de sessões abertas (João tem permissão de ver), mas <strong>esconde</strong> o botão "Nova sessão" no canto superior. Dentro de cada sessão, "Aprovar" e "Aplicar" também não aparecem pra ele. O que ele pode fazer (puxar próxima loc, bipar produtos, finalizar contagem) continua visível e funcional.<br/>
+    <strong>O usuário vê:</strong> Uma tela útil mas focada — sem botões que dariam erro se clicados. Se ele de alguma forma chegasse a disparar a ação (via URL direta ou dev tools), o sistema bloquearia no servidor com "Acesso negado", mas no uso normal isso nunca acontece — porque o botão simplesmente não está lá.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Admin tenta deletar a role "Admin"</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Eryk vai em Configurações → Roles → Admin, procura o botão "Deletar".<br/>
+    <strong>O que o sistema faz:</strong> Não mostra o botão. A role Admin é de sistema, tem um cadeado e a opção de deletar simplesmente não existe nessa tela.<br/>
+    <strong>O usuário vê:</strong> Apenas os campos de nome/descrição editáveis. As permissões aparecem todas marcadas em cinza claro (não-clicáveis), com a frase "A role admin sempre tem todas as permissões."
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Admin tenta tirar a role "Admin" do único admin do sistema</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Eryk é o único admin. Por engano, vai na própria ficha e desmarca a caixinha "Admin", marca "Operador" e tenta salvar.<br/>
+    <strong>O que o sistema faz:</strong> Bloqueia a operação. Como ninguém mais tem a role Admin, ele não pode se rebaixar — senão ninguém mais conseguiria mexer em roles, criar usuários ou alterar conexões.<br/>
+    <strong>O usuário vê:</strong> Toast vermelho: "Sistema precisa de pelo menos 1 admin." A mudança não é salva, a ficha do Eryk continua como Admin.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Admin tenta deletar role que tem usuários atribuídos</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Eryk criou "Conferente" e atribuiu pra João, Maria e Pedro. Algum tempo depois, decide deletar essa role.<br/>
+    <strong>O que o sistema faz:</strong> Verifica se algum dos 3 ficaria sem nenhuma role caso ela fosse removida. Se sim, bloqueia.<br/>
+    <strong>O usuário vê:</strong> Toast vermelho explicando: "Usuários ficariam sem nenhuma role — atribua outra role antes de deletar." Eryk vai na ficha de cada um, atribui outra role (ex: "Operador"), e tenta deletar de novo — agora funciona.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Colaborador é cadastrado mas ninguém atribui role ainda</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Eryk cadastra uma nova vendedora, Carla, mas esquece de marcar uma role pra ela. Carla recebe o PIN e tenta entrar.<br/>
+    <strong>O que o sistema faz:</strong> Aceita o login (PIN está certo), mas como Carla não tem nenhuma role, ela não tem nenhuma permissão.<br/>
+    <strong>O usuário vê:</strong> Carla loga, mas a barra lateral fica vazia. A tela inicial mostra: "Usuário sem acesso configurado — contate o administrador." Carla avisa o Eryk, ele atribui a role "Vendedor" e ela faz logout/login pra liberar.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Admin desativa uma role com usuários ativos</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> A operação de inventário sazonal terminou. Eryk não quer deletar a role "Conferente" (vai usar de novo no próximo ciclo), mas quer suspender o acesso dos 3 conferentes temporariamente. Em vez de mexer em 3 fichas, desmarca a caixinha "Ativa" na role.<br/>
+    <strong>O que o sistema faz:</strong> A role fica inativa. As atribuições continuam no sistema, mas as permissões dela não contam mais ao calcular o que cada usuário pode fazer.<br/>
+    <strong>O usuário vê:</strong> João, Maria e Pedro, no próximo login, abrem o sistema e a barra lateral está vazia (eles só tinham "Conferente"). Quando Eryk reativa a role, o acesso volta no próximo login deles.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Admin muda a role enquanto o colaborador está logado</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> João está separando pedidos. Eryk muda a role do João de "Operador" pra "Comprador" porque a equipe foi remanejada.<br/>
+    <strong>O que o sistema faz:</strong> A mudança vale a partir da próxima ação do João. Cada vez que ele clica em algo, o sistema confere a role atual.<br/>
+    <strong>O usuário vê:</strong> João tenta bipar mais um item — o sistema responde "Sem acesso". Ele estranha, sai e entra de novo, e agora vê só os menus de Compras. (Em algumas telas que dependem de dados antigos do navegador, ele pode precisar atualizar a página primeiro — F5 resolve.)
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Permissão antiga sobra no sistema depois que a feature foi removida</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> No futuro, a equipe técnica retira a tela "Insights Financeiros" do sistema. A permissão "Ver insights financeiros" deixou de existir no código, mas a role "Comprador" ainda tem essa permissão marcada na base do sistema.<br/>
+    <strong>O que o sistema faz:</strong> Ignora a permissão obsoleta silenciosamente — não existe mais nenhuma tela ou ação que peça por ela. Na tela de Roles, aparece um aviso amarelo: "1 permissão obsoleta — clique pra remover."<br/>
+    <strong>O usuário vê:</strong> Eryk vê o aviso na próxima vez que abrir a role Comprador. Clica pra remover, a base é limpa, sumo do aviso. Operação cosmética — não afeta o acesso de ninguém.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Admin esquece de salvar e fecha a aba</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Eryk marca 12 caixinhas de permissão na role "Supervisor Separação", mas é interrompido por uma ligação e fecha a aba sem clicar em Salvar.<br/>
+    <strong>O que o sistema faz:</strong> Nada — as mudanças não foram persistidas. Próximo admin que abrir a role vê as permissões antigas.<br/>
+    <strong>O usuário vê:</strong> Quando Eryk volta, abre a role de novo e nota que as caixinhas voltaram ao estado anterior. (Não há aviso de "alterações não salvas" — pode ser melhoria futura.)
+  </div>
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

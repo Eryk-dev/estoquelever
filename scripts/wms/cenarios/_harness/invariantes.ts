@@ -53,7 +53,7 @@ async function i3CustoMedio(sb: SupabaseClient): Promise<InvariantResult> {
       .eq("produto_id", p.id)
       .eq("tipo", "E")
       .not("custo_unitario", "is", null)
-      .order("created_at", { ascending: true });
+      .order("criado_em", { ascending: true });
     if (!movs || movs.length === 0) continue;
     let custoMed = 0;
     let saldo = 0;

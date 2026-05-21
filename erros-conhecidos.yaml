@@ -895,3 +895,32 @@ erros:
       criar nova sessão pra ajustar saldo se for o caso.
       Lição geral: sempre encadear .select() em upsert/update do supabase-js
       e checar `error` — caso contrário PostgrestError fica invisível.
+
+  - id: 2026-05-21-marcar-item-pedido-id-uuid-22p02
+    date: "2026-05-21"
+    source: wms.separacao.marcar-item
+    category: database
+    message: "Picking não decrementava saldo no ledger WMS — mov S silenciosamente descartada"
+    cause: >
+      A RPC wms_inserir_movimentacao espera uuid em p_origem_id e p_pedido_id
+      (migration 20260520b). As rotas marcar-item, marcar-realocacao, parcial
+      passavam string "pedido:<tinyId>" e o id text do Tiny. Postgres rejeitava
+      com 22P02 ("invalid input syntax for type uuid"), o try/catch em
+      marcar-item engolia com logger.warn "Mov WMS skipped", e a UI seguia
+      como se tivesse sucesso. Resultado: separacao.mov_saida_id=null, saldo
+      no siso_estoque sem decremento, ledger sem rastro.
+    fix: >
+      Removidos os args origem_id (text) e pedido_id (text) das 6 chamadas
+      em marcar-item/marcar-realocacao/parcial. Tiny pedido id passa a viajar
+      em origem_detalhes.pedido_id_tiny (jsonb) pra preservar rastreabilidade
+      em audit. Commit fe1a849.
+    files:
+      - src/app/api/wms/separacao/marcar-item/route.ts
+      - src/app/api/wms/separacao/marcar-realocacao/route.ts
+      - src/app/api/wms/separacao/parcial/route.ts
+    tags: [wms, separacao, picking, uuid, 22P02, silent-fail, ledger, mov-skipped, origem_id, pedido_id]
+    notes: >
+      Outros call sites com o mesmo padrão ainda não corrigidos (latent risk):
+      execution-worker-wms.ts, cutover.ts (gateados por WMS_AS_SOURCE — só staging
+      hoje); vendas/criar baixa_direta (sem gate, ativo em staging). Ver smoke
+      report 2026-05-21 pra triagem.

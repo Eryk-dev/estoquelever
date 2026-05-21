@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { createServiceClient } from "@/lib/supabase-server";
+import { userCan } from "@/lib/permissions";
 import {
   getEstoqueValorAtual,
   getInsightsAtivos,
@@ -9,9 +10,8 @@ import {
 export async function GET(req: NextRequest) {
   const user = await getSessionUser(req);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  // Só admin vê financeiro
-  if (user.cargo !== "admin") {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  if (!userCan(user, "insights.financeiro")) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
   const galpaoId = req.nextUrl.searchParams.get("galpao_id");
   const sb = createServiceClient();

@@ -2,9 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { Lock, Plus } from "lucide-react";
-import { AppShell } from "@/components/app-shell";
 import { sisoFetch, usePermissoes } from "@/lib/auth-context";
+import { Icon, PageHeader, Card } from "@/components/wms/ui/wms-ui";
 
 interface RoleRow {
   id: string;
@@ -32,59 +31,136 @@ export default function RolesPage() {
 
   if (!can("sistema.roles")) {
     return (
-      <AppShell title="Roles & Permissões">
-        <div className="p-6 text-zinc-400">Sem acesso a esta tela.</div>
-      </AppShell>
+      <>
+        <PageHeader
+          title="Roles & Permissões"
+          backHref="/wms/configuracoes"
+          backLabel="Configurações"
+        />
+        <div className="wms-empty-block">
+          <h3>Acesso restrito</h3>
+          <p>Apenas administradores podem gerenciar roles.</p>
+        </div>
+      </>
     );
   }
 
   return (
-    <AppShell title="Roles & Permissões">
-      <div className="max-w-5xl mx-auto p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-semibold">Roles & Permissões</h1>
-            <p className="text-sm text-zinc-400 mt-1">
-              Gerencie roles e o que cada uma pode acessar.
-            </p>
+    <>
+      <PageHeader
+        title="Roles & Permissões"
+        subtitle="Gerencie roles e o que cada uma pode acessar"
+        backHref="/wms/configuracoes"
+        backLabel="Configurações"
+      >
+        <Link
+          href="/wms/configuracoes/roles/nova"
+          className="wms-btn wms-btn-primary"
+        >
+          <Icon name="plus" size={12} />
+          Nova role
+        </Link>
+      </PageHeader>
+
+      <Card title={`Roles cadastradas${data ? ` (${data.roles.length})` : ""}`}>
+        {isLoading && (
+          <div className="wms-loading-pane">Carregando roles…</div>
+        )}
+        {error && (
+          <div className="wms-hint-card wms-hint-danger" style={{ fontSize: 12 }}>
+            <Icon name="alert" />
+            <span>Erro ao carregar roles.</span>
           </div>
-          <Link
-            href="/wms/configuracoes/roles/nova"
-            className="inline-flex items-center gap-2 rounded-md bg-cyan-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-cyan-400"
-          >
-            <Plus size={16} /> Nova role
-          </Link>
-        </div>
+        )}
 
-        {isLoading && <div className="text-zinc-400">Carregando...</div>}
-        {error && <div className="text-red-400">Erro ao carregar.</div>}
+        {data && data.roles.length === 0 && (
+          <p className="wms-td-mute" style={{ fontSize: 12, margin: 0 }}>
+            Nenhuma role cadastrada ainda.
+          </p>
+        )}
 
-        {data && (
-          <div className="grid gap-2">
+        {data && data.roles.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {data.roles.map((r) => (
               <Link
                 key={r.id}
                 href={`/wms/configuracoes/roles/${r.id}`}
-                className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3 hover:border-zinc-700"
+                style={{
+                  border: "1px solid var(--wms-c-border)",
+                  borderRadius: "var(--wms-r-3)",
+                  background: "var(--wms-c-panel-2)",
+                  padding: "10px 12px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  textDecoration: "none",
+                  transition: "border-color .15s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "var(--wms-c-border-2)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "var(--wms-c-border)";
+                }}
               >
-                <div className="flex items-center gap-3">
-                  {r.sistema && <Lock size={14} className="text-zinc-500" />}
-                  <div>
-                    <div className="font-medium">
-                      {r.nome}
-                      {!r.ativo && <span className="ml-2 text-xs text-zinc-500">(inativa)</span>}
-                    </div>
-                    <div className="text-xs text-zinc-500">{r.codigo}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <strong style={{ fontSize: 14 }}>{r.nome}</strong>
+                    <code className="wms-mono wms-td-mute" style={{ fontSize: 11 }}>
+                      {r.codigo}
+                    </code>
+                    {r.sistema && (
+                      <span className="wms-badge wms-badge-info">Sistema</span>
+                    )}
+                    {!r.ativo && (
+                      <span className="wms-badge wms-badge-mute">Inativa</span>
+                    )}
                   </div>
+                  {r.descricao && (
+                    <p
+                      className="wms-td-mute"
+                      style={{ fontSize: 12, margin: "4px 0 0" }}
+                    >
+                      {r.descricao}
+                    </p>
+                  )}
                 </div>
-                <div className="text-xs text-zinc-400">
-                  {r.n_permissoes} permissões · {r.n_usuarios} usuários
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    gap: 2,
+                    fontSize: 11,
+                  }}
+                  className="wms-td-mute"
+                >
+                  <span>
+                    <strong style={{ color: "var(--wms-c-fg)" }}>
+                      {r.n_permissoes}
+                    </strong>{" "}
+                    permissões
+                  </span>
+                  <span>
+                    <strong style={{ color: "var(--wms-c-fg)" }}>
+                      {r.n_usuarios}
+                    </strong>{" "}
+                    {r.n_usuarios === 1 ? "usuário" : "usuários"}
+                  </span>
                 </div>
+                <Icon name="chevron-r" size={14} className="wms-td-mute" />
               </Link>
             ))}
           </div>
         )}
-      </div>
-    </AppShell>
+      </Card>
+    </>
   );
 }

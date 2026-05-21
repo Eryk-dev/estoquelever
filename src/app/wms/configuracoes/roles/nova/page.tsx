@@ -3,8 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { AppShell } from "@/components/app-shell";
 import { sisoFetch, usePermissoes } from "@/lib/auth-context";
+import { Icon, PageHeader, Card, Field } from "@/components/wms/ui/wms-ui";
 
 export default function NovaRolePage() {
   const router = useRouter();
@@ -16,9 +16,17 @@ export default function NovaRolePage() {
 
   if (!can("sistema.roles")) {
     return (
-      <AppShell title="Nova role">
-        <div className="p-6 text-zinc-400">Sem acesso.</div>
-      </AppShell>
+      <>
+        <PageHeader
+          title="Nova role"
+          backHref="/wms/configuracoes/roles"
+          backLabel="Roles & Permissões"
+        />
+        <div className="wms-empty-block">
+          <h3>Acesso restrito</h3>
+          <p>Apenas administradores podem criar roles.</p>
+        </div>
+      </>
     );
   }
 
@@ -41,51 +49,81 @@ export default function NovaRolePage() {
   }
 
   return (
-    <AppShell title="Nova role">
-      <div className="max-w-xl mx-auto p-6">
-        <h1 className="text-2xl font-semibold mb-6">Nova role</h1>
-        <form onSubmit={submit} className="grid gap-4">
-          <label className="grid gap-1">
-            <span className="text-sm text-zinc-400">Código</span>
+    <>
+      <PageHeader
+        title="Nova role"
+        subtitle="Defina um código único, nome amigável e descrição"
+        backHref="/wms/configuracoes/roles"
+        backLabel="Roles & Permissões"
+      />
+
+      <form onSubmit={submit}>
+        <Card title="Dados da role">
+          <Field
+            label="Código"
+            required
+            hint="apenas a-z, 0-9, _ — começa com letra"
+          >
             <input
               required
               pattern="[a-z][a-z0-9_]*"
               value={codigo}
               onChange={(e) => setCodigo(e.target.value)}
               placeholder="conferente"
-              className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
+              className="wms-input wms-mono"
+              autoFocus
             />
-            <span className="text-xs text-zinc-500">apenas a-z, 0-9, _ — começa com letra</span>
-          </label>
-          <label className="grid gap-1">
-            <span className="text-sm text-zinc-400">Nome</span>
+          </Field>
+
+          <Field label="Nome" required>
             <input
               required
               value={nome}
               onChange={(e) => setNome(e.target.value)}
               placeholder="Conferente"
-              className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
+              className="wms-input"
             />
-          </label>
-          <label className="grid gap-1">
-            <span className="text-sm text-zinc-400">Descrição (opcional)</span>
+          </Field>
+
+          <Field label="Descrição" hint="opcional">
             <textarea
               value={descricao}
               onChange={(e) => setDescricao(e.target.value)}
               rows={3}
-              className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
+              className="wms-input"
+              placeholder="Pra que serve esta role?"
             />
-          </label>
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => router.back()} className="rounded-md px-4 py-2 text-zinc-300 hover:bg-zinc-800">
+          </Field>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              justifyContent: "flex-end",
+              borderTop: "1px solid var(--wms-c-border)",
+              paddingTop: 12,
+              marginTop: 4,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="wms-btn wms-btn-ghost"
+              disabled={saving}
+            >
               Cancelar
             </button>
-            <button type="submit" disabled={saving} className="rounded-md bg-cyan-500 px-4 py-2 text-zinc-950 hover:bg-cyan-400 disabled:opacity-50">
-              {saving ? "Criando..." : "Criar role"}
+            <button
+              type="submit"
+              disabled={saving}
+              className="wms-btn wms-btn-primary"
+            >
+              <Icon name="check" size={12} />
+              {saving ? "Criando…" : "Criar role"}
             </button>
           </div>
-        </form>
-      </div>
-    </AppShell>
+        </Card>
+      </form>
+    </>
   );
 }

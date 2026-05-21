@@ -14,13 +14,7 @@ import {
   CardInventarioCiclo,
 } from "./cards-detalhe";
 
-function EmptyCard({
-  href,
-  label,
-}: {
-  href: string;
-  label: string;
-}) {
+function EmptyCard({ href, label }: { href: string; label: string }) {
   return (
     <Link
       href={href}
@@ -52,6 +46,8 @@ export function QuadroTarefas() {
 
   const guardaTotal = data?.guarda.count ?? 0;
   const inventarioTotal = data?.inventario.sessoesAtivas ?? 0;
+  const comprasComprar = data?.compras.aComprar ?? 0;
+  const comprasReceber = data?.compras.aReceber ?? 0;
 
   return (
     <section className="wms-quadro">
@@ -95,70 +91,77 @@ export function QuadroTarefas() {
         />
       </div>
 
-      <div className="wms-quadro-sub">
-        Guarda
-        {guardaTotal > 0
-          ? ` · ${guardaTotal} pendência${guardaTotal === 1 ? "" : "s"}`
-          : ""}
-      </div>
-      <div className="wms-quadro-kanban">
-        {guardaTotal === 0 ? (
-          <EmptyCard href="/wms/guarda" label="Nenhuma pendência de guarda" />
-        ) : (
-          <>
-            {data!.guarda.itens.map((it) => (
-              <CardGuardaItem key={it.id} item={it} />
-            ))}
-            {data!.guarda.itens.length < guardaTotal ? (
-              <Link
+      <div className="wms-kanban-board">
+        <div className="wms-kanban-coluna">
+          <div className="wms-kanban-coluna-head">
+            <span className="wms-kanban-coluna-titulo">Guarda</span>
+            <span className="wms-kanban-coluna-count">{guardaTotal}</span>
+          </div>
+          <div className="wms-kanban-coluna-cards">
+            {guardaTotal === 0 ? (
+              <EmptyCard
                 href="/wms/guarda"
-                className="wms-card-detalhe wms-card-detalhe-more"
-              >
-                +{guardaTotal - data!.guarda.itens.length} pendência
-                {guardaTotal - data!.guarda.itens.length === 1 ? "" : "s"} ·
-                ver todas
-              </Link>
-            ) : null}
-          </>
-        )}
-      </div>
+                label="Nenhuma pendência de guarda"
+              />
+            ) : (
+              <>
+                {data!.guarda.itens.map((it) => (
+                  <CardGuardaItem key={it.id} item={it} />
+                ))}
+                {data!.guarda.itens.length < guardaTotal ? (
+                  <Link
+                    href="/wms/guarda"
+                    className="wms-card-detalhe wms-card-detalhe-more"
+                  >
+                    +{guardaTotal - data!.guarda.itens.length} pendência
+                    {guardaTotal - data!.guarda.itens.length === 1 ? "" : "s"}{" "}
+                    · ver todas
+                  </Link>
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
 
-      <div className="wms-quadro-sub">
-        Inventário
-        {inventarioTotal > 0
-          ? ` · ${inventarioTotal} ciclo${inventarioTotal === 1 ? "" : "s"} ativo${inventarioTotal === 1 ? "" : "s"}`
-          : ""}
-      </div>
-      <div className="wms-quadro-kanban">
-        {inventarioTotal === 0 ? (
-          <EmptyCard
-            href="/wms/inventario"
-            label="Nenhum ciclo de inventário em andamento"
-          />
-        ) : (
-          data!.inventario.ciclos.map((c) => (
-            <CardInventarioCiclo key={c.id} ciclo={c} />
-          ))
-        )}
-      </div>
+        <div className="wms-kanban-coluna">
+          <div className="wms-kanban-coluna-head">
+            <span className="wms-kanban-coluna-titulo">Inventário</span>
+            <span className="wms-kanban-coluna-count">{inventarioTotal}</span>
+          </div>
+          <div className="wms-kanban-coluna-cards">
+            {inventarioTotal === 0 ? (
+              <EmptyCard
+                href="/wms/inventario"
+                label="Nenhum ciclo em andamento"
+              />
+            ) : (
+              data!.inventario.ciclos.map((c) => (
+                <CardInventarioCiclo key={c.id} ciclo={c} />
+              ))
+            )}
+          </div>
+        </div>
 
-      <div className="wms-quadro-sub">
-        Compras
-        {data && (data.compras.aComprar > 0 || data.compras.aReceber > 0)
-          ? ` · ${data.compras.aComprar} a comprar / ${data.compras.aReceber} a receber`
-          : ""}
-      </div>
-      <div className="wms-quadro-kanban">
-        {!data || data.compras.fornecedores.length === 0 ? (
-          <EmptyCard
-            href="/wms/compras"
-            label="Nenhuma compra pendente"
-          />
-        ) : (
-          data.compras.fornecedores.map((f) => (
-            <CardComprasFornecedor key={f.fornecedor} fornecedor={f} />
-          ))
-        )}
+        <div className="wms-kanban-coluna">
+          <div className="wms-kanban-coluna-head">
+            <span className="wms-kanban-coluna-titulo">Compras</span>
+            <span className="wms-kanban-coluna-count">
+              {comprasComprar} / {comprasReceber}
+            </span>
+          </div>
+          <div className="wms-kanban-coluna-cards">
+            {!data || data.compras.fornecedores.length === 0 ? (
+              <EmptyCard
+                href="/wms/compras"
+                label="Nenhuma compra pendente"
+              />
+            ) : (
+              data.compras.fornecedores.map((f) => (
+                <CardComprasFornecedor key={f.fornecedor} fornecedor={f} />
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </section>
   );

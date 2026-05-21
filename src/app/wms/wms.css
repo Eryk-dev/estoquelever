@@ -2988,10 +2988,59 @@
 
 /* ─── Kanban detalhado (guarda, inventario, compras) ───────────────── */
 
-.wms-quadro-kanban {
+.wms-kanban-board {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .wms-kanban-board {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wms-kanban-coluna {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--wms-c-faint);
+  border: 1px solid var(--wms-c-border);
+  min-width: 0;
+}
+
+.wms-kanban-coluna-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid var(--wms-c-border);
+}
+
+.wms-kanban-coluna-titulo {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--wms-c-fg);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wms-kanban-coluna-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--wms-c-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.wms-kanban-coluna-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .wms-card-detalhe {

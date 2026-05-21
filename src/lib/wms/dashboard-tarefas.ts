@@ -60,16 +60,162 @@ export type DashboardTarefasResult = {
  * `galpao_id` (em guarda/inventário). Compras é sempre global.
  */
 export async function montarDashboardTarefas(
-  _sb: SupabaseClient,
+  sb: SupabaseClient,
   galpao_id: string | null,
 ): Promise<DashboardTarefasResult> {
+  // 6 queries em paralelo. Cada uma retorna { count } e/ou ids de executores.
+  const [
+    aprovacaoQ,
+    separacaoQ,
+    embalagemQ,
+    guardaQ,
+    invSessoesQ,
+    invOperadoresQ,
+    comprasComprarQ,
+    comprasReceberQ,
+  ] = await Promise.all([
+    // Aprovação pendente
+    (() => {
+      let q = sb
+        .from("siso_pedidos")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pendente");
+      if (galpao_id) q = q.eq("separacao_galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Separação ativa
+    (() => {
+      let q = sb
+        .from("siso_pedidos")
+        .select("id, status_separacao, separacao_operador_id")
+        .in("status_separacao", [
+          "aguardando_separacao",
+          "em_separacao",
+          "pendente_realocacao",
+          "validacao_oc",
+        ]);
+      if (galpao_id) q = q.eq("separacao_galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Embalagem
+    (() => {
+      let q = sb
+        .from("siso_pedidos")
+        .select("id, embalagem_operador_id")
+        .eq("status_separacao", "separado");
+      if (galpao_id) q = q.eq("separacao_galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Guarda
+    (() => {
+      let q = sb
+        .from("siso_wms_pendencias_guarda")
+        .select("id, status, iniciada_por")
+        .in("status", ["pendente", "em_guarda"]);
+      if (galpao_id) q = q.eq("galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Inventário — sessões em andamento
+    (() => {
+      let q = sb
+        .from("siso_inventario_sessoes")
+        .select("id")
+        .eq("status", "em_andamento");
+      if (galpao_id) q = q.eq("galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Inventário — operadores ativos (party)
+    // Filtra sessões em andamento + galpão via inner join
+    (() => {
+      let q = sb
+        .from("siso_inventario_operadores")
+        .select(
+          "usuario_id, sessao:siso_inventario_sessoes!inner(id, galpao_id, status)",
+        )
+        .is("finalizado_em", null)
+        .eq("sessao.status", "em_andamento");
+      if (galpao_id) q = q.eq("sessao.galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Compras — a comprar (cross-galpão)
+    sb
+      .from("siso_pedido_itens")
+      .select("id", { count: "exact", head: true })
+      .eq("compra_status", "aguardando_compra"),
+
+    // Compras — a receber (cross-galpão).
+    // CHECK em siso_ordens_compra: ('aguardando_compra','comprado','parcialmente_recebido','recebido','cancelado').
+    // Não há status 'aguardando_recebimento' — 'comprado' é o estado pós-compra aguardando recebimento físico.
+    sb
+      .from("siso_ordens_compra")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["comprado", "parcialmente_recebido"]),
+  ]);
+
+  type SepRow = { id: string; status_separacao: string; separacao_operador_id: string | null };
+  type EmbRow = { id: string; embalagem_operador_id: string | null };
+  type GuardaRow = { id: string; status: string; iniciada_por: string | null };
+  type InvOpRow = { usuario_id: string };
+
+  const sepRows = (separacaoQ.data ?? []) as SepRow[];
+  const embRows = (embalagemQ.data ?? []) as EmbRow[];
+  const guardaRows = (guardaQ.data ?? []) as GuardaRow[];
+  const invOpRows = (invOperadoresQ.data ?? []) as InvOpRow[];
+
+  const sepIds = dedupNonNullIds(
+    sepRows
+      .filter((r) => r.status_separacao === "em_separacao")
+      .map((r) => r.separacao_operador_id),
+  );
+  const embIds = dedupNonNullIds(embRows.map((r) => r.embalagem_operador_id));
+  const guardaIds = dedupNonNullIds(
+    guardaRows
+      .filter((r) => r.status === "em_guarda")
+      .map((r) => r.iniciada_por),
+  );
+  const invIds = dedupNonNullIds(invOpRows.map((r) => r.usuario_id));
+
+  // Hidrata avatares em uma query única
+  const allIds = dedupNonNullIds([...sepIds, ...embIds, ...guardaIds, ...invIds]);
+  const usuariosMap = new Map<string, Executor>();
+  if (allIds.length > 0) {
+    const { data: usuarios } = await sb
+      .from("siso_usuarios")
+      .select("id, nome, foto_url")
+      .in("id", allIds);
+    for (const u of (usuarios ?? []) as Executor[]) {
+      usuariosMap.set(u.id, u);
+    }
+  }
+
   return {
     galpao_id,
-    aprovacao: { count: 0 },
-    separacao: { count: 0, executores: [] },
-    embalagem: { count: 0, executores: [] },
-    guarda: { count: 0, executores: [] },
-    compras: { aComprar: 0, aReceber: 0 },
-    inventario: { sessoesAtivas: 0, executores: [] },
+    aprovacao: { count: aprovacaoQ.count ?? 0 },
+    separacao: {
+      count: sepRows.length,
+      executores: hidratarExecutores(sepIds, usuariosMap),
+    },
+    embalagem: {
+      count: embRows.length,
+      executores: hidratarExecutores(embIds, usuariosMap),
+    },
+    guarda: {
+      count: guardaRows.length,
+      executores: hidratarExecutores(guardaIds, usuariosMap),
+    },
+    compras: {
+      aComprar: comprasComprarQ.count ?? 0,
+      aReceber: comprasReceberQ.count ?? 0,
+    },
+    inventario: {
+      sessoesAtivas: (invSessoesQ.data ?? []).length,
+      executores: hidratarExecutores(invIds, usuariosMap),
+    },
   };
 }

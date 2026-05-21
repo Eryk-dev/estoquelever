@@ -27,7 +27,18 @@ export default {
     // - qty_pega = 5-2 = 3) em outra loc → A-01-01 com 3.
     await ctx.parcial({ pedido: pedido.id, item: sku, qty: 2, loc_zerou: true });
     await ctx.aguardarRealocacao(pedido.id, sku, "A-01-01");
-    await ctx.bipar({ pedido: pedido.id, item: sku, qty: 3 });
+    // Após parcial+realocação, /marcar-item rejeita (item já em parcial).
+    // Picking da realocação usa endpoint dedicado /marcar-realocacao com
+    // realocacao_id. Resolve a row recém-criada e chama direto.
+    const { data: realocs } = await ctx.sb
+      .from("siso_pedido_item_realocacoes")
+      .select("id")
+      .eq("status", "aguardando_picking")
+      .order("criado_em", { ascending: false })
+      .limit(1);
+    const realocId = (realocs as Array<{ id: string }> | null)?.[0]?.id;
+    if (!realocId) throw new Error("realocacao recém-criada não encontrada");
+    await ctx.http.post("/api/wms/separacao/marcar-realocacao", { realocacao_id: realocId });
     await ctx.concluirSeparacao(pedido.id);
   },
 

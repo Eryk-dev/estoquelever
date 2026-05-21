@@ -80,13 +80,49 @@ export function createContext(opts: {
   }
 
   // ── pedido + separação ──
-  async function webhook(p: { empresa: string; items: { sku: string; qty: number }[]; tipo?: "pedido" | "nota_fiscal"; pedidoFakeId?: number }) {
+  // O webhook tiny só aceita tipos "inclusao_pedido" | "atualizacao_pedido" com
+  // codigoSituacao "aprovado" | "cancelado". O processor depois chama Tiny via
+  // tinyFetch (que roteia pro tiny-stub quando TINY_DISABLED=true), e o stub
+  // lê de siso_stub_pedidos. Pra cenários funcionarem ponta-a-ponta, o webhook
+  // helper precisa seed siso_stub_pedidos antes do POST. Esta versão faz isso.
+  async function webhook(p: { empresa: string; items: { sku: string; qty: number }[]; tipo?: "nota_fiscal" | "inclusao_pedido" | "atualizacao_pedido"; pedidoFakeId?: number }) {
     const fakeId = p.pedidoFakeId ?? Math.floor(Math.random() * 90_000_000) + 9_000_000_000;
+    const tipoFinal = p.tipo ?? "inclusao_pedido";
+
+    // Seed do stub Tiny pro pedidoFakeId (se existir a tabela)
+    try {
+      const { data: empresa } = await sb.from("siso_empresas").select("id").eq("cnpj", p.empresa).single();
+      if (empresa) {
+        await sb.from("siso_stub_pedidos").upsert({
+          id: fakeId,
+          empresa_id: empresa.id,
+          cenario: "harness",
+          payload: {
+            id: fakeId,
+            numeroPedido: String(fakeId),
+            data: new Date().toISOString().slice(0, 10),
+            situacao: { id: 9, valor: "Aprovado" },
+            // ecommerce marca o pedido como marketplace (webhook-processor exige)
+            ecommerce: { nome: "Harness Test", numeroPedidoEcommerce: `H-${fakeId}` },
+            cliente: { cpfCnpj: p.empresa, nome: "Cliente Teste" },
+            itens: p.items.map((it, i) => ({
+              id: fakeId * 10 + i,
+              produto: { id: fakeId * 100 + i, codigo: it.sku, descricao: `Produto teste ${it.sku}` },
+              quantidade: it.qty,
+              valorUnitario: 1,
+            })),
+          },
+        });
+      }
+    } catch {
+      // siso_stub_pedidos pode não existir no schema; ignora e segue
+    }
+
     const body = {
-      tipo: p.tipo ?? "pedido",
+      tipo: tipoFinal,
       dados: {
         id: String(fakeId),
-        situacao: 1,
+        codigoSituacao: "aprovado",
         cliente: { cnpj: p.empresa, nome: "Cliente Teste" },
         itens: p.items.map((it, i) => ({
           id: String(fakeId * 10 + i),

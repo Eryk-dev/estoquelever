@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { Icon, PageHeader, type IconName } from "@/components/wms/ui/wms-ui";
 import { useWmsModals } from "@/components/wms/wms-shell";
+import { QuadroTarefas } from "@/components/wms/home/quadro-tarefas";
 
 interface CardData {
   href: string;
@@ -145,6 +146,8 @@ export default function WmsHome() {
           Receber mercadoria
         </button>
       </PageHeader>
+
+      <QuadroTarefas />
 
       {GROUPS.map((g) => (
         <section key={g.titulo} style={{ marginBottom: 24 }}>

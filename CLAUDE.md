@@ -632,10 +632,10 @@ Com o ledger simplificado, apuração por empresa virou **report sobre tags de m
 
 ### Roles & Permissões (dinâmico)
 
-Acesso é controlado por **roles editáveis** no UI (`/wms/configuracoes/roles`). Cada role tem um conjunto de permissões (granularidade módulo + ação) do registry em `src/lib/permissions.ts` (30 permissões em 8 módulos).
+Acesso é controlado por **roles editáveis** no UI (`/wms/configuracoes/roles`). Cada role tem um conjunto de permissões (granularidade módulo + ação) do registry em `src/lib/permissions.ts` (31 permissões em 8 módulos).
 
 **Roles padrão (sistema=true, não-deletáveis):**
-- `admin` — todas 30 permissões
+- `admin` — todas 31 permissões
 - `operador` — vendas (exceto criar), separação, compras.ver, estoque, cobertura, operações, inventário ver/executar, insights.ver, relatórios, cadastros
 - `operador_cwb` / `operador_sp` — idem `operador` (galpão é dimensão à parte, não permissão)
 - `comprador` — pedidos.ver, compras.*, estoque, cobertura, relatórios

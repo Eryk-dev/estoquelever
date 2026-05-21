@@ -20,13 +20,12 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Valida sessão (sem checar expiração — alinhar com session.ts: a coluna
-  // expira_em existe mas a checagem é feita no validador legacy; aqui apenas
-  // confirma que a sessão existe e pega usuario_id).
+  // Valida sessão + checa expiração (alinhado com session.ts).
   const { data: sessao, error: sessaoError } = await supabase
     .from("siso_sessoes")
     .select("usuario_id")
     .eq("id", sessionId)
+    .gt("expira_em", new Date().toISOString())
     .maybeSingle();
 
   if (sessaoError || !sessao) {

@@ -128,7 +128,7 @@ Controle de acesso é via RBAC dinâmico desde 2026-05-21.
 
 ### Fluxo de check
 
-1. **Registry (`src/lib/permissions.ts`):** lista canônica de 30 permissões em 8 módulos. Permissões são contratos com o código — cada `userCan(session, "X")` precisa ter X no registry.
+1. **Registry (`src/lib/permissions.ts`):** lista canônica de 31 permissões em 8 módulos. Permissões são contratos com o código — cada `userCan(session, "X")` precisa ter X no registry.
 2. **Roles (`siso_roles`):** agrupamentos editáveis pelo admin. 6 roles sistema (`admin`, `operador`, `operador_cwb`, `operador_sp`, `comprador`, `vendedor`) não-deletáveis; outras criadas dinamicamente.
 3. **Atribuição (`siso_usuario_roles`):** usuário tem 1..N roles. Permissões efetivas = união dos `siso_role_permissoes` das roles ativas.
 4. **Sessão:** `getSessionUser()` carrega `permissoes: Set<string>` em cada request (1 query JOIN, ~ms). Fallback: se usuário não tem `siso_usuario_roles`, busca por `cargos[]`.
@@ -136,7 +136,7 @@ Controle de acesso é via RBAC dinâmico desde 2026-05-21.
 
 ### Defesa em camadas
 - **UI esconde** items da sidebar e botões via `requires` / `can()`.
-- **API valida** todo endpoint sensível com `userCan` antes de qualquer operação.
+- **API valida** a maioria dos endpoints sensíveis com `userCan`; defesa em profundidade vai sendo aplicada conforme cleanup. Helpers compartilhados (`requireAdmin`, `requireWarehouseAccess`) também checam permissões.
 - **DB protege** anti-lockout via RPC `wms_role_delete` + validação no endpoint `/usuarios/[id]/roles`.
 
 ### Compat legado

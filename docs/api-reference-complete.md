@@ -4106,7 +4106,7 @@ A key fica em `siso_printnode_contas`, e galpões/usuários guardam
 ### Additional Admin Routes - Roles & Permissões (2026-05-21)
 
 ### `GET /api/wms/admin/permissoes`
-Retorna catálogo do registry (30 perms / 8 módulos) agrupado por módulo. Auth: sessão válida (qualquer cargo autenticado).
+Retorna catálogo do registry (31 perms / 8 módulos) agrupado por módulo. Auth: sessão válida (qualquer cargo autenticado).
 
 Response: `{ modulos: Array<{ id, label, permissoes: Array<{ codigo, label }> }>, total: number }`
 

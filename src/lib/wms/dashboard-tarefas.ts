@@ -25,6 +25,23 @@ export type Executor = {
   foto_url: string | null;
 };
 
+/**
+ * Hidrata uma lista de IDs com os dados do usuário, ignorando IDs que
+ * não estão no map (usuário deletado ou inacessível). Preserva a ordem
+ * de entrada.
+ */
+export function hidratarExecutores(
+  ids: string[],
+  usuarios: Map<string, Executor>,
+): Executor[] {
+  const out: Executor[] = [];
+  for (const id of ids) {
+    const u = usuarios.get(id);
+    if (u) out.push(u);
+  }
+  return out;
+}
+
 export type DashboardTarefasResult = {
   galpao_id: string | null;
   aprovacao: { count: number };

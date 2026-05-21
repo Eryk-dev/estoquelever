@@ -130,6 +130,17 @@ export function createContext(opts: {
       p_motivo: `harness seed [${correlationId.slice(0, 8)}]`,
     });
     if (error) throw new Error(`semearSaldo rpc: ${error.message}`);
+
+    // RPC só recalcula custo_medio em origem_tipo nf_compra|devolucao_cliente_integra|lancamento_retroativo.
+    // 'inventario_inicial' não dispara recálculo, então cenários que dependem
+    // de custo_medio (replenishment, devoluções etc.) precisam que o cache seja
+    // populado direto pelo seed.
+    if (p.custo !== undefined && p.custo !== null) {
+      await sb.from("siso_custo_medio").upsert(
+        { produto_id: prod.id, custo_medio: p.custo, atualizado_em: new Date().toISOString() },
+        { onConflict: "produto_id" },
+      );
+    }
   }
 
   // ── pedido + separação ──
@@ -491,10 +502,10 @@ export function createContext(opts: {
     const { data: orig } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.origem_loc).single();
     const { data: dest } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.destino_loc).single();
     await http.post("/api/wms/replenishment", {
-      produto_id: prod!.id,
-      origem_localizacao_id: orig!.id,
-      destino_localizacao_id: dest!.id,
-      quantidade: p.qty,
+      galpao_id,
+      localizacao_origem_id: orig!.id,
+      localizacao_destino_id: dest!.id,
+      itens: [{ produto_id: prod!.id, qty: p.qty }],
     });
   }
 

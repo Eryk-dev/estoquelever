@@ -4,8 +4,10 @@ import { logger } from "@/lib/logger";
 export interface SessionUser {
   id: string;
   nome: string;
-  cargo: string;
-  cargos: string[];
+  cargo: string;                  // mantido por compat — primeira role.codigo
+  cargos: string[];               // mantido por compat — roles[].codigo
+  roles: Array<{ id: string; codigo: string; nome: string }>;
+  permissoes: Set<string>;        // união das permissões das roles ativas
   galpaoId: string | null;
 }
 
@@ -27,7 +29,6 @@ export async function getSessionUser(
 
   const supabase = createServiceClient();
 
-  // Join sessoes → usuarios, filtering by valid (non-expired) session
   const { data, error } = await supabase
     .from("siso_sessoes")
     .select("usuario_id, siso_usuarios(id, nome, cargo, cargos)")
@@ -40,7 +41,6 @@ export async function getSessionUser(
     return null;
   }
 
-  // Supabase returns the joined row as an object (single FK)
   const usuario = data.siso_usuarios as unknown as {
     id: string;
     nome: string;
@@ -50,12 +50,56 @@ export async function getSessionUser(
 
   if (!usuario) return null;
 
-  const cargos = usuario.cargos?.length ? usuario.cargos : [usuario.cargo];
+  // Carrega roles ativas + permissões agregadas
+  const { data: rolesRaw } = await supabase
+    .from("siso_usuario_roles")
+    .select("siso_roles(id, codigo, nome, ativo, siso_role_permissoes(permissao_codigo))")
+    .eq("usuario_id", usuario.id);
 
-  // 1. Try X-Galpao-Id header (new dynamic approach)
+  const rolesAtivas: Array<{ id: string; codigo: string; nome: string }> = [];
+  const permissoesSet = new Set<string>();
+
+  for (const row of rolesRaw ?? []) {
+    const role = (row as unknown as {
+      siso_roles: {
+        id: string;
+        codigo: string;
+        nome: string;
+        ativo: boolean;
+        siso_role_permissoes: Array<{ permissao_codigo: string }>;
+      } | null;
+    }).siso_roles;
+    if (!role || !role.ativo) continue;
+    rolesAtivas.push({ id: role.id, codigo: role.codigo, nome: role.nome });
+    for (const rp of role.siso_role_permissoes ?? []) {
+      permissoesSet.add(rp.permissao_codigo);
+    }
+  }
+
+  // Fallback de compat: se usuário não tiver siso_usuario_roles ainda,
+  // usa cargos[] como nomes de role pra montar permissões via JOIN.
+  if (rolesAtivas.length === 0 && (usuario.cargos?.length || usuario.cargo)) {
+    const codigos = usuario.cargos?.length ? usuario.cargos : [usuario.cargo];
+    const { data: fallback } = await supabase
+      .from("siso_roles")
+      .select("id, codigo, nome, ativo, siso_role_permissoes(permissao_codigo)")
+      .in("codigo", codigos);
+
+    for (const role of fallback ?? []) {
+      if (!role.ativo) continue;
+      rolesAtivas.push({ id: role.id, codigo: role.codigo, nome: role.nome });
+      const rps = (role as unknown as { siso_role_permissoes: Array<{ permissao_codigo: string }> })
+        .siso_role_permissoes;
+      for (const rp of rps ?? []) permissoesSet.add(rp.permissao_codigo);
+    }
+  }
+
+  const cargosOut = rolesAtivas.map((r) => r.codigo);
+  const cargoOut = cargosOut[0] ?? usuario.cargo ?? "";
+
+  // ── Galpão (lógica existente, sem mudanças funcionais) ──
   const galpaoIdHeader = request.headers.get("X-Galpao-Id");
   if (galpaoIdHeader) {
-    // Validate that this galpão belongs to the user
     const { data: valid } = await supabase
       .from("siso_usuario_galpoes")
       .select("galpao_id")
@@ -67,17 +111,17 @@ export async function getSessionUser(
       return {
         id: usuario.id,
         nome: usuario.nome,
-        cargo: cargos[0],
-        cargos,
+        cargo: cargoOut,
+        cargos: cargosOut,
+        roles: rolesAtivas,
+        permissoes: permissoesSet,
         galpaoId: galpaoIdHeader,
       };
     }
-    // Header galpão not in user's list — fall through to legacy
   }
 
-  // 2. Legacy fallback: resolve from cargo name
   let galpaoId: string | null = null;
-  const operadorCargo = cargos.find((c) => c === "operador_cwb" || c === "operador_sp");
+  const operadorCargo = cargosOut.find((c) => c === "operador_cwb" || c === "operador_sp");
   if (operadorCargo) {
     const galpaoNome = operadorCargo === "operador_cwb" ? "CWB" : "SP";
     const { data: galpao } = await supabase
@@ -92,8 +136,10 @@ export async function getSessionUser(
   return {
     id: usuario.id,
     nome: usuario.nome,
-    cargo: cargos[0],
-    cargos,
+    cargo: cargoOut,
+    cargos: cargosOut,
+    roles: rolesAtivas,
+    permissoes: permissoesSet,
     galpaoId,
   };
 }

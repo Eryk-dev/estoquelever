@@ -134,7 +134,7 @@ export function createContext(opts: {
             cliente: { cpfCnpj: p.empresa, nome: "Cliente Teste" },
             itens: p.items.map((it, i) => ({
               id: fakeId * 10 + i,
-              produto: { id: fakeId * 100 + i, codigo: it.sku, descricao: `Produto teste ${it.sku}` },
+              produto: { id: tinyProdutoIdFromSku(it.sku), codigo: it.sku, descricao: `Produto teste ${it.sku}` },
               quantidade: it.qty,
               valorUnitario: 1,
             })),
@@ -153,7 +153,7 @@ export function createContext(opts: {
         cliente: { cnpj: p.empresa, nome: "Cliente Teste" },
         itens: p.items.map((it, i) => ({
           id: String(fakeId * 10 + i),
-          produto: { codigo: it.sku, descricao: it.sku },
+          produto: { id: String(tinyProdutoIdFromSku(it.sku)), codigo: it.sku, descricao: it.sku },
           quantidade: it.qty,
         })),
       },

@@ -51,10 +51,17 @@ export async function getSessionUser(
   if (!usuario) return null;
 
   // Carrega roles ativas + permissões agregadas
-  const { data: rolesRaw } = await supabase
+  const { data: rolesRaw, error: rolesError } = await supabase
     .from("siso_usuario_roles")
     .select("siso_roles(id, codigo, nome, ativo, siso_role_permissoes(permissao_codigo))")
     .eq("usuario_id", usuario.id);
+
+  if (rolesError) {
+    logger.error("session", "Failed to load user roles", {
+      usuarioId: usuario.id,
+      error: rolesError.message,
+    });
+  }
 
   const rolesAtivas: Array<{ id: string; codigo: string; nome: string }> = [];
   const permissoesSet = new Set<string>();
@@ -80,10 +87,18 @@ export async function getSessionUser(
   // usa cargos[] como nomes de role pra montar permissões via JOIN.
   if (rolesAtivas.length === 0 && (usuario.cargos?.length || usuario.cargo)) {
     const codigos = usuario.cargos?.length ? usuario.cargos : [usuario.cargo];
-    const { data: fallback } = await supabase
+    const { data: fallback, error: fallbackError } = await supabase
       .from("siso_roles")
       .select("id, codigo, nome, ativo, siso_role_permissoes(permissao_codigo)")
       .in("codigo", codigos);
+
+    if (fallbackError) {
+      logger.error("session", "Failed to load fallback roles by cargos[]", {
+        usuarioId: usuario.id,
+        cargos: codigos,
+        error: fallbackError.message,
+      });
+    }
 
     for (const role of fallback ?? []) {
       if (!role.ativo) continue;

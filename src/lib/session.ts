@@ -1,5 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { loadUserRolesAndPermissions } from "@/lib/roles-loader";
 
 export interface SessionUser {
   id: string;
@@ -50,64 +51,8 @@ export async function getSessionUser(
 
   if (!usuario) return null;
 
-  // Carrega roles ativas + permissões agregadas
-  const { data: rolesRaw, error: rolesError } = await supabase
-    .from("siso_usuario_roles")
-    .select("siso_roles(id, codigo, nome, ativo, siso_role_permissoes(permissao_codigo))")
-    .eq("usuario_id", usuario.id);
-
-  if (rolesError) {
-    logger.error("session", "Failed to load user roles", {
-      usuarioId: usuario.id,
-      error: rolesError.message,
-    });
-  }
-
-  const rolesAtivas: Array<{ id: string; codigo: string; nome: string }> = [];
-  const permissoesSet = new Set<string>();
-
-  for (const row of rolesRaw ?? []) {
-    const role = (row as unknown as {
-      siso_roles: {
-        id: string;
-        codigo: string;
-        nome: string;
-        ativo: boolean;
-        siso_role_permissoes: Array<{ permissao_codigo: string }>;
-      } | null;
-    }).siso_roles;
-    if (!role || !role.ativo) continue;
-    rolesAtivas.push({ id: role.id, codigo: role.codigo, nome: role.nome });
-    for (const rp of role.siso_role_permissoes ?? []) {
-      permissoesSet.add(rp.permissao_codigo);
-    }
-  }
-
-  // Fallback de compat: se usuário não tiver siso_usuario_roles ainda,
-  // usa cargos[] como nomes de role pra montar permissões via JOIN.
-  if (rolesAtivas.length === 0 && (usuario.cargos?.length || usuario.cargo)) {
-    const codigos = usuario.cargos?.length ? usuario.cargos : [usuario.cargo];
-    const { data: fallback, error: fallbackError } = await supabase
-      .from("siso_roles")
-      .select("id, codigo, nome, ativo, siso_role_permissoes(permissao_codigo)")
-      .in("codigo", codigos);
-
-    if (fallbackError) {
-      logger.error("session", "Failed to load fallback roles by cargos[]", {
-        usuarioId: usuario.id,
-        cargos: codigos,
-        error: fallbackError.message,
-      });
-    }
-
-    for (const role of fallback ?? []) {
-      if (!role.ativo) continue;
-      rolesAtivas.push({ id: role.id, codigo: role.codigo, nome: role.nome });
-      const rps = (role as unknown as { siso_role_permissoes: Array<{ permissao_codigo: string }> })
-        .siso_role_permissoes;
-      for (const rp of rps ?? []) permissoesSet.add(rp.permissao_codigo);
-    }
-  }
+  const { roles: rolesAtivas, permissoes: permissoesSet } =
+    await loadUserRolesAndPermissions(supabase, usuario, "session");
 
   const cargosOut = rolesAtivas.map((r) => r.codigo);
   const cargoOut = cargosOut[0] ?? usuario.cargo ?? "";

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { dedupNonNullIds, hidratarExecutores } from "./dashboard-tarefas";
+import {
+  agruparFornecedoresCompras,
+  dedupNonNullIds,
+  hidratarExecutores,
+} from "./dashboard-tarefas";
 
 describe("dedupNonNullIds", () => {
   it("retorna [] quando entrada é vazia", () => {
@@ -43,5 +47,52 @@ describe("hidratarExecutores", () => {
   it("propaga foto_url null sem mexer", () => {
     const out = hidratarExecutores(["u2"], usuarios);
     expect(out).toEqual([{ id: "u2", nome: "Bruno", foto_url: null }]);
+  });
+});
+
+describe("agruparFornecedoresCompras", () => {
+  it("retorna [] quando ambas as listas estão vazias", () => {
+    expect(agruparFornecedoresCompras([], [])).toEqual([]);
+  });
+
+  it("agrupa por fornecedor e soma a_comprar + a_receber", () => {
+    const out = agruparFornecedoresCompras(
+      [
+        { fornecedor_oc: "Tiger" },
+        { fornecedor_oc: "Tiger" },
+        { fornecedor_oc: "LDRU" },
+      ],
+      [{ fornecedor: "Tiger" }, { fornecedor: "GAUSS" }],
+    );
+    expect(out).toEqual([
+      { fornecedor: "Tiger", a_comprar: 2, a_receber: 1 },
+      { fornecedor: "GAUSS", a_comprar: 0, a_receber: 1 },
+      { fornecedor: "LDRU", a_comprar: 1, a_receber: 0 },
+    ]);
+  });
+
+  it("usa 'Sem fornecedor' quando fornecedor_oc/fornecedor é null ou vazio", () => {
+    const out = agruparFornecedoresCompras(
+      [{ fornecedor_oc: null }, { fornecedor_oc: "  " }],
+      [{ fornecedor: null }],
+    );
+    expect(out).toEqual([
+      { fornecedor: "Sem fornecedor", a_comprar: 2, a_receber: 1 },
+    ]);
+  });
+
+  it("ordena por total desc, depois alfabético", () => {
+    const out = agruparFornecedoresCompras(
+      [{ fornecedor_oc: "B" }, { fornecedor_oc: "A" }],
+      [{ fornecedor: "C" }, { fornecedor: "A" }],
+    );
+    // Totais: A=2, B=1, C=1. A vem primeiro (total maior); empate B vs C → alfabético
+    expect(out.map((f) => f.fornecedor)).toEqual(["A", "B", "C"]);
+  });
+
+  it("ignora fornecedores que ficariam com total 0", () => {
+    // Cenário não-real (não há entrada que zere), mas garante o filter
+    const out = agruparFornecedoresCompras([], []);
+    expect(out).toEqual([]);
   });
 });

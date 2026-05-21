@@ -2985,3 +2985,184 @@
   margin-left: 8px;
   text-decoration: underline;
 }
+
+.wms-quadro-vazio {
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px dashed var(--wms-c-border);
+  color: var(--wms-c-mute);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ─── Kanban detalhado (guarda, inventario, compras) ───────────────── */
+
+.wms-quadro-kanban {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.wms-card-detalhe {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--wms-c-border);
+  background: var(--wms-c-panel);
+  text-decoration: none;
+  color: inherit;
+  min-height: 110px;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+
+.wms-card-detalhe:hover {
+  background: var(--wms-c-faint);
+  border-color: var(--wms-c-fg);
+}
+
+.wms-card-detalhe-tall {
+  min-height: 160px;
+}
+
+.wms-card-detalhe-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.wms-card-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  border: 1px solid var(--wms-c-border);
+  color: var(--wms-c-mute);
+  background: var(--wms-c-faint);
+}
+
+.wms-card-badge-pendente {
+  color: var(--wms-c-mute);
+  border-color: var(--wms-c-border);
+  background: var(--wms-c-faint);
+}
+
+.wms-card-badge-ativo {
+  color: var(--wms-c-ok);
+  border-color: var(--wms-c-ok);
+  background: transparent;
+}
+
+.wms-card-badge-neutro {
+  color: var(--wms-c-mute);
+}
+
+.wms-card-detalhe-tempo {
+  font-size: 11px;
+  color: var(--wms-c-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.wms-card-detalhe-sku {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--wms-c-fg);
+  word-break: break-word;
+  line-height: 1.25;
+}
+
+.wms-card-detalhe-desc {
+  font-size: 12px;
+  color: var(--wms-c-mute);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wms-card-detalhe-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.wms-card-detalhe-qty {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--wms-c-fg);
+  line-height: 1;
+}
+
+.wms-card-detalhe-qty-inicial {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--wms-c-mute);
+}
+
+.wms-card-detalhe-meta {
+  font-size: 11px;
+  color: var(--wms-c-mute);
+}
+
+.wms-card-detalhe-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--wms-c-mute);
+  font-size: 12px;
+  border-style: dashed;
+}
+
+.wms-card-detalhe-more a {
+  margin-left: 6px;
+  text-decoration: underline;
+}
+
+/* Barra de progresso pros cards de ciclo de inventário */
+
+.wms-progresso {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wms-progresso-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--wms-c-faint);
+  overflow: hidden;
+}
+
+.wms-progresso-bar-fill {
+  height: 100%;
+  background: var(--wms-c-ok);
+  transition: width 220ms ease;
+}
+
+.wms-progresso-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--wms-c-mute);
+}
+
+.wms-progresso-label strong {
+  font-size: 14px;
+  color: var(--wms-c-fg);
+  font-variant-numeric: tabular-nums;
+}

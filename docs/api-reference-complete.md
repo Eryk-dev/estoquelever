@@ -5259,9 +5259,48 @@ Retorna o estado das 6 filas operacionais que o quadro de tarefas pendentes da h
   "aprovacao":  { "count": 0 },
   "separacao":  { "count": 0, "executores": [{ "id": "uuid", "nome": "…", "foto_url": "…|null" }] },
   "embalagem":  { "count": 0, "executores": [] },
-  "guarda":     { "count": 0, "executores": [] },
-  "compras":    { "aComprar": 0, "aReceber": 0 },
-  "inventario": { "sessoesAtivas": 0, "executores": [] }
+  "guarda": {
+    "count": 0,
+    "executores": [],
+    "itens": [
+      {
+        "id": "uuid",
+        "produto_sku": "EW123",
+        "produto_descricao": "string|null",
+        "qty_pendente": 5,
+        "qty_inicial": 10,
+        "status": "pendente|em_guarda",
+        "iniciada_por": { "id": "uuid", "nome": "…", "foto_url": "…|null" },
+        "criada_em": "ISO",
+        "galpao_nome": "string|null"
+      }
+    ]
+  },
+  "compras": {
+    "aComprar": 0,
+    "aReceber": 0,
+    "fornecedores": [
+      { "fornecedor": "Tiger", "a_comprar": 3, "a_receber": 1 }
+    ]
+  },
+  "inventario": {
+    "sessoesAtivas": 0,
+    "executores": [],
+    "ciclos": [
+      {
+        "id": "uuid",
+        "nome": "string",
+        "tipo": "cycle_count|completo",
+        "galpao_nome": "string|null",
+        "locs_total": 120,
+        "locs_contadas": 48,
+        "locs_pendentes": 72,
+        "progresso_pct": 40,
+        "iniciada_em": "ISO|null",
+        "operadores": [{ "id": "uuid", "nome": "…", "foto_url": "…|null" }]
+      }
+    ]
+  }
 }
 ```
 
@@ -5272,6 +5311,9 @@ Retorna o estado das 6 filas operacionais que o quadro de tarefas pendentes da h
 - `executores` em Embalagem = `embalagem_operador_id` quando setado.
 - `executores` em Guarda = `iniciada_por` de pendências em `em_guarda`.
 - `executores` em Inventário = `siso_inventario_operadores` ativos (party) das sessões em andamento.
+- `guarda.itens` é truncado em 50 cards (cards adicionais ficam na tela `/wms/guarda`). `guarda.count` reflete o total real.
+- `inventario.ciclos[].progresso_pct` = `locs_contadas / locs_total * 100`, onde "contada" = `siso_inventario_localizacoes.status NOT IN ('pendente','em_contagem')`.
+- `compras.fornecedores` agrupa por `siso_pedido_itens.fornecedor_oc` (a comprar) e `siso_ordens_compra.fornecedor` (a receber); valores nulos viram `"Sem fornecedor"`. Ordenado por total desc, depois alfabético.
 - Compras "a receber" usa `siso_ordens_compra.status IN ('comprado', 'parcialmente_recebido')`.
 - Aprovação e Compras não têm executor (são filas de espera).
 

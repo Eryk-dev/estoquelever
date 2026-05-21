@@ -84,7 +84,7 @@ async function i4ReservasOrfas(sb: SupabaseClient): Promise<InvariantResult> {
   const agora = new Date().toISOString();
   const { data, error } = await sb
     .from("siso_movimentacoes")
-    .select("id, origem_id, expira_em, created_at")
+    .select("id, origem_id, expira_em, criado_em")
     .eq("tipo", "R");
   if (error) return { nome: "I4: reservas órfãs", ok: false, detalhes: { error: error.message }, duracao_ms: Date.now() - t0 };
   const orfas: unknown[] = [];

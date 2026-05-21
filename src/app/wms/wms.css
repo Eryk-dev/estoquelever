@@ -2986,15 +2986,6 @@
   text-decoration: underline;
 }
 
-.wms-quadro-vazio {
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px dashed var(--wms-c-border);
-  color: var(--wms-c-mute);
-  font-size: 13px;
-  text-align: center;
-}
-
 /* ─── Kanban detalhado (guarda, inventario, compras) ───────────────── */
 
 .wms-quadro-kanban {
@@ -3130,6 +3121,25 @@
 .wms-card-detalhe-more a {
   margin-left: 6px;
   text-decoration: underline;
+}
+
+.wms-card-detalhe-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  opacity: 0.55;
+}
+
+.wms-card-detalhe-empty:hover {
+  opacity: 0.8;
+}
+
+.wms-card-detalhe-empty-label {
+  font-size: 12px;
+  color: var(--wms-c-mute);
+  font-style: italic;
+  text-align: center;
 }
 
 /* Barra de progresso pros cards de ciclo de inventário */

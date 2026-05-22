@@ -2,6 +2,21 @@ import type { TipoMov, OrigemTipo, Tripla, Movimentacao } from "./types";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 
+// Regex padrão pra uuid v1-v5 (case-insensitive). Aceita undefined/null/string vazia
+// (callers podem omitir o campo). Throw se não-vazio e não-uuid.
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function assertUuidLike(value: unknown, fieldName: string): void {
+  if (value === null || value === undefined || value === "") return;
+  if (typeof value !== "string" || !UUID_REGEX.test(value)) {
+    throw new Error(
+      `inserirMovimentacao: ${fieldName} esperava uuid mas recebeu ${typeof value === "string" ? `"${value}"` : typeof value}. ` +
+      `Provável causa: passou um ID text (ex: siso_pedidos.id) em campo uuid. ` +
+      `Use origem_detalhes pra preservar valores text não-uuid.`,
+    );
+  }
+}
+
 interface CalcInput {
   tipo: TipoMov;
   qty: number;
@@ -86,8 +101,26 @@ interface InserirMovInput {
  * e protege contra race conditions entre operações concorrentes.
  */
 export async function inserirMovimentacao(input: InserirMovInput): Promise<Movimentacao> {
-  const sb = createServiceClient();
   const { tripla, tipo, qty } = input;
+
+  // Validação defensiva: campos uuid devem ser uuid (ou null/undefined).
+  // PostgrestError em uuid inválido vira "[object Object]" no log — caro de
+  // debugar. Capturamos antes de chegar na RPC com mensagem clara.
+  // IMPORTANTE: roda ANTES de createServiceClient() pra ser testável sem env.
+  assertUuidLike(tripla.produto_id, "tripla.produto_id");
+  assertUuidLike(tripla.galpao_id, "tripla.galpao_id");
+  assertUuidLike(tripla.localizacao_id, "tripla.localizacao_id");
+  assertUuidLike(input.origem_id, "origem_id");
+  assertUuidLike(input.estorno_de, "estorno_de");
+  assertUuidLike(input.empresa_compradora_id, "empresa_compradora_id");
+  assertUuidLike(input.empresa_vendedora_id, "empresa_vendedora_id");
+  assertUuidLike(input.empresa_referencia_id, "empresa_referencia_id");
+  assertUuidLike(input.fornecedor_id, "fornecedor_id");
+  assertUuidLike(input.pedido_id, "pedido_id");
+  assertUuidLike(input.nota_fiscal_id, "nota_fiscal_id");
+  assertUuidLike(input.usuario_id, "usuario_id");
+
+  const sb = createServiceClient();
 
   // Validação client-side (early fail; RPC valida de novo no DB com FOR UPDATE)
   const { data: estoqueAtual } = await sb

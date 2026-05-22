@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcularPosteriores, validarCoerencia } from "./ledger";
+import { calcularPosteriores, validarCoerencia, inserirMovimentacao } from "./ledger";
 
 describe("calcularPosteriores", () => {
   it("entrada (E): incrementa saldo, reservado inalterado", () => {
@@ -46,5 +46,65 @@ describe("validarCoerencia", () => {
     expect(() =>
       validarCoerencia({ tipo: "E", qty: 1, saldoAnterior: 0, reservadoAnterior: 0 }),
     ).not.toThrow();
+  });
+});
+
+describe("inserirMovimentacao · uuid validation (defensiva)", () => {
+  // Triplas com uuids válidos pra não falhar antes da validação do campo testado.
+  const triplaOk = {
+    produto_id: "00000000-0000-4000-8000-000000000001",
+    galpao_id: "00000000-0000-4000-8000-000000000002",
+    localizacao_id: "00000000-0000-4000-8000-000000000003",
+  };
+
+  it("throws com mensagem clara quando pedido_id é text não-uuid (ex: 'MAN-abc-123')", async () => {
+    await expect(
+      inserirMovimentacao({
+        tripla: triplaOk,
+        tipo: "S",
+        qty: 1,
+        origem_tipo: "venda_manual",
+        pedido_id: "MAN-abc-123",
+      }),
+    ).rejects.toThrow(/pedido_id.*esperava uuid.*MAN-abc-123/);
+  });
+
+  it("throws quando origem_id é text não-uuid (ex: 'FOO')", async () => {
+    await expect(
+      inserirMovimentacao({
+        tripla: triplaOk,
+        tipo: "S",
+        qty: 1,
+        origem_tipo: "venda_manual",
+        origem_id: "FOO",
+      }),
+    ).rejects.toThrow(/origem_id.*esperava uuid.*FOO/);
+  });
+
+  it("throws quando empresa_vendedora_id é text não-uuid", async () => {
+    await expect(
+      inserirMovimentacao({
+        tripla: triplaOk,
+        tipo: "S",
+        qty: 1,
+        origem_tipo: "nf_venda",
+        empresa_vendedora_id: "netair",
+      }),
+    ).rejects.toThrow(/empresa_vendedora_id.*esperava uuid/);
+  });
+
+  it("throws quando tripla.produto_id é número (Tiny ID) em vez de uuid", async () => {
+    await expect(
+      inserirMovimentacao({
+        tripla: {
+          produto_id: "9077486999",
+          galpao_id: triplaOk.galpao_id,
+          localizacao_id: triplaOk.localizacao_id,
+        },
+        tipo: "S",
+        qty: 1,
+        origem_tipo: "venda_manual",
+      }),
+    ).rejects.toThrow(/tripla.produto_id.*esperava uuid.*9077486999/);
   });
 });

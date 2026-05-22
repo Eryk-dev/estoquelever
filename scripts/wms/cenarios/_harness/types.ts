@@ -59,7 +59,7 @@ export type Ctx = {
   aguardarFilaVazia: (opts?: { timeout_ms?: number }) => Promise<void>;
 
   // ── compras + recebimento ──
-  comprar: (p: { sku: string; qty: number; fornecedor?: string }) => Promise<{ ordem_id: string }>;
+  comprar: (p: { sku: string; qty: number; fornecedor?: string; pedido_id?: string }) => Promise<{ ordem_id: string }>;
   receberCompra: (p: { ordem_id: string; items: { sku: string; qty: number }[] }) => Promise<void>;
   prepararEmbalagem: (p: { pedido_id: string }) => Promise<void>;
   receber: (p: { items: { sku: string; qty: number; loc_destino?: string }[]; galpao: "CWB" | "SP"; entrada_direta?: boolean }) => Promise<{ pendencias: string[] }>;

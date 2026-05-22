@@ -295,6 +295,10 @@ export async function POST(request: NextRequest) {
   // 3) Se modoEfetivo === 'baixa_direta', gera movs 'S' no ledger com rollback manual
   const movsCriadas: string[] = [];
   if (modoEfetivo === "baixa_direta") {
+    // origem_id é uuid no schema (siso_movimentacoes.origem_id) — geramos um uuid
+    // compartilhado entre todos os itens da mesma venda pra agrupá-los no ledger.
+    // O pedidoId 'MAN-...' (text) vai como tag em origem_detalhes.pedido_id_manual.
+    const origemVendaId = crypto.randomUUID();
     for (const item of itensResolvidos) {
       // Aqui já garantimos que tem saldo (senão modoEfetivo seria 'separacao').
       // Mas localizacao_id deve existir — se não, é bug interno.
@@ -330,17 +334,19 @@ export async function POST(request: NextRequest) {
           tipo: "S",
           qty: item.quantidade,
           origem_tipo: "venda_manual",
-          origem_id: pedidoId,
+          origem_id: origemVendaId,
           origem_detalhes: {
             sku: item.sku,
             vendedor_id: user.id,
             vendedor_nome: user.nome,
             canal_venda: canal_venda ?? null,
             loc_codigo: item.localizacao_codigo,
+            pedido_id_manual: pedidoId,
           },
           empresa_vendedora_id: empresa_origem_id,
           cliente_nome,
-          pedido_id: pedidoId,
+          // pedido_id removido — siso_pedidos.id é text ('MAN-...'), não cabe na coluna uuid.
+          // Rastreio via origem_detalhes.pedido_id_manual acima.
           usuario_id: user.id,
           motivo: `Venda manual ${pedidoId} — ${cliente_nome}`,
         });

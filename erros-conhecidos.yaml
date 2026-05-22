@@ -963,3 +963,58 @@ erros:
       execution-worker-wms.ts, cutover.ts (gateados por WMS_AS_SOURCE — só staging
       hoje); vendas/criar baixa_direta (sem gate, ativo em staging). Ver smoke
       report 2026-05-21 pra triagem.
+
+  - id: pedidos-status-separacao-check-falta-validacao-oc
+    date: "2026-05-22"
+    source: db.check-constraint
+    category: database
+    message: "Pedidos OC ficam com status_separacao=NULL após processar"
+    cause: >
+      execution-worker.ts:665 faz UPDATE siso_pedidos SET status_separacao='validacao_oc'
+      mas o valor não estava no CHECK constraint de siso_pedidos.status_separacao. UPDATE
+      falha silenciosamente (Postgres rejeita o valor mas o app não trata o error — supabase-js
+      retorna data:null sem throw). Resultado: pedidos OC completos saem do worker sem
+      status_separacao setado, ficando parados sem visibilidade no painel.
+      Detectado pelo cenário 03 do smoke (assert "esperava validacao_oc; real: null").
+    fix: >
+      Migration 20260522_add_validacao_oc_status.sql adiciona 'validacao_oc' ao CHECK
+      constraint. Aplicada em staging (project ehbxpbeijofxtsbezwxd). UPDATE passa a
+      gravar e cenário 03 avança pro próximo passo.
+    files:
+      - supabase/migrations/20260522_add_validacao_oc_status.sql
+    commit: "7576546"
+    tags: [oc, validacao_oc, check_constraint, execution-worker, status_separacao, silent-update-failure, postgres-check]
+
+  - id: wms-ledger-uuid-text-mismatch-vendas-criar
+    date: "2026-05-22"
+    source: wms.ledger.inserirMovimentacao
+    category: database
+    message: "Falha ao baixar SKU-X: [object Object] (HTTP 409 em vendas/criar baixa_direta)"
+    cause: >
+      siso_pedidos.id é text mas siso_movimentacoes.pedido_id/origem_id/etc são uuid
+      (migration 20260520b). vendas/criar passava pedidoId='MAN-...' (text gerado
+      manualmente pra UI) pra esses campos uuid via wms_inserir_movimentacao. RPC
+      retornava PostgrestError opaco (22P02 invalid uuid syntax) que virava
+      '[object Object]' no toast porque o wrapper de erro caía em String(obj). Mesmo
+      padrão de bug do commit fe1a849 (marcar-item/marcar-realocacao/parcial), só que
+      em outro call site. Detectado pelo cenário 12 do smoke.
+    fix: >
+      vendas/criar agora usa origem_id=randomUUID() compartilhado entre itens da venda
+      e preserva pedidoId em origem_detalhes.pedido_id_manual (jsonb). Plus: ledger.ts
+      inserirMovimentacao ganhou validação defensiva assertUuidLike em 12 campos uuid
+      pra capturar futuras ocorrências antes de chegar na RPC (mensagem clara em vez
+      de [object Object]). 4 testes unitários adicionados em ledger.test.ts.
+    files:
+      - src/app/api/wms/vendas/criar/route.ts
+      - src/lib/wms/ledger.ts
+      - src/lib/wms/ledger.test.ts
+    commit: "7b1b960, f8ae05f"
+    tags: [uuid, text, ledger, postgrest-error, object-object, vendas, baixa-direta, defensive-validation, 22P02]
+    notes: >
+      Call sites latentes detectados (não-fixados nesse round, mas a validação defensiva
+      vai gritar quando ativarem):
+      - execution-worker-wms.ts:124,137 (gateado por WMS_AS_SOURCE — Plano 6 cutover)
+      - cutover.ts:251,278 (gateado por WMS_AS_SOURCE — Plano 6 cutover)
+      - devolucoes.ts:137,153,211,234 (nota_fiscal_id passado como bigint string em vez de uuid)
+      Fixar antes do Plano 6 cutover ou da próxima rodada de devoluções com nota_fiscal_id
+      setado.

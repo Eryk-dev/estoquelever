@@ -23,6 +23,7 @@
 
 import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
+import { getContextEmpresaId } from "./tiny-queue";
 
 // ─── Flag ──────────────────────────────────────────────────────────────────
 
@@ -318,12 +319,22 @@ async function handleListProdutos<T>(query: URLSearchParams): Promise<T> {
     return { itens: [] } as T;
   }
 
-  // Map siso_produtos UUIDs to Tiny IDs via siso_produto_empresas (first available).
+  // Resolve tiny_produto_id PER EMPRESA contexto (cada conta Tiny tem seu
+  // próprio ID pro mesmo SKU — espelha realidade do Tiny e evita colisão em
+  // cross-empresa stock enrichment do webhook-processor).
+  const empresaCtx = getContextEmpresaId();
   const produtoIds = data.map((p) => p.id);
-  const { data: mappings } = await supabase
+
+  let mappingsQ = supabase
     .from("siso_produto_empresas")
-    .select("produto_id, tiny_produto_id")
+    .select("produto_id, tiny_produto_id, empresa_id")
     .in("produto_id", produtoIds);
+
+  if (empresaCtx) {
+    mappingsQ = mappingsQ.eq("empresa_id", empresaCtx);
+  }
+
+  const { data: mappings } = await mappingsQ;
 
   const tinyByProduto = new Map<string, number>();
   for (const m of mappings ?? []) {
@@ -349,11 +360,12 @@ async function handleListProdutos<T>(query: URLSearchParams): Promise<T> {
  * combo. Deposito IDs come from siso_tiny_connections so the caller's
  * pickDeposito(depositos, configured_deposito_id) logic still works.
  *
- * Fase 5 (3D): siso_estoque deixou de ter empresa_dona_id — estoque é
- * fungível por (produto, galpão, localização). O stub agora agrega todas
- * as linhas do produto e expõe o total como "saldo da empresa". A
- * empresa segue determinando qual deposito_id é apresentado (vem de
- * siso_tiny_connections).
+ * Paridade com Tiny real: cada conta Tiny vê **só seu depósito
+ * configurado** (= galpão preferido da empresa). O stub agora filtra
+ * `siso_estoque` pelos `siso_empresa_galpoes_preferenciais` da empresa
+ * resolvida pelo mapping. Empresa sem preferenciais (raro mas possível —
+ * ex: Bellator) retorna saldo zero, espelhando o caso real "empresa sem
+ * depósito configurado".
  */
 async function handleGetEstoque<T>(produtoIdTiny: string): Promise<T> {
   const supabase = createServiceClient();
@@ -370,13 +382,47 @@ async function handleGetEstoque<T>(produtoIdTiny: string): Promise<T> {
     return { localizacao: null, depositos: [] } as T;
   }
 
-  // Aggregate saldo + reservado across all linhas for this produto (3D —
-  // fungível por (produto, galpão, loc); a empresa só determina qual
-  // deposito_id é apresentado ao caller Tiny-legacy).
+  // Get configured deposito_id for this empresa so pickDeposito matches
+  const { data: conn } = await supabase
+    .from("siso_tiny_connections")
+    .select("deposito_id")
+    .eq("empresa_id", mapping.empresa_id)
+    .eq("ativo", true)
+    .maybeSingle();
+
+  const depositoId = conn?.deposito_id ?? fakeIdFrom(`dep-${mapping.empresa_id}`);
+
+  // Galpões preferenciais da empresa (espelha "depósito configurado" no
+  // Tiny real — cada conta só enxerga o saldo do seu galpão).
+  const { data: prefs } = await supabase
+    .from("siso_empresa_galpoes_preferenciais")
+    .select("galpao_id")
+    .eq("empresa_id", mapping.empresa_id);
+
+  const galpaoIds = (prefs ?? []).map((p) => p.galpao_id as string);
+
+  if (galpaoIds.length === 0) {
+    // Empresa sem depósito configurado — Tiny real não encontraria
+    // saldo pra essa conta. Devolvemos zero pra espelhar.
+    return {
+      localizacao: null,
+      depositos: [
+        {
+          id: depositoId,
+          nome: "STAGING-DEPOSITO",
+          saldo: 0,
+          reservado: 0,
+        },
+      ],
+    } as T;
+  }
+
+  // Aggregate saldo + reservado apenas nas linhas dos galpões preferidos.
   const { data: linhas } = await supabase
     .from("siso_estoque")
     .select("saldo, reservado, localizacao_id, siso_localizacoes(codigo)")
-    .eq("produto_id", mapping.produto_id);
+    .eq("produto_id", mapping.produto_id)
+    .in("galpao_id", galpaoIds);
 
   let totalSaldo = 0;
   let totalReservado = 0;
@@ -392,16 +438,6 @@ async function handleGetEstoque<T>(produtoIdTiny: string): Promise<T> {
       primeiraLocalizacao = linha.siso_localizacoes.codigo;
     }
   }
-
-  // Get configured deposito_id for this empresa so pickDeposito matches
-  const { data: conn } = await supabase
-    .from("siso_tiny_connections")
-    .select("deposito_id")
-    .eq("empresa_id", mapping.empresa_id)
-    .eq("ativo", true)
-    .maybeSingle();
-
-  const depositoId = conn?.deposito_id ?? fakeIdFrom(`dep-${mapping.empresa_id}`);
 
   return {
     localizacao: primeiraLocalizacao,

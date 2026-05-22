@@ -20,10 +20,43 @@ export default {
     // O passo aguardando_compra só existe depois de /validar-oc-item.
     await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc");
 
-    const ordem = await ctx.comprar({ sku, qty: 3 });
-    await ctx.aguardarStatusSeparacao(pedido.id, "aguardando_nf", { timeout_ms: 10_000 });
+    // ctx.comprar com pedido_id chama validar-oc-item (acao=esgotado) primeiro,
+    // transicionando o pedido pra aguardando_compra, e depois /compras/comprar
+    // marca os itens como `comprado` (não dispara release ainda).
+    await ctx.comprar({ sku, qty: 3, pedido_id: pedido.id });
 
-    await ctx.receberCompra({ ordem_id: ordem.ordem_id, items: [{ sku, qty: 3 }] });
+    // /compras/receber marca itens recebido → dispara compras-release →
+    // aguardando_nf. Worker imediatamente gera NF e o aguardarStatusSeparacao
+    // simula o webhook NF, transitando direto pra aguardando_separacao.
+    // Pulamos a espera intermediária e vamos direto pra aguardando_separacao.
+    await ctx.receberCompra({ ordem_id: "ignored", items: [{ sku, qty: 3 }] });
+
+    // Recebimento físico no dock — entrada_direta grava 1 mov 'E' direto
+    // na loc destino e pula a pendência de guarda. Roda em paralelo com
+    // a transição via worker (não bloqueia).
+    await ctx.receber({
+      galpao: "CWB",
+      entrada_direta: true,
+      items: [{ sku, qty: 3, loc_destino: "A-01-01" }],
+    });
+
+    // Aponta o pedido_item pro endereço onde o estoque foi parar
+    // (em prod isso seria resolvido pelo putaway/guarda + signal_loc; no
+    // cenário pulamos a etapa de guarda e setamos manualmente).
+    // siso_pedido_item_estoques.produto_id é o Tiny bigint, não o uuid de
+    // siso_produtos — buscamos via siso_pedido_itens pra pegar o valor certo.
+    const { data: pedidoItem } = await ctx.sb
+      .from("siso_pedido_itens")
+      .select("produto_id")
+      .eq("pedido_id", pedido.id)
+      .eq("sku", sku)
+      .single();
+    await ctx.sb
+      .from("siso_pedido_item_estoques")
+      .update({ localizacao: "A-01-01" })
+      .eq("pedido_id", pedido.id)
+      .eq("produto_id", (pedidoItem as { produto_id: number }).produto_id);
+
     await ctx.aguardarStatusSeparacao(pedido.id, "aguardando_separacao", { timeout_ms: 8_000 });
 
     await ctx.iniciarSeparacao(pedido.id);
@@ -35,8 +68,9 @@ export default {
   },
 
   assertEsperado: async (ctx, { sku }) => {
-    // Comprou 3, expediu 3 → saldo final = 0
-    await ctx.assertMovsCount(sku, 2); // E (compra) + S (expedição)
+    // 1 E (entrada_direta) + 1 S (picking) = 2 movs. Saldo final = 0.
+    await ctx.assertSaldo(sku, "CWB", "A-01-01", 0);
+    await ctx.assertMovsCount(sku, 2);
   },
 } satisfies Cenario<{ sku: string }>;
 

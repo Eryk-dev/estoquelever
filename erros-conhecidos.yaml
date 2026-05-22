@@ -895,3 +895,42 @@ erros:
       criar nova sessão pra ajustar saldo se for o caso.
       Lição geral: sempre encadear .select() em upsert/update do supabase-js
       e checar `error` — caso contrário PostgrestError fica invisível.
+
+  - id: usuarios-create-vendedor-check-constraint
+    date: "2026-05-21"
+    source: wms.admin.usuarios.create
+    category: database
+    message: "POST /api/wms/admin/usuarios → 500 ao criar funcionário com role 'Vendedor' (também aconteceria com qualquer role customizada)"
+    cause: >
+      Migration 20260508_wms_foundation criou
+      `siso_usuarios_cargo_check` com lista hardcoded
+      ('admin','operador_cwb','operador_sp','comprador','supervisor_logistica').
+      Depois 'operador' foi adicionado e 'supervisor_logistica' removido,
+      mas a 20260519_vendas_diretas_vendedor declarou explicitamente
+      "Whitelist do cargo vendedor é JS-only, sem CHECK no DB" — falsa
+      premissa, o CHECK estático continuava ativo sem 'vendedor'. Quando
+      o frontend chama POST com cargos=['vendedor'] (placeholder derivado
+      do código da role selecionada), o insert na siso_usuarios viola a
+      constraint → Postgres 23514. A rota retorna `{erro: error.message}`
+      mas o toast no frontend mostra só "HTTP 500" porque wmsApi joga
+      o status no Error. Mesma falha aconteceria com qualquer role
+      customizada criada via UI no novo sistema dinâmico
+      (siso_roles + trigger wms_sync_cargos_from_roles).
+    fix: >
+      Drop do CHECK constraint via migration
+      20260521_drop_siso_usuarios_cargo_check.sql. Validação de cargo
+      agora é responsabilidade exclusiva de (a) siso_roles como source
+      of truth no DB e (b) VALID_CARGOS no código da rota (whitelist
+      conservadora pra rotas legadas que ainda aceitam `cargo` no body).
+    files:
+      - supabase/migrations/20260521_drop_siso_usuarios_cargo_check.sql
+    tags: [usuarios, cargo, check-constraint, vendedor, roles, 23514, hardcoded-whitelist, dynamic-roles]
+    notes: >
+      Constraint estática é incompatível com a arquitetura de roles
+      dinâmicas — admin pode criar roles novas via UI a qualquer momento,
+      e o trigger trg_sync_cargos_after_roles escreve o codigo da role
+      direto em cargo/cargos[]. Lição: quando uma migration declarar
+      "sem CHECK no DB", sempre rodar `SELECT pg_get_constraintdef(...)`
+      pra confirmar — premissas baseadas só em ler migrations anteriores
+      podem ignorar drift histórico (CHECKs editados via dashboard ou
+      ALTER manual).

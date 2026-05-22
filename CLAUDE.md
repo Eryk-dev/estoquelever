@@ -8,6 +8,19 @@ The system also handles the full post-approval workflow: separation (wave pickin
 
 **Volume:** ~500 orders/day across all companies.
 
+## Working Environment (LEIA PRIMEIRO)
+
+**Estamos trabalhando exclusivamente no ambiente de staging.** Toda alteração de schema, RPC, dado de teste ou query exploratória vai pra staging — nunca toque em prod sem pedido explícito do user.
+
+| | Branch | Vercel deploy | Supabase project_id | Nome |
+|---|---|---|---|---|
+| **Ativo (staging)** | `develop` | `estoquelever.vercel.app` | `ehbxpbeijofxtsbezwxd` | "100M" |
+| Prod (dormente) | `main` | — | `wrbrbhuhsaaupqsimkqz` | "parts-catalogs" |
+
+- O Vercel mostra `Environment: production` mesmo nos deploys da `develop` — isso é só o "production deployment" do Vercel (o publicado), **não** indica ambiente prod-real. Confiar em `Branch:` do log, não em `Environment:`.
+- `wrbrbhuhsaaupqsimkqz` aparece em vários lugares deste CLAUDE.md (Stack, env vars, exemplos antigos) por inércia histórica — ignore essas referências ao decidir onde aplicar mudanças. Source of truth é a tabela acima.
+- Migrations: criar arquivo em `supabase/migrations/` + aplicar via `mcp__supabase__apply_migration` no project `ehbxpbeijofxtsbezwxd`.
+
 ## Direção Estratégica (firmada 2026-05-18 — atualizada 2026-05-18)
 
 O app foi unificado sob o módulo **WMS**. Decisões arquiteturais não-negociáveis:
@@ -27,7 +40,7 @@ O app foi unificado sob o módulo **WMS**. Decisões arquiteturais não-negociá
 
 - **Framework:** Next.js 16.1.6 (App Router), React 19, TypeScript
 - **Styling:** Tailwind CSS 4 (no component library — all custom)
-- **Database:** Supabase (project `wrbrbhuhsaaupqsimkqz`, org `parts-catalogs`)
+- **Database:** Supabase — ambiente ativo é staging `ehbxpbeijofxtsbezwxd` (org `100M`). Prod `wrbrbhuhsaaupqsimkqz` (org `parts-catalogs`) está dormente. Ver seção "Working Environment" acima.
 - **ERP:** Tiny ERP API v3 (OAuth2 via Keycloak)
 - **Printing:** PrintNode API (thermal labels — ZPL + PDF)
 - **State:** TanStack React Query (client), no global store
@@ -683,9 +696,9 @@ Stock is stored normalized in `siso_pedido_item_estoques` (one row per empresa p
 
 ## Environment Variables
 
-Required in `.env.local`:
+Required in `.env.local` (use credenciais do projeto staging ativo — ver "Working Environment"):
 ```
-NEXT_PUBLIC_SUPABASE_URL=https://wrbrbhuhsaaupqsimkqz.supabase.co
+NEXT_PUBLIC_SUPABASE_URL=https://ehbxpbeijofxtsbezwxd.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
 SUPABASE_SERVICE_ROLE_KEY=<service-role-key>   # Required for server-side operations
 ```

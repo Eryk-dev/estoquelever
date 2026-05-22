@@ -1354,7 +1354,7 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
 
 **Side Effects:**
 - Updates `siso_pedido_itens.separacao_marcado`, `separacao_marcado_em`, `mov_saida_id`
-- On mark: inserts row in `siso_movimentacoes` (origem_tipo=`nf_venda`)
+- On mark: inserts row in `siso_movimentacoes` (origem_tipo=`nf_venda`). **Shape (fix 2026-05-21, commit `fe1a849`):** `origem_id=NULL` (RPC `wms_inserir_movimentacao` exige uuid; antes vinha string `pedido:<tinyId>` causando 22P02 silencioso). Tiny pedido id agora viaja em `origem_detalhes.pedido_id_tiny` (jsonb) pra rastreabilidade.
 - On unmark: inserts estorno row in `siso_movimentacoes` (estorno_de = previous mov_id)
 - Logs on error
 
@@ -1737,7 +1737,7 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
   - Item já processado / realocação não-`aguardando_picking` (versões anteriores ao fix-pack — agora coberto pelos códigos acima).
 
 **Side Effects (resumo):**
-- Inserts 1-2 rows in `siso_movimentacoes` (origem_tipo=`nf_venda` + optionally `ajuste_pick_zerou`). *(origem `emprestimo` removida em 2026-05-20.)*
+- Inserts 1-2 rows in `siso_movimentacoes` (origem_tipo=`nf_venda` + optionally `ajuste_pick_zerou`). *(origem `emprestimo` removida em 2026-05-20.)* **Shape (fix 2026-05-21, commit `fe1a849`):** `origem_id=NULL` em todas as movs do endpoint (RPC `wms_inserir_movimentacao` exige uuid; antes vinha string `pedido:<tinyId>` causando 22P02 silencioso). Tiny pedido id viaja em `origem_detalhes.pedido_id_tiny` (jsonb); wave consolidado lista também `pedidos_cobertos` no jsonb.
 - Modo item: updates `siso_pedido_itens` (`separacao_parcial`, `quantidade_pega`, `parcial_em`, `parcial_por`, `parcial_motivo`, `mov_saida_id`, `mov_ajuste_loc_zerou_id`, `separacao_marcado=true`).
 - Modo realocação: updates `siso_pedido_item_realocacoes` da raiz (`status`, `quantidade_pega`, `parcial`, `parcial_motivo`, `parcial_em`, `parcial_por`, `mov_id`, `mov_ajuste_loc_zerou_id`); acumula `quantidade_pega` no `siso_pedido_itens` pai.
 - Inserts rows in `siso_pedido_item_realocacoes` (status=`aguardando_picking`, `parent_realocacao_id` setado no modo realocação).
@@ -1799,7 +1799,7 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
 - Registers audit event `realocacao_picada`.
 
 **Side Effects:**
-- Inserts row in `siso_movimentacoes`
+- Inserts row in `siso_movimentacoes`. **Shape (fix 2026-05-21, commit `fe1a849`):** `origem_id=NULL` (RPC exige uuid; antes vinha `pedido:<tinyId>` causando 22P02 silencioso). Tiny pedido id viaja em `origem_detalhes.pedido_id_tiny` (jsonb).
 - Inserts row in `siso_pedido_item_mov_links`
 - Updates `siso_pedido_item_realocacoes.status = 'picado'`
 - Updates `siso_pedido_itens.quantidade_pega` (+=quantidade) via RPC atômica

@@ -253,15 +253,14 @@ async function processarParcialItem(
         tipo: "S",
         qty: quantidade_pega,
         origem_tipo: "nf_venda",
-        origem_id: `pedido:${primeiroPedido.id}`,
         origem_detalhes: {
+          pedido_id_tiny: primeiroPedido.id,
           pedido_numero: primeiroPedido.numero,
           pedido_item_ids: itemIdsList,
           sku: primeiroItem.sku,
           contexto: itemsRaw.length > 1 ? "parcial_consolidado" : "parcial",
         },
         empresa_vendedora_id: empresaOrigemId,
-        pedido_id: primeiroPedido.id,
         motivo:
           itemsRaw.length > 1
             ? `Picking parcial wave — ${itemsRaw.length} items (pedido #${primeiroPedido.numero}…)`
@@ -284,8 +283,8 @@ async function processarParcialItem(
           tipo: "S",
           qty: delta,
           origem_tipo: "ajuste_pick_zerou",
-          origem_id: `pedido:${primeiroPedido.id}`,
           origem_detalhes: {
+            pedido_id_tiny: primeiroPedido.id,
             pedido_numero: primeiroPedido.numero,
             pedido_item_ids: itemIdsList,
             saldo_anterior: saldoWms,
@@ -944,8 +943,8 @@ async function processarParcialRealocacao(
         tipo: "S",
         qty: quantidade_pega,
         origem_tipo: "nf_venda",
-        origem_id: `pedido:${primeiroPedido.id}`,
         origem_detalhes: {
+          pedido_id_tiny: primeiroPedido.id,
           pedido_numero: primeiroPedido.numero,
           pedido_item_ids: itemIds,
           realocacao_ids: realocIdsList,
@@ -954,7 +953,6 @@ async function processarParcialRealocacao(
             realocs.length > 1 ? "realocacao_parcial_consolidado" : "realocacao_parcial",
         },
         empresa_vendedora_id: empresaOrigemPrimeiroPedido,
-        pedido_id: primeiroPedido.id,
         motivo:
           realocs.length > 1
             ? `Picking parcial wave realocada — ${realocs.length} realocações (pedido #${primeiroPedido.numero}…)`
@@ -977,8 +975,8 @@ async function processarParcialRealocacao(
           tipo: "S",
           qty: delta,
           origem_tipo: "ajuste_pick_zerou",
-          origem_id: `pedido:${primeiroPedido.id}`,
           origem_detalhes: {
+            pedido_id_tiny: primeiroPedido.id,
             pedido_numero: primeiroPedido.numero,
             pedido_item_ids: itemIds,
             realocacao_ids: realocIdsList,

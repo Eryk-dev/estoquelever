@@ -83,8 +83,8 @@ export async function POST(request: NextRequest) {
       tipo: "S",
       qty: realoc.quantidade,
       origem_tipo: "nf_venda",
-      origem_id: `pedido:${pedido.id}`,
       origem_detalhes: {
+        pedido_id_tiny: pedido.id,
         pedido_numero: pedido.numero,
         pedido_item_id: item.id,
         realocacao_id: realoc.id,
@@ -92,7 +92,6 @@ export async function POST(request: NextRequest) {
         contexto: "realocacao",
       },
       empresa_vendedora_id: empresaVendedoraId,
-      pedido_id: pedido.id,
       motivo: `Picking pedido #${pedido.numero} — realocação`,
       usuario_id: session.id,
     });

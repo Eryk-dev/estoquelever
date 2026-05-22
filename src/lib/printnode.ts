@@ -10,6 +10,13 @@
 
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import {
+  isPrintNodeDisabled,
+  enviarImpressaoStub,
+  enviarImpressaoZplStub,
+  testarConexaoStub,
+  listarImpressorasStub,
+} from "./printnode-stub";
 
 const PRINTNODE_BASE = "https://api.printnode.com";
 
@@ -72,6 +79,7 @@ async function printNodeFetch<T>(
 export async function testarConexao(
   apiKey: string,
 ): Promise<{ ok: boolean; email?: string; error?: string }> {
+  if (isPrintNodeDisabled()) return testarConexaoStub();
   try {
     const data = await printNodeFetch<PrintNodeWhoamiResponse>(
       apiKey,
@@ -92,6 +100,7 @@ export async function testarConexao(
 export async function listarImpressoras(
   apiKey: string,
 ): Promise<PrintNodePrinter[]> {
+  if (isPrintNodeDisabled()) return listarImpressorasStub();
   const raw = await printNodeFetch<PrintNodePrinterRaw[]>(
     apiKey,
     "/printers",
@@ -115,6 +124,18 @@ export async function enviarImpressao(params: {
   pdfUrl: string;
   titulo: string;
 }): Promise<{ jobId: number }> {
+  if (isPrintNodeDisabled()) {
+    // pdfUrl é um URL string (não bytes) — codifica como base64 só pra
+    // alimentar o buffer do stub. Bridge stub's string id → numeric jobId
+    // pra manter o contrato { jobId: number }.
+    const { id } = await enviarImpressaoStub({
+      printerId: params.printerId,
+      titulo: params.titulo,
+      contentBase64: Buffer.from(params.pdfUrl).toString("base64"),
+    });
+    const jobId = Number(id.replace(/\D/g, "")) || 0;
+    return { jobId };
+  }
   const { apiKey, printerId, pdfUrl, titulo } = params;
 
   const body = JSON.stringify({
@@ -181,6 +202,15 @@ export async function enviarImpressaoZpl(params: {
   zpl: string;
   titulo: string;
 }): Promise<{ jobId: number }> {
+  if (isPrintNodeDisabled()) {
+    const { id } = await enviarImpressaoZplStub({
+      printerId: params.printerId,
+      titulo: params.titulo,
+      zpl: params.zpl,
+    });
+    const jobId = Number(id.replace(/\D/g, "")) || 0;
+    return { jobId };
+  }
   const { apiKey, printerId, zpl, titulo } = params;
 
   const zplBase64 = Buffer.from(zpl).toString("base64");

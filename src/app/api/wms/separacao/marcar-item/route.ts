@@ -94,15 +94,14 @@ export async function POST(request: NextRequest) {
             tipo: "S",
             qty: item.quantidade_pedida,
             origem_tipo: "nf_venda",
-            origem_id: `pedido:${pedido.id}`,
             origem_detalhes: {
+              pedido_id_tiny: pedido.id,
               pedido_numero: pedido.numero,
               pedido_item_id: item.id,
               sku: item.sku,
               contexto: "checkbox",
             },
             empresa_vendedora_id: empresaOrigemId,
-            pedido_id: pedido.id,
             motivo: `Picking pedido #${pedido.numero} — checkbox completo`,
             usuario_id: session.id,
           });

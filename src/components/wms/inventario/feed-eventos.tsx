@@ -8,6 +8,7 @@ interface Evento {
   tipo: string;
   origem_tipo: string;
   origem_id: string | null;
+  origem_detalhes: Record<string, unknown> | null;
   loc_codigo: string;
   sku: string;
   descricao: string;
@@ -38,9 +39,19 @@ function relativo(iso: string): string {
   return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function pedidoLabel(e: Evento): string {
+  if (e.origem_id) return e.origem_id;
+  const det = e.origem_detalhes ?? {};
+  return (
+    (det.pedido_id_tiny as string | undefined) ||
+    (det.pedido_numero as string | undefined) ||
+    "-"
+  );
+}
+
 function descricaoEvento(e: Evento): string {
   if (e.origem_tipo === "inventario") return `bipe ${e.quantidade}× ${e.sku} em ${e.loc_codigo}`;
-  if (e.origem_tipo === "nf_venda") return `saída ${e.quantidade}× ${e.sku} de ${e.loc_codigo} · pedido ${e.origem_id ?? ""}`;
+  if (e.origem_tipo === "nf_venda") return `saída ${e.quantidade}× ${e.sku} de ${e.loc_codigo} · pedido ${pedidoLabel(e)}`;
   if (e.origem_tipo === "recebimento") return `entrada ${e.quantidade}× ${e.sku} em ${e.loc_codigo}`;
   return `${e.tipo} ${e.quantidade}× ${e.sku} em ${e.loc_codigo} · ${e.origem_tipo}`;
 }

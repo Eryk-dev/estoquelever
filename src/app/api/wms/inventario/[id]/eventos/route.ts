@@ -50,7 +50,7 @@ export async function GET(
     // Movs nas locs da sessão criadas após o início
     const { data: movs } = await sb
       .from("siso_movimentacoes")
-      .select("id, localizacao_id, produto_id, tipo, origem_tipo, origem_id, quantidade, saldo_anterior, saldo_posterior, criado_em, estorno_de, siso_produtos!inner(sku, descricao), siso_localizacoes!inner(codigo, galpao_id)")
+      .select("id, localizacao_id, produto_id, tipo, origem_tipo, origem_id, origem_detalhes, quantidade, saldo_anterior, saldo_posterior, criado_em, estorno_de, siso_produtos!inner(sku, descricao), siso_localizacoes!inner(codigo, galpao_id)")
       .eq("siso_localizacoes.galpao_id", galpaoId)
       .in("localizacao_id", locIds)
       .gte("criado_em", inicio)
@@ -64,6 +64,7 @@ export async function GET(
       tipo: string;
       origem_tipo: string;
       origem_id: string | null;
+      origem_detalhes: Record<string, unknown> | null;
       quantidade: number;
       saldo_anterior: number;
       saldo_posterior: number;
@@ -93,6 +94,7 @@ export async function GET(
         tipo: m.tipo,
         origem_tipo: m.origem_tipo,
         origem_id: m.origem_id,
+        origem_detalhes: m.origem_detalhes,
         loc_codigo: l?.codigo,
         sku: p?.sku,
         descricao: p?.descricao,

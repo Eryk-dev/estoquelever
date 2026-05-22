@@ -312,8 +312,13 @@ export function createContext(opts: {
   }
 
   async function encaminhar(p: { pedido: string; item: string; galpao_destino: "CWB" | "SP" }) {
+    // Rota espera `pedido_ids: string[]` + `galpao_destino_id`. O `item` (sku)
+    // não é usado pela API — encaminhar opera por pedido inteiro, não por item.
     const galpao_id = staging.galpoes[p.galpao_destino.toLowerCase() as "cwb" | "sp"].id;
-    await http.post("/api/wms/separacao/encaminhar", { pedido_id: p.pedido, sku: p.item, galpao_destino_id: galpao_id });
+    await http.post("/api/wms/separacao/encaminhar", {
+      pedido_ids: [p.pedido],
+      galpao_destino_id: galpao_id,
+    });
   }
 
   async function concluirSeparacao(pedidoId: string) {
@@ -470,18 +475,57 @@ export function createContext(opts: {
   }
 
   // ── compras + recebimento ──
-  async function comprar(p: { sku: string; qty: number; fornecedor?: string }) {
-    const res = await http.post<{ ordem_id: string }>("/api/wms/compras/comprar", {
-      sku: p.sku,
-      quantidade: p.qty,
-      fornecedor_nome: p.fornecedor ?? "TestSupplier-Default",
+  // Fluxo OC real:
+  //  1. validacao_oc → /validar-oc-item acao=esgotado → aguardando_compra
+  //  2. /compras/comprar → marca comprado → compras-release dispara →
+  //     aguardando_nf
+  //  3. NF webhook simulado → aguardando_separacao
+  //  4. /compras/receber → marca compra_quantidade_recebida (não mexe ledger)
+  //  5. Estoque físico chega via /wms/receber (entrada_direta) → loc tem saldo
+  //  6. operador bipa picking
+  async function validarOcItens(p: { pedido_id: string; sku: string; acao: "esgotado" | "encontrei" }) {
+    const { data: items } = await sb
+      .from("siso_pedido_itens")
+      .select("id, sku")
+      .eq("pedido_id", p.pedido_id);
+    const filtered = (items as Array<{ id: string; sku: string }> | null)?.filter((i) => i.sku === p.sku) ?? [];
+    if (filtered.length === 0) throw new Error(`validarOcItens: sku ${p.sku} não está no pedido ${p.pedido_id}`);
+    await http.post("/api/wms/separacao/validar-oc-item", {
+      item_ids: filtered.map((i) => String(i.id)),
+      acao: p.acao,
     });
-    return res;
+  }
+
+  async function comprar(p: { sku: string; qty: number; fornecedor?: string; pedido_id?: string }) {
+    // Se pedido_id foi passado, primeiro transiciona validacao_oc → aguardando_compra
+    // pela rota /validar-oc-item (acao=esgotado). Em prod isso vem do operador
+    // após não achar fisicamente no picking — pulamos pra direto.
+    if (p.pedido_id) {
+      await validarOcItens({ pedido_id: p.pedido_id, sku: p.sku, acao: "esgotado" });
+    }
+    await http.post<{ ok: boolean; resultados: unknown[] }>("/api/wms/compras/comprar", {
+      itens: [{ sku: p.sku, quantidade_comprada: p.qty }],
+    });
+    // Busca a OC criada pra esse fornecedor+sku (uma row em siso_ordens_compra
+    // foi criada pelo validar-oc-item via linkItemToOC). Retorna o id pra
+    // receberCompra.
+    const { data: itemRow } = await sb
+      .from("siso_pedido_itens")
+      .select("ordem_compra_id")
+      .eq("sku", p.sku)
+      .eq("compra_status", "comprado")
+      .order("comprado_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const ordemId = (itemRow as { ordem_compra_id?: string } | null)?.ordem_compra_id ?? null;
+    return { ordem_id: ordemId ?? "" };
   }
 
   async function receberCompra(p: { ordem_id: string; items: { sku: string; qty: number }[] }) {
-    await http.post(`/api/wms/compras/conferencia/${p.ordem_id}`, {
-      itens: p.items.map((it) => ({ sku: it.sku, quantidade: it.qty })),
+    // /compras/receber: marca itens recebido (compra_status=recebido). Não
+    // mexe no ledger — estoque físico chega via /wms/receber em separado.
+    await http.post("/api/wms/compras/receber", {
+      itens: p.items.map((it) => ({ sku: it.sku, quantidade_recebida: it.qty })),
     });
   }
 

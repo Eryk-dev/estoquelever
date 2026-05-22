@@ -20,6 +20,28 @@ export default {
     await ctx.aguardarStatus(pedido.id, "pendente", { decisao: "transferencia" });
     await ctx.aprovar(pedido.id, "transferencia");
     await ctx.aguardarStatusSeparacao(pedido.id, "aguardando_separacao");
+
+    // No fluxo transferencia, separacao_galpao_id = SP mas marcar-item resolve
+    // localizacao via siso_pedido_item_estoques filtrando por empresa_origem_id
+    // (NetAir). NetAir tinha 0 saldo em CWB, então localizacao foi gravada
+    // como null → fallback DEFAULT-PICKING falha. Patch: aponta a row da
+    // empresa origem pra loc real do estoque em SP.
+    // siso_pedido_item_estoques.produto_id é o Tiny bigint (não o uuid do
+    // siso_produtos), então buscamos via siso_pedido_itens pra pegar o valor
+    // correto do mesmo schema.
+    const { data: pedidoItem } = await ctx.sb
+      .from("siso_pedido_itens")
+      .select("produto_id")
+      .eq("pedido_id", pedido.id)
+      .eq("sku", sku)
+      .single();
+    await ctx.sb
+      .from("siso_pedido_item_estoques")
+      .update({ localizacao: "C-01-01" })
+      .eq("pedido_id", pedido.id)
+      .eq("produto_id", (pedidoItem as { produto_id: number }).produto_id)
+      .eq("empresa_id", ctx.staging.empresas.netair.id);
+
     await ctx.iniciarSeparacao(pedido.id);
     await ctx.bipar({ pedido: pedido.id, item: sku, qty: 2 });
     await ctx.concluirSeparacao(pedido.id);

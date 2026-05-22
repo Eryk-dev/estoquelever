@@ -16,7 +16,10 @@ export default {
   run: async (ctx, { sku }) => {
     const pedido = await ctx.webhook({ empresa: ctx.staging.empresas.netair.cnpj, items: [{ sku, qty: 5 }] });
     await ctx.aguardarStatus(pedido.id, "pendente"); // não auto-aprova: cobertura parcial
-    await ctx.aprovar(pedido.id);
+    // Força decisao=propria pra separação rodar no CWB (não transferir pra SP).
+    // Sugestao default seria 'transferencia' (SP cobre 100%) mas o cenário quer
+    // testar cascade esgotando CWB → operador encaminha pra SP manualmente.
+    await ctx.aprovar(pedido.id, "propria");
     await ctx.aguardarStatusSeparacao(pedido.id, "aguardando_separacao");
     await ctx.iniciarSeparacao(pedido.id);
     await ctx.parcial({ pedido: pedido.id, item: sku, qty: 2, loc_zerou: true });
@@ -25,8 +28,11 @@ export default {
   },
 
   assertEsperado: async (ctx, { sku }) => {
-    await ctx.assertSaldo(sku, "CWB", "A-01-03", 0);
-    // Encaminhar gera pedido novo em SP; valida indiretamente via mov S em A-01-03
+    // Após encaminhar, o reset-state estorna a saída do parcial: saldo CWB
+    // volta ao original (2). SP fica intocado (10). Pedido vai pra SP onde
+    // operador continuará o picking via fluxo transferencia.
+    await ctx.assertSaldo(sku, "CWB", "A-01-03", 2);
+    await ctx.assertSaldo(sku, "SP", "C-01-02", 10);
   },
 } satisfies Cenario<{ sku: string }>;
 

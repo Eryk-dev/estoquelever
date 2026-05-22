@@ -23,6 +23,7 @@
 
 import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
+import { getContextEmpresaId } from "./tiny-queue";
 
 // ─── Flag ──────────────────────────────────────────────────────────────────
 
@@ -318,12 +319,22 @@ async function handleListProdutos<T>(query: URLSearchParams): Promise<T> {
     return { itens: [] } as T;
   }
 
-  // Map siso_produtos UUIDs to Tiny IDs via siso_produto_empresas (first available).
+  // Resolve tiny_produto_id PER EMPRESA contexto (cada conta Tiny tem seu
+  // próprio ID pro mesmo SKU — espelha realidade do Tiny e evita colisão em
+  // cross-empresa stock enrichment do webhook-processor).
+  const empresaCtx = getContextEmpresaId();
   const produtoIds = data.map((p) => p.id);
-  const { data: mappings } = await supabase
+
+  let mappingsQ = supabase
     .from("siso_produto_empresas")
-    .select("produto_id, tiny_produto_id")
+    .select("produto_id, tiny_produto_id, empresa_id")
     .in("produto_id", produtoIds);
+
+  if (empresaCtx) {
+    mappingsQ = mappingsQ.eq("empresa_id", empresaCtx);
+  }
+
+  const { data: mappings } = await mappingsQ;
 
   const tinyByProduto = new Map<string, number>();
   for (const m of mappings ?? []) {

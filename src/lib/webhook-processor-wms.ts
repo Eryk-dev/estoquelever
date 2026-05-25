@@ -50,6 +50,9 @@ interface ResolvedItem {
   quantidade: number;
   imagemUrl: string | null;
   gtin: string | null;
+  /** true se o produto é cabeçalho de kit. Componentes que entram via expansão
+   *  ficam sempre false aqui. */
+  ehKit: boolean;
 }
 
 /** Carrega o produto WMS de cada item via siso_produto_empresas. */
@@ -74,12 +77,12 @@ async function resolverItensWms(
   const produtoIds = Array.from(wmsByTinyId.values());
   const { data: produtos } = await sb
     .from("siso_produtos")
-    .select("id, sku, descricao, gtin, imagem_url")
+    .select("id, sku, descricao, gtin, imagem_url, eh_kit")
     .in("id", produtoIds);
 
   const produtoById = new Map(produtos?.map((p) => [p.id, p]) ?? []);
 
-  return pedido.itens.map((item) => {
+  const resolvidos: ResolvedItem[] = pedido.itens.map((item) => {
     const produtoIdWms = wmsByTinyId.get(item.produto.id) ?? null;
     const produto = produtoIdWms ? produtoById.get(produtoIdWms) : null;
     return {
@@ -90,8 +93,171 @@ async function resolverItensWms(
       quantidade: item.quantidade,
       imagemUrl: produto?.imagem_url ?? null,
       gtin: produto?.gtin ?? null,
+      ehKit: produto?.eh_kit === true,
     };
   });
+
+  return expandirKits(resolvidos, empresaOrigemId);
+}
+
+/**
+ * Substitui itens que são kit pelos seus componentes no WMS.
+ *
+ * Pra cada item com `eh_kit=true`, busca a composição em `siso_produto_kits`
+ * e produz uma linha por componente (`quantidade_componente × quantidade_kit_pedida`).
+ * Resolve o `tinyProdutoId` do componente NA EMPRESA ORIGEM via
+ * `siso_produto_empresas` (pra UI legada continuar funcionando).
+ *
+ * Kits sem composição cadastrada: mantém o item-kit original e loga warn —
+ * vai pra OC porque kit pai não tem saldo direto em `siso_estoque`.
+ */
+async function expandirKits(
+  itens: ResolvedItem[],
+  empresaOrigemId: string,
+): Promise<ResolvedItem[]> {
+  const sb = createServiceClient();
+  const kits = itens.filter((i) => i.ehKit && i.produtoIdWms);
+  if (kits.length === 0) return itens;
+
+  // 1. Composição de todos os kits, em uma query
+  const kitIds = kits.map((k) => k.produtoIdWms as string);
+  const { data: composicoes } = await sb
+    .from("siso_produto_kits")
+    .select(
+      `kit_produto_id, quantidade,
+       componente:siso_produtos!siso_produto_kits_componente_produto_id_fkey
+         (id, sku, descricao, gtin, imagem_url, eh_kit)`,
+    )
+    .in("kit_produto_id", kitIds);
+
+  type ComposicaoRow = {
+    kit_produto_id: string;
+    quantidade: number;
+    // Supabase tipa embedded relations como array — só pegamos o primeiro
+    componente:
+      | Array<{
+          id: string;
+          sku: string | null;
+          descricao: string | null;
+          gtin: string | null;
+          imagem_url: string | null;
+          eh_kit: boolean | null;
+        }>
+      | {
+          id: string;
+          sku: string | null;
+          descricao: string | null;
+          gtin: string | null;
+          imagem_url: string | null;
+          eh_kit: boolean | null;
+        }
+      | null;
+  };
+
+  const pickComponente = (
+    c: ComposicaoRow["componente"],
+  ): {
+    id: string;
+    sku: string | null;
+    descricao: string | null;
+    gtin: string | null;
+    imagem_url: string | null;
+  } | null => {
+    if (!c) return null;
+    return Array.isArray(c) ? (c[0] ?? null) : c;
+  };
+
+  const porKit = new Map<
+    string,
+    Array<{
+      componente_id: string;
+      sku: string;
+      descricao: string;
+      gtin: string | null;
+      imagem_url: string | null;
+      quantidade: number;
+    }>
+  >();
+
+  for (const r of (composicoes ?? []) as unknown as ComposicaoRow[]) {
+    const componente = pickComponente(r.componente);
+    if (!componente) continue;
+    const arr = porKit.get(r.kit_produto_id) ?? [];
+    arr.push({
+      componente_id: componente.id,
+      sku: componente.sku ?? "",
+      descricao: componente.descricao ?? "",
+      gtin: componente.gtin,
+      imagem_url: componente.imagem_url,
+      quantidade: r.quantidade,
+    });
+    porKit.set(r.kit_produto_id, arr);
+  }
+
+  // 2. Resolve tinyProdutoId do componente NA empresa origem
+  const componenteIds = Array.from(
+    new Set(
+      Array.from(porKit.values()).flatMap((arr) => arr.map((c) => c.componente_id)),
+    ),
+  );
+  const { data: mappings } = await sb
+    .from("siso_produto_empresas")
+    .select("produto_id, tiny_produto_id")
+    .eq("empresa_id", empresaOrigemId)
+    .in("produto_id", componenteIds);
+
+  const tinyIdByComponente = new Map<string, number>();
+  for (const m of mappings ?? []) {
+    tinyIdByComponente.set(m.produto_id, Number(m.tiny_produto_id));
+  }
+
+  // 3. Expandir os itens — kit pai sai, componentes entram
+  const expandido: ResolvedItem[] = [];
+  for (const item of itens) {
+    if (!item.ehKit || !item.produtoIdWms) {
+      expandido.push(item);
+      continue;
+    }
+    const comps = porKit.get(item.produtoIdWms) ?? [];
+    if (comps.length === 0) {
+      logger.warn("processor.wms", "kit sem composição cadastrada — mantém como item único", {
+        kitSku: item.sku,
+        kitProdutoId: item.produtoIdWms,
+      });
+      expandido.push(item);
+      continue;
+    }
+
+    logger.info("processor.wms", "kit expandido em componentes", {
+      kitSku: item.sku,
+      qty: item.quantidade,
+      componentes: comps.map((c) => ({ sku: c.sku, qty: c.quantidade })),
+    });
+
+    for (const c of comps) {
+      const tinyId = tinyIdByComponente.get(c.componente_id);
+      if (!tinyId) {
+        logger.warn("processor.wms", "componente sem mapeamento na empresa origem — pulado", {
+          kitSku: item.sku,
+          componenteSku: c.sku,
+          empresaId: empresaOrigemId,
+        });
+        continue;
+      }
+      expandido.push({
+        tinyProdutoId: tinyId,
+        produtoIdWms: c.componente_id,
+        sku: c.sku,
+        descricao: c.descricao,
+        quantidade: c.quantidade * item.quantidade,
+        imagemUrl: c.imagem_url,
+        gtin: c.gtin,
+        ehKit: false,
+      });
+    }
+  }
+
+  return expandido;
 }
 
 /** Lê siso_estoque agregado por (produto, galpão) — 3D, sem dona. */
@@ -423,10 +589,13 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     }
   }
 
+  // Replace-all: garante que linhas antigas (de processamentos anteriores —
+  // ex.: vindas do caminho legado Tiny antes do cutover) não sobrevivam
+  // quando o WMS decide OC sem cobertura. Sem isso, dados do Tiny ficavam
+  // órfãos na tabela e a UI continuava mostrando saldo/loc fantasma.
+  await sb.from("siso_pedido_item_estoques").delete().eq("pedido_id", pedido.id);
   if (estoqueRows.length > 0) {
-    await sb
-      .from("siso_pedido_item_estoques")
-      .upsert(estoqueRows, { onConflict: "pedido_id,produto_id,empresa_id" });
+    await sb.from("siso_pedido_item_estoques").insert(estoqueRows);
   }
 
   // 8. Criar reservas (apenas pra propria/transferencia — OC não reserva)

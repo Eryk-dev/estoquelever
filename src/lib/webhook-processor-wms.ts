@@ -522,7 +522,8 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   );
   if (pedidoErr) throw pedidoErr;
 
-  // 6. Grava itens (siso_pedido_itens)
+  // 6. Grava itens (siso_pedido_itens) — upsert + limpa órfãos
+  const tinyIdsNovos = itensResolvidos.map((i) => i.tinyProdutoId);
   for (const item of itensResolvidos) {
     const fornecedor = getFornecedorBySku(item.sku);
     await sb.from("siso_pedido_itens").upsert(
@@ -549,6 +550,22 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       },
       { onConflict: "pedido_id,produto_id" },
     );
+  }
+  // Remove órfãos (ex.: kit-pai sobrevivente de processamento legado, agora
+  // que expandimos pra componentes). FK em siso_pedido_item_realocacoes /
+  // siso_pedido_item_mov_links protege contra apagar item já em separação.
+  if (tinyIdsNovos.length > 0) {
+    const { error: delItErr } = await sb
+      .from("siso_pedido_itens")
+      .delete()
+      .eq("pedido_id", pedido.id)
+      .not("produto_id", "in", `(${tinyIdsNovos.join(",")})`);
+    if (delItErr) {
+      logger.warn("processor.wms", "falha ao remover itens órfãos do pedido", {
+        pedidoId: pedido.id,
+        err: delItErr.message,
+      });
+    }
   }
 
   // 7. Grava siso_pedido_item_estoques — pool fungível por galpão.

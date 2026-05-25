@@ -7,7 +7,7 @@ import { testarConexao } from "@/lib/tiny-api";
  * GET /api/tiny/oauth/callback?code=xxx&state=xxx
  *
  * OAuth2 callback. Exchanges authorization code for tokens.
- * Redirects back to /configuracoes with status.
+ * Redirects back to /wms/configuracoes/conexoes with status.
  */
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
   const forwardedProto = request.headers.get("x-forwarded-proto") ?? "https";
   const forwardedHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? request.nextUrl.host;
   const publicOrigin = `${forwardedProto}://${forwardedHost}`;
-  const configUrl = new URL("/configuracoes", publicOrigin);
+  const configUrl = new URL("/wms/configuracoes/conexoes", publicOrigin);
 
   // Handle OAuth errors
   if (error) {

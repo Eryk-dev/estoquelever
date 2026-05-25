@@ -6,12 +6,14 @@
  */
 
 /**
- * Quando true, webhook-processor lê estoque de siso_estoque (não Tiny),
- * e execution-worker grava saídas via wms_inserir_movimentacao (não
- * lancarEstoqueNota / movimentarEstoque).
+ * Quando true (default desde 2026-05-25), webhook-processor lê estoque de
+ * siso_estoque (não Tiny), e execution-worker grava saídas via
+ * wms_inserir_movimentacao (não lancarEstoqueNota / movimentarEstoque).
  *
- * Tipicamente combinada com TINY_DISABLED=true em staging.
+ * Opt-out: setar WMS_AS_SOURCE=false explicitamente pra reverter pro caminho
+ * legado (Tiny como source of truth). Rollback de emergência leva ~5min:
+ * setar a env var no Vercel + redeploy.
  */
 export function wmsAsSource(): boolean {
-  return process.env.WMS_AS_SOURCE === "true";
+  return process.env.WMS_AS_SOURCE !== "false";
 }

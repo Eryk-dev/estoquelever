@@ -77,7 +77,7 @@ export async function POST(
 
     const { data: empresa, error: empresaError } = await supabase
       .from("siso_empresas")
-      .select("grupo_id, galpao_id, siso_galpoes(nome)")
+      .select("grupo_id, galpao_id, siso_galpoes!siso_empresas_galpao_id_fkey(nome)")
       .eq("id", empresaOrigemId)
       .single();
 

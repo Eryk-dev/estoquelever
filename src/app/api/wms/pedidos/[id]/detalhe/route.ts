@@ -34,7 +34,7 @@ export async function GET(
       .from("siso_pedidos")
       .select(`
         *,
-        siso_empresas(nome, galpao_id, siso_galpoes(nome))
+        siso_empresas(nome, galpao_id, siso_galpoes!siso_empresas_galpao_id_fkey(nome))
       `)
       .eq("id", pedidoId)
       .single();

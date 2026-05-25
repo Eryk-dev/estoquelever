@@ -177,7 +177,7 @@ export async function GET(request: NextRequest) {
       sugestao, decisao_final, tipo_resolucao, operador_nome,
       empresa_origem_id, filial_origem, marcadores, separacao_tags,
       etiqueta_status, embalagem_concluida_em, criado_em, erro,
-      siso_empresas(nome, galpao_id, siso_galpoes(nome))
+      siso_empresas(nome, galpao_id, siso_galpoes!siso_empresas_galpao_id_fkey(nome))
     `;
 
     // For operador role: pre-fetch empresa IDs in their galpao

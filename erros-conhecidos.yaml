@@ -1018,3 +1018,29 @@ erros:
       - devolucoes.ts:137,153,211,234 (nota_fiscal_id passado como bigint string em vez de uuid)
       Fixar antes do Plano 6 cutover ou da próxima rodada de devoluções com nota_fiscal_id
       setado.
+
+  - id: postgrest-embed-ambiguo-empresas-galpoes
+    date: "2026-05-25"
+    source: api.wms.pedidos.detalhe (e 4 outras rotas)
+    category: database
+    message: "GET /api/wms/pedidos/{id}/detalhe -> 500 (PGRST201)"
+    cause: >
+      siso_empresas tem 2 relacionamentos com siso_galpoes desde o ledger 3D
+      (2026-05-20): FK direta deprecada siso_empresas_galpao_id_fkey + M2M via
+      siso_empresa_galpoes_preferenciais. PostgREST recusa o embed
+      siso_empresas(..., siso_galpoes(nome)) sem disambiguator com PGRST201
+      ("more than one relationship found"). 5 rotas estavam afetadas: detalhe,
+      tracking, equivalente/confirmar, tiny/connections (POST), separacao/checklist-items.
+      Embeds a partir de OUTRAS tabelas (inventario, guarda, movs, cobertura,
+      ledger, dashboard-tarefas) não foram afetados — apenas siso_empresas acumulou
+      2 FKs pra siso_galpoes.
+    fix: >
+      Adicionar disambiguator !siso_empresas_galpao_id_fkey no embed:
+      siso_galpoes(nome) -> siso_galpoes!siso_empresas_galpao_id_fkey(nome).
+    files:
+      - src/app/api/wms/pedidos/[id]/detalhe/route.ts
+      - src/app/api/wms/pedidos/tracking/route.ts
+      - src/app/api/wms/compras/itens/[itemId]/equivalente/confirmar/route.ts
+      - src/app/api/wms/tiny/connections/route.ts
+      - src/app/api/wms/separacao/checklist-items/route.ts
+    tags: [postgrest, embed, pgrst201, ambiguous-relationship, siso_empresas, siso_galpoes, ledger-3d-fallout]

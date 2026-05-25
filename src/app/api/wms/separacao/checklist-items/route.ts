@@ -138,7 +138,7 @@ export async function GET(request: NextRequest) {
     if (uniqueEmpresaIds.length > 0) {
       const { data: empresas } = await supabase
         .from("siso_empresas")
-        .select("id, siso_galpoes(nome)")
+        .select("id, siso_galpoes!siso_empresas_galpao_id_fkey(nome)")
         .in("id", uniqueEmpresaIds);
       for (const emp of empresas ?? []) {
         const g = emp.siso_galpoes as unknown as { nome: string } | null;

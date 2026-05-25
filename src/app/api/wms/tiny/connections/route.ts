@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
   // Fetch empresa with galpao to derive filial
   const { data: empresa } = await supabase
     .from("siso_empresas")
-    .select("id, nome, cnpj, siso_galpoes(nome)")
+    .select("id, nome, cnpj, siso_galpoes!siso_empresas_galpao_id_fkey(nome)")
     .eq("id", body.empresa_id)
     .single();
 

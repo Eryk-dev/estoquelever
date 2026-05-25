@@ -37,6 +37,13 @@ interface GalpaoConexao {
   siso_empresas: Array<{ id: string; nome: string; cnpj: string; ativo: boolean }>;
 }
 
+interface EmpresaLite {
+  id: string;
+  nome: string;
+  cnpj: string;
+  ativo: boolean;
+}
+
 export default function Page() {
   return (
     <Suspense>
@@ -52,23 +59,27 @@ function ConexoesContent() {
   const isAdmin = (user?.cargos ?? [user?.cargo]).includes("admin");
 
   const [connections, setConnections] = useState<TinyConnection[]>([]);
+  const [empresas, setEmpresas] = useState<EmpresaLite[]>([]);
   const [galpoes, setGalpoes] = useState<GalpaoConexao[]>([]);
   const [usuarios, setUsuarios] = useState<UsuarioPrintNode[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [connRes, galpRes, userRes] = await Promise.all([
+      const [connRes, empRes, galpRes, userRes] = await Promise.all([
         sisoFetch("/api/wms/tiny/connections"),
+        sisoFetch("/api/wms/admin/empresas"),
         sisoFetch("/api/wms/admin/galpoes"),
         sisoFetch("/api/wms/admin/usuarios"),
       ]);
-      const [connData, galpData, userData] = await Promise.all([
+      const [connData, empData, galpData, userData] = await Promise.all([
         connRes.json(),
+        empRes.json(),
         galpRes.json(),
         userRes.json(),
       ]);
       setConnections(Array.isArray(connData) ? connData : []);
+      setEmpresas(Array.isArray(empData) ? empData : []);
       setGalpoes(Array.isArray(galpData) ? galpData : []);
       setUsuarios(Array.isArray(userData) ? userData : []);
     } catch {
@@ -109,7 +120,7 @@ function ConexoesContent() {
 
   const webhookUrl =
     typeof window !== "undefined"
-      ? `${window.location.origin}/api/webhook/tiny`
+      ? `${window.location.origin}/api/wms/webhook/tiny`
       : "";
 
   if (!isAdmin) {
@@ -142,6 +153,7 @@ function ConexoesContent() {
 
         <TinyConnectionsCard
           connections={connections}
+          empresas={empresas}
           loading={loading}
           onRefresh={fetchAll}
         />
@@ -213,33 +225,171 @@ function WebhookCard({ url }: { url: string }) {
 
 function TinyConnectionsCard({
   connections,
+  empresas,
   loading,
   onRefresh,
 }: {
   connections: TinyConnection[];
+  empresas: EmpresaLite[];
   loading: boolean;
   onRefresh: () => void;
 }) {
+  const cnpjsConectados = new Set(connections.map((c) => c.cnpj));
+  const empresasOrfas = empresas.filter(
+    (e) =>
+      e.ativo &&
+      e.cnpj !== "00000000000000" &&
+      !cnpjsConectados.has(e.cnpj),
+  );
+
   return (
     <Card title={`Conexões Tiny (${connections.length})`}>
       {loading ? (
         <div className="wms-loading-pane">Carregando conexões…</div>
-      ) : connections.length === 0 ? (
-        <p className="wms-td-mute" style={{ fontSize: 12 }}>
-          Nenhuma conexão. Cadastre uma empresa primeiro em{" "}
-          <a href="/wms/configuracoes" className="wms-btn-link">
-            Configurações → Empresas
-          </a>
-          .
-        </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {connections.map((c) => (
-            <ConnectionRow key={c.id} connection={c} onUpdated={onRefresh} />
-          ))}
+          {connections.length === 0 ? (
+            <p className="wms-td-mute" style={{ fontSize: 12 }}>
+              Nenhuma conexão. Cadastre uma empresa primeiro em{" "}
+              <a href="/wms/configuracoes" className="wms-btn-link">
+                Configurações → Empresas
+              </a>
+              .
+            </p>
+          ) : (
+            connections.map((c) => (
+              <ConnectionRow key={c.id} connection={c} onUpdated={onRefresh} />
+            ))
+          )}
+
+          <ConectarTinyButton
+            empresasOrfas={empresasOrfas}
+            onConnected={onRefresh}
+          />
         </div>
       )}
     </Card>
+  );
+}
+
+function ConectarTinyButton({
+  empresasOrfas,
+  onConnected,
+}: {
+  empresasOrfas: EmpresaLite[];
+  onConnected: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [empresaId, setEmpresaId] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function conectar() {
+    if (!empresaId) {
+      toast.error("Selecione uma empresa");
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await sisoFetch("/api/wms/tiny/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ empresa_id: empresaId }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error ?? `HTTP ${r.status}`);
+      }
+      toast.success("Conexão Tiny criada — agora preencha as credenciais");
+      setOpen(false);
+      setEmpresaId("");
+      onConnected();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao criar conexão");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (empresasOrfas.length === 0) {
+    return (
+      <p
+        className="wms-td-mute"
+        style={{ fontSize: 11, fontStyle: "italic", marginTop: 4 }}
+      >
+        Todas as empresas ativas já têm conexão Tiny. Cadastre uma nova em{" "}
+        <a href="/wms/configuracoes" className="wms-btn-link">
+          Configurações → Empresas
+        </a>
+        .
+      </p>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="wms-btn wms-btn-ghost wms-btn-sm"
+        onClick={() => setOpen(true)}
+        style={{ alignSelf: "flex-start" }}
+      >
+        <Icon name="plus" size={11} />
+        Conectar Tiny ({empresasOrfas.length} empresa
+        {empresasOrfas.length > 1 ? "s" : ""} sem conexão)
+      </button>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--wms-c-border)",
+        borderRadius: "var(--wms-r-3)",
+        background: "var(--wms-c-panel-2)",
+        padding: 10,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <span className="wms-td-mute" style={{ fontSize: 11 }}>
+        Empresa pra conectar Tiny:
+      </span>
+      <select
+        className="wms-select"
+        value={empresaId}
+        onChange={(e) => setEmpresaId(e.target.value)}
+        autoFocus
+      >
+        <option value="">Selecionar…</option>
+        {empresasOrfas.map((e) => (
+          <option key={e.id} value={e.id}>
+            {e.nome} — {e.cnpj}
+          </option>
+        ))}
+      </select>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary wms-btn-sm"
+          onClick={conectar}
+          disabled={saving || !empresaId}
+        >
+          <Icon name="check" size={11} />
+          {saving ? "Criando…" : "Criar conexão"}
+        </button>
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost wms-btn-sm"
+          onClick={() => {
+            setOpen(false);
+            setEmpresaId("");
+          }}
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -260,7 +410,7 @@ function ConnectionRow({
   const hasCredentials = connection.has_client_id && connection.has_client_secret;
   const redirectUrl =
     typeof window !== "undefined"
-      ? `${window.location.origin}/api/tiny/oauth/callback`
+      ? `${window.location.origin}/api/wms/tiny/oauth/callback`
       : "";
 
   async function copyRedirect() {

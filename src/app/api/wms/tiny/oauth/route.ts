@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
   const forwardedProto = request.headers.get("x-forwarded-proto") ?? "https";
   const forwardedHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? request.nextUrl.host;
   const origin = `${forwardedProto}://${forwardedHost}`;
-  const redirectUri = `${origin}/api/tiny/oauth/callback`;
+  const redirectUri = `${origin}/api/wms/tiny/oauth/callback`;
 
   const authorizeUrl = buildAuthorizeUrl({
     clientId: conn.client_id,

@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
 
   try {
     // Exchange code for tokens
-    const redirectUri = `${publicOrigin}/api/tiny/oauth/callback`;
+    const redirectUri = `${publicOrigin}/api/wms/tiny/oauth/callback`;
     const tokens = await exchangeCodeForTokens({
       code,
       clientId: conn.client_id,

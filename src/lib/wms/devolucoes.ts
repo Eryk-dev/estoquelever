@@ -163,6 +163,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           tipo: "quarentena",
           ativo: true,
         })
+        .order("codigo", { ascending: true }) // determinístico
         .limit(1)
         .maybeSingle();
       const locDestinoQuarentena = (quarentena as { id: string } | null)?.id;

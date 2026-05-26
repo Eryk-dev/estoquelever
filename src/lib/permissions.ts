@@ -42,6 +42,7 @@ export const PERMISSIONS = {
   "inventario.ver":            { modulo: "inventario", label: "Ver sessões" },
   "inventario.executar":       { modulo: "inventario", label: "Contar (handheld)" },
   "inventario.supervisionar":  { modulo: "inventario", label: "Criar/aprovar/aplicar sessão" },
+  "inventario.iniciar_sessao": { modulo: "inventario", label: "Auto-iniciar sessão (ao entrar party)" },
 
   // ── Insights & Relatórios ──
   "insights.ver":          { modulo: "insights",    label: "Ver insights" },

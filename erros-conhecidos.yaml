@@ -1119,3 +1119,44 @@ erros:
       mov_saida_id=null, sem mov S/L, reservas R órfãs. Reconciliação
       manual pendente — exige plano separado (status_separacao já está
       em "separado", fora da whitelist do marcar-item).
+
+  - id: wms-marcar-item-desmarcar-nao-volta-reserva
+    date: "2026-05-26"
+    source: separacao-marcar-item
+    category: business_logic
+    message: 'Estorno WMS falhou: mov X já é um estorno (estorno_de=Y)'
+    cause: >
+      No desmarcar do checkbox, o loop iterava os mov_links (saida + liberacao_reserva)
+      e chamava estornarMovimentacao em cada um. A L de liberação carrega
+      estorno_de=R.id por convenção arquitetural (cutover do execution-worker
+      filtra reservas "já convertidas" via EXISTS L WHERE estorno_de=R.id).
+      Mas a guarda em ledger.estornarMovimentacao ("if original.estorno_de
+      → throw já é um estorno") confunde isso com estorno contábil e rejeita
+      o estorno da L. Resultado:
+       - S é estornada (E counter) — saldo volta ✓
+       - L NÃO é estornada — reservado fica em 0, R original viva mas
+         marcada como "já liberada" via L que continua de pé
+       - Re-marcação: buscarReservaPendente considera R "já liberada"
+         (L está lá) e cria S sem L par — pareamento R↔L corrompido.
+      Mesmo se a guarda fosse relaxada, o estornarMovimentacao genérico
+      criaria a R nova com origem_tipo='estorno' — invisível pro
+      buscarReservaPendente que filtra por origem_tipo='reserva_pedido'.
+    fix: >
+      Adicionado helper estornarLiberacaoReserva em src/lib/wms/reservas-picking.ts
+      que bypassa o estornarMovimentacao genérico e chama inserirMovimentacao
+      direto, criando uma R com origem_tipo='reserva_pedido', origem_id=pedido_id,
+      estorno_de=L.id. Idempotente (se já estornada, retorna a R existente).
+      marcar-item/route.ts desmarcar condiciona por tipo_link:
+       - 'saida' → estornarMovimentacao (cria E)
+       - 'liberacao_reserva' → estornarLiberacaoReserva (cria R nova)
+      Re-marcação depois passa a achar a R ressuscitada via buscarReservaPendente.
+      Pareamento R↔L↔S preservado em ciclos marca/desmarca arbitrários.
+    files:
+      - src/lib/wms/reservas-picking.ts
+      - src/app/api/wms/separacao/marcar-item/route.ts
+    tags: [wms, separacao, marcar-item, desmarcar, reserva, liberacao_reserva, estorno, ledger]
+    notes: >
+      Bug correlato fora de escopo: src/lib/separacao/reset-state.ts (usado
+      por cancelar, desfazer-parcial, voltar-etapa, reiniciar) só estorna
+      links tipo_link='saida' — ignora 'liberacao_reserva'. Mesma classe
+      de bug em outros caminhos. Fix separado pendente.

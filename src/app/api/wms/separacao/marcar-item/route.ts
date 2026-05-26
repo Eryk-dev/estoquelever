@@ -6,6 +6,7 @@ import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import {
   buscarReservaPendente,
   liberarReservaPicking,
+  estornarLiberacaoReserva,
 } from "@/lib/wms/reservas-picking";
 import {
   resolverProdutoWms,
@@ -244,11 +245,24 @@ export async function POST(request: NextRequest) {
 
       for (const link of links ?? []) {
         try {
-          await estornarMovimentacao({
-            mov_id: link.mov_id as string,
-            usuario_id: session.id,
-            motivo: `Desmarcar checkbox (${link.tipo_link})`,
-          });
+          if (link.tipo_link === "liberacao_reserva") {
+            // L de liberação não pode ir pelo estornarMovimentacao genérico —
+            // a guarda confunde com estorno contábil. Helper específico cria
+            // uma R nova com origem_tipo='reserva_pedido' pra re-marcação
+            // subsequente conseguir encontrar via buscarReservaPendente.
+            await estornarLiberacaoReserva({
+              liberacao_mov_id: link.mov_id as string,
+              pedido_id: String(pedido.id),
+              usuario_id: session.id,
+              motivo: `Desmarcar checkbox — ressuscita reserva pedido #${pedido.numero}`,
+            });
+          } else {
+            await estornarMovimentacao({
+              mov_id: link.mov_id as string,
+              usuario_id: session.id,
+              motivo: `Desmarcar checkbox (${link.tipo_link})`,
+            });
+          }
         } catch (estornoErr) {
           logger.warn("separacao-marcar-item", "Estorno WMS falhou", {
             error: estornoErr instanceof Error ? estornoErr.message : String(estornoErr),

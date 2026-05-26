@@ -181,3 +181,75 @@ export async function estornarReservaCascade(opts: {
     motivo: opts.motivo ?? "Estorno R cascade (desfazer-parcial)",
   });
 }
+
+/**
+ * Estorna uma L de liberação de reserva criando uma R nova ("ressuscita" a
+ * reserva). Usado no desmarcar do checkbox de separação — quando operador
+ * retorna o item, o reservado precisa voltar.
+ *
+ * Por que helper específico em vez de `estornarMovimentacao` genérico?
+ *   L de liberação carrega `estorno_de=R.id` por convenção arquitetural
+ *   (cutover do execution-worker filtra reservas "já convertidas" via
+ *   EXISTS L WHERE estorno_de=R.id). Mas a guarda em ledger.estornarMovimentacao
+ *   confunde isso com "mov já é um estorno contábil" e rejeita o estorno.
+ *
+ * E mesmo se a guarda fosse relaxada, o `estornarMovimentacao` genérico
+ * criaria a R nova com `origem_tipo='estorno'` — e `buscarReservaPendente`
+ * filtra por `origem_tipo='reserva_pedido'`. A R nova ficaria invisível.
+ * Aqui criamos com origem_tipo='reserva_pedido' + origem_id=pedido_id pra
+ * que a próxima re-marcação encontre essa reserva ressuscitada.
+ *
+ * Idempotente: se a L já foi estornada (existe R com estorno_de=L.id),
+ * retorna a R existente sem criar duplicata.
+ */
+export async function estornarLiberacaoReserva(opts: {
+  liberacao_mov_id: string;
+  pedido_id: string;
+  usuario_id: string;
+  motivo?: string;
+}): Promise<Movimentacao> {
+  const sb = createServiceClient();
+
+  const { data: l } = await sb
+    .from("siso_movimentacoes")
+    .select("*")
+    .eq("id", opts.liberacao_mov_id)
+    .single();
+  if (!l) {
+    throw new Error(`L ${opts.liberacao_mov_id} não encontrada`);
+  }
+  if (l.tipo !== "L" || l.origem_tipo !== "liberacao_reserva") {
+    throw new Error(
+      `mov ${opts.liberacao_mov_id} não é uma L de liberação_reserva (tipo=${l.tipo}, origem=${l.origem_tipo})`,
+    );
+  }
+
+  const { data: existente } = await sb
+    .from("siso_movimentacoes")
+    .select("*")
+    .eq("estorno_de", opts.liberacao_mov_id)
+    .eq("tipo", "R")
+    .maybeSingle();
+  if (existente) {
+    return existente as unknown as Movimentacao;
+  }
+
+  return inserirMovimentacao({
+    tripla: {
+      produto_id: l.produto_id as string,
+      galpao_id: l.galpao_id as string,
+      localizacao_id: l.localizacao_id as string,
+    },
+    tipo: "R",
+    qty: Number(l.quantidade),
+    origem_tipo: "reserva_pedido",
+    origem_id: opts.pedido_id,
+    origem_detalhes: {
+      contexto: "estorno_liberacao",
+      estorno_de_L: opts.liberacao_mov_id,
+    },
+    estorno_de: opts.liberacao_mov_id,
+    motivo: opts.motivo ?? `Ressuscita reserva — estorno de L ${opts.liberacao_mov_id}`,
+    usuario_id: opts.usuario_id,
+  });
+}

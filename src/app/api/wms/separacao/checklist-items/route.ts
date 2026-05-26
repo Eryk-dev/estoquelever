@@ -6,10 +6,13 @@ import { getSessionUser } from "@/lib/session";
 /**
  * GET /api/separacao/checklist-items?pedidos=id1,id2,id3
  *
- * Fetch individual items for the given pedido IDs with localizacao
- * from the separating empresa's stock data. For transfers, this is
- * the empresa in the separacao_galpao (the one that will ship), not
- * the empresa that originally received the order.
+ * Fetch individual items for the given pedido IDs with LIVE localizacao
+ * and saldo from siso_estoque (3D), filtered by the separação galpão.
+ *
+ * Loc exibida = a com maior saldo individual no galpão; saldo/disponivel
+ * = soma de todas as locs do galpão pra aquele SKU. NÃO usa o snapshot
+ * congelado de siso_pedido_item_estoques — estoque inserido após o
+ * webhook reflete imediatamente.
  */
 export async function GET(request: NextRequest) {
   const session = await getSessionUser(request);
@@ -97,8 +100,10 @@ export async function GET(request: NextRequest) {
 
     // pedido -> empresa that will separate (used for stock + localizacao)
     const pedidoSepEmpresaMap = new Map<string, string>();
+    const pedidoSepGalpaoMap = new Map<string, string>();
     for (const p of pedidos ?? []) {
       if (p.separacao_galpao_id) {
+        pedidoSepGalpaoMap.set(p.id, p.separacao_galpao_id);
         const empresaId = galpaoToEmpresaMap.get(p.separacao_galpao_id);
         if (empresaId) {
           pedidoSepEmpresaMap.set(p.id, empresaId);
@@ -111,24 +116,65 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 3. Fetch localizacao + stock from siso_pedido_item_estoques
-    const { data: estoques } = await supabase
-      .from("siso_pedido_item_estoques")
-      .select("pedido_id, produto_id, empresa_id, localizacao, saldo, disponivel")
-      .in("pedido_id", pedido_ids);
+    // 3. Loc + saldo LIVE: agregamos siso_estoque (3D) por (sku, galpão de
+    //    separação). Não usa snapshot de siso_pedido_item_estoques —
+    //    estoque inserido depois do webhook reflete imediatamente.
+    //    Loc exibida = a com maior saldo individual no galpão.
+    const sepGalpaoIds = Array.from(new Set(pedidoSepGalpaoMap.values()));
+    const skus = Array.from(
+      new Set((items ?? []).map((i) => i.sku).filter((s): s is string => !!s)),
+    );
 
-    // Build localizacao + stock maps (separating empresa only)
-    const locMap = new Map<string, string>();
-    const stockMap = new Map<string, { saldo: number; disponivel: number }>();
-    for (const e of estoques ?? []) {
-      const sepEmpresa = pedidoSepEmpresaMap.get(e.pedido_id);
-      if (e.empresa_id === sepEmpresa) {
-        const key = `${e.pedido_id}:${e.produto_id}`;
-        if (e.localizacao) locMap.set(key, e.localizacao);
-        stockMap.set(key, {
-          saldo: e.saldo ?? 0,
-          disponivel: e.disponivel ?? 0,
-        });
+    // Map: `${galpao_id}:${sku}` -> { localizacao_codigo, saldo, disponivel }
+    const liveStockMap = new Map<
+      string,
+      { localizacao: string | null; saldo: number; disponivel: number }
+    >();
+
+    if (sepGalpaoIds.length > 0 && skus.length > 0) {
+      type EstoqueRow = {
+        saldo: number | string | null;
+        disponivel: number | string | null;
+        galpao_id: string;
+        siso_produtos: { sku: string } | null;
+        siso_localizacoes: { codigo: string } | null;
+      };
+      const { data: estoqueRows } = await supabase
+        .from("siso_estoque")
+        .select(
+          "saldo, disponivel, galpao_id, siso_produtos!inner(sku), siso_localizacoes!inner(codigo)",
+        )
+        .in("galpao_id", sepGalpaoIds)
+        .in("siso_produtos.sku", skus);
+
+      // Pra escolher loc top precisamos saber qual loc tem mais saldo
+      // individual em cada (galpao, sku). Trackeamos o saldo da loc top.
+      const topLocSaldo = new Map<string, number>();
+
+      for (const row of (estoqueRows ?? []) as unknown as EstoqueRow[]) {
+        const sku = row.siso_produtos?.sku;
+        const locCodigo = row.siso_localizacoes?.codigo ?? null;
+        if (!sku) continue;
+        const key = `${row.galpao_id}:${sku}`;
+        const saldo = Number(row.saldo ?? 0);
+        const disponivel = Number(row.disponivel ?? 0);
+
+        const existing = liveStockMap.get(key);
+        if (existing) {
+          existing.saldo += saldo;
+          existing.disponivel += disponivel;
+        } else {
+          liveStockMap.set(key, {
+            localizacao: locCodigo,
+            saldo,
+            disponivel,
+          });
+        }
+        const currentTop = topLocSaldo.get(key) ?? -Infinity;
+        if (saldo > currentTop) {
+          topLocSaldo.set(key, saldo);
+          liveStockMap.get(key)!.localizacao = locCodigo;
+        }
       }
     }
 
@@ -216,6 +262,10 @@ export async function GET(request: NextRequest) {
 
     const result = visibleItems.map((item) => {
       const sepEmpresaId = pedidoSepEmpresaMap.get(item.pedido_id) ?? null;
+      const sepGalpaoId = pedidoSepGalpaoMap.get(item.pedido_id) ?? null;
+      const liveKey = sepGalpaoId && item.sku ? `${sepGalpaoId}:${item.sku}` : null;
+      const live = liveKey ? liveStockMap.get(liveKey) : undefined;
+
       const itemRealocacoes = (realocacoesPorItem.get(String(item.id)) ?? []).map((r) => ({
         id: r.id,
         parent_realocacao_id: r.parent_realocacao_id,
@@ -244,10 +294,9 @@ export async function GET(request: NextRequest) {
         bipado_completo: item.bipado_completo ?? false,
         imagem_url: item.imagem_url ?? null,
         compra_status: item.compra_status ?? null,
-        localizacao:
-          locMap.get(`${item.pedido_id}:${item.produto_id}`) ?? null,
-        saldo: stockMap.get(`${item.pedido_id}:${item.produto_id}`)?.saldo ?? 0,
-        disponivel: stockMap.get(`${item.pedido_id}:${item.produto_id}`)?.disponivel ?? 0,
+        localizacao: live?.localizacao ?? null,
+        saldo: live?.saldo ?? 0,
+        disponivel: live?.disponivel ?? 0,
         empresa_origem_id: sepEmpresaId,
         galpao_nome: galpaoMap.get(sepEmpresaId ?? "") ?? null,
         quantidade_pega: item.quantidade_pega ?? null,

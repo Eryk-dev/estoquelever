@@ -3,7 +3,11 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
-import { resolverProdutoWms, resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
+import {
+  resolverProdutoWms,
+  resolverLocalizacaoWms,
+  buscarLocComMaiorSaldoNoGalpao,
+} from "@/lib/separacao/wms-mapping";
 
 /**
  * POST /api/separacao/marcar-item
@@ -83,7 +87,17 @@ export async function POST(request: NextRequest) {
             .eq("produto_id", item.produto_id)
             .eq("empresa_id", empresaOrigemId)
             .maybeSingle();
-          const locId = await resolverLocalizacaoWms(galpaoId, (estoque?.localizacao as string | null | undefined) ?? null);
+          const snapshotLoc = (estoque?.localizacao as string | null | undefined) ?? null;
+          // Fallback live: se o snapshot está vazio (saldo era 0 no
+          // webhook, ou loc nunca preenchida), escolhe a loc com maior
+          // saldo do produto no galpão atual. Evita cair em DEFAULT-PICKING.
+          let locId: string;
+          if (snapshotLoc) {
+            locId = await resolverLocalizacaoWms(galpaoId, snapshotLoc);
+          } else {
+            const liveLocId = await buscarLocComMaiorSaldoNoGalpao(galpaoId, produtoWmsId);
+            locId = liveLocId ?? (await resolverLocalizacaoWms(galpaoId, null));
+          }
 
           const mov = await inserirMovimentacao({
             tripla: {

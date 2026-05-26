@@ -54,6 +54,30 @@ export async function resolverLocalizacaoWms(
   return fallback;
 }
 
+/**
+ * Busca a localizacao com MAIOR saldo do produto no galpão. Usado como
+ * fallback live quando o snapshot de siso_pedido_item_estoques está vazio
+ * (ex.: pedido chegou antes do recebimento, saldo era 0 no webhook).
+ * Retorna o ID da loc (uuid de siso_localizacoes) ou null se nenhuma loc
+ * tem saldo positivo.
+ */
+export async function buscarLocComMaiorSaldoNoGalpao(
+  galpaoId: string,
+  produtoUuid: string,
+): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("siso_estoque")
+    .select("localizacao_id")
+    .eq("galpao_id", galpaoId)
+    .eq("produto_id", produtoUuid)
+    .gt("saldo", 0)
+    .order("saldo", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data?.localizacao_id as string | null | undefined) ?? null;
+}
+
 function defaultDeps(): MappingDeps {
   return {
     buscarProdutoId: async (empresaId, tinyProdutoId) => {

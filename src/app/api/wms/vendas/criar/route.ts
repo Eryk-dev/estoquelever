@@ -190,9 +190,22 @@ export async function POST(request: NextRequest) {
         throw new Error(`Produto ${item.produto_id} não encontrado no catálogo`);
       }
       if (!tinyId) {
-        throw new Error(
-          `Produto ${prod.sku} não está cadastrado na empresa origem — peça pro admin sincronizar via Tiny`,
-        );
+        // Verifica se produto existe em OUTRAS empresas — sugere
+        const { data: outrasEmpresas } = await supabase
+          .from("siso_produto_empresas")
+          .select("empresa_id, siso_empresas!inner(nome)")
+          .eq("produto_id", item.produto_id);
+        const sugestoes = (outrasEmpresas ?? [])
+          .map((e: { siso_empresas?: { nome?: string } | { nome?: string }[] }) => {
+            const emp = Array.isArray(e.siso_empresas) ? e.siso_empresas[0] : e.siso_empresas;
+            return emp?.nome ?? null;
+          })
+          .filter((nome): nome is string => Boolean(nome));
+        const msg =
+          sugestoes.length > 0
+            ? `Produto ${prod.sku} não está cadastrado na empresa origem (${empresa.nome}). Disponível em: ${sugestoes.join(", ")}. Selecione uma dessas ou peça pro admin sincronizar.`
+            : `Produto ${prod.sku} não está cadastrado em nenhuma empresa — peça pro admin sincronizar via Tiny`;
+        throw new Error(msg);
       }
       const dispon = await resolverDisponibilidadeVenda(supabase as never, {
         produto_id: item.produto_id,

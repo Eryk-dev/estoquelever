@@ -4906,6 +4906,37 @@ Sugere localização de putaway. Heurística: SKU já com saldo no galpão → e
 
 **Response 200:** `{ localizacao_id, codigo?, razao, locaisExistentes }`.
 
+### GET /api/wms/saldo-recebimento-orfao
+
+Detecta saldo fantasma em locs `tipo='recebimento'` que NÃO têm pendência de guarda ativa (`status ∈ {pendente, em_guarda}`). Cobre o estado órfão quando a pendência foi cancelada sem mover a peça pra prateleira — o saldo continua "preso" em RECEBIMENTO e ninguém vai endereçá-lo. Consumido pelo card de alerta amarelo na home `/wms` (P5).
+
+**Auth:** `requireWarehouseAccess` (admin ou qualquer permissão de operação física de armazém).
+
+**Query params:** `galpao_id` (opcional — quando ausente, agrega todos os galpões).
+
+**Algoritmo:**
+1. SELECT locs `siso_localizacoes WHERE tipo='recebimento' AND ativo=true` (filtra por galpão se informado).
+2. SELECT saldos `siso_estoque WHERE localizacao_id IN (...) AND saldo > 0`.
+3. SELECT pendências ativas `siso_wms_pendencias_guarda WHERE status IN ('pendente','em_guarda') AND localizacao_origem_id IN (...)` — agrega `qty_pendente` por `(produto_id, localizacao_origem_id)`.
+4. Pra cada saldo, `orfao = saldo - pendente_total`. Retorna apenas onde `orfao > 0`.
+
+**Response 200:** `{ itens: ItemOrfao[] }` onde
+```ts
+ItemOrfao = {
+  produto_id: string;
+  sku: string;
+  descricao: string;
+  galpao_id: string;
+  localizacao_id: string;
+  localizacao_codigo: string;
+  saldo: number;
+  pendente_total: number;
+  orfao: number;
+}
+```
+
+Galpão sem locs `recebimento` ou sem saldos retorna `{ itens: [] }` (200, não 404).
+
 ---
 
 ### Guarda (put-away — etapa 2/2)

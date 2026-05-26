@@ -5257,7 +5257,13 @@ RPCs: acuracidade por operador (30d) + por localização (5000 últimas).
 **Business logic:** lista as N últimas movs **restritas ao pool de localizações da sessão** (`siso_inventario_localizacoes.localizacao_id`), criadas desde `iniciada_em`. Movs em locs fora da sessão são ignoradas — não fazem parte do escopo do inventário. Usado pelo painel ao vivo do supervisor.
 
 ### GET /api/wms/inventario/cleanup
-Cron-friendly. Auth: `x-worker-secret`. Detecta sessões inativas há 4h+ (alerta) e libera locks com 30min+ sem contagem nova (mov de status='pendente').
+Cron-friendly. Auth: `x-worker-secret`. Detecta:
+1. Sessões inativas há 4h+ (apenas log warn);
+2. Locks `em_contagem` com 30min+ sem contagem nova → libera (status volta a `pendente`);
+3. Operadores ativos zumbi (`finalizado_em IS NULL` + `ultima_acao_em > 30min`) → força `finalizado_em` e libera qualquer loc `em_contagem` que o operador ainda detém;
+4. Locks `em_contagem` cuja `bloqueada_por` já está finalizado (sair-party não limpou) → libera via RPC `wms_locks_bloqueada_por_finalizado`.
+
+**Response:** `{ sessoesAlerta: string[], locksLiberados: number, operadoresFinalizados: number, locksLiberadosPorFinalizado: number }`.
 
 ---
 

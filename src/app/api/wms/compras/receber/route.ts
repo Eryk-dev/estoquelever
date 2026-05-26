@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { userCan } from "@/lib/permissions";
+import { registrarEventos } from "@/lib/historico-service";
 
 /**
  * POST /api/compras/receber
@@ -44,6 +45,12 @@ export async function POST(request: NextRequest) {
     itens_atualizados: number;
     quantidade_alocada: number;
   }> = [];
+
+  // Per-pedido audit aggregator (1 evento compra_item_recebido por pedido).
+  const eventosPorPedido = new Map<
+    string,
+    { qty: number; skus: string[] }
+  >();
 
   try {
     for (const { sku, quantidade_recebida, observacao } of itens) {
@@ -117,6 +124,12 @@ export async function POST(request: NextRequest) {
         remaining -= qtyParaEsteItem;
         atualizados++;
         alocado += qtyParaEsteItem;
+
+        const pedidoId = item.pedido_id as string;
+        const cur = eventosPorPedido.get(pedidoId) ?? { qty: 0, skus: [] };
+        cur.qty += qtyParaEsteItem;
+        if (!cur.skus.includes(sku)) cur.skus.push(sku);
+        eventosPorPedido.set(pedidoId, cur);
       }
 
       recebimentoLog.push({
@@ -128,6 +141,22 @@ export async function POST(request: NextRequest) {
 
     // Check which pedidos are now fully received and can be released
     const pedidosDesbloqueados = await checkAndReleasePedidos(allAffectedItemIds);
+
+    // Audit trail: 1 evento compra_item_recebido por pedido afetado.
+    if (eventosPorPedido.size > 0) {
+      await registrarEventos(
+        Array.from(eventosPorPedido.entries()).map(([pedidoId, info]) => ({
+          pedidoId,
+          evento: "compra_item_recebido" as const,
+          usuarioId: session.id,
+          usuarioNome: session.nome,
+          detalhes: {
+            qty_total: info.qty,
+            skus: info.skus,
+          },
+        })),
+      );
+    }
 
     logger.info("compras-receber", "Recebimento confirmado", {
       usuario: session.nome,

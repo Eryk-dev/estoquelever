@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
+import { registrarEventos } from "@/lib/historico-service";
 
 /**
  * POST /api/compras/comprar
@@ -49,6 +50,12 @@ export async function POST(request: NextRequest) {
     quantidade_alocada: number;
     quantidade_excedente: number;
   }> = [];
+
+  // Per-pedido audit aggregator (1 evento compra_item_comprado por pedido).
+  const eventosPorPedido = new Map<
+    string,
+    { qty: number; skus: string[] }
+  >();
 
   try {
     for (const { sku, quantidade_comprada } of itens) {
@@ -118,6 +125,12 @@ export async function POST(request: NextRequest) {
         remaining -= qtyParaEsteItem;
         marcados++;
         alocado += qtyParaEsteItem;
+
+        const pedidoId = item.pedido_id as string;
+        const cur = eventosPorPedido.get(pedidoId) ?? { qty: 0, skus: [] };
+        cur.qty += qtyParaEsteItem;
+        if (!cur.skus.includes(sku)) cur.skus.push(sku);
+        eventosPorPedido.set(pedidoId, cur);
       }
 
       resultados.push({
@@ -126,6 +139,22 @@ export async function POST(request: NextRequest) {
         quantidade_alocada: alocado,
         quantidade_excedente: Math.max(remaining, 0),
       });
+    }
+
+    // Audit trail: 1 evento compra_item_comprado por pedido afetado.
+    if (eventosPorPedido.size > 0) {
+      await registrarEventos(
+        Array.from(eventosPorPedido.entries()).map(([pedidoId, info]) => ({
+          pedidoId,
+          evento: "compra_item_comprado" as const,
+          usuarioId: session.id,
+          usuarioNome: session.nome,
+          detalhes: {
+            qty_total: info.qty,
+            skus: info.skus,
+          },
+        })),
+      );
     }
 
     logger.info("compras-comprar", "Itens marcados como comprado", {

@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { buildCompraFieldReset, cancelOcIfEmpty } from "@/lib/compras-utils";
 import { userCan } from "@/lib/permissions";
+import { registrarEvento } from "@/lib/historico-service";
 
 /**
  * POST /api/compras/itens/[itemId]/devolver
@@ -26,7 +27,7 @@ export async function POST(
     // Fetch item
     const { data: item, error: itemError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, ordem_compra_id, compra_status, fornecedor_oc, compra_solicitada_em")
+      .select("id, pedido_id, sku, ordem_compra_id, compra_status, fornecedor_oc, compra_solicitada_em")
       .eq("id", itemId)
       .single();
 
@@ -57,6 +58,19 @@ export async function POST(
     if (updateError) throw new Error(`Erro ao atualizar item: ${updateError.message}`);
 
     await cancelOcIfEmpty(supabase, ordemCompraId, "compras-devolver");
+
+    await registrarEvento({
+      pedidoId: item.pedido_id,
+      evento: "compra_item_devolvido",
+      usuarioId: session.id,
+      usuarioNome: session.nome,
+      detalhes: {
+        item_id: itemId,
+        sku: item.sku,
+        ordem_compra_id_anterior: ordemCompraId,
+        fornecedor: item.fornecedor_oc,
+      },
+    });
 
     logger.info("compras-devolver", "Item devolvido para fila de compras", {
       itemId,

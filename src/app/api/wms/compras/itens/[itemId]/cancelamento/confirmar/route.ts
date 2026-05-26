@@ -5,6 +5,7 @@ import { getSessionUser } from "@/lib/session";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { checkAndCancelPedidoIfAllTerminal } from "@/lib/compras-utils";
 import { userCan } from "@/lib/permissions";
+import { registrarEvento } from "@/lib/historico-service";
 
 /**
  * POST /api/compras/itens/[itemId]/cancelamento/confirmar
@@ -82,6 +83,18 @@ export async function POST(
     if (!pedidoCancelado) {
       pedidosLiberados = await checkAndReleasePedidos([itemId]);
     }
+
+    await registrarEvento({
+      pedidoId: item.pedido_id,
+      evento: "compra_item_cancelado",
+      usuarioId: session.id,
+      usuarioNome: session.nome,
+      detalhes: {
+        item_id: itemId,
+        sku: item.sku,
+        motivo: item.compra_cancelamento_motivo ?? null,
+      },
+    });
 
     logger.warn("compras-cancelamento-confirmar", "Cancelamento de item confirmado", {
       itemId,

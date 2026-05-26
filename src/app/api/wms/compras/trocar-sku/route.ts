@@ -8,6 +8,7 @@ import { buscarProdutoPorSku, getEstoque, getProdutoDetalhe } from "@/lib/tiny-a
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
+import { registrarEventos } from "@/lib/historico-service";
 
 /**
  * POST /api/compras/trocar-sku
@@ -220,6 +221,33 @@ export async function POST(request: NextRequest) {
           error: estErr.message,
         });
       }
+    }
+
+    // Audit trail: 1 evento compra_sku_trocado por pedido afetado.
+    if (pedidoIds.length > 0) {
+      const itemsTyped = items as unknown as Array<{
+        id: string;
+        pedido_id: string;
+        sku: string;
+      }>;
+      await registrarEventos(
+        pedidoIds.map((pedidoId) => {
+          const itensDoPedido = itemsTyped.filter((i) => i.pedido_id === pedidoId);
+          const skuAnterior = itensDoPedido[0]?.sku ?? null;
+          return {
+            pedidoId,
+            evento: "compra_sku_trocado" as const,
+            usuarioId: session.id,
+            usuarioNome: session.nome,
+            detalhes: {
+              item_ids: itensDoPedido.map((i) => i.id),
+              sku_anterior: skuAnterior,
+              novo_sku: novoSku,
+              novo_fornecedor: novoFornecedor.fornecedor,
+            },
+          };
+        }),
+      );
     }
 
     logger.info("compras-trocar-sku", "SKU trocado com sucesso", {

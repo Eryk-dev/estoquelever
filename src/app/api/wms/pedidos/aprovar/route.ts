@@ -141,6 +141,7 @@ export async function POST(request: NextRequest) {
   // OC permanece intocado (não reserva).
   if (wmsAsSource() && (decisao === "propria" || decisao === "transferencia")) {
     const reservaResult = await criarReservasPedido({
+      supabase,
       pedidoId,
       empresaExecucaoId,
       separacaoGalpaoId,
@@ -256,31 +257,60 @@ type ReservaResult =
  * o bloco e retorna ok: true, reservasCriadas: 0.
  */
 async function criarReservasPedido(args: {
+  supabase: ReturnType<typeof createServiceClient>;
   pedidoId: string;
   empresaExecucaoId: string;
   separacaoGalpaoId: string;
 }): Promise<ReservaResult> {
-  const { pedidoId, empresaExecucaoId, separacaoGalpaoId } = args;
-  const supabase = createServiceClient();
+  const { supabase, pedidoId, empresaExecucaoId, separacaoGalpaoId } = args;
 
+  // TOCTOU note: o SELECT abaixo + o loop de INSERTs subsequentes formam
+  // uma janela onde 2 aprovar() concorrentes pro mesmo pedidoId podem
+  // ambos passar pela idempotência e criar 2×N reservas. Mitigação atual:
+  // o handler já checa `pedido.status !== 'pendente'` antes de chegar aqui
+  // (line 67), reduzindo a janela ao tempo entre o SELECT do pedido e o
+  // UPDATE. Pra cenários de double-click via UI, é janela <500ms; pra
+  // chamadas API concorrentes, considerar partial unique index ou
+  // restruturar pra UPDATE-then-SELECT-affected antes do bloco de
+  // reservas. Bug aceitável até evidência de problema real em produção.
   // 1. Idempotência: R já existe pro pedido?
-  const { data: jaR } = await supabase
+  const { data: jaR, error: jaRErr } = await supabase
     .from("siso_movimentacoes")
     .select("id")
     .eq("origem_id", pedidoId)
     .eq("origem_tipo", "reserva_pedido")
     .eq("tipo", "R")
     .limit(1);
+  if (jaRErr) {
+    logger.error("aprovar.reservas", "Falha ao checar reservas existentes", {
+      pedidoId,
+      err: jaRErr.message,
+    });
+    return {
+      ok: false,
+      body: { error: "reserva_falhou", motivo: "db_error", detalhe: jaRErr.message },
+    };
+  }
   if ((jaR?.length ?? 0) > 0) {
     logger.info("aprovar.reservas", "Reservas já existentes — skip", { pedidoId });
     return { ok: true, reservasCriadas: 0 };
   }
 
   // 2. Itens do pedido
-  const { data: itens } = await supabase
+  const { data: itens, error: itensErr } = await supabase
     .from("siso_pedido_itens")
     .select("id, produto_id, sku, quantidade_pedida")
     .eq("pedido_id", pedidoId);
+  if (itensErr) {
+    logger.error("aprovar.reservas", "Falha ao buscar itens do pedido", {
+      pedidoId,
+      err: itensErr.message,
+    });
+    return {
+      ok: false,
+      body: { error: "reserva_falhou", motivo: "db_error", detalhe: itensErr.message },
+    };
+  }
   if (!itens || itens.length === 0) {
     logger.warn("aprovar.reservas", "Pedido sem itens", { pedidoId });
     return { ok: true, reservasCriadas: 0 };
@@ -302,14 +332,14 @@ async function criarReservasPedido(args: {
         produtoWmsId,
       );
       if (!locId) {
-        await rollbackReservas(criadas, pedidoId);
+        const rb = await rollbackReservas(criadas, pedidoId);
         return {
           ok: false,
           body: {
             error: "reserva_falhou",
             motivo: "sem_saldo",
             item: { sku: item.sku, produto_id_tiny: item.produto_id, qty },
-            criadas_estornadas: criadas.length,
+            rollback: rb,
           },
         };
       }
@@ -327,9 +357,16 @@ async function criarReservasPedido(args: {
       criadas.push(reservaId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await rollbackReservas(criadas, pedidoId);
+      const rb = await rollbackReservas(criadas, pedidoId);
 
-      // Distingue mapeamento ausente vs outros erros pra mensagem melhor
+      // Classificação por regex sobre err.message é frágil — depende das
+      // strings literais retornadas por `resolverProdutoWms` (em
+      // `src/lib/separacao/wms-mapping.ts`) e pelo RPC
+      // `wms_reservar_atomico` (PL/pgSQL). Se essas mensagens mudarem,
+      // a classificação degrada silenciosamente pra `erro_runtime`. Fix
+      // proper: typed error classes (MapeamentoAusenteError,
+      // SaldoInsuficienteError) ou .code property exportadas pelos
+      // modules de origem. Pendente — não bloqueia release.
       const motivo = /mapeado em siso_produto_empresas/i.test(msg)
         ? "mapeamento_ausente"
         : /saldo|reserva|disponivel/i.test(msg)
@@ -342,7 +379,7 @@ async function criarReservasPedido(args: {
           error: "reserva_falhou",
           motivo,
           item: { sku: item.sku, produto_id_tiny: item.produto_id, qty },
-          criadas_estornadas: criadas.length,
+          rollback: rb,
           detalhe: msg,
         },
       };
@@ -356,20 +393,32 @@ async function criarReservasPedido(args: {
   return { ok: true, reservasCriadas: criadas.length };
 }
 
-async function rollbackReservas(reservaIds: string[], pedidoId: string): Promise<void> {
+async function rollbackReservas(
+  reservaIds: string[],
+  pedidoId: string,
+): Promise<{ tentativas: number; sucesso: number; falhou: number; orfas_ids: string[] }> {
+  let sucesso = 0;
+  const orfas: string[] = [];
   for (const rId of reservaIds) {
     try {
       await estornarReservaIndividual({
         reserva_id: rId,
         motivo: "rollback_aprovacao",
       });
+      sucesso++;
     } catch (err) {
+      orfas.push(rId);
       logger.error("aprovar.reservas", "Falha ao estornar R em rollback", {
         pedidoId,
         reservaId: rId,
         err: err instanceof Error ? err.message : String(err),
       });
-      // Continue — o operador vai precisar de cleanup manual desse R órfão.
     }
   }
+  return {
+    tentativas: reservaIds.length,
+    sucesso,
+    falhou: orfas.length,
+    orfas_ids: orfas,
+  };
 }

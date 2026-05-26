@@ -222,7 +222,6 @@ src/
         compras/itens/[itemId]/cancelamento/confirmar/route.ts # Confirm cancelamento (POST)
         compras/itens/[itemId]/equivalente/route.ts           # Propose equivalente SKU (POST)
         compras/itens/[itemId]/equivalente/confirmar/route.ts # Confirm equivalente (POST)
-        compras/itens/[itemId]/trocar-fornecedor/route.ts     # DEPRECATED (POST)
         # ── Cross (14 rotas) ──
         cross/search/route.ts              # GET busca (SKU/OEM/nome)
         cross/produtos/[sku]/route.ts      # GET detalhe (com lazy fetch Tiny)
@@ -853,7 +852,6 @@ Failure to update documentation means the next developer or LLM will work with s
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)
-- Remove deprecated `/api/wms/compras/itens/[itemId]/trocar-fornecedor` (replaced by `compras-equivalencia.ts`)
 - `siso_pedido_item_estoques` — após o cutover só é escrita por inércia (uma linha por pedido×empresa-origem com loc do WMS). Próximo cleanup: descontinuar a tabela e migrar consumidores legados pra ler de `siso_estoque` + ledger.
 
 ### Recently Removed (2026-05-18 — commit `f8b7dbb`)

@@ -167,7 +167,7 @@ src/
         # ── Pedidos ──
         pedidos/route.ts                   # List orders (GET)
         pedidos/tracking/route.ts          # Universal tracking list (GET)
-        pedidos/aprovar/route.ts           # Order approval (POST) — enqueues execution. Em WMS_AS_SOURCE, cria reservas R antes do enqueue (idempotente); 409 se runtime sem cobertura
+        pedidos/aprovar/route.ts           # Order approval (POST) — enqueues execution. Em WMS_AS_SOURCE, cria reservas R antes do enqueue (idempotente); 409 se runtime sem cobertura. decisao='rejeitado' (botão Recusar) marca cancelado + decisao_final='rejeitado' sem enfileirar
         pedidos/[id]/detalhe/route.ts      # Order detail consolidated (GET)
         pedidos/[id]/historico/route.ts    # Order history/audit trail (GET)
         pedidos/[id]/observacoes/route.ts  # Order comments (GET/POST)

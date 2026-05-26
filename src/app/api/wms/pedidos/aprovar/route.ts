@@ -14,6 +14,7 @@ import {
 } from "@/lib/separacao/wms-mapping";
 
 type Decisao = "propria" | "transferencia" | "oc";
+type DecisaoComRejeicao = Decisao | "rejeitado";
 
 /**
  * POST /api/pedidos/aprovar
@@ -21,14 +22,18 @@ type Decisao = "propria" | "transferencia" | "oc";
  * Operator approves a pending order with a decision.
  * Saves the decision, enqueues a stock-posting job, and kicks the worker.
  *
- * Body: { pedidoId, decisao, operadorId?, operadorNome? }
+ * Body: { pedidoId, decisao, operadorId?, operadorNome?, motivo? }
+ *
+ * `decisao === "rejeitado"` is the "Recusar" path — short-circuits everything
+ * (no fila, no reservas), marks pedido cancelado + decisao_final='rejeitado'.
  */
 export async function POST(request: NextRequest) {
   let body: {
     pedidoId?: string;
-    decisao?: Decisao;
+    decisao?: DecisaoComRejeicao;
     operadorId?: string;
     operadorNome?: string;
+    motivo?: string;
   };
 
   try {
@@ -44,6 +49,42 @@ export async function POST(request: NextRequest) {
       { error: "pedidoId e decisao são obrigatórios" },
       { status: 400 },
     );
+  }
+
+  // ── Decisão "rejeitado" (botão Recusar) ─────────────────────────────────
+  // Short-circuit antes da validação/fila/reservas: marca pedido cancelado
+  // + decisao_final='rejeitado' + status_separacao=null, registra evento e
+  // retorna. Nada de fila, nada de reserva, nada de worker.
+  if (decisao === "rejeitado") {
+    const supabase = createServiceClient();
+    const { error: updErr } = await supabase
+      .from("siso_pedidos")
+      .update({
+        decisao_final: "rejeitado",
+        status: "cancelado",
+        status_separacao: null,
+      })
+      .eq("id", pedidoId);
+    if (updErr) {
+      logger.error("aprovar", "Falha ao rejeitar pedido", {
+        pedidoId,
+        err: updErr.message,
+      });
+      return NextResponse.json({ error: updErr.message }, { status: 500 });
+    }
+    registrarEvento({
+      pedidoId,
+      evento: "cancelado",
+      usuarioId: operadorId,
+      usuarioNome: operadorNome,
+      detalhes: { motivo: body.motivo ?? "recusado pelo operador" },
+    }).catch(() => {});
+    logger.info("aprovar", "Pedido rejeitado", {
+      pedidoId,
+      operador: operadorNome,
+      motivo: body.motivo,
+    });
+    return NextResponse.json({ ok: true, pedidoId, decisao: "rejeitado" });
   }
 
   const validDecisoes: Decisao[] = ["propria", "transferencia", "oc"];

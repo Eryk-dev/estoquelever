@@ -319,13 +319,14 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```json
 {
   "pedidoId": "string",
-  "decisao": "propria" | "transferencia" | "oc",
+  "decisao": "propria" | "transferencia" | "oc" | "rejeitado",
   "operadorId": "string | null",
-  "operadorNome": "string | null"
+  "operadorNome": "string | null",
+  "motivo": "string (optional, used when decisao='rejeitado')"
 }
 ```
 
-**Response (200 - Success):**
+**Response (200 - Success, decisao ∈ {propria,transferencia,oc}):**
 ```json
 {
   "ok": true,
@@ -334,6 +335,15 @@ This is the **authoritative, comprehensive reference** for every API route in th
   "filialExecucao": "string",
   "empresaExecucaoId": "string",
   "status": "executando"
+}
+```
+
+**Response (200 - Success, decisao='rejeitado'):**
+```json
+{
+  "ok": true,
+  "pedidoId": "string",
+  "decisao": "rejeitado"
 }
 ```
 
@@ -366,6 +376,11 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```
 
 **Business Logic:**
+- **decisao = "rejeitado" short-circuit (botão Recusar):**
+  - Atualiza pedido: `decisao_final='rejeitado'`, `status='cancelado'`, `status_separacao=null`
+  - Registra evento `cancelado` em `siso_pedido_historico` com `motivo` do body
+  - Não enfileira execução, não cria reservas, não chama worker
+  - Retorna `{ ok: true, decisao: "rejeitado" }`
 - Fetches pedido, validates status = "pendente"
 - Validates empresa_origem_id exists
 - Resolves empresa_origem and determines filial_origem (galpão name)

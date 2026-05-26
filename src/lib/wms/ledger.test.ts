@@ -69,16 +69,23 @@ describe("inserirMovimentacao · uuid validation (defensiva)", () => {
     ).rejects.toThrow(/pedido_id.*esperava uuid.*MAN-abc-123/);
   });
 
-  it("throws quando origem_id é text não-uuid (ex: 'FOO')", async () => {
-    await expect(
-      inserirMovimentacao({
+  it("NÃO valida origem_id como uuid — coluna é text por design (regressão checkbox separação)", async () => {
+    // Convenção: quando origem_tipo ∈ {reserva_pedido, liberacao_reserva},
+    // origem_id carrega siso_pedidos.id (Tiny ID, text). Validar como uuid
+    // quebrou o checkbox de marcar-item após o cutover WMS_AS_SOURCE.
+    let caughtMsg = "";
+    try {
+      await inserirMovimentacao({
         tripla: triplaOk,
-        tipo: "S",
+        tipo: "L",
         qty: 1,
-        origem_tipo: "venda_manual",
-        origem_id: "FOO",
-      }),
-    ).rejects.toThrow(/origem_id.*esperava uuid.*FOO/);
+        origem_tipo: "liberacao_reserva",
+        origem_id: "937897149",
+      });
+    } catch (e) {
+      caughtMsg = e instanceof Error ? e.message : String(e);
+    }
+    expect(caughtMsg).not.toMatch(/origem_id.*esperava uuid/);
   });
 
   it("throws quando empresa_vendedora_id é text não-uuid", async () => {

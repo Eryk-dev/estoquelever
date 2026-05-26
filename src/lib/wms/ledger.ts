@@ -107,10 +107,13 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
   // PostgrestError em uuid inválido vira "[object Object]" no log — caro de
   // debugar. Capturamos antes de chegar na RPC com mensagem clara.
   // IMPORTANTE: roda ANTES de createServiceClient() pra ser testável sem env.
+  // NOTA: `origem_id` é DELIBERADAMENTE text (coluna `siso_movimentacoes.origem_id`
+  // é text por design). Convenção: quando origem_tipo ∈ {reserva_pedido,
+  // liberacao_reserva}, origem_id carrega `siso_pedidos.id` (Tiny ID, text).
+  // Não validamos uuid aqui.
   assertUuidLike(tripla.produto_id, "tripla.produto_id");
   assertUuidLike(tripla.galpao_id, "tripla.galpao_id");
   assertUuidLike(tripla.localizacao_id, "tripla.localizacao_id");
-  assertUuidLike(input.origem_id, "origem_id");
   assertUuidLike(input.estorno_de, "estorno_de");
   assertUuidLike(input.empresa_compradora_id, "empresa_compradora_id");
   assertUuidLike(input.empresa_vendedora_id, "empresa_vendedora_id");

@@ -1079,3 +1079,43 @@ erros:
       - src/app/wms/inventario/[id]/page.tsx
       - src/app/wms/inventario/[id]/contar/page.tsx
     tags: [home, quadro-tarefas, presenca, supabase-realtime, avatar, ux, separacao, embalagem, guarda, inventario]
+
+  - id: wms-marcar-item-origem-id-uuid-validation
+    date: "2026-05-26"
+    source: separacao-marcar-item
+    category: validation
+    message: 'inserirMovimentacao: origem_id esperava uuid mas recebeu "937xxx". Provável causa: passou um ID text (ex: siso_pedidos.id) em campo uuid.'
+    cause: >
+      assertUuidLike(input.origem_id, "origem_id") em src/lib/wms/ledger.ts:113
+      rejeitava pedido_id text (Tiny ID, ex: "937897149") passado por
+      liberarReservaPicking → inserirMovimentacao. A coluna
+      siso_movimentacoes.origem_id é text por design e a convenção do
+      código é: quando origem_tipo ∈ {reserva_pedido, liberacao_reserva},
+      origem_id carrega o siso_pedidos.id (Tiny ID). A validação foi
+      adicionada sem considerar essa convenção.
+      Efeito visível: operador clica checkbox no marcar-item, o try/catch
+      externo em route.ts:170 engole o throw com warn "Mov WMS skipped",
+      mas marca separacao_marcado=true sem criar mov S/L. Resultado:
+      reserva R fica órfã na loc (estoque não foi deduzido), pedido segue
+      como "separado". Afetou 49 pedidos entre o cutover WMS_AS_SOURCE
+      (25/05 19:18) e a fix (26/05).
+    fix: >
+      Removido o assertUuidLike de origem_id em ledger.ts. Comentário
+      atualizado explicando que origem_id é text por design.
+      Os outros 11 assertUuidLike (produto_id, galpao_id, empresa_*,
+      pedido_id da FK lógica, etc) continuam — proteção real contra bugs.
+      Teste em ledger.test.ts:72 convertido de "throws com FOO" pra
+      "NÃO valida origem_id como uuid" (regressão).
+      Outros call sites adjacentes que ficavam quebrados pela mesma raiz
+      (reservas.ts:77 liberar por NF, reservas-picking.ts:158 cascade
+      parcial, execution-worker-wms.ts:129,142 cutover do concluir)
+      passam a funcionar.
+    files:
+      - src/lib/wms/ledger.ts
+      - src/lib/wms/ledger.test.ts
+    tags: [wms, separacao, marcar-item, reserva, ledger, assertUuidLike, origem_id, cutover, wms-as-source]
+    notes: >
+      Estado herdado: 49 itens em 49 pedidos com separacao_marcado=true,
+      mov_saida_id=null, sem mov S/L, reservas R órfãs. Reconciliação
+      manual pendente — exige plano separado (status_separacao já está
+      em "separado", fora da whitelist do marcar-item).

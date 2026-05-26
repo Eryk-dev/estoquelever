@@ -125,6 +125,72 @@ export async function POST(request: NextRequest) {
     // mov_ajuste_loc_zerou_id NUNCA é estornado por design — reflete descoberta física.
     // Espelha cancelar/route.ts:79-80 e a spec original (invariantes).
 
+    // Estorna L's (liberacao_reserva) — cria R nova com estorno_de=L,
+    // reconstitui o reservado original. Idempotente: full estorno falha se
+    // L já foi estornado, mas warn-and-continue evita travar o desfazer.
+    const { data: linksL } = await supabase
+      .from("siso_pedido_item_mov_links")
+      .select("id, mov_id")
+      .eq("pedido_item_id", item.id)
+      .eq("tipo_link", "liberacao_reserva");
+
+    for (const link of linksL ?? []) {
+      try {
+        await estornarMovimentacao({
+          mov_id: link.mov_id as string,
+          usuario_id: session.id,
+          motivo: "Desfazer parcial — estorna L (recria reserva)",
+        });
+      } catch (e) {
+        logger.warn("separacao-desfazer-parcial", "Falhou estornar L (continua)", {
+          mov_id: link.mov_id,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+    if ((linksL?.length ?? 0) > 0) {
+      await supabase
+        .from("siso_pedido_item_mov_links")
+        .delete()
+        .in(
+          "id",
+          (linksL ?? []).map((l) => l.id as string),
+        );
+    }
+
+    // Estorna R cascade — cria L com estorno_de=R, zera o reservado cascade.
+    // Importante: roda antes de cancelar as realocações pendentes (o cancel
+    // não estorna ledger; a R só some via estorno explícito aqui).
+    const { data: linksRCascade } = await supabase
+      .from("siso_pedido_item_mov_links")
+      .select("id, mov_id")
+      .eq("pedido_item_id", item.id)
+      .eq("tipo_link", "reserva_cascade");
+
+    for (const link of linksRCascade ?? []) {
+      try {
+        await estornarMovimentacao({
+          mov_id: link.mov_id as string,
+          usuario_id: session.id,
+          motivo: "Desfazer parcial — estorna R cascade",
+        });
+      } catch (e) {
+        logger.warn("separacao-desfazer-parcial", "Falhou estornar R cascade (continua)", {
+          mov_id: link.mov_id,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+    if ((linksRCascade?.length ?? 0) > 0) {
+      await supabase
+        .from("siso_pedido_item_mov_links")
+        .delete()
+        .in(
+          "id",
+          (linksRCascade ?? []).map((l) => l.id as string),
+        );
+    }
+
     // Cancela realocações pendentes
     await supabase
       .from("siso_pedido_item_realocacoes")

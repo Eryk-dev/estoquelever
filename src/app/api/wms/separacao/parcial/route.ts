@@ -3,6 +3,12 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
+import {
+  buscarReservaPendente,
+  liberarReservaPicking,
+  criarReservaCascade,
+  type ReservaPendenteRow,
+} from "@/lib/wms/reservas-picking";
 import { registrarEvento } from "@/lib/historico-service";
 import { resolverProdutoWms, resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
 import { resolverRealocacao } from "@/lib/separacao/realocacao-resolver";
@@ -242,6 +248,50 @@ async function processarParcialItem(
     //    com lista completa de items cobertos em origem_detalhes pra rastreabilidade.
     const itemIdsList = itemsRaw.map((it) => Number(it.id));
 
+    // 7a. R↔L↔S pairing: pra cada pedido_id do wave, libera 100% da R
+    // criada no aprovar nessa loc original. Mesmo que pegamos só X<Y
+    // unidades, a R original perde sentido inteira porque a loc esvaziou
+    // (ou estamos forçando a saída parcial). O cascade re-emite R nas
+    // locs destino pra qty residual.
+    const liberacoesPorPedido = new Map<string, { reserva: ReservaPendenteRow; movL_id: string }>();
+    for (const pid of pedidoIds) {
+      try {
+        const r = await buscarReservaPendente({
+          pedido_id: String(pid),
+          tripla: {
+            produto_id: produtoWmsId,
+            galpao_id: galpaoId,
+            localizacao_id: locOriginalId,
+          },
+        });
+        if (!r) {
+          logger.warn("separacao-parcial", "R pendente não encontrada — pedido sem reserva", {
+            pedido_id: pid,
+            tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: locOriginalId },
+          });
+          continue;
+        }
+        const pedidoNumero = pedidoById.get(pid)?.numero;
+        const movL = await liberarReservaPicking({
+          reserva: r,
+          qty: Number(r.quantidade),
+          pedido_id: String(pid),
+          motivo: `Picking parcial pedido #${pedidoNumero ?? "?"} — libera reserva (loc esgotada)`,
+          usuario_id: session.id,
+          origem_detalhes: {
+            pedido_numero: pedidoNumero,
+            contexto: itemsRaw.length > 1 ? "parcial_consolidado" : "parcial",
+          },
+        });
+        liberacoesPorPedido.set(pid, { reserva: r, movL_id: movL.id });
+      } catch (libErr) {
+        logger.warn("separacao-parcial", "Falhou liberar R pendente (continua)", {
+          error: libErr instanceof Error ? libErr.message : String(libErr),
+          pedido_id: pid,
+        });
+      }
+    }
+
     let movSaidaId: string | null = null;
     if (quantidade_pega > 0) {
       const mov = await inserirMovimentacao({
@@ -399,6 +449,40 @@ async function processarParcialItem(
       }
     }
 
+    // 9c. Links das liberações de R (1 por pedido do wave). Linka no primeiro
+    //     item do pedido (qualquer item serve — é metadata pra desfazer reverter).
+    if (liberacoesPorPedido.size > 0) {
+      const linksLib: Array<{
+        pedido_item_id: number;
+        realocacao_id: null;
+        mov_id: string;
+        qty: number;
+        tipo_link: "liberacao_reserva";
+      }> = [];
+      for (const [pid, info] of liberacoesPorPedido) {
+        const primeiroItemDoPedido = itemsRaw.find((it) => it.pedido_id === pid);
+        if (!primeiroItemDoPedido) continue;
+        linksLib.push({
+          pedido_item_id: Number(primeiroItemDoPedido.id),
+          realocacao_id: null,
+          mov_id: info.movL_id,
+          qty: Number(info.reserva.quantidade),
+          tipo_link: "liberacao_reserva",
+        });
+      }
+      if (linksLib.length > 0) {
+        const { error: linkLibErr } = await supabase
+          .from("siso_pedido_item_mov_links")
+          .insert(linksLib);
+        if (linkLibErr) {
+          logger.warn("separacao-parcial-item", "Falhou criar links de liberação (continua)", {
+            error: linkLibErr.message,
+            linksLib,
+          });
+        }
+      }
+    }
+
     // C4: 2-pass atomic claim — evita drift mid-loop quando race acontece
     // numa iteração N>1 (iterações 1..N-1 já estavam committed no padrão antigo).
     //
@@ -544,11 +628,31 @@ async function processarParcialItem(
           });
         }
       }
-      if (movSaidaId) {
-        await supabase.from("siso_pedido_item_mov_links").delete().eq("mov_id", movSaidaId);
+      // Estorna L's das liberações de R (cria R nova com estorno_de=L)
+      for (const [pid, info] of liberacoesPorPedido) {
+        try {
+          await estornarMovimentacao({
+            mov_id: info.movL_id,
+            usuario_id: session.id,
+            motivo: "Race condition (libera L par)",
+          });
+        } catch (e: unknown) {
+          logger.warn("separacao-parcial", "rollback estorno L falhou", {
+            pedido_id: pid,
+            error: (e as Error).message,
+          });
+        }
       }
-      if (movAjusteId) {
-        await supabase.from("siso_pedido_item_mov_links").delete().eq("mov_id", movAjusteId);
+      const movIdsRollback = [
+        movSaidaId,
+        movAjusteId,
+        ...Array.from(liberacoesPorPedido.values()).map((info) => info.movL_id),
+      ].filter((id): id is string => !!id);
+      if (movIdsRollback.length > 0) {
+        await supabase
+          .from("siso_pedido_item_mov_links")
+          .delete()
+          .in("mov_id", movIdsRollback);
       }
       // Reverte marker fields de Pass A pras rows efetivamente claimed.
       // Pass B nunca rodou (skipped por racePerdida), então só os markers de
@@ -764,6 +868,70 @@ async function processarParcialItem(
       return NextResponse.json({ error: "erro criando realocações" }, { status: 500 });
     }
 
+    // Pra cada realocação criada, emite R cascade na loc destino. Isso preserva
+    // o invariante "reservado_total_pedido = qty_residual_não_atendido" — quando
+    // marcar-realocacao executar, vai liberar essa R pareada com a saída.
+    const cascadeLinks: Array<{
+      pedido_item_id: number;
+      realocacao_id: string;
+      mov_id: string;
+      qty: number;
+      tipo_link: "reserva_cascade";
+    }> = [];
+    for (const c of criadas ?? []) {
+      const itemDaRealoc = itemsRaw.find((it) => it.id === c.pedido_item_id);
+      const pedidoDaRealoc = itemDaRealoc
+        ? pedidoById.get(itemDaRealoc.pedido_id)
+        : null;
+      if (!itemDaRealoc || !pedidoDaRealoc) {
+        logger.warn("separacao-parcial", "Realoc sem item/pedido pra R cascade", {
+          realocacao_id: c.id,
+        });
+        continue;
+      }
+      try {
+        const movR = await criarReservaCascade({
+          tripla: {
+            produto_id: produtoWmsId,
+            galpao_id: galpaoId,
+            localizacao_id: c.localizacao_id as string,
+          },
+          qty: Number(c.quantidade),
+          pedido_id: String(pedidoDaRealoc.id),
+          usuario_id: session.id,
+          motivo: `Reserva cascade pedido #${pedidoDaRealoc.numero} (loc original esgotou)`,
+          origem_detalhes: {
+            realocacao_id: c.id,
+            pedido_numero: pedidoDaRealoc.numero,
+            sku: itemDaRealoc.sku,
+            loc_origem_id: locOriginalId,
+          },
+        });
+        cascadeLinks.push({
+          pedido_item_id: Number(c.pedido_item_id),
+          realocacao_id: c.id as string,
+          mov_id: movR.id,
+          qty: Number(c.quantidade),
+          tipo_link: "reserva_cascade",
+        });
+      } catch (cascadeErr) {
+        logger.warn("separacao-parcial", "Falhou criar R cascade (continua)", {
+          realocacao_id: c.id,
+          error: cascadeErr instanceof Error ? cascadeErr.message : String(cascadeErr),
+        });
+      }
+    }
+    if (cascadeLinks.length > 0) {
+      const { error: linkCascadeErr } = await supabase
+        .from("siso_pedido_item_mov_links")
+        .insert(cascadeLinks);
+      if (linkCascadeErr) {
+        logger.warn("separacao-parcial", "Falhou criar links cascade (continua)", {
+          error: linkCascadeErr.message,
+        });
+      }
+    }
+
     return NextResponse.json({
       status: "realocado",
       realocacoes: (criadas ?? []).map((c) => ({
@@ -932,6 +1100,64 @@ async function processarParcialRealocacao(
     void empresaDonaId;
     void isEmprestimo;
     void empresaDevedoraId;
+
+    // 7a. R↔L↔S pairing: pra cada pedido único do batch de realocs, libera
+    // 100% da R cascade que estava nessa loc. Cada modo-item anterior criou
+    // uma R por realoc; aqui consolidamos em 1 L por pedido (idempotente:
+    // buscarReservaPendente já filtra L existente).
+    const liberacoesRealocPorPedido = new Map<
+      string,
+      { reserva: ReservaPendenteRow; movL_id: string }
+    >();
+    for (const pid of pedidoIds) {
+      try {
+        const r = await buscarReservaPendente({
+          pedido_id: String(pid),
+          tripla: {
+            produto_id: produtoWmsId,
+            galpao_id: galpaoId,
+            localizacao_id: localizacaoId,
+          },
+        });
+        if (!r) {
+          logger.warn(
+            "separacao-parcial-realoc",
+            "R cascade pendente não encontrada — pedido sem reserva",
+            {
+              pedido_id: pid,
+              tripla: {
+                produto_id: produtoWmsId,
+                galpao_id: galpaoId,
+                localizacao_id: localizacaoId,
+              },
+            },
+          );
+          continue;
+        }
+        const pedidoNumero = pedidoById.get(pid)?.numero;
+        const movL = await liberarReservaPicking({
+          reserva: r,
+          qty: Number(r.quantidade),
+          pedido_id: String(pid),
+          motivo: `Picking parcial realoc pedido #${pedidoNumero ?? "?"} — libera R cascade`,
+          usuario_id: session.id,
+          origem_detalhes: {
+            pedido_numero: pedidoNumero,
+            contexto:
+              realocs.length > 1
+                ? "realocacao_parcial_consolidado"
+                : "realocacao_parcial",
+          },
+        });
+        liberacoesRealocPorPedido.set(pid, { reserva: r, movL_id: movL.id });
+      } catch (libErr) {
+        logger.warn("separacao-parcial-realoc", "Falhou liberar R cascade (continua)", {
+          error: libErr instanceof Error ? libErr.message : String(libErr),
+          pedido_id: pid,
+        });
+      }
+    }
+
     let movSaidaId: string | null = null;
     if (quantidade_pega > 0) {
       const mov = await inserirMovimentacao({
@@ -1083,6 +1309,45 @@ async function processarParcialRealocacao(
             metadata: { movAjusteId, delta },
           });
           return NextResponse.json({ error: "erro persistindo links" }, { status: 500 });
+        }
+      }
+    }
+
+    // 8c. Links das liberações de R cascade (1 por pedido do batch).
+    if (liberacoesRealocPorPedido.size > 0) {
+      const linksLibRealoc: Array<{
+        pedido_item_id: number;
+        realocacao_id: string;
+        mov_id: string;
+        qty: number;
+        tipo_link: "liberacao_reserva";
+      }> = [];
+      for (const [pid, info] of liberacoesRealocPorPedido) {
+        const primeiraRealocDoPedido = realocs.find((r) => {
+          const it = itemById.get(r.pedido_item_id);
+          return it?.pedido_id === pid;
+        });
+        if (!primeiraRealocDoPedido) continue;
+        linksLibRealoc.push({
+          pedido_item_id: Number(primeiraRealocDoPedido.pedido_item_id),
+          realocacao_id: primeiraRealocDoPedido.id,
+          mov_id: info.movL_id,
+          qty: Number(info.reserva.quantidade),
+          tipo_link: "liberacao_reserva",
+        });
+      }
+      if (linksLibRealoc.length > 0) {
+        const { error: linkLibErr } = await supabase
+          .from("siso_pedido_item_mov_links")
+          .insert(linksLibRealoc);
+        if (linkLibErr) {
+          logger.warn(
+            "separacao-parcial-realoc",
+            "Falhou criar links de liberação (continua)",
+            {
+              error: linkLibErr.message,
+            },
+          );
         }
       }
     }
@@ -1245,11 +1510,31 @@ async function processarParcialRealocacao(
           });
         }
       }
-      if (movSaidaId) {
-        await supabase.from("siso_pedido_item_mov_links").delete().eq("mov_id", movSaidaId);
+      // Estorna L's das liberações de R cascade
+      for (const [pid, info] of liberacoesRealocPorPedido) {
+        try {
+          await estornarMovimentacao({
+            mov_id: info.movL_id,
+            usuario_id: session.id,
+            motivo: "Race condition (libera L par)",
+          });
+        } catch (e: unknown) {
+          logger.warn("separacao-parcial-realoc", "rollback estorno L falhou", {
+            pedido_id: pid,
+            error: (e as Error).message,
+          });
+        }
       }
-      if (movAjusteId) {
-        await supabase.from("siso_pedido_item_mov_links").delete().eq("mov_id", movAjusteId);
+      const movIdsRollback = [
+        movSaidaId,
+        movAjusteId,
+        ...Array.from(liberacoesRealocPorPedido.values()).map((info) => info.movL_id),
+      ].filter((id): id is string => !!id);
+      if (movIdsRollback.length > 0) {
+        await supabase
+          .from("siso_pedido_item_mov_links")
+          .delete()
+          .in("mov_id", movIdsRollback);
       }
       // Reverte marker fields de Pass A pras rows efetivamente claimed.
       // Pass B nunca rodou (skipped por racePerdida), então só os markers de
@@ -1458,6 +1743,72 @@ async function processarParcialRealocacao(
         metadata: { realocacao_ids: realocIdsList, rows: linhasInsertTotais },
       });
       return NextResponse.json({ error: "erro criando realocações" }, { status: 500 });
+    }
+
+    // Pra cada realocação filha criada, emite R cascade nessa loc destino
+    // (mesmo padrão do modo item). Mantém o invariante reservado = qty residual
+    // pendente até o final do picking.
+    const cascadeLinksRealoc: Array<{
+      pedido_item_id: number;
+      realocacao_id: string;
+      mov_id: string;
+      qty: number;
+      tipo_link: "reserva_cascade";
+    }> = [];
+    for (const c of criadas ?? []) {
+      const itemDaFilha = itemById.get(c.pedido_item_id);
+      const pedidoDaFilha = itemDaFilha
+        ? pedidoById.get(itemDaFilha.pedido_id)
+        : null;
+      if (!itemDaFilha || !pedidoDaFilha) {
+        logger.warn("separacao-parcial-realoc", "Filha sem item/pedido pra R cascade", {
+          realocacao_id: c.id,
+        });
+        continue;
+      }
+      try {
+        const movR = await criarReservaCascade({
+          tripla: {
+            produto_id: produtoWmsId,
+            galpao_id: galpaoId,
+            localizacao_id: c.localizacao_id as string,
+          },
+          qty: Number(c.quantidade),
+          pedido_id: String(pedidoDaFilha.id),
+          usuario_id: session.id,
+          motivo: `Reserva cascade pedido #${pedidoDaFilha.numero} (chain de realocação)`,
+          origem_detalhes: {
+            realocacao_id: c.id,
+            parent_realocacao_id: c.parent_realocacao_id,
+            pedido_numero: pedidoDaFilha.numero,
+            sku: itemDaFilha.sku,
+          },
+        });
+        cascadeLinksRealoc.push({
+          pedido_item_id: Number(c.pedido_item_id),
+          realocacao_id: c.id as string,
+          mov_id: movR.id,
+          qty: Number(c.quantidade),
+          tipo_link: "reserva_cascade",
+        });
+      } catch (cascadeErr) {
+        logger.warn("separacao-parcial-realoc", "Falhou criar R cascade filha (continua)", {
+          realocacao_id: c.id,
+          error: cascadeErr instanceof Error ? cascadeErr.message : String(cascadeErr),
+        });
+      }
+    }
+    if (cascadeLinksRealoc.length > 0) {
+      const { error: linkCascadeErr } = await supabase
+        .from("siso_pedido_item_mov_links")
+        .insert(cascadeLinksRealoc);
+      if (linkCascadeErr) {
+        logger.warn(
+          "separacao-parcial-realoc",
+          "Falhou criar links cascade filhas (continua)",
+          { error: linkCascadeErr.message },
+        );
+      }
     }
 
     // Conta filhas criadas por parent pra evento cascade

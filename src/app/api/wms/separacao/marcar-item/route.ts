@@ -4,6 +4,10 @@ import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import {
+  buscarReservaPendente,
+  liberarReservaPicking,
+} from "@/lib/wms/reservas-picking";
+import {
   resolverProdutoWms,
   resolverLocalizacaoWms,
   buscarLocComMaiorSaldoNoGalpao,
@@ -74,6 +78,10 @@ export async function POST(request: NextRequest) {
 
     if (marcado) {
       let movSaidaId: string | null = null;
+      let movLiberacaoId: string | null = null;
+      let triplaProdutoWmsId: string | null = null;
+      let triplaLocId: string | null = null;
+
       if (empresaOrigemId && galpaoId) {
         try {
           const produtoWmsId = await resolverProdutoWms(
@@ -99,6 +107,44 @@ export async function POST(request: NextRequest) {
             locId = liveLocId ?? (await resolverLocalizacaoWms(galpaoId, null));
           }
 
+          triplaProdutoWmsId = produtoWmsId;
+          triplaLocId = locId;
+
+          // R↔L↔S pairing: busca a R criada no aprovar pra essa tripla
+          // e libera ela junto com a saída. Sem isso, a reserva fica
+          // órfã e o cutover do concluir duplica a baixa.
+          const reserva = await buscarReservaPendente({
+            pedido_id: String(pedido.id),
+            tripla: {
+              produto_id: produtoWmsId,
+              galpao_id: galpaoId,
+              localizacao_id: locId,
+            },
+          });
+
+          if (reserva) {
+            const movL = await liberarReservaPicking({
+              reserva,
+              qty: item.quantidade_pedida,
+              pedido_id: String(pedido.id),
+              motivo: `Picking pedido #${pedido.numero} — libera reserva (checkbox)`,
+              usuario_id: session.id,
+              origem_detalhes: {
+                pedido_numero: pedido.numero,
+                pedido_item_id: item.id,
+                sku: item.sku,
+                contexto: "checkbox",
+              },
+            });
+            movLiberacaoId = movL.id;
+          } else {
+            logger.warn("separacao-marcar-item", "R não encontrada — S sem L par", {
+              pedido_item_id,
+              pedido_id: pedido.id,
+              tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: locId },
+            });
+          }
+
           const mov = await inserirMovimentacao({
             tripla: {
               produto_id: produtoWmsId,
@@ -114,6 +160,7 @@ export async function POST(request: NextRequest) {
               pedido_item_id: item.id,
               sku: item.sku,
               contexto: "checkbox",
+              reserva_origem: reserva?.id ?? null,
             },
             empresa_vendedora_id: empresaOrigemId,
             motivo: `Picking pedido #${pedido.numero} — checkbox completo`,
@@ -127,6 +174,48 @@ export async function POST(request: NextRequest) {
           });
         }
       }
+
+      // Tabela ponte: registra L (liberacao_reserva) + S (saida) pareados.
+      // desfazer-parcial / cancelar usam essas linhas pra estornar tudo.
+      if (movSaidaId || movLiberacaoId) {
+        const links: Array<{
+          pedido_item_id: number;
+          realocacao_id: null;
+          mov_id: string;
+          qty: number;
+          tipo_link: "saida" | "liberacao_reserva";
+        }> = [];
+        if (movLiberacaoId) {
+          links.push({
+            pedido_item_id: Number(item.id),
+            realocacao_id: null,
+            mov_id: movLiberacaoId,
+            qty: Number(item.quantidade_pedida),
+            tipo_link: "liberacao_reserva",
+          });
+        }
+        if (movSaidaId) {
+          links.push({
+            pedido_item_id: Number(item.id),
+            realocacao_id: null,
+            mov_id: movSaidaId,
+            qty: Number(item.quantidade_pedida),
+            tipo_link: "saida",
+          });
+        }
+        const { error: linkErr } = await supabase
+          .from("siso_pedido_item_mov_links")
+          .insert(links);
+        if (linkErr) {
+          logger.warn("separacao-marcar-item", "Falhou criar links (continua)", {
+            error: linkErr.message,
+            pedido_item_id,
+          });
+        }
+      }
+
+      void triplaProdutoWmsId;
+      void triplaLocId;
 
       const { data: updated, error: updErr } = await supabase
         .from("siso_pedido_itens")
@@ -144,15 +233,48 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json(updated);
     } else {
-      if (item.mov_saida_id) {
+      // Desmarcar: estorna S e L pareados via tabela ponte.
+      // - Estornar S cria E counter → saldo volta
+      // - Estornar L cria R nova → reservado volta
+      const { data: links } = await supabase
+        .from("siso_pedido_item_mov_links")
+        .select("id, mov_id, tipo_link")
+        .eq("pedido_item_id", item.id)
+        .in("tipo_link", ["saida", "liberacao_reserva"]);
+
+      for (const link of links ?? []) {
+        try {
+          await estornarMovimentacao({
+            mov_id: link.mov_id as string,
+            usuario_id: session.id,
+            motivo: `Desmarcar checkbox (${link.tipo_link})`,
+          });
+        } catch (estornoErr) {
+          logger.warn("separacao-marcar-item", "Estorno WMS falhou", {
+            error: estornoErr instanceof Error ? estornoErr.message : String(estornoErr),
+            mov_id: link.mov_id,
+            tipo_link: link.tipo_link,
+          });
+        }
+      }
+      if ((links?.length ?? 0) > 0) {
+        await supabase
+          .from("siso_pedido_item_mov_links")
+          .delete()
+          .in(
+            "id",
+            (links ?? []).map((l) => l.id as string),
+          );
+      } else if (item.mov_saida_id) {
+        // Legacy fallback: items pré-fix sem entrada na tabela ponte
         try {
           await estornarMovimentacao({
             mov_id: item.mov_saida_id,
             usuario_id: session.id,
-            motivo: "Desmarcar checkbox",
+            motivo: "Desmarcar checkbox (legacy path)",
           });
         } catch (estornoErr) {
-          logger.warn("separacao-marcar-item", "Estorno WMS falhou", {
+          logger.warn("separacao-marcar-item", "Estorno legacy falhou", {
             error: estornoErr instanceof Error ? estornoErr.message : String(estornoErr),
             mov_id: item.mov_saida_id,
           });

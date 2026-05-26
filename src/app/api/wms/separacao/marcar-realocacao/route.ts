@@ -3,6 +3,10 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
+import {
+  buscarReservaPendente,
+  liberarReservaPicking,
+} from "@/lib/wms/reservas-picking";
 import { registrarEvento } from "@/lib/historico-service";
 import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
 
@@ -74,6 +78,46 @@ export async function POST(request: NextRequest) {
       String(item.produto_id),
     );
 
+    // R↔L↔S pairing: cascade do parcial criou R nova nessa tripla quando
+    // a loc original esvaziou. Libera ela junto com a saída pra reservado
+    // bater no concluir.
+    const reserva = await buscarReservaPendente({
+      pedido_id: String(pedido.id),
+      tripla: {
+        produto_id: produtoWmsId,
+        galpao_id: realoc.galpao_id,
+        localizacao_id: realoc.localizacao_id,
+      },
+    });
+    let movLiberacaoId: string | null = null;
+    if (reserva) {
+      const movL = await liberarReservaPicking({
+        reserva,
+        qty: Number(realoc.quantidade),
+        pedido_id: String(pedido.id),
+        motivo: `Picking pedido #${pedido.numero} — libera R cascade`,
+        usuario_id: session.id,
+        origem_detalhes: {
+          pedido_numero: pedido.numero,
+          pedido_item_id: item.id,
+          realocacao_id: realoc.id,
+          sku: item.sku,
+          contexto: "realocacao",
+        },
+      });
+      movLiberacaoId = movL.id;
+    } else {
+      logger.warn("separacao-marcar-realocacao", "R cascade não encontrada — S sem L par", {
+        realocacao_id: realoc.id,
+        pedido_id: pedido.id,
+        tripla: {
+          produto_id: produtoWmsId,
+          galpao_id: realoc.galpao_id,
+          localizacao_id: realoc.localizacao_id,
+        },
+      });
+    }
+
     const mov = await inserirMovimentacao({
       tripla: {
         produto_id: produtoWmsId,
@@ -90,22 +134,41 @@ export async function POST(request: NextRequest) {
         realocacao_id: realoc.id,
         sku: item.sku,
         contexto: "realocacao",
+        reserva_origem: reserva?.id ?? null,
       },
       empresa_vendedora_id: empresaVendedoraId,
       motivo: `Picking pedido #${pedido.numero} — realocação`,
       usuario_id: session.id,
     });
 
-    // Tabela ponte: 1 link por mov de saída de realocação picada.
-    const { error: linkErr } = await supabase
-      .from("siso_pedido_item_mov_links")
-      .insert({
+    // Tabela ponte: link S (saida) + L (liberacao_reserva) pareados.
+    const linksRealoc: Array<{
+      pedido_item_id: number;
+      realocacao_id: string;
+      mov_id: string;
+      qty: number;
+      tipo_link: "saida" | "liberacao_reserva";
+    }> = [
+      {
         pedido_item_id: Number(realoc.pedido_item_id),
         realocacao_id: realoc.id,
         mov_id: mov.id,
         qty: Number(realoc.quantidade),
         tipo_link: "saida",
+      },
+    ];
+    if (movLiberacaoId) {
+      linksRealoc.push({
+        pedido_item_id: Number(realoc.pedido_item_id),
+        realocacao_id: realoc.id,
+        mov_id: movLiberacaoId,
+        qty: Number(realoc.quantidade),
+        tipo_link: "liberacao_reserva",
       });
+    }
+    const { error: linkErr } = await supabase
+      .from("siso_pedido_item_mov_links")
+      .insert(linksRealoc);
     if (linkErr) {
       logger.logError({
         error: linkErr,
@@ -114,7 +177,7 @@ export async function POST(request: NextRequest) {
         category: "database",
         requestPath: "/api/wms/separacao/marcar-realocacao",
         requestMethod: "POST",
-        metadata: { realocacao_id: realoc.id, mov_id: mov.id },
+        metadata: { realocacao_id: realoc.id, mov_id: mov.id, movLiberacaoId },
       });
       return NextResponse.json({ error: "erro persistindo link" }, { status: 500 });
     }
@@ -149,7 +212,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!claimed || claimed.length === 0) {
-      // Race: rollback (estornar mov + delete bridge link)
+      // Race: rollback (estornar mov S + L + delete bridge links)
       try {
         await estornarMovimentacao({
           mov_id: mov.id,
@@ -157,14 +220,28 @@ export async function POST(request: NextRequest) {
           motivo: "Race condition — outro operador picou primeiro",
         });
       } catch (e: unknown) {
-        logger.warn("separacao-marcar-realocacao", "rollback estorno falhou", {
+        logger.warn("separacao-marcar-realocacao", "rollback estorno S falhou", {
           error: (e as Error).message,
         });
       }
+      if (movLiberacaoId) {
+        try {
+          await estornarMovimentacao({
+            mov_id: movLiberacaoId,
+            usuario_id: session.id,
+            motivo: "Race condition (estorna L par)",
+          });
+        } catch (e: unknown) {
+          logger.warn("separacao-marcar-realocacao", "rollback estorno L falhou", {
+            error: (e as Error).message,
+          });
+        }
+      }
+      const movIdsRollback = movLiberacaoId ? [mov.id, movLiberacaoId] : [mov.id];
       await supabase
         .from("siso_pedido_item_mov_links")
         .delete()
-        .eq("mov_id", mov.id);
+        .in("mov_id", movIdsRollback);
       return NextResponse.json(
         {
           error: "realocacao_ja_picada",

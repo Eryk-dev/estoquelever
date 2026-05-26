@@ -207,6 +207,7 @@ export async function estornarLiberacaoReserva(opts: {
   pedido_id: string;
   usuario_id: string;
   motivo?: string;
+  ttl_horas?: number;
 }): Promise<Movimentacao> {
   const sb = createServiceClient();
 
@@ -234,6 +235,11 @@ export async function estornarLiberacaoReserva(opts: {
     return existente as unknown as Movimentacao;
   }
 
+  // wms_inserir_movimentacao exige expira_em em movs tipo R (CHECK constraint).
+  // Alinhado com criarReservaCascade e webhook-processor-wms: 30 dias.
+  const ttlHoras = opts.ttl_horas ?? 24 * 30;
+  const expira = new Date(Date.now() + ttlHoras * 3600 * 1000).toISOString();
+
   return inserirMovimentacao({
     tripla: {
       produto_id: l.produto_id as string,
@@ -248,6 +254,7 @@ export async function estornarLiberacaoReserva(opts: {
       contexto: "estorno_liberacao",
       estorno_de_L: opts.liberacao_mov_id,
     },
+    expira_em: expira,
     estorno_de: opts.liberacao_mov_id,
     motivo: opts.motivo ?? `Ressuscita reserva — estorno de L ${opts.liberacao_mov_id}`,
     usuario_id: opts.usuario_id,

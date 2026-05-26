@@ -1183,3 +1183,29 @@ erros:
     files:
       - src/app/api/wms/pedidos/aprovar/route.ts
     tags: [wms, aprovar, idempotencia, reserva, ledger-imutavel, reset]
+
+  - id: wms-estornar-liberacao-reserva-exige-expira-em
+    date: "2026-05-26"
+    source: separacao-marcar-item
+    category: validation
+    message: 'reserva (tipo R) exige expira_em (P0001 do wms_inserir_movimentacao)'
+    cause: >
+      O helper estornarLiberacaoReserva (commit 209253c) chamava inserirMovimentacao
+      criando tipo='R' sem passar expira_em. O RPC wms_inserir_movimentacao tem
+      CHECK constraint exigindo expira_em NOT NULL pra movs tipo R. Toda
+      desmarcação falhava silenciosamente (try/catch externo logava warn
+      mas continuava deletando os links + marcando o item como desmarcado).
+      Sintoma: reservado não voltava ao desmarcar checkbox; UI só mostrava
+      o E counter da saída.
+      Erro de log adicional: PostgrestError não estende Error, e o catch
+      antigo fazia String(err) que retornava "[object Object]" — escondendo
+      a mensagem real ("reserva (tipo R) exige expira_em").
+    fix: >
+      estornarLiberacaoReserva passa expira_em = now() + 30 dias (alinhado
+      com criarReservaCascade e webhook-processor-wms). Catch no marcar-item
+      foi melhorado pra extrair .message de objetos com essa propriedade,
+      evitando "[object Object]" em logs futuros.
+    files:
+      - src/lib/wms/reservas-picking.ts
+      - src/app/api/wms/separacao/marcar-item/route.ts
+    tags: [wms, separacao, marcar-item, desmarcar, reserva, expira_em, postgrest-error]

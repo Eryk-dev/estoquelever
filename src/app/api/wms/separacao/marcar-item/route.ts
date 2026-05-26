@@ -264,8 +264,16 @@ export async function POST(request: NextRequest) {
             });
           }
         } catch (estornoErr) {
+          // PostgrestError não estende Error — vira "[object Object]" em String().
+          // Extraímos .message do objeto pra ter erro real no log.
+          const errMsg =
+            estornoErr instanceof Error
+              ? estornoErr.message
+              : typeof estornoErr === "object" && estornoErr !== null && "message" in estornoErr
+                ? String((estornoErr as { message: unknown }).message)
+                : String(estornoErr);
           logger.warn("separacao-marcar-item", "Estorno WMS falhou", {
-            error: estornoErr instanceof Error ? estornoErr.message : String(estornoErr),
+            error: errMsg,
             mov_id: link.mov_id,
             tipo_link: link.tipo_link,
           });

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao } from "./ledger";
 import { logger } from "@/lib/logger";
@@ -108,6 +109,11 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
   const d = dev as DevRow;
   if (d.status !== "aguardando_classificacao") throw new Error("já classificada");
 
+  // [#P6-6.17] origem_id compartilhado entre todas as movs do mesmo
+  // classify (Classe B = par S+E quarentena; Classe C = E + S fornecedor).
+  // Permite agrupar movs do mesmo evento no ledger pra auditoria/relatórios.
+  const origemCompartilhado = randomUUID();
+
   let empresaReferenciaId = input.empresa_referencia_id ?? null;
   if (!empresaReferenciaId && d.pedido_origem_mov_id) {
     const { data: mov } = await sb
@@ -159,6 +165,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         tipo: "E",
         qty: input.qty,
         origem_tipo: "devolucao_cliente_integra",
+        origem_id: origemCompartilhado,
         nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
         custo_unitario: custoUnitarioOriginal,
@@ -175,6 +182,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         tipo: "E",
         qty: input.qty,
         origem_tipo: "devolucao_cliente_avariada",
+        origem_id: origemCompartilhado,
         nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
         usuario_id: input.usuario_id,
@@ -198,6 +206,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           tipo: "S",
           qty: input.qty,
           origem_tipo: "transferencia_localizacao",
+          origem_id: origemCompartilhado,
           usuario_id: input.usuario_id,
           motivo: `avaria → quarentena: ${input.observacoes ?? ""}`,
         });
@@ -206,6 +215,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           tipo: "E",
           qty: input.qty,
           origem_tipo: "transferencia_localizacao",
+          origem_id: origemCompartilhado,
           usuario_id: input.usuario_id,
         });
       } else {
@@ -216,6 +226,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           tipo: "S",
           qty: input.qty,
           origem_tipo: "ajuste_manual",
+          origem_id: origemCompartilhado,
           origem_detalhes: { motivo: "avaria_devolucao_sem_quarentena" },
           usuario_id: input.usuario_id,
         });
@@ -234,6 +245,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         tipo: "E",
         qty: input.qty,
         origem_tipo: "devolucao_cliente_integra",
+        origem_id: origemCompartilhado,
         nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
         usuario_id: input.usuario_id,
@@ -243,6 +255,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         tipo: "S",
         qty: input.qty,
         origem_tipo: "devolucao_fornecedor_enviada",
+        origem_id: origemCompartilhado,
         fornecedor_id: input.fornecedor_id,
         usuario_id: input.usuario_id,
         motivo: `garantia: ${input.observacoes ?? ""}`,
@@ -258,6 +271,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         tipo: "E",
         qty: input.qty,
         origem_tipo: "devolucao_cliente_troca_sku",
+        origem_id: origemCompartilhado,
         nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
         usuario_id: input.usuario_id,

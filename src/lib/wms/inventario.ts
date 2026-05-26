@@ -809,11 +809,21 @@ export async function aplicarSessao(
   const sb = createServiceClient();
   const { data: sessao } = await sb
     .from("siso_inventario_sessoes")
-    .select("status, galpao_id")
+    .select("status, galpao_id, aplicada_em")
     .eq("id", sessaoId)
     .single();
   if (!sessao) throw new Error("sessão não encontrada");
-  const s = sessao as { status: string; galpao_id: string };
+  const s = sessao as { status: string; galpao_id: string; aplicada_em: string | null };
+
+  // P3 #4.1: idempotência. Sessão já aplicada → no-op com retorno coerente.
+  if (s.status === "aplicada") {
+    const { count } = await sb
+      .from("siso_movimentacoes")
+      .select("id", { count: "exact", head: true })
+      .eq("origem_id", sessaoId)
+      .in("origem_tipo", ["inventario_ganho", "inventario_perda"]);
+    return { movsGeradas: count ?? 0 };
+  }
   if (s.status !== "aprovada") throw new Error("sessão não está aprovada");
 
   const { data: divergencias } = await sb
@@ -835,29 +845,50 @@ export async function aplicarSessao(
     if (Number(d.delta) === 0) continue;
     const tipo: TipoMov = Number(d.delta) > 0 ? "E" : "S";
     const qty = Math.abs(Number(d.delta));
-    const mov = await inserirMovimentacao({
-      tripla: {
-        produto_id: d.produto_id,
-        galpao_id: s.galpao_id,
-        localizacao_id: d.localizacao_id,
-      },
-      tipo,
-      qty,
-      // 3D: separa ganho de perda (origem_tipo discrimina sinal do ajuste de inventário)
-      origem_tipo: tipo === "E" ? "inventario_ganho" : "inventario_perda",
-      origem_id: sessaoId,
-      origem_detalhes: { divergencia_id: d.id, delta_pct: d.delta_pct },
-      usuario_id: usuarioId,
-      motivo: `inventário sessão ${sessaoId}`,
-    });
-    await sb
-      .from("siso_inventario_divergencias")
-      .update({ status: "aplicada", mov_aplicada_id: mov.id })
-      .eq("id", d.id);
-    movsGeradas++;
+    try {
+      const mov = await inserirMovimentacao({
+        tripla: {
+          produto_id: d.produto_id,
+          galpao_id: s.galpao_id,
+          localizacao_id: d.localizacao_id,
+        },
+        tipo,
+        qty,
+        // 3D: separa ganho de perda (origem_tipo discrimina sinal do ajuste de inventário)
+        origem_tipo: tipo === "E" ? "inventario_ganho" : "inventario_perda",
+        origem_id: sessaoId,
+        origem_detalhes: { divergencia_id: d.id, delta_pct: d.delta_pct },
+        usuario_id: usuarioId,
+        motivo: `inventário sessão ${sessaoId}`,
+      });
+      await sb
+        .from("siso_inventario_divergencias")
+        .update({ status: "aplicada", mov_aplicada_id: mov.id })
+        .eq("id", d.id);
+      movsGeradas++;
+    } catch (err) {
+      // P3 #4.1: UNIQUE violation = outra chamada já aplicou essa divergência.
+      // No-op pra essa linha; assegurar status='aplicada' via lookup da mov existente.
+      const code = (err as { code?: string })?.code;
+      const msg = err instanceof Error ? err.message : String(err);
+      const isUniq = code === "23505" || /uniq_movs_inventario_divergencia/.test(msg);
+      if (!isUniq) throw err;
+      const { data: movExistente } = await sb
+        .from("siso_movimentacoes")
+        .select("id")
+        .eq("origem_detalhes->>divergencia_id", d.id)
+        .in("origem_tipo", ["inventario_ganho", "inventario_perda"])
+        .maybeSingle();
+      if (movExistente) {
+        await sb
+          .from("siso_inventario_divergencias")
+          .update({ status: "aplicada", mov_aplicada_id: movExistente.id })
+          .eq("id", d.id);
+      }
+    }
   }
 
-  // Libera locks da sessão
+  // Libera locks da sessão (idempotente)
   const { data: locs } = await sb
     .from("siso_inventario_localizacoes")
     .select("localizacao_id")
@@ -873,10 +904,12 @@ export async function aplicarSessao(
       .is("finalizado_em", null);
   }
 
+  // UPDATE condicional — só transiciona se ainda não foi aplicada (outra request)
   await sb
     .from("siso_inventario_sessoes")
     .update({ status: "aplicada", aplicada_em: new Date().toISOString() })
-    .eq("id", sessaoId);
+    .eq("id", sessaoId)
+    .neq("status", "aplicada");
 
   return { movsGeradas };
 }

@@ -9,6 +9,7 @@ import { Icon, PageHeader, fmtNum } from "@/components/wms/ui/wms-ui";
 import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import { LocVaziaModal } from "@/components/wms/inventario/loc-vazia-modal";
 import { useAuth } from "@/lib/auth-context";
+import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 import type {
   ProximaLocOutput,
   EsperadoItem,
@@ -56,6 +57,9 @@ export default function ContarPage({
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const { operadores } = useInventarioRealtime(id);
+
+  // Anuncia presença no card "Inventário" do quadro de tarefas (/wms).
+  useTrackPresencaWms("inventario");
 
   const [etapa, setEtapa] = useState<Etapa>("entering");
   const [locAtual, setLocAtual] = useState<ProximaLocOutput | null>(null);

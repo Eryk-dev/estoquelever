@@ -16,6 +16,7 @@ import {
 import { useLocalizacoes } from "@/components/wms/ui/modals";
 import { ScanContagem } from "@/components/wms/scan-contagem";
 import type { PendenciaJoined } from "@/lib/wms/guarda";
+import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 
 interface DetalheResponse {
   pendencia: PendenciaJoined;
@@ -35,6 +36,9 @@ export default function GuardaTabletPage() {
   const { can } = usePermissoes();
   const podeGuardar = can("operacoes.guarda");
   const id = String(params?.id ?? "");
+
+  // Anuncia presença no card "Guarda" do quadro de tarefas (/wms).
+  useTrackPresencaWms("guarda");
   const [qtyInput, setQtyInput] = useState("");
   const [destinoOverride, setDestinoOverride] = useState<{
     id: string;

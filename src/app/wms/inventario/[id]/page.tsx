@@ -19,6 +19,7 @@ import {
 import { useAuth, usePermissoes } from "@/lib/auth-context";
 import { FeedEventos } from "@/components/wms/inventario/feed-eventos";
 import { Avatar } from "@/components/wms/ui/avatar";
+import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 
 interface SessaoData {
   sessao?: {
@@ -86,6 +87,9 @@ export default function InventarioSupervisorPage({
   const { can } = usePermissoes();
   const podeSupervisar = can("inventario.supervisionar");
   const { contagens, locs, operadores } = useInventarioRealtime(id);
+
+  // Anuncia presença no card "Inventário" do quadro de tarefas (/wms).
+  useTrackPresencaWms("inventario");
   const [encerrarOpen, setEncerrarOpen] = useState(false);
   const [cancelarOpen, setCancelarOpen] = useState(false);
 

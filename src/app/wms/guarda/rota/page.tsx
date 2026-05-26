@@ -17,6 +17,7 @@ import {
 import { LocalizacaoCombo, useLocalizacoes } from "@/components/wms/ui/modals";
 import { ScanContagem } from "@/components/wms/scan-contagem";
 import type { PendenciaJoined } from "@/lib/wms/guarda";
+import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 
 interface RotaResponse {
   rows: PendenciaJoined[];
@@ -33,6 +34,9 @@ export default function GuardaRotaPage() {
 function GuardaRotaContent() {
   const sp = useSearchParams();
   const qc = useQueryClient();
+
+  // Anuncia presença no card "Guarda" do quadro de tarefas (/wms).
+  useTrackPresencaWms("guarda");
 
   const lote = sp.get("lote") ?? undefined;
   const ids = sp.get("ids") ?? undefined;

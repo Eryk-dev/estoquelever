@@ -1044,3 +1044,38 @@ erros:
       - src/app/api/wms/tiny/connections/route.ts
       - src/app/api/wms/separacao/checklist-items/route.ts
     tags: [postgrest, embed, pgrst201, ambiguous-relationship, siso_empresas, siso_galpoes, ledger-3d-fallout]
+
+  - id: home-quadro-avatar-preso-apos-fechar-aba
+    date: "2026-05-26"
+    source: wms.home.quadro-tarefas
+    category: business_logic
+    message: "Avatar de operador continua aparecendo nos cards Separação/Embalagem/Guarda/Inventário do quadro de tarefas mesmo após fechar a aba"
+    cause: >
+      Os executores dos 4 cards eram derivados puramente dos donos persistidos
+      em `siso_pedidos.separacao_operador_id` / `embalagem_operador_id`,
+      `siso_wms_pendencias_guarda.iniciada_por` e `siso_inventario_operadores`.
+      Esses campos só são limpos por ações explícitas (concluir, cancelar,
+      sairParty etc.) — fechar a aba não dispara nada. Como o pedido continua
+      legitimamente em `em_separacao` (estado correto pra retomada), o avatar
+      ficava preso sinalizando atividade que não existia.
+    fix: >
+      Distingue "dono do trabalho" (estado de negócio em DB) de "presença ao vivo"
+      (efêmero). Novo hook `src/hooks/use-presenca-wms.ts` publica via Supabase
+      Realtime Presence enquanto a aba estiver aberta (Supabase detecta disconnect
+      em ~30s sem precisar de beforeunload/heartbeat). Páginas operacionais
+      (separação + checklist + embalagem + guarda + rota + handheld + inventário
+      supervisor + contar) chamam `useTrackPresencaWms(funcao)`. `QuadroTarefas`
+      intersecta executores ∩ set de presença antes de renderizar avatares.
+      Estado persistido em DB NÃO mudou — só a UI de presença.
+    files:
+      - src/hooks/use-presenca-wms.ts
+      - src/components/wms/home/quadro-tarefas.tsx
+      - src/app/wms/separacao/page.tsx
+      - src/app/wms/separacao/checklist/page.tsx
+      - src/app/wms/separacao/embalagem/page.tsx
+      - src/app/wms/guarda/page.tsx
+      - src/app/wms/guarda/rota/page.tsx
+      - src/app/wms/guarda/[id]/page.tsx
+      - src/app/wms/inventario/[id]/page.tsx
+      - src/app/wms/inventario/[id]/contar/page.tsx
+    tags: [home, quadro-tarefas, presenca, supabase-realtime, avatar, ux, separacao, embalagem, guarda, inventario]

@@ -15,6 +15,7 @@ import {
 } from "@/components/wms/ui/wms-ui";
 import { useGalpoes } from "@/components/wms/ui/modals";
 import type { PendenciaJoined } from "@/lib/wms/guarda";
+import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 
 type StatusFiltro = "ativas" | "todas" | "guardada" | "cancelada";
 
@@ -35,6 +36,9 @@ export default function GuardaListaPage() {
   const router = useRouter();
   const { can } = usePermissoes();
   const podeGuardar = can("operacoes.guarda");
+
+  // Anuncia presença no card "Guarda" do quadro de tarefas (/wms).
+  useTrackPresencaWms("guarda");
   const { data: galpoes } = useGalpoes();
   const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
 

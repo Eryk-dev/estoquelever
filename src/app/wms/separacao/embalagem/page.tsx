@@ -23,6 +23,7 @@ import {
 import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
 import { naturalLocCompare } from "@/lib/domain-helpers";
 import type { SeparacaoPedido } from "@/components/wms/separacao/types";
+import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,9 @@ function WmsEmbalagemPage() {
     [sp],
   );
   const modo = sp?.get("modo") === "embalagem-oc" ? "embalagem-oc" : null;
+
+  // Anuncia presença no card "Embalagem" do quadro de tarefas (/wms).
+  useTrackPresencaWms("embalagem");
 
   const [scanQty, setScanQty] = useState(1);
   const [scanFeedback, setScanFeedback] = useState<{

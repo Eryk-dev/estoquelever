@@ -14,6 +14,7 @@ import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { naturalLocCompare } from "@/lib/domain-helpers";
 import { ParcialModal } from "@/components/wms/separacao/parcial-modal";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
+import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 
 // ──────────────────────────────────────────────────────────────────
 // Types
@@ -166,6 +167,9 @@ export default function WmsChecklistPage() {
     [sp],
   );
   const modo = (sp?.get("modo") ?? null) as "pick-oc" | null;
+
+  // Mantém presença ativa em "Separação" durante o wave picking.
+  useTrackPresencaWms("separacao");
 
   const [sort, setSort] = useState<SortMode>("localizacao");
   const [scanFeedback, setScanFeedback] = useState<ScanFeedback>(null);

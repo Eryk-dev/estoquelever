@@ -7,6 +7,12 @@ import { useAuth } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import type { DashboardTarefasResult } from "@/lib/wms/dashboard-tarefas";
 import { useDashboardTarefasRealtime } from "@/hooks/use-dashboard-tarefas-realtime";
+import {
+  useEstadoPresencaWms,
+  type EstadoPresencaWms,
+  type FuncaoPresenca,
+} from "@/hooks/use-presenca-wms";
+import type { Executor } from "@/lib/wms/dashboard-tarefas";
 import { CardTarefa } from "./card-tarefa";
 import {
   CardComprasFornecedor,
@@ -26,6 +32,21 @@ function EmptyCard({ href, label }: { href: string; label: string }) {
   );
 }
 
+/**
+ * Intersecta a lista de executores (dono persistido em `siso_pedidos` etc.)
+ * com o set de presença ao vivo. Avatar só aparece se o operador estiver
+ * realmente com a aba aberta na função correspondente.
+ */
+function filtrarPresentes(
+  executores: Executor[] | undefined,
+  presenca: EstadoPresencaWms,
+  funcao: FuncaoPresenca,
+): Executor[] {
+  if (!executores || executores.length === 0) return [];
+  const set = presenca[funcao];
+  return executores.filter((e) => set.has(e.id));
+}
+
 export function QuadroTarefas() {
   const { activeGalpaoId, activeGalpaoNome } = useAuth();
   const galpaoLabel = activeGalpaoNome ?? "Todos os galpões";
@@ -41,6 +62,7 @@ export function QuadroTarefas() {
   });
 
   useDashboardTarefasRealtime(activeGalpaoId ?? null);
+  const presenca = useEstadoPresencaWms();
 
   const data = query.data;
 
@@ -79,14 +101,22 @@ export function QuadroTarefas() {
           variante="simples"
           titulo="Separação"
           contador={data?.separacao.count ?? 0}
-          executores={data?.separacao.executores}
+          executores={filtrarPresentes(
+            data?.separacao.executores,
+            presenca,
+            "separacao",
+          )}
           href="/wms/separacao"
         />
         <CardTarefa
           variante="simples"
           titulo="Embalagem"
           contador={data?.embalagem.count ?? 0}
-          executores={data?.embalagem.executores}
+          executores={filtrarPresentes(
+            data?.embalagem.executores,
+            presenca,
+            "embalagem",
+          )}
           href="/wms/separacao"
         />
       </div>
@@ -106,7 +136,15 @@ export function QuadroTarefas() {
             ) : (
               <>
                 {data!.guarda.itens.map((it) => (
-                  <CardGuardaItem key={it.id} item={it} />
+                  <CardGuardaItem
+                    key={it.id}
+                    item={
+                      it.iniciada_por &&
+                      !presenca.guarda.has(it.iniciada_por.id)
+                        ? { ...it, iniciada_por: null }
+                        : it
+                    }
+                  />
                 ))}
                 {data!.guarda.itens.length < guardaTotal ? (
                   <Link
@@ -136,7 +174,15 @@ export function QuadroTarefas() {
               />
             ) : (
               data!.inventario.ciclos.map((c) => (
-                <CardInventarioCiclo key={c.id} ciclo={c} />
+                <CardInventarioCiclo
+                  key={c.id}
+                  ciclo={{
+                    ...c,
+                    operadores: c.operadores.filter((o) =>
+                      presenca.inventario.has(o.id),
+                    ),
+                  }}
+                />
               ))
             )}
           </div>

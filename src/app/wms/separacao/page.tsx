@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
+import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 import {
   Icon,
   PageHeader,
@@ -259,6 +260,10 @@ export default function WmsSeparacaoPage() {
     (user?.cargos ?? []).includes("admin") || user?.cargo === "admin";
   // Botões admin de separação (forçar pendente, voltar etapa, reimprimir, tags)
   const podeAdministrar = can("separacao.administrar");
+
+  // Anuncia presença no card "Separação" do quadro de tarefas (/wms) enquanto
+  // esta aba estiver aberta.
+  useTrackPresencaWms("separacao");
 
   const tab = parseTab(searchParams?.get("tab"));
   const busca = searchParams?.get("busca") ?? "";

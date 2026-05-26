@@ -474,8 +474,12 @@ export async function POST(request: NextRequest) {
             },
             empresa_vendedora_id: empresa_origem_id,
             cliente_nome,
-            // pedido_id removido — siso_pedidos.id é text ('MAN-...'), não cabe na coluna uuid.
-            // Rastreio via origem_detalhes.pedido_id_manual acima.
+            // pedido_id é TEXT por design (migration 20260526) — aceita
+            // `MAN-...` igual aceita Tiny ID. Popular aqui restaura o link
+            // formal mov ↔ pedido (que ficava só em origem_detalhes antes do
+            // P6); facilita reports tipo "movs do pedido X" sem ter que
+            // varrer JSON.
+            pedido_id: pedidoId,
             usuario_id: user.id,
             motivo: `Venda manual ${pedidoId} — ${cliente_nome}`,
           });

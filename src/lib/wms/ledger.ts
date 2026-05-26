@@ -79,7 +79,7 @@ interface InserirMovInput {
   motivo?: string | null;
   /** Cliente associado (ex: devolucao_cliente_*). */
   cliente_nome?: string | null;
-  /** Pedido associado (FK lógica pra siso_pedidos). */
+  /** Pedido associado (FK lógica pra siso_pedidos.id — text, aceita Tiny ID ou `MAN-...`). */
   pedido_id?: string | null;
   /** NF fiscal associada (uuid em siso_notas_fiscais). */
   nota_fiscal_id?: string | null;
@@ -115,10 +115,12 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
   // PostgrestError em uuid inválido vira "[object Object]" no log — caro de
   // debugar. Capturamos antes de chegar na RPC com mensagem clara.
   // IMPORTANTE: roda ANTES de createServiceClient() pra ser testável sem env.
-  // NOTA: `origem_id` é DELIBERADAMENTE text (coluna `siso_movimentacoes.origem_id`
-  // é text por design). Convenção: quando origem_tipo ∈ {reserva_pedido,
-  // liberacao_reserva}, origem_id carrega `siso_pedidos.id` (Tiny ID, text).
-  // Não validamos uuid aqui.
+  // NOTA: `origem_id` e `pedido_id` são DELIBERADAMENTE text (colunas
+  // `siso_movimentacoes.origem_id` / `pedido_id` são text por design — migration
+  // 20260526_movimentacoes_origem_id_pedido_id_text.sql). Convenção: quando
+  // origem_tipo ∈ {reserva_pedido, liberacao_reserva}, origem_id carrega
+  // `siso_pedidos.id` (Tiny ID, text). `pedido_id` também aceita ID de pedido
+  // manual `MAN-...`. Não validamos uuid em nenhum dos dois.
   assertUuidLike(tripla.produto_id, "tripla.produto_id");
   assertUuidLike(tripla.galpao_id, "tripla.galpao_id");
   assertUuidLike(tripla.localizacao_id, "tripla.localizacao_id");
@@ -127,7 +129,7 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
   assertUuidLike(input.empresa_vendedora_id, "empresa_vendedora_id");
   assertUuidLike(input.empresa_referencia_id, "empresa_referencia_id");
   assertUuidLike(input.fornecedor_id, "fornecedor_id");
-  assertUuidLike(input.pedido_id, "pedido_id");
+  // pedido_id intencionalmente NÃO validado — text por design.
   assertUuidLike(input.nota_fiscal_id, "nota_fiscal_id");
   assertUuidLike(input.usuario_id, "usuario_id");
 

@@ -4,6 +4,8 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { carregarDadosEquivalentePorSku } from "@/lib/compras-equivalencia";
 import { userCan } from "@/lib/permissions";
+import { liberarReserva } from "@/lib/wms/reservas";
+import { wmsAsSource } from "@/lib/wms/flags";
 
 /**
  * POST /api/compras/itens/[itemId]/equivalente/confirmar
@@ -123,6 +125,28 @@ export async function POST(
         },
         { status: 409 },
       );
+    }
+
+    // P2 #3.7: equivalente vira um produto NOVO — a R original (criada pra o
+    // produto antigo) fica órfã consumindo reservado>saldo após o swap.
+    // Liberar Rs do pedido antes de mexer no produto_id.
+    if (wmsAsSource()) {
+      try {
+        const liberadas = await liberarReserva({
+          pedido_id: String(item.pedido_id),
+          motivo: "cancelamento",
+          usuario_id: session.id,
+        });
+        logger.info("compras-equivalente-confirmar", "Rs liberadas pré-swap", {
+          pedido_id: item.pedido_id,
+          item_id: item.id,
+          liberadas,
+        });
+      } catch (e) {
+        logger.warn("compras-equivalente-confirmar", "falha liberando R (segue)", {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
 
     await supabase

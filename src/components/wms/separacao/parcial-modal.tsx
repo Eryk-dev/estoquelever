@@ -23,11 +23,13 @@ export function ParcialModal({
   onCancel,
 }: ParcialModalProps) {
   const [qty, setQty] = useState(quantidadePedida);
+  const [qtyInput, setQtyInput] = useState(String(quantidadePedida));
   const [locZerou, setLocZerou] = useState(false);
 
   useEffect(() => {
     if (open) {
       setQty(quantidadePedida);
+      setQtyInput(String(quantidadePedida));
       setLocZerou(false);
     }
   }, [open, quantidadePedida]);
@@ -35,13 +37,26 @@ export function ParcialModal({
   if (!open) return null;
 
   const handleQtyChange = (delta: number) => {
-    setQty((prev) => Math.max(0, Math.min(quantidadePedida, prev + delta)));
+    const next = Math.max(0, Math.min(quantidadePedida, qty + delta));
+    setQty(next);
+    setQtyInput(String(next));
   };
 
   const handleManualQty = (val: string) => {
+    if (val === "") {
+      setQtyInput("");
+      setQty(0);
+      return;
+    }
     const n = parseInt(val, 10);
     if (isNaN(n)) return;
-    setQty(Math.max(0, Math.min(quantidadePedida, n)));
+    const clamped = Math.max(0, Math.min(quantidadePedida, n));
+    setQty(clamped);
+    setQtyInput(String(clamped));
+  };
+
+  const handleQtyBlur = () => {
+    if (qtyInput === "") setQtyInput("0");
   };
 
   return (
@@ -87,10 +102,11 @@ export function ParcialModal({
           </button>
           <input
             type="number"
-            value={qty}
+            value={qtyInput}
             min={0}
             max={quantidadePedida}
             onChange={(e) => handleManualQty(e.target.value)}
+            onBlur={handleQtyBlur}
             disabled={loading}
             className="w-24 rounded-xl border border-zinc-200 bg-white py-3 text-center text-3xl font-bold text-zinc-900 focus:border-amber-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
           />

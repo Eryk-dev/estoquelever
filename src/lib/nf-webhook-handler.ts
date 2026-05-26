@@ -41,6 +41,45 @@ export async function handleNfWebhook(
 ): Promise<void> {
   const supabase = createServiceClient();
   const { idNotaFiscalTiny, urlDanfe, chaveAcesso } = payload.dados;
+
+  // Step 0 — Dedup defensivo composto (nota_fiscal_id + chave_acesso) [#P6-6.33]
+  // O dedup_key generated cobre tiny_pedido_id+tipo+codigo_situacao. Pra NF, Tiny
+  // pode re-emitir com idNotaFiscalTiny diferente mas mesma chave de acesso
+  // (raro, mas acontece em re-emissões pós-cancelamento). Lookup composto
+  // captura ambos os casos antes de inserir um log duplicado já processado.
+  const idAsText = String(idNotaFiscalTiny);
+  const dedupResults = await Promise.all([
+    supabase
+      .from("siso_webhook_logs")
+      .select("id, processado_em")
+      .eq("tipo", "nota_fiscal")
+      .eq("tiny_pedido_id", idAsText)
+      .not("processado_em", "is", null)
+      .limit(1)
+      .maybeSingle(),
+    chaveAcesso
+      ? supabase
+          .from("siso_webhook_logs")
+          .select("id, processado_em")
+          .eq("tipo", "nota_fiscal")
+          .filter("payload->dados->>chaveAcesso", "eq", chaveAcesso)
+          .not("processado_em", "is", null)
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+  const priorById = dedupResults[0].data;
+  const priorByChave = dedupResults[1].data;
+  if (priorById || priorByChave) {
+    logger.info("nf-webhook", "NF já processada previamente — skip dedup composto", {
+      idNotaFiscalTiny: idAsText,
+      chaveAcesso: chaveAcesso ?? null,
+      priorLogId: (priorById ?? priorByChave)?.id,
+      matchedBy: priorById ? "nota_fiscal_id" : "chave_acesso_nf",
+    });
+    return;
+  }
+
   // Step 1 — Dedup via siso_webhook_logs unique index on dedup_key (generated column)
   const { data: logEntry, error: insertError } = await supabase
     .from("siso_webhook_logs")

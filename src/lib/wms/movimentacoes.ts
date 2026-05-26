@@ -151,7 +151,18 @@ export async function receberEstoque(
   }
 
   // Modo padrão: entra em RECEBIMENTO + cria pendência de guarda.
-  const localizacaoRecebimentoId = await resolverLocRecebimento(input.galpao_id);
+  const { id: localizacaoRecebimentoId, created: locCreated } =
+    await resolverLocRecebimento(input.galpao_id);
+  if (locCreated) {
+    // Pré-condição esperada (loc semeada via migration
+    // 20260514_wms_guarda_pendencias.sql) está faltando — alerta o operador
+    // pra investigar. Não bloqueia: receber/criar loc é idempotente.
+    logger.warn(
+      "movimentacoes.receber",
+      "Loc RECEBIMENTO auto-criada — pré-condição faltando",
+      { galpaoId: input.galpao_id, locId: localizacaoRecebimentoId },
+    );
+  }
   // Pré-validação ANTES de qualquer escrita no ledger. Se destino == origem
   // (frontend bugado, race, etc), abortamos sem deixar mov órfã.
   validarItensRecebimento(input.itens, localizacaoRecebimentoId);

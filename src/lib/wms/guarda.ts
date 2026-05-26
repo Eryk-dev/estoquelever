@@ -70,8 +70,14 @@ export interface PendenciaJoined extends PendenciaGuarda {
 /**
  * Resolve (ou cria) a loc tipo='recebimento' do galpão. Idempotente.
  * Migration já cria 1 por galpão ativo, mas em testes/staging pode faltar.
+ *
+ * Retorna `{ id, created }` — `created=true` indica que a loc foi auto-criada
+ * agora (side-effect). Callers podem logar warning pra alertar que a
+ * pré-condição esperada (loc semeada via migration) está faltando.
  */
-export async function resolverLocRecebimento(galpaoId: string): Promise<string> {
+export async function resolverLocRecebimento(
+  galpaoId: string,
+): Promise<{ id: string; created: boolean }> {
   const sb = createServiceClient();
   const { data: existente } = await sb
     .from("siso_localizacoes")
@@ -79,7 +85,9 @@ export async function resolverLocRecebimento(galpaoId: string): Promise<string> 
     .match({ galpao_id: galpaoId, tipo: "recebimento", ativo: true })
     .order("criado_em", { ascending: true })
     .limit(1);
-  if (existente && existente.length > 0) return existente[0].id;
+  if (existente && existente.length > 0) {
+    return { id: existente[0].id, created: false };
+  }
 
   const { data: nova, error } = await sb
     .from("siso_localizacoes")
@@ -97,7 +105,7 @@ export async function resolverLocRecebimento(galpaoId: string): Promise<string> 
       `não foi possível resolver loc RECEBIMENTO do galpão ${galpaoId}: ${error?.message}`,
     );
   }
-  return nova.id;
+  return { id: nova.id, created: true };
 }
 
 export interface CriarPendenciaInput {

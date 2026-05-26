@@ -342,6 +342,20 @@ export default function DivergenciasPage({
                     <td className={`wms-tar wms-mono ${deltaCls}`}>
                       {d.delta > 0 ? `+${d.delta}` : d.delta}
                     </td>
+                    {/*
+                      Semântica de `delta_pct === null`:
+                      - `delta_pct` é NULL quando `saldo_esperado === 0` (em
+                        siso_inventario_divergencias o campo legado se chama
+                        `saldo_sistema` mas guarda o saldo_esperado_no_bipe).
+                        Dividir por zero não faz sentido, então o BD usa NULL.
+                      - Sub-caso "achado": `qty_contada > 0 && saldo_esperado === 0`
+                        → loc tinha estoque inesperado (achado físico).
+                      - Sub-caso "consistente": `qty_contada === 0 && saldo_esperado === 0`
+                        → loc estava vazia, contagem confirmou. Não deveria virar
+                        divergência em primeiro lugar.
+                      O "—" abaixo cobre os 2 sub-casos; rotulação visual
+                      distintiva (achado vs consistente) fica pro P5/UX.
+                    */}
                     <td className="wms-tar wms-mono wms-td-mute">
                       {d.delta_pct != null ? `${d.delta_pct}%` : "—"}
                     </td>

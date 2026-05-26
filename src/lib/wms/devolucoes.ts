@@ -107,6 +107,19 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
       empresaReferenciaId = resolverEmpresaReferencia(mov as MovOrigemVenda);
     }
   }
+  // [#P6-6.14] Fallback: se ainda null, busca empresa_origem_id do pedido
+  // que originou a NF. Cobre casos onde a mov de saída original não tem
+  // empresa_vendedora_id setada (legado pre-cutover) mas o pedido tem
+  // empresa_origem_id válido.
+  if (!empresaReferenciaId && d.nota_fiscal_id) {
+    const { data: ped } = await sb
+      .from("siso_pedidos")
+      .select("empresa_origem_id")
+      .eq("nota_fiscal_id", d.nota_fiscal_id)
+      .maybeSingle();
+    empresaReferenciaId =
+      (ped as { empresa_origem_id: string } | null)?.empresa_origem_id ?? null;
+  }
 
   const tripla = {
     produto_id: input.produto_id,

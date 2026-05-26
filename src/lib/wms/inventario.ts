@@ -569,6 +569,17 @@ export interface ComputarDivergenciasOpts {
   parcial?: boolean;
 }
 
+/**
+ * Recomputa divergências da sessão (compara contagens vs saldo reconciliado
+ * via ledger temporalmente).
+ *
+ * LIMITAÇÃO CONHECIDA [#P6-4.8]: reconciliação temporal usa cutoff_em
+ * (=contado_em). Movs entre cutoff_em e aprovado_em ainda alteram saldo
+ * "esperado" no ledger, mas a divergência foi calculada com snapshot
+ * cutoff_em. Pra reduzir janela: aprovar rapidamente após contagem.
+ * Ver design doc:
+ *   docs/superpowers/specs/2026-05-18-estoque-online-fluxo.html
+ */
 export async function computarDivergencias(
   sessaoId: string,
   opts: ComputarDivergenciasOpts = {},

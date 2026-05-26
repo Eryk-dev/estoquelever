@@ -84,6 +84,123 @@ export async function liberarReserva(input: {
   return liberados;
 }
 
+export interface EstornarReservaInput {
+  reserva_id: string;
+  motivo: "rollback_aprovacao" | "outro";
+  usuario_id?: string;
+}
+
+/**
+ * Dependências injetáveis de estornarReservaIndividual.
+ * Expostas pra viabilizar testes sem conexão real com o banco
+ * (mesmo padrão de injeção usado em roteamento.ts com buscarLinha).
+ */
+export interface EstornarReservaDeps {
+  /** Retorna o id de L já existente com estorno_de=reserva_id, ou null se não existir. */
+  buscarLExistente: (reserva_id: string) => Promise<string | null>;
+  /** Retorna a reserva R original, ou null se não existir. */
+  buscarReservaOriginal: (reserva_id: string) => Promise<{
+    produto_id: string;
+    galpao_id: string;
+    localizacao_id: string;
+    quantidade: number;
+  } | null>;
+  /** Insere o L no ledger e retorna o id da mov criada. */
+  inserirL: (params: {
+    reserva_id: string;
+    reserva: { produto_id: string; galpao_id: string; localizacao_id: string; quantidade: number };
+    motivo: string;
+    usuario_id?: string;
+  }) => Promise<string>;
+}
+
+/**
+ * Estorna UMA reserva específica inserindo L com estorno_de=reserva_id.
+ * Diferente de `liberarReserva` (que opera por pedido_id e libera todas as
+ * R do pedido), aqui o alvo é individual — usado pra rollback parcial em
+ * fluxos atômicos (ex.: aprovar criou 3 R e a 4ª falhou; precisa estornar
+ * as 3 sem mexer em reservas de outros pedidos).
+ *
+ * Idempotente: se já existe L com estorno_de=reserva_id, retorna o id
+ * existente sem criar novo L.
+ *
+ * Aceita `_deps` opcional para injeção de dependências em testes
+ * (mesmo padrão de roteamento.ts com buscarLinha).
+ */
+export async function estornarReservaIndividual(
+  input: EstornarReservaInput,
+  _deps?: EstornarReservaDeps,
+): Promise<string> {
+  // createServiceClient é instanciado lazily, só quando _deps não é fornecido
+  // (i.e. produção). Em testes, _deps é sempre passado, evitando erro de
+  // "supabaseUrl is required" sem .env.
+  function buildDefaultDeps(): EstornarReservaDeps {
+    const sb = createServiceClient();
+    return {
+      buscarLExistente: async (reserva_id) => {
+        const { data } = await sb
+          .from("siso_movimentacoes")
+          .select("id")
+          .eq("estorno_de", reserva_id)
+          .eq("tipo", "L")
+          .maybeSingle();
+        return (data?.id as string | undefined) ?? null;
+      },
+      buscarReservaOriginal: async (reserva_id) => {
+        const { data } = await sb
+          .from("siso_movimentacoes")
+          .select("produto_id, galpao_id, localizacao_id, quantidade")
+          .eq("id", reserva_id)
+          .eq("tipo", "R")
+          .maybeSingle();
+        if (!data) return null;
+        return {
+          produto_id: data.produto_id as string,
+          galpao_id: data.galpao_id as string,
+          localizacao_id: data.localizacao_id as string,
+          quantidade: Number(data.quantidade),
+        };
+      },
+      inserirL: async ({ reserva_id, reserva, motivo, usuario_id }) => {
+        const mov = await inserirMovimentacao({
+          tripla: {
+            produto_id: reserva.produto_id,
+            galpao_id: reserva.galpao_id,
+            localizacao_id: reserva.localizacao_id,
+          },
+          tipo: "L",
+          qty: reserva.quantidade,
+          origem_tipo: "liberacao_reserva",
+          origem_detalhes: { motivo: input.motivo },
+          estorno_de: reserva_id,
+          usuario_id,
+          motivo,
+        });
+        return mov.id;
+      },
+    };
+  }
+
+  const deps: EstornarReservaDeps = _deps ?? buildDefaultDeps();
+
+  // Idempotência: L já existe?
+  const lExistenteId = await deps.buscarLExistente(input.reserva_id);
+  if (lExistenteId) return lExistenteId;
+
+  // Carrega a R original pra reconstruir tripla + qty
+  const reserva = await deps.buscarReservaOriginal(input.reserva_id);
+  if (!reserva) {
+    throw new Error(`Reserva ${input.reserva_id} não encontrada`);
+  }
+
+  return deps.inserirL({
+    reserva_id: input.reserva_id,
+    reserva,
+    motivo: `Estorno individual: ${input.motivo}`,
+    usuario_id: input.usuario_id,
+  });
+}
+
 interface ReservaExpirada {
   id: string;
   origem_id: string | null;

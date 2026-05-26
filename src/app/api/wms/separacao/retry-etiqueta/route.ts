@@ -159,6 +159,15 @@ export async function POST(request: NextRequest) {
     const targetIds = rows
       .filter((row) => !row.etiqueta_zpl)
       .map((row) => row.id);
+
+    // Captura status_separacao original de TODOS os pedidos (não apenas
+    // 'separado'). Antes (até P6) só 'separado' era memorizado e restaurado
+    // como 'separado' — corretíssimo pra esse caso, mas se o retry mexesse no
+    // status_separacao de um pedido originalmente 'embalado' (futuro/edge
+    // case), perderia estado. Agora restauramos o valor exato capturado.
+    const originalStatusById = new Map<string, string | null>(
+      rows.map((row) => [row.id, row.status_separacao]),
+    );
     const originallySeparadoIds = new Set(
       rows
         .filter((row) => row.status_separacao === "separado")
@@ -225,6 +234,10 @@ export async function POST(request: NextRequest) {
 
     const targetedIds = new Set(targetIds);
     let finalRows = (finalRowsData ?? []) as PedidoRetryRow[];
+    // Detecta pedidos cujo status_separacao foi alterado DURANTE o retry. Em
+    // particular: originalmente 'separado' agora 'embalado'. Restauramos pro
+    // status original capturado (não hard-coded 'separado'); preserva a
+    // semântica antiga e protege casos futuros onde o original possa diferir.
     const changedToEmbaladoIds = finalRows
       .filter(
         (row) =>
@@ -234,30 +247,39 @@ export async function POST(request: NextRequest) {
       .map((row) => row.id);
 
     if (changedToEmbaladoIds.length > 0) {
-      const { error: restoreError } = await supabase
-        .from("siso_pedidos")
-        .update({
-          status_separacao: "separado",
-          embalagem_concluida_em: null,
-        })
-        .in("id", changedToEmbaladoIds)
-        .eq("status_separacao", "embalado");
+      // Restaura por ID — em lote por status original (que pra esse branch
+      // sempre é 'separado', mas usamos o map pra clareza/futuro-proofing).
+      const restoreErrors: unknown[] = [];
+      for (const pid of changedToEmbaladoIds) {
+        const originalStatus = originalStatusById.get(pid) ?? "separado";
+        const { error: restoreError } = await supabase
+          .from("siso_pedidos")
+          .update({
+            status_separacao: originalStatus,
+            embalagem_concluida_em: null,
+          })
+          .eq("id", pid)
+          .eq("status_separacao", "embalado");
+        if (restoreError) restoreErrors.push({ pid, error: restoreError });
+      }
 
-      if (restoreError) {
+      if (restoreErrors.length > 0) {
         logger.logError({
-          error: restoreError,
+          error: new Error("restore_errors"),
           source: LOG_SOURCE,
-          message: "Falha ao restaurar pedidos para separado após retry de etiqueta",
+          message: "Falha ao restaurar pedidos para status original após retry de etiqueta",
           category: "database",
-          errorCode: restoreError.code,
           requestPath: "/api/wms/separacao/retry-etiqueta",
           requestMethod: "POST",
-          metadata: { pedidoIds: changedToEmbaladoIds },
+          metadata: { restoreErrors },
         });
       } else {
         finalRows = finalRows.map((row) =>
           changedToEmbaladoIds.includes(row.id)
-            ? { ...row, status_separacao: "separado" }
+            ? {
+                ...row,
+                status_separacao: originalStatusById.get(row.id) ?? "separado",
+              }
             : row,
         );
       }

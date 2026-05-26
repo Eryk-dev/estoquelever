@@ -49,6 +49,14 @@ export interface ImprimirEtiquetasResult {
  * Imprime etiquetas de produto. Não lança — devolve `{ok: false, error}` se
  * algo falhou. O caller decide se isso é fatal pro fluxo (no recebimento,
  * tipicamente não — o ledger já foi gravado).
+ *
+ * **Persistência de falhas:** quando a chamada ao PrintNode falha, o erro é
+ * gravado em `siso_logs` (info estruturado) **e** em `siso_erros` (stack +
+ * categoria `external_api` + correlation id quando disponível) via
+ * `logger.logError`. Isso garante que falhas de impressão sejam auditáveis
+ * fora do escopo do request (timeouts, conta inativa, printer offline) — o
+ * operador pode reimprimir via `/api/wms/guarda/imprimir-lote` ou
+ * `/api/wms/guarda/[id]/imprimir` sem perda de informação histórica.
  */
 export async function imprimirEtiquetasProduto(
   input: ImprimirEtiquetasInput,

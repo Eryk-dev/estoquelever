@@ -145,6 +145,15 @@ Cascade que esgota cobertura dispara o modal encaminhar/OC no frontend
 Botão "Esgotado" das linhas normais removido — caso particular do Parcial
 com qty=0 + loc_zerou=true. Spec: `docs/superpowers/specs/2026-05-18-realocacao-cascateavel-design.md`.
 
+**Design: `mov_ajuste_loc_zerou_id` é preservado em cancelamento (2026-05-26).**
+Quando o operador faz Parcial marcando `loc_zerou=true`, o sistema gera uma
+mov `ajuste_pick_zerou` no ledger zerando o saldo da loc — isso registra
+uma **realidade física** (a loc estava vazia quando o operador chegou).
+`POST /api/wms/separacao/cancelar` **não estorna** essa mov: cancelar a
+separação não desfaz a constatação física. O FK em `siso_pedido_itens` é
+limpo (pra liberar o item pra nova separação), mas a mov no ledger fica
+intacta. Pra desfazer explicitamente, usar `POST /api/wms/separacao/desfazer-parcial`.
+
 ## Project Structure
 
 **Pós-cutover de superfície (2026-05-18):** apenas `/login`, `/wms/*` e `/api/{auth,wms}/*` existem.

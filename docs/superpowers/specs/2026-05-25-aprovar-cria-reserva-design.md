@@ -40,34 +40,23 @@ Quando o operador aprovar manualmente um pedido como `propria` ou `transferencia
 - **TTL 30 dias.** Alinhado com `webhook-processor-wms.ts` (que usa `24 * 30` em vez do default 48h da reserva de inventário).
 - **Localização escolhida = loc com maior saldo no galpão.** Mesma heurística do `buscarLocComMaiorSaldoNoGalpao` introduzido hoje pro `marcar-item`. Se um SKU tem múltiplas locs, a com mais saldo ganha (compactação natural).
 
-## 1. Frontend — desabilitar opções sem cobertura
+## 1. Frontend — já implementado (verificar)
 
-**Arquivo:** `src/components/wms/vendas/pedido-card-wms.tsx` (e/ou o componente do dropdown de aprovação que ele renderiza).
+**Descoberta na fase de planejamento:** `src/components/wms/vendas/pedido-card-wms.tsx:106` já tem a função `decisaoIsAvailable(decisao, itens, filialOrigem)` que checa cobertura full corretamente:
 
-**Lógica:** o card já recebe `pedido.itens[].estoques` (mapa `Record<galpaoNome, GalpaoEstoque>`) com `disponivel` live (commit de hoje). Computar:
+- `propria` → `galpaoAtendeTudo(itens, filialOrigem)` (galpão origem cobre todos os itens)
+- `transferencia` → algum outro galpão cobre todos
+- `oc` → sempre `true`
 
-```ts
-function coberturaPorGalpao(itens): Record<string, boolean> {
-  // Pra cada galpão presente nos itens, retorna true se TODOS os itens
-  // têm disponivel >= quantidadePedida nesse galpão.
-}
+O JSX (linha 198) usa o resultado em `disabled={!available}` no `<button>` do dropdown. O CSS `wms.css:2502` aplica `opacity: .4; cursor: not-allowed` quando `:disabled`. O `onClick` (linha 199) tem `if (!available) return;` como fallback. Label "sem estoque" (linha 210) aparece quando `!available`.
 
-const galpaoOrigem = pedido.filialOrigem;
-const cobertura = coberturaPorGalpao(pedido.itens);
+**Combinado com o commit `eac2826`** (estoque live na lista de pedidos), o `pedido.itens[].estoques` recebe saldo live de `siso_estoque` no GET — então `decisaoIsAvailable` agora opera sobre dados frescos, não snapshot.
 
-const coberturaPropria = cobertura[galpaoOrigem] === true;
-const galpoesAlternativos = Object.keys(cobertura).filter(g => g !== galpaoOrigem);
-const coberturaTransferencia = galpoesAlternativos.some(g => cobertura[g] === true);
-```
+**Tarefas no plano (frontend):**
 
-**UI:** o dropdown atual (`Sai daqui (CWB)`, `? → CWB`, `Comprar`) já mostra "sem estoque" em cinza. Ajustes:
-
-- Quando `coberturaPropria === false`, o botão "Sai daqui" recebe `disabled={true}` + `aria-disabled` + `cursor: not-allowed`. Não dispara `onApprove`.
-- Quando `coberturaTransferencia === false`, o botão de transferência idem.
-- "Comprar" (OC) permanece sempre habilitado.
-- Tooltip ou label inline preserva o motivo ("sem estoque em CWB" / "sem cobertura em outros galpões").
-
-**Sem mudanças:** o cálculo de `sugestao` (campo no pedido) — continua sendo o valor histórico do webhook. O disabled é puramente baseado em `cobertura` calculada live.
+- Smoke test manual: pedido com saldo zero → confirma que botão `propria` aparece cinza + não clicável.
+- Smoke test manual: insere saldo, espera realtime (≤2s), confirma que botão `propria` vira clicável.
+- Caso o smoke acuse problema (improvável dado o código acima), entra como bug separado.
 
 ## 2. Backend — `/api/wms/pedidos/aprovar`
 
@@ -158,11 +147,12 @@ Idempotência: se já existe L com `estorno_de=reserva_id`, retorna o id existen
 
 | Camada | Arquivo | Tipo de mudança |
 |---|---|---|
-| Frontend | `src/components/wms/vendas/pedido-card-wms.tsx` | Edit: cálculo de cobertura + disabled |
+| Frontend | `src/components/wms/vendas/pedido-card-wms.tsx` | **Nenhuma** (já implementado — verificação manual) |
 | Backend | `src/app/api/wms/pedidos/aprovar/route.ts` | Edit: novo bloco antes do update + helper local |
 | Helper | `src/lib/wms/reservas.ts` | Add: função `estornarReservaIndividual` |
-| Testes | `scripts/wms/cenarios/08-aprovar-cria-reserva.ts` | New |
-| Testes | `scripts/wms/cenarios/09-aprovar-sem-cobertura-falha.ts` | New |
+| Testes | `scripts/wms/cenarios/catalogo/18-aprovar-cria-reserva.ts` | New |
+| Testes | `scripts/wms/cenarios/catalogo/19-aprovar-sem-cobertura-falha.ts` | New |
+| Testes | `scripts/wms/cenarios/run-all.ts` | Edit: registra 18 + 19 |
 | Docs | `CLAUDE.md` | Edit: linha do aprovar nas APIs e nota no fluxo R→L+S |
 
 Migration SQL: **nenhuma**. Comportamento usa tabelas existentes.

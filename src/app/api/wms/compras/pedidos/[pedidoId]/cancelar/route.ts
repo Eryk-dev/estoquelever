@@ -7,6 +7,7 @@ import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { cancelOcIfEmpty } from "@/lib/compras-utils";
 import { userCan } from "@/lib/permissions";
+import { estornarMovimentacao } from "@/lib/wms/ledger";
 
 /**
  * POST /api/compras/pedidos/[pedidoId]/cancelar
@@ -69,6 +70,61 @@ export async function POST(
     const hadStockEntrada = (compraItems ?? []).some(
       (item) => (item.compra_quantidade_recebida ?? 0) > 0,
     );
+
+    // Estorna movs E nf_compra associadas aos itens recebidos (PR-1/PR-2).
+    // Sem isso, saldo fica "fantasma" no galpão após cancelar.
+    let movsEstornadas = 0;
+    const itensComEstoque = (compraItems ?? []).filter(
+      (i) => (i.compra_quantidade_recebida ?? 0) > 0,
+    );
+    if (itensComEstoque.length > 0) {
+      // Carrega TODAS as movs E nf_compra que essa OC/item gerou no ledger
+      // (origem_id = pedido_id). Filtra por pedido_item_id via origem_detalhes
+      // dentro do loop pra evitar query por item.
+      const { data: movsE } = await supabase
+        .from("siso_movimentacoes")
+        .select("id, estorno_de, origem_detalhes")
+        .eq("origem_tipo", "nf_compra")
+        .eq("origem_id", pedidoId);
+      for (const item of itensComEstoque) {
+        for (const mov of movsE ?? []) {
+          // Pula movs que já têm estorno OU que são elas mesmas estornos
+          if (mov.estorno_de) continue;
+          const detalhes = (mov.origem_detalhes ?? {}) as {
+            pedido_item_id?: string | number;
+          };
+          if (String(detalhes.pedido_item_id ?? "") !== String(item.id)) continue;
+
+          try {
+            await estornarMovimentacao({
+              mov_id: mov.id as string,
+              usuario_id: session.id,
+              motivo: `Cancelamento pedido ${pedidoId} — estorno de OC recebida`,
+            });
+            movsEstornadas++;
+          } catch (estErr) {
+            const msg = estErr instanceof Error ? estErr.message : String(estErr);
+            if (/já\s+(é\s+um\s+estorno|foi\s+estornada)/i.test(msg)) {
+              continue;
+            }
+            logger.error("compras-cancelar-pedido", "falha estornando mov", {
+              pedidoId,
+              mov_id: mov.id,
+              error: msg,
+            });
+          }
+        }
+      }
+      logger.info(
+        "compras-cancelar-pedido",
+        "movs E estornadas no cancelamento",
+        {
+          pedidoId,
+          movs_estornadas: movsEstornadas,
+          itens_com_estoque: itensComEstoque.length,
+        },
+      );
+    }
 
     await supabase
       .from("siso_pedido_itens")

@@ -291,9 +291,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Business Logic:**
 - Fetches up to 200 orders from `siso_pedidos`
 - Joins `siso_pedido_itens` for item details
-- Joins `siso_pedido_item_estoques` (normalized stock) to aggregate by galpão
-- For each item, aggregates stock across all empresas in the same galpão
-- Maps stock to dynamic galpão-keyed structure (supports any number of galpões)
+- Aggregates LIVE stock from `siso_estoque` (3D WMS cache) by (sku, galpão) via `aggregateLiveStockBySku` — reflects every movement (recebimento, ajuste, transferência, separação) without re-running the webhook
+- For pedidos `status ∈ {pendente, erro}`, recomputes `sugestao`/`sugestaoMotivo` dynamically via `recomputarSugestaoBatch` (reuses `rotearPedido` from the WMS routing module). `siso_pedidos.sugestao` continues to hold the webhook snapshot for audit, but the response returns the live value.
 - Filters by status if provided
 
 **Side Effects:** None (read-only)
@@ -301,8 +300,9 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Rate Limiting:** None
 
 **Notes:**
-- Stock is normalized in `siso_pedido_item_estoques` (one row per empresa per product)
-- API aggregates to galpão level for display
+- Stock is live from `siso_estoque` (3D pool), not the frozen `siso_pedido_item_estoques` snapshot
+- `sugestao` reflects current stock coverage — if balance arrives after the webhook, the suggestion automatically flips from `oc` to `propria`/`transferencia` on the next GET
+- Cost of recompute is bounded: 5 fixed queries regardless of pedido count
 - Supports any number of galpões (not hardcoded CWB/SP)
 
 ---
@@ -655,7 +655,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
   "data": "ISO date",
   "status": "string",
   "status_separacao": "string | null",
-  "sugestao": "string",
+  "sugestao": "propria | transferencia | oc",
+  "sugestao_motivo": "string | null",
   "decisao_final": "string | null",
   "tipo_resolucao": "string | null",
   "operador": "string | null",
@@ -757,9 +758,10 @@ This is the **authoritative, comprehensive reference** for every API route in th
 - Validates session via `getSessionUser()`
 - Fetches pedido with empresa/galpao JOIN, returns 404 if not found (PGRST116 code)
 - Role-based access: admin sees all, comprador only sees decisao_final='oc', operador only sees pedidos from their galpao
-- Fetches itens, estoques, historico, observacoes in parallel via Promise.all
-- Stock aggregated from `siso_pedido_item_estoques` by galpao (dynamic, not hardcoded)
+- Fetches itens, historico, observacoes in parallel via Promise.all
+- Stock aggregated LIVE from `siso_estoque` (3D pool) by (sku, galpão) via `aggregateLiveStockBySku`
 - Items include per-galpao stock with `atende` boolean (disponivel >= quantidade)
+- For pedidos `status ∈ {pendente, erro}`, `sugestao`/`sugestao_motivo` is recomputed dynamically via `recomputarSugestaoBatch` against live stock — `siso_pedidos.sugestao` continues to hold the webhook snapshot for audit
 - Historico ordered ascending (oldest first), observacoes ordered ascending
 
 **Side Effects:** None (read-only)

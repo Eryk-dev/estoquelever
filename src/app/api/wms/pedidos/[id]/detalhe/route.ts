@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { aggregateLiveStockBySku } from "@/lib/wms/live-stock";
+import { recomputarSugestaoBatch } from "@/lib/wms/sugestao-dinamica";
 import type { GalpaoEstoque } from "@/types";
 
 /**
@@ -97,6 +98,25 @@ export async function GET(
     const skus = Array.from(new Set(itensList.map((i) => i.sku).filter((s): s is string => !!s)));
     const stockBySku = await aggregateLiveStockBySku(supabase, skus);
 
+    // Sugestão dinâmica pra pedidos ainda em decisão (pendente/erro).
+    const ehDecidivel = pedido.status === "pendente" || pedido.status === "erro";
+    const sugestoesAtuais =
+      ehDecidivel && pedido.empresa_origem_id
+        ? await recomputarSugestaoBatch(supabase, [
+            {
+              pedidoId: pedido.id,
+              empresaOrigemId: pedido.empresa_origem_id,
+              itens: itensList
+                .filter((it) => !!it.sku)
+                .map((it) => ({
+                  sku: it.sku as string,
+                  quantidade: Number(it.quantidade_pedida) || 0,
+                })),
+            },
+          ])
+        : null;
+    const sugestaoAtual = sugestoesAtuais?.get(pedido.id);
+
     // Map empresa join
     const empresaData = pedido.siso_empresas as unknown as {
       nome: string;
@@ -174,7 +194,8 @@ export async function GET(
       data: pedido.data ?? "",
       status: pedido.status ?? "pendente",
       status_separacao: pedido.status_separacao ?? null,
-      sugestao: pedido.sugestao ?? "propria",
+      sugestao: sugestaoAtual?.sugestao ?? pedido.sugestao ?? "propria",
+      sugestao_motivo: sugestaoAtual?.motivo ?? pedido.sugestao_motivo ?? null,
       decisao_final: pedido.decisao_final ?? null,
       tipo_resolucao: pedido.tipo_resolucao ?? null,
       operador: pedido.operador_nome ?? null,

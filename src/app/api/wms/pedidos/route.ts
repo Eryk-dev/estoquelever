@@ -3,6 +3,10 @@ import { createServiceClient } from "@/lib/supabase-server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GalpaoEstoque } from "@/types";
 import { aggregateLiveStockBySku } from "@/lib/wms/live-stock";
+import {
+  recomputarSugestaoBatch,
+  type PedidoInput,
+} from "@/lib/wms/sugestao-dinamica";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
@@ -28,6 +32,24 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
   // de siso_pedido_item_estoques, que congela na hora do webhook.
   const skus = Array.from(new Set(itensList.map((i) => i.sku).filter((s): s is string => !!s)));
   const stockBySku = await aggregateLiveStockBySku(supabase, skus);
+
+  // Sugestão dinâmica: pra pedidos ainda em decisão (pendente/erro), recomputa
+  // sugestao com base no estoque atual. Snapshot em siso_pedidos.sugestao é
+  // preservado pra auditoria, mas o response devolve o valor recomputado.
+  const pedidosPraRecalcular: PedidoInput[] = pedidos
+    .filter((p) => p.status === "pendente" || p.status === "erro")
+    .filter((p) => !!p.empresa_origem_id)
+    .map((p) => ({
+      pedidoId: p.id,
+      empresaOrigemId: p.empresa_origem_id as string,
+      itens: (itensByPedido.get(p.id) ?? [])
+        .filter((it) => !!it.sku)
+        .map((it) => ({
+          sku: it.sku as string,
+          quantidade: Number(it.quantidade_pedida) || 0,
+        })),
+    }));
+  const sugestoesAtuais = await recomputarSugestaoBatch(supabase, pedidosPraRecalcular);
 
   return pedidos.map((p) => {
     const dbItens = itensByPedido.get(p.id) ?? [];
@@ -79,8 +101,9 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
           imagemUrl: item.imagem_url ?? undefined,
         };
       }),
-      sugestao: p.sugestao ?? "propria",
-      sugestaoMotivo: p.sugestao_motivo ?? "",
+      sugestao: sugestoesAtuais.get(p.id)?.sugestao ?? p.sugestao ?? "propria",
+      sugestaoMotivo:
+        sugestoesAtuais.get(p.id)?.motivo ?? p.sugestao_motivo ?? "",
       status: p.status ?? "pendente",
       tipoResolucao: p.tipo_resolucao ?? undefined,
       decisaoFinal: p.decisao_final ?? undefined,

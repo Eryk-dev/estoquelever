@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     const { data: item, error: itemErr } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, quantidade_pedida, separacao_parcial, mov_saida_id",
+        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_parcial, mov_saida_id",
       )
       .eq("id", pedido_item_id)
       .single();
@@ -83,7 +83,14 @@ export async function POST(request: NextRequest) {
       let triplaProdutoWmsId: string | null = null;
       let triplaLocId: string | null = null;
 
-      if (empresaOrigemId && galpaoId) {
+      // Item "em progresso" — já teve parcial sem loc_zerou anteriormente.
+      // quantidade_pega tem o qty já pego. Completar via checkbox só descontava
+      // o RESTANTE (qty_pedida - qty_pega). Se qty_pega === qty_pedida, item já
+      // está 100% pego — checkbox só marca como complete sem nova mov.
+      const qtyJaPega = Number(item.quantidade_pega ?? 0);
+      const qtyADescontar = Number(item.quantidade_pedida) - qtyJaPega;
+
+      if (empresaOrigemId && galpaoId && qtyADescontar > 0) {
         try {
           const produtoWmsId = await resolverProdutoWms(
             empresaOrigemId,
@@ -124,9 +131,11 @@ export async function POST(request: NextRequest) {
           });
 
           if (reserva) {
+            // Libera apenas qty restante (qty_pedida - qty_pega). Se item já
+            // teve parcial anterior, qty_pega>0 e libera só o residual.
             const movL = await liberarReservaPicking({
               reserva,
-              qty: item.quantidade_pedida,
+              qty: qtyADescontar,
               pedido_id: String(pedido.id),
               motivo: `Picking pedido #${pedido.numero} — libera reserva (checkbox)`,
               usuario_id: session.id,
@@ -135,6 +144,7 @@ export async function POST(request: NextRequest) {
                 pedido_item_id: item.id,
                 sku: item.sku,
                 contexto: "checkbox",
+                qty_ja_pega: qtyJaPega,
               },
             });
             movLiberacaoId = movL.id;
@@ -153,18 +163,22 @@ export async function POST(request: NextRequest) {
               localizacao_id: locId,
             },
             tipo: "S",
-            qty: item.quantidade_pedida,
+            qty: qtyADescontar,
             origem_tipo: "nf_venda",
             origem_detalhes: {
               pedido_id_tiny: pedido.id,
               pedido_numero: pedido.numero,
               pedido_item_id: item.id,
               sku: item.sku,
-              contexto: "checkbox",
+              contexto: qtyJaPega > 0 ? "checkbox_completa_parcial" : "checkbox",
               reserva_origem: reserva?.id ?? null,
+              qty_ja_pega: qtyJaPega,
             },
             empresa_vendedora_id: empresaOrigemId,
-            motivo: `Picking pedido #${pedido.numero} — checkbox completo`,
+            motivo:
+              qtyJaPega > 0
+                ? `Picking pedido #${pedido.numero} — completa parcial (${qtyADescontar}+${qtyJaPega})`
+                : `Picking pedido #${pedido.numero} — checkbox completo`,
             usuario_id: session.id,
           });
           movSaidaId = mov.id;
@@ -191,7 +205,7 @@ export async function POST(request: NextRequest) {
             pedido_item_id: Number(item.id),
             realocacao_id: null,
             mov_id: movLiberacaoId,
-            qty: Number(item.quantidade_pedida),
+            qty: qtyADescontar,
             tipo_link: "liberacao_reserva",
           });
         }
@@ -200,7 +214,7 @@ export async function POST(request: NextRequest) {
             pedido_item_id: Number(item.id),
             realocacao_id: null,
             mov_id: movSaidaId,
-            qty: Number(item.quantidade_pedida),
+            qty: qtyADescontar,
             tipo_link: "saida",
           });
         }

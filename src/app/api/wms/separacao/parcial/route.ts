@@ -10,7 +10,11 @@ import {
   type ReservaPendenteRow,
 } from "@/lib/wms/reservas-picking";
 import { registrarEvento } from "@/lib/historico-service";
-import { resolverProdutoWms, resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
+import {
+  resolverProdutoWms,
+  resolverLocalizacaoWms,
+  buscarLocComMaiorSaldoNoGalpao,
+} from "@/lib/separacao/wms-mapping";
 import { resolverRealocacao } from "@/lib/separacao/realocacao-resolver";
 
 /**
@@ -213,7 +217,17 @@ async function processarParcialItem(
       .maybeSingle();
 
     const locCodigo = (estoque?.localizacao as string | null | undefined) ?? null;
-    const locOriginalId = await resolverLocalizacaoWms(galpaoId, locCodigo);
+    // Fallback live: pedidos aprovados manual após cutover WMS_AS_SOURCE entram
+    // sem snapshot em siso_pedido_item_estoques. Sem fallback, cai em
+    // DEFAULT-PICKING (saldo=0) e dispara 'posicao_reservada' falso.
+    // Mesmo pattern do marcar-item/route.ts:99-109.
+    let locOriginalId: string;
+    if (locCodigo) {
+      locOriginalId = await resolverLocalizacaoWms(galpaoId, locCodigo);
+    } else {
+      const liveLocId = await buscarLocComMaiorSaldoNoGalpao(galpaoId, produtoWmsId);
+      locOriginalId = liveLocId ?? (await resolverLocalizacaoWms(galpaoId, null));
+    }
 
     // 6. Saldo / reservado (3D: produto + galpao + loc)
     const { data: estoqueWms } = await supabase
@@ -483,6 +497,43 @@ async function processarParcialItem(
       }
     }
 
+    // Acumula quantidade_pega pra TODOS os items que receberam qty —
+    // inclui items "em progresso" (qty_para_este>0 && qty_residual>0 && !loc_zerou)
+    // que ficam abertos e não passam pelo Pass B. RPC é idempotente em retry?
+    // Não — wms_acumular_qty_pega é UPDATE com soma. Em retry duplica. Por isso
+    // roda aqui antes do claim atômico (que falha apenas se outro op marcou primeiro).
+    for (const u of itemUpdates) {
+      if (u.qty_para_este > 0) {
+        await supabase.rpc("wms_acumular_qty_pega", {
+          p_item_id: u.item.id,
+          p_delta: u.qty_para_este,
+        });
+      }
+    }
+
+    // Log de items "em progresso" pra audit trail — Pass B só registra evento
+    // pros marcados, então o em-progresso fica sem evento sem este log.
+    if (!loc_zerou) {
+      for (const u of itemUpdates) {
+        if (u.qty_para_este > 0 && u.qty_residual > 0) {
+          await registrarEvento({
+            pedidoId: u.pedido_id,
+            evento: "parcial_em_progresso",
+            detalhes: {
+              item_id: u.item.id,
+              sku: u.item.sku,
+              quantidade_pega: u.qty_para_este,
+              quantidade_pedida: Number(u.item.quantidade_pedida),
+              quantidade_residual: u.qty_residual,
+              loc_codigo: locCodigo,
+              wave_consolidado: itemsRaw.length > 1,
+            },
+            usuarioId: session.id,
+          });
+        }
+      }
+    }
+
     // C4: 2-pass atomic claim — evita drift mid-loop quando race acontece
     // numa iteração N>1 (iterações 1..N-1 já estavam committed no padrão antigo).
     //
@@ -493,8 +544,13 @@ async function processarParcialItem(
     //
     // Pass B: per-row UPDATE pra setar campos diferenciais (separacao_parcial,
     // parcial_motivo, mov_saida_id, etc) SEM filtro de race — já temos lock.
+    //
+    // Items "em progresso" (qty_para_este>0 && qty_residual>0 && !loc_zerou)
+    // ficam ABERTOS: separacao_marcado=false, quantidade_pega já acumulada.
+    // Operador volta pelo checkbox normal (marcar-item entende qty_pega>0 e
+    // cria S de qty_pedida-qty_pega).
     const itemsParaMarcar = itemUpdates.filter(
-      (u) => u.qty_para_este > 0 || loc_zerou,
+      (u) => u.qty_residual === 0 || loc_zerou,
     );
     let racePerdida = false;
     let itemIdsClaimedParaReverter: number[] = [];
@@ -539,7 +595,11 @@ async function processarParcialItem(
           const { item: it, qty_para_este, qty_residual } = u;
           const ehBeneficiario = i === indexPrimeiroBeneficiado;
           const isCompleto = qty_residual === 0;
-          const deveMarcar = qty_para_este > 0 || loc_zerou;
+          // Pass B só marca items "fechados" — qty_residual===0 (pegou tudo)
+          // ou loc_zerou (cascade vai cuidar do residual em outra loc).
+          // Items "em progresso" (qty_para_este>0 && qty_residual>0 && !loc_zerou)
+          // já tiveram quantidade_pega acumulada no pre-pass e ficam abertos.
+          const deveMarcar = isCompleto || loc_zerou;
           if (!deveMarcar) continue;
 
           const isParcial = !isCompleto;
@@ -572,13 +632,8 @@ async function processarParcialItem(
             return NextResponse.json({ error: "erro persistindo parcial" }, { status: 500 });
           }
 
-          // I9: acumula qty_pega atomicamente via RPC (substitui RMW)
-          if (qty_para_este > 0) {
-            await supabase.rpc("wms_acumular_qty_pega", {
-              p_item_id: it.id,
-              p_delta: qty_para_este,
-            });
-          }
+          // qty_pega já foi acumulada no pre-pass (antes do claim atômico) —
+          // não duplica aqui.
 
           await registrarEvento({
             pedidoId: it.pedido_id,
@@ -670,6 +725,23 @@ async function processarParcialItem(
             error: revertErr.message,
             itemIdsClaimedParaReverter,
           });
+        }
+      }
+      // Reverte quantidade_pega acumulada no pre-pass (delta negativo via RPC).
+      // Cobre todos os items que receberam qty (não só os claimed) porque o
+      // pre-pass acumulou ANTES do filtro de race.
+      for (const u of itemUpdates) {
+        if (u.qty_para_este > 0) {
+          const { error: rpcErr } = await supabase.rpc("wms_acumular_qty_pega", {
+            p_item_id: u.item.id,
+            p_delta: -u.qty_para_este,
+          });
+          if (rpcErr) {
+            logger.warn("separacao-parcial", "rollback qty_pega falhou", {
+              error: rpcErr.message,
+              item_id: u.item.id,
+            });
+          }
         }
       }
       return NextResponse.json(

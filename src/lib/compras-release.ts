@@ -198,7 +198,11 @@ export async function checkAndReleasePedidos(
       .filter((i) => i.mov_saida_id != null)
       .map((i) => i.id as number);
 
-    // Insert job in execution queue
+    // Insert job in execution queue.
+    // Idempotência: índice único parcial `uq_fila_release_pedido` garante que só
+    // exista 1 job pendente do tipo `lancar_estoque` por pedido. Em caso de race
+    // (re-entrega de webhook de recebimento, dois caminhos chamando release ao
+    // mesmo tempo), o Postgres rejeita com 23505 — tratamos como skip idempotente.
     const { error: queueError } = await supabase
       .from("siso_fila_execucao")
       .insert({
@@ -210,11 +214,19 @@ export async function checkAndReleasePedidos(
       });
 
     if (queueError) {
-      logger.error("compras-release", "Erro ao enfileirar job de release", {
-        pedidoId,
-        error: queueError.message,
-      });
-      continue;
+      if ((queueError as { code?: string }).code === "23505") {
+        logger.info(
+          "compras-release",
+          "Job lancar_estoque já enfileirado para este pedido — skip idempotente",
+          { pedidoId },
+        );
+      } else {
+        logger.error("compras-release", "Erro ao enfileirar job de release", {
+          pedidoId,
+          error: queueError.message,
+        });
+        continue;
+      }
     }
 
     // Kick the worker to process the newly enqueued job

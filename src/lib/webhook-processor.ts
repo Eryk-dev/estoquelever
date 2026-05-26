@@ -370,7 +370,22 @@ export async function processWebhook(
       .eq("id", pedidoTinyId)
       .maybeSingle();
 
-    const vendedorIdFinal = pedidoExistente?.vendedor_id ?? null;
+    // 8d. Auto-attribute pedidos ML/Shopee ao usuário sintético 'system-marketplace'
+    //     pra reports/visões "pedidos por vendedor" não perderem marketplace.
+    //     Usuário é criado pela migration 20260527_user_system_marketplace.sql
+    //     (ativo=false, não aparece em login). Lookup é best-effort: se não
+    //     existir, mantém NULL.
+    let vendedorIdAuto: string | null = null;
+    if (vendedorNomeAuto) {
+      const { data: sysUser } = await supabase
+        .from("siso_usuarios")
+        .select("id")
+        .eq("nome", "system-marketplace")
+        .maybeSingle();
+      vendedorIdAuto = sysUser?.id ?? null;
+    }
+
+    const vendedorIdFinal = pedidoExistente?.vendedor_id ?? vendedorIdAuto;
     const vendedorNomeFinal =
       pedidoExistente?.vendedor_id != null
         ? pedidoExistente.vendedor_nome // preserved manual assignment

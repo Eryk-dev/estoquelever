@@ -14,7 +14,10 @@ export interface DisponibilidadeSugestao {
 
 export interface DisponibilidadeResult {
   total_disponivel: number;
+  /** Primeira sugestão ordenada (compat — = sugestoes[0] ?? null). */
   sugestao: DisponibilidadeSugestao | null;
+  /** Lista completa de locs com saldo, ordenada por preferência (picking>overstock>recebimento, depois maior disponivel). */
+  sugestoes: DisponibilidadeSugestao[];
 }
 
 interface EstoqueRow {
@@ -72,7 +75,7 @@ export async function resolverDisponibilidadeVenda(
   const total = rows.reduce((acc, r) => acc + Number(r.disponivel), 0);
 
   if (rows.length === 0) {
-    return { total_disponivel: 0, sugestao: null };
+    return { total_disponivel: 0, sugestao: null, sugestoes: [] };
   }
 
   rows.sort((a, b) => {
@@ -82,14 +85,16 @@ export async function resolverDisponibilidadeVenda(
     return Number(b.disponivel) - Number(a.disponivel);
   });
 
-  const top = rows[0];
+  const sugestoes: DisponibilidadeSugestao[] = rows.map((r) => ({
+    localizacao_id: r.localizacao_id,
+    localizacao_codigo: r.localizacao!.codigo!,
+    localizacao_tipo: r.localizacao!.tipo ?? "picking",
+    disponivel: Number(r.disponivel),
+  }));
+
   return {
     total_disponivel: total,
-    sugestao: {
-      localizacao_id: top.localizacao_id,
-      localizacao_codigo: top.localizacao!.codigo!,
-      localizacao_tipo: top.localizacao!.tipo ?? "picking",
-      disponivel: Number(top.disponivel),
-    },
+    sugestao: sugestoes[0] ?? null,
+    sugestoes,
   };
 }

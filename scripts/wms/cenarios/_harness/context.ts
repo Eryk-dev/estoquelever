@@ -503,12 +503,16 @@ export function createContext(opts: {
     if (p.pedido_id) {
       await validarOcItens({ pedido_id: p.pedido_id, sku: p.sku, acao: "esgotado" });
     }
-    await http.post<{ ok: boolean; resultados: unknown[] }>("/api/wms/compras/comprar", {
-      itens: [{ sku: p.sku, quantidade_comprada: p.qty }],
-    });
-    // Busca a OC criada pra esse fornecedor+sku (uma row em siso_ordens_compra
-    // foi criada pelo validar-oc-item via linkItemToOC). Retorna o id pra
-    // receberCompra.
+    // Pós-fix #3.2 (Task 3.4): /compras/comprar agora retorna `ordem_id` da
+    // primeira OC criada/encontrada via findOrCreateOC. Preferimos esse campo;
+    // fallback no DB pra compat com cenários antigos.
+    const resp = await http.post<{ ok: boolean; resultados: unknown[]; ordem_id?: string | null }>(
+      "/api/wms/compras/comprar",
+      {
+        itens: [{ sku: p.sku, quantidade_comprada: p.qty }],
+      },
+    );
+    if (resp.ordem_id) return { ordem_id: resp.ordem_id };
     const { data: itemRow } = await sb
       .from("siso_pedido_itens")
       .select("ordem_compra_id")

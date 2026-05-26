@@ -2864,6 +2864,8 @@ OR
 
 **Query Params:**
 - `tab`: "comprar" | "receber" | "historico" (default: "comprar")
+- `cursor` (apenas tab=historico): ISO timestamp de `comprado_em` do último item retornado anteriormente — ativa modo cursor-based
+- `limit` (apenas tab=historico): items per page (default 100, max 200)
 
 **Response (200 - Comprar tab):**
 ```json
@@ -2972,14 +2974,15 @@ OR
         }
       ]
     }
-  ]
+  ],
+  "next_cursor": "ISO datetime | null"
 }
 ```
 
 **Business Logic:**
 - **Comprar tab:** Groups items by fornecedor, aggregates by SKU, includes all unique pedidos per SKU
 - **Receber tab:** Shows purchased items awaiting receipt; auto-fixes items over-received
-- **Historico tab:** Shows received items (compra_status = "recebido") grouped by fornecedor and date
+- **Historico tab:** Shows received items (compra_status = "recebido") grouped by fornecedor and date. Paginação cursor-based via `?cursor=<comprado_em>&limit=<N>` (default 100, max 200); `next_cursor` é null quando exausto. Ordering `comprado_em DESC, id DESC` (tiebreaker estável).
 
 **Side Effects:** Auto-fix in receber tab (marks over-received items as "recebido")
 

@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { sisoFetch, usePermissoes } from "@/lib/auth-context";
@@ -111,6 +116,7 @@ interface HistoricoFornecedor {
 interface HistoricoResponse {
   counts: Counts;
   fornecedores: HistoricoFornecedor[];
+  next_cursor: string | null;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -157,9 +163,19 @@ export default function WmsComprasPage() {
     refetchInterval: 30_000,
   });
 
-  const historicoQuery = useQuery<HistoricoResponse>({
+  // Histórico usa paginação cursor-based (useInfiniteQuery) com botão
+  // "Carregar mais" — backend retorna até 100 itens por chamada + next_cursor.
+  const historicoQuery = useInfiniteQuery<HistoricoResponse>({
     queryKey: ["wms-compras", "historico"],
-    queryFn: () => wmsApi<HistoricoResponse>("/api/wms/compras?tab=historico"),
+    queryFn: ({ pageParam }) => {
+      const cursor = pageParam as string | null;
+      const url = cursor
+        ? `/api/wms/compras?tab=historico&cursor=${encodeURIComponent(cursor)}&limit=100`
+        : "/api/wms/compras?tab=historico&limit=100";
+      return wmsApi<HistoricoResponse>(url);
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
     enabled: tab === "historico",
     refetchInterval: 60_000,
   });
@@ -167,7 +183,7 @@ export default function WmsComprasPage() {
   const counts =
     comprarQuery.data?.counts ??
     receberQuery.data?.counts ??
-    historicoQuery.data?.counts;
+    historicoQuery.data?.pages?.[0]?.counts;
 
   const invalidateAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["wms-compras"] });
@@ -1151,7 +1167,7 @@ function TabReceber({
 function TabHistorico({
   query,
 }: {
-  query: ReturnType<typeof useQuery<HistoricoResponse>>;
+  query: ReturnType<typeof useInfiniteQuery<HistoricoResponse>>;
 }) {
   if (query.isLoading) {
     return <div className="wms-loading-pane">Carregando…</div>;
@@ -1164,7 +1180,14 @@ function TabHistorico({
       </div>
     );
   }
-  const fornecedores = query.data?.fornecedores ?? [];
+  // Aglutina fornecedores de todas as páginas. Como o cursor é por
+  // `comprado_em` e o backend agrupa por (fornecedor, data), aglutinar lista
+  // direto produz duplicação aparente de grupos do mesmo fornecedor+data
+  // entre páginas. É aceitável — cada grupo carrega itens distintos e a UI
+  // mostra como linhas separadas.
+  const fornecedores =
+    query.data?.pages?.flatMap((p) => p.fornecedores) ?? [];
+
   if (fornecedores.length === 0) {
     return (
       <div className="wms-empty-block">
@@ -1175,37 +1198,51 @@ function TabHistorico({
   }
 
   return (
-    <div className="wms-tbl">
-      <table>
-        <thead>
-          <tr>
-            <th>Data</th>
-            <th>Fornecedor</th>
-            <th>SKU</th>
-            <th>Produto</th>
-            <th className="wms-tar">Qty</th>
-          </tr>
-        </thead>
-        <tbody>
-          {fornecedores.flatMap((f) =>
-            f.itens.map((i, idx) => (
-              <tr key={`${f.fornecedor}-${i.sku}-${idx}`}>
-                <td className="wms-td-mute">
-                  {i.recebido_em
-                    ? fmtDateTime(i.recebido_em)
-                    : fmtDateTime(f.data_recebimento)}
-                </td>
-                <td>{f.fornecedor}</td>
-                <td className="wms-mono">{i.sku}</td>
-                <td>{i.descricao}</td>
-                <td className="wms-tar wms-mono">
-                  {fmtNum(i.quantidade_recebida)}
-                </td>
-              </tr>
-            )),
-          )}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <div className="wms-tbl">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Fornecedor</th>
+              <th>SKU</th>
+              <th>Produto</th>
+              <th className="wms-tar">Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {fornecedores.flatMap((f, fIdx) =>
+              f.itens.map((i, idx) => (
+                <tr key={`${fIdx}-${f.fornecedor}-${i.sku}-${idx}`}>
+                  <td className="wms-td-mute">
+                    {i.recebido_em
+                      ? fmtDateTime(i.recebido_em)
+                      : fmtDateTime(f.data_recebimento)}
+                  </td>
+                  <td>{f.fornecedor}</td>
+                  <td className="wms-mono">{i.sku}</td>
+                  <td>{i.descricao}</td>
+                  <td className="wms-tar wms-mono">
+                    {fmtNum(i.quantidade_recebida)}
+                  </td>
+                </tr>
+              )),
+            )}
+          </tbody>
+        </table>
+      </div>
+      {query.hasNextPage && (
+        <div style={{ display: "flex", justifyContent: "center", padding: "1rem" }}>
+          <button
+            type="button"
+            className="wms-btn"
+            onClick={() => query.fetchNextPage()}
+            disabled={query.isFetchingNextPage}
+          >
+            {query.isFetchingNextPage ? "Carregando…" : "Carregar mais"}
+          </button>
+        </div>
+      )}
+    </>
   );
 }

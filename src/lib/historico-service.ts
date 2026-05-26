@@ -49,7 +49,19 @@ export type EventoPedido =
   | "separacao_cancelada"
   | "venda_criada_manual"
   | "venda_baixa_direta_executada"
-  | "venda_vendedor_atribuido";
+  | "venda_vendedor_atribuido"
+  | "compra_item_comprado"
+  | "compra_item_recebido"
+  | "compra_item_indisponivel"
+  | "compra_item_devolvido"
+  | "compra_item_cancelado"
+  | "compra_item_equivalente_aplicado"
+  | "compra_sku_trocado"
+  | "compra_pedido_cancelado"
+  | "guarda_pendencia_criada"
+  | "guarda_pendencia_confirmada"
+  | "guarda_pendencia_cancelada"
+  | "inventario_patch_aplicado";
 
 /**
  * Record a single event in the order history.

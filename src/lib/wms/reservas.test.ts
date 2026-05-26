@@ -27,7 +27,7 @@ describe("calcularExpiraEm", () => {
 
 // ---------------------------------------------------------------------------
 // Helpers pra montar stubs in-memory alinhados com o estilo do projeto
-// (sem vi.mock — deps injetadas via _deps opcional, como roteamento.ts usa
+// (sem vi.mock — deps injetadas via deps opcional, como roteamento.ts usa
 // buscarLinha callback).
 // ---------------------------------------------------------------------------
 

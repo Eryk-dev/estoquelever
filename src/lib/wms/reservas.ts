@@ -124,15 +124,21 @@ export interface EstornarReservaDeps {
  * Idempotente: se já existe L com estorno_de=reserva_id, retorna o id
  * existente sem criar novo L.
  *
- * Aceita `_deps` opcional para injeção de dependências em testes
+ * **Idempotência:** se já existe L com `estorno_de=reserva_id`, retorna o
+ * id existente sem criar novo L. Importante: o `motivo` passado em chamadas
+ * subsequentes é **ignorado** — first writer wins. Isso é intencional pra
+ * evitar reescrever o motivo de um estorno já consumado.
+ *
+ * Aceita `deps` opcional para injeção de dependências em testes
  * (mesmo padrão de roteamento.ts com buscarLinha).
  */
 export async function estornarReservaIndividual(
   input: EstornarReservaInput,
-  _deps?: EstornarReservaDeps,
+  /** @internal — test seam */
+  deps?: EstornarReservaDeps,
 ): Promise<string> {
-  // createServiceClient é instanciado lazily, só quando _deps não é fornecido
-  // (i.e. produção). Em testes, _deps é sempre passado, evitando erro de
+  // createServiceClient é instanciado lazily, só quando deps não é fornecido
+  // (i.e. produção). Em testes, deps é sempre passado, evitando erro de
   // "supabaseUrl is required" sem .env.
   function buildDefaultDeps(): EstornarReservaDeps {
     const sb = createServiceClient();
@@ -171,7 +177,7 @@ export async function estornarReservaIndividual(
           tipo: "L",
           qty: reserva.quantidade,
           origem_tipo: "liberacao_reserva",
-          origem_detalhes: { motivo: input.motivo },
+          origem_detalhes: { motivo },
           estorno_de: reserva_id,
           usuario_id,
           motivo,
@@ -181,19 +187,22 @@ export async function estornarReservaIndividual(
     };
   }
 
-  const deps: EstornarReservaDeps = _deps ?? buildDefaultDeps();
+  const resolvedDeps: EstornarReservaDeps = deps ?? buildDefaultDeps();
 
   // Idempotência: L já existe?
-  const lExistenteId = await deps.buscarLExistente(input.reserva_id);
+  const lExistenteId = await resolvedDeps.buscarLExistente(input.reserva_id);
   if (lExistenteId) return lExistenteId;
 
   // Carrega a R original pra reconstruir tripla + qty
-  const reserva = await deps.buscarReservaOriginal(input.reserva_id);
+  const reserva = await resolvedDeps.buscarReservaOriginal(input.reserva_id);
   if (!reserva) {
+    logger.warn("wms.reservas", "estorno: reserva original não encontrada", {
+      reserva_id: input.reserva_id,
+    });
     throw new Error(`Reserva ${input.reserva_id} não encontrada`);
   }
 
-  return deps.inserirL({
+  return resolvedDeps.inserirL({
     reserva_id: input.reserva_id,
     reserva,
     motivo: `Estorno individual: ${input.motivo}`,

@@ -6,6 +6,12 @@ import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
 import { kickWorker } from "@/lib/execution-worker";
 import { logger } from "@/lib/logger";
 import { registrarEvento } from "@/lib/historico-service";
+import { wmsAsSource } from "@/lib/wms/flags";
+import { reservarAtomico, estornarReservaIndividual } from "@/lib/wms/reservas";
+import {
+  resolverProdutoWms,
+  buscarLocComMaiorSaldoNoGalpao,
+} from "@/lib/separacao/wms-mapping";
 
 type Decisao = "propria" | "transferencia" | "oc";
 
@@ -129,6 +135,21 @@ export async function POST(request: NextRequest) {
   const marcadores: string[] =
     decisao === "oc" ? ["OC", filialOrigem, "LVR"] : [filialExecucao, "LVR"];
 
+  // Em WMS_AS_SOURCE, quando decisao manual é propria/transferencia,
+  // criar as reservas R atomicamente ANTES de transitar status. Se algum
+  // item falhar, estorna parciais e devolve 409 sem mexer no pedido.
+  // OC permanece intocado (não reserva).
+  if (wmsAsSource() && (decisao === "propria" || decisao === "transferencia")) {
+    const reservaResult = await criarReservasPedido({
+      pedidoId,
+      empresaExecucaoId,
+      separacaoGalpaoId,
+    });
+    if (!reservaResult.ok) {
+      return NextResponse.json(reservaResult.body, { status: 409 });
+    }
+  }
+
   // Update order to "executando"
   const { error: updateError } = await supabase
     .from("siso_pedidos")
@@ -216,4 +237,139 @@ export async function POST(request: NextRequest) {
     empresaExecucaoId,
     status: "executando",
   });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Helpers privados do handler
+// ────────────────────────────────────────────────────────────────────────────
+
+type ReservaResult =
+  | { ok: true; reservasCriadas: number }
+  | { ok: false; body: Record<string, unknown> };
+
+/**
+ * Cria reservas R atomicamente pra cada item do pedido. Tudo-ou-nada:
+ * se alguma falhar, estorna as N-1 já criadas via estornarReservaIndividual
+ * e retorna { ok: false, body } pra o handler devolver 409.
+ *
+ * Idempotência: se já existe qualquer R com origem_id=pedidoId, skipa todo
+ * o bloco e retorna ok: true, reservasCriadas: 0.
+ */
+async function criarReservasPedido(args: {
+  pedidoId: string;
+  empresaExecucaoId: string;
+  separacaoGalpaoId: string;
+}): Promise<ReservaResult> {
+  const { pedidoId, empresaExecucaoId, separacaoGalpaoId } = args;
+  const supabase = createServiceClient();
+
+  // 1. Idempotência: R já existe pro pedido?
+  const { data: jaR } = await supabase
+    .from("siso_movimentacoes")
+    .select("id")
+    .eq("origem_id", pedidoId)
+    .eq("origem_tipo", "reserva_pedido")
+    .eq("tipo", "R")
+    .limit(1);
+  if ((jaR?.length ?? 0) > 0) {
+    logger.info("aprovar.reservas", "Reservas já existentes — skip", { pedidoId });
+    return { ok: true, reservasCriadas: 0 };
+  }
+
+  // 2. Itens do pedido
+  const { data: itens } = await supabase
+    .from("siso_pedido_itens")
+    .select("id, produto_id, sku, quantidade_pedida")
+    .eq("pedido_id", pedidoId);
+  if (!itens || itens.length === 0) {
+    logger.warn("aprovar.reservas", "Pedido sem itens", { pedidoId });
+    return { ok: true, reservasCriadas: 0 };
+  }
+
+  // 3. Loop atômico
+  const criadas: string[] = []; // ids das R criadas (pra rollback)
+  for (const item of itens) {
+    const qty = Number(item.quantidade_pedida ?? 0);
+    if (qty <= 0) continue;
+
+    try {
+      const produtoWmsId = await resolverProdutoWms(
+        empresaExecucaoId,
+        String(item.produto_id),
+      );
+      const locId = await buscarLocComMaiorSaldoNoGalpao(
+        separacaoGalpaoId,
+        produtoWmsId,
+      );
+      if (!locId) {
+        await rollbackReservas(criadas, pedidoId);
+        return {
+          ok: false,
+          body: {
+            error: "reserva_falhou",
+            motivo: "sem_saldo",
+            item: { sku: item.sku, produto_id_tiny: item.produto_id, qty },
+            criadas_estornadas: criadas.length,
+          },
+        };
+      }
+
+      const reservaId = await reservarAtomico({
+        tripla: {
+          produto_id: produtoWmsId,
+          galpao_id: separacaoGalpaoId,
+          localizacao_id: locId,
+        },
+        qty,
+        pedido_id: pedidoId,
+        ttl_horas: 24 * 30, // 30 dias, alinhado com webhook-processor-wms
+      });
+      criadas.push(reservaId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await rollbackReservas(criadas, pedidoId);
+
+      // Distingue mapeamento ausente vs outros erros pra mensagem melhor
+      const motivo = /mapeado em siso_produto_empresas/i.test(msg)
+        ? "mapeamento_ausente"
+        : /saldo|reserva|disponivel/i.test(msg)
+          ? "saldo_insuficiente"
+          : "erro_runtime";
+
+      return {
+        ok: false,
+        body: {
+          error: "reserva_falhou",
+          motivo,
+          item: { sku: item.sku, produto_id_tiny: item.produto_id, qty },
+          criadas_estornadas: criadas.length,
+          detalhe: msg,
+        },
+      };
+    }
+  }
+
+  logger.info("aprovar.reservas", "Reservas criadas", {
+    pedidoId,
+    total: criadas.length,
+  });
+  return { ok: true, reservasCriadas: criadas.length };
+}
+
+async function rollbackReservas(reservaIds: string[], pedidoId: string): Promise<void> {
+  for (const rId of reservaIds) {
+    try {
+      await estornarReservaIndividual({
+        reserva_id: rId,
+        motivo: "rollback_aprovacao",
+      });
+    } catch (err) {
+      logger.error("aprovar.reservas", "Falha ao estornar R em rollback", {
+        pedidoId,
+        reservaId: rId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      // Continue — o operador vai precisar de cleanup manual desse R órfão.
+    }
+  }
 }

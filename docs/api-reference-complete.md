@@ -1131,7 +1131,7 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
 **Response (400 - Invalid status):**
 ```json
 {
-  "error": "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra' ou 'em_separacao'",
+  "error": "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra', 'validacao_oc' ou 'em_separacao'",
   "pedido_ids": ["string"],
   "statuses": ["string"]
 }
@@ -1145,10 +1145,19 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
 }
 ```
 
+**Response (409 - pedido em pendente_realocacao):**
+```json
+{
+  "error": "pedido em pendente_realocacao — resolver realocações antes de iniciar",
+  "pedido_ids": ["string"]
+}
+```
+
 **Business Logic:**
 - Validates pedido_ids is non-empty array of strings
-- Fetches all pedidos, validates ALL have status_separacao = "aguardando_separacao", "aguardando_compra", "em_separacao" **or `pendente_realocacao`** (fix-pack 2026-05-18 I7 — permite retomar pedidos travados)
-- Filters pedidos with status = "aguardando_separacao", "aguardando_compra" ou `pendente_realocacao` (ignores already "em_separacao")
+- **`pendente_realocacao` é rejeitado com 409 (P6, 2026-05-26).** O status significa "wave bloqueada aguardando ação do supervisor sobre realocações órfãs". Operador precisa resolver realocações (confirmar/cancelar) antes de re-disparar `iniciar`.
+- Fetches all pedidos, validates ALL have status_separacao em ["aguardando_separacao", "aguardando_compra", "em_separacao", "validacao_oc"]
+- Filters pedidos com status `aguardando_separacao` ou `validacao_oc` (ignores already em_separacao)
 - Updates those to "em_separacao" with separacao_operador_id and separacao_iniciada_em
 - Calls RPC `siso_consolidar_produtos_separacao` to get consolidated product list (aggregates by SKU/localizacao)
 - Returns consolidated products sorted by localizacao

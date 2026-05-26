@@ -811,6 +811,10 @@ Failure to update documentation means the next developer or LLM will work with s
 - Migrations in `supabase/migrations/` with format `YYYYMMDD_description.sql`.
 - Upserts for idempotency (dedup on unique constraints).
 
+### Notas legados (NÃO TROPECE NISSO)
+- **`siso_pedido_itens.produto_id` é `tiny_produto_id`, NÃO o uuid de `siso_produtos`.** Herdado do schema pré-WMS quando produto era 1:1 com Tiny. Pra resolver pro uuid WMS, JOIN via `siso_produto_empresas` (filtrar por `empresa_id = empresa_origem_id` do pedido). Documentado com JSDoc em `src/types/index.ts:PedidoItem.produto_id`. Renomear esse campo numa próxima refactor é high-risk (módulos webhook/separação/compras dependem desse nome).
+- **`siso_pedido_itens.estoque_cwb_*` / `estoque_sp_*`**: colunas legacy hard-coded a 2 galpões. API lê de `siso_pedido_item_estoques` (normalizado). Serão removidas em migration futura.
+
 ## Current Status
 
 ### Fully Working

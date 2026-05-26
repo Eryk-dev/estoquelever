@@ -225,13 +225,14 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
       break;
     }
     case "troca_sku":
-      // Classe A — apenas entra. Troca de SKU vira fluxo separado em
+      // Classe D — apenas entra. Troca de SKU vira fluxo separado em
       // separacao (já existe `compras-equivalencia`). Aqui só reintegra.
+      // origem_tipo dedicado pra apurar troca separada de devolução íntegra.
       await inserirMovimentacao({
         tripla,
         tipo: "E",
         qty: input.qty,
-        origem_tipo: "devolucao_cliente_integra",
+        origem_tipo: "devolucao_cliente_troca_sku",
         nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
         usuario_id: input.usuario_id,

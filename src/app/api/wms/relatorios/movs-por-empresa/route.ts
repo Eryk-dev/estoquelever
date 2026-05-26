@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
       "nf_venda",
       "venda_manual",
       "devolucao_cliente_integra",
+      "devolucao_cliente_troca_sku",
       "devolucao_fornecedor_enviada",
     ]);
   if (galpaoId) query = query.eq("galpao_id", galpaoId);

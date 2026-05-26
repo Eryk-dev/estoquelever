@@ -578,7 +578,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Auth:** X-Session-Id (required)
 
 **Query Params:**
-- `page`: page number (default 1)
+- `page`: page number (default 1) — **LEGACY** — use `cursor` for new clients
+- `cursor`: ISO timestamp do `criado_em` do último item da página anterior; quando presente ativa modo cursor-based (mais eficiente, pula `count()` da tabela)
 - `limit`: items per page (default 50, max 200)
 - `data_inicio`: start date filter (ISO date string, default 30 days ago)
 - `data_fim`: end date filter (ISO date string, default today)
@@ -618,11 +619,17 @@ This is the **authoritative, comprehensive reference** for every API route in th
       "erro": "string | null"
     }
   ],
-  "total": "number",
+  "total": "number (0 quando cursor mode)",
   "page": "number",
-  "totalPages": "number"
+  "totalPages": "number (0 quando cursor mode)",
+  "next_cursor": "ISO datetime | null"
 }
 ```
+
+**Pagination contract:**
+- Modo cursor (recomendado): cliente passa `?cursor=<criado_em ISO>&limit=<N>`. Resposta inclui `next_cursor` se uma página cheia foi retornada (mais itens podem existir) ou `null` quando exausto. `total`/`totalPages` saem como 0 — count é skipado pra evitar O(N) na tabela.
+- Modo page (legado): cliente passa `?page=<N>&limit=<N>`. Resposta inclui `total`/`totalPages` calculados. `next_cursor` também é emitido pra clientes que queiram migrar gradualmente.
+- Ordering: sempre `criado_em DESC, id DESC` (tiebreaker estável quando dois pedidos têm o mesmo timestamp).
 
 **Response (401):**
 ```json

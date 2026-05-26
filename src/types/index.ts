@@ -137,6 +137,14 @@ export interface CriarVendaDiretaRequest {
     quantidade: number;
   }>;
   idempotency_key?: string;
+  /**
+   * Atribuir esta venda em nome de outro vendedor (opcional).
+   *
+   * Quando setado, o pedido grava vendedor_id/vendedor_nome do usuário-alvo
+   * em vez do usuário da sessão. Requer permissão `vendas.criar_em_nome_de`
+   * (admin/operador_*). Se igual ao user.id, é ignorado.
+   */
+  vendedor_id_alvo?: string;
 }
 
 /** Response shape for POST /api/wms/vendas/criar */

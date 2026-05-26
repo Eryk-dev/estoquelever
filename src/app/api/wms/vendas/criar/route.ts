@@ -35,6 +35,7 @@ import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import { registrarEvento } from "@/lib/historico-service";
+import { userCan } from "@/lib/permissions";
 import {
   resolverDisponibilidadeVenda,
   type DisponibilidadeSugestao,
@@ -82,6 +83,7 @@ export async function POST(request: NextRequest) {
     modo,
     items,
     idempotency_key,
+    vendedor_id_alvo,
   } = body;
 
   if (!cliente_nome?.trim()) {
@@ -112,6 +114,53 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
+
+  // ─── Vendedor efetivo (em nome de) ──────────────────────────────────────
+  // Default: usuário da sessão é o vendedor. Se `vendedor_id_alvo` foi enviado
+  // e é diferente do user.id, valida permissão `vendas.criar_em_nome_de` e
+  // resolve nome do alvo. Admin/operador_* têm essa perm por default.
+  let vendedorIdEfetivo: string = user.id;
+  let vendedorNomeEfetivo: string = user.nome;
+  let emNomeDe: { id: string; nome: string } | null = null;
+
+  if (vendedor_id_alvo && vendedor_id_alvo !== user.id) {
+    if (!userCan(user, "vendas.criar_em_nome_de")) {
+      return NextResponse.json(
+        { erro: "sem permissão pra criar em nome de outro vendedor" },
+        { status: 403 },
+      );
+    }
+    const { data: alvo, error: alvoErr } = await supabase
+      .from("siso_usuarios")
+      .select("id, nome, ativo")
+      .eq("id", vendedor_id_alvo)
+      .maybeSingle();
+    if (alvoErr) {
+      logger.error("vendas.criar", "Erro lendo vendedor_id_alvo", {
+        error: alvoErr.message,
+        vendedor_id_alvo,
+      });
+      return NextResponse.json(
+        { erro: "Erro lendo vendedor alvo" },
+        { status: 500 },
+      );
+    }
+    if (!alvo) {
+      return NextResponse.json(
+        { erro: "vendedor_id_alvo inválido" },
+        { status: 400 },
+      );
+    }
+    if (alvo.ativo === false) {
+      return NextResponse.json(
+        { erro: "vendedor_id_alvo está inativo" },
+        { status: 400 },
+      );
+    }
+    vendedorIdEfetivo = alvo.id;
+    vendedorNomeEfetivo = alvo.nome;
+    emNomeDe = { id: alvo.id, nome: alvo.nome };
+  }
 
   // Idempotência: se mesmo idempotency_key já foi processado, retorna o pedido existente
   if (idempotency_key) {
@@ -256,6 +305,25 @@ export async function POST(request: NextRequest) {
   const agora = new Date().toISOString();
 
   // 1) Insert siso_pedidos
+  //
+  // vendedor_id/vendedor_nome refletem o vendedor efetivo (em nome de):
+  // se vendedor_id_alvo foi enviado e a permissão `vendas.criar_em_nome_de`
+  // foi validada, o pedido fica atribuído ao alvo. payload_original registra
+  // quem **criou** (criado_por_*) pra audit, separadamente do vendedor exibido.
+  const payloadBase: Record<string, unknown> = {
+    manual: true,
+    modo_solicitado: modo,
+    degradado,
+    ...(emNomeDe
+      ? {
+          criado_por_id: user.id,
+          criado_por_nome: user.nome,
+          vendedor_alvo_id: emNomeDe.id,
+          vendedor_alvo_nome: emNomeDe.nome,
+        }
+      : {}),
+  };
+
   const pedidoRow = {
     id: pedidoId,
     numero,
@@ -265,8 +333,8 @@ export async function POST(request: NextRequest) {
     cliente_nome,
     cliente_cpf_cnpj: cliente_cpf_cnpj ?? null,
     canal_venda: canal_venda ?? null,
-    vendedor_id: user.id,
-    vendedor_nome: user.nome,
+    vendedor_id: vendedorIdEfetivo,
+    vendedor_nome: vendedorNomeEfetivo,
     origem_pedido: "manual",
     tipo_resolucao: "manual",
     decisao_final: "propria",
@@ -274,8 +342,8 @@ export async function POST(request: NextRequest) {
     separacao_galpao_id: galpao_id,
     marcadores: ["LVR", "VENDA_DIRETA"],
     payload_original: idempotency_key
-      ? { idempotency_key, manual: true, modo_solicitado: modo, degradado }
-      : { manual: true, modo_solicitado: modo, degradado },
+      ? { ...payloadBase, idempotency_key }
+      : payloadBase,
     ...(modoEfetivo === "separacao"
       ? { status: "executando", status_separacao: "aguardando_separacao" }
       : { status: "concluido", status_separacao: null, processado_em: agora }),
@@ -389,14 +457,20 @@ export async function POST(request: NextRequest) {
             origem_id: origemVendaId,
             origem_detalhes: {
               sku: item.sku,
-              vendedor_id: user.id,
-              vendedor_nome: user.nome,
+              vendedor_id: vendedorIdEfetivo,
+              vendedor_nome: vendedorNomeEfetivo,
               canal_venda: canal_venda ?? null,
               loc_codigo: sug.localizacao_codigo,
               pedido_id_manual: pedidoId,
               // Split-info: qty pedida e split atual (debug ledger)
               qty_item_total: item.quantidade,
               qty_desta_loc: qtyDestaLoc,
+              ...(emNomeDe
+                ? {
+                    criado_por_id: user.id,
+                    criado_por_nome: user.nome,
+                  }
+                : {}),
             },
             empresa_vendedora_id: empresa_origem_id,
             cliente_nome,
@@ -476,6 +550,11 @@ export async function POST(request: NextRequest) {
       items_count: itensResolvidos.length,
       canal_venda: canal_venda ?? null,
       ...(degradado ? { skus_sem_saldo: itensSemSaldo.map((i) => i.sku) } : {}),
+      ...(emNomeDe
+        ? {
+            em_nome_de: { id: emNomeDe.id, nome: emNomeDe.nome },
+          }
+        : {}),
     },
   }).catch(() => {});
 

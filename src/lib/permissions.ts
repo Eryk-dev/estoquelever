@@ -15,8 +15,9 @@ type PermissionEntry = { modulo: ModuloId; label: string };
 
 export const PERMISSIONS = {
   // ── Vendas ──
-  "vendas.ver":           { modulo: "vendas",        label: "Ver Vendas Diretas" },
-  "vendas.criar":         { modulo: "vendas",        label: "Criar venda manual" },
+  "vendas.ver":                { modulo: "vendas",   label: "Ver Vendas Diretas" },
+  "vendas.criar":              { modulo: "vendas",   label: "Criar venda manual" },
+  "vendas.criar_em_nome_de":   { modulo: "vendas",   label: "Criar venda em nome de outro vendedor" },
   "pedidos.ver":          { modulo: "vendas",        label: "Ver Pedidos (marketplace)" },
   "pedidos.aprovar":      { modulo: "vendas",        label: "Aprovar/rejeitar pedido" },
   "separacao.ver":        { modulo: "vendas",        label: "Ver Separação" },

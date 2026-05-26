@@ -54,7 +54,9 @@ export async function POST(request: NextRequest) {
     // Fetch the target items with necessary fields
     const { data: items, error: fetchErr } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, sku, quantidade_pedida, compra_status, fornecedor_oc")
+      .select(
+        "id, pedido_id, sku, quantidade_pedida, quantidade_pega, compra_status, fornecedor_oc",
+      )
       .in("id", normalizedIds);
 
     if (fetchErr) {
@@ -160,12 +162,46 @@ export async function POST(request: NextRequest) {
       for (const item of items) {
         const fornecedorInfo = getFornecedorBySku(item.sku);
 
-        // Update item to aguardando_compra
+        // Qty efetiva = pedida - já pegada (parcial) - picadas em realocações.
+        // Sem essa dedução, marcar "esgotado" pediria pra OC qty que já foi
+        // separada fisicamente, gerando overstock no recebimento.
+        const qtyJaPega = Number(item.quantidade_pega ?? 0);
+        const { data: realocs } = await supabase
+          .from("siso_pedido_item_realocacoes")
+          .select("qty_picada")
+          .eq("pedido_item_id", item.id)
+          .eq("status", "picado");
+        const qtyRealocsPicadas = (realocs ?? []).reduce(
+          (acc, r) => acc + Number(r.qty_picada ?? 0),
+          0,
+        );
+        const qtyEfetiva = Math.max(
+          0,
+          Number(item.quantidade_pedida ?? 0) - qtyJaPega - qtyRealocsPicadas,
+        );
+
+        if (qtyEfetiva === 0) {
+          // Item totalmente coberto — não dá pra marcar esgotado
+          return NextResponse.json(
+            {
+              error:
+                "item já totalmente coberto — não pode ser marcado esgotado",
+              item_id: item.id,
+              sku: item.sku,
+              qty_pedida: Number(item.quantidade_pedida ?? 0),
+              qty_ja_pega: qtyJaPega,
+              qty_realocs_picadas: qtyRealocsPicadas,
+            },
+            { status: 409 },
+          );
+        }
+
+        // Update item to aguardando_compra — usando qty efetiva
         const { error: updErr } = await supabase
           .from("siso_pedido_itens")
           .update({
             compra_status: "aguardando_compra",
-            compra_quantidade_solicitada: Number(item.quantidade_pedida ?? 0),
+            compra_quantidade_solicitada: qtyEfetiva,
             compra_solicitada_em: now,
             fornecedor_oc: item.fornecedor_oc || fornecedorInfo.fornecedor,
           })
@@ -192,7 +228,15 @@ export async function POST(request: NextRequest) {
           evento: "oc_item_confirmado",
           usuarioId: user.id,
           usuarioNome: user.nome,
-          detalhes: { sku: item.sku, item_id: item.id, fornecedor },
+          detalhes: {
+            sku: item.sku,
+            item_id: item.id,
+            fornecedor,
+            qty_pedida: Number(item.quantidade_pedida ?? 0),
+            qty_ja_pega: qtyJaPega,
+            qty_realocs_picadas: qtyRealocsPicadas,
+            qty_efetiva: qtyEfetiva,
+          },
         });
       }
     }

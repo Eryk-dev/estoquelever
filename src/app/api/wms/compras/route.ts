@@ -7,7 +7,6 @@ import {
   getAgingDays,
   getCompraQuantidadeSolicitada,
 } from "@/lib/compras-utils";
-import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { userCan } from "@/lib/permissions";
 
@@ -326,7 +325,11 @@ async function fetchReceber(supabase: SupabaseClient): Promise<FornecedorReceber
   if (error) throw new Error(`Erro ao buscar itens para receber: ${error.message}`);
   if (!items || items.length === 0) return [];
 
-  // Auto-fix: items that are fully received but stuck as "comprado"
+  // Diagnóstico: itens cuja qty recebida >= solicitada mas status segue 'comprado'.
+  // ANTES (auto-fix): GET silenciosamente promovia esses itens pra 'recebido' e disparava
+  // checkAndReleasePedidos. Removido em 2026-05-27 [#P6-6.31 #P6-3.12]: GET deve ser puro.
+  // Inconsistência real é tarefa do receber endpoint ou de um job manual — não de leitura.
+  // Itens sobre-recebidos seguem filtrados da listagem (UX), apenas não são auto-promovidos.
   const stuckIds: string[] = [];
   const activeItems: typeof items = [];
 
@@ -341,22 +344,14 @@ async function fetchReceber(supabase: SupabaseClient): Promise<FornecedorReceber
   }
 
   if (stuckIds.length > 0) {
-    await supabase
-      .from("siso_pedido_itens")
-      .update({ compra_status: "recebido" })
-      .in("id", stuckIds);
-    logger.info("compras-api", "Auto-fix: itens sobre-recebidos marcados como recebido", {
-      count: stuckIds.length,
-      ids: stuckIds,
-    });
-
-    // Trigger release check — the auto-fix may have completed all compra items for some pedidos
-    checkAndReleasePedidos(stuckIds).catch((err) => {
-      logger.error("compras-api", "Auto-fix: falha ao verificar release de pedidos", {
-        error: err instanceof Error ? err.message : String(err),
-        stuckIds,
-      });
-    });
+    logger.warn(
+      "compras.tab-receber",
+      "inconsistências detectadas em GET (itens sobre-recebidos ainda em status='comprado')",
+      {
+        count: stuckIds.length,
+        sample_ids: stuckIds.slice(0, 10),
+      },
+    );
   }
 
   if (activeItems.length === 0) return [];

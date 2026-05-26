@@ -46,6 +46,18 @@ export async function registrarDevolucaoPendente(
       .maybeSingle();
     pedidoOrigemMovId = (mov as { id: string } | null)?.id ?? null;
   }
+  // [#P6-6.15] Fallback: nota_fiscal_id pode não estar populado em movs
+  // antigas, mas chave_acesso_nf cobre os mesmos casos. Busca pela chave
+  // se o lookup primário falhou.
+  if (!pedidoOrigemMovId && input.chave_acesso_nf) {
+    const { data: mov } = await sb
+      .from("siso_movimentacoes")
+      .select("id")
+      .eq("chave_acesso_nf", input.chave_acesso_nf)
+      .eq("tipo", "S")
+      .maybeSingle();
+    pedidoOrigemMovId = (mov as { id: string } | null)?.id ?? null;
+  }
 
   const { data, error } = await sb
     .from("siso_devolucoes_pendentes")

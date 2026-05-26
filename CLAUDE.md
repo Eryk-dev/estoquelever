@@ -83,7 +83,7 @@ Separacao (/wms/separacao)        <-- wave picking → checklist → packing →
 
 Compras (/wms/compras)            <-- purchase order management for OC decisions
     |
-    └─ /api/wms/compras/*         <-- ordens, conferir, devolver, indisponivel
+    └─ /api/wms/compras/*         <-- ordens, conferencia, devolver, indisponivel
     └─ compras-release.ts         <-- when all items received → resume execution
 
 Recebimento físico (/wms/receber + /wms/guarda)
@@ -214,7 +214,6 @@ src/
         compras/preparar-embalagem/route.ts          # Stage orders for packing (POST)
         compras/trocar-sku/route.ts                  # Change product SKU (POST)
         compras/ordens/route.ts                      # List POs by supplier (GET)
-        compras/conferir/route.ts                    # DEPRECATED (POST)
         compras/conferencia/[ordemCompraId]/route.ts # Receive items for PO (GET/POST)
         compras/pedidos/[pedidoId]/cancelar/route.ts # Cancel purchase decision (POST)
         compras/itens/[itemId]/indisponivel/route.ts # Mark item unavailable (POST)
@@ -854,7 +853,6 @@ Failure to update documentation means the next developer or LLM will work with s
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)
-- Remove deprecated `/api/wms/compras/conferir` (replaced by comprar/receber flow)
 - Remove deprecated `/api/wms/compras/itens/[itemId]/trocar-fornecedor` (replaced by `compras-equivalencia.ts`)
 - `siso_pedido_item_estoques` — após o cutover só é escrita por inércia (uma linha por pedido×empresa-origem com loc do WMS). Próximo cleanup: descontinuar a tabela e migrar consumidores legados pra ler de `siso_estoque` + ledger.
 

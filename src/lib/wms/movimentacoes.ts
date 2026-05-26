@@ -387,21 +387,39 @@ export async function replenishmentIntraGalpao(
   return { origem_id };
 }
 
+/**
+ * Categorias estruturadas pra ajuste manual. Pareada com o enum SQL
+ * `wms_motivo_categoria_enum` (migration `20260527_ajuste_manual_motivo_categoria`).
+ */
+export type MotivoCategoria =
+  | "avaria"
+  | "perda"
+  | "achado"
+  | "correcao_inventario"
+  | "devolucao_sem_fluxo"
+  | "outro";
+
 export interface AjusteManualInput {
   tripla: Tripla;
   qty: number;
   motivo: string;
+  /** Categoria estruturada — obrigatória pra ajuste manual. */
+  motivo_categoria: MotivoCategoria;
   direcao: "entrada" | "saida";
   usuario_id: string;
 }
 
 /**
- * Ajuste manual de saldo numa tripla. `motivo` é obrigatório (>=3 chars) —
- * ajuste sem justificativa não passa.
+ * Ajuste manual de saldo numa tripla. `motivo` é obrigatório (>=3 chars) e
+ * `motivo_categoria` precisa ser uma das 6 categorias estruturadas — ajuste
+ * sem justificativa ou sem categoria não passa.
  */
 export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
   if (!input.motivo || input.motivo.trim().length < 3) {
     throw new Error("motivo do ajuste é obrigatório (≥3 caracteres)");
+  }
+  if (!input.motivo_categoria) {
+    throw new Error("motivo_categoria do ajuste é obrigatório");
   }
   await inserirMovimentacao({
     tripla: input.tripla,
@@ -410,6 +428,7 @@ export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
     origem_tipo: "ajuste_manual",
     origem_detalhes: { direcao: input.direcao },
     motivo: input.motivo.trim(),
+    motivo_categoria: input.motivo_categoria,
     usuario_id: input.usuario_id,
   });
 }

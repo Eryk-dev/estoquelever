@@ -640,7 +640,20 @@ export function createContext(opts: {
     });
   }
 
-  async function ajusteManual(p: { sku: string; galpao: "CWB" | "SP"; loc: string; delta: number; motivo: string }) {
+  async function ajusteManual(p: {
+    sku: string;
+    galpao: "CWB" | "SP";
+    loc: string;
+    delta: number;
+    motivo: string;
+    motivo_categoria?:
+      | "avaria"
+      | "perda"
+      | "achado"
+      | "correcao_inventario"
+      | "devolucao_sem_fluxo"
+      | "outro";
+  }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
     const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.loc).single();
@@ -653,6 +666,9 @@ export function createContext(opts: {
       qty: Math.abs(p.delta),
       direcao: p.delta >= 0 ? "entrada" : "saida",
       motivo: p.motivo,
+      // Default `outro` — endpoint exige categoria desde D.1.4 (2026-05-27).
+      // Cenários específicos podem sobrescrever.
+      motivo_categoria: p.motivo_categoria ?? "outro",
     });
   }
 

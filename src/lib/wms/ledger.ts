@@ -89,6 +89,14 @@ interface InserirMovInput {
   expira_em?: string;
   /** Custo unitário da entrada — alimenta recálculo do custo médio global. */
   custo_unitario?: number;
+  /** Categoria estruturada do motivo (obrigatório quando origem_tipo='ajuste_manual'). */
+  motivo_categoria?:
+    | "avaria"
+    | "perda"
+    | "achado"
+    | "correcao_inventario"
+    | "devolucao_sem_fluxo"
+    | "outro";
   usuario_id?: string;
   estorno_de?: string;
 }
@@ -162,6 +170,7 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
     p_nota_fiscal_id: input.nota_fiscal_id ?? null,
     p_chave_acesso_nf: input.chave_acesso_nf ?? null,
     p_custo_unitario: input.custo_unitario ?? null,
+    p_motivo_categoria: input.motivo_categoria ?? null,
   });
   if (error) {
     logger.error("wms.ledger", "falha ao inserir mov", { error, input });

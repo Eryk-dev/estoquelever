@@ -92,7 +92,8 @@ export type EventoPedido =
   | "guarda_pendencia_criada"
   | "guarda_pendencia_confirmada"
   | "guarda_pendencia_cancelada"
-  | "inventario_patch_aplicado";
+  | "inventario_patch_aplicado"
+  | "expedido";
 
 /**
  * Record a single event in the order history.

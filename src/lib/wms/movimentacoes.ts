@@ -195,6 +195,7 @@ export async function receberEstoque(
         custo_unitario: item.custo_unitario,
         observacoes: input.observacoes,
         lote_id: loteId,
+        criada_por: input.usuario_id,
       });
       pendenciaIds.push(pendenciaId);
       movIds.push(mov.id);

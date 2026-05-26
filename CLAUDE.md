@@ -576,7 +576,7 @@ Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger at
 
 | Table | Purpose |
 |---|---|
-| `siso_wms_pendencias_guarda` | Fila de pendências de put-away. 1 linha por linha de recebimento (preserva NF/lote). `qty_pendente = qty_inicial - qty_guardada` GENERATED. Status: pendente → em_guarda → guardada\|cancelada. Indexada por (galpao_id, status, criada_em). Trigger atualiza `atualizada_em`. CHECK garante coerência (guardada exige qty_guardada=qty_inicial+guardada_em). |
+| `siso_wms_pendencias_guarda` | Fila de pendências de put-away. 1 linha por linha de recebimento (preserva NF/lote). `qty_pendente = qty_inicial - qty_guardada` GENERATED. Status: pendente → em_guarda → guardada\|cancelada. Indexada por (galpao_id, status, criada_em). Trigger atualiza `atualizada_em`. CHECK garante coerência (guardada exige qty_guardada=qty_inicial+guardada_em). **Auditoria (2026-05-27)**: `criada_por uuid` (FK `siso_usuarios.id`, operador do recebimento) + `guardada_por uuid` (FK `siso_usuarios.id`, operador que confirmou a guarda final). |
 
 > Tabela `siso_wms_mini_swap_config` e RPCs `wms_executar_mini_swap` / `wms_executar_swap` **dropadas em 2026-05-20** com o ledger simplificado 3D. Mini-swap intra-galpão e swap N×N entre empresas perderam o sentido — não há mais empresa dona física a consolidar. Código arquivado em `src/lib/wms/_archive/mini-swap*.ts`.
 

@@ -50,11 +50,13 @@ export interface PendenciaGuarda {
   iniciada_em: string | null;
   iniciada_por: string | null;
   guardada_em: string | null;
+  guardada_por: string | null;
   cancelada_em: string | null;
   cancelada_por: string | null;
   motivo_cancelamento: string | null;
   observacoes: string | null;
   criada_em: string;
+  criada_por: string | null;
   atualizada_em: string;
 }
 
@@ -115,6 +117,8 @@ export interface CriarPendenciaInput {
   observacoes?: string | null;
   /** UUID compartilhado entre pendências do mesmo recebimento (agrupamento de rota). */
   lote_id?: string | null;
+  /** Usuário que criou a pendência (operador do recebimento). FK pra `siso_usuarios.id`. */
+  criada_por: string;
 }
 
 export async function criarPendencia(input: CriarPendenciaInput): Promise<string> {
@@ -150,6 +154,7 @@ export async function criarPendencia(input: CriarPendenciaInput): Promise<string
       custo_unitario: input.custo_unitario ?? null,
       observacoes: input.observacoes ?? null,
       lote_id: input.lote_id ?? null,
+      criada_por: input.criada_por,
     })
     .select("id")
     .single();
@@ -410,6 +415,7 @@ export async function confirmarGuarda(
   if (totalmenteGuardada) {
     update.status = "guardada";
     update.guardada_em = new Date().toISOString();
+    update.guardada_por = input.usuario_id;
   } else {
     // Volta pra pendente — operador pode pegar de novo depois.
     update.status = "pendente";

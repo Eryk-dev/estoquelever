@@ -2,15 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GalpaoEstoque } from "@/types";
-
-type StockEntry = {
-  depositoId: number | null;
-  depositoNome: string | null;
-  saldo: number;
-  reservado: number;
-  disponivel: number;
-  localizacao: string | null;
-};
+import { aggregateLiveStockBySku } from "@/lib/wms/live-stock";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
@@ -18,64 +10,24 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
 
   const pedidoIds = pedidos.map((p) => p.id);
 
-  const [itensResult, estoquesResult] = await Promise.all([
-    supabase
-      .from("siso_pedido_itens")
-      .select("id, pedido_id, produto_id, sku, descricao, quantidade_pedida, fornecedor_oc, imagem_url")
-      .in("pedido_id", pedidoIds),
-    supabase
-      .from("siso_pedido_item_estoques")
-      .select("pedido_id, produto_id, empresa_id, deposito_id, deposito_nome, saldo, reservado, disponivel, localizacao, siso_empresas!inner(galpao_id, siso_galpoes!siso_empresas_galpao_id_fkey!inner(nome))")
-      .in("pedido_id", pedidoIds),
-  ]);
+  const { data: itens } = await supabase
+    .from("siso_pedido_itens")
+    .select("id, pedido_id, produto_id, sku, descricao, quantidade_pedida, fornecedor_oc, imagem_url")
+    .in("pedido_id", pedidoIds);
 
-  const itens = itensResult.data ?? [];
-  const estoques = estoquesResult.data ?? [];
+  const itensList = itens ?? [];
 
-  const itensByPedido = new Map<string, typeof itens>();
-  for (const item of itens) {
+  const itensByPedido = new Map<string, typeof itensList>();
+  for (const item of itensList) {
     const list = itensByPedido.get(item.pedido_id) ?? [];
     list.push(item);
     itensByPedido.set(item.pedido_id, list);
   }
 
-  const stockMap = new Map<string, Map<number, Map<string, StockEntry>>>();
-
-  for (const est of estoques) {
-    const empresa = est.siso_empresas as unknown as {
-      galpao_id: string;
-      siso_galpoes: { nome: string };
-    } | null;
-    if (!empresa) continue;
-
-    const galpaoNome = empresa.siso_galpoes.nome;
-    const pedidoKey = est.pedido_id as string;
-    const produtoKey = est.produto_id as number;
-
-    if (!stockMap.has(pedidoKey)) stockMap.set(pedidoKey, new Map());
-    const produtoMap = stockMap.get(pedidoKey)!;
-    if (!produtoMap.has(produtoKey)) produtoMap.set(produtoKey, new Map());
-    const galpaoMap = produtoMap.get(produtoKey)!;
-
-    const existing = galpaoMap.get(galpaoNome);
-    if (existing) {
-      existing.saldo += (est.saldo as number) ?? 0;
-      existing.reservado += (est.reservado as number) ?? 0;
-      existing.disponivel += (est.disponivel as number) ?? 0;
-      if (!existing.localizacao && est.localizacao) {
-        existing.localizacao = est.localizacao as string;
-      }
-    } else {
-      galpaoMap.set(galpaoNome, {
-        depositoId: est.deposito_id as number | null,
-        depositoNome: est.deposito_nome as string | null,
-        saldo: (est.saldo as number) ?? 0,
-        reservado: (est.reservado as number) ?? 0,
-        disponivel: (est.disponivel as number) ?? 0,
-        localizacao: (est.localizacao as string) ?? null,
-      });
-    }
-  }
+  // Estoque LIVE: agrega siso_estoque (3D) por (sku, galpão) — não usa o snapshot
+  // de siso_pedido_item_estoques, que congela na hora do webhook.
+  const skus = Array.from(new Set(itensList.map((i) => i.sku).filter((s): s is string => !!s)));
+  const stockBySku = await aggregateLiveStockBySku(supabase, skus);
 
   return pedidos.map((p) => {
     const dbItens = itensByPedido.get(p.id) ?? [];
@@ -97,21 +49,21 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
         descricao: p.forma_envio_descricao ?? "",
       },
       itens: dbItens.map((item) => {
-        const galpaoStock = stockMap.get(p.id)?.get(item.produto_id);
+        const galpaoStock = item.sku ? stockBySku.get(item.sku) : undefined;
         const estoquesMap: Record<string, GalpaoEstoque> = {};
 
         if (galpaoStock) {
           for (const [gNome, stock] of galpaoStock) {
             estoquesMap[gNome] = {
               deposito: {
-                id: stock.depositoId ?? 0,
-                nome: stock.depositoNome ?? "",
+                id: 0,
+                nome: gNome,
                 saldo: stock.saldo,
                 reservado: stock.reservado,
                 disponivel: stock.disponivel,
               },
               atende: stock.disponivel >= (item.quantidade_pedida ?? 0),
-              localizacao: stock.localizacao ?? undefined,
+              localizacao: stock.localizacaoTop ?? undefined,
             };
           }
         }
@@ -146,11 +98,13 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
 /**
  * GET /api/pedidos
  *
- * Returns all orders from siso_pedidos + siso_pedido_item_estoques (normalized),
- * mapped to the frontend Pedido interface (camelCase).
+ * Returns all orders from siso_pedidos + LIVE stock from siso_estoque (3D
+ * WMS cache), mapped to the frontend Pedido interface (camelCase).
  *
- * Stock is returned as a dynamic map keyed by galpão name, supporting any
- * number of galpões without hardcoded CWB/SP references.
+ * Stock is aggregated by (sku, galpão), so any movement (recebimento,
+ * ajuste, transferência, separação) reflects on the next render. NÃO usa
+ * o snapshot congelado de siso_pedido_item_estoques. A `sugestao` do
+ * pedido permanece o cálculo histórico do webhook, mas saldo é live.
  *
  * Query params:
  *   ?status=pendente,executando  (comma-separated filter)

@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
+import { aggregateLiveStockBySku } from "@/lib/wms/live-stock";
 import type { GalpaoEstoque } from "@/types";
 
 /**
@@ -72,15 +73,12 @@ export async function GET(
       }
     }
 
-    // Fetch items, stock, historico, observacoes in parallel
-    const [itensResult, estoquesResult, historicoResult, observacoesResult] = await Promise.all([
+    // Fetch items, historico, observacoes in parallel. Estoque vem live
+    // de siso_estoque (3D) — agregado abaixo via aggregateLiveStockBySku.
+    const [itensResult, historicoResult, observacoesResult] = await Promise.all([
       supabase
         .from("siso_pedido_itens")
         .select("id, pedido_id, produto_id, sku, descricao, quantidade_pedida, imagem_url, fornecedor_oc, compra_status, compra_quantidade_solicitada, compra_quantidade_comprada, compra_quantidade_recebida, separacao_marcado, bipado_completo")
-        .eq("pedido_id", pedidoId),
-      supabase
-        .from("siso_pedido_item_estoques")
-        .select("pedido_id, produto_id, empresa_id, deposito_id, deposito_nome, saldo, reservado, disponivel, localizacao, siso_empresas!inner(galpao_id, siso_galpoes!siso_empresas_galpao_id_fkey!inner(nome))")
         .eq("pedido_id", pedidoId),
       supabase
         .from("siso_pedido_historico")
@@ -94,49 +92,10 @@ export async function GET(
         .order("criado_em", { ascending: true }),
     ]);
 
-    // Build stock map: produto_id → galpao_name → aggregated stock
-    type StockEntry = {
-      depositoId: number | null;
-      depositoNome: string | null;
-      saldo: number;
-      reservado: number;
-      disponivel: number;
-      localizacao: string | null;
-    };
-
-    const stockMap = new Map<number, Map<string, StockEntry>>();
-    for (const est of estoquesResult.data ?? []) {
-      const empresaJoin = est.siso_empresas as unknown as {
-        galpao_id: string;
-        siso_galpoes: { nome: string };
-      } | null;
-      if (!empresaJoin) continue;
-
-      const galpaoNome = empresaJoin.siso_galpoes.nome;
-      const produtoKey = est.produto_id as number;
-
-      if (!stockMap.has(produtoKey)) stockMap.set(produtoKey, new Map());
-      const galpaoMap = stockMap.get(produtoKey)!;
-
-      const existing = galpaoMap.get(galpaoNome);
-      if (existing) {
-        existing.saldo += (est.saldo as number) ?? 0;
-        existing.reservado += (est.reservado as number) ?? 0;
-        existing.disponivel += (est.disponivel as number) ?? 0;
-        if (!existing.localizacao && est.localizacao) {
-          existing.localizacao = est.localizacao as string;
-        }
-      } else {
-        galpaoMap.set(galpaoNome, {
-          depositoId: est.deposito_id as number | null,
-          depositoNome: est.deposito_nome as string | null,
-          saldo: (est.saldo as number) ?? 0,
-          reservado: (est.reservado as number) ?? 0,
-          disponivel: (est.disponivel as number) ?? 0,
-          localizacao: (est.localizacao as string) ?? null,
-        });
-      }
-    }
+    // Estoque LIVE por (sku, galpão) — reflete movimentações pós-webhook.
+    const itensList = itensResult.data ?? [];
+    const skus = Array.from(new Set(itensList.map((i) => i.sku).filter((s): s is string => !!s)));
+    const stockBySku = await aggregateLiveStockBySku(supabase, skus);
 
     // Map empresa join
     const empresaData = pedido.siso_empresas as unknown as {
@@ -146,22 +105,22 @@ export async function GET(
     } | null;
 
     // Build items with stock
-    const itens = (itensResult.data ?? []).map((item) => {
-      const galpaoStock = stockMap.get(item.produto_id);
+    const itens = itensList.map((item) => {
+      const galpaoStock = item.sku ? stockBySku.get(item.sku) : undefined;
       const estoques: Record<string, GalpaoEstoque> = {};
 
       if (galpaoStock) {
         for (const [galpaoNome, stock] of galpaoStock) {
           estoques[galpaoNome] = {
             deposito: {
-              id: stock.depositoId ?? 0,
-              nome: stock.depositoNome ?? "",
+              id: 0,
+              nome: galpaoNome,
               saldo: stock.saldo,
               reservado: stock.reservado,
               disponivel: stock.disponivel,
             },
             atende: stock.disponivel >= (item.quantidade_pedida ?? 0),
-            localizacao: stock.localizacao ?? undefined,
+            localizacao: stock.localizacaoTop ?? undefined,
           };
         }
       }

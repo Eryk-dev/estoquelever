@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
+import { usePedidosEstoqueRealtime } from "@/hooks/use-pedidos-estoque-realtime";
 import {
   PageHeader,
   Icon,
@@ -75,6 +76,11 @@ export default function WmsPedidosPage() {
     [user],
   );
   const hideAuto = cargos.length === 1 && cargos[0] === "comprador";
+
+  // Push-based refresh: invalida ["wms-pedidos"] quando siso_estoque
+  // ou siso_movimentacoes mudam (debounced 800ms). Mantém polling 30s
+  // como fallback caso o websocket caia.
+  usePedidosEstoqueRealtime();
 
   const tab = ((searchParams?.get("tab") as Tab) ?? "pendente") as Tab;
   const buscaParam = searchParams?.get("busca") ?? "";

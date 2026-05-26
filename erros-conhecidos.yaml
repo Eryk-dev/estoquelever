@@ -1160,3 +1160,26 @@ erros:
       por cancelar, desfazer-parcial, voltar-etapa, reiniciar) só estorna
       links tipo_link='saida' — ignora 'liberacao_reserva'. Mesma classe
       de bug em outros caminhos. Fix separado pendente.
+
+  - id: wms-aprovar-idempotencia-r-liberada-pula-criacao
+    date: "2026-05-26"
+    source: aprovar.reservas
+    category: business_logic
+    message: 'Reservas já existentes — skip (porém todas R estavam liberadas)'
+    cause: >
+      Em src/app/api/wms/pedidos/aprovar/route.ts, a idempotência checava
+      "qualquer R com origem_id=pedidoId" pra skipar criação. Ledger é
+      imutável — uma R liberada (com L estorno_de=R.id) continua viva como
+      linha. Resultado: após reset (ou qualquer fluxo que libere R por L
+      e re-deixe o pedido em 'pendente'), a re-aprovação encontrava a R
+      antiga e skipava criar nova. Pedido seguia pra separação SEM R.
+      Marcar checkbox criava S (sem L par, sem R par) — saldo deduz, mas
+      pareamento R↔L↔S inexistente. Apareceu logo após o reset dos 46
+      pedidos ACD003: usuário re-aprovou 6 e nenhum gerou reserva.
+    fix: >
+      Idempotência agora filtra Rs ainda pendentes (sem L estorno apontando).
+      Se TODAS Rs antigas estão liberadas, segue normalmente criando Rs novas.
+      Padrão equivalente ao usado por buscarReservaPendente.
+    files:
+      - src/app/api/wms/pedidos/aprovar/route.ts
+    tags: [wms, aprovar, idempotencia, reserva, ledger-imutavel, reset]

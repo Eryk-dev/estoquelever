@@ -273,14 +273,17 @@ async function criarReservasPedido(args: {
   // chamadas API concorrentes, considerar partial unique index ou
   // restruturar pra UPDATE-then-SELECT-affected antes do bloco de
   // reservas. Bug aceitável até evidência de problema real em produção.
-  // 1. Idempotência: R já existe pro pedido?
+  // 1. Idempotência: R *pendente* já existe pro pedido?
+  //    Ledger é imutável — uma R "consumida" continua viva como linha. O que
+  //    importa pra idempotência é se existe R sem L estorno apontando (=
+  //    reserva ainda válida). Sem esse filtro, re-aprovação após reset (ou
+  //    qualquer fluxo que libere a R por L) skipa criar R nova erroneamente.
   const { data: jaR, error: jaRErr } = await supabase
     .from("siso_movimentacoes")
     .select("id")
     .eq("origem_id", pedidoId)
     .eq("origem_tipo", "reserva_pedido")
-    .eq("tipo", "R")
-    .limit(1);
+    .eq("tipo", "R");
   if (jaRErr) {
     logger.error("aprovar.reservas", "Falha ao checar reservas existentes", {
       pedidoId,
@@ -292,8 +295,39 @@ async function criarReservasPedido(args: {
     };
   }
   if ((jaR?.length ?? 0) > 0) {
-    logger.info("aprovar.reservas", "Reservas já existentes — skip", { pedidoId });
-    return { ok: true, reservasCriadas: 0 };
+    const reservaIds = (jaR ?? []).map((r) => r.id as string);
+    const { data: liberadas, error: libErr } = await supabase
+      .from("siso_movimentacoes")
+      .select("estorno_de")
+      .in("estorno_de", reservaIds)
+      .eq("tipo", "L");
+    if (libErr) {
+      logger.error("aprovar.reservas", "Falha ao checar L estorno", {
+        pedidoId,
+        err: libErr.message,
+      });
+      return {
+        ok: false,
+        body: { error: "reserva_falhou", motivo: "db_error", detalhe: libErr.message },
+      };
+    }
+    const liberadasSet = new Set<string>(
+      (liberadas ?? [])
+        .map((l) => l.estorno_de as string | null)
+        .filter((id): id is string => !!id),
+    );
+    const pendentes = reservaIds.filter((id) => !liberadasSet.has(id));
+    if (pendentes.length > 0) {
+      logger.info("aprovar.reservas", "Reservas pendentes já existentes — skip", {
+        pedidoId,
+        pendentes: pendentes.length,
+      });
+      return { ok: true, reservasCriadas: 0 };
+    }
+    logger.info("aprovar.reservas", "Rs antigas todas liberadas — segue criando novas", {
+      pedidoId,
+      antigas: reservaIds.length,
+    });
   }
 
   // 2. Itens do pedido

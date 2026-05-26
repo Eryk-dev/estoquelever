@@ -570,7 +570,7 @@ Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger at
 
 | Table | Purpose |
 |---|---|
-| `siso_devolucoes_pendentes` | Fila de NFs de entrada esperando classificação física. UNIQUE parcial em nota_fiscal_id e chave_acesso_nf (dedup webhook re-entregue). Status: aguardando_classificacao→classificada→aplicada\|cancelada. |
+| `siso_devolucoes_pendentes` | Fila de NFs de entrada esperando classificação física. UNIQUE parcial em nota_fiscal_id e chave_acesso_nf (dedup webhook re-entregue). Status: aguardando_classificacao→classificada\|cancelada. |
 
 ### WMS Tables (Recebimento em 2 etapas — 2026-05-14)
 

@@ -521,11 +521,18 @@ export function createContext(opts: {
     return { ordem_id: ordemId ?? "" };
   }
 
-  async function receberCompra(p: { ordem_id: string; items: { sku: string; qty: number }[] }) {
-    // /compras/receber: marca itens recebido (compra_status=recebido). Não
-    // mexe no ledger — estoque físico chega via /wms/receber em separado.
+  async function receberCompra(p: { ordem_id: string; items: { sku: string; qty: number; custo_unitario?: number }[] }) {
+    // /compras/receber: marca itens recebido (compra_status=recebido) E (pós
+    // fix #3.1, em WMS_AS_SOURCE) emite mov E (origem_tipo='nf_compra') no
+    // ledger na loc RECEBIMENTO do galpão da OC. Custo unitário default 10
+    // alimenta recálculo do siso_custo_medio (RPC só recalcula se
+    // custo_unitario IS NOT NULL).
     await http.post("/api/wms/compras/receber", {
-      itens: p.items.map((it) => ({ sku: it.sku, quantidade_recebida: it.qty })),
+      itens: p.items.map((it) => ({
+        sku: it.sku,
+        quantidade_recebida: it.qty,
+        custo_unitario: it.custo_unitario ?? 10,
+      })),
     });
   }
 

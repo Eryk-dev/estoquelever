@@ -34,6 +34,10 @@ export async function POST(request: NextRequest) {
   const itens = body.itens as
     | Array<{ sku: string; quantidade_comprada: number }>
     | undefined;
+  const fornecedorOc =
+    typeof body.fornecedor_oc === "string" && body.fornecedor_oc.trim().length > 0
+      ? body.fornecedor_oc.trim()
+      : null;
 
   if (!itens || !Array.isArray(itens) || itens.length === 0) {
     return NextResponse.json(
@@ -110,6 +114,7 @@ export async function POST(request: NextRequest) {
             comprado_em: now,
             comprado_por: session.id,
             comprado_por_nome: session.nome,
+            fornecedor_oc: fornecedorOc,
           })
           .eq("id", item.id);
 

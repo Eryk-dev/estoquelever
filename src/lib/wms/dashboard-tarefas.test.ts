@@ -5,6 +5,7 @@ import {
   agruparInventarioRevisao,
   agruparTransferenciasTransito,
   dedupNonNullIds,
+  detectarRecebimentoOrfao,
   detectarReservasOrfas,
   hidratarExecutores,
   mapearRetroativosPendentes,
@@ -282,5 +283,47 @@ describe("mapearRetroativosPendentes", () => {
       },
     ]);
     expect(r.itens[0].produto_sku).toBe("SKU-Y");
+  });
+});
+
+describe("detectarRecebimentoOrfao", () => {
+  const saldos = [
+    {
+      produto_id: "p1",
+      galpao_id: "g1",
+      saldo: 10,
+      produto: { sku: "SKU-A" },
+      galpao: { nome: "CWB" },
+      localizacao: { codigo: "RECEBIMENTO" },
+    },
+    {
+      produto_id: "p2",
+      galpao_id: "g1",
+      saldo: 5,
+      produto: { sku: "SKU-B" },
+      galpao: { nome: "CWB" },
+      localizacao: { codigo: "RECEBIMENTO" },
+    },
+    {
+      produto_id: "p3",
+      galpao_id: "g1",
+      saldo: 0, // ignora saldo=0
+      produto: { sku: "SKU-C" },
+      galpao: { nome: "CWB" },
+      localizacao: { codigo: "RECEBIMENTO" },
+    },
+  ];
+
+  it("retorna apenas posições sem pendência cobrindo", () => {
+    // p1 tem pendência viva (em pendenciasVivas), p2 não.
+    const pendenciasVivas = new Set(["p1::g1"]);
+    const r = detectarRecebimentoOrfao(saldos, pendenciasVivas);
+    expect(r.count).toBe(1);
+    expect(r.itens[0].produto_sku).toBe("SKU-B");
+  });
+
+  it("ignora saldo zero", () => {
+    const r = detectarRecebimentoOrfao(saldos, new Set());
+    expect(r.itens.find((i) => i.produto_sku === "SKU-C")).toBeUndefined();
   });
 });

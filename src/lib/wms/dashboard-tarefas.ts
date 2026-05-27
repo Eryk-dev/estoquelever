@@ -390,6 +390,47 @@ export function mapearRetroativosPendentes(
   return { count: itens.length, itens };
 }
 
+type EstoqueRecebimentoLinha = {
+  produto_id: string;
+  galpao_id: string;
+  saldo: number;
+  produto: { sku: string } | Array<{ sku: string }> | null;
+  galpao: { nome: string } | Array<{ nome: string }> | null;
+  localizacao: { codigo: string } | Array<{ codigo: string }> | null;
+};
+
+/**
+ * Detecta saldos órfãos em localização tipo='recebimento'. Uma posição
+ * é órfã quando tem saldo > 0 mas não existe pendência viva (`pendente` ou
+ * `em_guarda`) cobrindo o par (produto_id, galpao_id). O set
+ * `pendenciasVivas` é chaveado por `"<produto_id>::<galpao_id>"`.
+ */
+export function detectarRecebimentoOrfao(
+  saldos: EstoqueRecebimentoLinha[],
+  pendenciasVivas: Set<string>,
+): { count: number; itens: RecebimentoOrfaoCard[] } {
+  const itens: RecebimentoOrfaoCard[] = [];
+  for (const s of saldos) {
+    if (Number(s.saldo) <= 0) continue;
+    const key = `${s.produto_id}::${s.galpao_id}`;
+    if (pendenciasVivas.has(key)) continue;
+    const produto = Array.isArray(s.produto) ? s.produto[0] ?? null : s.produto;
+    const galpao = Array.isArray(s.galpao) ? s.galpao[0] ?? null : s.galpao;
+    const loc = Array.isArray(s.localizacao)
+      ? s.localizacao[0] ?? null
+      : s.localizacao;
+    itens.push({
+      produto_id: s.produto_id,
+      produto_sku: produto?.sku ?? "—",
+      galpao_id: s.galpao_id,
+      galpao_nome: galpao?.nome ?? null,
+      localizacao_codigo: loc?.codigo ?? "—",
+      saldo: Number(s.saldo),
+    });
+  }
+  return { count: itens.length, itens };
+}
+
 /**
  * Monta o payload do quadro de tarefas pendentes da home /wms.
  *

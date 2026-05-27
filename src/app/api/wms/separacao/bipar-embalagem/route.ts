@@ -211,7 +211,7 @@ export async function POST(request: NextRequest) {
         .from("siso_pedido_itens")
         .select("id, separacao_marcado, compra_status, quantidade_pega")
         .eq("pedido_id", result.pedido_id)
-        .or("compra_status.is.null,compra_status.not.in.(cancelado)")
+        .or("compra_status.is.null,compra_status.not.in.(indisponivel,cancelado)")
         .or("separacao_marcado.eq.false,quantidade_pega.is.null");
       const allPicked = (faltantes ?? []).length === 0;
       if (nfPresente && allPicked) {

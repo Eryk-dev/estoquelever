@@ -159,8 +159,10 @@ function NovaVendaBody() {
 
       const data = (await res.json()) as CriarVendaDiretaResponse;
       if (data.degradado && data.motivo_degradacao === "falta_saldo") {
+        const skus = (data.skus_sem_saldo ?? []).join(", ") || "—";
         toast.warning(
-          `Sem saldo de ${(data.skus_sem_saldo ?? []).join(", ")} — pedido foi pra fila de separação.`,
+          `Pedido ${data.numero} criado, mas vai pra separação: sem saldo de ${skus}.`,
+          { duration: 10000 },
         );
       } else if (modo === "baixa_direta") {
         toast.success(`Pedido ${data.numero} criado e baixado do estoque`);

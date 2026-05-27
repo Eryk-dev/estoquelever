@@ -42,7 +42,9 @@ export async function POST(request: NextRequest) {
     // Fetch all items for the given pedidos
     const { data: items, error: fetchError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, separacao_marcado, compra_status")
+      .select(
+        "id, pedido_id, separacao_marcado, compra_status, compra_quantidade_solicitada, compra_quantidade_recebida, sku",
+      )
       .in("pedido_id", pedido_ids);
 
     if (fetchError) {
@@ -141,6 +143,36 @@ export async function POST(request: NextRequest) {
       } else {
         // All items marcado, no compra items → fully separated
         separados.push(pid);
+      }
+    }
+
+    // PR-1 safety: bloqueia conclusão se algum item OC ainda não foi totalmente
+    // coberto pelo recebimento (qty_recebida < qty_solicitada) — evita 'separado'
+    // mentir. Aplica só ao conjunto que iria pra 'separado' (aguardandoCompra
+    // pausa de propósito; pendentes já não avançam).
+    if (separados.length > 0) {
+      const itensIncompletosOC = (items ?? []).filter((i) => {
+        if (!separados.includes(i.pedido_id)) return false;
+        if (i.compra_status === "cancelado") return false;
+        if (i.compra_status === null) return false; // item normal — outras validações cuidam
+        const recebido = Number(i.compra_quantidade_recebida ?? 0);
+        const solicitado = Number(i.compra_quantidade_solicitada ?? 0);
+        return recebido < solicitado;
+      });
+      if (itensIncompletosOC.length > 0) {
+        return NextResponse.json(
+          {
+            error: "cobertura_oc_insuficiente",
+            detalhe:
+              "Há itens OC não totalmente recebidos — não pode concluir.",
+            itens: itensIncompletosOC.map((i) => ({
+              sku: i.sku,
+              recebido: Number(i.compra_quantidade_recebida ?? 0),
+              pedido: Number(i.compra_quantidade_solicitada ?? 0),
+            })),
+          },
+          { status: 409 },
+        );
       }
     }
 

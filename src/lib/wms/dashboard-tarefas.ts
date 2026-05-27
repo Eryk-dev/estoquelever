@@ -712,6 +712,9 @@ export async function montarDashboardTarefas(
     })(),
 
     // Separação ativa
+    // invariante: após aprovar, separacao_galpao_id sempre setado (status_separacao
+    // só sai de NULL via /pedidos/aprovar, que escreve galpão). Por isso aqui o
+    // .eq direto é seguro — confirmado em staging em 2026-05-26 (P5 §2.3).
     (() => {
       let q = sb
         .from("siso_pedidos")
@@ -727,6 +730,8 @@ export async function montarDashboardTarefas(
     })(),
 
     // Embalagem
+    // invariante: status_separacao='separado' implica separacao_galpao_id setado
+    // (mesma justificativa da separação acima).
     (() => {
       let q = sb
         .from("siso_pedidos")

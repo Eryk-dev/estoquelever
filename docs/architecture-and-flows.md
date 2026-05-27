@@ -141,3 +141,58 @@ Controle de acesso é via RBAC dinâmico desde 2026-05-21.
 
 ### Compat legado
 `siso_usuarios.cargo` e `.cargos[]` continuam existindo (nullable, espelhados por trigger `trg_sync_cargos_after_roles`). Código novo nunca lê esses campos — só permissoes. Remoção definitiva planejada para ~1 mês após Fase 3 estabilizar.
+
+## Reverse paritária (P3 — 2026-05-27)
+
+Princípio: **toda ação que insere movs no ledger deve ter uma contraparte de reversão**.
+Antes do P3, várias operações WMS eram "one-way": confirmavam saldo no ledger mas não tinham
+botão pra desfazer (operador precisava abrir ticket pra admin executar SQL manual). P3 fecha
+essa lacuna com 7 endpoints reverse e ajustes pra preservar invariantes do ledger.
+
+| Ação forward | Endpoint reverso (P3) | Estorna que? |
+|---|---|---|
+| `POST /api/wms/inventario/[id]/aplicar` (gera movs `inventario_perda/ganho` por divergência) | `POST /api/wms/inventario/[id]/estornar` **(admin)** | Para cada divergência `aplicada`, estorna a mov gerada e volta divergência pra `pendente`. Sessão volta pra `revisao`. |
+| `POST /api/wms/guarda/[id]/confirmar` (par S+E RECEBIMENTO→loc destino) | `POST /api/wms/guarda/[id]/desfazer` | Estorna a última confirmação (S+E), decrementa `qty_guardada`, restaura status da pendência. |
+| `POST /api/wms/devolucoes/[id]/classificar` (E + transferência opcional pra QUARENTENA + RMA) | `POST /api/wms/devolucoes/[id]/desclassificar` | Match por janela temporal ±60s da `classificada_em` + origem_tipo + (NF/produto quando disponíveis). Estorna todas as movs e volta pra `aguardando_classificacao`. |
+| `POST /api/wms/replenishment` (S+E intra-galpão) | `POST /api/wms/replenishment/[origem_id]/reverter` | Estorna ambas as legs (idempotente — chamadas repetidas pulam movs já estornadas). |
+| `POST /api/wms/ajuste` (mov manual S ou E) | `POST /api/wms/ajuste/[mov_id]/estornar` | Estorna a mov; valida `origem_tipo='ajuste_manual'` antes (recusa estornar movs de outras origens por esse endpoint). |
+| `POST /api/wms/vendas/criar` (baixa_direta gera S por item; modo separação gera R) | `POST /api/wms/vendas/[id]/cancelar` | Estorna movs S (idempotente) ou libera R conforme o status atual. Rejeita 400 se status_separacao ∈ {em_separacao,separado,embalado} — operador deve `voltar-etapa` primeiro. |
+| `POST /api/wms/transferencias/[id]/receber` (E destino) | `POST /api/wms/transferencias/[id]/desfazer-recebimento` | Estorna **só a leg E** + reset itens + header volta pra `em_transito`. A leg S continua (estoque continua em trânsito). Permite re-receber. |
+
+### Atomicidade reforçada (RPCs)
+
+Migrations P3 movem 2 fluxos multi-step do TS pra RPC SQL atômica:
+- `wms_replenishment_intra_galpao` — S+E numa transação única. Antes, crash entre S e E
+  deixava saldo evaporando. Endpoint `/api/wms/replenishment` consome via `replenishmentIntraGalpao()`.
+- `wms_confirmar_guarda_atomico` — S+E + UPDATE de `siso_wms_pendencias_guarda` (`qty_guardada`,
+  `status`) numa transação única. Antes, crash entre mov e UPDATE deixava saldo movido mas
+  pendência não atualizada (estado fantasma). Endpoint `/api/wms/guarda/[id]/confirmar` consome.
+
+### Idempotência (UNIQUE constraint)
+
+`aplicar` em duas requisições paralelas competia pra inserir 2 movs com o mesmo `origem_id`
+(divergencia_id). UNIQUE partial index `uniq_movs_inventario_divergencia` (`origem_id`,
+`origem_tipo`) WHERE `origem_tipo IN ('inventario_perda','inventario_ganho')` em
+`siso_movimentacoes` garante que o 2º recebe **SQLSTATE 23505** (traduzido como
+ConflictError `{ code: 'DIVERGENCIA_JA_APLICADA' }`) e o caller pula a div, continua com as demais.
+
+### Anti-race em fluxos críticos
+
+- **`iniciarGuarda`** (#5.2): UPDATE condicional `WHERE status='pendente'`; 2º operador recebe **409 PENDENCIA_OUTRA_GUARDA**.
+- **`registrarContagem`** (#4.3): exige `siso_inventario_localizacoes.bloqueada_por = caller`; sem lock retorna **409 LOC_NAO_BLOQUEADA**.
+- **`receberTransferencia`** (#8.10): claim lock via `siso_transferencias_galpao.recebimento_em_andamento_por`; 2º operador recebe **409 TRANSFERENCIA_OUTRO_RECEBIMENTO**.
+- **`computarDivergencias` / `aprovarSessao`** (#4.5/#4.6): retorna **409 OPERADORES_ATIVOS** se há ops bipando; supervisor pode bypassar via `force: true`.
+- **`marcar-item` desmarcar** (#2.7): estorna leg S **antes** da leg L, preservando invariante I2 (saldo_anterior + delta = saldo_posterior) durante o estorno em par.
+
+### Estado fantasma fix (#2.10)
+
+`reiniciar` com `etapa='embalagem'` agora invoca `reverterCutoverDoPedido` em
+`src/lib/wms/cutover.ts` — estorna as movs `'L'` (liberação reserva) e `'S'` (saída) emitidas
+no cutover anterior + recria as reservas R com saldo. Antes, voltar etapa de embalagem
+deixava saldo permanentemente saído sem caminho de volta (estado fantasma).
+
+### `lancamento-retroativo/[id]/reconciliar` (#8.6)
+
+Endpoint agora valida UUID format de `[id]` e `compra_mov_id` (regex) **antes** de chamar a
+RPC, e SELECT verifica existência das duas movs. Antes, caller podia passar string vazia/uuid
+inexistente e receber 23502/23503 cripticamente.

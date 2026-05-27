@@ -1209,3 +1209,418 @@ erros:
       - src/lib/wms/reservas-picking.ts
       - src/app/api/wms/separacao/marcar-item/route.ts
     tags: [wms, separacao, marcar-item, desmarcar, reserva, expira_em, postgrest-error]
+
+  # ─────────────────────────────────────────────────────────────────
+  # P3 — Reverse Paritária + Idempotência (2026-05-27)
+  # 22 findings da auditoria WMS. Catálogo completo de entries
+  # representativas (4.1, 4.2, 4.3, 4.4, 4.5/4.6, 4.7, 5.1, 5.2,
+  # 5.3/5.8, 6.3, 7.7, 7.13, 8.2, 8.3, 8.6, 8.8, 8.10, 2.7, 2.10, 3.20).
+  # As demais (subcasos menores) seguem o mesmo padrão e podem ser
+  # adicionadas sob demanda quando incidentes específicos forem registrados.
+  # Plano: docs/superpowers/plans/2026-05-26-wms-fix-p3-reverse-idempotencia.md
+  # ─────────────────────────────────────────────────────────────────
+
+  - id: p3-fix-4.1-aplicar-inventario-nao-idempotente
+    date: "2026-05-27"
+    source: wms.inventario.aplicar
+    category: business_logic
+    message: 'aplicar inventário 2× em paralelo cria duplo conjunto de movs'
+    cause: >
+      `aplicarSessao()` selecionava divergências aprovadas e inseria 1 mov
+      por divergência sem nenhuma proteção contra concorrência. Duas
+      requisições paralelas pra mesmo sessao_id resultavam em 2× movs por
+      divergência (saldo dobrado, custo médio recalculado errado).
+    fix: >
+      Migration `20260527_p3_movs_unique_inventario_divergencia.sql` cria
+      UNIQUE partial INDEX `uniq_movs_inventario_divergencia` em
+      `siso_movimentacoes(origem_id, origem_tipo)` WHERE origem_tipo IN
+      ('inventario_perda','inventario_ganho'). 2ª chamada paralela bate
+      em SQLSTATE 23505, traduzido como ConflictError
+      `{ code:'DIVERGENCIA_JA_APLICADA' }` no caller — a divergência é
+      pulada e o loop continua com as demais. Response agora retorna
+      `{ movsGeradas, divsJaAplicadas }`.
+    files:
+      - supabase/migrations/20260527_p3_movs_unique_inventario_divergencia.sql
+      - src/lib/wms/inventario.ts
+    tags: [wms, inventario, aplicar, idempotencia, unique-constraint, p3]
+
+  - id: p3-fix-4.2-sem-endpoint-estornar-sessao-aplicada
+    date: "2026-05-27"
+    source: wms.inventario.estornar
+    category: business_logic
+    message: 'não existia caminho oficial pra reverter sessão de inventário aplicada'
+    cause: >
+      Após `aplicarSessao` gerar movs no ledger, qualquer correção exigia SQL
+      manual em produção pelo DBA. Não havia botão admin pra desfazer.
+    fix: >
+      Novo endpoint `POST /api/wms/inventario/[id]/estornar` (admin-only).
+      Para cada divergência `aplicada` (mov_aplicada_id não-null) chama
+      `estornarMovimentacao` e volta divergência pra `pendente`. Sessão
+      volta pra `revisao`. Idempotente — repetir é no-op via guard
+      `estorno_de IS NOT NULL`.
+    files:
+      - src/app/api/wms/inventario/[id]/estornar/route.ts
+      - src/lib/wms/inventario.ts
+      - src/app/wms/inventario/[id]/page.tsx
+    tags: [wms, inventario, estornar, reverse, admin, p3]
+
+  - id: p3-fix-4.3-contagem-sem-lock
+    date: "2026-05-27"
+    source: wms.inventario.contagens
+    category: validation
+    message: 'POST /contagens permitia bipar loc sem ter adquirido lock'
+    cause: >
+      `registrarContagem()` lia o lock pra logar mas não validava. Dois
+      operadores podiam bipar a mesma loc em paralelo, ou um operador
+      podia bipar uma loc que nunca claimou (gerando contagem fantasma
+      que entrava em divergências).
+    fix: >
+      Endpoint agora valida que `siso_inventario_localizacoes.bloqueada_por
+      = usuario_id` antes de gravar. Sem lock retorna 409 LOC_NAO_BLOQUEADA.
+    files:
+      - src/app/api/wms/inventario/[id]/contagens/route.ts
+      - src/lib/wms/inventario.ts
+    tags: [wms, inventario, contagens, lock, anti-race, p3]
+
+  - id: p3-fix-4.4-delete-sessao-aplicada-permitia
+    date: "2026-05-27"
+    source: wms.inventario.delete
+    category: business_logic
+    message: 'DELETE /inventario/[id] cancelava sessão mesmo com status=aplicada'
+    cause: >
+      DELETE em sessão aplicada removia locks e mudava status pra cancelada,
+      mas as movs já estavam no ledger. Estado inconsistente — caller perdia
+      a referência pra estornar depois.
+    fix: >
+      DELETE agora retorna 409 se status='aplicada' com mensagem apontando
+      pra POST /inventario/[id]/estornar como caminho correto. Outros
+      status (planejada/em_andamento/revisao/aprovada) continuam canceláveis.
+    files:
+      - src/app/api/wms/inventario/[id]/route.ts
+      - src/lib/wms/inventario.ts
+    tags: [wms, inventario, delete, conflict, p3]
+
+  - id: p3-fix-4.5-aprovar-com-operadores-ativos
+    date: "2026-05-27"
+    source: wms.inventario.aprovar
+    category: business_logic
+    message: 'aprovar/aprovar-sessao não avisava se há operadores ainda bipando'
+    cause: >
+      Supervisor podia aprovar uma sessão enquanto operadores estavam
+      ativamente bipando, descartando contagens em andamento. Não havia
+      sinal claro de "espera" — sessão simplesmente avançava silenciosamente.
+      Operadores órfãos (com `finalizado_em` null indefinidamente) também
+      mantinham locks de localização.
+    fix: >
+      `computarDivergencias` agora limpa operadores órfãos (finaliza quem
+      ficou stale há >X min). Endpoints `/aprovar` e `/aprovar-sessao`
+      retornam 409 OPERADORES_ATIVOS com lista dos operadores ainda ativos.
+      Supervisor pode bypassar via body `{ force: true }`.
+    files:
+      - src/app/api/wms/inventario/[id]/aprovar/route.ts
+      - src/app/api/wms/inventario/[id]/aprovar-sessao/route.ts
+      - src/lib/wms/inventario.ts
+    tags: [wms, inventario, aprovar, operadores-ativos, conflict, p3]
+
+  - id: p3-fix-4.7-patch-modo-mid-flow
+    date: "2026-05-27"
+    source: wms.inventario.patch
+    category: business_logic
+    message: 'PATCH inventário permitia trocar modo_contagem (blind↔aberto) mid-flow'
+    cause: >
+      Operadores bipavam sob um modo (blind, p.ex.) e supervisor podia trocar
+      pra aberto no meio da sessão. Comparação de contagens vs sistema ficava
+      corrompida (parte das movs estava sob regras diferentes).
+    fix: >
+      PATCH agora bloqueia mudança de `modo_contagem` se status != 'planejada'.
+      Retorna 409 MODO_LOCKED. Outros campos (nome, tolerancia_pct, etc.)
+      continuam editáveis em qualquer status.
+    files:
+      - src/app/api/wms/inventario/[id]/route.ts
+    tags: [wms, inventario, patch, modo-contagem, p3]
+
+  - id: p3-fix-5.1-sem-desfazer-guarda
+    date: "2026-05-27"
+    source: wms.guarda.desfazer
+    category: business_logic
+    message: 'sem caminho oficial pra desfazer uma guarda já confirmada'
+    cause: >
+      Operador bipa loc errada → guarda confirmada (par S+E grava saldo
+      na loc errada). Não havia botão "desfazer última guarda". Caminho
+      anterior era abrir ticket pra DBA.
+    fix: >
+      Novo endpoint `POST /api/wms/guarda/[id]/desfazer`. Estorna o par
+      S+E mais recente da pendência, decrementa `qty_guardada`, restaura
+      status (`em_guarda` ou `pendente`).
+      Limitação MVP: só estorna a guarda mais recente. Pra desfazer
+      intermediárias, chamar repetidamente.
+    files:
+      - src/app/api/wms/guarda/[id]/desfazer/route.ts
+      - src/lib/wms/guarda.ts
+      - src/app/wms/guarda/[id]/page.tsx
+    tags: [wms, guarda, desfazer, reverse, p3]
+
+  - id: p3-fix-5.2-iniciar-guarda-race
+    date: "2026-05-27"
+    source: wms.guarda.iniciar
+    category: business_logic
+    message: '2 operadores conseguiam iniciar a mesma pendência → guarda dupla'
+    cause: >
+      `iniciarGuarda` fazia SELECT (status='pendente'?) + UPDATE. Dois
+      operadores chegando juntos passavam ambos no SELECT. Resultado:
+      dupla guarda do mesmo SKU/qty.
+    fix: >
+      Agora usa UPDATE condicional `WHERE status='pendente'`. Apenas a 1ª
+      requisição muda 1 linha; a 2ª recebe 0 linhas → 409
+      PENDENCIA_OUTRA_GUARDA. Idempotente se o caller já é o iniciada_por.
+    files:
+      - src/app/api/wms/guarda/[id]/iniciar/route.ts
+      - src/lib/wms/guarda.ts
+    tags: [wms, guarda, iniciar, anti-race, conflict, p3]
+
+  - id: p3-fix-5.3-5.8-confirmar-guarda-nao-atomico
+    date: "2026-05-27"
+    source: wms.guarda.confirmar
+    category: infrastructure
+    message: 'confirmar guarda era TS multi-step (mov + UPDATE) — crash deixava estado fantasma'
+    cause: >
+      `confirmarGuarda` fazia (1) `replenishmentIntraGalpao` (que insere par
+      S+E) e (2) UPDATE da pendência (qty_guardada+=qty, status final).
+      Crash entre 1 e 2 deixava saldo movido mas pendência intacta —
+      operador reentrava na mesma pendência e duplicava a guarda.
+    fix: >
+      Nova RPC SQL `wms_confirmar_guarda_atomico` faz mov par S+E
+      (via 2 chamadas a `wms_inserir_movimentacao`) + UPDATE da pendência
+      numa transação única. Endpoint passa a invocar a RPC. Tudo ou nada.
+    files:
+      - supabase/migrations/20260527_p3_rpc_wms_confirmar_guarda_atomico.sql
+      - src/lib/wms/guarda.ts
+    tags: [wms, guarda, confirmar, atomico, rpc, p3]
+
+  - id: p3-fix-5.8-replenishment-nao-atomico
+    date: "2026-05-27"
+    source: wms.replenishment
+    category: infrastructure
+    message: 'replenishment intra-galpão era TS multi-step — crash entre S e E sumia saldo'
+    cause: >
+      Endpoint inseria mov S na loc origem e DEPOIS mov E na loc destino.
+      Crash entre os 2 steps deixava saldo evaporando (saiu da origem mas
+      não chegou no destino).
+    fix: >
+      Migration `20260527_p3_rpc_wms_replenishment_atomico.sql` cria
+      RPC `wms_replenishment_intra_galpao` que faz S+E na mesma transação.
+      `replenishmentIntraGalpao()` no TS agora delega tudo pra RPC.
+    files:
+      - supabase/migrations/20260527_p3_rpc_wms_replenishment_atomico.sql
+      - src/lib/wms/movimentacoes.ts
+    tags: [wms, replenishment, atomico, rpc, p3]
+
+  - id: p3-fix-6.3-sem-desclassificar-devolucao
+    date: "2026-05-27"
+    source: wms.devolucoes.desclassificar
+    category: business_logic
+    message: 'sem caminho oficial pra reverter classificação errada de devolução'
+    cause: >
+      Operador classifica devolução como A (íntegro, recalcula custo médio)
+      mas era B (avariado, vai pra QUARENTENA). Sem botão "voltar atrás" —
+      precisava ajuste manual + estorno do recálculo de custo via SQL.
+    fix: >
+      Novo endpoint `POST /api/wms/devolucoes/[id]/desclassificar`.
+      Match por janela temporal ±60s da `classificada_em` + origem_tipo
+      (sempre 1 dos 4 valores devolucao_*) + nota_fiscal_id + produto_id
+      quando presentes. Estorna todas as movs encontradas e volta status
+      pra `aguardando_classificacao` (permite re-classificação imediata).
+    files:
+      - src/app/api/wms/devolucoes/[id]/desclassificar/route.ts
+      - src/lib/wms/devolucoes.ts
+      - src/app/wms/devolucoes/[id]/page.tsx
+    tags: [wms, devolucoes, desclassificar, reverse, p3]
+
+  - id: p3-fix-7.7-vendas-idempotency-cancelado
+    date: "2026-05-27"
+    source: wms.vendas.criar
+    category: business_logic
+    message: 'idempotency_key reciclava pedido cancelado em vez de criar novo'
+    cause: >
+      `vendas/criar` filtrava por `idempotency_key` mas não excluía pedidos
+      cancelados. Se vendedor cancelava venda e re-tentava com mesma key
+      (cenário comum — UI gera key uma vez), recebia o pedido cancelado
+      em vez de um novo.
+    fix: >
+      SELECT pre-insert agora filtra `status NOT IN ('cancelado')`.
+      Cancelados não bloqueiam re-criação com mesma key — comportamento
+      esperado pelo vendedor.
+    files:
+      - src/app/api/wms/vendas/criar/route.ts
+    tags: [wms, vendas, idempotency, cancelado, p3]
+
+  - id: p3-fix-7.13-sem-cancelar-venda
+    date: "2026-05-27"
+    source: wms.vendas.cancelar
+    category: business_logic
+    message: 'sem caminho oficial pra cancelar venda manual'
+    cause: >
+      Venda em `baixa_direta` gerava S no ledger imediatamente. Não havia
+      botão "cancelar" — vendedor que errasse precisava abrir ticket. Em
+      modo `separacao`, reservas R criadas no aprovar ficavam órfãs.
+    fix: >
+      Novo endpoint `POST /api/wms/vendas/[id]/cancelar` cobre 3 caminhos:
+      (1) aguardando_separacao/aguardando_compra → libera R; (2) concluido
+      com movs venda_manual → estorna S; (3) em_separacao/separado/embalado
+      → 400 (operador precisa voltar-etapa primeiro). Idempotente.
+    files:
+      - src/app/api/wms/vendas/[id]/cancelar/route.ts
+      - src/lib/wms/vendas-cancelamento.ts
+      - src/app/wms/vendas/[id]/page.tsx
+    tags: [wms, vendas, cancelar, reverse, p3]
+
+  - id: p3-fix-8.2-sem-desfazer-recebimento-transferencia
+    date: "2026-05-27"
+    source: wms.transferencias.desfazer-recebimento
+    category: business_logic
+    message: 'sem caminho pra reverter recebimento de transferência (bipou loc errada)'
+    cause: >
+      Operador no galpão destino confirmava transferência na loc errada.
+      Mov E estava no ledger; reverter exigia ajuste manual. Não havia
+      "rebobinar" pra `em_transito`.
+    fix: >
+      Novo endpoint `POST /api/wms/transferencias/[id]/desfazer-recebimento`.
+      Estorna **só a leg E**, reseta `mov_entrada_id` + `localizacao_destino_id`
+      nos itens, volta header pra `status='em_transito'`. Leg S permanece —
+      estoque continua em trânsito. Permite re-receber na loc correta.
+    files:
+      - src/app/api/wms/transferencias/[id]/desfazer-recebimento/route.ts
+      - src/lib/wms/transferencias.ts
+    tags: [wms, transferencias, desfazer-recebimento, reverse, p3]
+
+  - id: p3-fix-8.3-cancelar-transferencia-parcial
+    date: "2026-05-27"
+    source: wms.transferencias.cancelar
+    category: business_logic
+    message: 'cancelar rejeitava transferências com recebimento parcial'
+    cause: >
+      `cancelarTransferencia` retornava 400 se qualquer item já tivesse
+      `mov_entrada_id`. Mas o caso comum era: alguns itens foram recebidos,
+      outros não — operador queria cancelar o restante.
+    fix: >
+      Agora distingue:
+      - Nenhum item recebido → estorna movs S e cancela.
+      - Alguns recebidos → 400 com mensagem apontando pra `/desfazer-recebimento`
+        (operador desfaz primeiro, depois cancela).
+    files:
+      - src/app/api/wms/transferencias/[id]/cancelar/route.ts
+      - src/lib/wms/transferencias.ts
+    tags: [wms, transferencias, cancelar, parcial, p3]
+
+  - id: p3-fix-8.6-reconciliar-retroativo-uuid
+    date: "2026-05-27"
+    source: wms.lancamento-retroativo.reconciliar
+    category: validation
+    message: 'reconciliar aceitava UUIDs inválidos/inexistentes e RPC levantava 23502/23503'
+    cause: >
+      Endpoint chamava a RPC direto com `[id]` (do path) e `compra_mov_id`
+      (do body) sem validar formato UUID nem existência das movs. Erros
+      do Postgres (23502 NOT NULL violation, 23503 FK violation) vinham
+      crípticos pro client.
+    fix: >
+      Endpoint valida com regex UUID antes de chamar a RPC. SELECT confirma
+      existência das duas movs. Erros agora são 400 com mensagem semântica.
+    files:
+      - src/app/api/wms/lancamento-retroativo/[id]/reconciliar/route.ts
+    tags: [wms, lancamento-retroativo, reconciliar, validation, uuid, p3]
+
+  - id: p3-fix-8.8-sem-reverter-replenishment
+    date: "2026-05-27"
+    source: wms.replenishment.reverter
+    category: business_logic
+    message: 'sem caminho pra desfazer replenishment intra-galpão errado'
+    cause: >
+      Operador faz replenishment pra loc errada → par S+E no ledger. Reverter
+      exigia 2 ajustes manuais. Sem botão.
+    fix: >
+      Novo endpoint `POST /api/wms/replenishment/[origem_id]/reverter`.
+      `[id]` aqui é o `origem_id` (uuid) compartilhado pelas movs S+E (não
+      há header próprio). Estorna ambas as legs via `estornarMovimentacao`.
+      Idempotente — chamadas repetidas pulam movs já estornadas.
+    files:
+      - src/app/api/wms/replenishment/[id]/reverter/route.ts
+      - src/lib/wms/movimentacoes.ts
+    tags: [wms, replenishment, reverter, reverse, idempotente, p3]
+
+  - id: p3-fix-8.10-receber-transferencia-race
+    date: "2026-05-27"
+    source: wms.transferencias.receber
+    category: business_logic
+    message: '2 operadores recebendo a mesma transferência em paralelo → recebimento duplicado'
+    cause: >
+      `receberTransferencia` não tinha lock no header. Dois operadores
+      conferindo o mesmo header ao mesmo tempo: ambos confirmavam, gerando
+      2× mov E por item (saldo dobrado no destino).
+    fix: >
+      Nova coluna `siso_transferencias_galpao.recebimento_em_andamento_por uuid`
+      via migration `20260527_p3_transferencia_recebimento_em_andamento.sql`.
+      Endpoint faz UPDATE condicional `WHERE recebimento_em_andamento_por IS NULL`
+      antes de processar. 1º ganha; 2º recebe 409 TRANSFERENCIA_OUTRO_RECEBIMENTO
+      com `bloqueado_por`. Lock é limpo na conclusão ou em erro (try/finally).
+    files:
+      - supabase/migrations/20260527_p3_transferencia_recebimento_em_andamento.sql
+      - src/app/api/wms/transferencias/[id]/receber/route.ts
+      - src/lib/wms/transferencias.ts
+    tags: [wms, transferencias, receber, anti-race, claim-lock, p3]
+
+  - id: p3-fix-2.7-marcar-item-desmarcar-ordem
+    date: "2026-05-27"
+    source: wms.separacao.marcar-item
+    category: business_logic
+    message: 'desmarcar item violava invariante I2 (saldo_anterior+delta=saldo_posterior)'
+    cause: >
+      Desmarcar item estornava na ordem (1) leg L (estorno de
+      liberação_reserva → recria R) e (2) leg S (estorno de nf_venda).
+      Mas a leg L recriava R no saldo que a S ainda ocupava — saldo
+      momentaneamente reservava mais do que disponível.
+    fix: >
+      Inverte ordem: estorna leg S primeiro (sai do estoque), depois leg L
+      (recria R agora com saldo livre). Sequência paritária e invariante-safe.
+    files:
+      - src/app/api/wms/separacao/marcar-item/route.ts
+      - src/lib/wms/reservas-picking.ts
+    tags: [wms, separacao, marcar-item, desmarcar, invariante, p3]
+
+  - id: p3-fix-2.10-reiniciar-embalagem-nao-reverte-cutover
+    date: "2026-05-27"
+    source: wms.separacao.reiniciar
+    category: business_logic
+    message: 'reiniciar etapa=embalagem deixava saldo permanentemente saído (estado fantasma)'
+    cause: >
+      Cutover converte R em L+S quando o pedido entra em separado/embalado.
+      `reiniciar` com etapa=embalagem só resetava campos do item — não
+      revertia as movs do cutover. Resultado: saldo saía do ledger sem
+      caminho de volta. Re-iniciar embalagem ficava sem reserva pra cobrir.
+    fix: >
+      `resetarEstadoSeparacaoItens` em etapa=embalagem agora chama
+      `reverterCutoverDoPedido` em `src/lib/wms/cutover.ts`. Estorna as
+      movs L e S do cutover anterior + recria as reservas R com saldo
+      ressuscitado. Re-iniciar embalagem voltou a ser paritário.
+    files:
+      - src/app/api/wms/separacao/reiniciar/route.ts
+      - src/lib/wms/cutover.ts
+      - src/lib/separacao/reset-state.ts
+    tags: [wms, separacao, reiniciar, cutover, estado-fantasma, p3]
+
+  - id: p3-fix-3.20-sem-estornar-ajuste
+    date: "2026-05-27"
+    source: wms.ajuste.estornar
+    category: business_logic
+    message: 'sem caminho oficial pra estornar mov de ajuste manual'
+    cause: >
+      `POST /api/wms/ajuste` insere mov com origem_tipo='ajuste_manual'.
+      Mas não havia botão "estornar" — corrigir ajuste errado exigia SQL.
+    fix: >
+      Novo endpoint `POST /api/wms/ajuste/[mov_id]/estornar`. Valida
+      `origem_tipo='ajuste_manual'` (recusa estornar movs de outras origens
+      por aqui), delega pra `estornarMovimentacao`. Double-estorno
+      bloqueado por guard `estorno_de IS NOT NULL`.
+    files:
+      - src/app/api/wms/ajuste/[id]/estornar/route.ts
+      - src/lib/wms/movimentacoes.ts
+    tags: [wms, ajuste, estornar, reverse, p3]

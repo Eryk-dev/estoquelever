@@ -2015,3 +2015,40 @@ erros:
       evitar reimplementação redundante.
     files: []
     tags: [wms, separacao, parcial-modal, esgotado-modal, oc, encaminhar, no-op, fix-final-b, t8, b7]
+
+  - id: pendencias-guarda-tracking-origem-ids-defer
+    date: "2026-05-27"
+    source: wms.guarda.pendencias
+    category: infrastructure
+    message: "tracking_origem_ids text[] adicionado como scaffolding futuro — backfill + webhook + UI diferidos"
+    cause: >
+      Plano fix-final-B T13/B11 descrevia: (1) adicionar coluna
+      tracking_origem_ids text[] em siso_wms_pendencias_guarda, (2) backfill
+      de coluna singular tracking_origem_id, (3) webhook popula array,
+      (4) UI exibe lista.
+
+      Investigação pré-implementação revelou que:
+      a) A tabela nunca teve coluna singular tracking_origem_id — schema
+         original (migration 20260514_wms_guarda_pendencias.sql) só tem
+         nf_referencia text (chave de acesso da NF). O plano baseava-se em
+         suposição stale.
+      b) grep -rn "tracking_origem" src/ retorna zero resultados — nenhum
+         consumidor da coluna singular existe no codebase.
+      c) src/lib/nf-webhook-handler.ts usa chave_acesso para identificação
+         de NF; não há campo tracking_ids no payload Tiny atual.
+    fix: >
+      Aplicada apenas a migration que adiciona a coluna:
+      supabase/migrations/20260528_pendencias_tracking_origem_ids.sql
+      (ALTER TABLE ... ADD COLUMN IF NOT EXISTS tracking_origem_ids text[] NULL).
+
+      Itens diferidos:
+      - Backfill: sem fonte (tracking_origem_id singular nunca existiu).
+      - Webhook population: nf-webhook-handler.ts não toca o novo campo até
+        que o payload Tiny exponha tracking_ids. Quando isso acontecer,
+        adicionar ao INSERT em handleNfWebhook():
+          tracking_origem_ids: payload.tracking_ids ?? [],
+      - UI (/wms/guarda/[id]/page.tsx): não exibe a lista — não há dados para
+        mostrar. Adicionar quando a população estiver ativa.
+    files:
+      - supabase/migrations/20260528_pendencias_tracking_origem_ids.sql
+    tags: [wms, guarda, pendencias, tracking_origem_ids, scaffolding, defer, fix-final-b, t13, b11]

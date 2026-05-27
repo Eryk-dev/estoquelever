@@ -3,6 +3,8 @@ import { createServiceClient } from "@/lib/supabase-server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GalpaoEstoque } from "@/types";
 import { aggregateLiveStockBySku } from "@/lib/wms/live-stock";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
@@ -117,6 +119,15 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
  *   ?status=pendente,executando  (comma-separated filter)
  */
 export async function GET(request: Request) {
+  // Auth + perm (finding 1.7 + 1.10)
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (!userCan(session, "pedidos.ver")) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
   const { searchParams } = new URL(request.url);
   const statusFilter = searchParams.get("status");
 

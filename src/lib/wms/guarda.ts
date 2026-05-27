@@ -14,8 +14,9 @@
 // guarda só 3, a pendência fica com qty_pendente=2 (status volta pra pendente)
 // e a próxima operação zera o restante.
 
+import { randomUUID } from "crypto";
 import { createServiceClient } from "@/lib/supabase-server";
-import { estornarMovimentacao } from "./ledger";
+import { inserirMovimentacao } from "./ledger";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "wms.guarda";
@@ -513,16 +514,23 @@ export async function cancelarPendencia(
 }
 
 /**
- * P3 #5.1: desfaz uma guarda confirmada (total ou parcial).
+ * P3 #5.1 (B10): desfaz uma guarda confirmada, total ou com qty configurável.
  *
- * Estorna o par S+E intra-galpão (pendência → loc_destino vira loc_destino → pendência),
- * decrementa qty_guardada, devolve status pra 'pendente' (ou 'em_guarda' se ainda
- * houver qty_pendente).
+ * Usa movimentações forward-direction (NÃO estornos) para suportar desfazer
+ * qualquer qty ≤ qty_guardada, incluindo parcial:
+ *   - S de localizacao_destino (onde o estoque está agora)
+ *   - E para localizacao_origem_id (RECEBIMENTO — de onde veio)
+ * O par S+E compartilha o mesmo origem_id (novo randomUUID) e
+ * origem_tipo='transferencia_localizacao'.
  *
- * Sem qty: desfaz a última confirmação (qty_guardada não-zero mais recente).
- * Com qty: desfaz exatamente qty unidades (deve ≤ qty_guardada).
+ * Sem qty: desfaz tudo (qty_guardada inteira) — backwards-compat.
+ * Com qty: desfaz exatamente qty unidades (deve ser ≤ qty_guardada).
  *
- * Limitação: a pendência tem que estar em status 'pendente' ou 'guardada' (não cancelada).
+ * Para encontrar o(s) loc(s) destino onde o estoque foi guardado, busca as
+ * movs E (entrada na loc destino) das confirmações anteriores, do mais
+ * recente para o mais antigo, e desfaz na ordem inversa até cobrir qty.
+ *
+ * Limitação: pendência não pode estar cancelada.
  */
 export async function desfazerGuarda(input: {
   pendencia_id: string;
@@ -543,86 +551,90 @@ export async function desfazerGuarda(input: {
     throw new Error("pendência sem guardas confirmadas — nada a desfazer");
   }
 
-  // Localiza as movs E (entrada na loc destino) ligadas a essa pendência.
-  // origem_id das movs do replenishmentIntraGalpao é o lote da confirmação;
-  // o link é via origem_tipo='transferencia_localizacao' + galpao_id +
-  // produto_id + janela temporal. Mais simples: usar mov_entrada_id da
-  // pendência como pivot.
-  //
-  // Estratégia: buscar todas as movs do par (S na loc RECEBIMENTO + E na
-  // loc destino) com origem_tipo='transferencia_localizacao' e
-  // origem_id IN (lista de confirmações dessa pendência).
-  //
-  // Idempotência: estornarMovimentacao recusa double-estorno. Se 2 chamadas
-  // de desfazer chegam, 2ª retorna 0 estornadas.
-
-  // P3 #5.1 simplificação: requer 1 confirmação por pendência (sem qty parcial
-  // configurável aqui no MVP). Operador pode desfazer "a guarda" — estorna
-  // exatamente qty_guardada. Se desfazer parcial for necessário, escalar
-  // pra task futura.
-  if (input.qty && input.qty !== Number(pend.qty_guardada)) {
+  const qtyAlvo = Number(input.qty ?? pend.qty_guardada);
+  if (qtyAlvo <= 0) {
+    throw new Error("qty deve ser > 0");
+  }
+  if (qtyAlvo > Number(pend.qty_guardada)) {
     throw new Error(
-      "MVP: desfazer parcial não suportado. Omita qty pra desfazer toda a guarda atual.",
+      `qty (${qtyAlvo}) excede qty_guardada (${pend.qty_guardada})`,
     );
   }
 
-  // Estorna par S+E. Busca movs por origem_id compartilhada com a confirmação.
-  // confirmarGuarda compartilha origem_id entre as 2 movs (RPC garante).
-  // Mas hoje pendência não armazena os origem_id das confirmações — vamos
-  // adicionar coluna tracking_origem_ids text[] em migration separada.
-  //
-  // Fluxo MVP sem migration: busca movs pela tripla + janela [iniciada_em, now].
-  const triplaProduto = pend.produto_id;
-  const galpao = pend.galpao_id;
-  const locOrigem = pend.localizacao_origem_id;
-
-  const { data: movsS } = await sb
+  // Busca as movs E (entrada na loc destino) das confirmações anteriores.
+  // Cada confirmação gera um par S+E com o mesmo origem_id:
+  //   S: loc RECEBIMENTO (localizacao_origem_id) — estoque saiu daqui
+  //   E: loc destino — estoque entrou aqui
+  // Para desfazer, precisamos das E pra saber em que loc(s) o estoque está.
+  // Filtra por origem_tipo='transferencia_localizacao' + produto + galpão,
+  // excluindo a própria loc RECEBIMENTO (só locs destino), janela temporal
+  // a partir da criação da pendência.
+  const { data: movsE } = await sb
     .from("siso_movimentacoes")
     .select("id, origem_id, criado_em, quantidade, localizacao_id")
     .eq("origem_tipo", "transferencia_localizacao")
-    .eq("produto_id", triplaProduto)
-    .eq("galpao_id", galpao)
-    .eq("localizacao_id", locOrigem)
-    .eq("tipo", "S")
+    .eq("produto_id", pend.produto_id)
+    .eq("galpao_id", pend.galpao_id)
+    .neq("localizacao_id", pend.localizacao_origem_id)
+    .eq("tipo", "E")
+    .is("estorno_de", null)
     .gte("criado_em", pend.iniciada_em ?? pend.criada_em ?? "1970-01-01")
     .order("criado_em", { ascending: false });
 
-  // Filtra apenas os pares que ainda não foram estornados.
-  const candidatos = (movsS ?? []) as Array<{
+  const candidatos = (movsE ?? []) as Array<{
     id: string;
     origem_id: string;
     quantidade: number;
+    localizacao_id: string;
   }>;
-  let movsEstornadas = 0;
+
+  // Para cada confirmação, emite um par S+E forward-direction pela qty necessária.
+  // qty por par = min(qty da mov original, qty restante a desfazer).
+  // Par partilha novo origem_id (randomUUID) — não reutiliza o original.
+  let movsEstornadas = 0; // campo mantido por compat; conta movs criadas (2 por par)
   let qtyDesfeita = 0;
-  const qtyAlvo = Number(input.qty ?? pend.qty_guardada);
 
   for (const m of candidatos) {
     if (qtyDesfeita >= qtyAlvo) break;
-    try {
-      // Estorna par: a S na origem + a E na destino. Ambas têm o mesmo origem_id.
-      const { data: par } = await sb
-        .from("siso_movimentacoes")
-        .select("id, tipo")
-        .eq("origem_id", m.origem_id)
-        .eq("origem_tipo", "transferencia_localizacao");
-      for (const p of (par ?? []) as Array<{ id: string; tipo: string }>) {
-        await estornarMovimentacao({
-          mov_id: p.id,
-          usuario_id: input.usuario_id,
-          motivo: `Desfaz guarda pendência ${input.pendencia_id}: ${input.motivo}`,
-        });
-        movsEstornadas++;
-      }
-      qtyDesfeita += Number(m.quantidade);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/já foi estornada|já é um estorno/.test(msg)) continue;
-      throw err;
-    }
+    const qtyPar = Math.min(Number(m.quantidade), qtyAlvo - qtyDesfeita);
+    const novoOrigemId = randomUUID();
+    const motivo = `Desfaz guarda pendência ${input.pendencia_id}: ${input.motivo}`;
+
+    // S: remove da loc destino (onde o estoque está agora)
+    await inserirMovimentacao({
+      tripla: {
+        produto_id: pend.produto_id,
+        galpao_id: pend.galpao_id,
+        localizacao_id: m.localizacao_id,
+      },
+      tipo: "S",
+      qty: qtyPar,
+      origem_tipo: "transferencia_localizacao",
+      origem_id: novoOrigemId,
+      motivo,
+      usuario_id: input.usuario_id,
+    });
+
+    // E: devolve para RECEBIMENTO (localizacao_origem_id)
+    await inserirMovimentacao({
+      tripla: {
+        produto_id: pend.produto_id,
+        galpao_id: pend.galpao_id,
+        localizacao_id: pend.localizacao_origem_id,
+      },
+      tipo: "E",
+      qty: qtyPar,
+      origem_tipo: "transferencia_localizacao",
+      origem_id: novoOrigemId,
+      motivo,
+      usuario_id: input.usuario_id,
+    });
+
+    movsEstornadas += 2;
+    qtyDesfeita += qtyPar;
   }
 
-  // Atualiza pendência: decrementa qty_guardada, volta status.
+  // Atualiza pendência: decrementa qty_guardada, ajusta status.
   const novaQtyGuardada = Math.max(0, Number(pend.qty_guardada) - qtyDesfeita);
   const novoStatus = novaQtyGuardada > 0 ? "em_guarda" : "pendente";
   await sb

@@ -588,11 +588,13 @@ export function createContext(opts: {
     });
   }
 
-  async function desfazerGuarda(p: { pendencia_id: string; motivo?: string }) {
+  async function desfazerGuarda(p: { pendencia_id: string; motivo?: string; qty?: number }) {
     const motivo = p.motivo ?? "teste cenário desfazer";
+    const body: Record<string, unknown> = { motivo };
+    if (p.qty !== undefined) body.qty = p.qty;
     return http.post<{ movsEstornadas: number }>(
       `/api/wms/guarda/${p.pendencia_id}/desfazer`,
-      { motivo },
+      body,
     );
   }
 

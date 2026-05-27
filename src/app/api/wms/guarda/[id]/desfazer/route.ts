@@ -43,7 +43,8 @@ export async function POST(
       msg.includes("não encontrada") ||
       msg.includes("cancelada") ||
       msg.includes("sem guardas") ||
-      msg.includes("MVP") ||
+      msg.includes("excede qty_guardada") ||
+      msg.includes("qty deve ser") ||
       msg.includes("motivo");
     return wmsErrorResponse({
       source: "wms.guarda.desfazer",

@@ -296,8 +296,20 @@ function normalizarNumeros(p: PendenciaJoined): PendenciaJoined {
 }
 
 /**
- * Marca pendência como em_guarda. Idempotente — se já estiver em_guarda,
- * só retorna. Erro se status terminal (guardada/cancelada).
+ * Marca pendência como em_guarda. Idempotente pra re-entrada do MESMO
+ * operador. Anti-race via UPDATE condicional: se outro operador já
+ * "reivindicou" a pendência (iniciada_por != usuario_id), retorna erro
+ * com code='PENDENCIA_OUTRA_GUARDA' + atributo `iniciada_por` pra UI
+ * mostrar quem é o dono atual.
+ *
+ * Sem o UPDATE condicional, 2 operadores clicando "Iniciar" em paralelo
+ * passariam ambos pelo SELECT e fariam ambos os UPDATEs — o segundo
+ * sobrescreveria `iniciada_por` silenciosamente, corrompendo a atribuição.
+ *
+ * Erros possíveis:
+ *   - "pendência não encontrada" (400)
+ *   - "pendência em status terminal" — guardada|cancelada (400)
+ *   - code='PENDENCIA_OUTRA_GUARDA' (409) — outro operador é dono atual
  */
 export async function iniciarGuarda(input: {
   pendencia_id: string;
@@ -309,17 +321,49 @@ export async function iniciarGuarda(input: {
   if (pend.status === "guardada" || pend.status === "cancelada") {
     throw new Error(`pendência em status terminal (${pend.status})`);
   }
-  if (pend.status === "em_guarda") return pend;
-
-  const { error } = await sb
+  // Re-entrada do mesmo operador: idempotente.
+  if (pend.status === "em_guarda" && pend.iniciada_por === input.usuario_id) {
+    return pend;
+  }
+  // Já reivindicada por outro operador — não tenta sobrescrever.
+  if (
+    pend.status === "em_guarda" &&
+    pend.iniciada_por &&
+    pend.iniciada_por !== input.usuario_id
+  ) {
+    const err = new Error(
+      `pendência já está em_guarda com outro operador (${pend.iniciada_por})`,
+    ) as Error & { code?: string; iniciada_por?: string };
+    err.code = "PENDENCIA_OUTRA_GUARDA";
+    err.iniciada_por = pend.iniciada_por;
+    throw err;
+  }
+  // UPDATE condicional: só ganha se `iniciada_por` ainda for NULL ou já
+  // for o usuário atual, E o status não tiver virado terminal entre o
+  // SELECT e este UPDATE. Race-perdedor recebe 0 rows updated.
+  const { data: updated, error } = await sb
     .from("siso_wms_pendencias_guarda")
     .update({
       status: "em_guarda",
       iniciada_em: new Date().toISOString(),
       iniciada_por: input.usuario_id,
     })
-    .eq("id", input.pendencia_id);
+    .eq("id", input.pendencia_id)
+    .or(`iniciada_por.is.null,iniciada_por.eq.${input.usuario_id}`)
+    .neq("status", "guardada")
+    .neq("status", "cancelada")
+    .select("id, iniciada_por");
   if (error) throw error;
+  if (!updated || updated.length === 0) {
+    // Race perdida: outro operador ganhou. Re-lê pra anexar o dono atual.
+    const refreshed = await obterPendencia(input.pendencia_id);
+    const err = new Error(
+      `pendência foi reivindicada por outro operador (${refreshed?.iniciada_por ?? "?"})`,
+    ) as Error & { code?: string; iniciada_por?: string };
+    err.code = "PENDENCIA_OUTRA_GUARDA";
+    err.iniciada_por = refreshed?.iniciada_por ?? undefined;
+    throw err;
+  }
 
   const refresh = await obterPendencia(input.pendencia_id);
   if (!refresh) throw new Error("pendência sumiu após iniciar (race condition)");

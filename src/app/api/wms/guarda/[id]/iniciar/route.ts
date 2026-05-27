@@ -24,6 +24,16 @@ export async function POST(
     return NextResponse.json({ ok: true, pendencia: pend });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    const code = (e as { code?: string }).code;
+    const iniciadaPor = (e as { iniciada_por?: string }).iniciada_por;
+    // Race perdida — outro operador reivindicou primeiro. UI usa
+    // `iniciada_por` pra mostrar avatar/nome do dono atual.
+    if (code === "PENDENCIA_OUTRA_GUARDA") {
+      return NextResponse.json(
+        { error: msg, code, iniciada_por: iniciadaPor },
+        { status: 409 },
+      );
+    }
     const isClient =
       msg.includes("não encontrada") || msg.includes("status terminal");
     return wmsErrorResponse({

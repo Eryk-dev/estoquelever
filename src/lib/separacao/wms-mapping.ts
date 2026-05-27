@@ -55,11 +55,17 @@ export async function resolverLocalizacaoWms(
 }
 
 /**
- * Busca a localizacao com MAIOR saldo do produto no galpão. Usado como
- * fallback live quando o snapshot de siso_pedido_item_estoques está vazio
- * (ex.: pedido chegou antes do recebimento, saldo era 0 no webhook).
+ * Busca a localizacao com MAIOR saldo *disponível* do produto no galpão.
+ * Usado como fallback live quando o snapshot de siso_pedido_item_estoques
+ * está vazio (ex.: pedido chegou antes do recebimento, saldo era 0 no webhook).
+ *
+ * PR-2 #2.3: usa `disponivel` (= saldo - reservado) em vez de `saldo` cru —
+ * com WMS_AS_SOURCE ativo as reservas R viram parte de `reservado`, então
+ * uma loc com saldo=10/reservado=10 não tem nada pra picar. Ordenar por
+ * disponivel evita sugerir loc impick-ável.
+ *
  * Retorna o ID da loc (uuid de siso_localizacoes) ou null se nenhuma loc
- * tem saldo positivo.
+ * tem disponível positivo.
  */
 export async function buscarLocComMaiorSaldoNoGalpao(
   galpaoId: string,
@@ -71,8 +77,8 @@ export async function buscarLocComMaiorSaldoNoGalpao(
     .select("localizacao_id")
     .eq("galpao_id", galpaoId)
     .eq("produto_id", produtoUuid)
-    .gt("saldo", 0)
-    .order("saldo", { ascending: false })
+    .gt("disponivel", 0)
+    .order("disponivel", { ascending: false })
     .limit(1)
     .maybeSingle();
   return (data?.localizacao_id as string | null | undefined) ?? null;

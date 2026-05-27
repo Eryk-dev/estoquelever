@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { buildCompraFieldReset, cancelOcIfEmpty, checkAndCancelPedidoIfAllTerminal } from "@/lib/compras-utils";
 import { userCan } from "@/lib/permissions";
+import { registrarEvento } from "@/lib/historico-service";
 
 /**
  * POST /api/compras/itens/[itemId]/indisponivel
@@ -63,6 +64,19 @@ export async function POST(
       item.pedido_id,
       "compras-indisponivel",
     );
+
+    await registrarEvento({
+      pedidoId: item.pedido_id,
+      evento: "compra_item_indisponivel",
+      usuarioId: session.id,
+      usuarioNome: session.nome,
+      detalhes: {
+        item_id: itemId,
+        sku: item.sku,
+        fornecedor: item.fornecedor_oc,
+        motivo,
+      },
+    });
 
     logger.warn("compras-indisponivel", "Item marcado como indisponível", {
       itemId,

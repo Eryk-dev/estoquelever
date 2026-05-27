@@ -331,6 +331,13 @@ export default function WmsChecklistPage() {
         separados: string[];
         pendentes: string[];
         aguardandoCompra?: string[];
+        cobertura_incompleta?: Array<{
+          pedido_id: string;
+          sku: string;
+          recebido: number;
+          solicitado: number;
+          mensagem: string;
+        }>;
       }>;
     },
   });
@@ -727,11 +734,22 @@ export default function WmsChecklistPage() {
       const sep = result.separados?.length ?? 0;
       const pen = result.pendentes?.length ?? 0;
       const ag = result.aguardandoCompra?.length ?? 0;
+      const incompletos = result.cobertura_incompleta ?? [];
+      const pedidosIncompletos = new Set(incompletos.map((c) => c.pedido_id));
       const partes: string[] = [];
       if (sep > 0) partes.push(`${sep} separado(s)`);
       if (ag > 0) partes.push(`${ag} aguardando compra`);
       if (pen > 0) partes.push(`${pen} pendente(s)`);
-      toast.success(partes.length > 0 ? partes.join(" · ") : "Concluído");
+      if (pedidosIncompletos.size > 0) {
+        partes.push(`${pedidosIncompletos.size} pendente(s) de cobertura OC`);
+      }
+      const msg = partes.length > 0 ? partes.join(" · ") : "Concluído";
+      if (pedidosIncompletos.size > 0) {
+        const primeiraMsg = incompletos[0]?.mensagem ?? "";
+        toast.warning(`${msg}${primeiraMsg ? ` — ${primeiraMsg}` : ""}`);
+      } else {
+        toast.success(msg);
+      }
       queryClient.invalidateQueries({ queryKey: ["wms-separacao"] });
       if (ag > 0 && sep === 0) {
         router.push("/wms/separacao?tab=aguardando_compra");

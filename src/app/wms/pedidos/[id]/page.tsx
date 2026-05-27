@@ -584,8 +584,11 @@ function BannerEstornoManual({
   onEstornar,
 }: {
   isAdmin: boolean;
-  onEstornar: () => void;
+  onEstornar?: () => void;
 }) {
+  // Silence unused warnings while o botão está gated em P3.
+  void isAdmin;
+  void onEstornar;
   return (
     <div
       style={{
@@ -613,7 +616,9 @@ function BannerEstornoManual({
           posição.
         </div>
       </div>
-      {isAdmin && (
+      {/* TODO(P5+P3): wire quando P3 entregar /api/wms/pedidos/[id]/estornar-cancelado.
+          Por ora, banner mostra apenas a mensagem — sem botão pra não dar false promise. */}
+      {/* {isAdmin && (
         <button
           className="wms-btn wms-btn-danger"
           onClick={onEstornar}
@@ -622,7 +627,7 @@ function BannerEstornoManual({
           <Icon name="rotate" size={12} />
           Estornar agora
         </button>
-      )}
+      )} */}
     </div>
   );
 }
@@ -1064,22 +1069,22 @@ function TabAdmin({
           tone="primary"
         />
         <AcaoAdminRow
-          icone="arrow-left"
-          titulo="Forçar pendente"
-          descricao="Devolve o pedido pro estado 'pendente' (zera status de separação). Use quando uma separação ficou travada num estado inválido."
+          icone="arrow-right"
+          titulo="Forçar pra separação (bypass NF)"
+          descricao="Pula a espera da NF do Tiny e transita o pedido pra aguardando_separacao. Use quando a NF chegou mas o webhook não disparou (raro)."
           disponivel={podeForcarPendente}
-          motivoIndisponivel="Pedido ainda não entrou em separação."
+          motivoIndisponivel="Pedido já está em separação ou status incompatível."
           actionLabel={
-            forcarPendentePending ? "Forçando…" : "Forçar pendente"
+            forcarPendentePending ? "Forçando…" : "Forçar pra separação"
           }
           onClick={() =>
             confirmar(
-              "Forçar este pedido de volta pro estado pendente? A separação atual será descartada.",
+              "Forçar este pedido pra aguardando_separacao, pulando a espera da NF?",
               forcarPendente,
             )
           }
           pending={forcarPendentePending}
-          tone="danger"
+          tone="primary"
         />
         <AcaoAdminRow
           icone="download"

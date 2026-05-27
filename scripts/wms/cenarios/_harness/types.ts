@@ -60,7 +60,7 @@ export type Ctx = {
 
   // ── compras + recebimento ──
   comprar: (p: { sku: string; qty: number; fornecedor?: string; pedido_id?: string }) => Promise<{ ordem_id: string }>;
-  receberCompra: (p: { ordem_id: string; items: { sku: string; qty: number }[] }) => Promise<void>;
+  receberCompra: (p: { ordem_id: string; items: { sku: string; qty: number; custo_unitario?: number }[] }) => Promise<void>;
   prepararEmbalagem: (p: { pedido_id: string }) => Promise<void>;
   receber: (p: { items: { sku: string; qty: number; loc_destino?: string }[]; galpao: "CWB" | "SP"; entrada_direta?: boolean }) => Promise<{ pendencias: string[] }>;
   guardar: (p: { pendencia_id: string; loc_destino: string; qty?: number }) => Promise<void>;
@@ -74,7 +74,20 @@ export type Ctx = {
   desfazerRecebimentoTransferencia: (p: { transferencia_id: string; motivo?: string }) => Promise<{ movsEstornadas: number }>;
   replenishment: (p: { sku: string; galpao: "CWB" | "SP"; origem_loc: string; destino_loc: string; qty: number }) => Promise<{ origem_id: string; mov_ids: string[] }>;
   reverterReplenishment: (p: { origem_id: string; motivo?: string }) => Promise<{ movsEstornadas: number }>;
-  ajusteManual: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; delta: number; motivo: string }) => Promise<{ mov_id: string }>;
+  ajusteManual: (p: {
+    sku: string;
+    galpao: "CWB" | "SP";
+    loc: string;
+    delta: number;
+    motivo: string;
+    motivo_categoria?:
+      | "avaria"
+      | "perda"
+      | "achado"
+      | "correcao_inventario"
+      | "devolucao_sem_fluxo"
+      | "outro";
+  }) => Promise<{ mov_id: string }>;
   estornarAjuste: (p: { mov_id: string; motivo?: string }) => Promise<void>;
   lancamentoRetroativo: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; tipo: "E" | "S" }) => Promise<{ id: string }>;
   reconciliarRetroativo: (id: string) => Promise<void>;

@@ -151,7 +151,18 @@ export async function receberEstoque(
   }
 
   // Modo padrão: entra em RECEBIMENTO + cria pendência de guarda.
-  const localizacaoRecebimentoId = await resolverLocRecebimento(input.galpao_id);
+  const { id: localizacaoRecebimentoId, created: locCreated } =
+    await resolverLocRecebimento(input.galpao_id);
+  if (locCreated) {
+    // Pré-condição esperada (loc semeada via migration
+    // 20260514_wms_guarda_pendencias.sql) está faltando — alerta o operador
+    // pra investigar. Não bloqueia: receber/criar loc é idempotente.
+    logger.warn(
+      "movimentacoes.receber",
+      "Loc RECEBIMENTO auto-criada — pré-condição faltando",
+      { galpaoId: input.galpao_id, locId: localizacaoRecebimentoId },
+    );
+  }
   // Pré-validação ANTES de qualquer escrita no ledger. Se destino == origem
   // (frontend bugado, race, etc), abortamos sem deixar mov órfã.
   validarItensRecebimento(input.itens, localizacaoRecebimentoId);
@@ -195,6 +206,7 @@ export async function receberEstoque(
         custo_unitario: item.custo_unitario,
         observacoes: input.observacoes,
         lote_id: loteId,
+        criada_por: input.usuario_id,
       });
       pendenciaIds.push(pendenciaId);
       movIds.push(mov.id);
@@ -378,17 +390,40 @@ export async function replenishmentIntraGalpao(
   return { origem_id: r.origem_id, mov_ids: r.mov_ids ?? [] };
 }
 
+/**
+ * Categorias estruturadas pra ajuste manual. Pareada com o enum SQL
+ * `wms_motivo_categoria_enum` (migration `20260527_ajuste_manual_motivo_categoria`).
+ */
+export type MotivoCategoria =
+  | "avaria"
+  | "perda"
+  | "achado"
+  | "correcao_inventario"
+  | "devolucao_sem_fluxo"
+  | "outro";
+
 export interface AjusteManualInput {
   tripla: Tripla;
   qty: number;
   motivo: string;
+  /** Categoria estruturada — obrigatória pra ajuste manual. */
+  motivo_categoria: MotivoCategoria;
   direcao: "entrada" | "saida";
   usuario_id: string;
+  /**
+   * PR-6 #8.4 — Custo unitário opcional pra ajustes de **entrada**.
+   * Quando informado, alimenta recálculo do custo médio global (igual NF
+   * compra). Em ajustes de saída é ignorado (custo médio só atualiza em
+   * entradas). Ajuste sem custo mantém comportamento atual (entrada não
+   * mexe em `siso_custo_medio`).
+   */
+  custo_unitario?: number;
 }
 
 /**
- * Ajuste manual de saldo numa tripla. `motivo` é obrigatório (>=3 chars) —
- * ajuste sem justificativa não passa.
+ * Ajuste manual de saldo numa tripla. `motivo` é obrigatório (>=3 chars) e
+ * `motivo_categoria` precisa ser uma das 6 categorias estruturadas — ajuste
+ * sem justificativa ou sem categoria não passa.
  *
  * Retorna `{ mov_id }` pra permitir estorno via `estornarAjuste` /
  * `POST /api/wms/ajuste/[id]/estornar`.
@@ -399,6 +434,9 @@ export async function ajustarEstoque(
   if (!input.motivo || input.motivo.trim().length < 3) {
     throw new Error("motivo do ajuste é obrigatório (≥3 caracteres)");
   }
+  if (!input.motivo_categoria) {
+    throw new Error("motivo_categoria do ajuste é obrigatório");
+  }
   const mov = await inserirMovimentacao({
     tripla: input.tripla,
     tipo: input.direcao === "entrada" ? "E" : "S",
@@ -406,6 +444,9 @@ export async function ajustarEstoque(
     origem_tipo: "ajuste_manual",
     origem_detalhes: { direcao: input.direcao },
     motivo: input.motivo.trim(),
+    motivo_categoria: input.motivo_categoria,
+    custo_unitario:
+      input.direcao === "entrada" ? input.custo_unitario : undefined,
     usuario_id: input.usuario_id,
   });
   return { mov_id: mov.id };
@@ -461,6 +502,14 @@ export interface LancamentoRetroativoInput {
   fornecedor_id?: string | null;
   /** Pedido associado (opcional — quando o retroativo vem dum pedido específico). */
   pedido_id?: string | null;
+  /**
+   * PR-6 #8.7 — Data efetiva do recebimento (ISO). Carimbar `criado_em` da
+   * mov com essa data exigiria patch na RPC `wms_inserir_movimentacao`
+   * (out of scope nesse PR). Por ora vai como tag em
+   * `origem_detalhes.data_recebimento` pra reports/filtragem
+   * (`origem_detalhes->>'data_recebimento'`).
+   */
+  data_recebimento?: string;
 }
 
 /**
@@ -479,6 +528,9 @@ export async function lancarRetroativo(
     tipo: "E",
     qty: input.qty,
     origem_tipo: "lancamento_retroativo",
+    origem_detalhes: input.data_recebimento
+      ? { data_recebimento: input.data_recebimento }
+      : undefined,
     pedido_id: input.pedido_id ?? null,
     empresa_compradora_id: input.empresa_compradora_id ?? null,
     fornecedor_id: input.fornecedor_id ?? null,

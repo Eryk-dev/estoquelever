@@ -13,8 +13,9 @@ import {
 interface DevRow {
   id: string;
   nota_fiscal_id: number | null;
-  /** Vendedora da NF original (referência, não dona física — 3D). */
-  empresa_referencia?: { nome?: string } | null;
+  /** Empresa **receptora física** da devolução (FK `empresa_id`).
+   *  NÃO confundir com `empresa_referencia_id` (vendedora original). */
+  empresa_receptora?: { nome?: string } | null;
   criado_em: string;
   status?: string;
 }
@@ -85,7 +86,7 @@ export default function DevolucoesPage() {
             <thead>
               <tr>
                 <th>Nota fiscal</th>
-                <th>Empresa referência</th>
+                <th>Empresa receptora</th>
                 <th>Recebida</th>
                 <th>Status</th>
                 <th style={{ width: 32 }}></th>
@@ -102,7 +103,7 @@ export default function DevolucoesPage() {
                       NF {d.nota_fiscal_id ?? "—"}
                     </Link>
                   </td>
-                  <td className="wms-td-mute">{d.empresa_referencia?.nome ?? "—"}</td>
+                  <td className="wms-td-mute">{d.empresa_receptora?.nome ?? "—"}</td>
                   <td className="wms-td-mute">
                     {fmtRelative(d.criado_em)}
                   </td>

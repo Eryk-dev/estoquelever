@@ -319,13 +319,14 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```json
 {
   "pedidoId": "string",
-  "decisao": "propria" | "transferencia" | "oc",
+  "decisao": "propria" | "transferencia" | "oc" | "rejeitado",
   "operadorId": "string | null",
-  "operadorNome": "string | null"
+  "operadorNome": "string | null",
+  "motivo": "string (optional, used when decisao='rejeitado')"
 }
 ```
 
-**Response (200 - Success):**
+**Response (200 - Success, decisao ∈ {propria,transferencia,oc}):**
 ```json
 {
   "ok": true,
@@ -334,6 +335,15 @@ This is the **authoritative, comprehensive reference** for every API route in th
   "filialExecucao": "string",
   "empresaExecucaoId": "string",
   "status": "executando"
+}
+```
+
+**Response (200 - Success, decisao='rejeitado'):**
+```json
+{
+  "ok": true,
+  "pedidoId": "string",
+  "decisao": "rejeitado"
 }
 ```
 
@@ -366,6 +376,11 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```
 
 **Business Logic:**
+- **decisao = "rejeitado" short-circuit (botão Recusar):**
+  - Atualiza pedido: `decisao_final='rejeitado'`, `status='cancelado'`, `status_separacao=null`
+  - Registra evento `cancelado` em `siso_pedido_historico` com `motivo` do body
+  - Não enfileira execução, não cria reservas, não chama worker
+  - Retorna `{ ok: true, decisao: "rejeitado" }`
 - Fetches pedido, validates status = "pendente"
 - Validates empresa_origem_id exists
 - Resolves empresa_origem and determines filial_origem (galpão name)
@@ -563,7 +578,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
 **Auth:** X-Session-Id (required)
 
 **Query Params:**
-- `page`: page number (default 1)
+- `page`: page number (default 1) — **LEGACY** — use `cursor` for new clients
+- `cursor`: ISO timestamp do `criado_em` do último item da página anterior; quando presente ativa modo cursor-based (mais eficiente, pula `count()` da tabela)
 - `limit`: items per page (default 50, max 200)
 - `data_inicio`: start date filter (ISO date string, default 30 days ago)
 - `data_fim`: end date filter (ISO date string, default today)
@@ -603,11 +619,17 @@ This is the **authoritative, comprehensive reference** for every API route in th
       "erro": "string | null"
     }
   ],
-  "total": "number",
+  "total": "number (0 quando cursor mode)",
   "page": "number",
-  "totalPages": "number"
+  "totalPages": "number (0 quando cursor mode)",
+  "next_cursor": "ISO datetime | null"
 }
 ```
+
+**Pagination contract:**
+- Modo cursor (recomendado): cliente passa `?cursor=<criado_em ISO>&limit=<N>`. Resposta inclui `next_cursor` se uma página cheia foi retornada (mais itens podem existir) ou `null` quando exausto. `total`/`totalPages` saem como 0 — count é skipado pra evitar O(N) na tabela.
+- Modo page (legado): cliente passa `?page=<N>&limit=<N>`. Resposta inclui `total`/`totalPages` calculados. `next_cursor` também é emitido pra clientes que queiram migrar gradualmente.
+- Ordering: sempre `criado_em DESC, id DESC` (tiebreaker estável quando dois pedidos têm o mesmo timestamp).
 
 **Response (401):**
 ```json
@@ -1131,7 +1153,7 @@ Caminhos suportados:
 **Response (400 - Invalid status):**
 ```json
 {
-  "error": "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra' ou 'em_separacao'",
+  "error": "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra', 'validacao_oc' ou 'em_separacao'",
   "pedido_ids": ["string"],
   "statuses": ["string"]
 }
@@ -1145,10 +1167,19 @@ Caminhos suportados:
 }
 ```
 
+**Response (409 - pedido em pendente_realocacao):**
+```json
+{
+  "error": "pedido em pendente_realocacao — resolver realocações antes de iniciar",
+  "pedido_ids": ["string"]
+}
+```
+
 **Business Logic:**
 - Validates pedido_ids is non-empty array of strings
-- Fetches all pedidos, validates ALL have status_separacao = "aguardando_separacao", "aguardando_compra", "em_separacao" **or `pendente_realocacao`** (fix-pack 2026-05-18 I7 — permite retomar pedidos travados)
-- Filters pedidos with status = "aguardando_separacao", "aguardando_compra" ou `pendente_realocacao` (ignores already "em_separacao")
+- **`pendente_realocacao` é rejeitado com 409 (P6, 2026-05-26).** O status significa "wave bloqueada aguardando ação do supervisor sobre realocações órfãs". Operador precisa resolver realocações (confirmar/cancelar) antes de re-disparar `iniciar`.
+- Fetches all pedidos, validates ALL have status_separacao em ["aguardando_separacao", "aguardando_compra", "em_separacao", "validacao_oc"]
+- Filters pedidos com status `aguardando_separacao` ou `validacao_oc` (ignores already em_separacao)
 - Updates those to "em_separacao" with separacao_operador_id and separacao_iniciada_em
 - Calls RPC `siso_consolidar_produtos_separacao` to get consolidated product list (aggregates by SKU/localizacao)
 - Returns consolidated products sorted by localizacao
@@ -2874,6 +2905,8 @@ OR
 
 **Query Params:**
 - `tab`: "comprar" | "receber" | "historico" (default: "comprar")
+- `cursor` (apenas tab=historico): ISO timestamp de `comprado_em` do último item retornado anteriormente — ativa modo cursor-based
+- `limit` (apenas tab=historico): items per page (default 100, max 200)
 
 **Response (200 - Comprar tab):**
 ```json
@@ -2982,14 +3015,15 @@ OR
         }
       ]
     }
-  ]
+  ],
+  "next_cursor": "ISO datetime | null"
 }
 ```
 
 **Business Logic:**
 - **Comprar tab:** Groups items by fornecedor, aggregates by SKU, includes all unique pedidos per SKU
 - **Receber tab:** Shows purchased items awaiting receipt; auto-fixes items over-received
-- **Historico tab:** Shows received items (compra_status = "recebido") grouped by fornecedor and date
+- **Historico tab:** Shows received items (compra_status = "recebido") grouped by fornecedor and date. Paginação cursor-based via `?cursor=<comprado_em>&limit=<N>` (default 100, max 200); `next_cursor` é null quando exausto. Ordering `comprado_em DESC, id DESC` (tiebreaker estável).
 
 **Side Effects:** Auto-fix in receber tab (marks over-received items as "recebido")
 
@@ -3182,63 +3216,6 @@ OR
 - Inserts to `siso_fila_execucao` (priority jobs)
 - **WMS:** Insere E + R em `siso_movimentacoes` via `wms_receber_oc_atomico` (quando flag ativa)
 - Logs to `siso_logs`
-
----
-
-### POST /api/wms/compras/conferir
-
-**File:** `src/app/api/wms/compras/conferir/route.ts`
-
-**Purpose:** Process receiving confirmation. Updates DB, calls Tiny movimentarEstoque, and releases orders where all OC items are received.
-
-**Auth:** X-Session-Id (required), must have purchase cargo
-
-**Request Body:**
-```json
-{
-  "ordem_compra_id": "uuid",
-  "itens": [
-    {
-      "item_id": "uuid",
-      "quantidade_recebida": "number"
-    }
-  ]
-}
-```
-
-**Response (200):**
-```json
-{
-  "processados": "number",
-  "erros": "number",
-  "erros_detalhe": ["string"],
-  "itens_sem_produto_id": "number",
-  "pedidos_liberados": ["string"]
-}
-```
-
-**Business Logic:**
-- Fetches OC and resolves receiving empresa from galpão
-- Gets valid Tiny token for receiving empresa
-- For each item:
-  1. **DB update FIRST** with optimistic lock (prevents race conditions)
-  2. **Tiny call AFTER** DB success (if produto_id_tiny exists)
-  3. **Rollback DB** if Tiny call fails
-  4. Updates stock snapshot in `siso_pedido_item_estoques`
-- Updates OC status based on all items (recebido, parcialmente_recebido, comprado)
-- Checks each affected pedido: if all compra items are now received, releases it
-- Logs each operation
-
-**Side Effects:**
-- Updates `siso_pedido_itens.compra_quantidade_recebida`, `compra_status`
-- Calls Tiny API `movimentarEstoque` (type E for entry)
-- May rollback DB on Tiny failure
-- Updates `siso_pedido_item_estoques` stock snapshot
-- Updates `siso_ordens_compra.status`
-- Calls `checkAndReleasePedidos` to release orders
-- Logs to `siso_logs`
-
-**Rate Limiting:** 500ms delay between Tiny API calls
 
 ---
 
@@ -3732,69 +3709,6 @@ OR
 **Side Effects:**
 - Updates `siso_pedido_itens.compra_status`, `ordem_compra_id`
 - May delete `siso_ordens_compra` if OC becomes empty
-- Logs to `siso_logs`
-
----
-
-### POST /api/wms/compras/itens/[itemId]/trocar-fornecedor
-
-**File:** `src/app/api/wms/compras/itens/[itemId]/trocar-fornecedor/route.ts`
-
-**Purpose:** Changes the supplier of an item. Optionally moves it to a new OC.
-
-**Auth:** X-Session-Id (required), must have compras access
-
-**Request Body:**
-```json
-{
-  "novo_fornecedor": "string",
-  "nova_ordem_compra_id": "uuid (optional)"
-}
-```
-
-**Response (200):**
-```json
-{
-  "ok": true,
-  "item": {
-    "id": "uuid",
-    "sku": "string",
-    "descricao": "string",
-    "fornecedor_oc": "string (new)",
-    "compra_status": "comprado" | "aguardando_compra",
-    "ordem_compra_id": "uuid | null"
-  }
-}
-```
-
-**Response (400 - Missing novo_fornecedor):**
-```json
-{
-  "error": "novo_fornecedor é obrigatório"
-}
-```
-
-**Response (404 - Item not found):**
-```json
-{
-  "error": "Item não encontrado"
-}
-```
-
-**Business Logic:**
-- Fetches item
-- Updates fornecedor_oc to novo_fornecedor
-- If nova_ordem_compra_id provided:
-  - Links item to new OC
-  - Sets compra_status = "comprado"
-- If NOT provided:
-  - Unlinks from any OC
-  - Sets compra_status = "aguardando_compra"
-- Cancels old OC if it becomes empty
-
-**Side Effects:**
-- Updates `siso_pedido_itens.fornecedor_oc`, `ordem_compra_id`, `compra_status`
-- May delete old `siso_ordens_compra` if it becomes empty
 - Logs to `siso_logs`
 
 ---
@@ -4938,6 +4852,37 @@ Sugere localização de putaway. Heurística: SKU já com saldo no galpão → e
 
 **Response 200:** `{ localizacao_id, codigo?, razao, locaisExistentes }`.
 
+### GET /api/wms/saldo-recebimento-orfao
+
+Detecta saldo fantasma em locs `tipo='recebimento'` que NÃO têm pendência de guarda ativa (`status ∈ {pendente, em_guarda}`). Cobre o estado órfão quando a pendência foi cancelada sem mover a peça pra prateleira — o saldo continua "preso" em RECEBIMENTO e ninguém vai endereçá-lo. Consumido pelo card de alerta amarelo na home `/wms` (P5).
+
+**Auth:** `requireWarehouseAccess` (admin ou qualquer permissão de operação física de armazém).
+
+**Query params:** `galpao_id` (opcional — quando ausente, agrega todos os galpões).
+
+**Algoritmo:**
+1. SELECT locs `siso_localizacoes WHERE tipo='recebimento' AND ativo=true` (filtra por galpão se informado).
+2. SELECT saldos `siso_estoque WHERE localizacao_id IN (...) AND saldo > 0`.
+3. SELECT pendências ativas `siso_wms_pendencias_guarda WHERE status IN ('pendente','em_guarda') AND localizacao_origem_id IN (...)` — agrega `qty_pendente` por `(produto_id, localizacao_origem_id)`.
+4. Pra cada saldo, `orfao = saldo - pendente_total`. Retorna apenas onde `orfao > 0`.
+
+**Response 200:** `{ itens: ItemOrfao[] }` onde
+```ts
+ItemOrfao = {
+  produto_id: string;
+  sku: string;
+  descricao: string;
+  galpao_id: string;
+  localizacao_id: string;
+  localizacao_codigo: string;
+  saldo: number;
+  pendente_total: number;
+  orfao: number;
+}
+```
+
+Galpão sem locs `recebimento` ou sem saldos retorna `{ itens: [] }` (200, não 404).
+
 ---
 
 ### Guarda (put-away — etapa 2/2)
@@ -5399,7 +5344,13 @@ RPCs: acuracidade por operador (30d) + por localização (5000 últimas).
 **Business logic:** lista as N últimas movs **restritas ao pool de localizações da sessão** (`siso_inventario_localizacoes.localizacao_id`), criadas desde `iniciada_em`. Movs em locs fora da sessão são ignoradas — não fazem parte do escopo do inventário. Usado pelo painel ao vivo do supervisor.
 
 ### GET /api/wms/inventario/cleanup
-Cron-friendly. Auth: `x-worker-secret`. Detecta sessões inativas há 4h+ (alerta) e libera locks com 30min+ sem contagem nova (mov de status='pendente').
+Cron-friendly. Auth: `x-worker-secret`. Detecta:
+1. Sessões inativas há 4h+ (apenas log warn);
+2. Locks `em_contagem` com 30min+ sem contagem nova → libera (status volta a `pendente`);
+3. Operadores ativos zumbi (`finalizado_em IS NULL` + `ultima_acao_em > 30min`) → força `finalizado_em` e libera qualquer loc `em_contagem` que o operador ainda detém;
+4. Locks `em_contagem` cuja `bloqueada_por` já está finalizado (sair-party não limpou) → libera via RPC `wms_locks_bloqueada_por_finalizado`.
+
+**Response:** `{ sessoesAlerta: string[], locksLiberados: number, operadoresFinalizados: number, locksLiberadosPorFinalizado: number }`.
 
 ---
 
@@ -5407,6 +5358,14 @@ Cron-friendly. Auth: `x-worker-secret`. Detecta sessões inativas há 4h+ (alert
 
 ### GET /api/wms/devolucoes
 Lista devoluções aguardando classificação física. **Response:** `{ rows: [...] }`.
+
+### GET /api/wms/devolucoes/[id] (P5)
+Detalhe consolidado de 1 devolução pendente. Reutilizado pela página `/wms/devolucoes/[id]`
+quando a fila filtrada não tem mais a linha (status≠`aguardando_classificacao`).
+**Auth:** sessão (X-Session-Id).
+**Response 200:** `{ devolucao: { id, status, nota_fiscal_id, chave_acesso_nf, criado_em, classificacao, classificada_em, payload_webhook, empresa_receptora: { id, nome }|null } }`.
+**Nota:** `empresa_receptora` é a empresa **receptora física** (quem recebeu a NF de devolução no galpão); NÃO é a vendedora original — alinha com P2 #6.5.
+**Erros:** 401 sem sessão, 404 quando `id` não existe (`PGRST116`), 500 com mensagem do banco.
 
 ### POST /api/wms/devolucoes/[id]/desclassificar
 
@@ -5472,7 +5431,7 @@ Retorna o estado das 6 filas operacionais que o quadro de tarefas pendentes da h
 ```json
 {
   "galpao_id": "uuid-or-null",
-  "aprovacao":  { "count": 0 },
+  "aprovacao":  { "count": 0, "marketplace": 0, "manual": 0 },
   "separacao":  { "count": 0, "executores": [{ "id": "uuid", "nome": "…", "foto_url": "…|null" }] },
   "embalagem":  { "count": 0, "executores": [] },
   "guarda": {
@@ -5516,13 +5475,57 @@ Retorna o estado das 6 filas operacionais que o quadro de tarefas pendentes da h
         "operadores": [{ "id": "uuid", "nome": "…", "foto_url": "…|null" }]
       }
     ]
+  },
+  "excecoes": {
+    "devolucoes": {
+      "count": 0,
+      "itens": [
+        { "id": "uuid", "nota_fiscal_id": 12345, "empresa_referencia_nome": "string|null", "criada_em": "ISO" }
+      ]
+    },
+    "transferencias_transito": {
+      "count": 0,
+      "itens": [
+        { "id": "uuid", "origem_galpao_nome": "CWB", "destino_galpao_nome": "SP", "criada_em": "ISO", "qty_itens": 12 }
+      ]
+    },
+    "inventario_revisao": {
+      "count": 0,
+      "itens": [
+        { "id": "uuid", "nome": "Cycle … 26/05", "galpao_nome": "CWB", "total_divergencias": 4, "criado_em": "ISO" }
+      ]
+    },
+    "reservas_orfas": {
+      "count": 0,
+      "itens": [
+        { "id": "uuid (mov_id)", "pedido_id": "string", "pedido_numero": "string|null", "produto_sku": "string", "qty": 5, "criada_em": "ISO" }
+      ]
+    },
+    "retroativos": {
+      "count": 0,
+      "itens": [
+        { "id": "uuid (mov_id)", "produto_sku": "string", "qty": 10, "criado_em": "ISO", "motivo": "string" }
+      ]
+    },
+    "recebimento_orfao": {
+      "count": 0,
+      "itens": [
+        { "produto_id": "uuid", "produto_sku": "string", "galpao_id": "uuid", "galpao_nome": "string|null", "localizacao_codigo": "RECEBIMENTO", "saldo": 5 }
+      ]
+    }
   }
 }
 ```
 
+**Headers:** `Cache-Control: no-store` (evita cache no CDN).
+
 **Side effects:** nenhum (read-only).
 
 **Notas:**
+- `aprovacao.marketplace + aprovacao.manual === aprovacao.count` é invariante (P5). `manual` filtra `origem_pedido === "manual"`; o resto é marketplace.
+- `excecoes` (P5) reúne 6 filas de pendência fora do pipeline normal. Os contadores são absolutos e os arrays vêm truncados em `MAX_DETALHE_POR_SECAO=50`. Cada filtro respeita `galpao_id` quando aplicável (devoluções e reservas órfãs são cross-galpão; transferências filtra por destino).
+- `reservas_orfas` faz 2 queries (Rs ativas + estornos recentes) e intersecta no app — `pedido_id` em `siso_movimentacoes` é text sem FK, então o JOIN é manual.
+- `recebimento_orfao` é dock RECEBIMENTO com saldo > 0 e sem pendência viva em `siso_wms_pendencias_guarda`. Detecta posições "esquecidas" após cancelamento de guarda (P6 deve refinar a heurística).
 - `executores` em Separação = `separacao_operador_id` de pedidos em `em_separacao`.
 - `executores` em Embalagem = `embalagem_operador_id` quando setado.
 - `executores` em Guarda = `iniciada_por` de pendências em `em_guarda`.

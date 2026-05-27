@@ -103,10 +103,22 @@ export function getCompraQuantidadeSolicitada(item: CompraQuantidadeBase): numbe
   return 0;
 }
 
+/**
+ * Quantidade ainda a receber numa OC.
+ *
+ * Pode ser **negativo** quando o operador recebeu mais do que o solicitado
+ * (over-receive — caso real quando fornecedor manda brinde, contagem errada
+ * no recebimento, ou ajuste manual posterior). Callers que tratam esse valor
+ * como "quantidade a comprar" devem clampar com Math.max(0, ...); callers
+ * que checam saúde da OC (UI de alerta, validações) podem inspecionar o sinal
+ * pra sinalizar over-receive como aviso.
+ *
+ * Antes (até P6) o valor era clampado em zero aqui — ofuscava o problema.
+ */
 export function getCompraQuantidadeRestante(item: CompraQuantidadeBase): number {
   const solicitada = getCompraQuantidadeSolicitada(item);
   const recebida = Number(item.compra_quantidade_recebida ?? 0);
-  return Math.max(solicitada - recebida, 0);
+  return solicitada - recebida;
 }
 
 export function getAgingDays(iso: string | null | undefined): number {

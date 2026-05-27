@@ -541,7 +541,19 @@ export default function InventarioSupervisorPage({
       {/* Painel ao vivo */}
       <section className="mt-8">
         <h2 className="mb-3 text-lg font-semibold">Painel ao vivo</h2>
-        <FeedEventos sessaoId={id} />
+        <FeedEventos
+          sessaoId={id}
+          sessaoStatus={
+            sessao?.status as
+              | "planejada"
+              | "em_andamento"
+              | "revisao"
+              | "aprovada"
+              | "aplicada"
+              | "cancelada"
+              | undefined
+          }
+        />
       </section>
 
       {/* Últimos bipes */}

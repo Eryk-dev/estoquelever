@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
+import { logger } from "@/lib/logger";
 
 export async function GET(
   req: NextRequest,
@@ -99,10 +100,11 @@ export async function PATCH(
 
   // P3 #4.7: modo_contagem só pode ser alterado em sessão 'planejada'.
   // Se a sessão já iniciou, mudar blind↔aberto no meio quebra a semântica
-  // das contagens já feitas pelos operadores.
+  // das contagens já feitas pelos operadores. SELECT inclui campos extras
+  // (nome, tolerancia_pct, etc.) pra também alimentar o diff logging abaixo.
   const { data: sessao, error: fetchError } = await sb
     .from("siso_inventario_sessoes")
-    .select("status, modo_contagem")
+    .select("status, nome, modo_contagem, tolerancia_pct, exige_aprovacao_acima_valor, observacoes")
     .eq("id", id)
     .maybeSingle();
   if (fetchError) {
@@ -131,6 +133,8 @@ export async function PATCH(
       { status: 409 },
     );
   }
+  // `before` é usado pra logar diff dos campos que mudaram (logging best-effort).
+  const before = sessao;
 
   const { error } = await sb
     .from("siso_inventario_sessoes")
@@ -145,6 +149,26 @@ export async function PATCH(
       metadata: { sessao_id: id },
     });
   }
+
+  // Loga diff dos campos que mudaram. Tracking de quem editou + de/pra.
+  if (before) {
+    const diff: Record<string, [unknown, unknown]> = {};
+    const beforeMap = before as Record<string, unknown>;
+    const afterMap = allowed as Record<string, unknown>;
+    for (const k of Object.keys(afterMap)) {
+      const b = beforeMap[k];
+      const a = afterMap[k];
+      if (a !== undefined && a !== b) diff[k] = [b, a];
+    }
+    if (Object.keys(diff).length > 0) {
+      logger.info("wms.inventario.patch", "sessão atualizada", {
+        sessao_id: id,
+        diff,
+        usuario_id: auth.user.id,
+      });
+    }
+  }
+
   return NextResponse.json({ ok: true });
 }
 

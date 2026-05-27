@@ -610,10 +610,18 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   // ex.: vindas do caminho legado Tiny antes do cutover) não sobrevivam
   // quando o WMS decide OC sem cobertura. Sem isso, dados do Tiny ficavam
   // órfãos na tabela e a UI continuava mostrando saldo/loc fantasma.
+  // DEPRECATED [#P6-1.12]: write to siso_pedido_item_estoques (only retained
+  // for legacy consumers in /pedidos/tracking + painel). Future removal blocked
+  // on migration of those consumers to read from siso_estoque + ledger.
+  // See `docs/wms-deprecated-galpao-id-consumers.md` and follow-up issue.
   await sb.from("siso_pedido_item_estoques").delete().eq("pedido_id", pedido.id);
   if (estoqueRows.length > 0) {
     await sb.from("siso_pedido_item_estoques").insert(estoqueRows);
   }
+  logger.info("webhook.legacy-write", "pedido_item_estoques row written (legacy)", {
+    pedido_id: pedido.id,
+    rows: estoqueRows.length,
+  });
 
   // 8. Criar reservas (apenas pra propria/transferencia — OC não reserva)
   if (rota.decisao === "propria" || rota.decisao === "transferencia") {

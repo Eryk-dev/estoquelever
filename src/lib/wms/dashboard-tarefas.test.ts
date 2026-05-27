@@ -1,8 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
+  agruparDevolucoesPendentes,
   agruparFornecedoresCompras,
+  agruparInventarioRevisao,
+  agruparTransferenciasTransito,
   dedupNonNullIds,
+  detectarRecebimentoOrfao,
+  detectarReservasOrfas,
   hidratarExecutores,
+  mapearRetroativosPendentes,
 } from "./dashboard-tarefas";
 
 describe("dedupNonNullIds", () => {
@@ -94,5 +100,230 @@ describe("agruparFornecedoresCompras", () => {
     // Cenário não-real (não há entrada que zere), mas garante o filter
     const out = agruparFornecedoresCompras([], []);
     expect(out).toEqual([]);
+  });
+});
+
+describe("agruparDevolucoesPendentes", () => {
+  const linhas = [
+    {
+      id: "d1",
+      nota_fiscal_id: 100,
+      criado_em: "2026-05-26T10:00:00Z",
+      empresa_referencia: { nome: "NetAir" },
+    },
+    {
+      id: "d2",
+      nota_fiscal_id: null,
+      criado_em: "2026-05-26T11:00:00Z",
+      empresa_referencia: null,
+    },
+  ];
+
+  it("mapeia linhas pra cards", () => {
+    const r = agruparDevolucoesPendentes(linhas);
+    expect(r.count).toBe(2);
+    expect(r.itens).toHaveLength(2);
+    expect(r.itens[0]).toEqual({
+      id: "d1",
+      nota_fiscal_id: 100,
+      empresa_referencia_nome: "NetAir",
+      criada_em: "2026-05-26T10:00:00Z",
+    });
+    expect(r.itens[1].empresa_referencia_nome).toBeNull();
+  });
+
+  it("retorna count=0 e itens=[] quando vazio", () => {
+    expect(agruparDevolucoesPendentes([])).toEqual({ count: 0, itens: [] });
+  });
+
+  it("trata empresa_referencia como array (relação 1 sem !inner)", () => {
+    const r = agruparDevolucoesPendentes([
+      {
+        id: "d3",
+        nota_fiscal_id: null,
+        criado_em: "2026-05-26T12:00:00Z",
+        empresa_referencia: [{ nome: "NetParts" }],
+      },
+    ]);
+    expect(r.itens[0].empresa_referencia_nome).toBe("NetParts");
+  });
+});
+
+describe("agruparTransferenciasTransito", () => {
+  const linhas = [
+    {
+      id: "t1",
+      criada_em: "2026-05-26T08:00:00Z",
+      origem_galpao: { nome: "CWB" },
+      destino_galpao: { nome: "SP" },
+      itens: [{ qty: 5 }, { qty: 3 }],
+    },
+    {
+      id: "t2",
+      criada_em: "2026-05-26T09:00:00Z",
+      origem_galpao: null,
+      destino_galpao: null,
+      itens: [],
+    },
+  ];
+
+  it("conta itens (soma de qty)", () => {
+    const r = agruparTransferenciasTransito(linhas);
+    expect(r.itens[0].qty_itens).toBe(8);
+    expect(r.itens[1].qty_itens).toBe(0);
+  });
+
+  it("trata join como array ou objeto", () => {
+    const r = agruparTransferenciasTransito([
+      {
+        id: "t3",
+        criada_em: "2026-05-26T10:00:00Z",
+        origem_galpao: [{ nome: "CWB" }],
+        destino_galpao: { nome: "SP" },
+        itens: [{ qty: 1 }],
+      },
+    ]);
+    expect(r.itens[0].origem_galpao_nome).toBe("CWB");
+    expect(r.itens[0].destino_galpao_nome).toBe("SP");
+  });
+});
+
+describe("agruparInventarioRevisao", () => {
+  it("mapeia sessões + conta divergências", () => {
+    const r = agruparInventarioRevisao(
+      [
+        {
+          id: "s1",
+          nome: "Cycle inteligente · 26/05",
+          criado_em: "2026-05-26T07:00:00Z",
+          galpao: { nome: "CWB" },
+        },
+      ],
+      // map sessao_id → count de divergências pendentes
+      new Map([["s1", 4]]),
+    );
+    expect(r.itens[0].total_divergencias).toBe(4);
+    expect(r.itens[0].galpao_nome).toBe("CWB");
+  });
+
+  it("usa fallback de nome quando vazio", () => {
+    const r = agruparInventarioRevisao(
+      [{ id: "s2", nome: null, criado_em: "2026-05-26T07:00:00Z", galpao: null }],
+      new Map(),
+    );
+    expect(r.itens[0].nome).toMatch(/Inventário/);
+    expect(r.itens[0].total_divergencias).toBe(0);
+  });
+});
+
+describe("detectarReservasOrfas", () => {
+  const reservas = [
+    {
+      id: "m1",
+      pedido_id: "p1",
+      quantidade: 5,
+      criado_em: "2026-05-26T08:00:00Z",
+      produto: { sku: "SKU-A" },
+      pedido: { numero: "111", status: "cancelado" },
+    },
+    {
+      id: "m2",
+      pedido_id: "p2",
+      quantidade: 3,
+      criado_em: "2026-05-26T09:00:00Z",
+      produto: { sku: "SKU-B" },
+      pedido: { numero: "222", status: "pendente" },
+    },
+    {
+      id: "m3",
+      pedido_id: null, // R sem pedido — não conta
+      quantidade: 1,
+      criado_em: "2026-05-26T10:00:00Z",
+      produto: { sku: "SKU-C" },
+      pedido: null,
+    },
+  ];
+
+  it("filtra apenas Rs de pedidos cancelados", () => {
+    const r = detectarReservasOrfas(reservas, new Set(["m4_estornada"]));
+    expect(r.count).toBe(1);
+    expect(r.itens[0].pedido_numero).toBe("111");
+  });
+
+  it("excluir movs que já foram estornadas", () => {
+    const r = detectarReservasOrfas(reservas, new Set(["m1"]));
+    expect(r.count).toBe(0);
+  });
+});
+
+describe("mapearRetroativosPendentes", () => {
+  it("converte linhas do listar pra cards", () => {
+    const r = mapearRetroativosPendentes([
+      {
+        id: "r1",
+        criado_em: "2026-05-26T07:00:00Z",
+        quantidade: 10,
+        motivo: "Recebimento esquecido 2026-05-20",
+        produto: { sku: "SKU-X", descricao: "Produto X" },
+      },
+    ]);
+    expect(r.itens[0].produto_sku).toBe("SKU-X");
+    expect(r.itens[0].qty).toBe(10);
+    expect(r.itens[0].motivo).toBe("Recebimento esquecido 2026-05-20");
+  });
+
+  it("trata produto como array", () => {
+    const r = mapearRetroativosPendentes([
+      {
+        id: "r2",
+        criado_em: "2026-05-26T08:00:00Z",
+        quantidade: 5,
+        motivo: "x",
+        produto: [{ sku: "SKU-Y", descricao: null }],
+      },
+    ]);
+    expect(r.itens[0].produto_sku).toBe("SKU-Y");
+  });
+});
+
+describe("detectarRecebimentoOrfao", () => {
+  const saldos = [
+    {
+      produto_id: "p1",
+      galpao_id: "g1",
+      saldo: 10,
+      produto: { sku: "SKU-A" },
+      galpao: { nome: "CWB" },
+      localizacao: { codigo: "RECEBIMENTO" },
+    },
+    {
+      produto_id: "p2",
+      galpao_id: "g1",
+      saldo: 5,
+      produto: { sku: "SKU-B" },
+      galpao: { nome: "CWB" },
+      localizacao: { codigo: "RECEBIMENTO" },
+    },
+    {
+      produto_id: "p3",
+      galpao_id: "g1",
+      saldo: 0, // ignora saldo=0
+      produto: { sku: "SKU-C" },
+      galpao: { nome: "CWB" },
+      localizacao: { codigo: "RECEBIMENTO" },
+    },
+  ];
+
+  it("retorna apenas posições sem pendência cobrindo", () => {
+    // p1 tem pendência viva (em pendenciasVivas), p2 não.
+    const pendenciasVivas = new Set(["p1::g1"]);
+    const r = detectarRecebimentoOrfao(saldos, pendenciasVivas);
+    expect(r.count).toBe(1);
+    expect(r.itens[0].produto_sku).toBe("SKU-B");
+  });
+
+  it("ignora saldo zero", () => {
+    const r = detectarRecebimentoOrfao(saldos, new Set());
+    expect(r.itens.find((i) => i.produto_sku === "SKU-C")).toBeUndefined();
   });
 });

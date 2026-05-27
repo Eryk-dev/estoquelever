@@ -672,6 +672,7 @@ export function AjusteModal({
             galpaoId={galpaoId}
             value={locId}
             onChange={(v) => setLocIdUser(v)}
+            allowCreate={false}
           />
         </Field>
       </div>
@@ -1538,6 +1539,8 @@ export function RealocarModal({
             label="Localização"
             hint={linhaDest ? linhaDest.localizacao.tipo : ""}
           >
+            {/* Replenishment: allowCreate=true preserved — operador às vezes cria
+                loc nova de destino legitimamente quando expande galpão. */}
             <LocalizacaoCombo
               galpaoId={galpaoId || null}
               value={destino}

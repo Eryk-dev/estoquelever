@@ -4,6 +4,9 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { userCan } from "@/lib/permissions";
+import { registrarEventos } from "@/lib/historico-service";
+import { inserirMovimentacao } from "@/lib/wms/ledger";
+import { wmsAsSource } from "@/lib/wms/flags";
 
 /**
  * POST /api/compras/receber
@@ -13,8 +16,22 @@ import { userCan } from "@/lib/permissions";
  * Identifies and releases orders where all purchase items are now received.
  *
  * Body: {
- *   itens: Array<{ sku: string, quantidade_recebida: number, observacao?: string }>
+ *   itens: Array<{
+ *     sku: string,
+ *     quantidade_recebida: number,
+ *     observacao?: string,
+ *     custo_unitario?: number,     // opcional — alimenta recálculo do custo médio
+ *     nota_fiscal_id?: string|null // opcional — uuid em siso_notas_fiscais
+ *   }>
  * }
+ *
+ * Em WMS_AS_SOURCE (cutover Plano 6, default desde 2026-05-25), cada item
+ * recebido emite uma mov E (origem_tipo='nf_compra') no ledger via
+ * wms_inserir_movimentacao na loc RECEBIMENTO do galpão do pedido. Tags:
+ * empresa_compradora_id, fornecedor_id (best-effort por nome), custo_unitario.
+ *
+ * Failure mode: per-item mov failure NÃO quebra o loop — apenas seta
+ * compra_estoque_lancado_alerta=true no pedido pra operador investigar via UI.
  */
 export async function POST(request: NextRequest) {
   const session = await getSessionUser(request);
@@ -27,7 +44,13 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
   const itens = body.itens as
-    | Array<{ sku: string; quantidade_recebida: number; observacao?: string }>
+    | Array<{
+        sku: string;
+        quantidade_recebida: number;
+        observacao?: string;
+        custo_unitario?: number;
+        nota_fiscal_id?: string | null;
+      }>
     | undefined;
 
   if (!itens || !Array.isArray(itens) || itens.length === 0) {
@@ -43,17 +66,25 @@ export async function POST(request: NextRequest) {
     sku: string;
     itens_atualizados: number;
     quantidade_alocada: number;
+    movs_geradas: number;
+    movs_falhas: number;
   }> = [];
 
+  // Per-pedido audit aggregator (1 evento compra_item_recebido por pedido).
+  const eventosPorPedido = new Map<
+    string,
+    { qty: number; skus: string[] }
+  >();
+
   try {
-    for (const { sku, quantidade_recebida, observacao } of itens) {
+    for (const { sku, quantidade_recebida, observacao, custo_unitario, nota_fiscal_id } of itens) {
       if (!sku || quantidade_recebida <= 0) continue;
 
       // Fetch all order items for this SKU that are "comprado" (awaiting delivery)
       const { data: orderItems, error: fetchErr } = await supabase
         .from("siso_pedido_itens")
         .select(
-          "id, pedido_id, compra_quantidade_solicitada, compra_quantidade_recebida, compra_quantidade_comprada, quantidade_pedida, siso_pedidos(criado_em)",
+          "id, pedido_id, compra_quantidade_solicitada, compra_quantidade_recebida, compra_quantidade_comprada, quantidade_pedida, fornecedor_oc, siso_pedidos(criado_em, empresa_origem_id, separacao_galpao_id, nota_fiscal_id)",
         )
         .eq("sku", sku)
         .eq("compra_status", "comprado");
@@ -73,6 +104,8 @@ export async function POST(request: NextRequest) {
       let remaining = quantidade_recebida;
       let atualizados = 0;
       let alocado = 0;
+      let movsGeradas = 0;
+      let movsFalhas = 0;
 
       for (const item of sorted) {
         if (remaining <= 0) break;
@@ -117,23 +150,99 @@ export async function POST(request: NextRequest) {
         remaining -= qtyParaEsteItem;
         atualizados++;
         alocado += qtyParaEsteItem;
+
+        const pedidoId = item.pedido_id as string;
+        const cur = eventosPorPedido.get(pedidoId) ?? { qty: 0, skus: [] };
+        cur.qty += qtyParaEsteItem;
+        if (!cur.skus.includes(sku)) cur.skus.push(sku);
+        eventosPorPedido.set(pedidoId, cur);
+
+        // Em WMS_AS_SOURCE, grava mov E no ledger (entrada na loc
+        // RECEBIMENTO do galpão da OC). Failure isolada — não quebra
+        // o loop, apenas marca o pedido pra alerta.
+        if (wmsAsSource()) {
+          try {
+            const pedidoMeta = item.siso_pedidos as {
+              empresa_origem_id?: string | null;
+              separacao_galpao_id?: string | null;
+            } | null;
+            await gravarMovEntradaCompra({
+              supabase,
+              sku,
+              pedido_id: String(item.pedido_id),
+              pedido_item_id: String(item.id),
+              qty: qtyParaEsteItem,
+              empresa_origem_id: pedidoMeta?.empresa_origem_id ?? null,
+              separacao_galpao_id: pedidoMeta?.separacao_galpao_id ?? null,
+              fornecedor_nome:
+                (item as { fornecedor_oc?: string | null }).fornecedor_oc ??
+                null,
+              custo_unitario: custo_unitario ?? 0,
+              nota_fiscal_id: nota_fiscal_id ?? null,
+              usuario_id: session.id,
+            });
+            movsGeradas++;
+          } catch (movErr) {
+            movsFalhas++;
+            logger.error(
+              "compras-receber",
+              `Falha ao gravar mov E nf_compra pra item ${item.id}`,
+              {
+                error: movErr instanceof Error ? movErr.message : String(movErr),
+                pedido_id: item.pedido_id,
+                sku,
+                qty: qtyParaEsteItem,
+              },
+            );
+            // Best-effort: marca o pedido pra alerta. Se a coluna não existir
+            // ou o update falhar, segue em frente — não é fatal.
+            try {
+              await supabase
+                .from("siso_pedidos")
+                .update({ compra_estoque_lancado_alerta: true })
+                .eq("id", item.pedido_id);
+            } catch {
+              // ignora — coluna pode não existir em todos ambientes
+            }
+          }
+        }
       }
 
       recebimentoLog.push({
         sku,
         itens_atualizados: atualizados,
         quantidade_alocada: alocado,
+        movs_geradas: movsGeradas,
+        movs_falhas: movsFalhas,
       });
     }
 
     // Check which pedidos are now fully received and can be released
     const pedidosDesbloqueados = await checkAndReleasePedidos(allAffectedItemIds);
 
+    // Audit trail: 1 evento compra_item_recebido por pedido afetado.
+    if (eventosPorPedido.size > 0) {
+      await registrarEventos(
+        Array.from(eventosPorPedido.entries()).map(([pedidoId, info]) => ({
+          pedidoId,
+          evento: "compra_item_recebido" as const,
+          usuarioId: session.id,
+          usuarioNome: session.nome,
+          detalhes: {
+            qty_total: info.qty,
+            skus: info.skus,
+          },
+        })),
+      );
+    }
+
     logger.info("compras-receber", "Recebimento confirmado", {
       usuario: session.nome,
       total_skus: recebimentoLog.length,
       total_itens: recebimentoLog.reduce((s, r) => s + r.itens_atualizados, 0),
       pedidos_desbloqueados: pedidosDesbloqueados.length,
+      movs_geradas: recebimentoLog.reduce((s, r) => s + r.movs_geradas, 0),
+      movs_falhas: recebimentoLog.reduce((s, r) => s + r.movs_falhas, 0),
     });
 
     return NextResponse.json({
@@ -152,3 +261,134 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * Grava mov E (origem_tipo='nf_compra') no ledger pro recebimento de uma OC.
+ *
+ * Resolve:
+ * - Galpão: separacao_galpao_id (preferido) ou galpão preferencial da
+ *   empresa_origem_id (geo-priority 0).
+ * - Produto WMS uuid: via siso_produto_empresas JOIN
+ *   (empresa_id=empresa_origem_id, tiny_produto_id=item.produto_id) —
+ *   mas como o item já tem `sku`, basta resolver pelo sku.
+ * - Loc RECEBIMENTO: primeira `siso_localizacoes WHERE galpao_id=X
+ *   AND tipo='recebimento' AND ativo=true`.
+ * - Fornecedor: best-effort lookup por nome (item.fornecedor_oc).
+ *
+ * Critical: `pedido_id` em siso_pedidos é text (bigint stringificado do Tiny),
+ * NÃO é uuid. Passamos via `origem_id` + `origem_detalhes.pedido_id_tiny` —
+ * NÃO via `inserirMovimentacao({ pedido_id })` que validaria como uuid.
+ */
+async function gravarMovEntradaCompra(args: {
+  supabase: ReturnType<typeof createServiceClient>;
+  sku: string;
+  pedido_id: string;
+  pedido_item_id: string;
+  qty: number;
+  empresa_origem_id: string | null;
+  separacao_galpao_id: string | null;
+  fornecedor_nome: string | null;
+  custo_unitario: number;
+  nota_fiscal_id: string | null;
+  usuario_id: string;
+}): Promise<void> {
+  const {
+    supabase,
+    sku,
+    pedido_id,
+    pedido_item_id,
+    qty,
+    empresa_origem_id,
+    separacao_galpao_id,
+    fornecedor_nome,
+    custo_unitario,
+    nota_fiscal_id,
+    usuario_id,
+  } = args;
+
+  // 1) Resolve produto WMS uuid via sku (catálogo unificado).
+  const { data: produto } = await supabase
+    .from("siso_produtos")
+    .select("id")
+    .eq("sku", sku)
+    .maybeSingle();
+  const produtoId = (produto as { id?: string } | null)?.id;
+  if (!produtoId) {
+    throw new Error(`produto ${sku} não encontrado em siso_produtos`);
+  }
+
+  // 2) Resolve galpão: separacao_galpao_id (preferido) ou preferencial
+  //    de empresa_origem_id (geo-priority 0).
+  let galpaoId: string | null = separacao_galpao_id ?? null;
+  if (!galpaoId && empresa_origem_id) {
+    const { data: pref } = await supabase
+      .from("siso_empresa_galpoes_preferenciais")
+      .select("galpao_id")
+      .eq("empresa_id", empresa_origem_id)
+      .limit(1)
+      .maybeSingle();
+    galpaoId = (pref as { galpao_id?: string } | null)?.galpao_id ?? null;
+  }
+  if (!galpaoId) {
+    throw new Error(
+      `não foi possível resolver galpão pro pedido ${pedido_id} (separacao_galpao_id=null e empresa_origem_id sem preferencial)`,
+    );
+  }
+
+  // 3) Resolve loc RECEBIMENTO do galpão.
+  const { data: loc } = await supabase
+    .from("siso_localizacoes")
+    .select("id")
+    .eq("galpao_id", galpaoId)
+    .eq("tipo", "recebimento")
+    .eq("ativo", true)
+    .limit(1)
+    .maybeSingle();
+  const locId = (loc as { id?: string } | null)?.id;
+  if (!locId) {
+    throw new Error(
+      `galpão ${galpaoId} sem loc tipo='recebimento' ativa — semear DEFAULT-RECEBIMENTO`,
+    );
+  }
+
+  // 4) Best-effort: resolve fornecedor_id por nome (item.fornecedor_oc).
+  let fornecedorId: string | null = null;
+  if (fornecedor_nome) {
+    const { data: forn } = await supabase
+      .from("siso_fornecedores")
+      .select("id")
+      .eq("nome", fornecedor_nome)
+      .maybeSingle();
+    fornecedorId = (forn as { id?: string } | null)?.id ?? null;
+  }
+
+  // 5) Insere mov E no ledger.
+  //
+  // CRITICAL: `pedido_id` em siso_pedidos é text (bigint stringificado do
+  // Tiny, ex: "9034989457"), NÃO uuid. O validador de `inserirMovimentacao`
+  // rejeitaria via assertUuidLike. Passamos via `origem_id` (que é text por
+  // design no ledger) + `origem_detalhes.pedido_id_tiny` pra preservar
+  // rastreabilidade.
+  await inserirMovimentacao({
+    tripla: {
+      produto_id: produtoId,
+      galpao_id: galpaoId,
+      localizacao_id: locId,
+    },
+    tipo: "E",
+    qty,
+    origem_tipo: "nf_compra",
+    origem_id: pedido_id,
+    origem_detalhes: {
+      sku,
+      pedido_item_id,
+      fornecedor_nome,
+      pedido_id_tiny: pedido_id,
+    },
+    empresa_compradora_id: empresa_origem_id ?? null,
+    fornecedor_id: fornecedorId,
+    nota_fiscal_id: nota_fiscal_id ?? null,
+    custo_unitario: custo_unitario > 0 ? custo_unitario : undefined,
+    motivo: `Recebimento OC — pedido ${pedido_id}`,
+    usuario_id,
+  });
+}

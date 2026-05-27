@@ -57,16 +57,27 @@ describe("inserirMovimentacao · uuid validation (defensiva)", () => {
     localizacao_id: "00000000-0000-4000-8000-000000000003",
   };
 
-  it("throws com mensagem clara quando pedido_id é text não-uuid (ex: 'MAN-abc-123')", async () => {
-    await expect(
-      inserirMovimentacao({
+  it("NÃO valida pedido_id como uuid — coluna é text por design (aceita 'MAN-...' de venda manual)", async () => {
+    // Migration 20260526_movimentacoes_origem_id_pedido_id_text.sql tornou
+    // siso_movimentacoes.pedido_id TEXT (era uuid). `MAN-...` agora cabe
+    // direto na coluna; antes a validação defensiva impedia. P6 E.19 popula
+    // pedido_id em vendas/criar baixa_direta — esse teste protege a remoção
+    // do assertUuidLike contra reintrodução acidental.
+    let caughtMsg = "";
+    try {
+      await inserirMovimentacao({
         tripla: triplaOk,
         tipo: "S",
         qty: 1,
         origem_tipo: "venda_manual",
         pedido_id: "MAN-abc-123",
-      }),
-    ).rejects.toThrow(/pedido_id.*esperava uuid.*MAN-abc-123/);
+      });
+    } catch (err) {
+      caughtMsg = err instanceof Error ? err.message : String(err);
+    }
+    // Deve falhar APENAS por createServiceClient() faltar env (chamada bate
+    // no DB) — NÃO por validação de uuid.
+    expect(caughtMsg).not.toMatch(/pedido_id/);
   });
 
   it("NÃO valida origem_id como uuid — coluna é text por design (regressão checkbox separação)", async () => {

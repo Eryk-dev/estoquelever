@@ -50,11 +50,13 @@ export interface PendenciaGuarda {
   iniciada_em: string | null;
   iniciada_por: string | null;
   guardada_em: string | null;
+  guardada_por: string | null;
   cancelada_em: string | null;
   cancelada_por: string | null;
   motivo_cancelamento: string | null;
   observacoes: string | null;
   criada_em: string;
+  criada_por: string | null;
   atualizada_em: string;
 }
 
@@ -68,8 +70,14 @@ export interface PendenciaJoined extends PendenciaGuarda {
 /**
  * Resolve (ou cria) a loc tipo='recebimento' do galpão. Idempotente.
  * Migration já cria 1 por galpão ativo, mas em testes/staging pode faltar.
+ *
+ * Retorna `{ id, created }` — `created=true` indica que a loc foi auto-criada
+ * agora (side-effect). Callers podem logar warning pra alertar que a
+ * pré-condição esperada (loc semeada via migration) está faltando.
  */
-export async function resolverLocRecebimento(galpaoId: string): Promise<string> {
+export async function resolverLocRecebimento(
+  galpaoId: string,
+): Promise<{ id: string; created: boolean }> {
   const sb = createServiceClient();
   const { data: existente } = await sb
     .from("siso_localizacoes")
@@ -77,7 +85,9 @@ export async function resolverLocRecebimento(galpaoId: string): Promise<string> 
     .match({ galpao_id: galpaoId, tipo: "recebimento", ativo: true })
     .order("criado_em", { ascending: true })
     .limit(1);
-  if (existente && existente.length > 0) return existente[0].id;
+  if (existente && existente.length > 0) {
+    return { id: existente[0].id, created: false };
+  }
 
   const { data: nova, error } = await sb
     .from("siso_localizacoes")
@@ -95,7 +105,7 @@ export async function resolverLocRecebimento(galpaoId: string): Promise<string> 
       `não foi possível resolver loc RECEBIMENTO do galpão ${galpaoId}: ${error?.message}`,
     );
   }
-  return nova.id;
+  return { id: nova.id, created: true };
 }
 
 export interface CriarPendenciaInput {
@@ -115,6 +125,8 @@ export interface CriarPendenciaInput {
   observacoes?: string | null;
   /** UUID compartilhado entre pendências do mesmo recebimento (agrupamento de rota). */
   lote_id?: string | null;
+  /** Usuário que criou a pendência (operador do recebimento). FK pra `siso_usuarios.id`. */
+  criada_por: string;
 }
 
 export async function criarPendencia(input: CriarPendenciaInput): Promise<string> {
@@ -150,6 +162,7 @@ export async function criarPendencia(input: CriarPendenciaInput): Promise<string
       custo_unitario: input.custo_unitario ?? null,
       observacoes: input.observacoes ?? null,
       lote_id: input.lote_id ?? null,
+      criada_por: input.criada_por,
     })
     .select("id")
     .single();
@@ -395,10 +408,10 @@ export interface ConfirmarGuardaResult {
  * Em 3D, o custo médio é global por produto (siso_custo_medio) — não precisa
  * mais propagar `custo_medio` entre locs no put-away.
  *
- * Idempotência aproximada: race entre 2 confirmações da mesma pendência
- * pode causar over-decremento. Esperado raro porque cada pendência fica
- * "em_guarda" pelo mesmo operador. Caso surja, dá pra apertar com um lock
- * via RPC dedicada — não otimizar prematuramente.
+ * Atomicidade (P3 #5.3 + #5.8): RPC `wms_confirmar_guarda_atomico` faz tudo
+ * (FOR UPDATE no row da pendência + S+E par + UPDATE status) numa única
+ * transação. Concorrentes esperam no lock; race entre leitura e UPDATE
+ * não causa mais over-decremento.
  */
 export async function confirmarGuarda(
   input: ConfirmarGuardaInput,

@@ -20,10 +20,15 @@ type Classificacao = "integro" | "avariado" | "garantia" | "troca_sku";
 interface DevRow {
   id: string;
   nota_fiscal_id: number | null;
-  /** Vendedora da NF original (referência, não dona física — 3D). */
-  empresa_referencia?: { nome?: string } | null;
+  chave_acesso_nf?: string | null;
+  /** Empresa **receptora física** da NF de devolução (quem recebeu de volta
+   *  no galpão). NÃO é a vendedora original — essa só é resolvida no momento
+   *  da classificação a partir da mov S da venda. */
+  empresa_receptora?: { id?: string; nome?: string } | null;
   criado_em?: string;
   status?: string;
+  classificacao?: string | null;
+  classificada_em?: string | null;
 }
 
 interface ProdutoMin {
@@ -88,24 +93,29 @@ export default function ClassificarPage({
     localizacao_id?: string;
   }>({});
   const [observacoes, setObservacoes] = useState("");
+  const [fornecedorId, setFornecedorId] = useState<string>("");
   const [desclassificarOpen, setDesclassificarOpen] = useState(false);
   const [desclassificarMotivo, setDesclassificarMotivo] = useState("");
 
-  // Carrega tanto pendentes quanto classificadas — o id pode estar em qualquer
-  // dos dois conjuntos, e a UI muda conforme o status.
-  const { data: devsPendentes } = useQuery({
-    queryKey: ["wms-devolucoes"],
-    queryFn: () => wmsApi<{ rows: DevRow[] }>("/api/wms/devolucoes"),
-  });
-  const { data: devsClassificadas } = useQuery({
-    queryKey: ["wms-devolucoes-classificadas"],
+  // Endpoint dedicado (P5) retorna a devolução mesmo quando ela já saiu da fila
+  // (status≠'aguardando_classificacao') — necessário pro fluxo de desclassificar (P3).
+  const { data: devResp } = useQuery({
+    queryKey: ["wms-devolucao", id],
     queryFn: () =>
-      wmsApi<{ rows: DevRow[] }>("/api/wms/devolucoes?status=classificada"),
+      wmsApi<{ devolucao: DevRow }>(`/api/wms/devolucoes/${id}`),
   });
-  const dev =
-    devsPendentes?.rows?.find((x) => x.id === id) ??
-    devsClassificadas?.rows?.find((x) => x.id === id);
+  const dev = devResp?.devolucao;
   const jaClassificada = dev?.status === "classificada";
+
+  const { data: fornecedoresResp } = useQuery({
+    queryKey: ["wms-fornecedores"],
+    queryFn: () =>
+      wmsApi<{ rows: Array<{ id: string; nome: string }> }>(
+        "/api/wms/fornecedores",
+      ),
+    enabled: classificacao === "garantia",
+  });
+  const fornecedores = fornecedoresResp?.rows ?? [];
 
   async function buscar(s: string) {
     try {
@@ -135,6 +145,8 @@ export default function ClassificarPage({
           galpao_id: q.galpao_id,
           localizacao_id: q.localizacao_id,
           observacoes,
+          fornecedor_id:
+            classificacao === "garantia" ? fornecedorId : undefined,
         }),
       }),
     onSuccess: () => {
@@ -165,6 +177,7 @@ export default function ClassificarPage({
       );
       setDesclassificarOpen(false);
       setDesclassificarMotivo("");
+      queryClient.invalidateQueries({ queryKey: ["wms-devolucao", id] });
       queryClient.invalidateQueries({ queryKey: ["wms-devolucoes"] });
       queryClient.invalidateQueries({ queryKey: ["wms-devolucoes-classificadas"] });
       queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
@@ -174,7 +187,11 @@ export default function ClassificarPage({
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const valid = !!produto_id && qty > 0 && !!q.localizacao_id;
+  const valid =
+    !!produto_id &&
+    qty > 0 &&
+    !!q.localizacao_id &&
+    (classificacao !== "garantia" || !!fornecedorId);
 
   return (
     <>
@@ -230,10 +247,10 @@ export default function ClassificarPage({
             <h3
               style={{ margin: "4px 0 0", fontSize: 17, fontWeight: 600 }}
             >
-              {dev.empresa_referencia?.nome ?? "—"}
+              {dev.empresa_receptora?.nome ?? "—"}
             </h3>
             <div className="wms-td-mute" style={{ fontSize: 11 }}>
-              Empresa de referência (vendedora da NF original)
+              Empresa receptora da devolução
             </div>
             {dev.criado_em && (
               <div className="wms-td-mute" style={{ fontSize: 12 }}>
@@ -336,6 +353,23 @@ export default function ClassificarPage({
         </div>
       </Field>
 
+      {classificacao === "garantia" && (
+        <Field label="Fornecedor (RMA)" required>
+          <select
+            className="wms-input"
+            value={fornecedorId}
+            onChange={(e) => setFornecedorId(e.target.value)}
+          >
+            <option value="">— selecione o fornecedor —</option>
+            {fornecedores.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.nome}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+
       <Field label="Observações">
         <textarea
           className="wms-textarea"
@@ -380,7 +414,7 @@ export default function ClassificarPage({
       {desclassificarOpen && (
         <Modal
           title="Desclassificar devolução"
-          subtitle={`NF ${dev?.nota_fiscal_id ?? "—"} · ${dev?.empresa_referencia?.nome ?? "—"}`}
+          subtitle={`NF ${dev?.nota_fiscal_id ?? "—"} · ${dev?.empresa_receptora?.nome ?? "—"}`}
           width={520}
           onClose={() =>
             !desclassificar.isPending && setDesclassificarOpen(false)

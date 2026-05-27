@@ -503,12 +503,16 @@ export function createContext(opts: {
     if (p.pedido_id) {
       await validarOcItens({ pedido_id: p.pedido_id, sku: p.sku, acao: "esgotado" });
     }
-    await http.post<{ ok: boolean; resultados: unknown[] }>("/api/wms/compras/comprar", {
-      itens: [{ sku: p.sku, quantidade_comprada: p.qty }],
-    });
-    // Busca a OC criada pra esse fornecedor+sku (uma row em siso_ordens_compra
-    // foi criada pelo validar-oc-item via linkItemToOC). Retorna o id pra
-    // receberCompra.
+    // Pós-fix #3.2 (Task 3.4): /compras/comprar agora retorna `ordem_id` da
+    // primeira OC criada/encontrada via findOrCreateOC. Preferimos esse campo;
+    // fallback no DB pra compat com cenários antigos.
+    const resp = await http.post<{ ok: boolean; resultados: unknown[]; ordem_id?: string | null }>(
+      "/api/wms/compras/comprar",
+      {
+        itens: [{ sku: p.sku, quantidade_comprada: p.qty }],
+      },
+    );
+    if (resp.ordem_id) return { ordem_id: resp.ordem_id };
     const { data: itemRow } = await sb
       .from("siso_pedido_itens")
       .select("ordem_compra_id")
@@ -521,11 +525,18 @@ export function createContext(opts: {
     return { ordem_id: ordemId ?? "" };
   }
 
-  async function receberCompra(p: { ordem_id: string; items: { sku: string; qty: number }[] }) {
-    // /compras/receber: marca itens recebido (compra_status=recebido). Não
-    // mexe no ledger — estoque físico chega via /wms/receber em separado.
+  async function receberCompra(p: { ordem_id: string; items: { sku: string; qty: number; custo_unitario?: number }[] }) {
+    // /compras/receber: marca itens recebido (compra_status=recebido) E (pós
+    // fix #3.1, em WMS_AS_SOURCE) emite mov E (origem_tipo='nf_compra') no
+    // ledger na loc RECEBIMENTO do galpão da OC. Custo unitário default 10
+    // alimenta recálculo do siso_custo_medio (RPC só recalcula se
+    // custo_unitario IS NOT NULL).
     await http.post("/api/wms/compras/receber", {
-      itens: p.items.map((it) => ({ sku: it.sku, quantidade_recebida: it.qty })),
+      itens: p.items.map((it) => ({
+        sku: it.sku,
+        quantidade_recebida: it.qty,
+        custo_unitario: it.custo_unitario ?? 10,
+      })),
     });
   }
 
@@ -718,7 +729,20 @@ export function createContext(opts: {
     );
   }
 
-  async function ajusteManual(p: { sku: string; galpao: "CWB" | "SP"; loc: string; delta: number; motivo: string }) {
+  async function ajusteManual(p: {
+    sku: string;
+    galpao: "CWB" | "SP";
+    loc: string;
+    delta: number;
+    motivo: string;
+    motivo_categoria?:
+      | "avaria"
+      | "perda"
+      | "achado"
+      | "correcao_inventario"
+      | "devolucao_sem_fluxo"
+      | "outro";
+  }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
     const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.loc).single();
@@ -731,6 +755,9 @@ export function createContext(opts: {
       qty: Math.abs(p.delta),
       direcao: p.delta >= 0 ? "entrada" : "saida",
       motivo: p.motivo,
+      // Default `outro` — endpoint exige categoria desde D.1.4 (2026-05-27).
+      // Cenários específicos podem sobrescrever.
+      motivo_categoria: p.motivo_categoria ?? "outro",
     });
     return { mov_id: r.mov_id };
   }

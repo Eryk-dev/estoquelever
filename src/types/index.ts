@@ -137,6 +137,14 @@ export interface CriarVendaDiretaRequest {
     quantidade: number;
   }>;
   idempotency_key?: string;
+  /**
+   * Atribuir esta venda em nome de outro vendedor (opcional).
+   *
+   * Quando setado, o pedido grava vendedor_id/vendedor_nome do usuário-alvo
+   * em vez do usuário da sessão. Requer permissão `vendas.criar_em_nome_de`
+   * (admin/operador_*). Se igual ao user.id, é ignorado.
+   */
+  vendedor_id_alvo?: string;
 }
 
 /** Response shape for POST /api/wms/vendas/criar */
@@ -212,6 +220,20 @@ export interface SeparacaoCounts {
 export interface PedidoItem {
   id: string;
   pedido_id: string;
+  /**
+   * ATENÇÃO — semântica legada: `produto_id` em `siso_pedido_itens` é o
+   * `tiny_produto_id` (bigint serializado como string), **NÃO** o uuid de
+   * `siso_produtos`. Herdado do schema pré-WMS quando produto era 1:1 com Tiny.
+   *
+   * Pra resolver pro uuid WMS de `siso_produtos`:
+   *   1. Identificar a empresa do pedido (`siso_pedidos.empresa_origem_id`)
+   *   2. JOIN `siso_produto_empresas` ON
+   *        siso_pedido_itens.produto_id = siso_produto_empresas.tiny_produto_id
+   *        AND siso_produto_empresas.empresa_id = <empresa_origem_id>
+   *   3. O `produto_id` em `siso_produto_empresas` é o uuid de `siso_produtos`.
+   *
+   * Use `produto_id_tiny` (abaixo) pra chamadas diretas à API do Tiny.
+   */
   produto_id: string;
   sku: string;
   descricao: string;

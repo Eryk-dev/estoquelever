@@ -85,7 +85,7 @@ export async function checkAndReleasePedidos(
     // Get pedido info for the release
     const { data: pedido, error: pedidoError } = await supabase
       .from("siso_pedidos")
-      .select("id, empresa_origem_id, status_separacao")
+      .select("id, empresa_origem_id, status_separacao, separacao_galpao_id")
       .eq("id", pedidoId)
       .single();
 
@@ -105,9 +105,16 @@ export async function checkAndReleasePedidos(
       continue;
     }
 
-    // Resolve the OC's galpão and the pedido's origin galpão
+    // Resolve the OC's galpão and the pedido's separation galpão.
+    // Source-of-truth = pedido.separacao_galpao_id (decidido pelo webhook/roteamento).
+    // Fallback pra pedidos pré-WMS sem separacao_galpao_id setado: pega 1º preferencial
+    // da empresa origem via siso_empresa_galpoes_preferenciais.
+    // NÃO usar siso_empresas.galpao_id — é coluna deprecated (espelho do preferencial).
     const ocGalpaoId = await resolveOcGalpaoId(supabase, allCompraItems);
-    const pedidoGalpaoId = await resolveEmpresaGalpaoId(supabase, pedido.empresa_origem_id);
+    let pedidoGalpaoId: string | null = pedido.separacao_galpao_id;
+    if (!pedidoGalpaoId) {
+      pedidoGalpaoId = await resolvePedidoGalpaoIdFallback(supabase, pedido.empresa_origem_id);
+    }
 
     // If either galpão is unknown, skip release — wrong decisão causes irreversible Tiny mutations
     if (!ocGalpaoId || !pedidoGalpaoId) {
@@ -122,20 +129,21 @@ export async function checkAndReleasePedidos(
 
     const mesmoGalpao = ocGalpaoId === pedidoGalpaoId;
 
-    // For cross-galpão: find the empresa in the OC galpão for execution
-    // Use deterministic ordering to always pick the same empresa
+    // For cross-galpão: find an empresa in the OC galpão for execution.
+    // Usa siso_empresa_galpoes_preferenciais (N:N) — NÃO siso_empresas.galpao_id
+    // (deprecated). Deterministic ordering pra sempre escolher a mesma empresa.
     let empresaExecId = pedido.empresa_origem_id;
     if (!mesmoGalpao) {
-      const { data: empresaOcGalpao } = await supabase
-        .from("siso_empresas")
-        .select("id")
+      const { data: prefEmp } = await supabase
+        .from("siso_empresa_galpoes_preferenciais")
+        .select("empresa_id, siso_empresas!inner(id, ativo)")
         .eq("galpao_id", ocGalpaoId)
-        .eq("ativo", true)
-        .order("criado_em", { ascending: true })
+        .eq("siso_empresas.ativo", true)
+        .order("empresa_id", { ascending: true })
         .limit(1)
-        .single();
-      if (empresaOcGalpao) {
-        empresaExecId = empresaOcGalpao.id;
+        .maybeSingle();
+      if (prefEmp) {
+        empresaExecId = (prefEmp as { empresa_id: string }).empresa_id;
       }
     }
 
@@ -190,7 +198,11 @@ export async function checkAndReleasePedidos(
       .filter((i) => i.mov_saida_id != null)
       .map((i) => i.id as number);
 
-    // Insert job in execution queue
+    // Insert job in execution queue.
+    // Idempotência: índice único parcial `uq_fila_release_pedido` garante que só
+    // exista 1 job pendente do tipo `lancar_estoque` por pedido. Em caso de race
+    // (re-entrega de webhook de recebimento, dois caminhos chamando release ao
+    // mesmo tempo), o Postgres rejeita com 23505 — tratamos como skip idempotente.
     const { error: queueError } = await supabase
       .from("siso_fila_execucao")
       .insert({
@@ -202,11 +214,19 @@ export async function checkAndReleasePedidos(
       });
 
     if (queueError) {
-      logger.error("compras-release", "Erro ao enfileirar job de release", {
-        pedidoId,
-        error: queueError.message,
-      });
-      continue;
+      if ((queueError as { code?: string }).code === "23505") {
+        logger.info(
+          "compras-release",
+          "Job lancar_estoque já enfileirado para este pedido — skip idempotente",
+          { pedidoId },
+        );
+      } else {
+        logger.error("compras-release", "Erro ao enfileirar job de release", {
+          pedidoId,
+          error: queueError.message,
+        });
+        continue;
+      }
     }
 
     // Kick the worker to process the newly enqueued job
@@ -263,19 +283,21 @@ async function resolveOcGalpaoId(
 }
 
 /**
- * Get the galpao_id for a given empresa.
+ * Fallback pra pedidos pré-WMS sem separacao_galpao_id setado.
+ * Pega o 1º galpão preferencial da empresa origem via siso_empresa_galpoes_preferenciais
+ * (N:N). NÃO consulta siso_empresas.galpao_id — coluna deprecated em runtime.
  */
-async function resolveEmpresaGalpaoId(
+async function resolvePedidoGalpaoIdFallback(
   supabase: ReturnType<typeof createServiceClient>,
   empresaId: string | null,
 ): Promise<string | null> {
   if (!empresaId) return null;
-
-  const { data: empresa } = await supabase
-    .from("siso_empresas")
-    .select("galpao_id")
-    .eq("id", empresaId)
-    .single();
-
-  return empresa?.galpao_id ?? null;
+  const { data: pref } = await supabase
+    .from("siso_empresa_galpoes_preferenciais")
+    .select("galpao_id, siso_galpoes!inner(nome)")
+    .eq("empresa_id", empresaId)
+    .order("siso_galpoes(nome)", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return (pref as { galpao_id: string } | null)?.galpao_id ?? null;
 }

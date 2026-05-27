@@ -17,6 +17,7 @@ import {
  *   - fornecedor_id (optional, tag histórica)
  *   - custo_unitario (optional, alimenta recálculo custo médio global)
  *   - pedido_id (optional)
+ *   - data_recebimento (optional, ISO; ≤ now; vai pra origem_detalhes.data_recebimento — #8.7)
  */
 export async function POST(req: NextRequest) {
   const auth = await requireWarehouseAccess(req);
@@ -52,6 +53,20 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  // PR-6 #8.7 — data_recebimento opcional (ISO, ≤ now). Carimbar criado_em
+  // da mov com a data real exigiria mudar a RPC `wms_inserir_movimentacao`
+  // (out of scope). Por enquanto guardamos em origem_detalhes.data_recebimento
+  // pra reports filtrarem via (origem_detalhes->>'data_recebimento').
+  const dataRecebimento = body.data_recebimento as string | undefined;
+  if (dataRecebimento) {
+    const d = new Date(dataRecebimento);
+    if (Number.isNaN(d.getTime()) || d.getTime() > Date.now()) {
+      return NextResponse.json(
+        { error: "data_recebimento inválida ou no futuro" },
+        { status: 400 },
+      );
+    }
+  }
   try {
     await lancarRetroativo({
       tripla,
@@ -61,6 +76,7 @@ export async function POST(req: NextRequest) {
       fornecedor_id: body.fornecedor_id ?? null,
       custo_unitario: custoUnitario,
       pedido_id: body.pedido_id ?? null,
+      data_recebimento: dataRecebimento,
       usuario_id: auth.user.id,
     });
     return NextResponse.json({ ok: true });

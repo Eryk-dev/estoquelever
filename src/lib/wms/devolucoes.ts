@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
 import { logger } from "@/lib/logger";
@@ -27,6 +28,10 @@ export interface RegistrarDevolucaoInput {
   nota_fiscal_id?: number;
   chave_acesso_nf?: string;
   pedido_origem_id?: string;
+  /** Empresa **receptora física** da NF de devolução (quem recebeu a peça
+   *  de volta no galpão). NÃO confundir com empresa vendedora da venda
+   *  original — essa última é a `empresa_referencia_id` derivada da mov S
+   *  da venda em `classificarDevolucao` via `resolverEmpresaReferencia`. */
   empresa_id?: string;
   payload_webhook: unknown;
 }
@@ -42,6 +47,18 @@ export async function registrarDevolucaoPendente(
       .from("siso_movimentacoes")
       .select("id")
       .eq("nota_fiscal_id", input.nota_fiscal_id)
+      .eq("tipo", "S")
+      .maybeSingle();
+    pedidoOrigemMovId = (mov as { id: string } | null)?.id ?? null;
+  }
+  // [#P6-6.15] Fallback: nota_fiscal_id pode não estar populado em movs
+  // antigas, mas chave_acesso_nf cobre os mesmos casos. Busca pela chave
+  // se o lookup primário falhou.
+  if (!pedidoOrigemMovId && input.chave_acesso_nf) {
+    const { data: mov } = await sb
+      .from("siso_movimentacoes")
+      .select("id")
+      .eq("chave_acesso_nf", input.chave_acesso_nf)
       .eq("tipo", "S")
       .maybeSingle();
     pedidoOrigemMovId = (mov as { id: string } | null)?.id ?? null;
@@ -96,6 +113,14 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
   const d = dev as DevRow;
   if (d.status !== "aguardando_classificacao") throw new Error("já classificada");
 
+  // [#P6-6.17] origem_id compartilhado entre todas as movs do mesmo
+  // classify (Classe B = par S+E quarentena; Classe C = E + S fornecedor).
+  // Permite agrupar movs do mesmo evento no ledger pra auditoria/relatórios.
+  const origemCompartilhado = randomUUID();
+
+  // empresa_referencia_id = vendedora da venda ORIGINAL (mov S nf_venda).
+  // NUNCA confundir com siso_devolucoes_pendentes.empresa_id (que é receptora
+  // física da devolução — pode ser empresa diferente da que vendeu).
   let empresaReferenciaId = input.empresa_referencia_id ?? null;
   if (!empresaReferenciaId && d.pedido_origem_mov_id) {
     const { data: mov } = await sb
@@ -107,6 +132,19 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
       empresaReferenciaId = resolverEmpresaReferencia(mov as MovOrigemVenda);
     }
   }
+  // [#P6-6.14] Fallback: se ainda null, busca empresa_origem_id do pedido
+  // que originou a NF. Cobre casos onde a mov de saída original não tem
+  // empresa_vendedora_id setada (legado pre-cutover) mas o pedido tem
+  // empresa_origem_id válido.
+  if (!empresaReferenciaId && d.nota_fiscal_id) {
+    const { data: ped } = await sb
+      .from("siso_pedidos")
+      .select("empresa_origem_id")
+      .eq("nota_fiscal_id", d.nota_fiscal_id)
+      .maybeSingle();
+    empresaReferenciaId =
+      (ped as { empresa_origem_id: string } | null)?.empresa_origem_id ?? null;
+  }
 
   const tripla = {
     produto_id: input.produto_id,
@@ -114,26 +152,33 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
     localizacao_id: input.localizacao_id,
   };
 
+  // Custo unitário da venda original (alimenta recálculo do custo médio em
+  // toda Classe — A, B, C, D). Hoist do bloco integro pra raiz do classificar:
+  // sem custo herdado, devoluções B/C/D entrariam com cu=undefined e o ledger
+  // calcularia custo médio sobre uma base errada (ignorando o valor real do
+  // item que está voltando).
+  let custoUnitarioOriginal: number | undefined;
+  if (d.pedido_origem_mov_id) {
+    const { data: movOriginal } = await sb
+      .from("siso_movimentacoes")
+      .select("custo_unitario")
+      .eq("id", d.pedido_origem_mov_id)
+      .single();
+    const cu = (movOriginal as { custo_unitario: number | null } | null)
+      ?.custo_unitario;
+    if (cu) custoUnitarioOriginal = Number(cu);
+  }
+
   switch (input.classificacao) {
     case "integro": {
       // Classe A — íntegra do cliente. Custo unitário herdado da venda
       // original ativa o recálculo de custo médio global.
-      let custoUnitarioOriginal: number | undefined;
-      if (d.pedido_origem_mov_id) {
-        const { data: movOriginal } = await sb
-          .from("siso_movimentacoes")
-          .select("custo_unitario")
-          .eq("id", d.pedido_origem_mov_id)
-          .single();
-        const cu = (movOriginal as { custo_unitario: number | null } | null)
-          ?.custo_unitario;
-        if (cu) custoUnitarioOriginal = Number(cu);
-      }
       await inserirMovimentacao({
         tripla,
         tipo: "E",
         qty: input.qty,
         origem_tipo: "devolucao_cliente_integra",
+        origem_id: origemCompartilhado,
         nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
         custo_unitario: custoUnitarioOriginal,
@@ -150,8 +195,10 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         tipo: "E",
         qty: input.qty,
         origem_tipo: "devolucao_cliente_avariada",
+        origem_id: origemCompartilhado,
         nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
+        custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
         motivo: input.observacoes,
       });
@@ -163,6 +210,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           tipo: "quarentena",
           ativo: true,
         })
+        .order("codigo", { ascending: true }) // determinístico
         .limit(1)
         .maybeSingle();
       const locDestinoQuarentena = (quarentena as { id: string } | null)?.id;
@@ -172,6 +220,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           tipo: "S",
           qty: input.qty,
           origem_tipo: "transferencia_localizacao",
+          origem_id: origemCompartilhado,
           usuario_id: input.usuario_id,
           motivo: `avaria → quarentena: ${input.observacoes ?? ""}`,
         });
@@ -180,6 +229,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           tipo: "E",
           qty: input.qty,
           origem_tipo: "transferencia_localizacao",
+          origem_id: origemCompartilhado,
           usuario_id: input.usuario_id,
         });
       } else {
@@ -190,6 +240,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           tipo: "S",
           qty: input.qty,
           origem_tipo: "ajuste_manual",
+          origem_id: origemCompartilhado,
           origem_detalhes: { motivo: "avaria_devolucao_sem_quarentena" },
           usuario_id: input.usuario_id,
         });
@@ -208,8 +259,10 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         tipo: "E",
         qty: input.qty,
         origem_tipo: "devolucao_cliente_integra",
+        origem_id: origemCompartilhado,
         nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
+        custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
       });
       await inserirMovimentacao({
@@ -217,6 +270,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         tipo: "S",
         qty: input.qty,
         origem_tipo: "devolucao_fornecedor_enviada",
+        origem_id: origemCompartilhado,
         fornecedor_id: input.fornecedor_id,
         usuario_id: input.usuario_id,
         motivo: `garantia: ${input.observacoes ?? ""}`,
@@ -224,15 +278,18 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
       break;
     }
     case "troca_sku":
-      // Classe A — apenas entra. Troca de SKU vira fluxo separado em
+      // Classe D — apenas entra. Troca de SKU vira fluxo separado em
       // separacao (já existe `compras-equivalencia`). Aqui só reintegra.
+      // origem_tipo dedicado pra apurar troca separada de devolução íntegra.
       await inserirMovimentacao({
         tripla,
         tipo: "E",
         qty: input.qty,
-        origem_tipo: "devolucao_cliente_integra",
+        origem_tipo: "devolucao_cliente_troca_sku",
+        origem_id: origemCompartilhado,
         nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
+        custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
         motivo: `troca SKU: ${input.observacoes ?? ""}`,
       });
@@ -305,9 +362,11 @@ export async function receberDevolucaoFornecedor(input: {
 interface DevolucaoPendenteRow {
   id: string;
   nota_fiscal_id: number | null;
-  /** Vendedora da NF original — tag de referência (não chave física).
+  /** Empresa **receptora física** da NF de devolução (FK `empresa_id`).
+   *  NÃO confundir com `empresa_referencia_id` (vendedora original) — essa
+   *  só é resolvida no `classificarDevolucao` via mov S da venda original.
    *  Em 3D não há mais "dona destino"; saldo entra na (produto, galpão, loc). */
-  empresa_referencia: { nome: string } | null;
+  empresa_receptora: { nome: string } | null;
   criado_em: string;
 }
 
@@ -435,9 +494,11 @@ export async function desclassificarDevolucao(input: {
 
 export async function listarDevolucoesPendentes(): Promise<DevolucaoPendenteRow[]> {
   const sb = createServiceClient();
+  // O JOIN é em `empresa_id` (FK receptora física) — alias `empresa_receptora`
+  // pra deixar explícito que NÃO é a vendedora original (`empresa_referencia_id`).
   const { data, error } = await sb
     .from("siso_devolucoes_pendentes")
-    .select("*, empresa_referencia:siso_empresas!empresa_id(nome)")
+    .select("*, empresa_receptora:siso_empresas!empresa_id(nome)")
     .eq("status", "aguardando_classificacao")
     .order("criado_em", { ascending: false });
   if (error) throw error;

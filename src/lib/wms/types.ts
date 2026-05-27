@@ -16,6 +16,7 @@ export type OrigemTipo =
   | "nf_compra"
   | "devolucao_cliente_integra"
   | "devolucao_cliente_avariada"
+  | "devolucao_cliente_troca_sku"
   | "devolucao_fornecedor_recebida"
   | "nf_venda"
   | "venda_manual"

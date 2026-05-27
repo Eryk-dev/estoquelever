@@ -79,7 +79,7 @@ interface InserirMovInput {
   motivo?: string | null;
   /** Cliente associado (ex: devolucao_cliente_*). */
   cliente_nome?: string | null;
-  /** Pedido associado (FK lógica pra siso_pedidos). */
+  /** Pedido associado (FK lógica pra siso_pedidos.id — text, aceita Tiny ID ou `MAN-...`). */
   pedido_id?: string | null;
   /** NF fiscal associada (uuid em siso_notas_fiscais). */
   nota_fiscal_id?: string | null;
@@ -89,6 +89,14 @@ interface InserirMovInput {
   expira_em?: string;
   /** Custo unitário da entrada — alimenta recálculo do custo médio global. */
   custo_unitario?: number;
+  /** Categoria estruturada do motivo (obrigatório quando origem_tipo='ajuste_manual'). */
+  motivo_categoria?:
+    | "avaria"
+    | "perda"
+    | "achado"
+    | "correcao_inventario"
+    | "devolucao_sem_fluxo"
+    | "outro";
   usuario_id?: string;
   estorno_de?: string;
 }
@@ -107,10 +115,12 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
   // PostgrestError em uuid inválido vira "[object Object]" no log — caro de
   // debugar. Capturamos antes de chegar na RPC com mensagem clara.
   // IMPORTANTE: roda ANTES de createServiceClient() pra ser testável sem env.
-  // NOTA: `origem_id` é DELIBERADAMENTE text (coluna `siso_movimentacoes.origem_id`
-  // é text por design). Convenção: quando origem_tipo ∈ {reserva_pedido,
-  // liberacao_reserva}, origem_id carrega `siso_pedidos.id` (Tiny ID, text).
-  // Não validamos uuid aqui.
+  // NOTA: `origem_id` e `pedido_id` são DELIBERADAMENTE text (colunas
+  // `siso_movimentacoes.origem_id` / `pedido_id` são text por design — migration
+  // 20260526_movimentacoes_origem_id_pedido_id_text.sql). Convenção: quando
+  // origem_tipo ∈ {reserva_pedido, liberacao_reserva}, origem_id carrega
+  // `siso_pedidos.id` (Tiny ID, text). `pedido_id` também aceita ID de pedido
+  // manual `MAN-...`. Não validamos uuid em nenhum dos dois.
   assertUuidLike(tripla.produto_id, "tripla.produto_id");
   assertUuidLike(tripla.galpao_id, "tripla.galpao_id");
   assertUuidLike(tripla.localizacao_id, "tripla.localizacao_id");
@@ -119,7 +129,7 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
   assertUuidLike(input.empresa_vendedora_id, "empresa_vendedora_id");
   assertUuidLike(input.empresa_referencia_id, "empresa_referencia_id");
   assertUuidLike(input.fornecedor_id, "fornecedor_id");
-  assertUuidLike(input.pedido_id, "pedido_id");
+  // pedido_id intencionalmente NÃO validado — text por design.
   assertUuidLike(input.nota_fiscal_id, "nota_fiscal_id");
   assertUuidLike(input.usuario_id, "usuario_id");
 
@@ -162,6 +172,7 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
     p_nota_fiscal_id: input.nota_fiscal_id ?? null,
     p_chave_acesso_nf: input.chave_acesso_nf ?? null,
     p_custo_unitario: input.custo_unitario ?? null,
+    p_motivo_categoria: input.motivo_categoria ?? null,
   });
   if (error) {
     logger.error("wms.ledger", "falha ao inserir mov", { error, input });

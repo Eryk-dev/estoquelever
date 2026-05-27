@@ -25,6 +25,15 @@ export default function AjustePage() {
   const [qty, setQty] = useState(1);
   const [direcao, setDirecao] = useState<"entrada" | "saida">("saida");
   const [motivo, setMotivo] = useState("");
+  const [motivoCategoria, setMotivoCategoria] = useState<
+    | ""
+    | "avaria"
+    | "perda"
+    | "achado"
+    | "correcao_inventario"
+    | "devolucao_sem_fluxo"
+    | "outro"
+  >("");
 
   async function buscar(s: string) {
     try {
@@ -52,12 +61,14 @@ export default function AjustePage() {
           qty,
           direcao,
           motivo,
+          motivo_categoria: motivoCategoria,
         }),
       }),
     onSuccess: () => {
       toast.success("Ajuste registrado");
       setQty(1);
       setMotivo("");
+      setMotivoCategoria("");
       setProduto(undefined);
       setSku("");
       queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
@@ -68,12 +79,13 @@ export default function AjustePage() {
 
   const motivoTooShort = motivo.length > 0 && motivo.length < 3;
   // 3D: API exige tripla completa {produto_id, galpao_id, localizacao_id}
-  // + qty>0 + motivo>=3. Sem empresa dona.
+  // + qty>0 + motivo>=3 + motivo_categoria entre as 6 válidas. Sem empresa dona.
   const valid =
     !!produto_id &&
     !!q.galpao_id &&
     !!q.localizacao_id &&
     motivo.length >= 3 &&
+    !!motivoCategoria &&
     qty > 0;
 
   return (
@@ -138,6 +150,30 @@ export default function AjustePage() {
       </div>
 
       <Field
+        label="Categoria"
+        required
+        hint="estruturada para apuração — selecione antes do motivo livre"
+      >
+        <select
+          className="wms-input"
+          value={motivoCategoria}
+          onChange={(e) =>
+            setMotivoCategoria(
+              e.target.value as typeof motivoCategoria,
+            )
+          }
+        >
+          <option value="">Selecione…</option>
+          <option value="avaria">Avaria</option>
+          <option value="perda">Perda</option>
+          <option value="achado">Achado</option>
+          <option value="correcao_inventario">Correção de inventário</option>
+          <option value="devolucao_sem_fluxo">Devolução sem fluxo</option>
+          <option value="outro">Outro</option>
+        </select>
+      </Field>
+
+      <Field
         label="Motivo"
         required
         hint={motivoTooShort ? "muito curto" : "mín. 3 caracteres"}
@@ -146,7 +182,7 @@ export default function AjustePage() {
           className="wms-textarea"
           value={motivo}
           onChange={(e) => setMotivo(e.target.value)}
-          placeholder="avaria, perda, encontro, erro de contagem…"
+          placeholder="detalhes do ajuste (NF, cliente, lote, etc.)"
           rows={3}
         />
       </Field>

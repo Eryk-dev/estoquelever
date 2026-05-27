@@ -7,7 +7,6 @@ import {
   getAgingDays,
   getCompraQuantidadeSolicitada,
 } from "@/lib/compras-utils";
-import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { userCan } from "@/lib/permissions";
 
@@ -136,8 +135,19 @@ export async function GET(request: NextRequest) {
     const counts = await fetchCounts(supabase);
 
     if (tab === "historico") {
-      const fornecedores = await fetchHistorico(supabase);
-      return NextResponse.json({ counts, fornecedores });
+      const cursorRaw = searchParams.get("cursor");
+      const cursorValid =
+        cursorRaw && !Number.isNaN(Date.parse(cursorRaw)) ? cursorRaw : null;
+      const limit = Math.min(
+        200,
+        Math.max(1, parseInt(searchParams.get("limit") ?? "100", 10)),
+      );
+      const { fornecedores, next_cursor } = await fetchHistorico(
+        supabase,
+        cursorValid,
+        limit,
+      );
+      return NextResponse.json({ counts, fornecedores, next_cursor });
     }
 
     if (tab === "receber") {
@@ -326,7 +336,11 @@ async function fetchReceber(supabase: SupabaseClient): Promise<FornecedorReceber
   if (error) throw new Error(`Erro ao buscar itens para receber: ${error.message}`);
   if (!items || items.length === 0) return [];
 
-  // Auto-fix: items that are fully received but stuck as "comprado"
+  // Diagnóstico: itens cuja qty recebida >= solicitada mas status segue 'comprado'.
+  // ANTES (auto-fix): GET silenciosamente promovia esses itens pra 'recebido' e disparava
+  // checkAndReleasePedidos. Removido em 2026-05-27 [#P6-6.31 #P6-3.12]: GET deve ser puro.
+  // Inconsistência real é tarefa do receber endpoint ou de um job manual — não de leitura.
+  // Itens sobre-recebidos seguem filtrados da listagem (UX), apenas não são auto-promovidos.
   const stuckIds: string[] = [];
   const activeItems: typeof items = [];
 
@@ -341,22 +355,14 @@ async function fetchReceber(supabase: SupabaseClient): Promise<FornecedorReceber
   }
 
   if (stuckIds.length > 0) {
-    await supabase
-      .from("siso_pedido_itens")
-      .update({ compra_status: "recebido" })
-      .in("id", stuckIds);
-    logger.info("compras-api", "Auto-fix: itens sobre-recebidos marcados como recebido", {
-      count: stuckIds.length,
-      ids: stuckIds,
-    });
-
-    // Trigger release check — the auto-fix may have completed all compra items for some pedidos
-    checkAndReleasePedidos(stuckIds).catch((err) => {
-      logger.error("compras-api", "Auto-fix: falha ao verificar release de pedidos", {
-        error: err instanceof Error ? err.message : String(err),
-        stuckIds,
-      });
-    });
+    logger.warn(
+      "compras.tab-receber",
+      "inconsistências detectadas em GET (itens sobre-recebidos ainda em status='comprado')",
+      {
+        count: stuckIds.length,
+        sample_ids: stuckIds.slice(0, 10),
+      },
+    );
   }
 
   if (activeItems.length === 0) return [];
@@ -504,8 +510,24 @@ async function fetchExcecoes(supabase: SupabaseClient): Promise<ExcecaoItem[]> {
 
 // ─── Tab: Historico (Recebidos) ─────────────────────────────────────────────
 
-async function fetchHistorico(supabase: SupabaseClient) {
-  const { data: items, error } = await supabase
+async function fetchHistorico(
+  supabase: SupabaseClient,
+  cursor: string | null,
+  limit: number,
+): Promise<{
+  fornecedores: Array<{
+    fornecedor: string;
+    data_recebimento: string;
+    itens: Array<{
+      sku: string;
+      descricao: string;
+      quantidade_recebida: number;
+      recebido_em: string | null;
+    }>;
+  }>;
+  next_cursor: string | null;
+}> {
+  let query = supabase
     .from("siso_pedido_itens")
     .select(
       "sku, descricao, compra_quantidade_recebida, comprado_em, fornecedor_oc",
@@ -513,10 +535,17 @@ async function fetchHistorico(supabase: SupabaseClient) {
     .eq("compra_status", "recebido")
     .not("compra_quantidade_recebida", "is", null)
     .order("comprado_em", { ascending: false })
-    .limit(500);
+    .order("id", { ascending: false })
+    .limit(limit);
+
+  if (cursor) {
+    query = query.lt("comprado_em", cursor);
+  }
+
+  const { data: items, error } = await query;
 
   if (error) throw new Error(`Erro ao buscar itens recebidos: ${error.message}`);
-  if (!items || items.length === 0) return [];
+  if (!items || items.length === 0) return { fornecedores: [], next_cursor: null };
 
   const groups = new Map<
     string,
@@ -551,9 +580,18 @@ async function fetchHistorico(supabase: SupabaseClient) {
     });
   }
 
-  return [...groups.values()].sort((a, b) =>
+  const fornecedores = [...groups.values()].sort((a, b) =>
     b.data_recebimento.localeCompare(a.data_recebimento),
   );
+
+  // next_cursor: comprado_em do último item retornado pela query (não do último
+  // group), pra cliente continuar a paginação a partir do próximo item.
+  const nextCursor =
+    items.length === limit
+      ? ((items[items.length - 1].comprado_em as string | null) ?? null)
+      : null;
+
+  return { fornecedores, next_cursor: nextCursor };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

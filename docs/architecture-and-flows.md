@@ -142,6 +142,60 @@ Controle de acesso é via RBAC dinâmico desde 2026-05-21.
 ### Compat legado
 `siso_usuarios.cargo` e `.cargos[]` continuam existindo (nullable, espelhados por trigger `trg_sync_cargos_after_roles`). Código novo nunca lê esses campos — só permissoes. Remoção definitiva planejada para ~1 mês após Fase 3 estabilizar.
 
+---
+
+## Quadro de Tarefas Pendentes — home /wms (P5, 2026-05-26)
+
+A home `/wms` é PageHeader + `<QuadroTarefas>`. O quadro divide o que o operador precisa enxergar em 3 zonas:
+
+### 1. Pipeline do pedido (3 cards horizontais no topo)
+
+| Card | Contador | Split |
+|---|---|---|
+| Aprovação | `aprovacao.count` | `marketplace` vs `manual` (P5) |
+| Separação | `separacao.count` | avatares ao vivo via presença WMS |
+| Embalagem | `embalagem.count` | avatares ao vivo |
+
+### 2. Kanban operacional (3 colunas)
+
+- **Guarda** — `siso_wms_pendencias_guarda` em `pendente`/`em_guarda`. Cards individuais com SKU + qty + idade + avatar.
+- **Inventário** — sessões `em_andamento` com progresso `locs_contadas / locs_total` e party ativa.
+- **Compras** — agrupado por fornecedor: `a_comprar` (itens) + `a_receber` (ordens).
+
+### 3. Seção Exceções (P5)
+
+Abaixo do kanban, a seção `<SecaoExcecoes>` agrupa 6 categorias de pendência que quebram o fluxo normal e exigem ação operacional. Default expandido se qualquer contador > 0; colapsável manualmente (estado perde no F5 intencionalmente — primeira impressão importa).
+
+| # | Card | Trigger |
+|---|---|---|
+| 1 | **Devoluções pendentes** | `siso_devolucoes_pendentes.status='aguardando_classificacao'` |
+| 2 | **Transferências em trânsito** | `siso_transferencias_galpao.status='em_transito'`. Idade visível (>48h fica vermelho). |
+| 3 | **Inventário em revisão** | `siso_inventario_sessoes.status='revisao'` + divergências pendentes contadas |
+| 4 | **Reservas órfãs** | Mov R com `origem_tipo='reserva_pedido'`, pedido cancelado, sem estorno. Alerta vermelho >5. |
+| 5 | **Retroativos pendentes** | Movs `origem_tipo='lancamento_retroativo'` não-estornadas |
+| 6 | **Saldo órfão em RECEBIMENTO** | `siso_estoque` em loc tipo='recebimento' com saldo > 0 sem pendência viva |
+
+### Realtime
+
+Hook `useDashboardTarefasRealtime(galpaoId)` subscribe a 8 tabelas via Supabase Realtime. Invalidates são **debounced em 250ms** pra coalesce eventos rapid-fire. Fallback: `staleTime=0 + refetchInterval=30_000` no useQuery.
+
+Tabelas assinadas (devem estar na publication `supabase_realtime` — verificada em P1):
+
+1. `siso_pedidos`
+2. `siso_wms_pendencias_guarda`
+3. `siso_inventario_sessoes`
+4. `siso_inventario_operadores`
+5. `siso_pedido_itens`
+6. `siso_devolucoes_pendentes` (P5)
+7. `siso_transferencias_galpao` (P5)
+8. `siso_movimentacoes` filtrado `tipo=eq.R` (P5)
+
+### Fix de galpão filter (P5)
+
+Bug 0.5/5.8: filtro `galpao_id` aplicava `eq('separacao_galpao_id', galpao_id)` em pedidos pendentes, mas pedidos pendentes **ainda não aprovados** têm `separacao_galpao_id IS NULL` — escondia ~69% dos pendentes em prod. Fix: para `status='pendente'`, usar `OR(separacao_galpao_id.eq.X, separacao_galpao_id.is.null)`. Para fluxos pós-aprovação (separacao/embalagem) a invariante `separacao_galpao_id IS NOT NULL` é mantida pelo `pedidos/aprovar`.
+
+---
+
 ## Reverse paritária (P3 — 2026-05-27)
 
 Princípio: **toda ação que insere movs no ledger deve ter uma contraparte de reversão**.

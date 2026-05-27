@@ -4,6 +4,9 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { carregarDadosEquivalentePorSku } from "@/lib/compras-equivalencia";
 import { userCan } from "@/lib/permissions";
+import { registrarEvento } from "@/lib/historico-service";
+import { liberarReserva } from "@/lib/wms/reservas";
+import { wmsAsSource } from "@/lib/wms/flags";
 
 /**
  * POST /api/compras/itens/[itemId]/equivalente/confirmar
@@ -125,6 +128,28 @@ export async function POST(
       );
     }
 
+    // P2 #3.7: equivalente vira um produto NOVO — a R original (criada pra o
+    // produto antigo) fica órfã consumindo reservado>saldo após o swap.
+    // Liberar Rs do pedido antes de mexer no produto_id.
+    if (wmsAsSource()) {
+      try {
+        const liberadas = await liberarReserva({
+          pedido_id: String(item.pedido_id),
+          motivo: "cancelamento",
+          usuario_id: session.id,
+        });
+        logger.info("compras-equivalente-confirmar", "Rs liberadas pré-swap", {
+          pedido_id: item.pedido_id,
+          item_id: item.id,
+          liberadas,
+        });
+      } catch (e) {
+        logger.warn("compras-equivalente-confirmar", "falha liberando R (segue)", {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
     await supabase
       .from("siso_pedido_item_estoques")
       .delete()
@@ -201,6 +226,20 @@ export async function POST(
     if (updateError) {
       throw new Error(`Erro ao confirmar equivalente: ${updateError.message}`);
     }
+
+    await registrarEvento({
+      pedidoId: item.pedido_id,
+      evento: "compra_item_equivalente_aplicado",
+      usuarioId: session.id,
+      usuarioNome: session.nome,
+      detalhes: {
+        item_id: itemId,
+        sku_original: item.sku,
+        sku_equivalente: equivalente.sku,
+        qty: quantidadeNecessariaCompra,
+        fornecedor: item.compra_equivalente_fornecedor ?? equivalente.fornecedor,
+      },
+    });
 
     logger.info("compras-equivalente-confirmar", "Equivalente confirmado e sincronizado", {
       itemId,

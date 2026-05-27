@@ -83,7 +83,7 @@ Separacao (/wms/separacao)        <-- wave picking → checklist → packing →
 
 Compras (/wms/compras)            <-- purchase order management for OC decisions
     |
-    └─ /api/wms/compras/*         <-- ordens, conferir, devolver, indisponivel
+    └─ /api/wms/compras/*         <-- ordens, conferencia, devolver, indisponivel
     └─ compras-release.ts         <-- when all items received → resume execution
 
 Recebimento físico (/wms/receber + /wms/guarda)
@@ -145,6 +145,15 @@ Cascade que esgota cobertura dispara o modal encaminhar/OC no frontend
 Botão "Esgotado" das linhas normais removido — caso particular do Parcial
 com qty=0 + loc_zerou=true. Spec: `docs/superpowers/specs/2026-05-18-realocacao-cascateavel-design.md`.
 
+**Design: `mov_ajuste_loc_zerou_id` é preservado em cancelamento (2026-05-26).**
+Quando o operador faz Parcial marcando `loc_zerou=true`, o sistema gera uma
+mov `ajuste_pick_zerou` no ledger zerando o saldo da loc — isso registra
+uma **realidade física** (a loc estava vazia quando o operador chegou).
+`POST /api/wms/separacao/cancelar` **não estorna** essa mov: cancelar a
+separação não desfaz a constatação física. O FK em `siso_pedido_itens` é
+limpo (pra liberar o item pra nova separação), mas a mov no ledger fica
+intacta. Pra desfazer explicitamente, usar `POST /api/wms/separacao/desfazer-parcial`.
+
 ## Project Structure
 
 **Pós-cutover de superfície (2026-05-18):** apenas `/login`, `/wms/*` e `/api/{auth,wms}/*` existem.
@@ -167,7 +176,7 @@ src/
         # ── Pedidos ──
         pedidos/route.ts                   # List orders (GET)
         pedidos/tracking/route.ts          # Universal tracking list (GET)
-        pedidos/aprovar/route.ts           # Order approval (POST) — enqueues execution. Em WMS_AS_SOURCE, cria reservas R antes do enqueue (idempotente); 409 se runtime sem cobertura
+        pedidos/aprovar/route.ts           # Order approval (POST) — enqueues execution. Em WMS_AS_SOURCE, cria reservas R antes do enqueue (idempotente); 409 se runtime sem cobertura. decisao='rejeitado' (botão Recusar) marca cancelado + decisao_final='rejeitado' sem enfileirar
         pedidos/[id]/detalhe/route.ts      # Order detail consolidated (GET)
         pedidos/[id]/historico/route.ts    # Order history/audit trail (GET)
         pedidos/[id]/observacoes/route.ts  # Order comments (GET/POST)
@@ -215,7 +224,6 @@ src/
         compras/preparar-embalagem/route.ts          # Stage orders for packing (POST)
         compras/trocar-sku/route.ts                  # Change product SKU (POST)
         compras/ordens/route.ts                      # List POs by supplier (GET)
-        compras/conferir/route.ts                    # DEPRECATED (POST)
         compras/conferencia/[ordemCompraId]/route.ts # Receive items for PO (GET/POST)
         compras/pedidos/[pedidoId]/cancelar/route.ts # Cancel purchase decision (POST)
         compras/itens/[itemId]/indisponivel/route.ts # Mark item unavailable (POST)
@@ -224,7 +232,6 @@ src/
         compras/itens/[itemId]/cancelamento/confirmar/route.ts # Confirm cancelamento (POST)
         compras/itens/[itemId]/equivalente/route.ts           # Propose equivalente SKU (POST)
         compras/itens/[itemId]/equivalente/confirmar/route.ts # Confirm equivalente (POST)
-        compras/itens/[itemId]/trocar-fornecedor/route.ts     # DEPRECATED (POST)
         # ── Cross (14 rotas) ──
         cross/search/route.ts              # GET busca (SKU/OEM/nome)
         cross/produtos/[sku]/route.ts      # GET detalhe (com lazy fetch Tiny)
@@ -577,13 +584,13 @@ Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger at
 
 | Table | Purpose |
 |---|---|
-| `siso_devolucoes_pendentes` | Fila de NFs de entrada esperando classificação física. UNIQUE parcial em nota_fiscal_id e chave_acesso_nf (dedup webhook re-entregue). Status: aguardando_classificacao→classificada→aplicada\|cancelada. |
+| `siso_devolucoes_pendentes` | Fila de NFs de entrada esperando classificação física. UNIQUE parcial em nota_fiscal_id e chave_acesso_nf (dedup webhook re-entregue). Status: aguardando_classificacao→classificada\|cancelada. |
 
 ### WMS Tables (Recebimento em 2 etapas — 2026-05-14)
 
 | Table | Purpose |
 |---|---|
-| `siso_wms_pendencias_guarda` | Fila de pendências de put-away. 1 linha por linha de recebimento (preserva NF/lote). `qty_pendente = qty_inicial - qty_guardada` GENERATED. Status: pendente → em_guarda → guardada\|cancelada. Indexada por (galpao_id, status, criada_em). Trigger atualiza `atualizada_em`. CHECK garante coerência (guardada exige qty_guardada=qty_inicial+guardada_em). |
+| `siso_wms_pendencias_guarda` | Fila de pendências de put-away. 1 linha por linha de recebimento (preserva NF/lote). `qty_pendente = qty_inicial - qty_guardada` GENERATED. Status: pendente → em_guarda → guardada\|cancelada. Indexada por (galpao_id, status, criada_em). Trigger atualiza `atualizada_em`. CHECK garante coerência (guardada exige qty_guardada=qty_inicial+guardada_em). **Auditoria (2026-05-27)**: `criada_por uuid` (FK `siso_usuarios.id`, operador do recebimento) + `guardada_por uuid` (FK `siso_usuarios.id`, operador que confirmou a guarda final). |
 
 > Tabela `siso_wms_mini_swap_config` e RPCs `wms_executar_mini_swap` / `wms_executar_swap` **dropadas em 2026-05-20** com o ledger simplificado 3D. Mini-swap intra-galpão e swap N×N entre empresas perderam o sentido — não há mais empresa dona física a consolidar. Código arquivado em `src/lib/wms/_archive/mini-swap*.ts`.
 
@@ -811,6 +818,10 @@ Failure to update documentation means the next developer or LLM will work with s
 - Migrations in `supabase/migrations/` with format `YYYYMMDD_description.sql`.
 - Upserts for idempotency (dedup on unique constraints).
 
+### Notas legados (NÃO TROPECE NISSO)
+- **`siso_pedido_itens.produto_id` é `tiny_produto_id`, NÃO o uuid de `siso_produtos`.** Herdado do schema pré-WMS quando produto era 1:1 com Tiny. Pra resolver pro uuid WMS, JOIN via `siso_produto_empresas` (filtrar por `empresa_id = empresa_origem_id` do pedido). Documentado com JSDoc em `src/types/index.ts:PedidoItem.produto_id`. Renomear esse campo numa próxima refactor é high-risk (módulos webhook/separação/compras dependem desse nome).
+- **`siso_pedido_itens.estoque_cwb_*` / `estoque_sp_*`**: colunas legacy hard-coded a 2 galpões. API lê de `siso_pedido_item_estoques` (normalizado). Serão removidas em migration futura.
+
 ## Current Status
 
 ### Fully Working
@@ -845,6 +856,7 @@ Failure to update documentation means the next developer or LLM will work with s
 - **WMS Inventário · Claim hierárquico (rua > prédio > buffer > colisão) — implementado em staging, 2026-05-13.** Substitui o slot_atribuido / LPT / smart routing por zonas. Modelo: endereço = rua-prédio-andar (3 segmentos do código); operador "reivindica" uma unidade (rua livre → prédio com buffer ≥1 → prédio sem buffer → colisão controlada no último prédio com max 2 ops + distância vertical máxima) e desce nela até esgotar. Auto-degrade: quando 2º op é forçado a entrar numa rua claimed por colega, o claim do colega cai pra 'predio'. Buffer físico (≥1 prédio de gap entre ops na mesma rua) vale sempre, nos 3 tipos de sessão. Sem `slot_atribuido` — distribuição 100% dinâmica via RPC `wms_inventario_proxima_loc` reescrita. Schema: 4 colunas claim_* em `siso_inventario_operadores` + trigger limpa claim em sairSlot. Frontend mostra "rua A ↓", "prédio A-03 ↓" ou "prédio A-03 ↑ (compartilhando)" no painel do supervisor e na tela do operador. Migration: `supabase/migrations/20260513_wms_inventario_claim_hierarquico.sql`.
 - **WMS Inventário · Reconciliação temporal (estoque online) — implementado em 2026-05-18.** Algoritmo `reconciliarTemporal` reconstrói saldo no instante do bipe usando `siso_movimentacoes.saldo_anterior` da primeira mov após `T_ref`. Pure function testada por TDD (16+ testes em `inventario-reconciliacao.test.ts`). `computarDivergencias` agora faz snapshot `cutoff_em` e delega cálculo. Handheld ganha modal "loc vazia?" pra distinguir loc visitada-vazia de não-visitada. Supervisor ganha feed ao vivo classificado (verde/amarelo/vermelho) em `/api/wms/inventario/[id]/eventos`. Spec: `docs/superpowers/specs/2026-05-18-estoque-online-fluxo.html`. Plano: `docs/superpowers/plans/2026-05-18-estoque-online.md`.
 - **WMS Plano 5 (Exceções + dashboards) — implementado, validado em staging. Encerra Fase 0.** Devoluções classificadas A/B/C/D com recálculo de custo médio + transferência pra QUARENTENA + RMA. Troca SKU na separação (2 movs com mesma origem_id) com validação Cross opcional. Webhook NF detecta devolução (best-effort). Materialized view `siso_cobertura_estoque` com status crítico/atenção/lead_time_risco/ok/sem_giro. Dashboard geral (4 cards, refresh 30s). Shell e home reorganizados em 4 grupos. Plano: `docs/superpowers/plans/2026-06-05-wms-5-excecoes-dashboards.md`. Checklist Fase 0: `docs/superpowers/plans/wms-fase0-checklist.md`. **Próximo: Plano 6 (cutover big bang).**
+- **WMS Fix P5 (Visibilidade Home + UI Fixes) — implementado em 2026-05-26.** Quadro home `/wms` ganhou seção colapsável "Exceções" com 6 cards (devoluções pendentes, transferências em_transito, inventário em revisão, reservas órfãs de pedido cancelado, lançamentos retroativos pendentes, saldo órfão em RECEBIMENTO) + split marketplace vs manual no card Aprovação. Filtro de galpão corrigido pra incluir pedidos com `separacao_galpao_id IS NULL` via `OR(eq, is.null)` (escondia ~69% dos pendentes em prod). Hook `useDashboardTarefasRealtime` estendido pra 8 tabelas (3 novas: `siso_devolucoes_pendentes`, `siso_transferencias_galpao`, `siso_movimentacoes` filtrado `tipo=eq.R`) + invalidate debounced 250ms + handheld inventário ganha toast+redirect em cancelamento de sessão (finding 4.9). 12 UI fixes cirúrgicos: Devolução Classe C select de fornecedor, devolução detalhe fetch dedicado em novo endpoint `GET /api/wms/devolucoes/[id]`, label "Forçar pra separação (bypass NF)" coerente com comportamento, banner D10 estornar gated em P3 (botão comentado com TODO), botão Recusar pedido sem fluxo removido, guarda `[id]` substitui useEffect-iniciar por botão explícito, `FeedEventos` para polling em sessão `aplicada`/`cancelada`, `LocalizacaoCombo` no modal Receber com `allowCreate=false`, toast `imprimir-lote` expõe contagem de `ignorados[]` quando faltam locs destino, paginação client-side em `/wms/pedidos` tabs não-expedidos + `/wms/compras` tab Histórico (backend migration pendente quando volume saturar), vendas/nova com toast de `motivo_degradacao` detalhado + scaffold "criar em nome de X" gated na perm `vendas.criar_em_nome_de` (criada em P4). `<QuadroTarefas>` usa `staleTime=0 + refetchInterval=30_000` como safety net da publication. **Princípios restaurados:** PR-3 (realtime cross-module) e PR-8 (exceções visíveis na home). Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p5-visibilidade-home-ui-fixes.md`. Spec mãe: `docs/superpowers/specs/2026-05-26-auditoria-wms-fixes-design.md` §9.
 - **WMS Recebimento em 2 etapas (Recebimento + Guarda) — implementado em staging, 2026-05-14.** Quebra o recebimento em duas fases pra alinhar com o fluxo físico: dock RECEBIMENTO (chega caminhão, registra qty) → guarda no tablet (imprime etiqueta, bipa QR da loc destino, confirma). 1 pendência em `siso_wms_pendencias_guarda` por linha de recebimento. Suporta guarda parcial (qty<qty_pendente fica aberta) + cancelamento com motivo. Etiqueta de produto em ZPL pareado 2-por-folha (`gerarZplProduto` em `src/lib/wms/zpl-produto.ts`), N etiquetas por unidade. Impressora dedicada de produto (`printnode_printer_id_produto`) com fallback automático pra impressora de envio se não configurada. Migration: `supabase/migrations/20260514_wms_guarda_pendencias.sql`. APIs: `/api/wms/guarda` (lista + detalhe + iniciar/confirmar/cancelar/imprimir + imprimir-lote bulk).
   - **Entrada direta (2026-05-19):** flag `entrada_direta` em `/api/wms/receber` (tanto no modal individual quanto no lote em `/wms/receber`) pula o dock RECEBIMENTO e grava 1 mov direto na `localizacao_destino_id` de cada item — sem criar pendência. Exige loc destino em **todos** os itens (frontend bloqueia o confirm e mostra alerta em vermelho se faltar). Impressão de etiqueta segue funcionando: `/api/wms/guarda/imprimir-lote` ganhou um modo alternativo `{ linhas: [{produto_id, galpao_id, qty, localizacao_id?}] }` pra cobrir o caso sem pendência. Pra casos onde o operador já vai guardando direto na prateleira (pequenas entradas, lançamento retroativo, achados).
 - **WMS Mini-Swap Intra-Galpão** — **arquivado em 2026-05-20** com o ledger simplificado 3D. Empresa deixou de ser coordenada física, não há mais o que swappear/consolidar entre empresas no mesmo galpão. Código preservado em `src/lib/wms/_archive/mini-swap*.ts` pra referência histórica.
@@ -859,14 +871,12 @@ Failure to update documentation means the next developer or LLM will work with s
 
 - **Aprovar manual completa a reserva (2026-05-25, mesmo dia do cutover).** Quando webhook entrou com saldo=0 (sugestao=oc) mas o operador inseriu estoque depois e aprovou como propria/transferência, o `/api/wms/pedidos/aprovar` agora cria as reservas R correspondentes antes de transitar status. Frontend desabilita os botões propria/transferência se o estoque live não cobre todos os itens (`decisaoIsAvailable` em `pedido-card-wms.tsx`). Spec: `docs/superpowers/specs/2026-05-25-aprovar-cria-reserva-design.md`.
 
-- **WMS Fix P1 (Foundation Realtime + Insights Recovery) — implementado em 2026-05-26.** Restaura a camada de observação: 6 tabelas faltantes adicionadas à publication `supabase_realtime`; 4 RPCs insights re-escritas pra schema 3D; 4 cron jobs HTTP agendados (insights 5min, reservas 1h, inventário 30min, curva ABC diária). Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p1-foundation-realtime-insights.md`.
+- **WMS Fix P1 (Foundation Realtime + Insights Recovery) — implementado em 2026-05-26.** Restaura a camada de observação: (a) 6 tabelas faltantes adicionadas à publication `supabase_realtime` (`siso_pedidos`, `siso_pedido_itens`, `siso_wms_pendencias_guarda`, `siso_inventario_sessoes`, `siso_devolucoes_pendentes`, `siso_transferencias_galpao`) — restaura PR-3; (b) 4 RPCs insights reescritas para schema 3D — remove `siso_estoque.custo_medio` (→ JOIN `siso_custo_medio`), `siso_estoque.empresa_dona_id` (axis dropado), `siso_empresas.galpao_id` (→ `siso_pedidos.separacao_galpao_id`); `wms_insights_estoque_quadrante` mudou de 3-arg pra 2-arg (`p_empresa_dona_id` removido) — caller em `src/lib/wms/insights/queries.ts:125` atualizado no mesmo PR; (c) 4 cron jobs HTTP agendados (insights 5min, reservas 1h, inventário 30min, curva ABC diária 3am UTC). **Deviação documentada:** WORKER_SECRET armazenado em `supabase_vault` (name `worker_secret`) com expressão `(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'worker_secret' LIMIT 1)` nos cron commands — Supabase staging bloqueia `ALTER DATABASE/ROLE` pra GUCs custom, então a abordagem `current_setting('app.worker_secret')` do plano original não funciona. Mesmo valor configurado em Vercel env `WORKER_SECRET` (Production). Cron usa `net.http_get` (não POST) porque os 3 endpoints exportam apenas `GET`. Validação E2E: motor insights gerou 7 alertas ativos no primeiro tick. Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p1-foundation-realtime-insights.md`. Spec mãe: `docs/superpowers/specs/2026-05-26-auditoria-wms-fixes-design.md` §5. PR #4 merged.
 
 - **WMS Fix P3 (Reverse Paritária + Idempotência) — implementado em 2026-05-27.** 22 findings da auditoria WMS endereçados em 1 PR. **7 novos endpoints reverse** — `POST /api/wms/{inventario/[id]/estornar (admin), guarda/[id]/desfazer, devolucoes/[id]/desclassificar, replenishment/[origem_id]/reverter, ajuste/[mov_id]/estornar, vendas/[id]/cancelar, transferencias/[id]/desfazer-recebimento}`. **5 race fixes** — iniciarGuarda (UPDATE condicional → 409 PENDENCIA_OUTRA_GUARDA), contagens (exige lock da loc → 409 LOC_NAO_BLOQUEADA), confirmarGuarda (atômica via RPC), receberTransferencia (claim lock via nova coluna `recebimento_em_andamento_por`), marcar-item desmarcar (ordem S antes de L pra preservar invariante I2). **2 atomic RPCs** — `wms_replenishment_intra_galpao` e `wms_confirmar_guarda_atomico` (S+E+UPDATE numa transação). **1 UNIQUE constraint** — `uniq_movs_inventario_divergencia` em `siso_movimentacoes` (idempotência de `aplicarSessao`). **Outros fixes:** `aprovar`/`aprovar-sessao` aceita `force:true` pra OPERADORES_ATIVOS; PATCH inventário bloqueia troca de `modo_contagem` fora de planejada (409 MODO_LOCKED); DELETE inventário aplicada → 409; `vendas/criar` idempotency_key filtra cancelados; `reiniciar etapa=embalagem` reverte cutover do ledger (estado fantasma fix #2.10); `lancamento-retroativo/reconciliar` valida UUID + existência. **13 novos cenários** (40, 40b-d, 41, 41b, 42, 43, 44, 45, 45b, 46, 46b, 47, 48, 48b, 49, 49b) — suite cresce de 17 → 30+. Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p3-reverse-idempotencia.md`. PR pendente.
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)
-- Remove deprecated `/api/wms/compras/conferir` (replaced by comprar/receber flow)
-- Remove deprecated `/api/wms/compras/itens/[itemId]/trocar-fornecedor` (replaced by `compras-equivalencia.ts`)
 - `siso_pedido_item_estoques` — após o cutover só é escrita por inércia (uma linha por pedido×empresa-origem com loc do WMS). Próximo cleanup: descontinuar a tabela e migrar consumidores legados pra ler de `siso_estoque` + ledger.
 
 ### Recently Removed (2026-05-18 — commit `f8b7dbb`)

@@ -3225,3 +3225,194 @@
   color: var(--wms-c-fg);
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Seção Exceções (P5) ─────────────────────────────────────────────── */
+.wms-excecoes-secao {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--wms-c-border);
+}
+
+.wms-excecoes-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: 1px solid var(--wms-c-border-2);
+  border-radius: var(--wms-r-2);
+  color: var(--wms-c-fg);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.wms-excecoes-toggle:hover {
+  background: var(--wms-c-faint);
+}
+
+.wms-excecoes-toggle-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+.wms-excecoes-toggle-count {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border);
+  border-radius: 999px;
+  min-width: 24px;
+  text-align: center;
+}
+.wms-excecoes-toggle-count-warn {
+  background: var(--wms-c-warn-bg);
+  color: var(--wms-c-warn);
+  border-color: var(--wms-c-warn-bd);
+}
+
+.wms-excecoes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.wms-excecao-card {
+  display: block;
+  padding: 12px;
+  background: var(--wms-c-panel);
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-2);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.12s, transform 0.12s;
+}
+.wms-excecao-card:hover {
+  border-color: var(--wms-c-fg);
+  transform: translateY(-1px);
+}
+
+.wms-excecao-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.wms-excecao-card-titulo {
+  font-size: 12px;
+  font-weight: 600;
+  flex: 1;
+}
+.wms-excecao-card-count {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--wms-c-faint);
+  border-radius: 999px;
+  min-width: 28px;
+  text-align: center;
+}
+.wms-excecao-card-count-warn {
+  background: var(--wms-c-warn-bg);
+  color: var(--wms-c-warn);
+}
+.wms-excecao-card-count-alert {
+  background: var(--wms-c-danger-bg);
+  color: var(--wms-c-danger);
+}
+.wms-excecao-card-count-info {
+  background: var(--wms-c-info-bg);
+  color: var(--wms-c-info);
+}
+
+.wms-excecao-card-vazio {
+  font-size: 12px;
+  color: var(--wms-c-mute);
+  padding: 8px 0;
+}
+
+.wms-excecao-card-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wms-excecao-card-linha {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.wms-excecao-card-linha > :nth-child(2) {
+  flex: 1;
+}
+.wms-excecao-card-mais {
+  font-size: 11px;
+  color: var(--wms-c-mute);
+  padding-top: 4px;
+  border-top: 1px dashed var(--wms-c-border);
+}
+.wms-excecao-card-alerta {
+  font-size: 11px;
+  color: var(--wms-c-danger);
+  padding: 6px;
+  background: var(--wms-c-danger-bg);
+  border: 1px solid var(--wms-c-danger-bd);
+  border-radius: var(--wms-r-1);
+  margin-bottom: 4px;
+}
+
+.wms-excecao-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.wms-excecao-badge-ok {
+  background: var(--wms-c-faint);
+  color: var(--wms-c-mute);
+}
+.wms-excecao-badge-warn {
+  background: var(--wms-c-warn-bg);
+  color: var(--wms-c-warn);
+}
+.wms-excecao-badge-alert {
+  background: var(--wms-c-danger-bg);
+  color: var(--wms-c-danger);
+}
+.wms-excecao-badge-info {
+  background: var(--wms-c-info-bg);
+  color: var(--wms-c-info);
+}
+
+/* Skeleton placeholders pra SecaoExcecoesSkeleton */
+@keyframes wms-skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.wms-skeleton-line {
+  display: block;
+  height: 12px;
+  background: var(--wms-c-faint);
+  border-radius: var(--wms-r-1);
+  animation: wms-skeleton-pulse 1.4s ease-in-out infinite;
+}
+.wms-skeleton-line-40 { width: 40%; }
+.wms-skeleton-line-60 { width: 60%; }
+.wms-skeleton-line-80 { width: 80%; }
+.wms-excecao-card-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wms-excecoes-toggle-skeleton {
+  pointer-events: none;
+}
+
+/* Legenda secundária do CardTarefa (split aprovação) */
+.wms-card-tarefa-legenda-extra {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--wms-c-mute-2);
+  text-align: center;
+}

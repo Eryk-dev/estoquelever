@@ -10,19 +10,38 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
  * Subscreve às tabelas que afetam o quadro de tarefas da home /wms e
  * invalida o React Query a cada evento, forçando refetch.
  *
+ * Lista canônica de subscribes (8 channels):
+ *   1. `siso_pedidos`                 — pipeline aprovação / separação / embalagem
+ *   2. `siso_wms_pendencias_guarda`   — coluna Guarda do kanban
+ *   3. `siso_inventario_sessoes`      — ciclos de inventário em andamento
+ *   4. `siso_inventario_operadores`   — party (entradas/saídas) e progresso
+ *   5. `siso_pedido_itens`            — contadores de Compras (a_comprar / a_receber)
+ *   6. `siso_devolucoes_pendentes`    — fila de devoluções aguardando classificação
+ *   7. `siso_transferencias_galpao`   — transferências inter-galpão em trânsito
+ *   8. `siso_movimentacoes` (tipo=R)  — reservas pendentes (R/L) que afetam disponível
+ *
  * Quando `galpaoId` é null, subscreve sem filtros server-side (modo
  * "todos os galpões"). Quando muda, fecha os channels antigos e
  * reabre com novos filtros.
+ *
+ * To smoke-test: temporarily add `console.log("[dt-realtime] invalidate", new Date())`
+ * inside `invalidate` below, then trigger INSERT/UPDATE em cada uma das 8 tabelas via
+ * `mcp__supabase__execute_sql` e confirmar log fires in browser console.
  */
 export function useDashboardTarefasRealtime(galpaoId: string | null) {
   const queryClient = useQueryClient();
   const channelsRef = useRef<RealtimeChannel[]>([]);
 
   useEffect(() => {
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
     const invalidate = () => {
-      queryClient.invalidateQueries({
-        queryKey: ["wms-tarefas-pendentes", galpaoId],
-      });
+      if (pendingTimer) return;
+      pendingTimer = setTimeout(() => {
+        queryClient.invalidateQueries({
+          queryKey: ["wms-tarefas-pendentes", galpaoId],
+        });
+        pendingTimer = null;
+      }, 250);
     };
 
     const suffix = galpaoId ?? "all";
@@ -92,9 +111,60 @@ export function useDashboardTarefasRealtime(galpaoId: string | null) {
       )
       .subscribe();
 
-    channelsRef.current = [ch1, ch2, ch3, ch4, ch5];
+    const ch6 = supabase
+      .channel(`dt-devolucoes-${suffix}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "siso_devolucoes_pendentes",
+        },
+        invalidate,
+      )
+      .subscribe();
+
+    const ch7 = supabase
+      .channel(`dt-transf-galpao-${suffix}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "siso_transferencias_galpao",
+        },
+        invalidate,
+      )
+      .subscribe();
+
+    const ch8 = supabase
+      .channel(`dt-movs-r-${suffix}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "siso_movimentacoes",
+          filter: "tipo=eq.R",
+        },
+        invalidate,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "siso_movimentacoes",
+          filter: "tipo=eq.R",
+        },
+        invalidate,
+      )
+      .subscribe();
+
+    channelsRef.current = [ch1, ch2, ch3, ch4, ch5, ch6, ch7, ch8];
 
     return () => {
+      if (pendingTimer) clearTimeout(pendingTimer);
       for (const ch of channelsRef.current) {
         supabase.removeChannel(ch);
       }

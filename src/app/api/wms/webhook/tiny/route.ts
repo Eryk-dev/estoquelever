@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getEmpresaByCnpj } from "@/lib/empresa-lookup";
 import { processWebhook } from "@/lib/webhook-processor";
-import { handleNfWebhook, type NfWebhookPayload } from "@/lib/nf-webhook-handler";
+import { handleNfWebhook, isDevolucao, type NfWebhookPayload } from "@/lib/nf-webhook-handler";
 import { logger, generateCorrelationId } from "@/lib/logger";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
 import { wmsAsSource } from "@/lib/wms/flags";
@@ -81,12 +81,19 @@ export async function POST(request: NextRequest) {
     // física pelo operador. Best-effort, não afeta o fluxo principal.
     // Tiny payload básico não carrega tipo_operacao — quando carrega, a
     // condição abaixo dispara. Caso contrário fica no-op (graceful).
+    // PR-2 #6.12: centraliza detecção em isDevolucao pra cobrir todas as
+    // variantes (tipo_nota/tipoOperacao/finalidade) consistentemente.
     const dadosNf = nfPayload.dados as Record<string, unknown>;
-    const tipoOperacao = dadosNf.tipoOperacao ?? dadosNf.tipo_operacao;
-    const tipoNota = dadosNf.tipo_nota;
-    const isDevolucao =
-      tipoNota === "devolucao" || tipoOperacao === "E";
-    if (isDevolucao) {
+    const tipoOperacao = (dadosNf.tipoOperacao ?? dadosNf.tipo_operacao) as
+      | string
+      | undefined;
+    const tipoNota = dadosNf.tipo_nota as string | undefined;
+    const finalidade = (dadosNf.finalidade ?? dadosNf.finalidade_nf) as
+      | string
+      | undefined;
+    if (
+      isDevolucao({ tipo: tipoNota, tipoOperacao, finalidade })
+    ) {
       void (async () => {
         try {
           const { registrarDevolucaoPendente } = await import(

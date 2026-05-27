@@ -1667,3 +1667,195 @@ erros:
       - p4
       - wms-fix
       - cutover
+
+  # ─────────────────────────────────────────────────────────────────
+  # Fix-Final A — Cobertura ledger (2026-05-27)
+  # 8 itens P0 residuais da auditoria 2026-05-26 (resíduos pós-P1..P6).
+  # Plano: docs/superpowers/plans/2026-05-27-wms-fix-final-A.md
+  # Spec:  docs/superpowers/specs/2026-05-27-wms-fix-final-design.md
+  # ─────────────────────────────────────────────────────────────────
+
+  - id: wms-fix-final-a-2.15-gating-concluir-oc
+    date: "2026-05-27"
+    source: src/app/api/wms/separacao/concluir-oc/route.ts
+    category: business_logic
+    message: "dupla baixa OC — worker legado + cutover ledger geram 2 saídas pro mesmo pedido"
+    cause: >
+      O gating original (!wmsAsSource() em volta do enqueue lancar_estoque) foi
+      revertido em c349ead porque achava-se que quebrava NF. Sem o gate, em
+      WMS_AS_SOURCE rodavam: (a) worker legado escrevendo em
+      siso_pedido_item_estoques (deprecated), (b) dispararCutoverSePronto
+      escrevendo no ledger 3D. Resultado: saldo decrementado 2x.
+    fix: >
+      Re-aplica !wmsAsSource() gate em volta do enqueue lancar_estoque. A
+      preocupação com NF não procede: dispararCutoverSePronto retorna
+      motivo='sem_nf' quando a NF ainda não chegou; nf-webhook-handler chama
+      o helper de novo quando NF aparece, completando o cutover sem buracos.
+    files:
+      - src/app/api/wms/separacao/concluir-oc/route.ts
+    tags: [wms, concluir-oc, dupla-baixa, cutover, nf, fix-final-a]
+
+  - id: wms-fix-final-a-2.6-desfazer-encontrei
+    date: "2026-05-27"
+    source: src/app/api/wms/separacao/validar-oc-item/route.ts
+    category: business_logic
+    message: "desfazer_encontrei deixa saldo decrementado — não estorna mov S"
+    cause: >
+      O fix #2.6 fez "encontrei" emitir mov S nf_venda e persistir
+      mov_saida_id no item. Mas o branch desfazer_encontrei só restaurava
+      compra_status='oc_pendente' sem reverter a mov S — saldo ficava
+      permanentemente decrementado. Mitigação anterior: o cancelar/
+      desfazer-parcial estornava via mov_saida_id se o pedido fosse
+      cancelado depois. Sem cancelamento, residual ficava no ledger.
+    fix: >
+      Branch desfazer_encontrei agora chama estornarMovimentacao(mov_saida_id)
+      ANTES de limpar campos, e reseta mov_saida_id/quantidade_pega/
+      separacao_parcial/parcial_motivo no UPDATE. Se mov_saida_id=null (modo
+      legacy ou WMS_AS_SOURCE off no momento do encontrei), apenas limpa
+      campos (estorno não-aplicável).
+    files:
+      - src/app/api/wms/separacao/validar-oc-item/route.ts
+    tags: [wms, separacao, validar-oc-item, desfazer-encontrei, estorno, fix-final-a]
+
+  - id: wms-fix-final-a-2.7-localizacao-com-reservas
+    date: "2026-05-27"
+    source: src/app/api/wms/separacao/localizacao/route.ts
+    category: business_logic
+    message: "transferencia_localizacao falha quando reservado>0 (validarCoerencia)"
+    cause: >
+      POST /api/wms/separacao/localizacao tenta mover saldo de uma loc origem
+      via mov S+E. Quando a loc origem tem Rs ativas (reservado>0), a S
+      decrementa saldo pra 0 mas reservado fica > 0 → validarCoerencia
+      rejeita (reservado_posterior > saldo_posterior). Catch silencioso
+      absorvia + logava warn; movimento perdia transferência (TODO #2.7-followup).
+    fix: >
+      Refator do handler em 4 etapas: (1) filtra Rs ativas não-estornadas
+      e não-expiradas na loc origem; (2) estorna via estornarReservaIndividual
+      (motivo='localizacao_move') preservando TTL e pedido_id; (3) faz par
+      S+E como antes; (4) reemite Rs no destino via reservarAtomico com
+      TTL recalculado. EstornarReservaInput ganhou motivo 'localizacao_move'.
+    files:
+      - src/app/api/wms/separacao/localizacao/route.ts
+      - src/lib/wms/reservas.ts
+    tags: [wms, separacao, localizacao, reservas, transferencia_localizacao, fix-final-a]
+
+  - id: wms-fix-final-a-a4-marcar-item-transferencia
+    date: "2026-05-27"
+    source: scripts/wms/cenarios/catalogo/02-pedido-transferencia.ts
+    category: business_logic
+    message: "patch SQL workaround nos cenários 02/03 — marcar-item resolvia loc errada em transferência"
+    cause: >
+      No fluxo transferência, pedido nasce em NetAir (empresa origem) mas é
+      separado em SP (separacao_galpao_id=SP). marcar-item filtrava
+      siso_pedido_item_estoques por empresa_id=NetAir, que tinha
+      localizacao=null (saldo zero em CWB no momento do webhook). Fallback
+      antigo caía em DEFAULT-PICKING e falhava (DEFAULT-PICKING não existia
+      em SP). Cenários 02/03 patchavam manualmente a linha do snapshot.
+    fix: >
+      Hoje DEFAULT-PICKING existe em CWB+SP (seed P6). Fallback
+      buscarLocComMaiorSaldoNoGalpao(separacao_galpao_id, produtoWmsId)
+      encontra a loc real. Helper resolveSeparacaoGalpao (T4) formaliza
+      o contrato pra uso futuro. Patches SQL removidos dos cenários 02/03 —
+      vão re-rodar em T31 sem o workaround.
+    files:
+      - scripts/wms/cenarios/catalogo/02-pedido-transferencia.ts
+      - scripts/wms/cenarios/catalogo/03-pedido-oc-completo.ts
+      - src/lib/separacao/wms-mapping.ts
+    tags: [wms, separacao, transferencia, marcar-item, default-picking, fix-final-a]
+
+  - id: wms-fix-final-a-a5-endpoint-estornar
+    date: "2026-05-27"
+    source: src/app/api/wms/pedidos/[id]/estornar/route.ts
+    category: business_logic
+    message: "Banner D10 'Estornar agora' não tinha endpoint — admin não conseguia estornar pedido"
+    cause: >
+      A UI já mostrava Banner D10 com botão 'Estornar agora' pra admin,
+      mas o onClick chamava toast.error('não implementado'). Não havia
+      endpoint pra estornar todas as movs (S+R) de um pedido em massa.
+    fix: >
+      Cria POST /api/wms/pedidos/[id]/estornar (admin-only via perm
+      pedidos.estornar). Lista todas movs S/R ativas do pedido, estorna
+      cada uma (estornarMovimentacao pra S, estornarReservaIndividual
+      pra R), marca status_separacao='cancelado', registra evento
+      estorno_manual_admin. Botão D10 chama mutation real.
+    files:
+      - src/app/api/wms/pedidos/[id]/estornar/route.ts
+      - src/app/wms/pedidos/[id]/page.tsx
+      - src/lib/permissions.ts
+    tags: [wms, pedidos, estornar, banner-d10, admin, fix-final-a]
+
+  - id: wms-fix-final-a-a6-endpoint-liberar-reservas
+    date: "2026-05-27"
+    source: src/app/api/wms/pedidos/[id]/liberar-reservas/route.ts
+    category: business_logic
+    message: "D2 override (liberar reservas) não tinha endpoint nem botão UI"
+    cause: >
+      TODO em pedidos/[id]/page.tsx:1066 marcava que D2 override (liberar
+      todas as Rs do pedido sem cancelar o pedido) dependia do Plano 3.
+      Sem isso, estoque preso em estado fantasma não tinha caminho admin
+      pra ser destravado — operador precisava cancelar o pedido inteiro
+      pra liberar Rs.
+    fix: >
+      Cria POST /api/wms/pedidos/[id]/liberar-reservas (admin-only via
+      perm pedidos.liberar_reservas). Lista todas Rs ativas do pedido
+      e estorna cada uma via estornarReservaIndividual sem tocar em movs
+      S nem mudar status do pedido. Best-effort: erro em 1 R não bloqueia
+      as demais. TabAdmin ganha row 'Liberar reservas (D2 override)'.
+    files:
+      - src/app/api/wms/pedidos/[id]/liberar-reservas/route.ts
+      - src/app/wms/pedidos/[id]/page.tsx
+      - src/lib/permissions.ts
+    tags: [wms, pedidos, liberar-reservas, d2-override, admin, fix-final-a]
+
+  - id: wms-fix-final-a-r5-siso-notas-fiscais
+    date: "2026-05-27"
+    source: supabase/migrations/20260527_siso_notas_fiscais.sql
+    category: database
+    message: "movs com origem NF tinham nota_fiscal_id NULL — rastreio fiscal quebrado"
+    cause: >
+      Não havia tabela canônica de NF. siso_movimentacoes.nota_fiscal_id
+      era uuid nullable sem FK destino — devoluções, vendas e compras
+      gravavam bigint Tiny via origem_detalhes (text) e deixavam o uuid
+      NULL. Resultado: rastreio NF↔mov frágil; reconciliação fiscal
+      manual; impossível seguir uma cadeia de devolução de volta à
+      venda original.
+    fix: >
+      Cria siso_notas_fiscais (uuid PK, chave_acesso UNIQUE, tipo
+      entrada/saida, raw_tiny JSONB). FK siso_movimentacoes.nota_fiscal_id
+      → siso_notas_fiscais(id) ON DELETE SET NULL. Helper upsertNotaFiscal
+      (nf-webhook-handler.ts) dedupa por chave_acesso ou tiny_id antes
+      de inserir. classificarDevolucao (entrada) + executarEstoquePosNfWms
+      (saída) populam nota_fiscal_id em todas as novas movs.
+      inserirMovimentacao agora exige nota_fiscal_id quando origem_tipo é
+      NF — vigia regressão. Backfill script criado (scripts/wms/
+      backfill-notas-fiscais.ts) pra movs históricas com chave em
+      origem_detalhes.
+    files:
+      - supabase/migrations/20260527_siso_notas_fiscais.sql
+      - src/lib/nf-webhook-handler.ts
+      - src/lib/wms/devolucoes.ts
+      - src/lib/execution-worker-wms.ts
+      - src/lib/wms/ledger.ts
+      - scripts/wms/backfill-notas-fiscais.ts
+    tags: [wms, ledger, nf, siso_notas_fiscais, fk, backfill, fix-final-a, r5]
+
+  - id: wms-fix-final-a-a8-backfill-r1
+    date: "2026-05-27"
+    source: scripts/wms/backfill-compras-recebidas.ts
+    category: database
+    message: "OCs recebidas pre-P2 sem mov nf_compra — buraco no ledger"
+    cause: >
+      Antes do P2, /api/wms/compras/receber atualizava só
+      siso_pedido_itens.compra_quantidade_recebida sem gravar no ledger.
+      Pós-P2, novas chamadas gravam mov E nf_compra, mas OCs já recebidas
+      antes ficaram com saldo físico ≠ siso_estoque.
+    fix: >
+      Script scripts/wms/backfill-compras-recebidas.ts (commit b12a4ef)
+      cria movs E retroativas pra items com compra_quantidade_recebida>0
+      sem mov nf_compra correspondente. Idempotente (skip se mov já existe).
+      Executado em staging: 0 candidatas (truncado). Em prod roda
+      pós-promoção quando houver volume histórico.
+    files:
+      - scripts/wms/backfill-compras-recebidas.ts
+      - docs/superpowers/backfill-r1-2026-05-27-staging.md
+    tags: [wms, backfill, compras, receber, r1, fix-final-a]

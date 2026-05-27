@@ -1881,3 +1881,30 @@ erros:
       route.ts e a entrada em docs/api-reference-complete.md.
     files: []
     tags: [wms, transferir-galpao, orphan, fix-final-b, t2, cenarios, harness, defer]
+
+  - id: wms-fix-final-b-t3-vendas-disponibilidade-already-clean
+    date: "2026-05-27"
+    source: wms.vendas.disponibilidade
+    category: business_logic
+    message: "Audit apontou hardcoded CWB/SP em vendas-disponibilidade — já estava 3D-clean"
+    cause: >
+      Fix-Final-B T3 (B2) planejou refatorar hardcoded 'CWB'/'SP' em
+      src/lib/wms/vendas-disponibilidade.ts e src/app/api/wms/vendas/.
+      O commit ec7a9cf (refactor(wms/vendas-disponibilidade): 3D, ordem por tipo loc + saldo)
+      já tinha removido empresa_origem_id e tornado o arquivo 100% 3D antes do plano
+      Fix-Final-B ser escrito. Audit docs/audit-workflows/ era stale — analisou código
+      anterior ao refactor.
+    fix: >
+      Nenhuma ação necessária. Verificação independente confirmou:
+      1. src/lib/wms/vendas-disponibilidade.ts (100 linhas) — puramente 3D. Usa apenas
+         produto_id + galpao_id como dimensões. Sem qualquer referência a 'CWB', 'SP',
+         empresa_dona, filial ou nome de galpão.
+      2. src/app/api/wms/vendas/ — zero matches para 'CWB'|'SP' literais.
+         Únicos usos de nome de galpão são: (a) galpaoNome em criar/route.ts linha 245
+         é captura de valor dinâmico do DB para filial_origem (campo legacy), (b) regex
+         /^cwb\b/i e /^sp\b/i nas linhas 380-381 populam colunas deprecated cwb_atende
+         e sp_atende em siso_pedido_itens com comentário explicit de "Legacy compat" —
+         não é lógica de roteamento, é escrita de colunas legacy. Fora do escopo B2.
+    files: []
+    commit: ec7a9cf
+    tags: [wms, vendas, disponibilidade, 3d, hardcoded, cwb, sp, fix-final-b, t3, no-op, already-clean]

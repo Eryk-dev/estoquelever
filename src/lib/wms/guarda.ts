@@ -14,9 +14,7 @@
 // guarda só 3, a pendência fica com qty_pendente=2 (status volta pra pendente)
 // e a próxima operação zera o restante.
 
-import { randomUUID } from "crypto";
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao } from "./ledger";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "wms.guarda";
@@ -538,123 +536,40 @@ export async function desfazerGuarda(input: {
   usuario_id: string;
   motivo: string;
 }): Promise<{ pendencia: PendenciaJoined; movsEstornadas: number }> {
-  if (!input.motivo || input.motivo.trim().length < 3) {
-    throw new Error("motivo do undo é obrigatório (≥3 caracteres)");
-  }
   const sb = createServiceClient();
-  const pend = await obterPendencia(input.pendencia_id);
-  if (!pend) throw new Error("pendência não encontrada");
-  if (pend.status === "cancelada") {
-    throw new Error("pendência cancelada — undo de guarda não se aplica");
-  }
-  if (Number(pend.qty_guardada) === 0) {
-    throw new Error("pendência sem guardas confirmadas — nada a desfazer");
-  }
 
-  const qtyAlvo = Number(input.qty ?? pend.qty_guardada);
-  if (qtyAlvo <= 0) {
-    throw new Error("qty deve ser > 0");
-  }
-  if (qtyAlvo > Number(pend.qty_guardada)) {
-    throw new Error(
-      `qty (${qtyAlvo}) excede qty_guardada (${pend.qty_guardada})`,
-    );
+  // Fix-Final C T17 (Concern A Fix-B audit): delega pro RPC atômico
+  // wms_desfazer_guarda_atomico, que faz FOR UPDATE no row da pendência
+  // antes de qualquer leitura/decisão — fechando a race onde 2 calls
+  // concorrentes leem o mesmo qty_guardada e ambas decrementam.
+  // Validações (motivo, status, qty bounds) ficam dentro do RPC.
+  const { data, error } = await sb.rpc("wms_desfazer_guarda_atomico", {
+    p_pendencia_id: input.pendencia_id,
+    p_qty: input.qty ?? null,
+    p_motivo: input.motivo,
+    p_usuario_id: input.usuario_id,
+  });
+
+  if (error) {
+    throw new Error(error.message);
   }
 
-  // Busca as movs E (entrada na loc destino) das confirmações anteriores.
-  // Cada confirmação gera um par S+E com o mesmo origem_id:
-  //   S: loc RECEBIMENTO (localizacao_origem_id) — estoque saiu daqui
-  //   E: loc destino — estoque entrou aqui
-  // Para desfazer, precisamos das E pra saber em que loc(s) o estoque está.
-  // Filtra por origem_tipo='transferencia_localizacao' + produto + galpão,
-  // excluindo a própria loc RECEBIMENTO (só locs destino), janela temporal
-  // a partir da criação da pendência.
-  const { data: movsE } = await sb
-    .from("siso_movimentacoes")
-    .select("id, origem_id, criado_em, quantidade, localizacao_id")
-    .eq("origem_tipo", "transferencia_localizacao")
-    .eq("produto_id", pend.produto_id)
-    .eq("galpao_id", pend.galpao_id)
-    .neq("localizacao_id", pend.localizacao_origem_id)
-    .eq("tipo", "E")
-    .is("estorno_de", null)
-    .gte("criado_em", pend.iniciada_em ?? pend.criada_em ?? "1970-01-01")
-    .order("criado_em", { ascending: false });
-
-  const candidatos = (movsE ?? []) as Array<{
-    id: string;
-    origem_id: string;
-    quantidade: number;
-    localizacao_id: string;
-  }>;
-
-  // Para cada confirmação, emite um par S+E forward-direction pela qty necessária.
-  // qty por par = min(qty da mov original, qty restante a desfazer).
-  // Par partilha novo origem_id (randomUUID) — não reutiliza o original.
-  let movsEstornadas = 0; // campo mantido por compat; conta movs criadas (2 por par)
-  let qtyDesfeita = 0;
-
-  for (const m of candidatos) {
-    if (qtyDesfeita >= qtyAlvo) break;
-    const qtyPar = Math.min(Number(m.quantidade), qtyAlvo - qtyDesfeita);
-    const novoOrigemId = randomUUID();
-    const motivo = `Desfaz guarda pendência ${input.pendencia_id}: ${input.motivo}`;
-
-    // S: remove da loc destino (onde o estoque está agora)
-    await inserirMovimentacao({
-      tripla: {
-        produto_id: pend.produto_id,
-        galpao_id: pend.galpao_id,
-        localizacao_id: m.localizacao_id,
-      },
-      tipo: "S",
-      qty: qtyPar,
-      origem_tipo: "transferencia_localizacao",
-      origem_id: novoOrigemId,
-      motivo,
-      usuario_id: input.usuario_id,
-    });
-
-    // E: devolve para RECEBIMENTO (localizacao_origem_id)
-    await inserirMovimentacao({
-      tripla: {
-        produto_id: pend.produto_id,
-        galpao_id: pend.galpao_id,
-        localizacao_id: pend.localizacao_origem_id,
-      },
-      tipo: "E",
-      qty: qtyPar,
-      origem_tipo: "transferencia_localizacao",
-      origem_id: novoOrigemId,
-      motivo,
-      usuario_id: input.usuario_id,
-    });
-
-    movsEstornadas += 2;
-    qtyDesfeita += qtyPar;
-  }
-
-  // Atualiza pendência: decrementa qty_guardada, ajusta status.
-  const novaQtyGuardada = Math.max(0, Number(pend.qty_guardada) - qtyDesfeita);
-  const novoStatus = novaQtyGuardada > 0 ? "em_guarda" : "pendente";
-  await sb
-    .from("siso_wms_pendencias_guarda")
-    .update({
-      qty_guardada: novaQtyGuardada,
-      status: novoStatus,
-      guardada_em:
-        novaQtyGuardada >= Number(pend.qty_inicial) ? pend.guardada_em : null,
-    })
-    .eq("id", input.pendencia_id);
+  const result = data as {
+    pendencia_id: string;
+    qty_desfeita: number;
+    movs_estornadas: number;
+    nova_qty_guardada: number;
+    novo_status: StatusPendencia;
+  };
 
   logger.info(LOG_SOURCE, "guarda desfeita", {
     pendenciaId: input.pendencia_id,
-    qtyDesfeita: String(qtyDesfeita),
-    movsEstornadas: String(movsEstornadas),
-    novoStatus,
+    qtyDesfeita: String(result.qty_desfeita),
+    movsEstornadas: String(result.movs_estornadas),
+    novoStatus: result.novo_status,
   });
 
   const refresh = await obterPendencia(input.pendencia_id);
   if (!refresh) throw new Error("pendência sumiu após desfazer");
-  return { pendencia: refresh, movsEstornadas };
+  return { pendencia: refresh, movsEstornadas: result.movs_estornadas };
 }

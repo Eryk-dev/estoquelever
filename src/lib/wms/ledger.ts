@@ -99,6 +99,9 @@ interface InserirMovInput {
     | "outro";
   usuario_id?: string;
   estorno_de?: string;
+  /** FK pra siso_devolucoes_pendentes — populado por classificarDevolucao pra
+   *  lookup determinístico em desclassificarDevolucao (elimina window temporal). */
+  devolucao_id?: string | null;
 }
 
 /**
@@ -132,6 +135,7 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
   // pedido_id intencionalmente NÃO validado — text por design.
   assertUuidLike(input.nota_fiscal_id, "nota_fiscal_id");
   assertUuidLike(input.usuario_id, "usuario_id");
+  assertUuidLike(input.devolucao_id, "devolucao_id");
 
   // Fix-Final A T8 (R5) — RELAXADO em 2026-05-27 pós-suite-falha (Fix-A hotfix):
   // a versão original throw fazia /receber, /parcial e callers legacy retornar
@@ -213,6 +217,16 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
     });
     throw errMov ?? new Error("mov recém-criada não encontrada");
   }
+
+  // Popula devolucao_id via UPDATE-after-insert (não modifica a RPC).
+  // Lookup determinístico em desclassificarDevolucao usa este FK.
+  if (input.devolucao_id && (mov as { id: string }).id) {
+    await sb
+      .from("siso_movimentacoes")
+      .update({ devolucao_id: input.devolucao_id })
+      .eq("id", (mov as { id: string }).id);
+  }
+
   return mov as unknown as Movimentacao;
 }
 

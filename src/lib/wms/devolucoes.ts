@@ -202,6 +202,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
         motivo: input.observacoes,
+        devolucao_id: input.devolucao_id,
       });
       break;
     }
@@ -219,6 +220,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
         motivo: input.observacoes,
+        devolucao_id: input.devolucao_id,
       });
       const { data: quarentena } = await sb
         .from("siso_localizacoes")
@@ -241,6 +243,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           origem_id: origemCompartilhado,
           usuario_id: input.usuario_id,
           motivo: `avaria → quarentena: ${input.observacoes ?? ""}`,
+          devolucao_id: input.devolucao_id,
         });
         await inserirMovimentacao({
           tripla: { ...tripla, localizacao_id: locDestinoQuarentena },
@@ -249,6 +252,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           origem_tipo: "transferencia_localizacao",
           origem_id: origemCompartilhado,
           usuario_id: input.usuario_id,
+          devolucao_id: input.devolucao_id,
         });
       } else {
         // Sem quarentena no galpão — ajuste manual pra remover saldo
@@ -261,6 +265,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
           origem_id: origemCompartilhado,
           origem_detalhes: { motivo: "avaria_devolucao_sem_quarentena" },
           usuario_id: input.usuario_id,
+          devolucao_id: input.devolucao_id,
         });
       }
       break;
@@ -282,6 +287,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         empresa_referencia_id: empresaReferenciaId,
         custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
+        devolucao_id: input.devolucao_id,
       });
       await inserirMovimentacao({
         tripla,
@@ -292,6 +298,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         fornecedor_id: input.fornecedor_id,
         usuario_id: input.usuario_id,
         motivo: `garantia: ${input.observacoes ?? ""}`,
+        devolucao_id: input.devolucao_id,
       });
       break;
     }
@@ -310,6 +317,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
         motivo: `troca SKU: ${input.observacoes ?? ""}`,
+        devolucao_id: input.devolucao_id,
       });
       break;
   }
@@ -389,21 +397,18 @@ interface DevolucaoPendenteRow {
 }
 
 /**
- * P3 #6.3: reverte uma devolução classificada — estorna todas as movs
- * geradas e volta status='aguardando_classificacao'.
+ * P3 #6.3 (fix-final-B T11): reverte uma devolução classificada — estorna
+ * todas as movs geradas e volta status='aguardando_classificacao'.
  *
- * Como `classificarDevolucao` não usa origem_id compartilhada hoje
- * (apenas origem_tipo+nota_fiscal_id+empresa_referencia_id), buscamos as
- * movs do par "classe X" pela combinação:
- *   - origem_tipo IN (devolucao_cliente_integra|avariada,
- *                     transferencia_localizacao, devolucao_fornecedor_enviada,
- *                     ajuste_manual)
- *   - nota_fiscal_id = devolucao.nota_fiscal_id (quando aplicável)
- *   - produto_id     = devolucao.produto_id (quando coluna existir)
- *   - criado_em entre devolucao.classificada_em-1min e classificada_em+1min
+ * Lookup determinístico via FK `siso_movimentacoes.devolucao_id`:
+ * `classificarDevolucao` popula essa coluna em cada `inserirMovimentacao`
+ * desde fix-final-B T11. Busca direta por `devolucao_id = input.devolucao_id`
+ * substitui o match por janela temporal (±1min) anterior.
  *
- * TODO P6: adicionar coluna `devolucao_id text` em `siso_movimentacoes` pra
- * lookup determinístico, eliminando o match por janela temporal.
+ * Nota: devoluções classificadas antes deste commit não terão `devolucao_id`
+ * nas movs (coluna era NULL), portanto `desclassificar` retornará 0 movs
+ * estornadas nesses casos históricos. Esses registros já estão resolvidos
+ * operacionalmente — sem impacto.
  */
 export async function desclassificarDevolucao(input: {
   devolucao_id: string;
@@ -426,11 +431,6 @@ export async function desclassificarDevolucao(input: {
     classificacao: string | null;
     classificada_em: string | null;
     classificada_por: string | null;
-    nota_fiscal_id: number | null;
-    /** Em 3D não há coluna produto_id direta; viaja em payload_webhook. */
-    produto_id?: string | null;
-    qty?: number | null;
-    payload_webhook: Record<string, unknown> | null;
   };
   if (d.status !== "classificada") {
     throw new Error(
@@ -441,42 +441,16 @@ export async function desclassificarDevolucao(input: {
     throw new Error("devolução sem timestamp classificada_em — auditoria quebrada");
   }
 
-  // Produto e galpão vêm da coluna direta (legado) ou de payload_webhook
-  // (caminho atual em 3D — mais robusto pra desambiguar a janela temporal).
-  const payload = d.payload_webhook ?? {};
-  const produtoIdFromPayload =
-    (payload as { produto_id?: string }).produto_id ?? null;
-  const produtoId = d.produto_id ?? produtoIdFromPayload;
-
-  // Janela: classificada_em ± 1min (geração das movs é síncrona dentro
-  // de classificarDevolucao; 1min é folgado).
-  const t0 = new Date(d.classificada_em);
-  const tEarly = new Date(t0.getTime() - 60_000).toISOString();
-  const tLate = new Date(t0.getTime() + 60_000).toISOString();
-
-  const origensRelevantes = [
-    "devolucao_cliente_integra",
-    "devolucao_cliente_avariada",
-    "devolucao_fornecedor_enviada",
-    "transferencia_localizacao",
-    "ajuste_manual",
-  ];
-
-  let movsEstornadas = 0;
-  let query = sb
+  // Lookup determinístico via FK devolucao_id (fix-final-B T11).
+  // Busca apenas movs originais (estorno_de IS NULL) pra não tentar
+  // estornar estornos já existentes.
+  const { data: movs } = await sb
     .from("siso_movimentacoes")
     .select("id")
-    .in("origem_tipo", origensRelevantes)
-    .gte("criado_em", tEarly)
-    .lte("criado_em", tLate);
-  if (d.nota_fiscal_id) {
-    // nota_fiscal_id em movs é text (string do número); cast.
-    query = query.eq("nota_fiscal_id", String(d.nota_fiscal_id));
-  }
-  if (produtoId) {
-    query = query.eq("produto_id", produtoId);
-  }
-  const { data: movs } = await query;
+    .eq("devolucao_id", input.devolucao_id)
+    .is("estorno_de", null);
+
+  let movsEstornadas = 0;
   for (const m of (movs ?? []) as Array<{ id: string }>) {
     try {
       await estornarMovimentacao({

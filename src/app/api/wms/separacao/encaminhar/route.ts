@@ -6,6 +6,8 @@ import { runWithEmpresa } from "@/lib/tiny-queue";
 import { estornarEstoque, movimentarEstoque } from "@/lib/tiny-api";
 import { registrarEvento } from "@/lib/historico-service";
 import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
+import { liberarReserva } from "@/lib/wms/reservas";
+import { wmsAsSource } from "@/lib/wms/flags";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "encaminhar";
@@ -310,8 +312,28 @@ async function reverseStockExecution(
   supabase: ReturnType<typeof createServiceClient>,
   pedido: PedidoForReversal,
 ): Promise<void> {
+  // PR-1: libera R do pedido no WMS antes de qualquer reversa Tiny.
+  // Sem isso, R fica zumbi e re-aprovação no destino falha por reservado>saldo.
+  // Roda independente de `estoque_lancado` — a R é criada no aprovar/webhook,
+  // antes de o estoque legado ser baixado.
+  if (wmsAsSource()) {
+    try {
+      const liberadas = await liberarReserva({
+        pedido_id: String(pedido.id),
+        motivo: "cancelamento",
+      });
+      logger.info(LOG_SOURCE, `Rs liberadas no encaminhar: ${liberadas}`, {
+        pedidoId: pedido.id,
+      });
+    } catch (e) {
+      logger.warn(LOG_SOURCE, "falha liberando Rs (segue com reverse)", {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   if (!pedido.estoque_lancado) {
-    // No stock was posted — nothing to reverse
+    // No stock was posted — nothing more to reverse (Rs já liberadas acima)
     return;
   }
 

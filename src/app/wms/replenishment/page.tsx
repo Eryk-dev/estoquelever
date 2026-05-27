@@ -91,7 +91,7 @@ export default function RealocarPage() {
     <>
       <PageHeader
         title="Realocar intra-galpão"
-        subtitle="Mover entre localizações no mesmo galpão (overstock → picking)"
+        subtitle="Página de consulta — histórico de movimentações entre localizações no mesmo galpão (overstock → picking). Use o botão abaixo (ou Atalhos no shell) pra criar uma realocação."
       >
         {can("operacoes.replenishment") && (
           <button
@@ -108,7 +108,8 @@ export default function RealocarPage() {
         <div className="wms-exp-empty" style={{ padding: 24, textAlign: "center" }}>
           Nenhuma sugestão automática no momento. Quando a heurística de
           picking/overstock estiver populada, sugestões aparecem aqui prontas
-          pra executar.
+          pra executar. Pra criar uma realocação manual agora, use o botão
+          “Nova realocação” no topo da página.
         </div>
       </Card>
 

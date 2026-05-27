@@ -63,6 +63,10 @@ export function QuadroTarefas() {
           ? `/api/wms/dashboard-tarefas?galpao_id=${activeGalpaoId}`
           : `/api/wms/dashboard-tarefas`,
       ),
+    // staleTime=0 + refetchInterval 30s: realtime hook invalida sob demanda;
+    // o intervalo é apenas safety net caso a publication falhe (P5 §6).
+    staleTime: 0,
+    refetchInterval: 30_000,
   });
 
   useDashboardTarefasRealtime(activeGalpaoId ?? null);

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  agruparDevolucoesPendentes,
   agruparFornecedoresCompras,
   dedupNonNullIds,
   hidratarExecutores,
@@ -94,5 +95,51 @@ describe("agruparFornecedoresCompras", () => {
     // Cenário não-real (não há entrada que zere), mas garante o filter
     const out = agruparFornecedoresCompras([], []);
     expect(out).toEqual([]);
+  });
+});
+
+describe("agruparDevolucoesPendentes", () => {
+  const linhas = [
+    {
+      id: "d1",
+      nota_fiscal_id: 100,
+      criado_em: "2026-05-26T10:00:00Z",
+      empresa_referencia: { nome: "NetAir" },
+    },
+    {
+      id: "d2",
+      nota_fiscal_id: null,
+      criado_em: "2026-05-26T11:00:00Z",
+      empresa_referencia: null,
+    },
+  ];
+
+  it("mapeia linhas pra cards", () => {
+    const r = agruparDevolucoesPendentes(linhas);
+    expect(r.count).toBe(2);
+    expect(r.itens).toHaveLength(2);
+    expect(r.itens[0]).toEqual({
+      id: "d1",
+      nota_fiscal_id: 100,
+      empresa_referencia_nome: "NetAir",
+      criada_em: "2026-05-26T10:00:00Z",
+    });
+    expect(r.itens[1].empresa_referencia_nome).toBeNull();
+  });
+
+  it("retorna count=0 e itens=[] quando vazio", () => {
+    expect(agruparDevolucoesPendentes([])).toEqual({ count: 0, itens: [] });
+  });
+
+  it("trata empresa_referencia como array (relação 1 sem !inner)", () => {
+    const r = agruparDevolucoesPendentes([
+      {
+        id: "d3",
+        nota_fiscal_id: null,
+        criado_em: "2026-05-26T12:00:00Z",
+        empresa_referencia: [{ nome: "NetParts" }],
+      },
+    ]);
+    expect(r.itens[0].empresa_referencia_nome).toBe("NetParts");
   });
 });

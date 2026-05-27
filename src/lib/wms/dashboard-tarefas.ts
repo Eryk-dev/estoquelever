@@ -211,6 +211,35 @@ export function agruparFornecedoresCompras(
     );
 }
 
+type DevolucaoLinha = {
+  id: string;
+  nota_fiscal_id: number | null;
+  criado_em: string;
+  empresa_referencia: { nome: string } | Array<{ nome: string }> | null;
+};
+
+/**
+ * Mapeia linhas de `siso_devolucoes_pendentes` (com join opcional em
+ * `siso_empresas` por `empresa_id`) pra cards prontos pro frontend.
+ * Função pura — sem side effects.
+ */
+export function agruparDevolucoesPendentes(
+  linhas: DevolucaoLinha[],
+): { count: number; itens: DevolucaoPendenteCard[] } {
+  const itens: DevolucaoPendenteCard[] = linhas.map((l) => {
+    const empresa = Array.isArray(l.empresa_referencia)
+      ? l.empresa_referencia[0] ?? null
+      : l.empresa_referencia;
+    return {
+      id: l.id,
+      nota_fiscal_id: l.nota_fiscal_id,
+      empresa_referencia_nome: empresa?.nome ?? null,
+      criada_em: l.criado_em,
+    };
+  });
+  return { count: itens.length, itens };
+}
+
 /**
  * Monta o payload do quadro de tarefas pendentes da home /wms.
  *

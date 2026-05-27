@@ -31,12 +31,14 @@ export const PERMISSIONS = {
   "cobertura.ver":        { modulo: "visibilidade",  label: "Ver Cobertura" },
 
   // ── Operações ──
-  "operacoes.transferir":     { modulo: "operacoes", label: "Transferir entre galpões" },
-  "operacoes.replenishment":  { modulo: "operacoes", label: "Realocar intra-galpão" },
-  "operacoes.devolucoes":     { modulo: "operacoes", label: "Classificar devoluções" },
-  "operacoes.receber":        { modulo: "operacoes", label: "Receber NF (dock)" },
-  "operacoes.guarda":         { modulo: "operacoes", label: "Put-away" },
-  "operacoes.ajuste_manual":  { modulo: "operacoes", label: "Ajuste manual de saldo" },
+  "operacoes.transferir":           { modulo: "operacoes", label: "Transferir entre galpões" },
+  "operacoes.replenishment":        { modulo: "operacoes", label: "Realocar intra-galpão" },
+  "operacoes.devolucoes":           { modulo: "operacoes", label: "Ver devoluções (read)" },
+  "operacoes.devolucoes_classificar": { modulo: "operacoes", label: "Classificar devolução (escrita)" },
+  "operacoes.receber":              { modulo: "operacoes", label: "Receber NF (dock)" },
+  "operacoes.guarda":               { modulo: "operacoes", label: "Put-away" },
+  "operacoes.ajuste_manual":        { modulo: "operacoes", label: "Ajuste manual de saldo" },
+  "operacoes.retroativo":           { modulo: "operacoes", label: "Lançamento retroativo + reconciliar" },
 
   // ── Inventário ──
   "inventario.ver":            { modulo: "inventario", label: "Ver sessões" },

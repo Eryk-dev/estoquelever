@@ -331,6 +331,8 @@ export async function montarDashboardTarefas(
     comprasOrdensQ,
     devolucoesQ,
     transferenciasQ,
+    invRevisaoQ,
+    invDivergenciasQ,
   ] = await Promise.all([
     // Aprovação pendente
     (() => {
@@ -463,6 +465,25 @@ export async function montarDashboardTarefas(
       if (galpao_id) q = q.eq("galpao_destino_id", galpao_id);
       return q;
     })(),
+
+    // Inventário em revisão (P5 §1) — sessão encerrou contagem mas supervisor
+    // ainda não aprovou.
+    (() => {
+      let q = sb
+        .from("siso_inventario_sessoes")
+        .select("id, nome, criado_em, galpao_id, galpao:siso_galpoes(nome)")
+        .eq("status", "revisao")
+        .order("criado_em", { ascending: true })
+        .limit(MAX_DETALHE_POR_SECAO + 1);
+      if (galpao_id) q = q.eq("galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Divergências pendentes agrupadas por sessão (popula contador do card)
+    sb
+      .from("siso_inventario_divergencias")
+      .select("sessao_id")
+      .eq("status", "pendente"),
   ]);
 
   type SepRow = {
@@ -627,6 +648,23 @@ export async function montarDashboardTarefas(
   const transferenciasRows = (transferenciasQ.data ?? []) as TransferenciaLinha[];
   const transferencias = agruparTransferenciasTransito(transferenciasRows);
 
+  // §1 task 1.7 — Inventário em revisão + divergências por sessão
+  const revisaoRows = (invRevisaoQ.data ?? []) as RevisaoLinha[];
+  const divergenciasRows = (invDivergenciasQ.data ?? []) as Array<{
+    sessao_id: string;
+  }>;
+  const divergenciasPorSessao = new Map<string, number>();
+  for (const d of divergenciasRows) {
+    divergenciasPorSessao.set(
+      d.sessao_id,
+      (divergenciasPorSessao.get(d.sessao_id) ?? 0) + 1,
+    );
+  }
+  const inventarioRevisao = agruparInventarioRevisao(
+    revisaoRows,
+    divergenciasPorSessao,
+  );
+
   return {
     galpao_id,
     aprovacao: {
@@ -660,7 +698,7 @@ export async function montarDashboardTarefas(
     excecoes: {
       devolucoes,
       transferencias_transito: transferencias,
-      inventario_revisao: { count: 0, itens: [] },
+      inventario_revisao: inventarioRevisao,
       reservas_orfas: { count: 0, itens: [] },
       retroativos: { count: 0, itens: [] },
       recebimento_orfao: { count: 0, itens: [] },

@@ -257,6 +257,60 @@ export default function WmsPedidoDetalhePage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  // Fix-Final A T23 (#A5): mutation real pro Banner D10 "Estornar agora"
+  const estornarMutation = useMutation({
+    mutationFn: async () => {
+      const motivo = window.prompt("Motivo do estorno manual (mín 3 chars):");
+      if (!motivo || motivo.trim().length < 3) {
+        throw new Error("motivo obrigatório (≥3 chars)");
+      }
+      const r = await sisoFetch(`/api/wms/pedidos/${id}/estornar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        throw new Error(
+          (body as { error?: string }).error ?? "Erro ao estornar pedido",
+        );
+      }
+      return body as { ok: boolean; movs_estornadas: number };
+    },
+    onSuccess: (b) => {
+      toast.success(`Pedido estornado (${b.movs_estornadas} movs revertidas)`);
+      queryClient.invalidateQueries({ queryKey: ["wms-pedido-detalhe", id] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  // Fix-Final A T26 (#A6): mutation real pro botão D2 "Liberar reservas"
+  const liberarReservasMutation = useMutation({
+    mutationFn: async () => {
+      const motivo = window.prompt("Motivo da liberação das reservas (mín 3 chars):");
+      if (!motivo || motivo.trim().length < 3) {
+        throw new Error("motivo obrigatório (≥3 chars)");
+      }
+      const r = await sisoFetch(`/api/wms/pedidos/${id}/liberar-reservas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        throw new Error(
+          (body as { error?: string }).error ?? "Erro ao liberar reservas",
+        );
+      }
+      return body as { ok: boolean; rs_liberadas: number };
+    },
+    onSuccess: (b) => {
+      toast.success(`${b.rs_liberadas} reservas liberadas`);
+      queryClient.invalidateQueries({ queryKey: ["wms-pedido-detalhe", id] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   const forcarPendente = useMutation({
     mutationFn: async () => {
       const r = await sisoFetch(`/api/wms/separacao/${id}/forcar-pendente`, {
@@ -420,11 +474,9 @@ export default function WmsPedidoDetalhePage() {
         <BannerEstornoManual
           isAdmin={isAdmin}
           onEstornar={() => {
-            // TODO: endpoint de estorno manual ainda não existe.
-            // Quando existir, chamar e invalidar a query.
-            toast.error(
-              "Endpoint de estorno manual ainda não implementado — abrir ticket pro admin.",
-            );
+            if (window.confirm("Confirma estornar TODAS as movs do pedido? Esta ação não pode ser desfeita.")) {
+              estornarMutation.mutate();
+            }
           }}
         />
       )}
@@ -570,6 +622,8 @@ export default function WmsPedidoDetalhePage() {
             reprocessarPending={reprocessar.isPending}
             forcarPendente={() => forcarPendente.mutate()}
             forcarPendentePending={forcarPendente.isPending}
+            liberarReservas={() => liberarReservasMutation.mutate()}
+            liberarReservasPending={liberarReservasMutation.isPending}
           />
         )}
       </div>
@@ -998,6 +1052,8 @@ function TabAdmin({
   reprocessarPending,
   forcarPendente,
   forcarPendentePending,
+  liberarReservas,
+  liberarReservasPending,
 }: {
   pedido: PedidoDetalhe;
   podeReimprimir: boolean;
@@ -1007,6 +1063,8 @@ function TabAdmin({
   reprocessarPending: boolean;
   forcarPendente: () => void;
   forcarPendentePending: boolean;
+  liberarReservas: () => void;
+  liberarReservasPending: boolean;
 }) {
   function confirmar(msg: string, fn: () => void) {
     if (typeof window === "undefined") return;
@@ -1016,9 +1074,8 @@ function TabAdmin({
   const podeReprocessar = pedido.status === "erro";
   const podeForcarPendente = pedido.status_separacao != null;
 
-  // TODO: Liberar reserva (D2 override) — implementação dependente do Plano 3
-  //   Endpoint ainda não existe; quando existir, plugar aqui como mais uma
-  //   ação admin (`POST /api/wms/reservas/{id}/liberar` ou similar).
+  // Fix-Final A T26 (#A6): D2 override real. Endpoint
+  // POST /api/wms/pedidos/[id]/liberar-reservas existe (T25).
 
   return (
     <div
@@ -1100,6 +1157,24 @@ function TabAdmin({
           }
           pending={reimprimirPending}
           tone="ghost"
+        />
+        <AcaoAdminRow
+          icone="alert"
+          titulo="Liberar reservas (D2 override)"
+          descricao="Libera TODAS as reservas R ativas deste pedido sem cancelar o pedido. Use quando o estoque está preso em estado fantasma."
+          disponivel={true}
+          motivoIndisponivel=""
+          actionLabel={
+            liberarReservasPending ? "Liberando…" : "Liberar reservas"
+          }
+          onClick={() =>
+            confirmar(
+              "Liberar todas as reservas deste pedido? O pedido NÃO será cancelado, apenas as Rs vão pra L.",
+              liberarReservas,
+            )
+          }
+          pending={liberarReservasPending}
+          tone="danger"
         />
       </div>
     </div>

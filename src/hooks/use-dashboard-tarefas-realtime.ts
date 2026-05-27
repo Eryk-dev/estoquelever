@@ -33,10 +33,15 @@ export function useDashboardTarefasRealtime(galpaoId: string | null) {
   const channelsRef = useRef<RealtimeChannel[]>([]);
 
   useEffect(() => {
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
     const invalidate = () => {
-      queryClient.invalidateQueries({
-        queryKey: ["wms-tarefas-pendentes", galpaoId],
-      });
+      if (pendingTimer) return;
+      pendingTimer = setTimeout(() => {
+        queryClient.invalidateQueries({
+          queryKey: ["wms-tarefas-pendentes", galpaoId],
+        });
+        pendingTimer = null;
+      }, 250);
     };
 
     const suffix = galpaoId ?? "all";
@@ -159,6 +164,7 @@ export function useDashboardTarefasRealtime(galpaoId: string | null) {
     channelsRef.current = [ch1, ch2, ch3, ch4, ch5, ch6, ch7, ch8];
 
     return () => {
+      if (pendingTimer) clearTimeout(pendingTimer);
       for (const ch of channelsRef.current) {
         supabase.removeChannel(ch);
       }

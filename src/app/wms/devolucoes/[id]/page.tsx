@@ -19,10 +19,13 @@ type Classificacao = "integro" | "avariado" | "garantia" | "troca_sku";
 interface DevRow {
   id: string;
   nota_fiscal_id: number | null;
+  chave_acesso_nf?: string | null;
   /** Vendedora da NF original (referência, não dona física — 3D). */
-  empresa_referencia?: { nome?: string } | null;
+  empresa_referencia?: { id?: string; nome?: string } | null;
   criado_em?: string;
   status?: string;
+  classificacao?: string | null;
+  classificada_em?: string | null;
 }
 
 interface ProdutoMin {
@@ -89,11 +92,12 @@ export default function ClassificarPage({
   const [observacoes, setObservacoes] = useState("");
   const [fornecedorId, setFornecedorId] = useState<string>("");
 
-  const { data: devs } = useQuery({
-    queryKey: ["wms-devolucoes"],
-    queryFn: () => wmsApi<{ rows: DevRow[] }>("/api/wms/devolucoes"),
+  const { data: devResp } = useQuery({
+    queryKey: ["wms-devolucao", id],
+    queryFn: () =>
+      wmsApi<{ devolucao: DevRow }>(`/api/wms/devolucoes/${id}`),
   });
-  const dev = devs?.rows?.find((x) => x.id === id);
+  const dev = devResp?.devolucao;
 
   const { data: fornecedoresResp } = useQuery({
     queryKey: ["wms-fornecedores"],

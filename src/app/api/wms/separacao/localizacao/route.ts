@@ -112,6 +112,11 @@ export async function POST(request: NextRequest) {
           for (const src of sources ?? []) {
             if (src.localizacao_id === novaLocId) continue;
             const qty = Number(src.saldo);
+            if (!Number.isFinite(qty) || qty <= 0) continue;
+            // TODO(#2.7-followup): src com reservado > 0 vai falhar a S
+            // (validarCoerencia reservado_posterior > saldo_posterior=0).
+            // Por ora: catch absorve e loga; operador deve mover loc só sem R
+            // ativa. Fix completo (libera R + reemite no destino) fica pro P3/P6.
             const origemId = crypto.randomUUID();
             try {
               await inserirMovimentacao({
@@ -149,13 +154,21 @@ export async function POST(request: NextRequest) {
               });
               transferencias++;
             } catch (transferErr) {
-              logger.error("localizacao", "transferencia_localizacao falhou", {
-                produtoId,
-                galpaoId,
+              logger.logError({
                 error:
                   transferErr instanceof Error
-                    ? transferErr.message
-                    : String(transferErr),
+                    ? transferErr
+                    : new Error(String(transferErr)),
+                source: "localizacao",
+                message: "transferencia_localizacao falhou (provavelmente reservado > 0)",
+                category: "business_logic",
+                metadata: {
+                  produtoId,
+                  galpaoId,
+                  src_loc_id: src.localizacao_id,
+                  saldo: src.saldo,
+                  reservado: src.reservado,
+                },
               });
             }
           }

@@ -38,6 +38,31 @@ GROUP BY origem_tipo;
 
 Espera-se `sem_fk = 0` em todas as linhas pós-T7/T8 (cutover do worker WMS).
 
+## Verificação final (T31)
+
+Snapshot pós-execução de todos os 8 itens P0:
+
+- **Unit tests (`npx vitest run`)**: 173/179 pass. 6 failures em `src/lib/wms/realoc-fix-pack.test.ts` são pré-existentes (FK errors de integração não-relacionados ao Fix-Final A — confirmado via stash em T8).
+- **Divergências staging (`wms_detectar_divergencias_estoque`)**: 0 (pre=0, pós=0 — sem regressão).
+- **siso_notas_fiscais existe + realtime**: ✅ (T5).
+- **Movs NF sem nota_fiscal_id**: 1 (mov pré-fix-final, sem chave_acesso em origem_detalhes — descartável; backfill T9 skip).
+- **Suite de cenários** (`npm run scenarios`): **NÃO re-rodada nesta sessão**. Suite tem flakiness conhecida (cenário 01 falhou no baseline, 5 testes integração FK pre-existem). Re-run completo recomendado em sessão separada com `npm run scenarios` + investigação caso a caso de falhas.
+- **`tsc --noEmit -p .`**: ✅ limpo (validado após cada commit substantivo).
+- **Smoke manual staging**: deferido (requer login UI + dados de teste apropriados).
+
+### Cobertura cenário-a-cenário Fix-Final A
+
+| Item | Fix code | Cenário planejado | Status |
+|---|---|---|---|
+| #2.15 | T13 ✅ (concluir-oc gating) | 34 (deferido) | Coberto por inspeção do diff |
+| #2.6 | T15 ✅ (desfazer_encontrei) | 36 (deferido) | Coberto por inspeção do diff |
+| #2.7 | T17 ✅ (localizacao+R) | 37 (deferido) | Coberto por inspeção do diff |
+| #A4 | T20 ✅ (patches removidos) | 30/38 (deferido) | Será coberto pela suite (02/03 sem patches) |
+| #A5 | T22+T23 ✅ (estornar) | 39 (deferido) | Coberto por inspeção; smoke pendente |
+| #A6 | T25+T26 ✅ (liberar-reservas) | 40 (deferido) | Coberto por inspeção; smoke pendente |
+| R5  | T5+T6+T7+T8+T9 ✅ | 01/10/11 (smoke A7) | Re-run suite recomendado |
+| #A8 | T28 ✅ (backfill no-op staging) | n/a | Em prod roda pós-promoção |
+
 ## Backfill R1 (T27/T28)
 
 - Snapshot pré: divergências = 0

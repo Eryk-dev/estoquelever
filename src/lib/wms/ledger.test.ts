@@ -126,3 +126,48 @@ describe("inserirMovimentacao · uuid validation (defensiva)", () => {
     ).rejects.toThrow(/tripla.produto_id.*esperava uuid.*9077486999/);
   });
 });
+
+describe("inserirMovimentacao · nota_fiscal_id required for NF origens (T8)", () => {
+  const triplaOk = {
+    produto_id: "00000000-0000-4000-8000-000000000001",
+    galpao_id: "00000000-0000-4000-8000-000000000002",
+    localizacao_id: "00000000-0000-4000-8000-000000000003",
+  };
+  const NF_ORIGENS = [
+    "nf_compra",
+    "nf_venda",
+    "devolucao_cliente_integra",
+    "devolucao_cliente_avariada",
+    "devolucao_fornecedor_recebida",
+    "devolucao_fornecedor_enviada",
+  ] as const;
+
+  for (const origem of NF_ORIGENS) {
+    it(`rejeita ${origem} sem nota_fiscal_id`, async () => {
+      await expect(
+        inserirMovimentacao({
+          tripla: triplaOk,
+          tipo: "E",
+          qty: 1,
+          origem_tipo: origem,
+          // nota_fiscal_id deliberadamente omitido
+        } as any),
+      ).rejects.toThrow(/nota_fiscal_id obrigatório/i);
+    });
+  }
+
+  it("NÃO exige nota_fiscal_id pra ajuste_manual", async () => {
+    let caughtMsg = "";
+    try {
+      await inserirMovimentacao({
+        tripla: triplaOk,
+        tipo: "E",
+        qty: 1,
+        origem_tipo: "ajuste_manual",
+      });
+    } catch (e) {
+      caughtMsg = e instanceof Error ? e.message : String(e);
+    }
+    expect(caughtMsg).not.toMatch(/nota_fiscal_id obrigatório/i);
+  });
+});

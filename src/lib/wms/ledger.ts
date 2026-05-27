@@ -133,6 +133,25 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
   assertUuidLike(input.nota_fiscal_id, "nota_fiscal_id");
   assertUuidLike(input.usuario_id, "usuario_id");
 
+  // Fix-Final A T8 (R5): origem fiscal exige nota_fiscal_id (uuid em
+  // siso_notas_fiscais). Sem isso, devoluções/vendas/compras quebram
+  // rastreio fiscal e dificultam reconciliação NF↔mov.
+  // ajuste_manual, inventario_*, transferencia_*, reserva_pedido etc.
+  // não exigem NF — operações internas sem documento fiscal.
+  const NF_REQUIRED = new Set<OrigemTipo>([
+    "nf_compra",
+    "nf_venda",
+    "devolucao_cliente_integra",
+    "devolucao_cliente_avariada",
+    "devolucao_fornecedor_recebida",
+    "devolucao_fornecedor_enviada",
+  ]);
+  if (NF_REQUIRED.has(input.origem_tipo) && !input.nota_fiscal_id) {
+    throw new Error(
+      `inserirMovimentacao: nota_fiscal_id obrigatório quando origem_tipo='${input.origem_tipo}'. Use upsertNotaFiscal() pra obter o uuid antes de chamar.`,
+    );
+  }
+
   const sb = createServiceClient();
 
   // Validação client-side (early fail; RPC valida de novo no DB com FOR UPDATE)

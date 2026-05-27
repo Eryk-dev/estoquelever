@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   agruparDevolucoesPendentes,
   agruparFornecedoresCompras,
+  agruparTransferenciasTransito,
   dedupNonNullIds,
   hidratarExecutores,
 } from "./dashboard-tarefas";
@@ -141,5 +142,44 @@ describe("agruparDevolucoesPendentes", () => {
       },
     ]);
     expect(r.itens[0].empresa_referencia_nome).toBe("NetParts");
+  });
+});
+
+describe("agruparTransferenciasTransito", () => {
+  const linhas = [
+    {
+      id: "t1",
+      criada_em: "2026-05-26T08:00:00Z",
+      origem_galpao: { nome: "CWB" },
+      destino_galpao: { nome: "SP" },
+      itens: [{ qty: 5 }, { qty: 3 }],
+    },
+    {
+      id: "t2",
+      criada_em: "2026-05-26T09:00:00Z",
+      origem_galpao: null,
+      destino_galpao: null,
+      itens: [],
+    },
+  ];
+
+  it("conta itens (soma de qty)", () => {
+    const r = agruparTransferenciasTransito(linhas);
+    expect(r.itens[0].qty_itens).toBe(8);
+    expect(r.itens[1].qty_itens).toBe(0);
+  });
+
+  it("trata join como array ou objeto", () => {
+    const r = agruparTransferenciasTransito([
+      {
+        id: "t3",
+        criada_em: "2026-05-26T10:00:00Z",
+        origem_galpao: [{ nome: "CWB" }],
+        destino_galpao: { nome: "SP" },
+        itens: [{ qty: 1 }],
+      },
+    ]);
+    expect(r.itens[0].origem_galpao_nome).toBe("CWB");
+    expect(r.itens[0].destino_galpao_nome).toBe("SP");
   });
 });

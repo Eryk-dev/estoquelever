@@ -240,6 +240,44 @@ export function agruparDevolucoesPendentes(
   return { count: itens.length, itens };
 }
 
+type TransferenciaLinha = {
+  id: string;
+  criada_em: string;
+  origem_galpao: { nome: string } | Array<{ nome: string }> | null;
+  destino_galpao: { nome: string } | Array<{ nome: string }> | null;
+  itens: Array<{ qty: number }> | null;
+};
+
+/**
+ * Mapeia linhas de `siso_transferencias_galpao` (com joins de galpões e
+ * itens) pra cards de transferência em trânsito. Soma `qty` dos itens
+ * pra preencher o badge "qty_itens" no card.
+ */
+export function agruparTransferenciasTransito(
+  linhas: TransferenciaLinha[],
+): { count: number; itens: TransferenciaTransitoCard[] } {
+  const itens: TransferenciaTransitoCard[] = linhas.map((l) => {
+    const origem = Array.isArray(l.origem_galpao)
+      ? l.origem_galpao[0] ?? null
+      : l.origem_galpao;
+    const destino = Array.isArray(l.destino_galpao)
+      ? l.destino_galpao[0] ?? null
+      : l.destino_galpao;
+    const qty_itens = (l.itens ?? []).reduce(
+      (acc, i) => acc + Number(i.qty || 0),
+      0,
+    );
+    return {
+      id: l.id,
+      origem_galpao_nome: origem?.nome ?? null,
+      destino_galpao_nome: destino?.nome ?? null,
+      criada_em: l.criada_em,
+      qty_itens,
+    };
+  });
+  return { count: itens.length, itens };
+}
+
 /**
  * Monta o payload do quadro de tarefas pendentes da home /wms.
  *

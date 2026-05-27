@@ -381,6 +381,8 @@ export async function POST(request: NextRequest) {
     } catch (resetErr) {
       logger.error("produto-esgotado", "Reset com estorno falhou (OC branch)", {
         error: resetErr instanceof Error ? resetErr.message : String(resetErr),
+        affectedPedidoIds,
+        itemIds,
       });
       return NextResponse.json(
         { error: "Erro ao estornar movs antes de marcar OC" },

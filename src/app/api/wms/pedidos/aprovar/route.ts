@@ -12,6 +12,8 @@ import {
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
 import { rotearPedidoDoBanco } from "@/lib/wms/roteamento";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 type Decisao = "propria" | "transferencia" | "oc";
 type DecisaoComRejeicao = Decisao | "rejeitado";
@@ -28,6 +30,15 @@ type DecisaoComRejeicao = Decisao | "rejeitado";
  * (no fila, no reservas), marks pedido cancelado + decisao_final='rejeitado'.
  */
 export async function POST(request: NextRequest) {
+  // Auth + perm (finding 4.1 — pedidos.aprovar)
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (!userCan(session, "pedidos.aprovar")) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
   let body: {
     pedidoId?: string;
     decisao?: DecisaoComRejeicao;

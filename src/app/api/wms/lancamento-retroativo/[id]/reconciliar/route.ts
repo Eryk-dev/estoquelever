@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { reconciliarRetroativo } from "@/lib/wms/movimentacoes";
 import { createServiceClient } from "@/lib/supabase-server";
@@ -12,8 +13,15 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireWarehouseAccess(req);
-  if (!auth.ok) return auth.response;
+  // Auth + perm granular (finding 8.9)
+  const session = await getSessionUser(req);
+  if (!session) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (!userCan(session, "operacoes.retroativo")) {
+    return NextResponse.json({ error: "forbidden — requer operacoes.retroativo" }, { status: 403 });
+  }
+  const auth = { user: session };
 
   const { id } = await params;
   const body = await req.json();

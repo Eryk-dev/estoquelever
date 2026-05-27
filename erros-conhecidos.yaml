@@ -1624,3 +1624,46 @@ erros:
       - src/app/api/wms/ajuste/[id]/estornar/route.ts
       - src/lib/wms/movimentacoes.ts
     tags: [wms, ajuste, estornar, reverse, p3]
+
+  - id: p4-auth-backend-gating-cluster
+    date: "2026-05-27"
+    source: api.wms.pedidos
+    category: auth
+    message: "Backend não validava perm (vários endpoints WMS pós-cutover)"
+    cause: |
+      Spec §8 (P4) — 13 endpoints confiavam apenas em UI gating
+      (usePermissoes() no frontend) sem chamar userCan no backend.
+      Bypass trivial via curl/Postman: vendedor podia ver pedidos de outro
+      vendedor, comprador podia aprovar pedidos, etc.
+    fix: |
+      Inseridos getSessionUser + userCan no topo de cada handler. Para
+      retroativo + devoluções, criadas 2 perms granulares novas
+      (operacoes.retroativo, operacoes.devolucoes_classificar) seedadas
+      em admin + operador*. webhook/reprocessar virou admin-only com Zod
+      body e processa apenas o pedidoId enviado.
+    files:
+      - src/lib/permissions.ts
+      - src/lib/wms/auth.ts
+      - src/app/api/wms/pedidos/route.ts
+      - src/app/api/wms/pedidos/aprovar/route.ts
+      - src/app/api/wms/pedidos/[id]/historico/route.ts
+      - src/app/api/wms/pedidos/[id]/observacoes/route.ts
+      - src/app/api/wms/webhook/reprocessar/route.ts
+      - src/app/api/wms/vendas/criar/route.ts
+      - src/app/api/wms/vendas/[id]/route.ts
+      - src/app/api/wms/vendas/[id]/vendedor/route.ts
+      - src/app/api/wms/inventario/metricas/route.ts
+      - src/app/api/wms/devolucoes/[id]/classificar/route.ts
+      - src/app/api/wms/lancamento-retroativo/route.ts
+      - src/app/api/wms/lancamento-retroativo/[id]/reconciliar/route.ts
+      - src/hooks/use-dashboard-tarefas-realtime.ts
+      - supabase/migrations/20260527_p4_new_permissions.sql
+      - supabase/migrations/20260527_siso_pedido_observacoes_formal.sql
+    tags:
+      - auth
+      - rbac
+      - userCan
+      - permissions
+      - p4
+      - wms-fix
+      - cutover

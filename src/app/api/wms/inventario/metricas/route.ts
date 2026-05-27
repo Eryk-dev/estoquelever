@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
-import { getSessionUser } from "@/lib/session";
+import { requireWarehouseAccess } from "@/lib/wms/auth";
 
 export async function GET(req: NextRequest) {
-  if (!(await getSessionUser(req))) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  // Auth + perm (finding 4.16)
+  const auth = await requireWarehouseAccess(req);
+  if (!auth.ok) return auth.response;
+
   const sb = createServiceClient();
 
   const [op, loc] = await Promise.all([

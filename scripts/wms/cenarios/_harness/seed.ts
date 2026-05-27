@@ -125,6 +125,10 @@ export async function seedInicial(sb: SupabaseClient): Promise<StagingFixtures> 
   // Fornecedor genérico pra prefixo TEST
   await upsertFornecedor(sb, "TestSupplier-Default", "TEST");
 
+  // P4 auth matrix users (admin/operador/vendedor/comprador)
+  const { seedTestUsers } = await import("./seed-test-users");
+  await seedTestUsers(sb);
+
   return {
     empresas: {
       netair: { id: netair.id, nome: netair.nome, cnpj: netair.cnpj, galpao_id: cwbId },

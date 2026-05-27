@@ -42,17 +42,30 @@ export async function GET(
     return NextResponse.json({ erro: "Pedido não encontrado" }, { status: 404 });
   }
 
-  // Permissão: vendedor só pode ver pedidos da aba Vendas (manual OR ML/Shopee).
+  // Permissão: vendedor "puro" (sem perms de admin/operador) só pode ver
+  // pedidos da aba Vendas (manual OR ML/Shopee) E que sejam seus
+  // (vendedor_id == session.id OR vendedor_nome contém session.nome).
   const isVendaDireta =
     pedido.origem_pedido === "manual" ||
     pedido.nome_ecommerce === "Mercado Livre" ||
     pedido.nome_ecommerce === "Shopee";
-  // Proxy: vendedor "puro" (não admin) só pode ver venda direta.
-  // Admin tem sistema.usuarios + vendas.criar; restrição não se aplica.
   const isAdmin = userCan(user, "sistema.usuarios");
-  const isVendedor = !isAdmin && userCan(user, "vendas.criar");
-  if (isVendedor && !isVendaDireta) {
-    return NextResponse.json({ erro: "Sem permissão" }, { status: 403 });
+  const isOperador = userCan(user, "separacao.executar");
+  const isVendedor = !isAdmin && !isOperador && userCan(user, "vendas.criar");
+  if (isVendedor) {
+    if (!isVendaDireta) {
+      return NextResponse.json({ erro: "Sem permissão" }, { status: 403 });
+    }
+    // Ownership: vendedor_id match OR auto-atribuição via vendedor_nome
+    // (webhook-processor seta vendedor_nome = `${ecomNome} ${empresaNome}`
+    // — chequeamos com case-insensitive contains pra cobrir esse caso).
+    const ownedById = pedido.vendedor_id === user.id;
+    const ownedByName = pedido.vendedor_nome
+      ? pedido.vendedor_nome.toLowerCase().includes(user.nome.toLowerCase())
+      : false;
+    if (!ownedById && !ownedByName) {
+      return NextResponse.json({ erro: "Sem permissão (não é seu pedido)" }, { status: 403 });
+    }
   }
 
   const { data: itens } = await supabase

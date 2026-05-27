@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "test:integration": "vitest run -c vitest.integration.config.ts",
     "scenarios": "tsx scripts/wms/cenarios/run-all.ts",
+    "auth-matrix": "tsx scripts/wms/cenarios/auth/run-all-auth.ts",
     "scenarios:only": "tsx scripts/wms/cenarios/run-all.ts --only"
   },
   "dependencies": {
@@ -31,7 +32,8 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "sonner": "^2.0.7",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

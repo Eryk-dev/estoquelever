@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
+import { requireAuth } from "@/lib/wms/auth";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import {
   lancarRetroativo,
@@ -20,8 +22,15 @@ import {
  *   - data_recebimento (optional, ISO; ≤ now; vai pra origem_detalhes.data_recebimento — #8.7)
  */
 export async function POST(req: NextRequest) {
-  const auth = await requireWarehouseAccess(req);
-  if (!auth.ok) return auth.response;
+  // Auth + perm granular (finding 8.9)
+  const session = await getSessionUser(req);
+  if (!session) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (!userCan(session, "operacoes.retroativo")) {
+    return NextResponse.json({ error: "forbidden — requer operacoes.retroativo" }, { status: 403 });
+  }
+  const auth = { user: session };
 
   const body = await req.json();
   if (!body.motivo || body.motivo.length < 3) {

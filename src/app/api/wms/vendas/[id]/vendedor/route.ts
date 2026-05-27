@@ -57,18 +57,38 @@ export async function PATCH(
     return NextResponse.json({ erro: "Sem permissão pra alterar vendedor" }, { status: 403 });
   }
 
-  // Resolve nome do novo vendedor
+  // Resolve nome do novo vendedor + valida cargo (finding 7.4)
+  // Target precisa ter role vendedor OR operador* OR admin. Comprador NÃO
+  // pode receber atribuição (não faz sentido — comprador não faz pedidos
+  // de cliente).
   let novoNome: string | null = null;
   if (body.vendedor_id) {
     const { data: u } = await supabase
       .from("siso_usuarios")
-      .select("id, nome")
+      .select("id, nome, siso_usuario_roles(siso_roles(codigo))")
       .eq("id", body.vendedor_id)
       .maybeSingle();
     if (!u) {
       return NextResponse.json({ erro: "vendedor_id inválido" }, { status: 400 });
     }
-    novoNome = u.nome;
+    // Extract role codes from nested join shape
+    const targetRoleCodes = ((u as unknown as {
+      siso_usuario_roles: Array<{ siso_roles: { codigo: string } | null }>;
+    }).siso_usuario_roles ?? [])
+      .map((r) => r.siso_roles?.codigo)
+      .filter((c): c is string => !!c);
+    const allowedTarget = targetRoleCodes.some((c) =>
+      c === "vendedor" || c === "admin" || c === "operador" || c === "operador_cwb" || c === "operador_sp",
+    );
+    if (!allowedTarget) {
+      return NextResponse.json(
+        {
+          erro: `vendedor_id alvo não tem cargo vendedor/operador/admin (roles: ${targetRoleCodes.join(",") || "nenhuma"})`,
+        },
+        { status: 400 },
+      );
+    }
+    novoNome = (u as { nome: string }).nome;
   }
 
   const { error: updErr } = await supabase

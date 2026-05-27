@@ -6,7 +6,6 @@ import { registrarEventos } from "@/lib/historico-service";
 import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/agrupamento-service";
 import { kickWorker } from "@/lib/execution-worker";
 import { dispararCutoverSePronto } from "@/lib/wms/cutover";
-import { wmsAsSource } from "@/lib/wms/flags";
 
 const LOG_SOURCE = "separacao-concluir-oc";
 
@@ -307,28 +306,23 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // PR-1: enqueue do worker legado só faz sentido no caminho Tiny-source.
-      // Em WMS_AS_SOURCE o cutover R→L+S é disparado por dispararCutoverSePronto
-      // (chamado abaixo) — enfileirar lancar_estoque aqui causaria dedução
-      // dupla e gravaria no caminho legado siso_pedido_item_estoques.
-      if (!wmsAsSource()) {
-        const { error: queueError } = await supabase
-          .from("siso_fila_execucao")
-          .insert({
-            pedido_id: pedido.id,
-            tipo: "lancar_estoque",
-            empresa_id: empresaExecId,
-            decisao,
-            tentativas: 0,
-            status: "pendente",
-          });
+      // Insert execution queue job
+      const { error: queueError } = await supabase
+        .from("siso_fila_execucao")
+        .insert({
+          pedido_id: pedido.id,
+          tipo: "lancar_estoque",
+          empresa_id: empresaExecId,
+          decisao,
+          tentativas: 0,
+          status: "pendente",
+        });
 
-        if (queueError) {
-          logger.error(LOG_SOURCE, "Erro ao enfileirar job", {
-            pedidoId: pedido.id,
-            error: queueError.message,
-          });
-        }
+      if (queueError) {
+        logger.error(LOG_SOURCE, "Erro ao enfileirar job", {
+          pedidoId: pedido.id,
+          error: queueError.message,
+        });
       }
     }
 

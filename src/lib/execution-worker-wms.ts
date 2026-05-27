@@ -21,6 +21,7 @@
 import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
 import { inserirMovimentacao } from "./wms/ledger";
+import { upsertNotaFiscal } from "./nf-webhook-handler";
 import { criarAgrupamentoFase1 } from "./agrupamento-service";
 
 interface ReservaRow {
@@ -40,7 +41,7 @@ export async function executarEstoquePosNfWms(job: {
 
   const { data: pedido, error: pedidoErr } = await sb
     .from("siso_pedidos")
-    .select("id, status_separacao, estoque_lancado, nota_fiscal_id, empresa_origem_id")
+    .select("id, status_separacao, estoque_lancado, nota_fiscal_id, chave_acesso_nf, empresa_origem_id")
     .eq("id", job.pedido_id)
     .single();
 
@@ -55,6 +56,26 @@ export async function executarEstoquePosNfWms(job: {
 
   // Empresa vendedora = origem do pedido (tag, não chave).
   const empresaVendedoraId = pedido.empresa_origem_id ?? job.empresa_id;
+
+  // Fix-Final A T7 (R5): resolve uuid de NF saída (tipo='saida') a partir do
+  // bigint do Tiny + chave de acesso. Sem isso, a inserção de mov S falha
+  // em assertUuidLike (pedido.nota_fiscal_id é bigint, não uuid).
+  let notaFiscalUuid: string | null = null;
+  if (pedido.nota_fiscal_id != null || pedido.chave_acesso_nf) {
+    try {
+      notaFiscalUuid = await upsertNotaFiscal({
+        tiny_nota_fiscal_id: pedido.nota_fiscal_id as number | null,
+        chave_acesso: pedido.chave_acesso_nf as string | null,
+        empresa_id: empresaVendedoraId,
+        tipo: "saida",
+      });
+    } catch (e) {
+      logger.warn("worker.wms", "upsertNotaFiscal falhou — mov S sem nota_fiscal_id", {
+        pedidoId: job.pedido_id,
+        err: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
 
   // 1. Buscar reservas ativas do pedido
   const { data: reservasRaw, error: reservasErr } = await sb
@@ -143,7 +164,7 @@ export async function executarEstoquePosNfWms(job: {
         origem_detalhes: { reserva_origem: r.id, decisao: job.decisao },
         empresa_vendedora_id: empresaVendedoraId,
         pedido_id: job.pedido_id,
-        nota_fiscal_id: pedido.nota_fiscal_id ?? undefined,
+        nota_fiscal_id: notaFiscalUuid,
         motivo: "Saída via WMS (cutover Plano 2)",
       });
       convertidas++;

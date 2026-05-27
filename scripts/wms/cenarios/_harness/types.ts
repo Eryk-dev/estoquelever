@@ -69,7 +69,20 @@ export type Ctx = {
   // ── movs operacionais ──
   transferirGalpao: (p: { origem: "CWB" | "SP"; destino: "CWB" | "SP"; items: { sku: string; qty: number }[] }) => Promise<{ id: string }>;
   replenishment: (p: { sku: string; galpao: "CWB" | "SP"; origem_loc: string; destino_loc: string; qty: number }) => Promise<void>;
-  ajusteManual: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; delta: number; motivo: string }) => Promise<void>;
+  ajusteManual: (p: {
+    sku: string;
+    galpao: "CWB" | "SP";
+    loc: string;
+    delta: number;
+    motivo: string;
+    motivo_categoria?:
+      | "avaria"
+      | "perda"
+      | "achado"
+      | "correcao_inventario"
+      | "devolucao_sem_fluxo"
+      | "outro";
+  }) => Promise<void>;
   lancamentoRetroativo: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; tipo: "E" | "S" }) => Promise<{ id: string }>;
   reconciliarRetroativo: (id: string) => Promise<void>;
 

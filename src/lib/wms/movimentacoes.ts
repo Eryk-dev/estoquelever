@@ -151,7 +151,18 @@ export async function receberEstoque(
   }
 
   // Modo padrão: entra em RECEBIMENTO + cria pendência de guarda.
-  const localizacaoRecebimentoId = await resolverLocRecebimento(input.galpao_id);
+  const { id: localizacaoRecebimentoId, created: locCreated } =
+    await resolverLocRecebimento(input.galpao_id);
+  if (locCreated) {
+    // Pré-condição esperada (loc semeada via migration
+    // 20260514_wms_guarda_pendencias.sql) está faltando — alerta o operador
+    // pra investigar. Não bloqueia: receber/criar loc é idempotente.
+    logger.warn(
+      "movimentacoes.receber",
+      "Loc RECEBIMENTO auto-criada — pré-condição faltando",
+      { galpaoId: input.galpao_id, locId: localizacaoRecebimentoId },
+    );
+  }
   // Pré-validação ANTES de qualquer escrita no ledger. Se destino == origem
   // (frontend bugado, race, etc), abortamos sem deixar mov órfã.
   validarItensRecebimento(input.itens, localizacaoRecebimentoId);
@@ -195,6 +206,7 @@ export async function receberEstoque(
         custo_unitario: item.custo_unitario,
         observacoes: input.observacoes,
         lote_id: loteId,
+        criada_por: input.usuario_id,
       });
       pendenciaIds.push(pendenciaId);
       movIds.push(mov.id);
@@ -386,10 +398,24 @@ export async function replenishmentIntraGalpao(
   return { origem_id };
 }
 
+/**
+ * Categorias estruturadas pra ajuste manual. Pareada com o enum SQL
+ * `wms_motivo_categoria_enum` (migration `20260527_ajuste_manual_motivo_categoria`).
+ */
+export type MotivoCategoria =
+  | "avaria"
+  | "perda"
+  | "achado"
+  | "correcao_inventario"
+  | "devolucao_sem_fluxo"
+  | "outro";
+
 export interface AjusteManualInput {
   tripla: Tripla;
   qty: number;
   motivo: string;
+  /** Categoria estruturada — obrigatória pra ajuste manual. */
+  motivo_categoria: MotivoCategoria;
   direcao: "entrada" | "saida";
   usuario_id: string;
   /**
@@ -403,12 +429,16 @@ export interface AjusteManualInput {
 }
 
 /**
- * Ajuste manual de saldo numa tripla. `motivo` é obrigatório (>=3 chars) —
- * ajuste sem justificativa não passa.
+ * Ajuste manual de saldo numa tripla. `motivo` é obrigatório (>=3 chars) e
+ * `motivo_categoria` precisa ser uma das 6 categorias estruturadas — ajuste
+ * sem justificativa ou sem categoria não passa.
  */
 export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
   if (!input.motivo || input.motivo.trim().length < 3) {
     throw new Error("motivo do ajuste é obrigatório (≥3 caracteres)");
+  }
+  if (!input.motivo_categoria) {
+    throw new Error("motivo_categoria do ajuste é obrigatório");
   }
   await inserirMovimentacao({
     tripla: input.tripla,
@@ -417,6 +447,7 @@ export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
     origem_tipo: "ajuste_manual",
     origem_detalhes: { direcao: input.direcao },
     motivo: input.motivo.trim(),
+    motivo_categoria: input.motivo_categoria,
     custo_unitario:
       input.direcao === "entrada" ? input.custo_unitario : undefined,
     usuario_id: input.usuario_id,

@@ -83,7 +83,7 @@ Separacao (/wms/separacao)        <-- wave picking → checklist → packing →
 
 Compras (/wms/compras)            <-- purchase order management for OC decisions
     |
-    └─ /api/wms/compras/*         <-- ordens, conferir, devolver, indisponivel
+    └─ /api/wms/compras/*         <-- ordens, conferencia, devolver, indisponivel
     └─ compras-release.ts         <-- when all items received → resume execution
 
 Recebimento físico (/wms/receber + /wms/guarda)
@@ -145,6 +145,15 @@ Cascade que esgota cobertura dispara o modal encaminhar/OC no frontend
 Botão "Esgotado" das linhas normais removido — caso particular do Parcial
 com qty=0 + loc_zerou=true. Spec: `docs/superpowers/specs/2026-05-18-realocacao-cascateavel-design.md`.
 
+**Design: `mov_ajuste_loc_zerou_id` é preservado em cancelamento (2026-05-26).**
+Quando o operador faz Parcial marcando `loc_zerou=true`, o sistema gera uma
+mov `ajuste_pick_zerou` no ledger zerando o saldo da loc — isso registra
+uma **realidade física** (a loc estava vazia quando o operador chegou).
+`POST /api/wms/separacao/cancelar` **não estorna** essa mov: cancelar a
+separação não desfaz a constatação física. O FK em `siso_pedido_itens` é
+limpo (pra liberar o item pra nova separação), mas a mov no ledger fica
+intacta. Pra desfazer explicitamente, usar `POST /api/wms/separacao/desfazer-parcial`.
+
 ## Project Structure
 
 **Pós-cutover de superfície (2026-05-18):** apenas `/login`, `/wms/*` e `/api/{auth,wms}/*` existem.
@@ -167,7 +176,7 @@ src/
         # ── Pedidos ──
         pedidos/route.ts                   # List orders (GET)
         pedidos/tracking/route.ts          # Universal tracking list (GET)
-        pedidos/aprovar/route.ts           # Order approval (POST) — enqueues execution. Em WMS_AS_SOURCE, cria reservas R antes do enqueue (idempotente); 409 se runtime sem cobertura
+        pedidos/aprovar/route.ts           # Order approval (POST) — enqueues execution. Em WMS_AS_SOURCE, cria reservas R antes do enqueue (idempotente); 409 se runtime sem cobertura. decisao='rejeitado' (botão Recusar) marca cancelado + decisao_final='rejeitado' sem enfileirar
         pedidos/[id]/detalhe/route.ts      # Order detail consolidated (GET)
         pedidos/[id]/historico/route.ts    # Order history/audit trail (GET)
         pedidos/[id]/observacoes/route.ts  # Order comments (GET/POST)
@@ -214,7 +223,6 @@ src/
         compras/preparar-embalagem/route.ts          # Stage orders for packing (POST)
         compras/trocar-sku/route.ts                  # Change product SKU (POST)
         compras/ordens/route.ts                      # List POs by supplier (GET)
-        compras/conferir/route.ts                    # DEPRECATED (POST)
         compras/conferencia/[ordemCompraId]/route.ts # Receive items for PO (GET/POST)
         compras/pedidos/[pedidoId]/cancelar/route.ts # Cancel purchase decision (POST)
         compras/itens/[itemId]/indisponivel/route.ts # Mark item unavailable (POST)
@@ -223,7 +231,6 @@ src/
         compras/itens/[itemId]/cancelamento/confirmar/route.ts # Confirm cancelamento (POST)
         compras/itens/[itemId]/equivalente/route.ts           # Propose equivalente SKU (POST)
         compras/itens/[itemId]/equivalente/confirmar/route.ts # Confirm equivalente (POST)
-        compras/itens/[itemId]/trocar-fornecedor/route.ts     # DEPRECATED (POST)
         # ── Cross (14 rotas) ──
         cross/search/route.ts              # GET busca (SKU/OEM/nome)
         cross/produtos/[sku]/route.ts      # GET detalhe (com lazy fetch Tiny)
@@ -570,13 +577,13 @@ Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger at
 
 | Table | Purpose |
 |---|---|
-| `siso_devolucoes_pendentes` | Fila de NFs de entrada esperando classificação física. UNIQUE parcial em nota_fiscal_id e chave_acesso_nf (dedup webhook re-entregue). Status: aguardando_classificacao→classificada→aplicada\|cancelada. |
+| `siso_devolucoes_pendentes` | Fila de NFs de entrada esperando classificação física. UNIQUE parcial em nota_fiscal_id e chave_acesso_nf (dedup webhook re-entregue). Status: aguardando_classificacao→classificada\|cancelada. |
 
 ### WMS Tables (Recebimento em 2 etapas — 2026-05-14)
 
 | Table | Purpose |
 |---|---|
-| `siso_wms_pendencias_guarda` | Fila de pendências de put-away. 1 linha por linha de recebimento (preserva NF/lote). `qty_pendente = qty_inicial - qty_guardada` GENERATED. Status: pendente → em_guarda → guardada\|cancelada. Indexada por (galpao_id, status, criada_em). Trigger atualiza `atualizada_em`. CHECK garante coerência (guardada exige qty_guardada=qty_inicial+guardada_em). |
+| `siso_wms_pendencias_guarda` | Fila de pendências de put-away. 1 linha por linha de recebimento (preserva NF/lote). `qty_pendente = qty_inicial - qty_guardada` GENERATED. Status: pendente → em_guarda → guardada\|cancelada. Indexada por (galpao_id, status, criada_em). Trigger atualiza `atualizada_em`. CHECK garante coerência (guardada exige qty_guardada=qty_inicial+guardada_em). **Auditoria (2026-05-27)**: `criada_por uuid` (FK `siso_usuarios.id`, operador do recebimento) + `guardada_por uuid` (FK `siso_usuarios.id`, operador que confirmou a guarda final). |
 
 > Tabela `siso_wms_mini_swap_config` e RPCs `wms_executar_mini_swap` / `wms_executar_swap` **dropadas em 2026-05-20** com o ledger simplificado 3D. Mini-swap intra-galpão e swap N×N entre empresas perderam o sentido — não há mais empresa dona física a consolidar. Código arquivado em `src/lib/wms/_archive/mini-swap*.ts`.
 
@@ -804,6 +811,10 @@ Failure to update documentation means the next developer or LLM will work with s
 - Migrations in `supabase/migrations/` with format `YYYYMMDD_description.sql`.
 - Upserts for idempotency (dedup on unique constraints).
 
+### Notas legados (NÃO TROPECE NISSO)
+- **`siso_pedido_itens.produto_id` é `tiny_produto_id`, NÃO o uuid de `siso_produtos`.** Herdado do schema pré-WMS quando produto era 1:1 com Tiny. Pra resolver pro uuid WMS, JOIN via `siso_produto_empresas` (filtrar por `empresa_id = empresa_origem_id` do pedido). Documentado com JSDoc em `src/types/index.ts:PedidoItem.produto_id`. Renomear esse campo numa próxima refactor é high-risk (módulos webhook/separação/compras dependem desse nome).
+- **`siso_pedido_itens.estoque_cwb_*` / `estoque_sp_*`**: colunas legacy hard-coded a 2 galpões. API lê de `siso_pedido_item_estoques` (normalizado). Serão removidas em migration futura.
+
 ## Current Status
 
 ### Fully Working
@@ -857,8 +868,6 @@ Failure to update documentation means the next developer or LLM will work with s
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)
-- Remove deprecated `/api/wms/compras/conferir` (replaced by comprar/receber flow)
-- Remove deprecated `/api/wms/compras/itens/[itemId]/trocar-fornecedor` (replaced by `compras-equivalencia.ts`)
 - `siso_pedido_item_estoques` — após o cutover só é escrita por inércia (uma linha por pedido×empresa-origem com loc do WMS). Próximo cleanup: descontinuar a tabela e migrar consumidores legados pra ler de `siso_estoque` + ledger.
 
 ### Recently Removed (2026-05-18 — commit `f8b7dbb`)

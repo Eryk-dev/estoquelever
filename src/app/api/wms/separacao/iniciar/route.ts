@@ -70,15 +70,40 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate all have an allowed status (aguardando_separacao, aguardando_compra, em_separacao for resume, or pendente_realocacao for resume after short-pick)
-    const ALLOWED_STATUSES = ["aguardando_separacao", "aguardando_compra", "em_separacao", "validacao_oc", "pendente_realocacao"];
+    // Rejeição explícita: `pendente_realocacao` significa "wave bloqueada
+    // aguardando ação do supervisor sobre realocações órfãs". Tentar iniciar
+    // nesse estado contornaria o gate. Operador precisa resolver realocações
+    // (confirmar/cancelar) antes de re-disparar `iniciar`.
+    const pendenteRealocacao = (pedidos ?? []).filter(
+      (p) => p.status_separacao === "pendente_realocacao",
+    );
+    if (pendenteRealocacao.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "pedido em pendente_realocacao — resolver realocações antes de iniciar",
+          pedido_ids: pendenteRealocacao.map((p) => p.id),
+        },
+        { status: 409 },
+      );
+    }
+
+    // Validate all have an allowed status (aguardando_separacao,
+    // aguardando_compra, em_separacao for resume, validacao_oc).
+    // `pendente_realocacao` removido — tratado acima com 409 dedicado.
+    const ALLOWED_STATUSES = [
+      "aguardando_separacao",
+      "aguardando_compra",
+      "em_separacao",
+      "validacao_oc",
+    ];
     const invalidPedidos = (pedidos ?? []).filter(
       (p) => !ALLOWED_STATUSES.includes(p.status_separacao),
     );
     if (invalidPedidos.length > 0) {
       return NextResponse.json(
         {
-          error: "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra', 'validacao_oc', 'em_separacao' ou 'pendente_realocacao'",
+          error: "todos os pedidos devem estar com status 'aguardando_separacao', 'aguardando_compra', 'validacao_oc' ou 'em_separacao'",
           pedido_ids: invalidPedidos.map((p) => p.id),
           statuses: invalidPedidos.map((p) => p.status_separacao),
         },

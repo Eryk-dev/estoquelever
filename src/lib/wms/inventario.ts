@@ -443,6 +443,32 @@ export interface RegistrarContagemInput {
   modo?: "incremental" | "absoluto";
 }
 
+/**
+ * Registra um bipe de contagem na sessão de inventário.
+ *
+ * **Semântica de concorrência (2 ops na mesma tripla):**
+ *
+ * O modelo permite que múltiplos operadores bipem a mesma tripla
+ * (produto × galpão × localização) na mesma sessão — caso edge documentado
+ * desde o rewrite v2 (2026-05-12): se um operador faz `sairParty` mid-loc
+ * antes de chamar `finalizarLoc`, a loc volta pro pool e outro op pode
+ * pegá-la e bipar os mesmos SKUs.
+ *
+ * Como `computarDivergencias` consolida divergências, ele **soma todas as
+ * contagens da tripla** (todas as linhas em `siso_inventario_contagens` com
+ * mesmo `sessao_id + localizacao_id + produto_id`) — não importa quem
+ * bipou. Resultado: se OP1 bipou 3 e OP2 bipou 2 na mesma tripla, a
+ * `qty_contada_final` na divergência é 5.
+ *
+ * Isso é **intencional** pra casos legítimos (operadores cooperando numa
+ * loc grande) e é a única opção segura quando o supervisor abre a tela de
+ * divergências — não dá pra advinhar qual contagem é "a certa". A
+ * divergência fica pendente se o total bater fora da tolerância.
+ *
+ * UNIQUE constraint na tabela é (sessao_id, localizacao_id, produto_id,
+ * contada_por) — múltiplos ops podem ter rows separadas, mas o mesmo op
+ * tem 1 row por tripla (a função abaixo trata incremental vs absoluto).
+ */
 export async function registrarContagem(
   input: RegistrarContagemInput,
 ): Promise<void> {
@@ -543,6 +569,17 @@ export interface ComputarDivergenciasOpts {
   parcial?: boolean;
 }
 
+/**
+ * Recomputa divergências da sessão (compara contagens vs saldo reconciliado
+ * via ledger temporalmente).
+ *
+ * LIMITAÇÃO CONHECIDA [#P6-4.8]: reconciliação temporal usa cutoff_em
+ * (=contado_em). Movs entre cutoff_em e aprovado_em ainda alteram saldo
+ * "esperado" no ledger, mas a divergência foi calculada com snapshot
+ * cutoff_em. Pra reduzir janela: aprovar rapidamente após contagem.
+ * Ver design doc:
+ *   docs/superpowers/specs/2026-05-18-estoque-online-fluxo.html
+ */
 export async function computarDivergencias(
   sessaoId: string,
   opts: ComputarDivergenciasOpts = {},

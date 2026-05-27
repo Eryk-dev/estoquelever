@@ -10,6 +10,37 @@ import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "historico";
 
+/** Hard limit em bytes pro JSONB de `detalhes`. JSONB > 64KB infla index,
+ *  faz EXPLAIN ANALYZE ruim e atrapalha realtime payload. */
+const MAX_DETALHES_BYTES = 64 * 1024;
+
+/**
+ * Garante que `detalhes` não passa de 64KB serializado. Quando excede,
+ * substitui pelo marker truncado preservando metadata (`_truncated`,
+ * `_original_size_bytes`, `_max_size_bytes`, `_note`). Campos pesados
+ * são jogados fora — verificar `siso_logs` por correlation_id pro detalhe
+ * original.
+ */
+export function truncateDetalhes(
+  detalhes: Record<string, unknown>,
+  ctx: { pedidoId?: string; evento?: string },
+): Record<string, unknown> {
+  const json = JSON.stringify(detalhes);
+  if (json.length <= MAX_DETALHES_BYTES) return detalhes;
+  logger.warn(LOG_SOURCE, "detalhes excedeu 64KB — truncated", {
+    pedidoId: ctx.pedidoId,
+    evento: ctx.evento,
+    original_size_bytes: String(json.length),
+  });
+  return {
+    _truncated: true,
+    _original_size_bytes: json.length,
+    _max_size_bytes: MAX_DETALHES_BYTES,
+    _note:
+      "campos pesados removidos — verificar siso_logs por correlation_id",
+  };
+}
+
 export type EventoPedido =
   | "recebido"
   | "auto_aprovado"
@@ -49,7 +80,20 @@ export type EventoPedido =
   | "separacao_cancelada"
   | "venda_criada_manual"
   | "venda_baixa_direta_executada"
-  | "venda_vendedor_atribuido";
+  | "venda_vendedor_atribuido"
+  | "compra_item_comprado"
+  | "compra_item_recebido"
+  | "compra_item_indisponivel"
+  | "compra_item_devolvido"
+  | "compra_item_cancelado"
+  | "compra_item_equivalente_aplicado"
+  | "compra_sku_trocado"
+  | "compra_pedido_cancelado"
+  | "guarda_pendencia_criada"
+  | "guarda_pendencia_confirmada"
+  | "guarda_pendencia_cancelada"
+  | "inventario_patch_aplicado"
+  | "expedido";
 
 /**
  * Record a single event in the order history.
@@ -69,7 +113,10 @@ export async function registrarEvento(params: {
       evento: params.evento,
       usuario_id: params.usuarioId ?? null,
       usuario_nome: params.usuarioNome ?? null,
-      detalhes: params.detalhes ?? {},
+      detalhes: truncateDetalhes(params.detalhes ?? {}, {
+        pedidoId: params.pedidoId,
+        evento: params.evento,
+      }),
     });
 
     if (error) {
@@ -109,7 +156,10 @@ export async function registrarEventos(
       evento: e.evento,
       usuario_id: e.usuarioId ?? null,
       usuario_nome: e.usuarioNome ?? null,
-      detalhes: e.detalhes ?? {},
+      detalhes: truncateDetalhes(e.detalhes ?? {}, {
+        pedidoId: e.pedidoId,
+        evento: e.evento,
+      }),
     }));
 
     const { error } = await supabase.from("siso_pedido_historico").insert(rows);

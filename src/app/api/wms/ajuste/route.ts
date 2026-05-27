@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
-import { ajustarEstoque } from "@/lib/wms/movimentacoes";
+import { ajustarEstoque, type MotivoCategoria } from "@/lib/wms/movimentacoes";
+
+const CATEGORIAS_VALIDAS = [
+  "avaria",
+  "perda",
+  "achado",
+  "correcao_inventario",
+  "devolucao_sem_fluxo",
+  "outro",
+] as const satisfies readonly MotivoCategoria[];
 
 /**
  * POST /api/wms/ajuste
@@ -54,6 +63,18 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  const motivoCategoria = body.motivo_categoria;
+  if (
+    typeof motivoCategoria !== "string" ||
+    !(CATEGORIAS_VALIDAS as readonly string[]).includes(motivoCategoria)
+  ) {
+    return NextResponse.json(
+      {
+        error: `motivo_categoria é obrigatório e deve ser uma de: ${CATEGORIAS_VALIDAS.join(", ")}`,
+      },
+      { status: 400 },
+    );
+  }
   // PR-6 #8.4 — custo_unitario opcional, só faz sentido em entrada.
   const custoUnitario =
     body.custo_unitario !== undefined && body.custo_unitario !== null
@@ -73,6 +94,7 @@ export async function POST(req: NextRequest) {
       tripla,
       qty,
       motivo,
+      motivo_categoria: motivoCategoria as MotivoCategoria,
       direcao: body.direcao,
       custo_unitario:
         body.direcao === "entrada" ? custoUnitario : undefined,

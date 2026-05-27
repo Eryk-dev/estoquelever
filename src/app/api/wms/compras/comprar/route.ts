@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
+import { registrarEventos } from "@/lib/historico-service";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 
 /**
@@ -34,6 +35,10 @@ export async function POST(request: NextRequest) {
   const itens = body.itens as
     | Array<{ sku: string; quantidade_comprada: number }>
     | undefined;
+  const fornecedorOc =
+    typeof body.fornecedor_oc === "string" && body.fornecedor_oc.trim().length > 0
+      ? body.fornecedor_oc.trim()
+      : null;
 
   if (!itens || !Array.isArray(itens) || itens.length === 0) {
     return NextResponse.json(
@@ -51,6 +56,12 @@ export async function POST(request: NextRequest) {
     quantidade_excedente: number;
   }> = [];
   let firstOcId: string | null = null;
+
+  // Per-pedido audit aggregator (1 evento compra_item_comprado por pedido).
+  const eventosPorPedido = new Map<
+    string,
+    { qty: number; skus: string[] }
+  >();
 
   try {
     for (const { sku, quantidade_comprada } of itens) {
@@ -138,6 +149,8 @@ export async function POST(request: NextRequest) {
           comprado_por_nome: session.nome,
         };
         if (ocId) updatePayload.ordem_compra_id = ocId;
+        // P6 #6.29/#3.11 — persiste fornecedor escolhido no body pra audit.
+        if (fornecedorOc) updatePayload.fornecedor_oc = fornecedorOc;
 
         const { error: updateErr } = await supabase
           .from("siso_pedido_itens")
@@ -156,6 +169,12 @@ export async function POST(request: NextRequest) {
         remaining -= qtyParaEsteItem;
         marcados++;
         alocado += qtyParaEsteItem;
+
+        const pedidoId = item.pedido_id as string;
+        const cur = eventosPorPedido.get(pedidoId) ?? { qty: 0, skus: [] };
+        cur.qty += qtyParaEsteItem;
+        if (!cur.skus.includes(sku)) cur.skus.push(sku);
+        eventosPorPedido.set(pedidoId, cur);
       }
 
       resultados.push({
@@ -164,6 +183,22 @@ export async function POST(request: NextRequest) {
         quantidade_alocada: alocado,
         quantidade_excedente: Math.max(remaining, 0),
       });
+    }
+
+    // Audit trail: 1 evento compra_item_comprado por pedido afetado.
+    if (eventosPorPedido.size > 0) {
+      await registrarEventos(
+        Array.from(eventosPorPedido.entries()).map(([pedidoId, info]) => ({
+          pedidoId,
+          evento: "compra_item_comprado" as const,
+          usuarioId: session.id,
+          usuarioNome: session.nome,
+          detalhes: {
+            qty_total: info.qty,
+            skus: info.skus,
+          },
+        })),
+      );
     }
 
     logger.info("compras-comprar", "Itens marcados como comprado", {

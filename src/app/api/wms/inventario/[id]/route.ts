@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
+import { logger } from "@/lib/logger";
 
 export async function GET(
   req: NextRequest,
@@ -96,6 +97,15 @@ export async function PATCH(
     );
   }
   const sb = createServiceClient();
+
+  // Captura estado anterior pra logar diff. Não-bloqueante: se falhar,
+  // segue com o UPDATE mesmo assim (logging best-effort, não invariante).
+  const { data: before } = await sb
+    .from("siso_inventario_sessoes")
+    .select("nome, modo_contagem, tolerancia_pct, exige_aprovacao_acima_valor, observacoes")
+    .eq("id", id)
+    .single();
+
   const { error } = await sb
     .from("siso_inventario_sessoes")
     .update(allowed)
@@ -109,6 +119,26 @@ export async function PATCH(
       metadata: { sessao_id: id },
     });
   }
+
+  // Loga diff dos campos que mudaram. Tracking de quem editou + de/pra.
+  if (before) {
+    const diff: Record<string, [unknown, unknown]> = {};
+    const beforeMap = before as Record<string, unknown>;
+    const afterMap = allowed as Record<string, unknown>;
+    for (const k of Object.keys(afterMap)) {
+      const b = beforeMap[k];
+      const a = afterMap[k];
+      if (a !== undefined && a !== b) diff[k] = [b, a];
+    }
+    if (Object.keys(diff).length > 0) {
+      logger.info("wms.inventario.patch", "sessão atualizada", {
+        sessao_id: id,
+        diff,
+        usuario_id: auth.user.id,
+      });
+    }
+  }
+
   return NextResponse.json({ ok: true });
 }
 

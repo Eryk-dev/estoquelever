@@ -7,6 +7,7 @@ import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { cancelOcIfEmpty } from "@/lib/compras-utils";
 import { userCan } from "@/lib/permissions";
+import { registrarEvento } from "@/lib/historico-service";
 import { estornarMovimentacao } from "@/lib/wms/ledger";
 
 /**
@@ -157,6 +158,17 @@ export async function POST(
       })
       .eq("pedido_id", pedidoId)
       .eq("status", "pendente");
+
+    await registrarEvento({
+      pedidoId,
+      evento: "compra_pedido_cancelado",
+      usuarioId: session.id,
+      usuarioNome: session.nome,
+      detalhes: {
+        affected_oc_ids: affectedOcIds,
+        had_stock_entrada: hadStockEntrada,
+      },
+    });
 
     logger.warn("compras-cancelar-pedido", "Pedido cancelado a partir da aba de compras", {
       pedidoId,

@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { sisoFetch, usePermissoes } from "@/lib/auth-context";
@@ -13,7 +18,6 @@ import {
 import {
   Icon,
   PageHeader,
-  Pagination,
   fmtDateTime,
   fmtNum,
   fmtRelative,
@@ -112,6 +116,7 @@ interface HistoricoFornecedor {
 interface HistoricoResponse {
   counts: Counts;
   fornecedores: HistoricoFornecedor[];
+  next_cursor: string | null;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -158,9 +163,19 @@ export default function WmsComprasPage() {
     refetchInterval: 30_000,
   });
 
-  const historicoQuery = useQuery<HistoricoResponse>({
+  // Histórico usa paginação cursor-based (useInfiniteQuery) com botão
+  // "Carregar mais" — backend retorna até 100 itens por chamada + next_cursor.
+  const historicoQuery = useInfiniteQuery<HistoricoResponse>({
     queryKey: ["wms-compras", "historico"],
-    queryFn: () => wmsApi<HistoricoResponse>("/api/wms/compras?tab=historico"),
+    queryFn: ({ pageParam }) => {
+      const cursor = pageParam as string | null;
+      const url = cursor
+        ? `/api/wms/compras?tab=historico&cursor=${encodeURIComponent(cursor)}&limit=100`
+        : "/api/wms/compras?tab=historico&limit=100";
+      return wmsApi<HistoricoResponse>(url);
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
     enabled: tab === "historico",
     refetchInterval: 60_000,
   });
@@ -168,7 +183,7 @@ export default function WmsComprasPage() {
   const counts =
     comprarQuery.data?.counts ??
     receberQuery.data?.counts ??
-    historicoQuery.data?.counts;
+    historicoQuery.data?.pages?.[0]?.counts;
 
   const invalidateAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["wms-compras"] });
@@ -1152,44 +1167,8 @@ function TabReceber({
 function TabHistorico({
   query,
 }: {
-  query: ReturnType<typeof useQuery<HistoricoResponse>>;
+  query: ReturnType<typeof useInfiniteQuery<HistoricoResponse>>;
 }) {
-  // Paginação client-side (finding 3.13). API limita a 500 linhas no
-  // backend; aqui dividimos em páginas de 50 pra reduzir DOM. Quando o
-  // volume escalar, migrar pra paginação server-side com offset/limit.
-  const PAGE_SIZE = 50;
-  const [page, setPage] = useState(1);
-
-  const fornecedores = query.data?.fornecedores ?? [];
-  const linhas = useMemo(() => {
-    const rows: Array<{
-      fornecedor: string;
-      data_recebimento: string;
-      sku: string;
-      descricao: string;
-      quantidade_recebida: number;
-      recebido_em: string | null;
-    }> = [];
-    for (const f of fornecedores) {
-      for (const i of f.itens) {
-        rows.push({
-          fornecedor: f.fornecedor,
-          data_recebimento: f.data_recebimento,
-          sku: i.sku,
-          descricao: i.descricao,
-          quantidade_recebida: i.quantidade_recebida,
-          recebido_em: i.recebido_em,
-        });
-      }
-    }
-    return rows;
-  }, [fornecedores]);
-
-  const linhasPage = useMemo(
-    () => linhas.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [linhas, page],
-  );
-
   if (query.isLoading) {
     return <div className="wms-loading-pane">Carregando…</div>;
   }
@@ -1201,7 +1180,15 @@ function TabHistorico({
       </div>
     );
   }
-  if (linhas.length === 0) {
+  // Aglutina fornecedores de todas as páginas. Como o cursor é por
+  // `comprado_em` e o backend agrupa por (fornecedor, data), aglutinar lista
+  // direto produz duplicação aparente de grupos do mesmo fornecedor+data
+  // entre páginas. É aceitável — cada grupo carrega itens distintos e a UI
+  // mostra como linhas separadas.
+  const fornecedores =
+    query.data?.pages?.flatMap((p) => p.fornecedores) ?? [];
+
+  if (fornecedores.length === 0) {
     return (
       <div className="wms-empty-block">
         <h3>Sem histórico</h3>
@@ -1224,31 +1211,38 @@ function TabHistorico({
             </tr>
           </thead>
           <tbody>
-            {linhasPage.map((row, idx) => (
-              <tr key={`${row.fornecedor}-${row.sku}-${(page - 1) * PAGE_SIZE + idx}`}>
-                <td className="wms-td-mute">
-                  {row.recebido_em
-                    ? fmtDateTime(row.recebido_em)
-                    : fmtDateTime(row.data_recebimento)}
-                </td>
-                <td>{row.fornecedor}</td>
-                <td className="wms-mono">{row.sku}</td>
-                <td>{row.descricao}</td>
-                <td className="wms-tar wms-mono">
-                  {fmtNum(row.quantidade_recebida)}
-                </td>
-              </tr>
-            ))}
+            {fornecedores.flatMap((f, fIdx) =>
+              f.itens.map((i, idx) => (
+                <tr key={`${fIdx}-${f.fornecedor}-${i.sku}-${idx}`}>
+                  <td className="wms-td-mute">
+                    {i.recebido_em
+                      ? fmtDateTime(i.recebido_em)
+                      : fmtDateTime(f.data_recebimento)}
+                  </td>
+                  <td>{f.fornecedor}</td>
+                  <td className="wms-mono">{i.sku}</td>
+                  <td>{i.descricao}</td>
+                  <td className="wms-tar wms-mono">
+                    {fmtNum(i.quantidade_recebida)}
+                  </td>
+                </tr>
+              )),
+            )}
           </tbody>
         </table>
       </div>
-      <Pagination
-        total={linhas.length}
-        pageSize={PAGE_SIZE}
-        page={page}
-        onPageChange={setPage}
-        label="recebimentos"
-      />
+      {query.hasNextPage && (
+        <div style={{ display: "flex", justifyContent: "center", padding: "1rem" }}>
+          <button
+            type="button"
+            className="wms-btn"
+            onClick={() => query.fetchNextPage()}
+            disabled={query.isFetchingNextPage}
+          >
+            {query.isFetchingNextPage ? "Carregando…" : "Carregar mais"}
+          </button>
+        </div>
+      )}
     </>
   );
 }

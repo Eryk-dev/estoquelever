@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { carregarDadosEquivalentePorSku } from "@/lib/compras-equivalencia";
 import { userCan } from "@/lib/permissions";
+import { registrarEvento } from "@/lib/historico-service";
 import { liberarReserva } from "@/lib/wms/reservas";
 import { wmsAsSource } from "@/lib/wms/flags";
 
@@ -225,6 +226,20 @@ export async function POST(
     if (updateError) {
       throw new Error(`Erro ao confirmar equivalente: ${updateError.message}`);
     }
+
+    await registrarEvento({
+      pedidoId: item.pedido_id,
+      evento: "compra_item_equivalente_aplicado",
+      usuarioId: session.id,
+      usuarioNome: session.nome,
+      detalhes: {
+        item_id: itemId,
+        sku_original: item.sku,
+        sku_equivalente: equivalente.sku,
+        qty: quantidadeNecessariaCompra,
+        fornecedor: item.compra_equivalente_fornecedor ?? equivalente.fornecedor,
+      },
+    });
 
     logger.info("compras-equivalente-confirmar", "Equivalente confirmado e sincronizado", {
       itemId,

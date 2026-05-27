@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import {
   useQueryClient,
   type QueryClient,
@@ -8,6 +8,13 @@ import {
 } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+
+/**
+ * Janela de debounce (ms) pra coalescer múltiplos eventos realtime numa
+ * só invalidação. Eventos em rajada (ex.: cancelar pedido emite N updates
+ * nos itens + 1 no pedido) viram uma única refetch.
+ */
+const REFETCH_DEBOUNCE_MS = 500;
 
 interface RealtimeSeparacaoConfig {
   /**
@@ -51,6 +58,37 @@ export function useRealtimeSeparacao(config?: RealtimeSeparacaoConfig) {
   // Stable key for the queryKey (objects/arrays would re-trigger otherwise).
   const queryKeyHash = scopedQueryKey ? JSON.stringify(scopedQueryKey) : "";
 
+  // ─── Debounce invalidations ───
+  // Rajadas de eventos (cancelar emite N updates) coalescem em 1 refetch.
+  // Mapa por queryKeyHash pra escopar timers — invalidação do "separacao"
+  // global não deve esperar/cancelar a do scopedQueryKey.
+  const debounceTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+
+  const debouncedInvalidate = useCallback(
+    (queryKey: QueryKey) => {
+      const hash = JSON.stringify(queryKey);
+      const existing = debounceTimers.current.get(hash);
+      if (existing) clearTimeout(existing);
+      const timer = setTimeout(() => {
+        debounceTimers.current.delete(hash);
+        queryClient.invalidateQueries({ queryKey });
+      }, REFETCH_DEBOUNCE_MS);
+      debounceTimers.current.set(hash, timer);
+    },
+    [queryClient],
+  );
+
+  // Cleanup global: limpa timers pendentes ao desmontar o hook.
+  useEffect(() => {
+    const timers = debounceTimers.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+
   // ─── siso_pedidos: legacy global invalidation OR scoped invalidation ───
   useEffect(() => {
     const channel = supabase
@@ -72,10 +110,10 @@ export function useRealtimeSeparacao(config?: RealtimeSeparacaoConfig) {
                 | string
                 | undefined);
             if (pedidoId && scopedPedidoIds.includes(pedidoId)) {
-              queryClient.invalidateQueries({ queryKey: scopedQueryKey });
+              debouncedInvalidate(scopedQueryKey);
             }
           } else {
-            queryClient.invalidateQueries({ queryKey: ["separacao"] });
+            debouncedInvalidate(["separacao"]);
           }
         },
       )
@@ -92,7 +130,7 @@ export function useRealtimeSeparacao(config?: RealtimeSeparacaoConfig) {
     // queryKeyHash + pedidoIdsKey capture the scoped config changes; we
     // intentionally exclude scopedQueryKey/scopedPedidoIds object identities.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryClient, pedidoIdsKey, queryKeyHash]);
+  }, [queryClient, pedidoIdsKey, queryKeyHash, debouncedInvalidate]);
 
   // ─── siso_pedido_item_realocacoes: only when scoped config provided ───
   useEffect(() => {
@@ -128,7 +166,7 @@ export function useRealtimeSeparacao(config?: RealtimeSeparacaoConfig) {
             item &&
             scopedPedidoIds.includes(item.pedido_id as string)
           ) {
-            queryClient.invalidateQueries({ queryKey: scopedQueryKey });
+            debouncedInvalidate(scopedQueryKey);
           }
         },
       )
@@ -143,5 +181,5 @@ export function useRealtimeSeparacao(config?: RealtimeSeparacaoConfig) {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryClient, pedidoIdsKey, queryKeyHash]);
+  }, [queryClient, pedidoIdsKey, queryKeyHash, debouncedInvalidate]);
 }

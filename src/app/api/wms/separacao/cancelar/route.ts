@@ -139,6 +139,16 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Reset all item checkmarks + parcial fields for the given pedidos
+    //
+    // DESIGN: mov_ajuste_loc_zerou_id é preservado deliberadamente.
+    // O ajuste de "loc zerou" representa uma realidade física (a loc realmente
+    // estava vazia quando o operador chegou) — cancelar a separação NÃO desfaz
+    // a constatação física. Se o operador quiser "desfazer" o ajuste, usar
+    // /api/wms/separacao/desfazer-parcial (fluxo explícito).
+    //
+    // O FK mov_ajuste_loc_zerou_id em siso_pedido_itens é limpo aqui (a coluna
+    // some do pedido), mas a mov no ledger fica intacta (não foi estornada
+    // acima, pois o Set movsSaidaSet só carrega movs do tipo "saida").
     const { error: itemsError } = await supabase
       .from("siso_pedido_itens")
       .update({

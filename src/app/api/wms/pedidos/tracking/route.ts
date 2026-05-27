@@ -11,7 +11,8 @@ import { userCan } from "@/lib/permissions";
  * Returns pedido summary data with combined status, empresa/galpao names.
  *
  * Query params:
- *   page — page number (default 1)
+ *   page — page number (default 1) [LEGACY — use cursor instead]
+ *   cursor — ISO timestamp of last item's `criado_em` (cursor-based pagination)
  *   limit — items per page (default 50, max 200)
  *   data_inicio — start date filter (ISO, default 30 days ago)
  *   data_fim — end date filter (ISO, default now)
@@ -22,6 +23,14 @@ import { userCan } from "@/lib/permissions";
  *   empresa_origem_id — filter by origin empresa
  *   marketplace — ilike filter on nome_ecommerce
  *   tab — "expedidos" for final-state orders, default for all others
+ *
+ * Pagination contract:
+ *   - When `cursor` is provided: returns `{ pedidos, next_cursor }`. `next_cursor`
+ *     is the `criado_em` of the last item if a full page was returned (i.e. more
+ *     may exist), or null when exhausted.
+ *   - When `cursor` is absent: falls back to page-based mode and also returns
+ *     `total` + `totalPages` (legacy frontend). `next_cursor` is still emitted
+ *     pra clientes que queiram migrar gradualmente.
  *
  * Role-based filtering:
  *   admin — sees all
@@ -37,6 +46,13 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
   const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") ?? "50", 10)));
+
+  // Cursor-based pagination: client passes `?cursor=<criado_em ISO>` and gets
+  // back the next page + `next_cursor` for the subsequent fetch. Validate that
+  // it parses as a date — fall back to page-mode if garbage.
+  const cursorRaw = searchParams.get("cursor");
+  const cursorValid = cursorRaw && !Number.isNaN(Date.parse(cursorRaw)) ? cursorRaw : null;
+  const useCursor = cursorValid !== null;
 
   // Date range — default last 30 days
   const now = new Date();
@@ -190,26 +206,44 @@ export async function GET(request: NextRequest) {
 
       empresaIds = (empresasInGalpao ?? []).map((e) => e.id);
       if (empresaIds.length === 0) {
-        return NextResponse.json({ pedidos: [], total: 0, page, totalPages: 0 });
+        return NextResponse.json({
+          pedidos: [],
+          total: 0,
+          page,
+          totalPages: 0,
+          next_cursor: null,
+        });
       }
     }
 
-    // Count query (same filters, no pagination)
-    let countQuery = supabase
-      .from("siso_pedidos")
-      .select("*", { count: "exact", head: true });
-    countQuery = applyFilters(countQuery, empresaIds);
+    // Count query (same filters, no pagination). Skip in cursor mode — count is
+    // O(N) on the table and clients in cursor mode don't need totalPages.
+    let countResult: { count: number | null } | null = null;
+    if (!useCursor) {
+      let countQuery = supabase
+        .from("siso_pedidos")
+        .select("*", { count: "exact", head: true });
+      countQuery = applyFilters(countQuery, empresaIds);
+      countResult = await countQuery;
+    }
 
     // Data query (with pagination)
     let dataQuery = supabase
       .from("siso_pedidos")
       .select(selectFields)
       .order("criado_em", { ascending: false })
-      .range((page - 1) * limit, page * limit - 1);
+      .order("id", { ascending: false });
+
+    if (useCursor) {
+      // criado_em < cursor — strictly less than, since the cursor IS the last
+      // item from the previous page (we don't want to repeat it).
+      dataQuery = dataQuery.lt("criado_em", cursorValid as string).limit(limit);
+    } else {
+      dataQuery = dataQuery.range((page - 1) * limit, page * limit - 1);
+    }
     dataQuery = applyFilters(dataQuery, empresaIds);
 
-    // Execute count + data in parallel
-    const [countResult, dataResult] = await Promise.all([countQuery, dataQuery]);
+    const dataResult = await dataQuery;
 
     if (dataResult.error) {
       logger.error("pedidos-tracking", "Failed to fetch pedidos", {
@@ -218,8 +252,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: dataResult.error.message }, { status: 500 });
     }
 
-    const total = countResult.count ?? 0;
-    const totalPages = Math.ceil(total / limit);
+    const total = countResult?.count ?? 0;
+    const totalPages = useCursor ? 0 : Math.ceil(total / limit);
 
     // Map to response shape
     const pedidos = (dataResult.data ?? []).map((p) => {
@@ -254,7 +288,20 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({ pedidos, total, page, totalPages });
+    // next_cursor: emite quando uma página cheia foi retornada (sinaliza que
+    // mais itens podem existir). Null quando exausto.
+    const nextCursor =
+      pedidos.length === limit && pedidos.length > 0
+        ? pedidos[pedidos.length - 1].criado_em || null
+        : null;
+
+    return NextResponse.json({
+      pedidos,
+      total,
+      page,
+      totalPages,
+      next_cursor: nextCursor,
+    });
   } catch (err) {
     logger.error("pedidos-tracking", "Unexpected error", {
       error: err instanceof Error ? err.message : String(err),

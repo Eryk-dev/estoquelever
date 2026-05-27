@@ -37,7 +37,11 @@ import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import { reservarAtomico, estornarReservaIndividual } from "@/lib/wms/reservas";
 import { wmsAsSource } from "@/lib/wms/flags";
 import { registrarEvento } from "@/lib/historico-service";
-import { resolverDisponibilidadeVenda } from "@/lib/wms/vendas-disponibilidade";
+import { userCan } from "@/lib/permissions";
+import {
+  resolverDisponibilidadeVenda,
+  type DisponibilidadeSugestao,
+} from "@/lib/wms/vendas-disponibilidade";
 import type {
   CriarVendaDiretaRequest,
   CriarVendaDiretaResponse,
@@ -55,6 +59,8 @@ interface ItemResolvido {
   localizacao_id: string | null;
   localizacao_codigo: string | null;
   disponivel: number;
+  /** Lista ordenada de locs com saldo — usada pra split em baixa_direta. */
+  sugestoes: DisponibilidadeSugestao[];
 }
 
 export async function POST(request: NextRequest) {
@@ -79,6 +85,7 @@ export async function POST(request: NextRequest) {
     modo,
     items,
     idempotency_key,
+    vendedor_id_alvo,
   } = body;
 
   if (!cliente_nome?.trim()) {
@@ -109,6 +116,53 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
+
+  // ─── Vendedor efetivo (em nome de) ──────────────────────────────────────
+  // Default: usuário da sessão é o vendedor. Se `vendedor_id_alvo` foi enviado
+  // e é diferente do user.id, valida permissão `vendas.criar_em_nome_de` e
+  // resolve nome do alvo. Admin/operador_* têm essa perm por default.
+  let vendedorIdEfetivo: string = user.id;
+  let vendedorNomeEfetivo: string = user.nome;
+  let emNomeDe: { id: string; nome: string } | null = null;
+
+  if (vendedor_id_alvo && vendedor_id_alvo !== user.id) {
+    if (!userCan(user, "vendas.criar_em_nome_de")) {
+      return NextResponse.json(
+        { erro: "sem permissão pra criar em nome de outro vendedor" },
+        { status: 403 },
+      );
+    }
+    const { data: alvo, error: alvoErr } = await supabase
+      .from("siso_usuarios")
+      .select("id, nome, ativo")
+      .eq("id", vendedor_id_alvo)
+      .maybeSingle();
+    if (alvoErr) {
+      logger.error("vendas.criar", "Erro lendo vendedor_id_alvo", {
+        error: alvoErr.message,
+        vendedor_id_alvo,
+      });
+      return NextResponse.json(
+        { erro: "Erro lendo vendedor alvo" },
+        { status: 500 },
+      );
+    }
+    if (!alvo) {
+      return NextResponse.json(
+        { erro: "vendedor_id_alvo inválido" },
+        { status: 400 },
+      );
+    }
+    if (alvo.ativo === false) {
+      return NextResponse.json(
+        { erro: "vendedor_id_alvo está inativo" },
+        { status: 400 },
+      );
+    }
+    vendedorIdEfetivo = alvo.id;
+    vendedorNomeEfetivo = alvo.nome;
+    emNomeDe = { id: alvo.id, nome: alvo.nome };
+  }
 
   // Idempotência: se mesmo idempotency_key já foi processado, retorna o pedido existente
   if (idempotency_key) {
@@ -192,9 +246,22 @@ export async function POST(request: NextRequest) {
         throw new Error(`Produto ${item.produto_id} não encontrado no catálogo`);
       }
       if (!tinyId) {
-        throw new Error(
-          `Produto ${prod.sku} não está cadastrado na empresa origem — peça pro admin sincronizar via Tiny`,
-        );
+        // Verifica se produto existe em OUTRAS empresas — sugere
+        const { data: outrasEmpresas } = await supabase
+          .from("siso_produto_empresas")
+          .select("empresa_id, siso_empresas!inner(nome)")
+          .eq("produto_id", item.produto_id);
+        const sugestoes = (outrasEmpresas ?? [])
+          .map((e: { siso_empresas?: { nome?: string } | { nome?: string }[] }) => {
+            const emp = Array.isArray(e.siso_empresas) ? e.siso_empresas[0] : e.siso_empresas;
+            return emp?.nome ?? null;
+          })
+          .filter((nome): nome is string => Boolean(nome));
+        const msg =
+          sugestoes.length > 0
+            ? `Produto ${prod.sku} não está cadastrado na empresa origem (${empresa.nome}). Disponível em: ${sugestoes.join(", ")}. Selecione uma dessas ou peça pro admin sincronizar.`
+            : `Produto ${prod.sku} não está cadastrado em nenhuma empresa — peça pro admin sincronizar via Tiny`;
+        throw new Error(msg);
       }
       const dispon = await resolverDisponibilidadeVenda(supabase as never, {
         produto_id: item.produto_id,
@@ -209,6 +276,7 @@ export async function POST(request: NextRequest) {
         localizacao_id: dispon.sugestao?.localizacao_id ?? null,
         localizacao_codigo: dispon.sugestao?.localizacao_codigo ?? null,
         disponivel: dispon.total_disponivel,
+        sugestoes: dispon.sugestoes,
       };
     }),
   ).catch((err) => {
@@ -239,6 +307,25 @@ export async function POST(request: NextRequest) {
   const agora = new Date().toISOString();
 
   // 1) Insert siso_pedidos
+  //
+  // vendedor_id/vendedor_nome refletem o vendedor efetivo (em nome de):
+  // se vendedor_id_alvo foi enviado e a permissão `vendas.criar_em_nome_de`
+  // foi validada, o pedido fica atribuído ao alvo. payload_original registra
+  // quem **criou** (criado_por_*) pra audit, separadamente do vendedor exibido.
+  const payloadBase: Record<string, unknown> = {
+    manual: true,
+    modo_solicitado: modo,
+    degradado,
+    ...(emNomeDe
+      ? {
+          criado_por_id: user.id,
+          criado_por_nome: user.nome,
+          vendedor_alvo_id: emNomeDe.id,
+          vendedor_alvo_nome: emNomeDe.nome,
+        }
+      : {}),
+  };
+
   const pedidoRow = {
     id: pedidoId,
     numero,
@@ -248,8 +335,8 @@ export async function POST(request: NextRequest) {
     cliente_nome,
     cliente_cpf_cnpj: cliente_cpf_cnpj ?? null,
     canal_venda: canal_venda ?? null,
-    vendedor_id: user.id,
-    vendedor_nome: user.nome,
+    vendedor_id: vendedorIdEfetivo,
+    vendedor_nome: vendedorNomeEfetivo,
     origem_pedido: "manual",
     tipo_resolucao: "manual",
     decisao_final: "propria",
@@ -257,8 +344,8 @@ export async function POST(request: NextRequest) {
     separacao_galpao_id: galpao_id,
     marcadores: ["LVR", "VENDA_DIRETA"],
     payload_original: idempotency_key
-      ? { idempotency_key, manual: true, modo_solicitado: modo, degradado }
-      : { manual: true, modo_solicitado: modo, degradado },
+      ? { ...payloadBase, idempotency_key }
+      : payloadBase,
     ...(modoEfetivo === "separacao"
       ? { status: "executando", status_separacao: "aguardando_separacao" }
       : { status: "concluido", status_separacao: null, processado_em: agora }),
@@ -280,8 +367,11 @@ export async function POST(request: NextRequest) {
     sku: i.sku,
     descricao: i.descricao,
     quantidade_pedida: i.quantidade,
-    cwb_atende: galpaoNome === "CWB",
-    sp_atende: galpaoNome === "SP",
+    // Legacy compat: cwb_atende/sp_atende são mantidos pra queries legadas
+    // de painéis. Popula com case-insensitive match no nome do galpão.
+    // Pra galpões fora de {CWB, SP}, ambos ficam false (sinaliza "outro").
+    cwb_atende: /^cwb\b/i.test(galpaoNome ?? ""),
+    sp_atende: /^sp\b/i.test(galpaoNome ?? ""),
   }));
 
   const { error: itensErr } = await supabase.from("siso_pedido_itens").insert(itensRows);
@@ -353,102 +443,156 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // 3) Se modoEfetivo === 'baixa_direta', gera movs 'S' no ledger com rollback manual
+  // 3) Se modoEfetivo === 'baixa_direta', gera movs 'S' no ledger com rollback manual.
+  //    Cada item pode ser dividido em N movs se a qty pedida não cabe numa única
+  //    loc — iteramos sobre item.sugestoes[] (já ordenadas por preferência:
+  //    picking > overstock > recebimento, depois maior disponivel) até completar
+  //    a qty pedida ou esgotar sugestoes.
   const movsCriadas: string[] = [];
+
+  // Helper de rollback: estorna movs criadas + deleta itens e pedido.
+  const rollbackBaixaDireta = async (motivo: string) => {
+    for (const movId of movsCriadas) {
+      try {
+        await estornarMovimentacao({
+          mov_id: movId,
+          usuario_id: user.id,
+          motivo: `Rollback de venda manual ${pedidoId} (${motivo})`,
+        });
+      } catch (estornoErr) {
+        logger.error(
+          "vendas.criar",
+          "Falha no rollback de mov — DADOS POSSIVELMENTE INCONSISTENTES",
+          {
+            pedidoId,
+            mov_id: movId,
+            erro:
+              estornoErr instanceof Error ? estornoErr.message : String(estornoErr),
+          },
+        );
+      }
+    }
+    await supabase.from("siso_pedido_itens").delete().eq("pedido_id", pedidoId);
+    await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
+  };
+
   if (modoEfetivo === "baixa_direta") {
     // origem_id é uuid no schema (siso_movimentacoes.origem_id) — geramos um uuid
     // compartilhado entre todos os itens da mesma venda pra agrupá-los no ledger.
     // O pedidoId 'MAN-...' (text) vai como tag em origem_detalhes.pedido_id_manual.
     const origemVendaId = crypto.randomUUID();
     for (const item of itensResolvidos) {
-      // Aqui já garantimos que tem saldo (senão modoEfetivo seria 'separacao').
-      // Mas localizacao_id deve existir — se não, é bug interno.
-      if (!item.localizacao_id) {
-        logger.error("vendas.criar", "Item sem tripla resolvida em baixa_direta — inconsistência", {
-          pedidoId,
-          sku: item.sku,
-        });
-        for (const movId of movsCriadas) {
-          try {
-            await estornarMovimentacao({
-              mov_id: movId,
-              usuario_id: user.id,
-              motivo: `Rollback de venda manual ${pedidoId} (tripla inconsistente)`,
-            });
-          } catch {}
-        }
-        await supabase.from("siso_pedido_itens").delete().eq("pedido_id", pedidoId);
-        await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
+      // Sanity: se chegou aqui é porque modoEfetivo === 'baixa_direta', logo
+      // não-degradação garante quantidade <= disponivel. Se sugestoes vazio,
+      // é bug interno (disponivel deveria ser zero e degradação teria ocorrido).
+      if (!item.sugestoes || item.sugestoes.length === 0) {
+        logger.error(
+          "vendas.criar",
+          "Item sem sugestoes em baixa_direta — inconsistência",
+          { pedidoId, sku: item.sku, disponivel: item.disponivel },
+        );
+        await rollbackBaixaDireta("sugestoes vazia");
         return NextResponse.json(
-          { erro: `Falha interna: tripla não resolvida pra ${item.sku}` },
+          { erro: `Falha interna: nenhuma loc resolvida pra ${item.sku}` },
           { status: 500 },
         );
       }
 
-      try {
-        const mov = await inserirMovimentacao({
-          tripla: {
-            produto_id: item.produto_id,
-            galpao_id: galpao_id,
-            localizacao_id: item.localizacao_id,
-          },
-          tipo: "S",
-          qty: item.quantidade,
-          origem_tipo: "venda_manual",
-          origem_id: origemVendaId,
-          origem_detalhes: {
-            sku: item.sku,
-            vendedor_id: user.id,
-            vendedor_nome: user.nome,
-            canal_venda: canal_venda ?? null,
-            loc_codigo: item.localizacao_codigo,
-            pedido_id_manual: pedidoId,
-          },
-          empresa_vendedora_id: empresa_origem_id,
-          cliente_nome,
-          // pedido_id removido — siso_pedidos.id é text ('MAN-...'), não cabe na coluna uuid.
-          // Rastreio via origem_detalhes.pedido_id_manual acima.
-          usuario_id: user.id,
-          motivo: `Venda manual ${pedidoId} — ${cliente_nome}`,
-        });
-        movsCriadas.push(mov.id);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.error("vendas.criar", "Falha em mov de baixa direta — fazendo rollback", {
-          pedidoId,
-          sku: item.sku,
-          erro: msg,
-          movs_pra_estornar: movsCriadas,
-        });
+      // Distribui qty entre locs até completar
+      let restante = item.quantidade;
+      for (const sug of item.sugestoes) {
+        if (restante <= 0) break;
+        const qtyDestaLoc = Math.min(restante, sug.disponivel);
+        if (qtyDestaLoc <= 0) continue;
 
-        // Rollback das movs anteriores
-        for (const movId of movsCriadas) {
-          try {
-            await estornarMovimentacao({
-              mov_id: movId,
-              usuario_id: user.id,
-              motivo: `Rollback de venda manual ${pedidoId} (falha em outro item)`,
-            });
-          } catch (estornoErr) {
-            logger.error("vendas.criar", "Falha no rollback de mov — DADOS POSSIVELMENTE INCONSISTENTES", {
+        try {
+          const mov = await inserirMovimentacao({
+            tripla: {
+              produto_id: item.produto_id,
+              galpao_id: galpao_id,
+              localizacao_id: sug.localizacao_id,
+            },
+            tipo: "S",
+            qty: qtyDestaLoc,
+            origem_tipo: "venda_manual",
+            origem_id: origemVendaId,
+            origem_detalhes: {
+              sku: item.sku,
+              vendedor_id: vendedorIdEfetivo,
+              vendedor_nome: vendedorNomeEfetivo,
+              canal_venda: canal_venda ?? null,
+              loc_codigo: sug.localizacao_codigo,
+              pedido_id_manual: pedidoId,
+              // Split-info: qty pedida e split atual (debug ledger)
+              qty_item_total: item.quantidade,
+              qty_desta_loc: qtyDestaLoc,
+              ...(emNomeDe
+                ? {
+                    criado_por_id: user.id,
+                    criado_por_nome: user.nome,
+                  }
+                : {}),
+            },
+            empresa_vendedora_id: empresa_origem_id,
+            cliente_nome,
+            // pedido_id é TEXT por design (migration 20260526) — aceita
+            // `MAN-...` igual aceita Tiny ID. Popular aqui restaura o link
+            // formal mov ↔ pedido (que ficava só em origem_detalhes antes do
+            // P6); facilita reports tipo "movs do pedido X" sem ter que
+            // varrer JSON.
+            pedido_id: pedidoId,
+            usuario_id: user.id,
+            motivo: `Venda manual ${pedidoId} — ${cliente_nome}`,
+          });
+          movsCriadas.push(mov.id);
+          restante -= qtyDestaLoc;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.error(
+            "vendas.criar",
+            "Falha em mov de baixa direta — fazendo rollback",
+            {
               pedidoId,
-              mov_id: movId,
-              erro: estornoErr instanceof Error ? estornoErr.message : String(estornoErr),
-            });
-          }
+              sku: item.sku,
+              loc: sug.localizacao_codigo,
+              qty_desta_loc: qtyDestaLoc,
+              erro: msg,
+              movs_pra_estornar: movsCriadas,
+            },
+          );
+          await rollbackBaixaDireta("falha em outro item");
+          return NextResponse.json(
+            {
+              erro: `Falha ao baixar ${item.sku}: ${msg}`,
+              sku: item.sku,
+              movs_estornadas: movsCriadas.length,
+            },
+            { status: 409 },
+          );
         }
+      }
 
-        // Apaga itens e pedido
-        await supabase.from("siso_pedido_itens").delete().eq("pedido_id", pedidoId);
-        await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
-
+      if (restante > 0) {
+        // Cobertura insuficiente entre as sugestoes — não deveria ocorrer
+        // porque a degradação acima trata isso. Defensive: rollback + erro.
+        logger.error(
+          "vendas.criar",
+          "Sugestoes insuficientes em baixa_direta — degradação falhou",
+          {
+            pedidoId,
+            sku: item.sku,
+            qty_pedida: item.quantidade,
+            qty_atendida: item.quantidade - restante,
+            disponivel_total: item.disponivel,
+          },
+        );
+        await rollbackBaixaDireta("sugestoes insuficientes");
         return NextResponse.json(
           {
-            erro: `Falha ao baixar ${item.sku}: ${msg}`,
+            erro: `Falha interna: cobertura insuficiente pra ${item.sku} (pedida=${item.quantidade}, atendida=${item.quantidade - restante})`,
             sku: item.sku,
-            movs_estornadas: movsCriadas.length,
           },
-          { status: 409 },
+          { status: 500 },
         );
       }
     }
@@ -471,6 +615,11 @@ export async function POST(request: NextRequest) {
       items_count: itensResolvidos.length,
       canal_venda: canal_venda ?? null,
       ...(degradado ? { skus_sem_saldo: itensSemSaldo.map((i) => i.sku) } : {}),
+      ...(emNomeDe
+        ? {
+            em_nome_de: { id: emNomeDe.id, nome: emNomeDe.nome },
+          }
+        : {}),
     },
   }).catch(() => {});
 

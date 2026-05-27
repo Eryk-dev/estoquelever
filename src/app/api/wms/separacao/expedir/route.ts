@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { logger } from "@/lib/logger";
+import { registrarEventos } from "@/lib/historico-service";
 
 /**
  * POST /api/separacao/expedir
@@ -132,6 +133,17 @@ export async function POST(request: NextRequest) {
       updated: count,
       usuario: session.nome,
     });
+
+    // Audit trail por pedido (fire-and-forget). Sem isso, a transição
+    // embalado→expedido sumia do histórico — só ficava em siso_logs.
+    await registrarEventos(
+      pedido_ids.map((pid) => ({
+        pedidoId: pid,
+        evento: "expedido" as const,
+        usuarioId: session.id,
+        detalhes: { batch_size: pedido_ids.length },
+      })),
+    );
 
     return NextResponse.json({ updated: count ?? pedido_ids.length });
   } catch (err) {

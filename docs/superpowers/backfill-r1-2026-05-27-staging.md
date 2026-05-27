@@ -23,6 +23,21 @@ Coletados via `mcp__supabase__execute_sql` no projeto staging em 2026-05-27 14:0
 - Skip do worktree (Task 2 do plano original): user pediu trabalhar direto em `develop`.
 - Skip do PR (Task 32 ajustada): user pediu direto em `develop`, sem fluxo de revisão externa.
 
+## Smoke A7 (T10)
+
+T10 do plano original prescreve rodar cenários 01 / 10 / 11 e checar via SQL que movs novas têm `nota_fiscal_id`. **Adiado pra T31 (verificação final)** pra não pagar 2× o custo da suite (cada run leva ~5min+ e tem flakiness em FK). A SQL de verificação fica documentada aqui:
+
+```sql
+-- Toda mov nova de NF deve ter nota_fiscal_id populado:
+SELECT origem_tipo, COUNT(*) AS total, COUNT(*) FILTER (WHERE nota_fiscal_id IS NULL) AS sem_fk
+FROM siso_movimentacoes
+WHERE origem_tipo IN ('nf_compra','nf_venda','devolucao_cliente_integra','devolucao_cliente_avariada','devolucao_fornecedor_recebida','devolucao_fornecedor_enviada')
+  AND criado_em > '2026-05-27 17:00:00+00'  -- após aplicação da migration T5
+GROUP BY origem_tipo;
+```
+
+Espera-se `sem_fk = 0` em todas as linhas pós-T7/T8 (cutover do worker WMS).
+
 ## Backfill NF (T9)
 
 - Dry-run: 1 mov candidata, 1 skipped_sem_chave (origem_detalhes sem `chave_acesso`)

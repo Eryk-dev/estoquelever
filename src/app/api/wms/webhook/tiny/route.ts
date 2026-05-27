@@ -4,6 +4,8 @@ import { getEmpresaByCnpj } from "@/lib/empresa-lookup";
 import { processWebhook } from "@/lib/webhook-processor";
 import { handleNfWebhook, type NfWebhookPayload } from "@/lib/nf-webhook-handler";
 import { logger, generateCorrelationId } from "@/lib/logger";
+import { estornarReservaIndividual } from "@/lib/wms/reservas";
+import { wmsAsSource } from "@/lib/wms/flags";
 
 /**
  * POST /api/webhook/tiny
@@ -189,6 +191,55 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (existingOrder) {
+      // PR-1 (#1.1): libera Rs do pedido cancelado per-R via
+      // `estornarReservaIndividual` pra evitar o short-circuit global de
+      // `liberarReserva` (ver fix #2.9 em encaminhar). Sem isso, R fica
+      // zumbi consumindo "reservado" em siso_estoque até o cron de cleanup
+      // (expira_em). Próximo pedido pro mesmo SKU degrada pra OC
+      // erroneamente porque `disponivel = saldo - reservado` fica baixo.
+      //
+      // Idempotente por R (acha L com estorno_de=R.id antes de criar novo),
+      // então seguro chamar pra TODAS as Rs do pedido — as já liberadas por
+      // picking retornam o L existente sem criar mov nova.
+      if (wmsAsSource()) {
+        try {
+          const { data: reservasAbertas } = await supabase
+            .from("siso_movimentacoes")
+            .select("id")
+            .eq("tipo", "R")
+            .eq("origem_tipo", "reserva_pedido")
+            .eq("origem_id", String(pedidoId));
+          const lista = (reservasAbertas ?? []) as Array<{ id: string }>;
+          let liberadas = 0;
+          for (const r of lista) {
+            try {
+              await estornarReservaIndividual({
+                reserva_id: r.id,
+                motivo: "outro",
+                // webhook é system-initiated; sem usuário operador
+              });
+              liberadas++;
+            } catch (e) {
+              logger.warn("webhook", "falha estornando R individual (segue)", {
+                pedidoId,
+                reserva_id: r.id,
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
+          }
+          logger.info("webhook", "Rs liberadas no cancelamento", {
+            pedidoId,
+            liberadas,
+            tentadas: lista.length,
+          });
+        } catch (e) {
+          logger.warn("webhook", "falha liberando Rs no cancel (segue)", {
+            pedidoId,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+
       const cancelUpdate: Record<string, unknown> = {
         status: "cancelado",
         processado_em: new Date().toISOString(),

@@ -322,10 +322,50 @@ export async function receberTransferencia(
 
 // ─── Cancelar ─────────────────────────────────────────────────────────────
 
+/**
+ * Cancela uma transferência inter-galpão **em trânsito**, estornando todas as
+ * legs já materializadas — inclusive itens já recebidos no destino (parcial).
+ *
+ * P3 #8.3 (2026-05-27): hardening do cenário "em_transito com items já
+ * recebidos". A versão anterior estornava só as legs S (origem) — se algum
+ * item tivesse `mov_entrada_id` setado (recebimento parcial via race, undo
+ * de recebimento que deixou estado intermediário, ou cancelamento durante
+ * recebimento), a leg E ficaria órfã no destino. Agora estornamos primeiro
+ * as legs E (de itens com `mov_entrada_id`), depois as legs S do header,
+ * resetamos os campos do item e marcamos o header como cancelada.
+ *
+ * Schema deviation documentada (vs spec):
+ * - O schema só conhece status ∈ {'em_transito','recebida','cancelada'}.
+ *   `recebida_parcial` (proposto no plano) não existe — `receberTransferencia`
+ *   é atômico (recebe todos ou rejeita). Status `'recebida'` é REJEITADO
+ *   aqui com mensagem apontando pra `/desfazer-recebimento` (que volta o
+ *   header pra `em_transito` antes de re-cancelar).
+ *
+ * Requisitos:
+ * - Status do header DEVE ser `em_transito`. `recebida` → erro com hint.
+ *   `cancelada` → erro idempotência (já cancelado).
+ *
+ * Efeito:
+ * - Pra cada item com `mov_entrada_id` (recebido parcialmente, sem estorno
+ *   ainda): estorna a leg E via `estornarMovimentacao` (idempotente — se a
+ *   mov já tem estorno, é ignorada).
+ * - Pra cada item com `mov_saida_id` e sem `mov_estorno_id`: estorna a leg
+ *   S na origem (par E na loc origem).
+ * - Reseta `mov_entrada_id=null` e `localizacao_destino_id=null` nos itens
+ *   que tinham recebimento parcial (mantém audit do `mov_saida_id` +
+ *   `mov_estorno_id`).
+ * - Atualiza header pra `status='cancelada'` + `cancelada_em=now()` +
+ *   `cancelada_por=usuario_id`.
+ *
+ * @returns `{ movsEstornadas, itensComRecebimentoParcial }`
+ *   - `movsEstornadas` — total de movs estornadas (E + S).
+ *   - `itensComRecebimentoParcial` — quantos itens tinham `mov_entrada_id`
+ *     setado no momento do cancelamento (zero quando 100% em_transito puro).
+ */
 export async function cancelarTransferencia(
   transferenciaId: string,
   usuarioId: string,
-): Promise<void> {
+): Promise<{ movsEstornadas: number; itensComRecebimentoParcial: number }> {
   const sb = createServiceClient();
   const { data: transf, error } = await sb
     .from("siso_transferencias_galpao")
@@ -338,6 +378,11 @@ export async function cancelarTransferencia(
     status: StatusTransferencia;
     galpao_origem_id: string;
   };
+  if (t.status === "recebida") {
+    throw new Error(
+      `transferência já foi recebida — use POST /api/wms/transferencias/${transferenciaId}/desfazer-recebimento antes de cancelar`,
+    );
+  }
   if (t.status !== "em_transito") {
     throw new Error(
       `só transferências em trânsito podem ser canceladas (status: ${t.status})`,
@@ -347,7 +392,7 @@ export async function cancelarTransferencia(
   const { data: itens } = await sb
     .from("siso_transferencia_galpao_itens")
     .select(
-      "id, produto_id, qty, localizacao_origem_id, mov_saida_id, mov_estorno_id",
+      "id, produto_id, qty, localizacao_origem_id, mov_saida_id, mov_entrada_id, mov_estorno_id",
     )
     .eq("transferencia_id", transferenciaId);
   type ItemRow = {
@@ -356,9 +401,36 @@ export async function cancelarTransferencia(
     qty: number;
     localizacao_origem_id: string;
     mov_saida_id: string | null;
+    mov_entrada_id: string | null;
     mov_estorno_id: string | null;
   };
-  for (const it of (itens ?? []) as ItemRow[]) {
+  const rows = ((itens ?? []) as ItemRow[]);
+
+  let movsEstornadas = 0;
+  let itensComRecebimentoParcial = 0;
+
+  // 1) Estorna leg E (entrada destino) pra cada item com recebimento parcial.
+  //    Usa estornarMovimentacao (idempotente — rejeita double-estorno).
+  for (const it of rows) {
+    if (!it.mov_entrada_id) continue;
+    itensComRecebimentoParcial++;
+    try {
+      await estornarMovimentacao({
+        mov_id: it.mov_entrada_id,
+        usuario_id: usuarioId,
+        motivo: `Cancelamento de transferência ${transferenciaId} (estorno leg E)`,
+      });
+      movsEstornadas++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Idempotência: tolera leg E já estornada.
+      if (/já foi estornada|já é um estorno/.test(msg)) continue;
+      throw err;
+    }
+  }
+
+  // 2) Estorna leg S (saída origem) — preserva audit em mov_estorno_id.
+  for (const it of rows) {
     if (it.mov_estorno_id || !it.mov_saida_id) continue;
     const mov = await inserirMovimentacao({
       tripla: {
@@ -377,8 +449,23 @@ export async function cancelarTransferencia(
       .from("siso_transferencia_galpao_itens")
       .update({ mov_estorno_id: mov.id })
       .eq("id", it.id);
+    movsEstornadas++;
   }
 
+  // 3) Reseta itens com recebimento parcial (mantém mov_saida_id +
+  //    mov_estorno_id pra audit; só limpa o caminho do destino).
+  if (itensComRecebimentoParcial > 0) {
+    await sb
+      .from("siso_transferencia_galpao_itens")
+      .update({
+        mov_entrada_id: null,
+        localizacao_destino_id: null,
+      })
+      .eq("transferencia_id", transferenciaId)
+      .not("mov_entrada_id", "is", null);
+  }
+
+  // 4) Marca header cancelada.
   await sb
     .from("siso_transferencias_galpao")
     .update({
@@ -387,6 +474,8 @@ export async function cancelarTransferencia(
       cancelada_em: new Date().toISOString(),
     })
     .eq("id", transferenciaId);
+
+  return { movsEstornadas, itensComRecebimentoParcial };
 }
 
 // ─── Desfazer recebimento (P3 #8.2) ───────────────────────────────────────

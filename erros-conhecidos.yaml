@@ -1936,3 +1936,48 @@ erros:
       - supabase/migrations/20260527_inventario_sugerir_excluir_quarentena.sql
     commit: e9201e9
     tags: [wms, inventario, quarentena, no-op, already-applied, fix-final-b, t6, b5]
+
+  - id: wms-fix-final-b-t7-desfazer-parcial-mensagens-ja-corretas
+    date: "2026-05-27"
+    source: src/app/api/wms/separacao/desfazer-parcial/route.ts
+    category: business_logic
+    message: "Fix-Final-B T7 (B6) — referências a desfazer-parcial já estão corretas; nenhuma mensagem aponta pra rota inexistente"
+    cause: >
+      Fix-Final-B T7 (B6) planejou corrigir mensagens de erro que pudessem
+      apontar pra uma rota de UI inexistente (ex: "use /desfazer-parcial pra reverter").
+      O plano indicou que o exemplo era hipotético, não confirmado.
+    fix: >
+      Verificação independente completa. grep -rn em src/ para
+      "desfazer-parcial|desfazer.parcial", "error:.*desfazer",
+      "use.*/desfazer", "abra.*desfazer", "desfazer-parcial.*pra" e
+      leitura de todos os arquivos relevantes confirmaram:
+
+      1. src/app/api/wms/separacao/desfazer-parcial/route.ts — existe e funciona.
+         Rota real em POST /api/wms/separacao/desfazer-parcial. Mensagens de erro
+         descrevem estado ("item não está em estado parcial", "não pode desfazer —
+         alguma realocação já foi picada") — corretas, sem URL recomendada.
+
+      2. src/app/api/wms/separacao/cancelar/route.ts:149 — comentário de código
+         para DEVs: "/api/wms/separacao/desfazer-parcial (fluxo explícito)".
+         Correto (rota existe) e é comentário interno, não mensagem de usuário.
+
+      3. src/app/api/wms/separacao/marcar-item/route.ts:197 — comentário:
+         "desfazer-parcial / cancelar usam essas linhas pra estornar tudo".
+         Correto, comentário interno.
+
+      4. src/app/api/wms/separacao/parcial/route.ts:614 — comentário referenciando
+         a rota. Correto, interno.
+
+      5. src/components/wms/separacao/parcial-modal.tsx — zero referências a
+         "desfazer" ou qualquer rota. Componente apenas gerencia qty + locZerou.
+
+      6. src/lib/wms/guarda.ts:565 — "MVP: desfazer parcial não suportado. Omita qty
+         pra desfazer toda a guarda atual." Contexto diferente (put-away undo),
+         sem referência a URL. Não é do módulo de separação.
+
+      7. src/lib/wms/reservas-picking.ts:171 — comentário técnico sobre o
+         desfazer-parcial. Correto, interno.
+
+      Conclusão: nenhuma mensagem user-facing incorreta. Nenhuma ação necessária.
+    files: []
+    tags: [wms, separacao, desfazer-parcial, parcial-modal, no-op, fix-final-b, t7, b6]

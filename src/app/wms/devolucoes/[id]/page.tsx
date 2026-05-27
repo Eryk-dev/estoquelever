@@ -19,8 +19,10 @@ type Classificacao = "integro" | "avariado" | "garantia" | "troca_sku";
 interface DevRow {
   id: string;
   nota_fiscal_id: number | null;
-  /** Vendedora da NF original (referência, não dona física — 3D). */
-  empresa_referencia?: { nome?: string } | null;
+  /** Empresa **receptora física** da NF de devolução (quem recebeu de volta
+   *  no galpão). NÃO é a vendedora original — essa só é resolvida no momento
+   *  da classificação a partir da mov S da venda. */
+  empresa_receptora?: { nome?: string } | null;
   criado_em?: string;
   status?: string;
 }
@@ -171,10 +173,10 @@ export default function ClassificarPage({
             <h3
               style={{ margin: "4px 0 0", fontSize: 17, fontWeight: 600 }}
             >
-              {dev.empresa_referencia?.nome ?? "—"}
+              {dev.empresa_receptora?.nome ?? "—"}
             </h3>
             <div className="wms-td-mute" style={{ fontSize: 11 }}>
-              Empresa de referência (vendedora da NF original)
+              Empresa receptora da devolução
             </div>
             {dev.criado_em && (
               <div className="wms-td-mute" style={{ fontSize: 12 }}>

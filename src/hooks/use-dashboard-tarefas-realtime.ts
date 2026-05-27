@@ -10,9 +10,23 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
  * Subscreve às tabelas que afetam o quadro de tarefas da home /wms e
  * invalida o React Query a cada evento, forçando refetch.
  *
+ * Lista canônica de subscribes (8 channels):
+ *   1. `siso_pedidos`                 — pipeline aprovação / separação / embalagem
+ *   2. `siso_wms_pendencias_guarda`   — coluna Guarda do kanban
+ *   3. `siso_inventario_sessoes`      — ciclos de inventário em andamento
+ *   4. `siso_inventario_operadores`   — party (entradas/saídas) e progresso
+ *   5. `siso_pedido_itens`            — contadores de Compras (a_comprar / a_receber)
+ *   6. `siso_devolucoes_pendentes`    — fila de devoluções aguardando classificação
+ *   7. `siso_transferencias_galpao`   — transferências inter-galpão em trânsito
+ *   8. `siso_movimentacoes` (tipo=R)  — reservas pendentes (R/L) que afetam disponível
+ *
  * Quando `galpaoId` é null, subscreve sem filtros server-side (modo
  * "todos os galpões"). Quando muda, fecha os channels antigos e
  * reabre com novos filtros.
+ *
+ * To smoke-test: temporarily add `console.log("[dt-realtime] invalidate", new Date())`
+ * inside `invalidate` below, then trigger INSERT/UPDATE em cada uma das 8 tabelas via
+ * `mcp__supabase__execute_sql` e confirmar log fires in browser console.
  */
 export function useDashboardTarefasRealtime(galpaoId: string | null) {
   const queryClient = useQueryClient();

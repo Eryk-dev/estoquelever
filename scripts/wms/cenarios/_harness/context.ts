@@ -782,14 +782,14 @@ export function createContext(opts: {
   }
 
   // ── vendas ──
-  async function criarVendaDireta(p: { galpao: "CWB" | "SP"; empresa: "netair" | "netparts"; items: { sku: string; qty: number }[]; modo: "separacao" | "baixa_direta" }) {
+  async function criarVendaDireta(p: { galpao: "CWB" | "SP"; empresa: "netair" | "netparts"; items: { sku: string; qty: number }[]; modo: "separacao" | "baixa_direta"; idempotency_key?: string }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const empresa_origem_id = staging.empresas[p.empresa].id;
     const itens = await Promise.all(p.items.map(async (it) => {
       const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", it.sku).single();
       return { produto_id: prod!.id, quantidade: it.qty };
     }));
-    return http.post<{ id: string; degradado: boolean; motivo_degradacao?: string; skus_sem_saldo?: string[] }>(
+    return http.post<{ id: string; pedido_id?: string; degradado: boolean; motivo_degradacao?: string; skus_sem_saldo?: string[]; idempotente?: boolean }>(
       "/api/wms/vendas/criar",
       {
         cliente_nome: "Cliente Teste Harness",
@@ -799,6 +799,7 @@ export function createContext(opts: {
         empresa_origem_id,
         items: itens,
         modo: p.modo,
+        ...(p.idempotency_key ? { idempotency_key: p.idempotency_key } : {}),
       },
     );
   }

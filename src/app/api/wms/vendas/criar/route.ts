@@ -108,13 +108,16 @@ export async function POST(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Idempotência: se mesmo idempotency_key já foi processado, retorna o pedido existente
+  // Idempotência (P3 #7.7): se mesmo idempotency_key já foi processado, retorna
+  // o pedido existente — desde que **não esteja cancelado**. Após cancelamento,
+  // a key fica liberada pra criar nova venda (rollback recovery).
   if (idempotency_key) {
     const { data: existente } = await supabase
       .from("siso_pedidos")
       .select("id, numero, status, status_separacao")
       .eq("payload_original->>idempotency_key", idempotency_key)
       .eq("origem_pedido", "manual")
+      .neq("status", "cancelado")
       .maybeSingle();
     if (existente) {
       return NextResponse.json({

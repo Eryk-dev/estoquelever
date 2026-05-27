@@ -261,6 +261,7 @@ export async function montarDashboardTarefas(
     invLocsQ,
     comprasComprarItensQ,
     comprasOrdensQ,
+    devolucoesQ,
   ] = await Promise.all([
     // Aprovação pendente
     (() => {
@@ -362,6 +363,17 @@ export async function montarDashboardTarefas(
       .from("siso_ordens_compra")
       .select("id, fornecedor")
       .in("status", ["comprado", "parcialmente_recebido"]),
+
+    // Devoluções pendentes (P5 §1) — global, sem filtro de galpão (a devolução
+    // só ganha galpão quando classificada).
+    sb
+      .from("siso_devolucoes_pendentes")
+      .select(
+        "id, nota_fiscal_id, criado_em, empresa_referencia:siso_empresas!empresa_id(nome)",
+      )
+      .eq("status", "aguardando_classificacao")
+      .order("criado_em", { ascending: true })
+      .limit(MAX_DETALHE_POR_SECAO + 1),
   ]);
 
   type SepRow = {
@@ -518,6 +530,10 @@ export async function montarDashboardTarefas(
     ordensRows,
   );
 
+  // §1 task 1.3 — Devoluções pendentes
+  const devolucoesRows = (devolucoesQ.data ?? []) as DevolucaoLinha[];
+  const devolucoes = agruparDevolucoesPendentes(devolucoesRows);
+
   return {
     galpao_id,
     aprovacao: {
@@ -549,7 +565,7 @@ export async function montarDashboardTarefas(
       ciclos,
     },
     excecoes: {
-      devolucoes: { count: 0, itens: [] },
+      devolucoes,
       transferencias_transito: { count: 0, itens: [] },
       inventario_revisao: { count: 0, itens: [] },
       reservas_orfas: { count: 0, itens: [] },

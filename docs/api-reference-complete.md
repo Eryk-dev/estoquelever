@@ -5235,6 +5235,13 @@ Cron-friendly. Auth: `x-worker-secret`. Detecta sessões inativas há 4h+ (alert
 ### GET /api/wms/devolucoes
 Lista devoluções aguardando classificação física. **Response:** `{ rows: [...] }`.
 
+### GET /api/wms/devolucoes/[id] (P5)
+Detalhe consolidado de 1 devolução pendente. Reutilizado pela página `/wms/devolucoes/[id]`
+quando a fila filtrada não tem mais a linha (status≠`aguardando_classificacao`).
+**Auth:** sessão (X-Session-Id).
+**Response 200:** `{ devolucao: { id, status, nota_fiscal_id, chave_acesso_nf, criado_em, classificacao, classificada_em, payload_webhook, empresa_referencia: { id, nome }|null } }`.
+**Erros:** 401 sem sessão, 404 quando `id` não existe (`PGRST116`), 500 com mensagem do banco.
+
 ### POST /api/wms/devolucoes/[id]/classificar
 **Body (3D — refactor 2026-05-20):** `{ classificacao: 'A'|'B'|'C'|'D', produto_id, qty, galpao_id, localizacao_id, empresa_referencia_id?, fornecedor_id?, observacoes? }`.
 
@@ -5286,7 +5293,7 @@ Retorna o estado das 6 filas operacionais que o quadro de tarefas pendentes da h
 ```json
 {
   "galpao_id": "uuid-or-null",
-  "aprovacao":  { "count": 0 },
+  "aprovacao":  { "count": 0, "marketplace": 0, "manual": 0 },
   "separacao":  { "count": 0, "executores": [{ "id": "uuid", "nome": "…", "foto_url": "…|null" }] },
   "embalagem":  { "count": 0, "executores": [] },
   "guarda": {
@@ -5330,13 +5337,57 @@ Retorna o estado das 6 filas operacionais que o quadro de tarefas pendentes da h
         "operadores": [{ "id": "uuid", "nome": "…", "foto_url": "…|null" }]
       }
     ]
+  },
+  "excecoes": {
+    "devolucoes": {
+      "count": 0,
+      "itens": [
+        { "id": "uuid", "nota_fiscal_id": 12345, "empresa_referencia_nome": "string|null", "criada_em": "ISO" }
+      ]
+    },
+    "transferencias_transito": {
+      "count": 0,
+      "itens": [
+        { "id": "uuid", "origem_galpao_nome": "CWB", "destino_galpao_nome": "SP", "criada_em": "ISO", "qty_itens": 12 }
+      ]
+    },
+    "inventario_revisao": {
+      "count": 0,
+      "itens": [
+        { "id": "uuid", "nome": "Cycle … 26/05", "galpao_nome": "CWB", "total_divergencias": 4, "criado_em": "ISO" }
+      ]
+    },
+    "reservas_orfas": {
+      "count": 0,
+      "itens": [
+        { "id": "uuid (mov_id)", "pedido_id": "string", "pedido_numero": "string|null", "produto_sku": "string", "qty": 5, "criada_em": "ISO" }
+      ]
+    },
+    "retroativos": {
+      "count": 0,
+      "itens": [
+        { "id": "uuid (mov_id)", "produto_sku": "string", "qty": 10, "criado_em": "ISO", "motivo": "string" }
+      ]
+    },
+    "recebimento_orfao": {
+      "count": 0,
+      "itens": [
+        { "produto_id": "uuid", "produto_sku": "string", "galpao_id": "uuid", "galpao_nome": "string|null", "localizacao_codigo": "RECEBIMENTO", "saldo": 5 }
+      ]
+    }
   }
 }
 ```
 
+**Headers:** `Cache-Control: no-store` (evita cache no CDN).
+
 **Side effects:** nenhum (read-only).
 
 **Notas:**
+- `aprovacao.marketplace + aprovacao.manual === aprovacao.count` é invariante (P5). `manual` filtra `origem_pedido === "manual"`; o resto é marketplace.
+- `excecoes` (P5) reúne 6 filas de pendência fora do pipeline normal. Os contadores são absolutos e os arrays vêm truncados em `MAX_DETALHE_POR_SECAO=50`. Cada filtro respeita `galpao_id` quando aplicável (devoluções e reservas órfãs são cross-galpão; transferências filtra por destino).
+- `reservas_orfas` faz 2 queries (Rs ativas + estornos recentes) e intersecta no app — `pedido_id` em `siso_movimentacoes` é text sem FK, então o JOIN é manual.
+- `recebimento_orfao` é dock RECEBIMENTO com saldo > 0 e sem pendência viva em `siso_wms_pendencias_guarda`. Detecta posições "esquecidas" após cancelamento de guarda (P6 deve refinar a heurística).
 - `executores` em Separação = `separacao_operador_id` de pedidos em `em_separacao`.
 - `executores` em Embalagem = `embalagem_operador_id` quando setado.
 - `executores` em Guarda = `iniciada_por` de pendências em `em_guarda`.

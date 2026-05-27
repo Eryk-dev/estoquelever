@@ -64,9 +64,13 @@ interface ItemResolvido {
 }
 
 export async function POST(request: NextRequest) {
+  // Auth + perm (finding 7.1)
   const user = await getSessionUser(request);
   if (!user) {
     return NextResponse.json({ erro: "Sessão inválida ou expirada" }, { status: 401 });
+  }
+  if (!userCan(user, "vendas.criar")) {
+    return NextResponse.json({ erro: "forbidden — requer vendas.criar" }, { status: 403 });
   }
 
   let body: CriarVendaDiretaRequest;

@@ -38,6 +38,17 @@ GROUP BY origem_tipo;
 
 Espera-se `sem_fk = 0` em todas as linhas pós-T7/T8 (cutover do worker WMS).
 
+## Backfill R1 (T27/T28)
+
+- Snapshot pré: divergências = 0
+- Dry-run (`npx tsx scripts/wms/backfill-compras-recebidas.ts --dry`):
+  ```
+  Items com compra_quantidade_recebida > 0: 0
+  Movs a criar: 0
+  ```
+- Apply: skip — sem candidatas em staging. Em prod o script roda pós-promoção quando houver volume real.
+- Snapshot pós: divergências = 0 (sem mudança esperada)
+
 ## Backfill NF (T9)
 
 - Dry-run: 1 mov candidata, 1 skipped_sem_chave (origem_detalhes sem `chave_acesso`)

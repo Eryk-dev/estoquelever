@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "test:integration": "vitest run -c vitest.integration.config.ts",
     "scenarios": "tsx scripts/wms/cenarios/run-all.ts",
+    "auth-matrix": "tsx scripts/wms/cenarios/auth/run-all-auth.ts",
     "scenarios:only": "tsx scripts/wms/cenarios/run-all.ts --only"
   },
   "dependencies": {

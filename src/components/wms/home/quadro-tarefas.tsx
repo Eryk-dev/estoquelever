@@ -19,6 +19,10 @@ import {
   CardGuardaItem,
   CardInventarioCiclo,
 } from "./cards-detalhe";
+import {
+  SecaoExcecoes,
+  SecaoExcecoesSkeleton,
+} from "./exceptions/secao-excecoes";
 
 function EmptyCard({ href, label }: { href: string; label: string }) {
   return (
@@ -95,6 +99,11 @@ export function QuadroTarefas() {
           titulo="Aprovação"
           contador={data?.aprovacao.count ?? 0}
           legenda="aguardando"
+          legendaExtra={
+            data?.aprovacao
+              ? `${data.aprovacao.marketplace} marketplace · ${data.aprovacao.manual} manual`
+              : undefined
+          }
           href="/wms/pedidos"
         />
         <CardTarefa
@@ -209,6 +218,12 @@ export function QuadroTarefas() {
           </div>
         </div>
       </div>
+
+      {query.isLoading && !data ? (
+        <SecaoExcecoesSkeleton />
+      ) : data?.excecoes ? (
+        <SecaoExcecoes excecoes={data.excecoes} />
+      ) : null}
     </section>
   );
 }

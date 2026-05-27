@@ -835,6 +835,25 @@ export async function aplicarSessao(
     if (Number(d.delta) === 0) continue;
     const tipo: TipoMov = Number(d.delta) > 0 ? "E" : "S";
     const qty = Math.abs(Number(d.delta));
+
+    // PR-6 (#4.11): ganho de inventário precisa carregar custo médio atual
+    // como custo_unitario pra preservar a rastreabilidade do valor do ganho
+    // no ledger. Sem isso a mov fica com custo_unitario=null e perdemos o
+    // histórico de custo do entrante. Perda (tipo S) não move custo médio,
+    // então não precisa carregar custo_unitario.
+    let custoUnitario: number | undefined;
+    if (tipo === "E") {
+      const { data: cm } = await sb
+        .from("siso_custo_medio")
+        .select("custo_medio")
+        .eq("produto_id", d.produto_id)
+        .maybeSingle();
+      const cmRow = cm as { custo_medio: number | string | null } | null;
+      if (cmRow?.custo_medio !== undefined && cmRow?.custo_medio !== null) {
+        custoUnitario = Number(cmRow.custo_medio);
+      }
+    }
+
     const mov = await inserirMovimentacao({
       tripla: {
         produto_id: d.produto_id,
@@ -847,6 +866,7 @@ export async function aplicarSessao(
       origem_tipo: tipo === "E" ? "inventario_ganho" : "inventario_perda",
       origem_id: sessaoId,
       origem_detalhes: { divergencia_id: d.id, delta_pct: d.delta_pct },
+      custo_unitario: custoUnitario,
       usuario_id: usuarioId,
       motivo: `inventário sessão ${sessaoId}`,
     });

@@ -42,7 +42,9 @@ export async function POST(request: NextRequest) {
     // Fetch all items for the given pedidos
     const { data: items, error: fetchError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, separacao_marcado, compra_status")
+      .select(
+        "id, pedido_id, separacao_marcado, compra_status, compra_quantidade_solicitada, compra_quantidade_recebida, sku",
+      )
       .in("pedido_id", pedido_ids);
 
     if (fetchError) {
@@ -144,6 +146,51 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // PR-1 safety: bloqueia conclusão por-pedido se algum item OC ainda não
+    // foi totalmente coberto pelo recebimento (qty_recebida < qty_solicitada)
+    // — evita 'separado' mentir. Aplica só ao conjunto que iria pra 'separado'
+    // (aguardandoCompra pausa de propósito; pendentes já não avançam).
+    //
+    // Semântica de batch: pedidos com cobertura incompleta saem do bucket
+    // `separados` e vão pro `coberturaIncompleta` na resposta (200, não 409),
+    // pra não abortar `aguardandoCompra` e `separados` limpos do mesmo lote.
+    // Skip: 'cancelado' (já hidden), 'indisponivel' (released, hidden — qty_recebida
+    // foi zerada por buildCompraFieldReset, geraria false-positive), null (normal).
+    const coberturaIncompleta: Array<{
+      pedido_id: string;
+      sku: string;
+      recebido: number;
+      solicitado: number;
+      mensagem: string;
+    }> = [];
+    const pedidosComCoberturaIncompleta = new Set<string>();
+    if (separados.length > 0) {
+      const separadosSet = new Set(separados);
+      for (const it of items ?? []) {
+        if (!separadosSet.has(it.pedido_id)) continue;
+        if (it.compra_status === "cancelado") continue;
+        if (it.compra_status === "indisponivel") continue;
+        if (it.compra_status === null) continue;
+        const recebido = Number(it.compra_quantidade_recebida ?? 0);
+        const solicitado = Number(it.compra_quantidade_solicitada ?? 0);
+        if (recebido < solicitado) {
+          pedidosComCoberturaIncompleta.add(it.pedido_id);
+          coberturaIncompleta.push({
+            pedido_id: it.pedido_id,
+            sku: it.sku,
+            recebido,
+            solicitado,
+            mensagem: `Item ${it.sku} aguardando recebimento (recebido ${recebido} de ${solicitado})`,
+          });
+        }
+      }
+    }
+
+    // Filtra pedidos incompletos de `separados` — eles ficam pendentes de cobertura.
+    const separadosCompletos = separados.filter(
+      (pid) => !pedidosComCoberturaIncompleta.has(pid),
+    );
+
     // Update pedidos transitioning to aguardando_compra (partial — waiting for purchases)
     if (aguardandoCompra.length > 0) {
       const { error: compraError } = await supabase
@@ -174,15 +221,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update fully completed pedidos to 'separado'
-    if (separados.length > 0) {
+    // Update fully completed pedidos to 'separado' (apenas os com cobertura OK)
+    if (separadosCompletos.length > 0) {
       const { error: updateError } = await supabase
         .from("siso_pedidos")
         .update({
           status_separacao: "separado",
           separacao_concluida_em: new Date().toISOString(),
         })
-        .in("id", separados)
+        .in("id", separadosCompletos)
         .eq("status_separacao", "em_separacao");
 
       if (updateError) {
@@ -194,7 +241,7 @@ export async function POST(request: NextRequest) {
           errorCode: updateError.code,
           requestPath: "/api/wms/separacao/concluir",
           requestMethod: "POST",
-          metadata: { separados, table: "siso_pedidos" },
+          metadata: { separados: separadosCompletos, table: "siso_pedidos" },
         });
         return NextResponse.json(
           { error: updateError.message },
@@ -204,9 +251,10 @@ export async function POST(request: NextRequest) {
     }
 
     logger.info("separacao-concluir", "Separação concluída", {
-      separados,
+      separados: separadosCompletos,
       aguardandoCompra,
       pendentes,
+      coberturaIncompleta: [...pedidosComCoberturaIncompleta],
     });
 
     // Record history for pedidos transitioning to aguardando_compra
@@ -222,9 +270,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Record history for completed pedidos
-    if (separados.length > 0) {
+    if (separadosCompletos.length > 0) {
       registrarEventos(
-        separados.map((pid) => ({
+        separadosCompletos.map((pid) => ({
           pedidoId: pid,
           evento: "separacao_concluida" as const,
           usuarioId: session.id,
@@ -235,7 +283,7 @@ export async function POST(request: NextRequest) {
       // WMS cutover R→L+S: pedido entrou no conjunto forward (separado).
       // Helper é idempotente e gateado por wmsAsSource() — em modo Tiny
       // não faz nada, em WMS dispara se NF já emitida (caso normal).
-      for (const pid of separados) {
+      for (const pid of separadosCompletos) {
         dispararCutoverSePronto(pid).catch((err) => {
           logger.warn("separacao-concluir", "Falha ao disparar cutover", {
             pedidoId: pid,
@@ -247,20 +295,25 @@ export async function POST(request: NextRequest) {
       // Fire-and-forget: ensure agrupamentos exist and ZPL labels are cached.
       // This is a second chance — the first attempt was at iniciar time.
       // 1. Create agrupamentos for any pedidos that don't have one yet
-      preCriarAgrupamentosEmLote(separados).catch((err) => {
+      preCriarAgrupamentosEmLote(separadosCompletos).catch((err) => {
         logger.error("separacao-concluir", "Falha ao pré-criar agrupamentos no concluir", {
           error: err instanceof Error ? err.message : String(err),
         });
       });
       // 2. Re-download ZPL for pedidos that have agrupamento but missing ZPL
-      recarregarEtiquetasFaltantes(separados).catch((err) => {
+      recarregarEtiquetasFaltantes(separadosCompletos).catch((err) => {
         logger.error("separacao-concluir", "Falha ao recarregar etiquetas faltantes", {
           error: err instanceof Error ? err.message : String(err),
         });
       });
     }
 
-    return NextResponse.json({ separados, aguardandoCompra, pendentes });
+    return NextResponse.json({
+      separados: separadosCompletos,
+      aguardandoCompra,
+      pendentes,
+      cobertura_incompleta: coberturaIncompleta,
+    });
   } catch (err) {
     logger.logError({
       error: err,

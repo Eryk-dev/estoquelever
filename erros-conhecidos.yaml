@@ -1859,3 +1859,25 @@ erros:
       - scripts/wms/backfill-compras-recebidas.ts
       - docs/superpowers/backfill-r1-2026-05-27-staging.md
     tags: [wms, backfill, compras, receber, r1, fix-final-a]
+
+  - id: wms-fix-final-b-t2-transferir-galpao-defer-delete
+    date: "2026-05-27"
+    source: api.wms.transferir-galpao
+    category: business_logic
+    message: "DELETE de endpoint transferir-galpao adiado — consumidores reais existem"
+    cause: >
+      Fix-Final-B T2 (B1) planejou deletar src/app/api/wms/transferir-galpao/route.ts
+      por ser considerado órfão (sem callers em src/). Verificação grep revelou
+      dois consumidores reais fora de src/:
+      1. scripts/wms/cenarios/_harness/context.ts:638 — harness de testes usa POST direto
+      2. scripts/wms/cenarios/catalogo/15-transferencia-inter-galpao.ts — cenário 15 usa via ctx.transferirGalpao()
+      Audit em docs/audit-workflows/08-transferencias-ajustes.html marcou como deadcode
+      analisando apenas src/, ignorando scripts/.
+    fix: >
+      DELETE adiado. Endpoint mantido. Para deletar no futuro é necessário primeiro
+      migrar cenário 15 para usar o fluxo de 2 etapas (POST /api/wms/transferencias +
+      POST /api/wms/transferencias/[id]/receber) e remover o helper
+      ctx.transferirGalpao() do harness (context.ts:580-647). Só então deletar o
+      route.ts e a entrada em docs/api-reference-complete.md.
+    files: []
+    tags: [wms, transferir-galpao, orphan, fix-final-b, t2, cenarios, harness, defer]

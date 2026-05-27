@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   agruparDevolucoesPendentes,
   agruparFornecedoresCompras,
+  agruparInventarioRevisao,
   agruparTransferenciasTransito,
   dedupNonNullIds,
   hidratarExecutores,
@@ -181,5 +182,33 @@ describe("agruparTransferenciasTransito", () => {
     ]);
     expect(r.itens[0].origem_galpao_nome).toBe("CWB");
     expect(r.itens[0].destino_galpao_nome).toBe("SP");
+  });
+});
+
+describe("agruparInventarioRevisao", () => {
+  it("mapeia sessões + conta divergências", () => {
+    const r = agruparInventarioRevisao(
+      [
+        {
+          id: "s1",
+          nome: "Cycle inteligente · 26/05",
+          criado_em: "2026-05-26T07:00:00Z",
+          galpao: { nome: "CWB" },
+        },
+      ],
+      // map sessao_id → count de divergências pendentes
+      new Map([["s1", 4]]),
+    );
+    expect(r.itens[0].total_divergencias).toBe(4);
+    expect(r.itens[0].galpao_nome).toBe("CWB");
+  });
+
+  it("usa fallback de nome quando vazio", () => {
+    const r = agruparInventarioRevisao(
+      [{ id: "s2", nome: null, criado_em: "2026-05-26T07:00:00Z", galpao: null }],
+      new Map(),
+    );
+    expect(r.itens[0].nome).toMatch(/Inventário/);
+    expect(r.itens[0].total_divergencias).toBe(0);
   });
 });

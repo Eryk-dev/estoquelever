@@ -278,6 +278,36 @@ export function agruparTransferenciasTransito(
   return { count: itens.length, itens };
 }
 
+type RevisaoLinha = {
+  id: string;
+  nome: string | null;
+  criado_em: string;
+  galpao: { nome: string } | Array<{ nome: string }> | null;
+};
+
+/**
+ * Mapeia sessões de inventário em status='revisao' pra cards. O contador
+ * de divergências vem de um map auxiliar (calculado fora pra evitar N+1).
+ */
+export function agruparInventarioRevisao(
+  linhas: RevisaoLinha[],
+  divergenciasPorSessao: Map<string, number>,
+): { count: number; itens: InventarioRevisaoCard[] } {
+  const itens: InventarioRevisaoCard[] = linhas.map((l) => {
+    const galpao = Array.isArray(l.galpao) ? l.galpao[0] ?? null : l.galpao;
+    return {
+      id: l.id,
+      nome:
+        l.nome?.trim() ||
+        `Inventário · ${new Date(l.criado_em).toLocaleDateString("pt-BR")}`,
+      galpao_nome: galpao?.nome ?? null,
+      total_divergencias: divergenciasPorSessao.get(l.id) ?? 0,
+      criado_em: l.criado_em,
+    };
+  });
+  return { count: itens.length, itens };
+}
+
 /**
  * Monta o payload do quadro de tarefas pendentes da home /wms.
  *

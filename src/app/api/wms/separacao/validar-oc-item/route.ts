@@ -5,6 +5,7 @@ import { getSessionUser } from "@/lib/session";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { registrarEvento } from "@/lib/historico-service";
 import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
+import { estornarMovimentacao } from "@/lib/wms/ledger";
 
 /**
  * POST /api/separacao/validar-oc-item
@@ -186,16 +187,37 @@ export async function POST(request: NextRequest) {
         });
       }
     } else if (acao === "desfazer_encontrei") {
-      // Undo "encontrei" — restore item to oc_pendente.
-      // TODO(#2.6-followup): com o fix #2.6, o branch "encontrei" agora emite
-      // mov S nf_venda via pickMovPicking e persiste mov_saida_id no item.
-      // Este branch ainda NÃO estorna essa mov nem limpa mov_saida_id /
-      // quantidade_pega — saldo permanece decrementado após desfazer_encontrei.
-      // Mitigação: o flow cancelar/desfazer-parcial estorna via mov_saida_id
-      // se o pedido for cancelado depois. Fix completo escalado pra P3/P6.
+      // Fix-Final A T15 (#2.6): estorna a mov S do encontrei + limpa
+      // mov_saida_id/quantidade_pega/separacao_parcial. Antes desse fix,
+      // desfazer_encontrei restaurava o status pra oc_pendente sem reverter
+      // a saída do estoque, deixando o saldo permanentemente decrementado.
       for (const item of items) {
         const fornecedorInfo = getFornecedorBySku(item.sku);
 
+        // 1. Estorna a mov S registrada em mov_saida_id (se houver).
+        //    Se mov_saida_id é null, significa que o encontrei não chegou a
+        //    gerar mov (modo legacy ou WMS_AS_SOURCE off) — só limpa campos.
+        const movSaidaId = (item as { mov_saida_id?: string | null }).mov_saida_id;
+        if (movSaidaId) {
+          try {
+            await estornarMovimentacao({
+              mov_id: movSaidaId,
+              usuario_id: user.id,
+              motivo: `desfazer_encontrei OC (item ${item.id})`,
+            });
+          } catch (e) {
+            logger.logError({
+              error: e instanceof Error ? e : new Error(String(e)),
+              source: "validar-oc-item",
+              message: `Falha ao estornar mov_saida ${movSaidaId} em desfazer_encontrei`,
+              category: "business_logic",
+              metadata: { item_id: item.id, mov_saida_id: movSaidaId },
+            });
+            continue;
+          }
+        }
+
+        // 2. Limpa todos os campos de pick + mov_saida_id + quantidade_pega
         const { error: updErr } = await supabase
           .from("siso_pedido_itens")
           .update({
@@ -207,6 +229,10 @@ export async function POST(request: NextRequest) {
             separacao_marcado: false,
             bipado_completo: false,
             quantidade_bipada: 0,
+            mov_saida_id: null,
+            quantidade_pega: 0,
+            separacao_parcial: false,
+            parcial_motivo: null,
           })
           .eq("id", item.id);
 
@@ -226,7 +252,7 @@ export async function POST(request: NextRequest) {
           evento: "oc_item_desfazer_encontrado",
           usuarioId: user.id,
           usuarioNome: user.nome,
-          detalhes: { sku: item.sku, item_id: item.id },
+          detalhes: { sku: item.sku, item_id: item.id, mov_estornada: movSaidaId },
         });
       }
     } else {

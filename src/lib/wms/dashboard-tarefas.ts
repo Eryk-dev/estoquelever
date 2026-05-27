@@ -459,6 +459,8 @@ export async function montarDashboardTarefas(
     reservasQ,
     estornosQ,
     retroativosQ,
+    saldosRecebQ,
+    pendenciasVivasQ,
   ] = await Promise.all([
     // Aprovação pendente
     (() => {
@@ -648,6 +650,33 @@ export async function montarDashboardTarefas(
         .is("estorno_de", null)
         .order("criado_em", { ascending: false })
         .limit(MAX_DETALHE_POR_SECAO + 1);
+      if (galpao_id) q = q.eq("galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Saldos em localização tipo='recebimento' com saldo > 0
+    // (potenciais órfãos — detalhamos no detectarRecebimentoOrfao).
+    (() => {
+      let q = sb
+        .from("siso_estoque")
+        .select(
+          "produto_id, galpao_id, saldo, " +
+            "produto:siso_produtos(sku), galpao:siso_galpoes(nome), " +
+            "localizacao:siso_localizacoes!inner(codigo, tipo)",
+        )
+        .gt("saldo", 0)
+        .eq("localizacao.tipo", "recebimento");
+      if (galpao_id) q = q.eq("galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Pendências vivas — usadas pra excluir posições que ainda têm guarda
+    // pendente do conjunto "órfão".
+    (() => {
+      let q = sb
+        .from("siso_wms_pendencias_guarda")
+        .select("produto_id, galpao_id")
+        .in("status", ["pendente", "em_guarda"]);
       if (galpao_id) q = q.eq("galpao_id", galpao_id);
       return q;
     })(),
@@ -886,6 +915,21 @@ export async function montarDashboardTarefas(
   );
   const retroativos = mapearRetroativosPendentes(retroativosNaoEstornados);
 
+  // §1 task 1.13 — Saldo RECEBIMENTO órfão
+  const saldosRecebRows = (saldosRecebQ.data ?? []) as EstoqueRecebimentoLinha[];
+  const pendenciasVivasRows = (pendenciasVivasQ.data ?? []) as Array<{
+    produto_id: string;
+    galpao_id: string;
+  }>;
+  const pendenciasVivasKeys = new Set<string>();
+  for (const p of pendenciasVivasRows) {
+    pendenciasVivasKeys.add(`${p.produto_id}::${p.galpao_id}`);
+  }
+  const recebimentoOrfao = detectarRecebimentoOrfao(
+    saldosRecebRows,
+    pendenciasVivasKeys,
+  );
+
   return {
     galpao_id,
     aprovacao: {
@@ -922,7 +966,7 @@ export async function montarDashboardTarefas(
       inventario_revisao: inventarioRevisao,
       reservas_orfas: reservasOrfas,
       retroativos,
-      recebimento_orfao: { count: 0, itens: [] },
+      recebimento_orfao: recebimentoOrfao,
     },
   };
 }

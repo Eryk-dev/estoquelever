@@ -86,7 +86,7 @@ export async function liberarReserva(input: {
 
 export interface EstornarReservaInput {
   reserva_id: string;
-  motivo: "rollback_aprovacao" | "outro";
+  motivo: "rollback_aprovacao" | "localizacao_move" | "liberar_reservas_admin" | "outro";
   usuario_id?: string;
 }
 

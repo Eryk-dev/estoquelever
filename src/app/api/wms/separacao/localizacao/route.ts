@@ -6,6 +6,7 @@ import { atualizarLocalizacaoProduto } from "@/lib/tiny-api";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { getSessionUser } from "@/lib/session";
 import { inserirMovimentacao } from "@/lib/wms/ledger";
+import { reservarAtomico, estornarReservaIndividual } from "@/lib/wms/reservas";
 import { wmsAsSource } from "@/lib/wms/flags";
 import { resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
 
@@ -113,46 +114,91 @@ export async function POST(request: NextRequest) {
             if (src.localizacao_id === novaLocId) continue;
             const qty = Number(src.saldo);
             if (!Number.isFinite(qty) || qty <= 0) continue;
-            // TODO(#2.7-followup): src com reservado > 0 vai falhar a S
-            // (validarCoerencia reservado_posterior > saldo_posterior=0).
-            // Por ora: catch absorve e loga; operador deve mover loc só sem R
-            // ativa. Fix completo (libera R + reemite no destino) fica pro P3/P6.
+            const srcLocId = src.localizacao_id as string;
             const origemId = crypto.randomUUID();
+
             try {
+              // Fix-Final A T17 (#2.7): se a loc origem tem Rs ativas,
+              // libera ANTES da S — senão validarCoerencia falha
+              // (reservado_posterior > saldo_posterior=0). Depois da
+              // transferência, reemite Rs no destino preservando TTL.
+              const { data: rsAtivasRaw } = await supabase
+                .from("siso_movimentacoes")
+                .select("id, quantidade, expira_em, origem_id")
+                .eq("tipo", "R")
+                .eq("produto_id", produtoWmsId)
+                .eq("galpao_id", galpaoId)
+                .eq("localizacao_id", srcLocId);
+
+              type RAtiva = { id: string; quantidade: number; expira_em: string | null; origem_id: string | null };
+              const candidatas = (rsAtivasRaw ?? []) as RAtiva[];
+
+              // Filtra só Rs ainda não estornadas + não expiradas
+              const rIds = candidatas.map((r) => r.id);
+              const { data: jaLiberadasRaw } = rIds.length
+                ? await supabase
+                    .from("siso_movimentacoes")
+                    .select("estorno_de")
+                    .in("estorno_de", rIds)
+                    .eq("tipo", "L")
+                : { data: [] as Array<{ estorno_de: string }> };
+              const liberadasSet = new Set<string>(
+                (jaLiberadasRaw ?? []).map((j) => j.estorno_de as string),
+              );
+              const agora = Date.now();
+              const rsAtivas = candidatas.filter((r) => {
+                if (liberadasSet.has(r.id)) return false;
+                if (!r.expira_em) return true;
+                return new Date(r.expira_em).getTime() > agora;
+              });
+
+              // 1. Libera Rs ativas
+              const rsParaReemitir: Array<{ qty: number; ttlHoras: number; pedido_id: string | null }> = [];
+              for (const r of rsAtivas) {
+                await estornarReservaIndividual({
+                  reserva_id: r.id,
+                  motivo: "localizacao_move",
+                  usuario_id: session.id,
+                });
+                const ttlHoras = r.expira_em
+                  ? Math.max(1, Math.ceil((new Date(r.expira_em).getTime() - agora) / 3_600_000))
+                  : 48;
+                rsParaReemitir.push({ qty: Number(r.quantidade), ttlHoras, pedido_id: r.origem_id });
+              }
+
+              // 2. Move saldo via par S+E
               await inserirMovimentacao({
-                tripla: {
-                  produto_id: produtoWmsId,
-                  galpao_id: galpaoId,
-                  localizacao_id: src.localizacao_id as string,
-                },
+                tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: srcLocId },
                 tipo: "S",
                 qty,
                 origem_tipo: "transferencia_localizacao",
                 origem_id: origemId,
-                origem_detalhes: {
-                  contexto: "atualizar_localizacao_produto",
-                  destino_loc_id: novaLocId,
-                },
+                origem_detalhes: { contexto: "atualizar_localizacao_produto", destino_loc_id: novaLocId },
                 usuario_id: session.id,
                 motivo: `Mudança de loc — produto ${produtoId} pra ${trimmed}`,
               });
               await inserirMovimentacao({
-                tripla: {
-                  produto_id: produtoWmsId,
-                  galpao_id: galpaoId,
-                  localizacao_id: novaLocId,
-                },
+                tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: novaLocId },
                 tipo: "E",
                 qty,
                 origem_tipo: "transferencia_localizacao",
                 origem_id: origemId,
-                origem_detalhes: {
-                  contexto: "atualizar_localizacao_produto",
-                  origem_loc_id: src.localizacao_id,
-                },
+                origem_detalhes: { contexto: "atualizar_localizacao_produto", origem_loc_id: srcLocId },
                 usuario_id: session.id,
               });
               transferencias++;
+
+              // 3. Reemite Rs no destino preservando TTL e pedido_id
+              for (const r of rsParaReemitir) {
+                if (!r.pedido_id) continue; // R sem origem_id é anômala; pula
+                await reservarAtomico({
+                  tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: novaLocId },
+                  qty: r.qty,
+                  pedido_id: r.pedido_id,
+                  ttl_horas: r.ttlHoras,
+                  usuario_id: session.id,
+                });
+              }
             } catch (transferErr) {
               logger.logError({
                 error:
@@ -160,12 +206,12 @@ export async function POST(request: NextRequest) {
                     ? transferErr
                     : new Error(String(transferErr)),
                 source: "localizacao",
-                message: "transferencia_localizacao falhou (provavelmente reservado > 0)",
+                message: "transferencia_localizacao falhou em Rs/move/reemit",
                 category: "business_logic",
                 metadata: {
                   produtoId,
                   galpaoId,
-                  src_loc_id: src.localizacao_id,
+                  src_loc_id: srcLocId,
                   saldo: src.saldo,
                   reservado: src.reservado,
                 },

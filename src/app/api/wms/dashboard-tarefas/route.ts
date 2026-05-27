@@ -11,5 +11,7 @@ export async function GET(req: NextRequest) {
   const galpao_id = req.nextUrl.searchParams.get("galpao_id");
   const sb = createServiceClient();
   const result = await montarDashboardTarefas(sb, galpao_id || null);
-  return NextResponse.json(result);
+  return NextResponse.json(result, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }

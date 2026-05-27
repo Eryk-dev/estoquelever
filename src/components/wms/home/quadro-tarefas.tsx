@@ -19,6 +19,10 @@ import {
   CardGuardaItem,
   CardInventarioCiclo,
 } from "./cards-detalhe";
+import {
+  SecaoExcecoes,
+  SecaoExcecoesSkeleton,
+} from "./exceptions/secao-excecoes";
 
 function EmptyCard({ href, label }: { href: string; label: string }) {
   return (
@@ -59,6 +63,10 @@ export function QuadroTarefas() {
           ? `/api/wms/dashboard-tarefas?galpao_id=${activeGalpaoId}`
           : `/api/wms/dashboard-tarefas`,
       ),
+    // staleTime=0 + refetchInterval 30s: realtime hook invalida sob demanda;
+    // o intervalo é apenas safety net caso a publication falhe (P5 §6).
+    staleTime: 0,
+    refetchInterval: 30_000,
   });
 
   useDashboardTarefasRealtime(activeGalpaoId ?? null);
@@ -95,6 +103,11 @@ export function QuadroTarefas() {
           titulo="Aprovação"
           contador={data?.aprovacao.count ?? 0}
           legenda="aguardando"
+          legendaExtra={
+            data?.aprovacao
+              ? `${data.aprovacao.marketplace} marketplace · ${data.aprovacao.manual} manual`
+              : undefined
+          }
           href="/wms/pedidos"
         />
         <CardTarefa
@@ -209,6 +222,12 @@ export function QuadroTarefas() {
           </div>
         </div>
       </div>
+
+      {query.isLoading && !data ? (
+        <SecaoExcecoesSkeleton />
+      ) : data?.excecoes ? (
+        <SecaoExcecoes excecoes={data.excecoes} />
+      ) : null}
     </section>
   );
 }

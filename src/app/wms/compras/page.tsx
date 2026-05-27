@@ -13,6 +13,7 @@ import {
 import {
   Icon,
   PageHeader,
+  Pagination,
   fmtDateTime,
   fmtNum,
   fmtRelative,
@@ -1153,6 +1154,42 @@ function TabHistorico({
 }: {
   query: ReturnType<typeof useQuery<HistoricoResponse>>;
 }) {
+  // Paginação client-side (finding 3.13). API limita a 500 linhas no
+  // backend; aqui dividimos em páginas de 50 pra reduzir DOM. Quando o
+  // volume escalar, migrar pra paginação server-side com offset/limit.
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+
+  const fornecedores = query.data?.fornecedores ?? [];
+  const linhas = useMemo(() => {
+    const rows: Array<{
+      fornecedor: string;
+      data_recebimento: string;
+      sku: string;
+      descricao: string;
+      quantidade_recebida: number;
+      recebido_em: string | null;
+    }> = [];
+    for (const f of fornecedores) {
+      for (const i of f.itens) {
+        rows.push({
+          fornecedor: f.fornecedor,
+          data_recebimento: f.data_recebimento,
+          sku: i.sku,
+          descricao: i.descricao,
+          quantidade_recebida: i.quantidade_recebida,
+          recebido_em: i.recebido_em,
+        });
+      }
+    }
+    return rows;
+  }, [fornecedores]);
+
+  const linhasPage = useMemo(
+    () => linhas.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [linhas, page],
+  );
+
   if (query.isLoading) {
     return <div className="wms-loading-pane">Carregando…</div>;
   }
@@ -1164,8 +1201,7 @@ function TabHistorico({
       </div>
     );
   }
-  const fornecedores = query.data?.fornecedores ?? [];
-  if (fornecedores.length === 0) {
+  if (linhas.length === 0) {
     return (
       <div className="wms-empty-block">
         <h3>Sem histórico</h3>
@@ -1175,37 +1211,44 @@ function TabHistorico({
   }
 
   return (
-    <div className="wms-tbl">
-      <table>
-        <thead>
-          <tr>
-            <th>Data</th>
-            <th>Fornecedor</th>
-            <th>SKU</th>
-            <th>Produto</th>
-            <th className="wms-tar">Qty</th>
-          </tr>
-        </thead>
-        <tbody>
-          {fornecedores.flatMap((f) =>
-            f.itens.map((i, idx) => (
-              <tr key={`${f.fornecedor}-${i.sku}-${idx}`}>
+    <>
+      <div className="wms-tbl">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Fornecedor</th>
+              <th>SKU</th>
+              <th>Produto</th>
+              <th className="wms-tar">Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhasPage.map((row, idx) => (
+              <tr key={`${row.fornecedor}-${row.sku}-${(page - 1) * PAGE_SIZE + idx}`}>
                 <td className="wms-td-mute">
-                  {i.recebido_em
-                    ? fmtDateTime(i.recebido_em)
-                    : fmtDateTime(f.data_recebimento)}
+                  {row.recebido_em
+                    ? fmtDateTime(row.recebido_em)
+                    : fmtDateTime(row.data_recebimento)}
                 </td>
-                <td>{f.fornecedor}</td>
-                <td className="wms-mono">{i.sku}</td>
-                <td>{i.descricao}</td>
+                <td>{row.fornecedor}</td>
+                <td className="wms-mono">{row.sku}</td>
+                <td>{row.descricao}</td>
                 <td className="wms-tar wms-mono">
-                  {fmtNum(i.quantidade_recebida)}
+                  {fmtNum(row.quantidade_recebida)}
                 </td>
               </tr>
-            )),
-          )}
-        </tbody>
-      </table>
-    </div>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Pagination
+        total={linhas.length}
+        pageSize={PAGE_SIZE}
+        page={page}
+        onPageChange={setPage}
+        label="recebimentos"
+      />
+    </>
   );
 }

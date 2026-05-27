@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
 
 // Cliente anônimo só pra subscribe ao Realtime channel.
@@ -65,6 +67,7 @@ interface SessaoSnapshot {
 }
 
 export function useInventarioRealtime(sessaoId: string | null) {
+  const router = useRouter();
   const [contagens, setContagens] = useState<Contagem[]>([]);
   const [locs, setLocs] = useState<LocSessao[]>([]);
   const [operadores, setOperadores] = useState<Operador[]>([]);
@@ -149,13 +152,32 @@ export function useInventarioRealtime(sessaoId: string | null) {
             ),
           ),
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "siso_inventario_sessoes",
+          filter: `id=eq.${sessaoId}`,
+        },
+        ({ new: r }) => {
+          // Finding 4.9: se supervisor cancela a sessão, o operador no
+          // handheld precisa saber AGORA — sem isso continua bipando numa
+          // sessão morta e gerando contagens órfãs.
+          const status = (r as { status?: string })?.status;
+          if (status === "cancelada") {
+            toast.error("Sessão de inventário foi cancelada pelo supervisor.");
+            router.push("/wms/inventario");
+          }
+        },
+      )
       .subscribe();
 
     return () => {
       cancelled = true;
       sb.removeChannel(channel);
     };
-  }, [sessaoId]);
+  }, [sessaoId, router]);
 
   return { contagens, locs, operadores };
 }

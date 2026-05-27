@@ -76,9 +76,80 @@ export type FornecedorCompras = {
   a_receber: number;
 };
 
+/** 1 devolução aguardando classificação na fila. */
+export type DevolucaoPendenteCard = {
+  id: string;
+  nota_fiscal_id: number | null;
+  empresa_referencia_nome: string | null;
+  criada_em: string;
+};
+
+/** 1 transferência inter-galpão em trânsito. */
+export type TransferenciaTransitoCard = {
+  id: string;
+  origem_galpao_nome: string | null;
+  destino_galpao_nome: string | null;
+  criada_em: string;
+  qty_itens: number;
+};
+
+/** 1 sessão de inventário em estado `revisao` (aguardando supervisor). */
+export type InventarioRevisaoCard = {
+  id: string;
+  nome: string;
+  galpao_nome: string | null;
+  total_divergencias: number;
+  criado_em: string;
+};
+
+/** 1 reserva R órfã = mov tipo R + origem_tipo='reserva_pedido' onde
+ *  o pedido associado está cancelado e a R nunca foi liberada (estorno_de NULL
+ *  E não existe mov L com mesmo pedido_id). */
+export type ReservaOrfaCard = {
+  id: string;
+  pedido_id: string | null;
+  pedido_numero: string | null;
+  produto_sku: string;
+  qty: number;
+  criada_em: string;
+};
+
+/** Pendência de lançamento retroativo aguardando reconciliação. */
+export type RetroativoPendenteCard = {
+  id: string;
+  produto_sku: string;
+  qty: number;
+  criado_em: string;
+  motivo: string;
+};
+
+/** Saldo em RECEBIMENTO sem pendência viva (após cancelamento de guarda). */
+export type RecebimentoOrfaoCard = {
+  produto_id: string;
+  produto_sku: string;
+  galpao_id: string;
+  galpao_nome: string | null;
+  localizacao_codigo: string;
+  saldo: number;
+};
+
+export type ExcecoesPayload = {
+  devolucoes: { count: number; itens: DevolucaoPendenteCard[] };
+  transferencias_transito: { count: number; itens: TransferenciaTransitoCard[] };
+  inventario_revisao: { count: number; itens: InventarioRevisaoCard[] };
+  reservas_orfas: { count: number; itens: ReservaOrfaCard[] };
+  retroativos: { count: number; itens: RetroativoPendenteCard[] };
+  recebimento_orfao: { count: number; itens: RecebimentoOrfaoCard[] };
+};
+
 export type DashboardTarefasResult = {
   galpao_id: string | null;
-  aprovacao: { count: number };
+  aprovacao: {
+    count: number;
+    /** Split por origem do pedido — útil pra distinguir prioridade. */
+    marketplace: number;
+    manual: number;
+  };
   separacao: { count: number; executores: Executor[] };
   embalagem: { count: number; executores: Executor[] };
   guarda: { count: number; executores: Executor[]; itens: GuardaItem[] };
@@ -92,6 +163,8 @@ export type DashboardTarefasResult = {
     executores: Executor[];
     ciclos: CicloInventario[];
   };
+  /** Cards novos do P5 — visibilidade de exceções operacionais. */
+  excecoes: ExcecoesPayload;
 };
 
 /**
@@ -138,6 +211,463 @@ export function agruparFornecedoresCompras(
     );
 }
 
+type DevolucaoLinha = {
+  id: string;
+  nota_fiscal_id: number | null;
+  criado_em: string;
+  empresa_referencia: { nome: string } | Array<{ nome: string }> | null;
+};
+
+/**
+ * Mapeia linhas de `siso_devolucoes_pendentes` (com join opcional em
+ * `siso_empresas` por `empresa_id`) pra cards prontos pro frontend.
+ * Função pura — sem side effects.
+ */
+export function agruparDevolucoesPendentes(
+  linhas: DevolucaoLinha[],
+): { count: number; itens: DevolucaoPendenteCard[] } {
+  const itens: DevolucaoPendenteCard[] = linhas.map((l) => {
+    const empresa = Array.isArray(l.empresa_referencia)
+      ? l.empresa_referencia[0] ?? null
+      : l.empresa_referencia;
+    return {
+      id: l.id,
+      nota_fiscal_id: l.nota_fiscal_id,
+      empresa_referencia_nome: empresa?.nome ?? null,
+      criada_em: l.criado_em,
+    };
+  });
+  return { count: itens.length, itens };
+}
+
+type TransferenciaLinha = {
+  id: string;
+  criada_em: string;
+  origem_galpao: { nome: string } | Array<{ nome: string }> | null;
+  destino_galpao: { nome: string } | Array<{ nome: string }> | null;
+  itens: Array<{ qty: number }> | null;
+};
+
+/**
+ * Mapeia linhas de `siso_transferencias_galpao` (com joins de galpões e
+ * itens) pra cards de transferência em trânsito. Soma `qty` dos itens
+ * pra preencher o badge "qty_itens" no card.
+ */
+export function agruparTransferenciasTransito(
+  linhas: TransferenciaLinha[],
+): { count: number; itens: TransferenciaTransitoCard[] } {
+  const itens: TransferenciaTransitoCard[] = linhas.map((l) => {
+    const origem = Array.isArray(l.origem_galpao)
+      ? l.origem_galpao[0] ?? null
+      : l.origem_galpao;
+    const destino = Array.isArray(l.destino_galpao)
+      ? l.destino_galpao[0] ?? null
+      : l.destino_galpao;
+    const qty_itens = (l.itens ?? []).reduce(
+      (acc, i) => acc + Number(i.qty || 0),
+      0,
+    );
+    return {
+      id: l.id,
+      origem_galpao_nome: origem?.nome ?? null,
+      destino_galpao_nome: destino?.nome ?? null,
+      criada_em: l.criada_em,
+      qty_itens,
+    };
+  });
+  return { count: itens.length, itens };
+}
+
+type RevisaoLinha = {
+  id: string;
+  nome: string | null;
+  criado_em: string;
+  galpao: { nome: string } | Array<{ nome: string }> | null;
+};
+
+/**
+ * Mapeia sessões de inventário em status='revisao' pra cards. O contador
+ * de divergências vem de um map auxiliar (calculado fora pra evitar N+1).
+ */
+export function agruparInventarioRevisao(
+  linhas: RevisaoLinha[],
+  divergenciasPorSessao: Map<string, number>,
+): { count: number; itens: InventarioRevisaoCard[] } {
+  const itens: InventarioRevisaoCard[] = linhas.map((l) => {
+    const galpao = Array.isArray(l.galpao) ? l.galpao[0] ?? null : l.galpao;
+    return {
+      id: l.id,
+      nome:
+        l.nome?.trim() ||
+        `Inventário · ${new Date(l.criado_em).toLocaleDateString("pt-BR")}`,
+      galpao_nome: galpao?.nome ?? null,
+      total_divergencias: divergenciasPorSessao.get(l.id) ?? 0,
+      criado_em: l.criado_em,
+    };
+  });
+  return { count: itens.length, itens };
+}
+
+type ReservaCandidata = {
+  id: string;
+  pedido_id: string | null;
+  quantidade: number;
+  criado_em: string;
+  produto: { sku: string } | Array<{ sku: string }> | null;
+  pedido:
+    | { numero: string | null; status: string | null }
+    | Array<{ numero: string | null; status: string | null }>
+    | null;
+};
+
+/**
+ * Detecta reservas R órfãs: movs tipo='R' + origem_tipo='reserva_pedido'
+ * cujo pedido associado está com status='cancelado' E que ainda não foram
+ * estornadas (não aparecem em `movsJaEstornadas`).
+ *
+ * Função pura. O caller é responsável por:
+ *   - Buscar Rs candidatas
+ *   - Resolver os pedidos (pode vir via JOIN do PostgREST ou via query
+ *     separada — pedido_id é text, sem FK declarada)
+ *   - Hidratar `pedido` no objeto antes de chamar
+ *   - Montar o set `movsJaEstornadas` (movs que apareceram como `estorno_de`)
+ */
+export function detectarReservasOrfas(
+  reservas: ReservaCandidata[],
+  movsJaEstornadas: Set<string>,
+): { count: number; itens: ReservaOrfaCard[] } {
+  const itens: ReservaOrfaCard[] = [];
+  for (const r of reservas) {
+    if (movsJaEstornadas.has(r.id)) continue;
+    if (!r.pedido_id) continue;
+    const pedido = Array.isArray(r.pedido) ? r.pedido[0] ?? null : r.pedido;
+    if (!pedido) continue;
+    if (pedido.status !== "cancelado") continue;
+    const produto = Array.isArray(r.produto) ? r.produto[0] ?? null : r.produto;
+    itens.push({
+      id: r.id,
+      pedido_id: r.pedido_id,
+      pedido_numero: pedido.numero ?? null,
+      produto_sku: produto?.sku ?? "—",
+      qty: Number(r.quantidade),
+      criada_em: r.criado_em,
+    });
+  }
+  return { count: itens.length, itens };
+}
+
+type RetroativoLinha = {
+  id: string;
+  criado_em: string;
+  quantidade: number;
+  motivo: string | null;
+  produto:
+    | { sku: string; descricao: string | null }
+    | Array<{ sku: string; descricao: string | null }>
+    | null;
+};
+
+/**
+ * Mapeia movs com origem_tipo='lancamento_retroativo' pra cards
+ * de pendência. Não filtra estornos aqui (caller faz isso usando o
+ * `movsJaEstornadas` montado pra reservas órfãs).
+ */
+export function mapearRetroativosPendentes(
+  linhas: RetroativoLinha[],
+): { count: number; itens: RetroativoPendenteCard[] } {
+  const itens: RetroativoPendenteCard[] = linhas.map((l) => {
+    const produto = Array.isArray(l.produto)
+      ? l.produto[0] ?? null
+      : l.produto;
+    return {
+      id: l.id,
+      produto_sku: produto?.sku ?? "—",
+      qty: Number(l.quantidade),
+      criado_em: l.criado_em,
+      motivo: l.motivo ?? "",
+    };
+  });
+  return { count: itens.length, itens };
+}
+
+type EstoqueRecebimentoLinha = {
+  produto_id: string;
+  galpao_id: string;
+  saldo: number;
+  produto: { sku: string } | Array<{ sku: string }> | null;
+  galpao: { nome: string } | Array<{ nome: string }> | null;
+  localizacao: { codigo: string } | Array<{ codigo: string }> | null;
+};
+
+/**
+ * Detecta saldos órfãos em localização tipo='recebimento'. Uma posição
+ * é órfã quando tem saldo > 0 mas não existe pendência viva (`pendente` ou
+ * `em_guarda`) cobrindo o par (produto_id, galpao_id). O set
+ * `pendenciasVivas` é chaveado por `"<produto_id>::<galpao_id>"`.
+ */
+export function detectarRecebimentoOrfao(
+  saldos: EstoqueRecebimentoLinha[],
+  pendenciasVivas: Set<string>,
+): { count: number; itens: RecebimentoOrfaoCard[] } {
+  const itens: RecebimentoOrfaoCard[] = [];
+  for (const s of saldos) {
+    if (Number(s.saldo) <= 0) continue;
+    const key = `${s.produto_id}::${s.galpao_id}`;
+    if (pendenciasVivas.has(key)) continue;
+    const produto = Array.isArray(s.produto) ? s.produto[0] ?? null : s.produto;
+    const galpao = Array.isArray(s.galpao) ? s.galpao[0] ?? null : s.galpao;
+    const loc = Array.isArray(s.localizacao)
+      ? s.localizacao[0] ?? null
+      : s.localizacao;
+    itens.push({
+      produto_id: s.produto_id,
+      produto_sku: produto?.sku ?? "—",
+      galpao_id: s.galpao_id,
+      galpao_nome: galpao?.nome ?? null,
+      localizacao_codigo: loc?.codigo ?? "—",
+      saldo: Number(s.saldo),
+    });
+  }
+  return { count: itens.length, itens };
+}
+
+/**
+ * Coleta as 6 exceções operacionais expostas no dashboard /wms (P5 §1).
+ * Roda 8 queries em paralelo + 1 query suplementar (pedidos por id) pra
+ * hidratar reservas órfãs.
+ *
+ * Decisão de design: corre em Promise.all separado do main pra manter o
+ * `montarDashboardTarefas` legível. As 8 queries são independentes —
+ * paralelismo aqui não compete com as queries base.
+ */
+export async function montarExcecoes(
+  sb: SupabaseClient,
+  galpao_id: string | null,
+): Promise<ExcecoesPayload> {
+  const [
+    devolucoesQ,
+    transferenciasQ,
+    invRevisaoQ,
+    invDivergenciasQ,
+    reservasQ,
+    estornosQ,
+    retroativosQ,
+    saldosRecebQ,
+    pendenciasVivasQ,
+  ] = await Promise.all([
+    // Devoluções pendentes — global, sem filtro de galpão (a devolução
+    // só ganha galpão quando classificada).
+    sb
+      .from("siso_devolucoes_pendentes")
+      .select(
+        "id, nota_fiscal_id, criado_em, empresa_referencia:siso_empresas!empresa_id(nome)",
+      )
+      .eq("status", "aguardando_classificacao")
+      .order("criado_em", { ascending: true })
+      .limit(MAX_DETALHE_POR_SECAO + 1),
+
+    // Transferências em trânsito — operador no destino precisa de
+    // visibilidade. Quando galpao_id presente, filtra por galpao_destino_id.
+    // NOTE: tabela é singular `siso_transferencia_galpao_itens`; FKs são
+    // `galpao_origem_id` / `galpao_destino_id`.
+    (() => {
+      let q = sb
+        .from("siso_transferencias_galpao")
+        .select(
+          "id, criada_em, " +
+            "origem_galpao:siso_galpoes!galpao_origem_id(nome), " +
+            "destino_galpao:siso_galpoes!galpao_destino_id(nome), " +
+            "itens:siso_transferencia_galpao_itens(qty)",
+        )
+        .eq("status", "em_transito")
+        .order("criada_em", { ascending: true })
+        .limit(MAX_DETALHE_POR_SECAO + 1);
+      if (galpao_id) q = q.eq("galpao_destino_id", galpao_id);
+      return q;
+    })(),
+
+    // Inventário em revisão — sessão encerrou contagem, supervisor ainda
+    // não aprovou.
+    (() => {
+      let q = sb
+        .from("siso_inventario_sessoes")
+        .select("id, nome, criado_em, galpao_id, galpao:siso_galpoes(nome)")
+        .eq("status", "revisao")
+        .order("criado_em", { ascending: true })
+        .limit(MAX_DETALHE_POR_SECAO + 1);
+      if (galpao_id) q = q.eq("galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Divergências pendentes agrupadas por sessão (contador do card)
+    sb
+      .from("siso_inventario_divergencias")
+      .select("sessao_id")
+      .eq("status", "pendente"),
+
+    // Reservas R pendentes (últimas 500). pedido_id é text sem FK — pedidos
+    // vêm via query separada e são merged em memória.
+    sb
+      .from("siso_movimentacoes")
+      .select(
+        "id, pedido_id, quantidade, criado_em, produto:siso_produtos(sku)",
+      )
+      .eq("tipo", "R")
+      .eq("origem_tipo", "reserva_pedido")
+      .order("criado_em", { ascending: false })
+      .limit(500),
+
+    // Movs com estorno_de != null. Usada por reservas órfãs + retroativos.
+    sb
+      .from("siso_movimentacoes")
+      .select("estorno_de")
+      .not("estorno_de", "is", null)
+      .order("criado_em", { ascending: false })
+      .limit(2000),
+
+    // Lançamentos retroativos pendentes (não estornados).
+    (() => {
+      let q = sb
+        .from("siso_movimentacoes")
+        .select(
+          "id, criado_em, quantidade, motivo, galpao_id, produto:siso_produtos(sku, descricao)",
+        )
+        .eq("origem_tipo", "lancamento_retroativo")
+        .is("estorno_de", null)
+        .order("criado_em", { ascending: false })
+        .limit(MAX_DETALHE_POR_SECAO + 1);
+      if (galpao_id) q = q.eq("galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Saldos em localização tipo='recebimento' com saldo > 0.
+    (() => {
+      let q = sb
+        .from("siso_estoque")
+        .select(
+          "produto_id, galpao_id, saldo, " +
+            "produto:siso_produtos(sku), galpao:siso_galpoes(nome), " +
+            "localizacao:siso_localizacoes!inner(codigo, tipo)",
+        )
+        .gt("saldo", 0)
+        .eq("localizacao.tipo", "recebimento");
+      if (galpao_id) q = q.eq("galpao_id", galpao_id);
+      return q;
+    })(),
+
+    // Pendências de guarda vivas (pra subtrair do "órfão").
+    (() => {
+      let q = sb
+        .from("siso_wms_pendencias_guarda")
+        .select("produto_id, galpao_id")
+        .in("status", ["pendente", "em_guarda"]);
+      if (galpao_id) q = q.eq("galpao_id", galpao_id);
+      return q;
+    })(),
+  ]);
+
+  // Devoluções
+  const devolucoesRows = (devolucoesQ.data ?? []) as DevolucaoLinha[];
+  const devolucoes = agruparDevolucoesPendentes(devolucoesRows);
+
+  // Transferências em trânsito
+  const transferenciasRows = (transferenciasQ.data ?? []) as unknown as TransferenciaLinha[];
+  const transferencias = agruparTransferenciasTransito(transferenciasRows);
+
+  // Inventário em revisão + divergências por sessão
+  const revisaoRows = (invRevisaoQ.data ?? []) as RevisaoLinha[];
+  const divergenciasRows = (invDivergenciasQ.data ?? []) as Array<{
+    sessao_id: string;
+  }>;
+  const divergenciasPorSessao = new Map<string, number>();
+  for (const d of divergenciasRows) {
+    divergenciasPorSessao.set(
+      d.sessao_id,
+      (divergenciasPorSessao.get(d.sessao_id) ?? 0) + 1,
+    );
+  }
+  const inventarioRevisao = agruparInventarioRevisao(
+    revisaoRows,
+    divergenciasPorSessao,
+  );
+
+  // Reservas órfãs (hidrata pedidos em query separada)
+  const reservasRawRows = (reservasQ.data ?? []) as Array<{
+    id: string;
+    pedido_id: string | null;
+    quantidade: number;
+    criado_em: string;
+    produto: { sku: string } | Array<{ sku: string }> | null;
+  }>;
+  const estornosRows = (estornosQ.data ?? []) as Array<{
+    estorno_de: string | null;
+  }>;
+  const movsJaEstornadas = new Set<string>();
+  for (const e of estornosRows) {
+    if (e.estorno_de) movsJaEstornadas.add(e.estorno_de);
+  }
+  const reservaPedidoIds = dedupNonNullIds(
+    reservasRawRows.map((r) => r.pedido_id),
+  );
+  const pedidosPorId = new Map<
+    string,
+    { numero: string | null; status: string | null }
+  >();
+  if (reservaPedidoIds.length > 0) {
+    const { data: pedidos } = await sb
+      .from("siso_pedidos")
+      .select("id, numero, status")
+      .in("id", reservaPedidoIds);
+    for (const p of (pedidos ?? []) as Array<{
+      id: string;
+      numero: string | null;
+      status: string | null;
+    }>) {
+      pedidosPorId.set(p.id, { numero: p.numero, status: p.status });
+    }
+  }
+  const reservasRows: ReservaCandidata[] = reservasRawRows.map((r) => ({
+    id: r.id,
+    pedido_id: r.pedido_id,
+    quantidade: r.quantidade,
+    criado_em: r.criado_em,
+    produto: r.produto,
+    pedido: r.pedido_id ? pedidosPorId.get(r.pedido_id) ?? null : null,
+  }));
+  const reservasOrfas = detectarReservasOrfas(reservasRows, movsJaEstornadas);
+
+  // Retroativos (descarta os já estornados)
+  const retroativosRows = (retroativosQ.data ?? []) as RetroativoLinha[];
+  const retroativosNaoEstornados = retroativosRows.filter(
+    (r) => !movsJaEstornadas.has(r.id),
+  );
+  const retroativos = mapearRetroativosPendentes(retroativosNaoEstornados);
+
+  // Saldo RECEBIMENTO órfão
+  const saldosRecebRows = (saldosRecebQ.data ?? []) as unknown as EstoqueRecebimentoLinha[];
+  const pendenciasVivasRows = (pendenciasVivasQ.data ?? []) as Array<{
+    produto_id: string;
+    galpao_id: string;
+  }>;
+  const pendenciasVivasKeys = new Set<string>();
+  for (const p of pendenciasVivasRows) {
+    pendenciasVivasKeys.add(`${p.produto_id}::${p.galpao_id}`);
+  }
+  const recebimentoOrfao = detectarRecebimentoOrfao(
+    saldosRecebRows,
+    pendenciasVivasKeys,
+  );
+
+  return {
+    devolucoes,
+    transferencias_transito: transferencias,
+    inventario_revisao: inventarioRevisao,
+    reservas_orfas: reservasOrfas,
+    retroativos,
+    recebimento_orfao: recebimentoOrfao,
+  };
+}
+
 /**
  * Monta o payload do quadro de tarefas pendentes da home /wms.
  *
@@ -149,6 +679,9 @@ export async function montarDashboardTarefas(
   sb: SupabaseClient,
   galpao_id: string | null,
 ): Promise<DashboardTarefasResult> {
+  // P5 §1.17 — exceções extraídas em helper separado pra manter este aqui legível
+  const excecoesPromise = montarExcecoes(sb, galpao_id);
+
   const [
     aprovacaoQ,
     separacaoQ,
@@ -160,17 +693,28 @@ export async function montarDashboardTarefas(
     comprasComprarItensQ,
     comprasOrdensQ,
   ] = await Promise.all([
-    // Aprovação pendente
+    // Aprovação pendente — agora retorna rows (não head:true) pra split
+    // marketplace vs manual via `origem_pedido`.
     (() => {
       let q = sb
         .from("siso_pedidos")
-        .select("id", { count: "exact", head: true })
+        .select("id, origem_pedido")
         .eq("status", "pendente");
-      if (galpao_id) q = q.eq("separacao_galpao_id", galpao_id);
+      if (galpao_id) {
+        // Pedidos `pendente` podem ter separacao_galpao_id NULL (ainda não
+        // aprovados). Incluir esses no filtro do galpão atual — operador
+        // precisa ver pra decidir.
+        q = q.or(
+          `separacao_galpao_id.eq.${galpao_id},separacao_galpao_id.is.null`,
+        );
+      }
       return q;
     })(),
 
     // Separação ativa
+    // invariante: após aprovar, separacao_galpao_id sempre setado (status_separacao
+    // só sai de NULL via /pedidos/aprovar, que escreve galpão). Por isso aqui o
+    // .eq direto é seguro — confirmado em staging em 2026-05-26 (P5 §2.3).
     (() => {
       let q = sb
         .from("siso_pedidos")
@@ -186,6 +730,8 @@ export async function montarDashboardTarefas(
     })(),
 
     // Embalagem
+    // invariante: status_separacao='separado' implica separacao_galpao_id setado
+    // (mesma justificativa da separação acima).
     (() => {
       let q = sb
         .from("siso_pedidos")
@@ -261,6 +807,9 @@ export async function montarDashboardTarefas(
       .select("id, fornecedor")
       .in("status", ["comprado", "parcialmente_recebido"]),
   ]);
+
+  // Aguarda exceções (P5 §1) — disparadas em paralelo no início da função
+  const excecoes = await excecoesPromise;
 
   type SepRow = {
     id: string;
@@ -416,9 +965,24 @@ export async function montarDashboardTarefas(
     ordensRows,
   );
 
+  // §1 task 1.15 — Split aprovação manual vs marketplace
+  const aprovacaoRows = (aprovacaoQ.data ?? []) as Array<{
+    origem_pedido: string | null;
+  }>;
+  const aprovacaoMarketplace = aprovacaoRows.filter(
+    (r) => r.origem_pedido !== "manual",
+  ).length;
+  const aprovacaoManual = aprovacaoRows.filter(
+    (r) => r.origem_pedido === "manual",
+  ).length;
+
   return {
     galpao_id,
-    aprovacao: { count: aprovacaoQ.count ?? 0 },
+    aprovacao: {
+      count: aprovacaoRows.length,
+      marketplace: aprovacaoMarketplace,
+      manual: aprovacaoManual,
+    },
     separacao: {
       count: sepRows.length,
       executores: hidratarExecutores(sepIds, usuariosMap),
@@ -442,5 +1006,6 @@ export async function montarDashboardTarefas(
       executores: hidratarExecutores(invIds, usuariosMap),
       ciclos,
     },
+    excecoes,
   };
 }

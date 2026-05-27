@@ -2,6 +2,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
 import type { TipoMov } from "./types";
 import { reconciliarTemporal } from "./inventario-reconciliacao";
+import { logger } from "@/lib/logger";
 
 export type TipoSessao = "cycle_count" | "completo";
 export type ModoContagem = "aberto" | "blind";
@@ -648,6 +649,28 @@ export async function computarDivergencias(
   const sb = createServiceClient();
   const parcial = opts.parcial === true;
   const cutoff_em = new Date().toISOString();
+
+  // B4: Guard contra re-execução. Se sessão já foi computada (status >= revisao),
+  // retornar no-op em vez de rodar cleanup de locks denovo (gera warning falso
+  // + churn no ledger).
+  const { data: sessaoGuard } = await sb
+    .from("siso_inventario_sessoes")
+    .select("status")
+    .eq("id", sessaoId)
+    .single();
+
+  const statusAtual = (sessaoGuard as { status: string } | null)?.status;
+  if (
+    statusAtual === "revisao" ||
+    statusAtual === "aprovada" ||
+    statusAtual === "aplicada"
+  ) {
+    logger.info("computarDivergencias", "sessao já computada, no-op", {
+      sessaoId,
+      status: statusAtual,
+    });
+    return;
+  }
 
   // P3 #4.5: aborta cedo se há operador ativo e o caller não confirmou.
   const ativos = await listarOperadoresAtivos(sessaoId);

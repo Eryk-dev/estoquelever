@@ -308,6 +308,54 @@ export function agruparInventarioRevisao(
   return { count: itens.length, itens };
 }
 
+type ReservaCandidata = {
+  id: string;
+  pedido_id: string | null;
+  quantidade: number;
+  criado_em: string;
+  produto: { sku: string } | Array<{ sku: string }> | null;
+  pedido:
+    | { numero: string | null; status: string | null }
+    | Array<{ numero: string | null; status: string | null }>
+    | null;
+};
+
+/**
+ * Detecta reservas R órfãs: movs tipo='R' + origem_tipo='reserva_pedido'
+ * cujo pedido associado está com status='cancelado' E que ainda não foram
+ * estornadas (não aparecem em `movsJaEstornadas`).
+ *
+ * Função pura. O caller é responsável por:
+ *   - Buscar Rs candidatas
+ *   - Resolver os pedidos (pode vir via JOIN do PostgREST ou via query
+ *     separada — pedido_id é text, sem FK declarada)
+ *   - Hidratar `pedido` no objeto antes de chamar
+ *   - Montar o set `movsJaEstornadas` (movs que apareceram como `estorno_de`)
+ */
+export function detectarReservasOrfas(
+  reservas: ReservaCandidata[],
+  movsJaEstornadas: Set<string>,
+): { count: number; itens: ReservaOrfaCard[] } {
+  const itens: ReservaOrfaCard[] = [];
+  for (const r of reservas) {
+    if (movsJaEstornadas.has(r.id)) continue;
+    if (!r.pedido_id) continue;
+    const pedido = Array.isArray(r.pedido) ? r.pedido[0] ?? null : r.pedido;
+    if (!pedido) continue;
+    if (pedido.status !== "cancelado") continue;
+    const produto = Array.isArray(r.produto) ? r.produto[0] ?? null : r.produto;
+    itens.push({
+      id: r.id,
+      pedido_id: r.pedido_id,
+      pedido_numero: pedido.numero ?? null,
+      produto_sku: produto?.sku ?? "—",
+      qty: Number(r.quantidade),
+      criada_em: r.criado_em,
+    });
+  }
+  return { count: itens.length, itens };
+}
+
 /**
  * Monta o payload do quadro de tarefas pendentes da home /wms.
  *

@@ -5,6 +5,7 @@ import {
   agruparInventarioRevisao,
   agruparTransferenciasTransito,
   dedupNonNullIds,
+  detectarReservasOrfas,
   hidratarExecutores,
 } from "./dashboard-tarefas";
 
@@ -210,5 +211,45 @@ describe("agruparInventarioRevisao", () => {
     );
     expect(r.itens[0].nome).toMatch(/Inventário/);
     expect(r.itens[0].total_divergencias).toBe(0);
+  });
+});
+
+describe("detectarReservasOrfas", () => {
+  const reservas = [
+    {
+      id: "m1",
+      pedido_id: "p1",
+      quantidade: 5,
+      criado_em: "2026-05-26T08:00:00Z",
+      produto: { sku: "SKU-A" },
+      pedido: { numero: "111", status: "cancelado" },
+    },
+    {
+      id: "m2",
+      pedido_id: "p2",
+      quantidade: 3,
+      criado_em: "2026-05-26T09:00:00Z",
+      produto: { sku: "SKU-B" },
+      pedido: { numero: "222", status: "pendente" },
+    },
+    {
+      id: "m3",
+      pedido_id: null, // R sem pedido — não conta
+      quantidade: 1,
+      criado_em: "2026-05-26T10:00:00Z",
+      produto: { sku: "SKU-C" },
+      pedido: null,
+    },
+  ];
+
+  it("filtra apenas Rs de pedidos cancelados", () => {
+    const r = detectarReservasOrfas(reservas, new Set(["m4_estornada"]));
+    expect(r.count).toBe(1);
+    expect(r.itens[0].pedido_numero).toBe("111");
+  });
+
+  it("excluir movs que já foram estornadas", () => {
+    const r = detectarReservasOrfas(reservas, new Set(["m1"]));
+    expect(r.count).toBe(0);
   });
 });

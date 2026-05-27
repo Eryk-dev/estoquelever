@@ -356,6 +356,40 @@ export function detectarReservasOrfas(
   return { count: itens.length, itens };
 }
 
+type RetroativoLinha = {
+  id: string;
+  criado_em: string;
+  quantidade: number;
+  motivo: string | null;
+  produto:
+    | { sku: string; descricao: string | null }
+    | Array<{ sku: string; descricao: string | null }>
+    | null;
+};
+
+/**
+ * Mapeia movs com origem_tipo='lancamento_retroativo' pra cards
+ * de pendência. Não filtra estornos aqui (caller faz isso usando o
+ * `movsJaEstornadas` montado pra reservas órfãs).
+ */
+export function mapearRetroativosPendentes(
+  linhas: RetroativoLinha[],
+): { count: number; itens: RetroativoPendenteCard[] } {
+  const itens: RetroativoPendenteCard[] = linhas.map((l) => {
+    const produto = Array.isArray(l.produto)
+      ? l.produto[0] ?? null
+      : l.produto;
+    return {
+      id: l.id,
+      produto_sku: produto?.sku ?? "—",
+      qty: Number(l.quantidade),
+      criado_em: l.criado_em,
+      motivo: l.motivo ?? "",
+    };
+  });
+  return { count: itens.length, itens };
+}
+
 /**
  * Monta o payload do quadro de tarefas pendentes da home /wms.
  *

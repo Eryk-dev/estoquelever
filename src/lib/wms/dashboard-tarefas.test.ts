@@ -7,6 +7,7 @@ import {
   dedupNonNullIds,
   detectarReservasOrfas,
   hidratarExecutores,
+  mapearRetroativosPendentes,
 } from "./dashboard-tarefas";
 
 describe("dedupNonNullIds", () => {
@@ -251,5 +252,35 @@ describe("detectarReservasOrfas", () => {
   it("excluir movs que já foram estornadas", () => {
     const r = detectarReservasOrfas(reservas, new Set(["m1"]));
     expect(r.count).toBe(0);
+  });
+});
+
+describe("mapearRetroativosPendentes", () => {
+  it("converte linhas do listar pra cards", () => {
+    const r = mapearRetroativosPendentes([
+      {
+        id: "r1",
+        criado_em: "2026-05-26T07:00:00Z",
+        quantidade: 10,
+        motivo: "Recebimento esquecido 2026-05-20",
+        produto: { sku: "SKU-X", descricao: "Produto X" },
+      },
+    ]);
+    expect(r.itens[0].produto_sku).toBe("SKU-X");
+    expect(r.itens[0].qty).toBe(10);
+    expect(r.itens[0].motivo).toBe("Recebimento esquecido 2026-05-20");
+  });
+
+  it("trata produto como array", () => {
+    const r = mapearRetroativosPendentes([
+      {
+        id: "r2",
+        criado_em: "2026-05-26T08:00:00Z",
+        quantidade: 5,
+        motivo: "x",
+        produto: [{ sku: "SKU-Y", descricao: null }],
+      },
+    ]);
+    expect(r.itens[0].produto_sku).toBe("SKU-Y");
   });
 });

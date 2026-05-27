@@ -184,7 +184,13 @@ export async function POST(request: NextRequest) {
         });
       }
     } else if (acao === "desfazer_encontrei") {
-      // Undo "encontrei" — restore item to oc_pendente
+      // Undo "encontrei" — restore item to oc_pendente.
+      // TODO(#2.6-followup): com o fix #2.6, o branch "encontrei" agora emite
+      // mov S nf_venda via pickMovPicking e persiste mov_saida_id no item.
+      // Este branch ainda NÃO estorna essa mov nem limpa mov_saida_id /
+      // quantidade_pega — saldo permanece decrementado após desfazer_encontrei.
+      // Mitigação: o flow cancelar/desfazer-parcial estorna via mov_saida_id
+      // se o pedido for cancelado depois. Fix completo escalado pra P3/P6.
       for (const item of items) {
         const fornecedorInfo = getFornecedorBySku(item.sku);
 

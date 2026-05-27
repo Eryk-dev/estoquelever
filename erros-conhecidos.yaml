@@ -2052,3 +2052,153 @@ erros:
     files:
       - supabase/migrations/20260528_pendencias_tracking_origem_ids.sql
     tags: [wms, guarda, pendencias, tracking_origem_ids, scaffolding, defer, fix-final-b, t13, b11]
+
+  - id: wms-fix-final-b-t4-cancelar-movs-estornadas-truncate
+    date: "2026-05-27"
+    source: src/app/api/wms/separacao/cancelar/route.ts
+    category: business_logic
+    message: "JSONB movs_estornadas crescia sem limite ao cancelar pedidos com muitas movimentações"
+    cause: >
+      O campo movs_estornadas em siso_pedido_historico.detalhes era populado com
+      todos os IDs de movimentações estornadas ao cancelar um pedido via
+      POST /api/wms/separacao/cancelar. Pedidos com muitas movs (ex: múltiplos
+      parciais + realocações + picking) podiam gerar arrays grandes sem nenhum
+      truncamento, inflando o JSONB do registro histórico sem controle.
+    fix: >
+      Truncar array a 50 entradas (últimas por ordem de inserção no Set).
+      Dois campos auxiliares adicionados ao JSONB:
+        - movs_estornadas_total: number — contagem real sem truncamento.
+        - movs_estornadas_truncado: boolean — true se total > 50.
+      A lista completa continua disponível via query direta:
+        SELECT id FROM siso_movimentacoes
+        WHERE origem_id = :pedido_id AND tipo = 'E' AND estorno_de IS NOT NULL;
+      Commit 903ce96.
+    files:
+      - src/app/api/wms/separacao/cancelar/route.ts
+    commit: "903ce96"
+    tags: [wms, separacao, cancelar, movs-estornadas, jsonb, truncate, fix-final-b, t4, b3]
+
+  - id: wms-fix-final-b-t5-computar-divergencias-guard
+    date: "2026-05-27"
+    source: src/lib/wms/inventario.ts
+    category: business_logic
+    message: "computarDivergencias re-executava cleanup de locks em sessão já em revisao/aprovada/aplicada"
+    cause: >
+      A função computarDivergencias (src/lib/wms/inventario.ts) não tinha guard
+      de re-execução. Quando chamada em sessão já no status revisao, aprovada ou
+      aplicada, rodava novamente a limpeza de locks de localização, logando
+      avisos falsos e potencialmente interferindo com operações concorrentes
+      sobre a mesma sessão.
+    fix: >
+      Early-return guard adicionado ao início da função (linhas 653-673).
+      Guard verifica session.status contra ['revisao', 'aprovada', 'aplicada'];
+      se verdadeiro, loga logger.info com mensagem "computarDivergencias no-op
+      — sessão já em <status>" e retorna void imediatamente sem tocar locks
+      ou divergências. Commit 8a5c9bd.
+    files:
+      - src/lib/wms/inventario.ts
+    commit: "8a5c9bd"
+    tags: [wms, inventario, computar-divergencias, guard, idempotente, re-execucao, fix-final-b, t5, b4]
+
+  - id: wms-fix-final-b-t9-cenario-50-replenishment
+    date: "2026-05-27"
+    source: scripts/wms/cenarios/catalogo/50-replenishment-cria-mov.ts
+    category: business_logic
+    message: "Endpoint /api/wms/replenishment existia sem cenário de teste ponta-a-ponta validando par S+E"
+    cause: >
+      O fluxo de replenishment intra-galpão (overstock → picking) estava
+      implementado (endpoint + lib), mas não havia nenhum cenário na sistemática
+      de testes validando a criação do par S+E no ledger nem os invariantes
+      I1-I7 após a operação. Regressão poderia passar despercebida.
+    fix: >
+      Novo cenário 50-replenishment-cria-mov.ts adicionado ao catálogo.
+      (Numerado 50 por o catálogo ter encerrado em 49b antes deste item.)
+      Fluxo: seed 100 unid em loc overstock → POST /api/wms/replenishment com
+      qty=20 → assert 2 movs criadas (S overstock + E picking) + saldos
+      overstock=80 e picking=20 + invariantes I1-I7 passando.
+      84 linhas. ✅ em ~3348ms individualmente. Commit dabdc81.
+    files:
+      - scripts/wms/cenarios/catalogo/50-replenishment-cria-mov.ts
+    commit: "dabdc81"
+    tags: [wms, replenishment, cenarios, test, par-se, ledger, fix-final-b, t9, b8]
+
+  - id: wms-fix-final-b-t10-replenishment-page-action-oriented
+    date: "2026-05-27"
+    source: src/app/wms/replenishment/page.tsx
+    category: business_logic
+    message: "Subtítulo da página /wms/replenishment enquadrava a tela como consulta passiva e indicava botão errado"
+    cause: >
+      O subtítulo da página /wms/replenishment dizia "Página de consulta" e
+      "Use o botão abaixo para criar uma realocação", mas o botão Nova realocação
+      fica no PageHeader (acima do conteúdo), não abaixo. A frase orientava o
+      operador para uma posição incorreta na UI, gerando confusão.
+      Adicionalmente, enquadrar como "consulta" ocultava que a tela também
+      permite criação de realocações.
+    fix: >
+      Subtítulo atualizado para: "Consulte o histórico e crie realocações entre
+      localizações no mesmo galpão (overstock → picking). Use o botão acima ou
+      Atalhos no shell." Sem alteração de funcionalidade — apenas o texto.
+      Botão por linha (auto-sugestão) não adicionado: sem dados de sugestão
+      populados ainda. Commit 1e5c0c9.
+    files:
+      - src/app/wms/replenishment/page.tsx
+    commit: "1e5c0c9"
+    tags: [wms, replenishment, ui, subtitulo, ux, fix-final-b, t10, b8]
+
+  - id: wms-fix-final-b-t11-devolucao-id-determinismo
+    date: "2026-05-27"
+    source: siso_movimentacoes + src/lib/wms/ledger.ts + src/lib/wms/devolucoes.ts
+    category: database
+    message: "desclassificarDevolucao usava heurística de janela temporal (±1min) pra encontrar movs — risco de falso positivo/negativo"
+    cause: >
+      A função desclassificarDevolucao (src/lib/wms/devolucoes.ts) identificava
+      movimentações a estornar por correspondência aproximada: buscava movs
+      cujo criado_em caía dentro de ±1 minuto em torno de devolucao.classificada_em.
+      Essa heurística era frágil: outras movs não relacionadas no mesmo intervalo
+      poderiam ser capturadas (falso positivo) ou a mov certa poderia ser perdida
+      se o relógio do servidor variasse (falso negativo).
+    fix: >
+      Migration 20260528_movs_devolucao_id.sql adiciona coluna
+      devolucao_id uuid REFERENCES siso_devolucoes_pendentes(id) ON DELETE SET NULL
+      em siso_movimentacoes, com índice parcial WHERE devolucao_id IS NOT NULL.
+      inserirMovimentacao aceita devolucao_id opcional via UPDATE-after-insert
+      (RPC wms_inserir_movimentacao não foi alterada — compatibilidade mantida).
+      classificarDevolucao passa devolucao_id ao inserir as movs.
+      desclassificarDevolucao usa .eq('devolucao_id', id).is('estorno_de', null)
+      em vez da janela temporal — determinístico. Cenário 52 valida o fluxo ✅.
+      Commit 56b1f17.
+    files:
+      - supabase/migrations/20260528_movs_devolucao_id.sql
+      - src/lib/wms/ledger.ts
+      - src/lib/wms/devolucoes.ts
+    commit: "56b1f17"
+    tags: [wms, devolucoes, ledger, devolucao-id, determinismo, heuristica, falso-positivo, fix-final-b, t11, b9]
+
+  - id: wms-fix-final-b-t12-desfazer-guarda-parcial
+    date: "2026-05-27"
+    source: src/lib/wms/guarda.ts + src/app/api/wms/guarda/[id]/desfazer/route.ts
+    category: business_logic
+    message: "desfazerGuarda rejeitava qty != qty_guardada — guarda parcial não era desfazível"
+    cause: >
+      A função desfazerGuarda (src/lib/wms/guarda.ts) tinha guard de MVP que
+      retornava erro ao receber qty diferente de qty_guardada:
+        "MVP: desfazer parcial não suportado. Omita qty pra desfazer toda a guarda atual."
+      Impedia operadores de reverter apenas parte de uma guarda já confirmada,
+      forçando sempre desfazer tudo ou nada.
+    fix: >
+      Guard de MVP removido. Lógica de estorno substituída por par S+E direcional
+      (S na loc destino → E em RECEBIMENTO), suportando qualquer qty ≤ qty_guardada.
+      Backwards-compat: qty omitido = desfazer qty_guardada inteiro.
+      Cenário 51 valida desfazer parcial e total ✅ (~214s). Commit 1407fae.
+
+      Concern documentado (não corrigido): existe race condition entre as 2
+      chamadas sequenciais a inserirMovimentacao (S + E). As 2 movs não são
+      atômicas — se o processo morrer entre elas, o saldo fica inconsistente.
+      O mesmo risco já existia antes desta task. Correção definitiva requer
+      wrapper PL/pgSQL RPC que execute ambas as movs em 1 transação DB.
+      Fora do escopo B10 / fix-final-b.
+    files:
+      - src/lib/wms/guarda.ts
+      - src/app/api/wms/guarda/[id]/desfazer/route.ts
+    commit: "1407fae"
+    tags: [wms, guarda, desfazer, parcial, race-condition, atomicidade, fix-final-b, t12, b10]

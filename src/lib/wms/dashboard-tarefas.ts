@@ -381,6 +381,8 @@ export async function montarDashboardTarefas(
     transferenciasQ,
     invRevisaoQ,
     invDivergenciasQ,
+    reservasQ,
+    estornosQ,
   ] = await Promise.all([
     // Aprovação pendente
     (() => {
@@ -532,6 +534,30 @@ export async function montarDashboardTarefas(
       .from("siso_inventario_divergencias")
       .select("sessao_id")
       .eq("status", "pendente"),
+
+    // Reservas R pendentes (últimas 500). Filtramos depois pra ver quais
+    // são órfãs (pedido cancelado + sem estorno).
+    // NOTE: `siso_movimentacoes.pedido_id` é text sem FK pra `siso_pedidos` —
+    // não dá pra fazer join PostgREST direto; hidratamos pedidos em uma
+    // query separada abaixo.
+    sb
+      .from("siso_movimentacoes")
+      .select(
+        "id, pedido_id, quantidade, criado_em, produto:siso_produtos(sku)",
+      )
+      .eq("tipo", "R")
+      .eq("origem_tipo", "reserva_pedido")
+      .order("criado_em", { ascending: false })
+      .limit(500),
+
+    // Movs que estornam reservas (qualquer mov com estorno_de IS NOT NULL).
+    // Usada também por retroativos (task 1.11) pra excluir já-estornados.
+    sb
+      .from("siso_movimentacoes")
+      .select("estorno_de")
+      .not("estorno_de", "is", null)
+      .order("criado_em", { ascending: false })
+      .limit(2000),
   ]);
 
   type SepRow = {
@@ -713,6 +739,53 @@ export async function montarDashboardTarefas(
     divergenciasPorSessao,
   );
 
+  // §1 task 1.9 — Reservas órfãs
+  // pedido_id em siso_movimentacoes é text sem FK; pedidos vêm via query
+  // separada e são merged em memória.
+  const reservasRawRows = (reservasQ.data ?? []) as Array<{
+    id: string;
+    pedido_id: string | null;
+    quantidade: number;
+    criado_em: string;
+    produto: { sku: string } | Array<{ sku: string }> | null;
+  }>;
+  const estornosRows = (estornosQ.data ?? []) as Array<{
+    estorno_de: string | null;
+  }>;
+  const movsJaEstornadas = new Set<string>();
+  for (const e of estornosRows) {
+    if (e.estorno_de) movsJaEstornadas.add(e.estorno_de);
+  }
+  const reservaPedidoIds = dedupNonNullIds(
+    reservasRawRows.map((r) => r.pedido_id),
+  );
+  const pedidosPorId = new Map<
+    string,
+    { numero: string | null; status: string | null }
+  >();
+  if (reservaPedidoIds.length > 0) {
+    const { data: pedidos } = await sb
+      .from("siso_pedidos")
+      .select("id, numero, status")
+      .in("id", reservaPedidoIds);
+    for (const p of (pedidos ?? []) as Array<{
+      id: string;
+      numero: string | null;
+      status: string | null;
+    }>) {
+      pedidosPorId.set(p.id, { numero: p.numero, status: p.status });
+    }
+  }
+  const reservasRows: ReservaCandidata[] = reservasRawRows.map((r) => ({
+    id: r.id,
+    pedido_id: r.pedido_id,
+    quantidade: r.quantidade,
+    criado_em: r.criado_em,
+    produto: r.produto,
+    pedido: r.pedido_id ? pedidosPorId.get(r.pedido_id) ?? null : null,
+  }));
+  const reservasOrfas = detectarReservasOrfas(reservasRows, movsJaEstornadas);
+
   return {
     galpao_id,
     aprovacao: {
@@ -747,7 +820,7 @@ export async function montarDashboardTarefas(
       devolucoes,
       transferencias_transito: transferencias,
       inventario_revisao: inventarioRevisao,
-      reservas_orfas: { count: 0, itens: [] },
+      reservas_orfas: reservasOrfas,
       retroativos: { count: 0, itens: [] },
       recebimento_orfao: { count: 0, itens: [] },
     },

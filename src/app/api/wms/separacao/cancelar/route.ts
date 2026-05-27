@@ -5,6 +5,8 @@ import { logger } from "@/lib/logger";
 import { estornarMovimentacao } from "@/lib/wms/ledger";
 import { registrarEventos } from "@/lib/historico-service";
 
+const MAX_MOVS_LOG = 50;
+
 /**
  * POST /api/separacao/cancelar
  *
@@ -269,6 +271,8 @@ export async function POST(request: NextRequest) {
 
     // Registra evento de cancelamento por pedido (fire-and-forget)
     const movsEstornadas = [...movsSaidaSet];
+    const movsEstornadasTotal = movsEstornadas.length;
+    const movsEstornadasTruncadas = movsEstornadas.slice(-MAX_MOVS_LOG);
     const realocsCanceladas = (realocs ?? []).length;
     await registrarEventos(
       pedido_ids.map((pid) => ({
@@ -278,7 +282,9 @@ export async function POST(request: NextRequest) {
         detalhes: {
           item_ids: itemIds,
           realocs_canceladas: realocsCanceladas,
-          movs_estornadas: movsEstornadas,
+          movs_estornadas: movsEstornadasTruncadas,
+          movs_estornadas_total: movsEstornadasTotal,
+          movs_estornadas_truncado: movsEstornadasTotal > MAX_MOVS_LOG,
         },
       })),
     );

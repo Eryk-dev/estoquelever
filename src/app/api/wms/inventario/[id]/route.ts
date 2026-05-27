@@ -96,6 +96,42 @@ export async function PATCH(
     );
   }
   const sb = createServiceClient();
+
+  // P3 #4.7: modo_contagem só pode ser alterado em sessão 'planejada'.
+  // Se a sessão já iniciou, mudar blind↔aberto no meio quebra a semântica
+  // das contagens já feitas pelos operadores.
+  const { data: sessao, error: fetchError } = await sb
+    .from("siso_inventario_sessoes")
+    .select("status, modo_contagem")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchError) {
+    return wmsErrorResponse({
+      source: "wms.inventario.patch",
+      error: fetchError,
+      requestPath: `/api/wms/inventario/${id}`,
+      requestMethod: "PATCH",
+      metadata: { sessao_id: id },
+    });
+  }
+  if (!sessao) {
+    return NextResponse.json({ error: "sessão não encontrada" }, { status: 404 });
+  }
+  if (
+    allowed.modo_contagem &&
+    allowed.modo_contagem !== (sessao as { modo_contagem: string }).modo_contagem &&
+    (sessao as { status: string }).status !== "planejada"
+  ) {
+    return NextResponse.json(
+      {
+        error: "modo_contagem só pode ser alterado em sessão 'planejada' (ainda não iniciada)",
+        code: "MODO_LOCKED",
+        status_atual: (sessao as { status: string }).status,
+      },
+      { status: 409 },
+    );
+  }
+
   const { error } = await sb
     .from("siso_inventario_sessoes")
     .update(allowed)

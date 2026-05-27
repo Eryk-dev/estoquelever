@@ -22,3 +22,9 @@ Coletados via `mcp__supabase__execute_sql` no projeto staging em 2026-05-27 14:0
 ## Plano de execução
 - Skip do worktree (Task 2 do plano original): user pediu trabalhar direto em `develop`.
 - Skip do PR (Task 32 ajustada): user pediu direto em `develop`, sem fluxo de revisão externa.
+
+## Backfill NF (T9)
+
+- Dry-run: 1 mov candidata, 1 skipped_sem_chave (origem_detalhes sem `chave_acesso`)
+- Apply: created=0, linked=0, skipped_sem_chave=1, erros=0 → no-op em staging (esperado: staging foi truncado várias vezes)
+- Em prod, o mesmo script será re-executado pós-promoção quando houver volume real de NFs históricas.

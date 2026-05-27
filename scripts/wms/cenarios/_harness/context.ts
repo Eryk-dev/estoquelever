@@ -745,6 +745,14 @@ export function createContext(opts: {
     );
   }
 
+  async function cancelarVenda(p: { pedido_id: string; motivo?: string }) {
+    const motivo = (p.motivo ?? "teste cenário — cancelamento de venda").trim();
+    return http.post<{ ok: boolean; movsEstornadas: number; reservasLiberadas: number }>(
+      `/api/wms/vendas/${p.pedido_id}/cancelar`,
+      { motivo },
+    );
+  }
+
   async function disponibilidadeVenda(p: { sku: string; galpao: "CWB" | "SP"; empresa: "netair" | "netparts" }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const empresa_origem_id = staging.empresas[p.empresa].id;
@@ -914,7 +922,7 @@ export function createContext(opts: {
     aguardarStatus, aguardarStatusSeparacao, aguardarRealocacao, aguardarFilaVazia,
     comprar, receberCompra, prepararEmbalagem, receber, guardar, desfazerGuarda, aguardarPendenciaGuarda,
     transferirGalpao, replenishment, ajusteManual, lancamentoRetroativo, reconciliarRetroativo,
-    criarVendaDireta, disponibilidadeVenda,
+    criarVendaDireta, disponibilidadeVenda, cancelarVenda,
     reservar, cleanupReservas,
     classificarDevolucao, desclassificarDevolucao,
     criarSessaoInventario, entrarParty, proximaLoc, bipeInventario, finalizarLocInventario, aprovarInventario, aplicarInventario, estornarInventario,

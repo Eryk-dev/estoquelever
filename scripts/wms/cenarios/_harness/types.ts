@@ -82,6 +82,7 @@ export type Ctx = {
     modo: "separacao" | "baixa_direta";
   }) => Promise<{ id: string; degradado: boolean; motivo_degradacao?: string; skus_sem_saldo?: string[] }>;
   disponibilidadeVenda: (p: { sku: string; galpao: "CWB" | "SP"; empresa: "netair" | "netparts" }) => Promise<{ localizacao_id?: string; disponivel: number }>;
+  cancelarVenda: (p: { pedido_id: string; motivo?: string }) => Promise<{ movsEstornadas: number; reservasLiberadas: number }>;
 
   // ── reservas ──
   reservar: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; ttl_horas?: number; ttl_segundos?: number }) => Promise<{ mov_id: string }>;

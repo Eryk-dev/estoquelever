@@ -300,6 +300,7 @@ export async function montarDashboardTarefas(
     comprasComprarItensQ,
     comprasOrdensQ,
     devolucoesQ,
+    transferenciasQ,
   ] = await Promise.all([
     // Aprovação pendente
     (() => {
@@ -412,6 +413,26 @@ export async function montarDashboardTarefas(
       .eq("status", "aguardando_classificacao")
       .order("criado_em", { ascending: true })
       .limit(MAX_DETALHE_POR_SECAO + 1),
+
+    // Transferências em trânsito (P5 §1) — operador no destino é quem precisa
+    // de visibilidade. Quando galpao_id presente, filtra por galpao_destino_id.
+    // NOTE: tabela é singular `siso_transferencia_galpao_itens`; FKs são
+    // `galpao_origem_id` / `galpao_destino_id`.
+    (() => {
+      let q = sb
+        .from("siso_transferencias_galpao")
+        .select(
+          "id, criada_em, " +
+            "origem_galpao:siso_galpoes!galpao_origem_id(nome), " +
+            "destino_galpao:siso_galpoes!galpao_destino_id(nome), " +
+            "itens:siso_transferencia_galpao_itens(qty)",
+        )
+        .eq("status", "em_transito")
+        .order("criada_em", { ascending: true })
+        .limit(MAX_DETALHE_POR_SECAO + 1);
+      if (galpao_id) q = q.eq("galpao_destino_id", galpao_id);
+      return q;
+    })(),
   ]);
 
   type SepRow = {
@@ -572,6 +593,10 @@ export async function montarDashboardTarefas(
   const devolucoesRows = (devolucoesQ.data ?? []) as DevolucaoLinha[];
   const devolucoes = agruparDevolucoesPendentes(devolucoesRows);
 
+  // §1 task 1.5 — Transferências em trânsito
+  const transferenciasRows = (transferenciasQ.data ?? []) as TransferenciaLinha[];
+  const transferencias = agruparTransferenciasTransito(transferenciasRows);
+
   return {
     galpao_id,
     aprovacao: {
@@ -604,7 +629,7 @@ export async function montarDashboardTarefas(
     },
     excecoes: {
       devolucoes,
-      transferencias_transito: { count: 0, itens: [] },
+      transferencias_transito: transferencias,
       inventario_revisao: { count: 0, itens: [] },
       reservas_orfas: { count: 0, itens: [] },
       retroativos: { count: 0, itens: [] },

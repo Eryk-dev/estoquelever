@@ -1981,3 +1981,37 @@ erros:
       Conclusão: nenhuma mensagem user-facing incorreta. Nenhuma ação necessária.
     files: []
     tags: [wms, separacao, desfazer-parcial, parcial-modal, no-op, fix-final-b, t7, b6]
+
+  - id: parcial-modal-encaminhar-oc-ja-existe-via-esgotado-modal
+    date: "2026-05-27"
+    source: wms.separacao.parcial-modal
+    category: business_logic
+    message: "Plano pede 3ª opção de radio 'Encaminhar pra OC' no ParcialModal — já existe via EsgotadoModal"
+    cause: >
+      O plano WMS fix-final-B T8/B7 descrevia adicionar um 3º radio button
+      "Encaminhar pra OC" em src/components/wms/separacao/parcial-modal.tsx,
+      supondo que o modal já tinha radios. O modal não tem radios — apenas
+      qty (stepper numérico) + checkbox locZerou.
+
+      A funcionalidade pedida ("operador pode enviar para OC quando sem
+      cobertura") já existe e está funcionando via fluxo de 2 etapas:
+
+      1. Operador confirma o parcial-modal (qty + locZerou).
+      2. POST /api/wms/separacao/parcial roda cascade re-busca de locs.
+      3. Se cascade falha, endpoint retorna { status: "sem_cobertura" }.
+      4. checklist/page.tsx (linha 654-660) detecta "sem_cobertura" e
+         chama handleEsgotadoPreview(sku) automaticamente.
+      5. EsgotadoModal abre mostrando galpões alternativos com saldo +
+         botão "Criar Ordem de Compra".
+      6. handleEsgotadoAction("oc") chama /api/wms/separacao/produto-esgotado
+         com acao=oc, transitando o pedido para OC.
+    fix: >
+      No-op. Implementar a opção no parcial-modal seria uma regressão de UX:
+      forçaria o operador a decidir OC vs encaminhar ANTES de o sistema
+      calcular a cobertura dos galpões alternativos. O fluxo atual é superior:
+      decide-se OC apenas quando o cascade confirma que nenhum galpão tem stock.
+
+      Nenhum arquivo foi alterado. Esta entrada documenta a investigação para
+      evitar reimplementação redundante.
+    files: []
+    tags: [wms, separacao, parcial-modal, esgotado-modal, oc, encaminhar, no-op, fix-final-b, t8, b7]

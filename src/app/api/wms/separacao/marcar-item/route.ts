@@ -52,7 +52,10 @@ export async function POST(request: NextRequest) {
     }
     if (item.separacao_parcial) {
       return NextResponse.json(
-        { error: "item está em parcial — use /desfazer-parcial antes" },
+        {
+          error:
+            "item está em parcial — cancele a separação inteira (checklist) ou peça pro supervisor desfazer o parcial",
+        },
         { status: 409 },
       );
     }

@@ -76,9 +76,80 @@ export type FornecedorCompras = {
   a_receber: number;
 };
 
+/** 1 devolução aguardando classificação na fila. */
+export type DevolucaoPendenteCard = {
+  id: string;
+  nota_fiscal_id: number | null;
+  empresa_referencia_nome: string | null;
+  criada_em: string;
+};
+
+/** 1 transferência inter-galpão em trânsito. */
+export type TransferenciaTransitoCard = {
+  id: string;
+  origem_galpao_nome: string | null;
+  destino_galpao_nome: string | null;
+  criada_em: string;
+  qty_itens: number;
+};
+
+/** 1 sessão de inventário em estado `revisao` (aguardando supervisor). */
+export type InventarioRevisaoCard = {
+  id: string;
+  nome: string;
+  galpao_nome: string | null;
+  total_divergencias: number;
+  criado_em: string;
+};
+
+/** 1 reserva R órfã = mov tipo R + origem_tipo='reserva_pedido' onde
+ *  o pedido associado está cancelado e a R nunca foi liberada (estorno_de NULL
+ *  E não existe mov L com mesmo pedido_id). */
+export type ReservaOrfaCard = {
+  id: string;
+  pedido_id: string | null;
+  pedido_numero: string | null;
+  produto_sku: string;
+  qty: number;
+  criada_em: string;
+};
+
+/** Pendência de lançamento retroativo aguardando reconciliação. */
+export type RetroativoPendenteCard = {
+  id: string;
+  produto_sku: string;
+  qty: number;
+  criado_em: string;
+  motivo: string;
+};
+
+/** Saldo em RECEBIMENTO sem pendência viva (após cancelamento de guarda). */
+export type RecebimentoOrfaoCard = {
+  produto_id: string;
+  produto_sku: string;
+  galpao_id: string;
+  galpao_nome: string | null;
+  localizacao_codigo: string;
+  saldo: number;
+};
+
+export type ExcecoesPayload = {
+  devolucoes: { count: number; itens: DevolucaoPendenteCard[] };
+  transferencias_transito: { count: number; itens: TransferenciaTransitoCard[] };
+  inventario_revisao: { count: number; itens: InventarioRevisaoCard[] };
+  reservas_orfas: { count: number; itens: ReservaOrfaCard[] };
+  retroativos: { count: number; itens: RetroativoPendenteCard[] };
+  recebimento_orfao: { count: number; itens: RecebimentoOrfaoCard[] };
+};
+
 export type DashboardTarefasResult = {
   galpao_id: string | null;
-  aprovacao: { count: number };
+  aprovacao: {
+    count: number;
+    /** Split por origem do pedido — útil pra distinguir prioridade. */
+    marketplace: number;
+    manual: number;
+  };
   separacao: { count: number; executores: Executor[] };
   embalagem: { count: number; executores: Executor[] };
   guarda: { count: number; executores: Executor[]; itens: GuardaItem[] };
@@ -92,6 +163,8 @@ export type DashboardTarefasResult = {
     executores: Executor[];
     ciclos: CicloInventario[];
   };
+  /** Cards novos do P5 — visibilidade de exceções operacionais. */
+  excecoes: ExcecoesPayload;
 };
 
 /**
@@ -418,7 +491,11 @@ export async function montarDashboardTarefas(
 
   return {
     galpao_id,
-    aprovacao: { count: aprovacaoQ.count ?? 0 },
+    aprovacao: {
+      count: aprovacaoQ.count ?? 0,
+      marketplace: 0,
+      manual: 0,
+    },
     separacao: {
       count: sepRows.length,
       executores: hidratarExecutores(sepIds, usuariosMap),
@@ -441,6 +518,14 @@ export async function montarDashboardTarefas(
       sessoesAtivas: invSessoes.length,
       executores: hidratarExecutores(invIds, usuariosMap),
       ciclos,
+    },
+    excecoes: {
+      devolucoes: { count: 0, itens: [] },
+      transferencias_transito: { count: 0, itens: [] },
+      inventario_revisao: { count: 0, itens: [] },
+      reservas_orfas: { count: 0, itens: [] },
+      retroativos: { count: 0, itens: [] },
+      recebimento_orfao: { count: 0, itens: [] },
     },
   };
 }

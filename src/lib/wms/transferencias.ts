@@ -234,6 +234,30 @@ export async function getTransferencia(
 
 // ─── Receber ──────────────────────────────────────────────────────────────
 
+/**
+ * Recebe uma transferência em trânsito. Gera mov E na loc destino pra cada
+ * item informado, atualiza `mov_entrada_id` + `localizacao_destino_id` em cada
+ * row de item, e flipa o header pra `status='recebida'`.
+ *
+ * **P3 #8.10 — Anti-race (2026-05-27):**
+ * Sem proteção, 2 operadores chamando /receber em paralelo passariam ambos a
+ * validação de `status='em_transito'` (SELECTs separados), inseririam movs E
+ * duas vezes (saldo dobrado no destino), e o último UPDATE de status='recebida'
+ * sobrescreveria silenciosamente. Agora, antes de inserir as movs, tentamos
+ * reivindicar o header via UPDATE condicional setando
+ * `recebimento_em_andamento_por`. WHERE id=$1 AND status='em_transito' AND
+ * `recebimento_em_andamento_por IS NULL` (claim **estrito** — diferente de
+ * `iniciarGuarda` que tolera re-entrada do mesmo user porque o inner write
+ * é idempotente). Aqui o inner write é INSERT de mov E (não-idempotente até
+ * `mov_entrada_id` ser setado), então 2 chamadas paralelas do MESMO user
+ * também precisam serializar. Loser leva 0 rows → 409 com
+ * `code='TRANSFERENCIA_OUTRO_RECEBIMENTO'` + `recebimento_em_andamento_por`
+ * pra UI mostrar quem ganhou.
+ *
+ * Ao fim do happy-path, o campo é zerado junto com o flip pra `status='recebida'`.
+ * Se o processo morrer no meio, o campo fica "preso" — admin pode limpar manual.
+ * Trade-off aceito: retry após crash exige cleanup (vs. risco de saldo duplicado).
+ */
 export async function receberTransferencia(
   input: ReceberTransferenciaInput,
 ): Promise<void> {
@@ -241,7 +265,7 @@ export async function receberTransferencia(
 
   const { data: transf, error: errHeader } = await sb
     .from("siso_transferencias_galpao")
-    .select("id, status, galpao_destino_id")
+    .select("id, status, galpao_destino_id, recebimento_em_andamento_por")
     .eq("id", input.transferencia_id)
     .single();
   if (errHeader || !transf) throw new Error("transferência não encontrada");
@@ -249,6 +273,7 @@ export async function receberTransferencia(
     id: string;
     status: StatusTransferencia;
     galpao_destino_id: string;
+    recebimento_em_andamento_por: string | null;
   };
   if (t.status !== "em_transito") {
     throw new Error(
@@ -256,68 +281,126 @@ export async function receberTransferencia(
     );
   }
 
-  const { data: itens, error: errItens } = await sb
-    .from("siso_transferencia_galpao_itens")
-    .select("id, produto_id, qty, mov_entrada_id")
-    .eq("transferencia_id", input.transferencia_id);
-  if (errItens || !itens) throw new Error("itens não encontrados");
-  type ItemRow = {
-    id: string;
-    produto_id: string;
-    qty: number;
-    mov_entrada_id: string | null;
-  };
-  const itensMap = new Map(
-    ((itens ?? []) as ItemRow[]).map((i) => [i.id, i]),
-  );
-
-  // Valida que veio loc destino pra TODOS os itens não-recebidos
-  for (const it of itens as ItemRow[]) {
-    if (it.mov_entrada_id) continue;
-    const sel = input.itens.find((x) => x.transferencia_item_id === it.id);
-    if (!sel) {
-      throw new Error(
-        `localização de destino faltando pra item ${it.id}`,
-      );
-    }
+  // P3 #8.10: Se já tem alguém com o lock, rejeita imediatamente (sem
+  // round-trip extra no UPDATE). Claim é ESTRITO — mesmo o mesmo user
+  // não pode entrar duas vezes (inner write não é idempotente).
+  if (t.recebimento_em_andamento_por) {
+    const err = new Error(
+      `recebimento já em andamento por outro operador (${t.recebimento_em_andamento_por})`,
+    ) as Error & { code?: string; recebimento_em_andamento_por?: string };
+    err.code = "TRANSFERENCIA_OUTRO_RECEBIMENTO";
+    err.recebimento_em_andamento_por = t.recebimento_em_andamento_por;
+    throw err;
   }
 
-  // Pra cada item informado: gera entrada na loc destino
-  for (const sel of input.itens) {
-    const item = itensMap.get(sel.transferencia_item_id);
-    if (!item) throw new Error(`item ${sel.transferencia_item_id} não pertence à transferência`);
-    if (item.mov_entrada_id) continue; // já recebido — idempotência
-
-    const mov = await inserirMovimentacao({
-      tripla: {
-        produto_id: item.produto_id,
-        galpao_id: t.galpao_destino_id,
-        localizacao_id: sel.localizacao_destino_id,
-      },
-      tipo: "E",
-      qty: item.qty,
-      origem_tipo: "transferencia_galpao",
-      origem_id: t.id,
-      usuario_id: input.usuario_id,
-      motivo: "recebimento de transferência inter-galpão",
-    });
-    await sb
-      .from("siso_transferencia_galpao_itens")
-      .update({
-        localizacao_destino_id: sel.localizacao_destino_id,
-        mov_entrada_id: mov.id,
-      })
-      .eq("id", sel.transferencia_item_id);
-  }
-
-  await sb
+  // P3 #8.10: UPDATE condicional pra reivindicar o recebimento. Claim
+  // estrito: só passa se `recebimento_em_andamento_por IS NULL`. Loser
+  // (qualquer chamada concorrente) leva 0 rows → 409.
+  const { data: claimed, error: errClaim } = await sb
     .from("siso_transferencias_galpao")
-    .update({
-      status: "recebida",
-      recebida_por: input.usuario_id,
-      recebida_em: new Date().toISOString(),
-    })
-    .eq("id", t.id);
+    .update({ recebimento_em_andamento_por: input.usuario_id })
+    .eq("id", t.id)
+    .eq("status", "em_transito")
+    .is("recebimento_em_andamento_por", null)
+    .select("id");
+  if (errClaim) throw errClaim;
+  if (!claimed || claimed.length === 0) {
+    // Race perdida entre o SELECT e o UPDATE — re-lê pra anexar o dono atual.
+    const { data: refreshed } = await sb
+      .from("siso_transferencias_galpao")
+      .select("recebimento_em_andamento_por, status")
+      .eq("id", t.id)
+      .single();
+    const r = refreshed as
+      | { recebimento_em_andamento_por: string | null; status: StatusTransferencia }
+      | null;
+    const err = new Error(
+      `recebimento já em andamento por outro operador (${r?.recebimento_em_andamento_por ?? "?"})`,
+    ) as Error & { code?: string; recebimento_em_andamento_por?: string };
+    err.code = "TRANSFERENCIA_OUTRO_RECEBIMENTO";
+    err.recebimento_em_andamento_por = r?.recebimento_em_andamento_por ?? undefined;
+    throw err;
+  }
+
+  try {
+    const { data: itens, error: errItens } = await sb
+      .from("siso_transferencia_galpao_itens")
+      .select("id, produto_id, qty, mov_entrada_id")
+      .eq("transferencia_id", input.transferencia_id);
+    if (errItens || !itens) throw new Error("itens não encontrados");
+    type ItemRow = {
+      id: string;
+      produto_id: string;
+      qty: number;
+      mov_entrada_id: string | null;
+    };
+    const itensMap = new Map(
+      ((itens ?? []) as ItemRow[]).map((i) => [i.id, i]),
+    );
+
+    // Valida que veio loc destino pra TODOS os itens não-recebidos
+    for (const it of itens as ItemRow[]) {
+      if (it.mov_entrada_id) continue;
+      const sel = input.itens.find((x) => x.transferencia_item_id === it.id);
+      if (!sel) {
+        throw new Error(
+          `localização de destino faltando pra item ${it.id}`,
+        );
+      }
+    }
+
+    // Pra cada item informado: gera entrada na loc destino
+    for (const sel of input.itens) {
+      const item = itensMap.get(sel.transferencia_item_id);
+      if (!item) throw new Error(`item ${sel.transferencia_item_id} não pertence à transferência`);
+      if (item.mov_entrada_id) continue; // já recebido — idempotência
+
+      const mov = await inserirMovimentacao({
+        tripla: {
+          produto_id: item.produto_id,
+          galpao_id: t.galpao_destino_id,
+          localizacao_id: sel.localizacao_destino_id,
+        },
+        tipo: "E",
+        qty: item.qty,
+        origem_tipo: "transferencia_galpao",
+        origem_id: t.id,
+        usuario_id: input.usuario_id,
+        motivo: "recebimento de transferência inter-galpão",
+      });
+      await sb
+        .from("siso_transferencia_galpao_itens")
+        .update({
+          localizacao_destino_id: sel.localizacao_destino_id,
+          mov_entrada_id: mov.id,
+        })
+        .eq("id", sel.transferencia_item_id);
+    }
+
+    // Happy-path: flipa header e zera o lock atomicamente no mesmo UPDATE.
+    await sb
+      .from("siso_transferencias_galpao")
+      .update({
+        status: "recebida",
+        recebida_por: input.usuario_id,
+        recebida_em: new Date().toISOString(),
+        recebimento_em_andamento_por: null,
+      })
+      .eq("id", t.id);
+  } catch (e) {
+    // Sad-path: tenta limpar o lock pra não deixar o header travado. Só
+    // limpa se ainda formos o dono (proteção contra interleavings exóticos).
+    try {
+      await sb
+        .from("siso_transferencias_galpao")
+        .update({ recebimento_em_andamento_por: null })
+        .eq("id", t.id)
+        .eq("recebimento_em_andamento_por", input.usuario_id);
+    } catch {
+      // best-effort
+    }
+    throw e;
+  }
 }
 
 // ─── Cancelar ─────────────────────────────────────────────────────────────

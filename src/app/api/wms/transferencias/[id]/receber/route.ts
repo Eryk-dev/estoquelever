@@ -25,6 +25,18 @@ export async function POST(
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
+    // P3 #8.10: race perdida — outro operador já reivindicou o recebimento.
+    // UI usa `recebimento_em_andamento_por` pra mostrar quem ganhou.
+    const code = (e as { code?: string }).code;
+    if (code === "TRANSFERENCIA_OUTRO_RECEBIMENTO") {
+      const msg = e instanceof Error ? e.message : String(e);
+      const dono = (e as { recebimento_em_andamento_por?: string })
+        .recebimento_em_andamento_por;
+      return NextResponse.json(
+        { error: msg, code, recebimento_em_andamento_por: dono },
+        { status: 409 },
+      );
+    }
     return wmsErrorResponse({
       source: "wms.transferencias.receber",
       error: e,

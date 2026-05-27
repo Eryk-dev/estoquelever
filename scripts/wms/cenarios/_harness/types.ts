@@ -97,6 +97,7 @@ export type Ctx = {
   finalizarLocInventario: (p: { sessao_id: string; loc: string }) => Promise<void>;
   aprovarInventario: (sessaoId: string) => Promise<void>;
   aplicarInventario: (sessaoId: string) => Promise<void>;
+  estornarInventario: (sessaoId: string, motivo?: string) => Promise<{ ok: boolean; movsEstornadas: number }>;
 
   // ── asserts ──
   assertSaldo: (sku: string, galpao: "CWB" | "SP", loc: string, qty_esperada: number) => Promise<void>;

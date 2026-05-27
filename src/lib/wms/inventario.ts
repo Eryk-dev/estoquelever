@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao } from "./ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
 import type { TipoMov } from "./types";
 import { reconciliarTemporal } from "./inventario-reconciliacao";
 
@@ -978,4 +978,90 @@ export async function ultimasContagensDoProduto(
   });
   if (error) throw error;
   return (data ?? []) as UltimaContagemProduto[];
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// P3 #4.2 — Estornar sessão de inventário aplicada
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Estorna uma sessão de inventário aplicada.
+ *
+ * Para cada divergência aplicada (status='aplicada' + mov_aplicada_id):
+ *   1. Estorna a mov no ledger via estornarMovimentacao (cria contra-mov)
+ *   2. Reseta divergencia.status='pendente' (volta pra fila do supervisor)
+ *
+ * Não toca em contagens — preserva trilha histórica do que foi contado.
+ * Sessão volta pra status='revisao' (supervisor decide se re-aplica ou
+ * cancela). Idempotente: re-execução não duplica estornos (estornarMov
+ * recusa double-estorno via "já foi estornada" / "já é um estorno").
+ *
+ * Falha gracefully se algum estorno bater em saldo negativo (ledger
+ * coerência sobrepõe undo).
+ */
+export async function estornarSessaoInventario(input: {
+  sessao_id: string;
+  usuario_id: string;
+  motivo: string;
+}): Promise<{ movsEstornadas: number }> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo do estorno é obrigatório (≥3 caracteres)");
+  }
+  const sb = createServiceClient();
+  const { data: sessao } = await sb
+    .from("siso_inventario_sessoes")
+    .select("id, status")
+    .eq("id", input.sessao_id)
+    .maybeSingle();
+  if (!sessao) throw new Error("sessão não encontrada");
+  const status = (sessao as { status: string }).status;
+  if (status !== "aplicada") {
+    throw new Error(
+      `sessão em status ${status} — apenas 'aplicada' pode ser estornada`,
+    );
+  }
+
+  const { data: divs } = await sb
+    .from("siso_inventario_divergencias")
+    .select("id, mov_aplicada_id, status")
+    .eq("sessao_id", input.sessao_id)
+    .eq("status", "aplicada");
+
+  let estornadas = 0;
+  for (const d of (divs ?? []) as Array<{
+    id: string;
+    mov_aplicada_id: string | null;
+    status: string;
+  }>) {
+    if (!d.mov_aplicada_id) continue;
+    try {
+      await estornarMovimentacao({
+        mov_id: d.mov_aplicada_id,
+        usuario_id: input.usuario_id,
+        motivo: `Estorno sessão inventário ${input.sessao_id}: ${input.motivo}`,
+      });
+      estornadas++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/já foi estornada/.test(msg) || /já é um estorno/.test(msg)) {
+        // Idempotência: outra request já estornou. Segue.
+        continue;
+      }
+      throw err;
+    }
+    await sb
+      .from("siso_inventario_divergencias")
+      .update({ status: "pendente", mov_aplicada_id: null })
+      .eq("id", d.id);
+  }
+
+  // UPDATE condicional — só transiciona se ainda está 'aplicada' (proteção
+  // contra re-execução paralela; idempotente).
+  await sb
+    .from("siso_inventario_sessoes")
+    .update({ status: "revisao", aplicada_em: null })
+    .eq("id", input.sessao_id)
+    .eq("status", "aplicada");
+
+  return { movsEstornadas: estornadas };
 }

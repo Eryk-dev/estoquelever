@@ -875,6 +875,13 @@ export function createContext(opts: {
     await http.post(`/api/wms/inventario/${sessaoId}/aplicar`);
   }
 
+  async function estornarInventario(sessaoId: string, motivo = "teste cenário 41") {
+    return http.post<{ ok: boolean; movsEstornadas: number }>(
+      `/api/wms/inventario/${sessaoId}/estornar`,
+      { motivo },
+    );
+  }
+
   // ── asserts (proxies) ──
   const assertSaldo: Ctx["assertSaldo"] = (sku, g, l, q) => A.assertSaldo(sb, sku, g, l, q);
   const assertReservado: Ctx["assertReservado"] = (sku, g, l, q) => A.assertReservado(sb, sku, g, l, q);
@@ -894,7 +901,7 @@ export function createContext(opts: {
     criarVendaDireta, disponibilidadeVenda,
     reservar, cleanupReservas,
     classificarDevolucao,
-    criarSessaoInventario, entrarParty, proximaLoc, bipeInventario, finalizarLocInventario, aprovarInventario, aplicarInventario,
+    criarSessaoInventario, entrarParty, proximaLoc, bipeInventario, finalizarLocInventario, aprovarInventario, aplicarInventario, estornarInventario,
     assertSaldo, assertReservado, assertMovsCount, assertPedidoStatus, assertCustoMedio, assertSemReservasOrfas,
   } as Ctx;
 }

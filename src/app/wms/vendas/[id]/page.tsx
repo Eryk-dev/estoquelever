@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { use } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { sisoFetch, useAuth } from "@/lib/auth-context";
+import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
 import { PageHeader, StatusBadge, Modal, Field, Icon } from "@/components/wms/ui/wms-ui";
 import { formatRelativeTime, getMarketplaceName } from "@/lib/domain-helpers";
 
@@ -62,10 +62,26 @@ export default function VendaDetalhePage({
 }) {
   const { id } = use(params);
   const { user } = useAuth();
+  const { canAny } = usePermissoes();
   const qc = useQueryClient();
   const cargos = useMemo(() => user?.cargos ?? (user?.cargo ? [user.cargo] : []), [user]);
   const canReassign = cargos.includes("admin") || cargos.some((c) => c.startsWith("operador"));
+  // Cancelar venda requer permissão de operações de armazém (qualquer perm
+  // de operacoes.* ou inventario.executar/supervisionar — alinhado com
+  // requireWarehouseAccess no backend).
+  const podeCancelar = canAny(
+    "operacoes.transferir",
+    "operacoes.replenishment",
+    "operacoes.devolucoes",
+    "operacoes.receber",
+    "operacoes.guarda",
+    "operacoes.ajuste_manual",
+    "inventario.executar",
+    "inventario.supervisionar",
+  );
   const [reassignOpen, setReassignOpen] = useState(false);
+  const [cancelarOpen, setCancelarOpen] = useState(false);
+  const [cancelarMotivo, setCancelarMotivo] = useState("");
 
   const { data, isLoading, refetch } = useQuery<DetalheResponse>({
     queryKey: ["venda-detalhe", id],
@@ -76,6 +92,40 @@ export default function VendaDetalhePage({
     },
   });
 
+  const [cancelando, setCancelando] = useState(false);
+  const submitCancelar = async () => {
+    const motivo = cancelarMotivo.trim();
+    if (motivo.length < 3) {
+      toast.error("Motivo precisa de ao menos 3 caracteres");
+      return;
+    }
+    setCancelando(true);
+    try {
+      const r = await sisoFetch(
+        `/api/wms/vendas/${encodeURIComponent(id)}/cancelar`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ motivo }),
+        },
+      );
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        toast.error(j.error ?? `Erro HTTP ${r.status}`);
+        return;
+      }
+      toast.success("Venda cancelada");
+      setCancelarOpen(false);
+      setCancelarMotivo("");
+      refetch();
+      qc.invalidateQueries({ queryKey: ["vendas-lista"] });
+      qc.invalidateQueries({ queryKey: ["wms-estoque"] });
+      qc.invalidateQueries({ queryKey: ["wms-ledger"] });
+    } finally {
+      setCancelando(false);
+    }
+  };
+
   if (isLoading) {
     return <div className="p-6 text-xs text-zinc-500">Carregando…</div>;
   }
@@ -84,6 +134,10 @@ export default function VendaDetalhePage({
   }
 
   const { pedido, itens, historico } = data;
+  const podeCancelarStatus = pedido.status !== "cancelado";
+  const statusSeparacaoAtivo = ["em_separacao", "separado", "embalado"].includes(
+    pedido.status_separacao ?? "",
+  );
   const origemLabel =
     pedido.origem_pedido === "manual"
       ? "Manual"
@@ -98,6 +152,24 @@ export default function VendaDetalhePage({
         backLabel="Voltar para vendas"
       >
         <StatusBadge status={pedido.status_separacao ?? pedido.status} />
+        {podeCancelarStatus && podeCancelar && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-danger"
+            onClick={() => {
+              setCancelarMotivo("");
+              setCancelarOpen(true);
+            }}
+            title={
+              statusSeparacaoAtivo
+                ? "Em separação ativa — backend exigirá voltar etapa antes (400 esperado)"
+                : "Cancelar venda · libera reservas e/ou estorna movs"
+            }
+          >
+            <Icon name="x" size={11} />
+            Cancelar venda
+          </button>
+        )}
       </PageHeader>
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
@@ -181,6 +253,100 @@ export default function VendaDetalhePage({
             qc.invalidateQueries({ queryKey: ["vendas-lista"] });
           }}
         />
+      )}
+
+      {cancelarOpen && (
+        <Modal
+          title="Cancelar venda"
+          subtitle={`#${pedido.numero} · ${pedido.cliente_nome}`}
+          width={520}
+          onClose={() => !cancelando && setCancelarOpen(false)}
+          footer={
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                disabled={cancelando}
+                onClick={() => setCancelarOpen(false)}
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-danger"
+                disabled={cancelando || cancelarMotivo.trim().length < 3}
+                onClick={submitCancelar}
+              >
+                <Icon name="x" size={11} />
+                {cancelando ? "Cancelando…" : "Cancelar venda"}
+              </button>
+            </div>
+          }
+        >
+          {statusSeparacaoAtivo && (
+            <div
+              style={{
+                background: "var(--wms-c-warn-bg, #fff4d6)",
+                border: "1px solid var(--wms-c-warn, #b8860b)",
+                borderRadius: "var(--wms-r-2)",
+                padding: "10px 12px",
+                marginBottom: 12,
+                fontSize: 12.5,
+              }}
+            >
+              <Icon name="alert" size={11} /> Pedido está em separação ativa
+              (<strong>{pedido.status_separacao}</strong>). O backend vai
+              recusar com 400 — operador precisa primeiro <em>voltar etapa</em>
+              {" "}pra preservar auditoria dos picks.
+            </div>
+          )}
+          <p style={{ fontSize: 13, marginBottom: 10 }}>
+            Cancela essa venda. Conforme o status atual:
+          </p>
+          <ul
+            style={{
+              fontSize: 12.5,
+              lineHeight: 1.55,
+              paddingLeft: 18,
+              marginBottom: 12,
+            }}
+          >
+            <li>
+              <strong>aguardando_separacao/compra</strong> — libera reservas R
+              (idempotente).
+            </li>
+            <li>
+              <strong>concluido</strong> com movs venda_manual — estorna cada
+              mov S (idempotente por estorno_de).
+            </li>
+            <li>
+              <strong>em_separacao/separado/embalado</strong> — 400. Voltar
+              etapa antes.
+            </li>
+            <li>
+              <strong>cancelado</strong> — no-op (idempotente, 200 com 0/0).
+            </li>
+          </ul>
+          <label
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              display: "block",
+              marginBottom: 6,
+            }}
+          >
+            Motivo do cancelamento (≥3 chars)
+          </label>
+          <textarea
+            className="wms-textarea"
+            value={cancelarMotivo}
+            onChange={(e) => setCancelarMotivo(e.target.value)}
+            placeholder="Ex.: cliente desistiu, troca solicitada, pedido duplicado"
+            rows={3}
+            autoFocus
+            disabled={cancelando}
+          />
+        </Modal>
       )}
     </div>
   );

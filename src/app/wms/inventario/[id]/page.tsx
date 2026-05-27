@@ -92,6 +92,10 @@ export default function InventarioSupervisorPage({
   useTrackPresencaWms("inventario");
   const [encerrarOpen, setEncerrarOpen] = useState(false);
   const [cancelarOpen, setCancelarOpen] = useState(false);
+  const [estornarOpen, setEstornarOpen] = useState(false);
+  const [estornarMotivo, setEstornarMotivo] = useState("");
+  // Admin perm gates "Estornar sessão" (backend requires requireAdmin).
+  const podeEstornar = can("sistema.usuarios");
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-inv", id],
@@ -207,6 +211,32 @@ export default function InventarioSupervisorPage({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const estornar = useMutation({
+    mutationFn: (motivo: string) =>
+      wmsApi<{ ok: true; movsEstornadas?: number }>(
+        `/api/wms/inventario/${id}/estornar`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ motivo }),
+        },
+      ),
+    onSuccess: (r) => {
+      toast.success(
+        r.movsEstornadas != null
+          ? `Sessão estornada · ${r.movsEstornadas} mov(s) revertida(s)`
+          : "Sessão estornada — voltou pra revisão",
+      );
+      setEstornarOpen(false);
+      setEstornarMotivo("");
+      queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
+      queryClient.invalidateQueries({ queryKey: ["wms-inv-div", id] });
+      queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
+      queryClient.invalidateQueries({ queryKey: ["wms-ledger"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   // ─── KPIs derivados do realtime ───
   const stats = useMemo(() => {
     const total = locs.length;
@@ -252,7 +282,8 @@ export default function InventarioSupervisorPage({
     encerrar.isPending ||
     aprovarSessao.isPending ||
     aplicar.isPending ||
-    cancelar.isPending;
+    cancelar.isPending ||
+    estornar.isPending;
   const guide = status ? STATUS_GUIDE[status] : undefined;
   const podeCancelar = status === "planejada" || status === "em_andamento";
 
@@ -439,6 +470,21 @@ export default function InventarioSupervisorPage({
             {aplicar.isPending ? "Aplicando…" : "Aplicar no estoque"}
           </button>
         )}
+        {status === "aplicada" && podeEstornar && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-ghost"
+            disabled={anyPending}
+            onClick={() => {
+              setEstornarMotivo("");
+              setEstornarOpen(true);
+            }}
+            title="Reverte as movs aplicadas e devolve a sessão pra revisão (admin only)"
+          >
+            <Icon name="rotate" size={11} />
+            Estornar sessão
+          </button>
+        )}
       </div>
 
       {/* Na party — lista dinâmica de operadores ativos */}
@@ -598,6 +644,57 @@ export default function InventarioSupervisorPage({
               liberados e nenhuma divergência é gerada.
             </li>
           </ul>
+        </Modal>
+      )}
+
+      {estornarOpen && (
+        <Modal
+          title="Estornar sessão aplicada"
+          subtitle={`${sessao?.nome ?? "Sessão"} · ${status}`}
+          width={520}
+          onClose={() => !anyPending && setEstornarOpen(false)}
+          footer={
+            <>
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                disabled={anyPending}
+                onClick={() => setEstornarOpen(false)}
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-danger"
+                disabled={anyPending || estornarMotivo.trim().length < 3}
+                onClick={() => estornar.mutate(estornarMotivo.trim())}
+              >
+                <Icon name="rotate" size={11} />
+                {estornar.isPending ? "Estornando…" : "Estornar"}
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, marginBottom: 10 }}>
+            Reverte as movimentações aplicadas no ledger, recoloca as
+            divergências em <strong>pendente</strong> e a sessão volta pra{" "}
+            <strong>revisão</strong>. Não dá pra desfazer o estorno — só
+            re-aprovando + re-aplicando.
+          </p>
+          <label
+            style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}
+          >
+            Motivo do estorno (≥3 chars)
+          </label>
+          <textarea
+            className="wms-textarea"
+            value={estornarMotivo}
+            onChange={(e) => setEstornarMotivo(e.target.value)}
+            placeholder="Ex.: contagem aplicada com saldo errado, reaplicar após correção"
+            rows={3}
+            autoFocus
+            disabled={anyPending}
+          />
         </Modal>
       )}
 

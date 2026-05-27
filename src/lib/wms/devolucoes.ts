@@ -443,3 +443,21 @@ export async function listarDevolucoesPendentes(): Promise<DevolucaoPendenteRow[
   if (error) throw error;
   return (data ?? []) as unknown as DevolucaoPendenteRow[];
 }
+
+/**
+ * Devoluções já classificadas (status='classificada'), pra UI de
+ * desclassificar (reverter classificação). Idempotência: rows com
+ * `classificada_em` IS NULL ficam fora — sem timestamp, desclassificar
+ * dispararia erro de auditoria.
+ */
+export async function listarDevolucoesClassificadas(): Promise<DevolucaoPendenteRow[]> {
+  const sb = createServiceClient();
+  const { data, error } = await sb
+    .from("siso_devolucoes_pendentes")
+    .select("*, empresa_referencia:siso_empresas!empresa_id(nome)")
+    .eq("status", "classificada")
+    .not("classificada_em", "is", null)
+    .order("classificada_em", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as unknown as DevolucaoPendenteRow[];
+}

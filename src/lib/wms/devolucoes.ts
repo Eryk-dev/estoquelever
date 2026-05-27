@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
+import { upsertNotaFiscal } from "@/lib/nf-webhook-handler";
 import { logger } from "@/lib/logger";
 
 // Modelo 3D (Fase 5 Batch C):
@@ -109,6 +110,9 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
     status: string;
     pedido_origem_mov_id: string | null;
     nota_fiscal_id: number | null;
+    chave_acesso_nf: string | null;
+    empresa_id: string | null;
+    payload_webhook: unknown;
   };
   const d = dev as DevRow;
   if (d.status !== "aguardando_classificacao") throw new Error("já classificada");
@@ -117,6 +121,20 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
   // classify (Classe B = par S+E quarentena; Classe C = E + S fornecedor).
   // Permite agrupar movs do mesmo evento no ledger pra auditoria/relatórios.
   const origemCompartilhado = randomUUID();
+
+  // Fix-Final A T6 (R5): garante uuid em siso_notas_fiscais antes de chamar
+  // inserirMovimentacao — a migration T5 adicionou FK e o ledger valida
+  // assertUuidLike(nota_fiscal_id). Sem upsert, devolução com NF Tiny crash.
+  let notaFiscalUuid: string | null = null;
+  if (d.nota_fiscal_id != null || d.chave_acesso_nf) {
+    notaFiscalUuid = await upsertNotaFiscal({
+      tiny_nota_fiscal_id: d.nota_fiscal_id,
+      chave_acesso: d.chave_acesso_nf,
+      empresa_id: d.empresa_id,
+      tipo: "entrada",
+      raw: d.payload_webhook,
+    });
+  }
 
   // empresa_referencia_id = vendedora da venda ORIGINAL (mov S nf_venda).
   // NUNCA confundir com siso_devolucoes_pendentes.empresa_id (que é receptora
@@ -179,7 +197,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         qty: input.qty,
         origem_tipo: "devolucao_cliente_integra",
         origem_id: origemCompartilhado,
-        nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
+        nota_fiscal_id: notaFiscalUuid ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
         custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
@@ -196,7 +214,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         qty: input.qty,
         origem_tipo: "devolucao_cliente_avariada",
         origem_id: origemCompartilhado,
-        nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
+        nota_fiscal_id: notaFiscalUuid ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
         custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
@@ -260,7 +278,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         qty: input.qty,
         origem_tipo: "devolucao_cliente_integra",
         origem_id: origemCompartilhado,
-        nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
+        nota_fiscal_id: notaFiscalUuid ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
         custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,
@@ -287,7 +305,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         qty: input.qty,
         origem_tipo: "devolucao_cliente_troca_sku",
         origem_id: origemCompartilhado,
-        nota_fiscal_id: d.nota_fiscal_id?.toString() ?? undefined,
+        nota_fiscal_id: notaFiscalUuid ?? undefined,
         empresa_referencia_id: empresaReferenciaId,
         custo_unitario: custoUnitarioOriginal,
         usuario_id: input.usuario_id,

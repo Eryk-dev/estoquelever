@@ -54,6 +54,76 @@ export function isDevolucao(nf: {
   return false;
 }
 
+// ─── upsertNotaFiscal helper (Fix-Final A T6 / R5) ─────────────────────────
+/**
+ * Garante existência de uma linha em `siso_notas_fiscais` (tabela canônica)
+ * e retorna seu UUID. Usado por `classificarDevolucao` e pelo handler de NF
+ * de saída antes de chamar `inserirMovimentacao` (que exige uuid em
+ * `nota_fiscal_id` por causa da FK adicionada na migration T5).
+ *
+ * Dedup priorizado:
+ * 1. `chave_acesso` quando presente (UNIQUE)
+ * 2. `tiny_nota_fiscal_id` como fallback
+ * 3. INSERT
+ *
+ * Race-safe na prática (chave_acesso UNIQUE), mas em race extremo o segundo
+ * INSERT estoura 23505 e o caller deve retry — não tentamos handle aqui pra
+ * manter código simples; a probabilidade real é desprezível (1 webhook por NF
+ * + dedup upstream em siso_webhook_logs).
+ */
+export type UpsertNfInput = {
+  tiny_nota_fiscal_id?: number | string | null;
+  chave_acesso?: string | null;
+  numero?: string | null;
+  serie?: string | null;
+  empresa_id?: string | null;
+  tipo: "entrada" | "saida";
+  raw?: unknown;
+};
+
+export async function upsertNotaFiscal(input: UpsertNfInput): Promise<string> {
+  const sb = createServiceClient();
+  const chave = input.chave_acesso?.trim() || null;
+  const tinyId = input.tiny_nota_fiscal_id != null && input.tiny_nota_fiscal_id !== ""
+    ? Number(input.tiny_nota_fiscal_id)
+    : null;
+
+  if (chave) {
+    const { data: existing } = await sb
+      .from("siso_notas_fiscais")
+      .select("id")
+      .eq("chave_acesso", chave)
+      .maybeSingle();
+    if (existing) return (existing as { id: string }).id;
+  }
+  if (tinyId != null) {
+    const { data: existing } = await sb
+      .from("siso_notas_fiscais")
+      .select("id")
+      .eq("tiny_nota_fiscal_id", tinyId)
+      .maybeSingle();
+    if (existing) return (existing as { id: string }).id;
+  }
+
+  const { data, error } = await sb
+    .from("siso_notas_fiscais")
+    .insert({
+      tiny_nota_fiscal_id: tinyId,
+      chave_acesso: chave,
+      numero: input.numero ?? null,
+      serie: input.serie ?? null,
+      empresa_id: input.empresa_id ?? null,
+      tipo: input.tipo,
+      raw_tiny: (input.raw as Record<string, unknown> | null | undefined) ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    throw new Error(`upsertNotaFiscal falhou: ${error.message}`);
+  }
+  return (data as { id: string }).id;
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function handleNfWebhook(

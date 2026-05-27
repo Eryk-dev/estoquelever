@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao } from "./ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
 import { logger } from "@/lib/logger";
 
 // Modelo 3D (Fase 5 Batch C):
@@ -309,6 +309,128 @@ interface DevolucaoPendenteRow {
    *  Em 3D não há mais "dona destino"; saldo entra na (produto, galpão, loc). */
   empresa_referencia: { nome: string } | null;
   criado_em: string;
+}
+
+/**
+ * P3 #6.3: reverte uma devolução classificada — estorna todas as movs
+ * geradas e volta status='aguardando_classificacao'.
+ *
+ * Como `classificarDevolucao` não usa origem_id compartilhada hoje
+ * (apenas origem_tipo+nota_fiscal_id+empresa_referencia_id), buscamos as
+ * movs do par "classe X" pela combinação:
+ *   - origem_tipo IN (devolucao_cliente_integra|avariada,
+ *                     transferencia_localizacao, devolucao_fornecedor_enviada,
+ *                     ajuste_manual)
+ *   - nota_fiscal_id = devolucao.nota_fiscal_id (quando aplicável)
+ *   - produto_id     = devolucao.produto_id (quando coluna existir)
+ *   - criado_em entre devolucao.classificada_em-1min e classificada_em+1min
+ *
+ * TODO P6: adicionar coluna `devolucao_id text` em `siso_movimentacoes` pra
+ * lookup determinístico, eliminando o match por janela temporal.
+ */
+export async function desclassificarDevolucao(input: {
+  devolucao_id: string;
+  usuario_id: string;
+  motivo: string;
+}): Promise<{ movsEstornadas: number }> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo da desclassificação é obrigatório (≥3 caracteres)");
+  }
+  const sb = createServiceClient();
+  const { data: dev } = await sb
+    .from("siso_devolucoes_pendentes")
+    .select("*")
+    .eq("id", input.devolucao_id)
+    .maybeSingle();
+  if (!dev) throw new Error("devolução não encontrada");
+  const d = dev as {
+    id: string;
+    status: string;
+    classificacao: string | null;
+    classificada_em: string | null;
+    classificada_por: string | null;
+    nota_fiscal_id: number | null;
+    /** Em 3D não há coluna produto_id direta; viaja em payload_webhook. */
+    produto_id?: string | null;
+    qty?: number | null;
+    payload_webhook: Record<string, unknown> | null;
+  };
+  if (d.status !== "classificada") {
+    throw new Error(
+      `devolução em status ${d.status} — apenas 'classificada' pode ser desclassificada`,
+    );
+  }
+  if (!d.classificada_em) {
+    throw new Error("devolução sem timestamp classificada_em — auditoria quebrada");
+  }
+
+  // Produto e galpão vêm da coluna direta (legado) ou de payload_webhook
+  // (caminho atual em 3D — mais robusto pra desambiguar a janela temporal).
+  const payload = d.payload_webhook ?? {};
+  const produtoIdFromPayload =
+    (payload as { produto_id?: string }).produto_id ?? null;
+  const produtoId = d.produto_id ?? produtoIdFromPayload;
+
+  // Janela: classificada_em ± 1min (geração das movs é síncrona dentro
+  // de classificarDevolucao; 1min é folgado).
+  const t0 = new Date(d.classificada_em);
+  const tEarly = new Date(t0.getTime() - 60_000).toISOString();
+  const tLate = new Date(t0.getTime() + 60_000).toISOString();
+
+  const origensRelevantes = [
+    "devolucao_cliente_integra",
+    "devolucao_cliente_avariada",
+    "devolucao_fornecedor_enviada",
+    "transferencia_localizacao",
+    "ajuste_manual",
+  ];
+
+  let movsEstornadas = 0;
+  let query = sb
+    .from("siso_movimentacoes")
+    .select("id")
+    .in("origem_tipo", origensRelevantes)
+    .gte("criado_em", tEarly)
+    .lte("criado_em", tLate);
+  if (d.nota_fiscal_id) {
+    // nota_fiscal_id em movs é text (string do número); cast.
+    query = query.eq("nota_fiscal_id", String(d.nota_fiscal_id));
+  }
+  if (produtoId) {
+    query = query.eq("produto_id", produtoId);
+  }
+  const { data: movs } = await query;
+  for (const m of (movs ?? []) as Array<{ id: string }>) {
+    try {
+      await estornarMovimentacao({
+        mov_id: m.id,
+        usuario_id: input.usuario_id,
+        motivo: `Desclassifica devolução ${input.devolucao_id}: ${input.motivo}`,
+      });
+      movsEstornadas++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/já foi estornada|já é um estorno/.test(msg)) continue;
+      throw err;
+    }
+  }
+
+  await sb
+    .from("siso_devolucoes_pendentes")
+    .update({
+      status: "aguardando_classificacao",
+      classificacao: null,
+      classificada_por: null,
+      classificada_em: null,
+    })
+    .eq("id", input.devolucao_id);
+
+  logger.info("wms.devolucoes", "desclassificada", {
+    devolucao_id: input.devolucao_id,
+    movs_estornadas: movsEstornadas,
+  });
+
+  return { movsEstornadas };
 }
 
 export async function listarDevolucoesPendentes(): Promise<DevolucaoPendenteRow[]> {

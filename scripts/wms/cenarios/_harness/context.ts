@@ -819,6 +819,14 @@ export function createContext(opts: {
     });
   }
 
+  async function desclassificarDevolucao(p: { devolucao_id: string; motivo?: string }) {
+    const motivo = (p.motivo ?? "teste cenário 43 — desclassifica").trim();
+    return http.post<{ ok: boolean; movsEstornadas: number }>(
+      `/api/wms/devolucoes/${p.devolucao_id}/desclassificar`,
+      { motivo },
+    );
+  }
+
   // ── inventário ──
   async function criarSessaoInventario(p: { galpao: "CWB" | "SP"; locs: string[]; modo?: "blind" | "aberto"; tipo?: "cycle_count" | "completo" }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
@@ -908,7 +916,7 @@ export function createContext(opts: {
     transferirGalpao, replenishment, ajusteManual, lancamentoRetroativo, reconciliarRetroativo,
     criarVendaDireta, disponibilidadeVenda,
     reservar, cleanupReservas,
-    classificarDevolucao,
+    classificarDevolucao, desclassificarDevolucao,
     criarSessaoInventario, entrarParty, proximaLoc, bipeInventario, finalizarLocInventario, aprovarInventario, aplicarInventario, estornarInventario,
     assertSaldo, assertReservado, assertMovsCount, assertPedidoStatus, assertCustoMedio, assertSemReservasOrfas,
   } as Ctx;

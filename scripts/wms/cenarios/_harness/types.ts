@@ -89,6 +89,7 @@ export type Ctx = {
 
   // ── devoluções ──
   classificarDevolucao: (p: { devolucao_id: string; classificacao: "A" | "B" | "C" | "D" }) => Promise<void>;
+  desclassificarDevolucao: (p: { devolucao_id: string; motivo?: string }) => Promise<{ movsEstornadas: number }>;
 
   // ── inventário ──
   criarSessaoInventario: (p: { galpao: "CWB" | "SP"; locs: string[]; modo?: "blind" | "aberto"; tipo?: "cycle_count" | "completo" }) => Promise<{ id: string }>;

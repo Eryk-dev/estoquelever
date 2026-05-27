@@ -448,6 +448,35 @@ export async function registrarContagem(
 ): Promise<void> {
   const sb = createServiceClient();
 
+  // P3 #4.3: bipe só é aceito se a loc está bloqueada por este operador.
+  // Sem esse guard, qualquer usuário com sessão válida injetaria contagens
+  // em sessões que nunca entrou (silent write vazamento).
+  const { data: locRow } = await sb
+    .from("siso_inventario_localizacoes")
+    .select("bloqueada_por, status")
+    .eq("sessao_id", input.sessao_id)
+    .eq("localizacao_id", input.localizacao_id)
+    .maybeSingle();
+  if (!locRow) {
+    throw new Error("localização não faz parte desta sessão");
+  }
+  const lr = locRow as { bloqueada_por: string | null; status: string };
+  if (lr.status === "contada" || lr.status === "aprovada") {
+    throw new Error(
+      `loc já está em status ${lr.status} — re-abertura via supervisor`,
+    );
+  }
+  if (!lr.bloqueada_por) {
+    throw new Error(
+      "loc não está reivindicada — chame /proxima-loc antes de bipar",
+    );
+  }
+  if (lr.bloqueada_por !== input.contada_por) {
+    throw new Error(
+      `loc reivindicada por outro operador (${lr.bloqueada_por}). Aguarde liberação.`,
+    );
+  }
+
   // Se o produto bipado é um kit, expande pra contagens dos componentes
   // (qty_no_kit × qty_bipada por componente). Não registra contagem pro
   // próprio SKU do kit — kits não têm saldo direto em siso_estoque.

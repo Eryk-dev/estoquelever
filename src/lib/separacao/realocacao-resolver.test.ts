@@ -176,7 +176,7 @@ describe("resolverRealocacao — pool fungível 3D", () => {
 
   it("exclui múltiplas localizações via localizacoes_excluir", async () => {
     const deps: ResolverDeps = {
-      listarSaldoCandidato: vi.fn(async ({ localizacao_id_excluir, localizacoes_excluir }) => {
+      listarSaldoCandidato: vi.fn(async ({ localizacoes_excluir }) => {
         const todas: EstoqueCandidato[] = [
           {
             localizacao_id: "loc-A",
@@ -197,9 +197,7 @@ describe("resolverRealocacao — pool fungível 3D", () => {
             disponivel: 5,
           },
         ];
-        const excluidas = new Set(
-          localizacoes_excluir ?? (localizacao_id_excluir ? [localizacao_id_excluir] : []),
-        );
+        const excluidas = new Set(localizacoes_excluir ?? []);
         return todas.filter((c) => !excluidas.has(c.localizacao_id));
       }),
     };

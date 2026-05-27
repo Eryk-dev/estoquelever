@@ -39,8 +39,6 @@ export interface ResolverDeps {
   listarSaldoCandidato: (input: {
     produto_id: string;
     galpao_id: string;
-    /** @deprecated use `localizacoes_excluir`. Mantido por compat. */
-    localizacao_id_excluir?: string;
     localizacoes_excluir?: string[];
   }) => Promise<EstoqueCandidato[]>;
 }
@@ -68,8 +66,6 @@ export async function resolverRealocacao(
     produto_id: input.produto_id,
     galpao_id: input.galpao_id,
     localizacoes_excluir: excluir,
-    // Mantém legacy pra deps que ainda lêem só localizacao_id_excluir
-    localizacao_id_excluir: excluir[0],
   });
 
   if (candidatos.length === 0) {
@@ -118,15 +114,9 @@ function defaultDeps(): ResolverDeps {
       produto_id,
       galpao_id,
       localizacoes_excluir,
-      localizacao_id_excluir,
     }) => {
       const supabase = createServiceClient();
-      const excluir =
-        localizacoes_excluir && localizacoes_excluir.length > 0
-          ? localizacoes_excluir
-          : localizacao_id_excluir
-            ? [localizacao_id_excluir]
-            : [];
+      const excluir = localizacoes_excluir ?? [];
 
       // 3D: pool fungível por (produto, galpao) — sem filtro por dona.
       let query = supabase

@@ -13,6 +13,8 @@ type Variante =
       titulo: string;
       contador: number;
       legenda?: string;
+      /** Linha secundária menor — usada pra split (ex: marketplace · manual). */
+      legendaExtra?: string;
       executores?: Executor[];
     }
   | {
@@ -45,6 +47,11 @@ export function CardTarefa(props: CardTarefaProps) {
           <div className="wms-card-tarefa-contador">{props.contador}</div>
           {props.legenda ? (
             <div className="wms-card-tarefa-legenda">{props.legenda}</div>
+          ) : null}
+          {props.legendaExtra ? (
+            <div className="wms-card-tarefa-legenda-extra">
+              {props.legendaExtra}
+            </div>
           ) : null}
         </>
       ) : (

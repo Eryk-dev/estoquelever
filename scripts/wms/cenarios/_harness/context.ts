@@ -577,6 +577,14 @@ export function createContext(opts: {
     });
   }
 
+  async function desfazerGuarda(p: { pendencia_id: string; motivo?: string }) {
+    const motivo = p.motivo ?? "teste cenário desfazer";
+    return http.post<{ movsEstornadas: number }>(
+      `/api/wms/guarda/${p.pendencia_id}/desfazer`,
+      { motivo },
+    );
+  }
+
   async function aguardarPendenciaGuarda(pendenciaId: string, status: string, opts: { timeout_ms?: number } = {}) {
     const timeout = opts.timeout_ms ?? 5_000;
     const deadline = Date.now() + timeout;
@@ -896,7 +904,7 @@ export function createContext(opts: {
     webhook, aprovar, iniciarSeparacao, bipar, parcial, desfazerParcial, encaminhar,
     concluirSeparacao, embalar, expedir,
     aguardarStatus, aguardarStatusSeparacao, aguardarRealocacao, aguardarFilaVazia,
-    comprar, receberCompra, prepararEmbalagem, receber, guardar, aguardarPendenciaGuarda,
+    comprar, receberCompra, prepararEmbalagem, receber, guardar, desfazerGuarda, aguardarPendenciaGuarda,
     transferirGalpao, replenishment, ajusteManual, lancamentoRetroativo, reconciliarRetroativo,
     criarVendaDireta, disponibilidadeVenda,
     reservar, cleanupReservas,

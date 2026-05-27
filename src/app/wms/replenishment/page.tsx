@@ -91,7 +91,7 @@ export default function RealocarPage() {
     <>
       <PageHeader
         title="Realocar intra-galpão"
-        subtitle="Página de consulta — histórico de movimentações entre localizações no mesmo galpão (overstock → picking). Use o botão abaixo (ou Atalhos no shell) pra criar uma realocação."
+        subtitle="Consulte o histórico e crie realocações entre localizações no mesmo galpão (overstock → picking). Use o botão acima ou Atalhos no shell."
       >
         {can("operacoes.replenishment") && (
           <button

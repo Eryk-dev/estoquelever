@@ -1866,9 +1866,46 @@ This writes to both `siso_logs` and `siso_erros`.
 
 ---
 
-**Schema Last Updated:** 2026-05-20 (Ledger Simplificado 3D — Phase 13)
+**Schema Last Updated:** 2026-05-27 (Fix-Final A — siso_notas_fiscais R5)
 **Database Version:** PostgreSQL 14+ (Supabase)
-**Supabase Project:** `wrbrbhuhsaaupqsimkqz`
+**Supabase Project:** `ehbxpbeijofxtsbezwxd` (staging) / `wrbrbhuhsaaupqsimkqz` (prod dormente)
+
+---
+
+## WMS — Notas Fiscais (2026-05-27 Fix-Final A)
+
+### siso_notas_fiscais
+
+**Purpose:** Tabela canônica de NFs (entrada + saída) referenciada por `siso_movimentacoes.nota_fiscal_id` (FK ON DELETE SET NULL). Resolve R5: até 2026-05-27, movs com `origem_tipo IN ('nf_compra','nf_venda','devolucao_*')` ficavam com `nota_fiscal_id` NULL, dificultando rastreio fiscal e divergências de NF.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | `gen_random_uuid()` | PK |
+| `tiny_nota_fiscal_id` | bigint | YES | | ID externo do Tiny ERP (quando origem fiscal é Tiny) |
+| `chave_acesso` | text | YES | UNIQUE | Chave de acesso NFe (44 chars) — UNIQUE pra dedup |
+| `numero` | text | YES | | Número da NF |
+| `serie` | text | YES | | Série |
+| `empresa_id` | uuid | YES | FK | → `siso_empresas(id)` ON DELETE SET NULL |
+| `tipo` | text | NO | | `'entrada'` ou `'saida'`. `CHECK (tipo IN ('entrada','saida'))` |
+| `criada_em` | timestamptz | NO | `now()` | |
+| `raw_tiny` | jsonb | YES | | Payload bruto do webhook Tiny (auditoria) |
+
+**Indexes:**
+- `ix_siso_notas_fiscais_tiny_id` (tiny_nota_fiscal_id) WHERE NOT NULL
+- `ix_siso_notas_fiscais_empresa` (empresa_id)
+- `ix_siso_notas_fiscais_criada_em` (criada_em DESC)
+
+**FK em `siso_movimentacoes`:**
+- `siso_movimentacoes.nota_fiscal_id` → `siso_notas_fiscais(id)` ON DELETE SET NULL
+
+**Realtime:** Incluída em `supabase_realtime` (Fix-Final P1 coverage).
+
+**Populada por:**
+- `nf-webhook-handler.ts` (Fix-Final A T6) → tipo='entrada' (devolução cliente / NF de compra)
+- `webhook-processor.ts` (Fix-Final A T7) → tipo='saida' (NF venda gerada pelo Tiny)
+- `scripts/wms/backfill-notas-fiscais.ts` (Fix-Final A T9) — backfill retroativo a partir de `origem_detalhes.chave_acesso` em movs históricas
+
+**Migration:** `supabase/migrations/20260527_siso_notas_fiscais.sql`
 
 ---
 

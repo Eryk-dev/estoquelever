@@ -527,44 +527,74 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
-### POST /api/wms/pedidos/[id]/liberar-reserva
+### POST /api/wms/pedidos/[id]/estornar
 
-**File:** `src/app/api/wms/pedidos/[id]/liberar-reserva/route.ts`
+**File:** `src/app/api/wms/pedidos/[id]/estornar/route.ts` (Fix-Final A T22 — 2026-05-27)
 
-**Purpose:** Admin-only override que libera todas as reservas WMS do pedido e o reseta pra pendente. Quando estoque já foi lançado (cutover R→S rodou), lança entradas compensatórias (E) antes pra zerar a posição.
+**Purpose:** Banner D10 admin: estorna TODAS as movs (S+R) do pedido e marca pedido como cancelado. Cria par de estorno simétrico no ledger (chain estorno_de). Imutabilidade preservada — nada é deletado.
 
-**Auth:** X-Session-Id (required) + `cargos.includes("admin")`
+**Auth:** X-Session-Id (required) + `userCan(session, "pedidos.estornar")` (apenas admin via PERMISSAO_CODIGOS spread)
 
-**Request Body (opcional):**
+**Request Body:**
 ```json
-{ "motivo": "string" }
+{ "motivo": "string (≥3, ≤500 chars)" }
 ```
 
 **Response (200):**
 ```json
-{
-  "ok": true,
-  "pedido_id": "string",
-  "reservas_liberadas": 2,
-  "saidas_revertidas": 0,
-  "alerta_estoque_lancado": false
-}
+{ "ok": true, "movs_estornadas": 5 }
 ```
 
-**Response (403):** `{ "error": "Apenas admin pode liberar reservas manualmente" }`
-**Response (404):** `{ "error": "Pedido não encontrado" }`
-**Response (400):** `{ "error": "Pedido cancelado — use webhook de cancel pra liberar" }`
+**Response (401):** `{ "error": "unauthorized" }`
+**Response (403):** `{ "error": "forbidden" }`
+**Response (400):** `{ "error": "motivo (string ≥3 e ≤500 chars) obrigatório" }`
+**Response (404):** `{ "error": "pedido não encontrado" }`
+**Response (500):** `{ "error": "estorno_parcial_falhou", "estornadas": N }` (idempotente em re-run)
 
 **Business Logic:**
-- Se `estoque_lancado=true`: chama `estornarSaidasPedido` (E com origem=cancelamento_nf, estorno_de=S.id) e seta `compra_estoque_lancado_alerta=true`
-- Sempre chama `liberarReserva` (L com origem=liberacao_reserva, estorno_de=R.id, motivo=ajuste_admin)
-- Reseta pedido pra pendente (decisao_final, status_separacao, estoque_lancado limpos; NF/etiquetas preservadas)
-- Reset item-level (separacao_marcado, quantidade_bipada, estoque_saida_lancada)
-- Registra evento `status_revertido` com detalhes em siso_pedido_historico
+- Lista movs do pedido com `tipo IN ('S','R')` e `estorno_de IS NULL`
+- Pra cada S: chama `estornarMovimentacao()` (cria par E com `estorno_de=S.id`)
+- Pra cada R: chama `estornarReservaIndividual({motivo:'outro'})` (cria L com `estorno_de=R.id`)
+- UPDATE `siso_pedidos.status_separacao='cancelado'`
+- Registra evento `estorno_manual_admin` em `siso_pedido_historico`
 
 **Side Effects:**
-- Insere L (e opcionalmente E) em `siso_movimentacoes`
-- UPDATE em `siso_pedidos` e `siso_pedido_itens`
+- INSERTs em `siso_movimentacoes` (1 par por mov original)
+- UPDATE em `siso_pedidos` + `siso_estoque` (via RPC)
+- INSERT em `siso_pedido_historico`
+
+---
+
+### POST /api/wms/pedidos/[id]/liberar-reservas
+
+**File:** `src/app/api/wms/pedidos/[id]/liberar-reservas/route.ts` (Fix-Final A T25 — 2026-05-27)
+
+**Purpose:** D2 override admin: libera TODAS as reservas R do pedido (sem cancelar o pedido nem tocar em movs S). Desbloqueia estoque preso em estado fantasma.
+
+**Auth:** X-Session-Id (required) + `userCan(session, "pedidos.liberar_reservas")` (apenas admin)
+
+**Request Body:**
+```json
+{ "motivo": "string (≥3, ≤500 chars)" }
+```
+
+**Response (200):**
+```json
+{ "ok": true, "rs_liberadas": 3 }
+```
+
+**Response (401/403/400):** mesma estrutura do `/estornar`
+
+**Business Logic:**
+- Lista movs com `tipo='R'`, `origem_tipo='reserva_pedido'`, `estorno_de IS NULL`, `origem_id=pedido_id`
+- Pra cada R: chama `estornarReservaIndividual({motivo:'liberar_reservas_admin'})`
+- Best-effort: erro em 1 R não interrompe as demais (loga + continua)
+- Registra evento `liberar_reservas_admin` em `siso_pedido_historico`
+- NÃO toca em movs S, NÃO muda status do pedido
+
+**Side Effects:**
+- INSERT L (par) em `siso_movimentacoes` pra cada R liberada
+- UPDATE `siso_estoque.reservado` (via RPC)
 - INSERT em `siso_pedido_historico`
 
 ---

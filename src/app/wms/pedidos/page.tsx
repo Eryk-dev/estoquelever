@@ -580,9 +580,6 @@ function TabPendente({
                         setLoadingId(null);
                       }
                     },
-                    onReject: () => {
-                      toast.info("Recusar: implementação pendente");
-                    },
                   }
                 : undefined
             }

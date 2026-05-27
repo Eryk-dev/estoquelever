@@ -87,12 +87,23 @@ export default function ClassificarPage({
     localizacao_id?: string;
   }>({});
   const [observacoes, setObservacoes] = useState("");
+  const [fornecedorId, setFornecedorId] = useState<string>("");
 
   const { data: devs } = useQuery({
     queryKey: ["wms-devolucoes"],
     queryFn: () => wmsApi<{ rows: DevRow[] }>("/api/wms/devolucoes"),
   });
   const dev = devs?.rows?.find((x) => x.id === id);
+
+  const { data: fornecedoresResp } = useQuery({
+    queryKey: ["wms-fornecedores"],
+    queryFn: () =>
+      wmsApi<{ rows: Array<{ id: string; nome: string }> }>(
+        "/api/wms/fornecedores",
+      ),
+    enabled: classificacao === "garantia",
+  });
+  const fornecedores = fornecedoresResp?.rows ?? [];
 
   async function buscar(s: string) {
     try {
@@ -122,6 +133,8 @@ export default function ClassificarPage({
           galpao_id: q.galpao_id,
           localizacao_id: q.localizacao_id,
           observacoes,
+          fornecedor_id:
+            classificacao === "garantia" ? fornecedorId : undefined,
         }),
       }),
     onSuccess: () => {
@@ -133,7 +146,11 @@ export default function ClassificarPage({
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const valid = !!produto_id && qty > 0 && !!q.localizacao_id;
+  const valid =
+    !!produto_id &&
+    qty > 0 &&
+    !!q.localizacao_id &&
+    (classificacao !== "garantia" || !!fornecedorId);
 
   return (
     <>
@@ -262,6 +279,23 @@ export default function ClassificarPage({
           />
         </div>
       </Field>
+
+      {classificacao === "garantia" && (
+        <Field label="Fornecedor (RMA)" required>
+          <select
+            className="wms-input"
+            value={fornecedorId}
+            onChange={(e) => setFornecedorId(e.target.value)}
+          >
+            <option value="">— selecione o fornecedor —</option>
+            {fornecedores.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.nome}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       <Field label="Observações">
         <textarea

@@ -105,7 +105,20 @@ export function useDashboardTarefasRealtime(galpaoId: string | null) {
       )
       .subscribe();
 
-    channelsRef.current = [ch1, ch2, ch3, ch4, ch5, ch6];
+    const ch7 = supabase
+      .channel(`dt-transf-galpao-${suffix}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "siso_transferencias_galpao",
+        },
+        invalidate,
+      )
+      .subscribe();
+
+    channelsRef.current = [ch1, ch2, ch3, ch4, ch5, ch6, ch7];
 
     return () => {
       for (const ch of channelsRef.current) {

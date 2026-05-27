@@ -211,26 +211,3 @@ export async function getValidTokenByEmpresa(
   return { token, connectionId: conn.id };
 }
 
-// ─── Legacy: get valid token by filial (deprecated) ─────────────────────────
-
-/** @deprecated Use getValidTokenByEmpresa instead */
-export async function getValidTokenByFilial(
-  filial: "CWB" | "SP",
-): Promise<{ token: string; connectionId: string }> {
-  if (isTinyDisabled()) {
-    return { token: STAGING_FAKE_TOKEN, connectionId: STAGING_FAKE_CONNECTION_ID };
-  }
-  const supabase = createServiceClient();
-
-  const { data: conn } = await supabase
-    .from("siso_tiny_connections")
-    .select("id")
-    .eq("filial", filial)
-    .eq("ativo", true)
-    .single();
-
-  if (!conn) throw new Error(`No active connection for filial ${filial}`);
-
-  const token = await getValidToken(conn.id);
-  return { token, connectionId: conn.id };
-}

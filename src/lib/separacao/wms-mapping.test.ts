@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   resolverProdutoWms,
   resolverLocalizacaoWms,
+  resolveSeparacaoGalpao,
   type MappingDeps,
 } from "./wms-mapping";
 
@@ -60,5 +61,31 @@ describe("resolverLocalizacaoWms", () => {
     });
     const r = await resolverLocalizacaoWms("galp-1", "C-99-99", deps);
     expect(r).toBe("uuid-default");
+  });
+});
+
+describe("resolveSeparacaoGalpao", () => {
+  it("retorna separacao_galpao_id quando presente (fluxo transferência)", () => {
+    const pedido = {
+      empresa_origem_id: "emp-cwb-uuid",
+      separacao_galpao_id: "gal-sp-uuid",
+      sugestao: "transferencia",
+    };
+    expect(resolveSeparacaoGalpao(pedido as any)).toBe("gal-sp-uuid");
+  });
+
+  it("fallback pro galpão da empresa_origem quando separacao_galpao_id é NULL (própria)", () => {
+    const pedido = {
+      empresa_origem_id: "emp-cwb-uuid",
+      separacao_galpao_id: null,
+      sugestao: "propria",
+      empresa_origem_galpao_id: "gal-cwb-uuid",
+    };
+    expect(resolveSeparacaoGalpao(pedido as any)).toBe("gal-cwb-uuid");
+  });
+
+  it("lança erro quando ambos NULL", () => {
+    const pedido = { empresa_origem_id: null, separacao_galpao_id: null };
+    expect(() => resolveSeparacaoGalpao(pedido as any)).toThrow(/sem galpão resolvível/i);
   });
 });

@@ -84,6 +84,33 @@ export async function buscarLocComMaiorSaldoNoGalpao(
   return (data?.localizacao_id as string | null | undefined) ?? null;
 }
 
+/**
+ * Resolve qual galpão usar pra resolver localizações/movs durante separação.
+ *
+ * Em fluxos `transferencia` o pedido nasce em uma empresa (`empresa_origem_id`)
+ * mas é separado em outro galpão (`separacao_galpao_id` aponta pro destino
+ * que tem o estoque). Sem esse helper, código que olhava `empresa_origem_id`
+ * pra resolver galpão acabava buscando loc na empresa errada (#A4).
+ *
+ * Em fluxos `propria`, `separacao_galpao_id` pode ser NULL no início e a
+ * separação acontece no galpão preferencial da empresa_origem — o caller
+ * resolve esse galpão upstream e popula `empresa_origem_galpao_id` no objeto.
+ *
+ * Lança quando ambos são null: situação indica pedido em estado inválido.
+ */
+type PedidoComGalpao = {
+  separacao_galpao_id?: string | null;
+  empresa_origem_galpao_id?: string | null;
+};
+
+export function resolveSeparacaoGalpao(pedido: PedidoComGalpao): string {
+  if (pedido.separacao_galpao_id) return pedido.separacao_galpao_id;
+  if (pedido.empresa_origem_galpao_id) return pedido.empresa_origem_galpao_id;
+  throw new Error(
+    "resolveSeparacaoGalpao: pedido sem galpão resolvível (separacao_galpao_id e empresa_origem_galpao_id ambos null)",
+  );
+}
+
 function defaultDeps(): MappingDeps {
   return {
     buscarProdutoId: async (empresaId, tinyProdutoId) => {

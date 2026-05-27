@@ -118,7 +118,31 @@ export function useDashboardTarefasRealtime(galpaoId: string | null) {
       )
       .subscribe();
 
-    channelsRef.current = [ch1, ch2, ch3, ch4, ch5, ch6, ch7];
+    const ch8 = supabase
+      .channel(`dt-movs-r-${suffix}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "siso_movimentacoes",
+          filter: "tipo=eq.R",
+        },
+        invalidate,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "siso_movimentacoes",
+          filter: "tipo=eq.R",
+        },
+        invalidate,
+      )
+      .subscribe();
+
+    channelsRef.current = [ch1, ch2, ch3, ch4, ch5, ch6, ch7, ch8];
 
     return () => {
       for (const ch of channelsRef.current) {

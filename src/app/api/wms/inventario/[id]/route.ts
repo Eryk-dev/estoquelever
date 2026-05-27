@@ -121,6 +121,33 @@ export async function DELETE(
 
   const { id } = await params;
   const sb = createServiceClient();
+
+  // P3 #4.4: sessão aplicada não pode ser cancelada. Operadora teria
+  // que ESTORNAR (POST /estornar). Cancelar deletaria a trilha sem
+  // reverter as movs no ledger — saldo ficaria inconsistente.
+  const { data: sessao } = await sb
+    .from("siso_inventario_sessoes")
+    .select("status")
+    .eq("id", id)
+    .maybeSingle();
+  if (!sessao) {
+    return NextResponse.json({ error: "sessão não encontrada" }, { status: 404 });
+  }
+  if ((sessao as { status: string }).status === "aplicada") {
+    return NextResponse.json(
+      {
+        error:
+          "sessão já foi aplicada (movs no ledger). Use POST /api/wms/inventario/[id]/estornar para reverter.",
+        code: "SESSAO_APLICADA",
+      },
+      { status: 409 },
+    );
+  }
+  if ((sessao as { status: string }).status === "cancelada") {
+    // Já cancelada — idempotente.
+    return NextResponse.json({ ok: true });
+  }
+
   const { data: locs } = await sb
     .from("siso_inventario_localizacoes")
     .select("localizacao_id")

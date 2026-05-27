@@ -6,7 +6,7 @@ import { runWithEmpresa } from "@/lib/tiny-queue";
 import { estornarEstoque, movimentarEstoque } from "@/lib/tiny-api";
 import { registrarEvento } from "@/lib/historico-service";
 import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
-import { liberarReserva } from "@/lib/wms/reservas";
+import { estornarReservaIndividual } from "@/lib/wms/reservas";
 import { wmsAsSource } from "@/lib/wms/flags";
 import { logger } from "@/lib/logger";
 
@@ -150,7 +150,7 @@ async function encaminharPedido(
   }
 
   // B2. Reverse stock execution
-  await reverseStockExecution(supabase, pedido);
+  await reverseStockExecution(supabase, pedido, session.id);
 
   // B3. Reset pedido to pendente
   // NF fields (nota_fiscal_id, chave_acesso_nf, url_danfe) are intentionally
@@ -311,19 +311,55 @@ interface PedidoForReversal {
 async function reverseStockExecution(
   supabase: ReturnType<typeof createServiceClient>,
   pedido: PedidoForReversal,
+  usuarioId: string,
 ): Promise<void> {
-  // PR-1: libera R do pedido no WMS antes de qualquer reversa Tiny.
-  // Sem isso, R fica zumbi e re-aprovação no destino falha por reservado>saldo.
-  // Roda independente de `estoque_lancado` — a R é criada no aprovar/webhook,
-  // antes de o estoque legado ser baixado.
+  // PR-1 (#2.9 follow-up): libera CADA R do pedido individualmente via
+  // `estornarReservaIndividual` antes de qualquer reversa Tiny.
+  //
+  // Por que per-R (em vez de `liberarReserva` por pedido): `liberarReserva`
+  // tem short-circuit — se QUALQUER L do pedido já existe (ex.: operador
+  // bipou item A antes de encaminhar), ele pula todas as Rs sem liberar.
+  // Resultado: Rs dos itens não bipados ficam zumbis e a re-aprovação no
+  // destino falha por reservado>saldo. `estornarReservaIndividual` é
+  // idempotente por R (acha L com estorno_de=R.id e retorna), então é
+  // seguro chamar pra TODAS as Rs do pedido — as já liberadas por picking
+  // retornam o L existente sem criar novo.
+  //
+  // motivo: encaminhar é tecnicamente reroute, não cancel — ver #2.9
+  // followup pra estender enum de motivo.
   if (wmsAsSource()) {
     try {
-      const liberadas = await liberarReserva({
-        pedido_id: String(pedido.id),
-        motivo: "cancelamento",
-      });
+      const { data: reservasAbertas } = await supabase
+        .from("siso_movimentacoes")
+        .select("id")
+        .eq("tipo", "R")
+        .eq("origem_tipo", "reserva_pedido")
+        .eq("origem_id", String(pedido.id));
+      const lista = (reservasAbertas ?? []) as Array<{ id: string }>;
+      let liberadas = 0;
+      for (const r of lista) {
+        try {
+          await estornarReservaIndividual({
+            reserva_id: r.id,
+            motivo: "outro",
+            usuario_id: usuarioId,
+          });
+          liberadas++;
+        } catch (e) {
+          // `estornarReservaIndividual` é idempotente (retorna L existente sem
+          // throw). Único erro esperado: "Reserva X não encontrada" (race
+          // raríssima). Em qualquer caso, logamos e seguimos — encaminhar não
+          // pode falhar por causa disso.
+          logger.warn(LOG_SOURCE, "falha estornando R individual (segue)", {
+            pedido_id: pedido.id,
+            reserva_id: r.id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
       logger.info(LOG_SOURCE, `Rs liberadas no encaminhar: ${liberadas}`, {
         pedidoId: pedido.id,
+        tentadas: lista.length,
       });
     } catch (e) {
       logger.warn(LOG_SOURCE, "falha liberando Rs (segue com reverse)", {

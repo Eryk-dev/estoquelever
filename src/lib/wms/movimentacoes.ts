@@ -534,6 +534,9 @@ export async function reconciliarRetroativo(
     estorno_de: m.id,
     usuario_id: input.usuario_id,
     motivo: `reconciliado com mov ${input.compra_mov_id}`,
+    // Trilha de auditoria: a mov de "compra" que cobriu o lançamento retroativo
+    // viaja em origem_detalhes pra reconstruir a cadeia retroativo→estorno→compra.
+    origem_detalhes: { compra_mov_id: input.compra_mov_id },
   });
   logger.info("wms.movs", "lançamento retroativo reconciliado", {
     retro: m.id,

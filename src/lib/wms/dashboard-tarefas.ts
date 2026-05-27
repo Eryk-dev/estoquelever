@@ -417,6 +417,7 @@ export async function montarDashboardTarefas(
     invDivergenciasQ,
     reservasQ,
     estornosQ,
+    retroativosQ,
   ] = await Promise.all([
     // Aprovação pendente
     (() => {
@@ -592,6 +593,23 @@ export async function montarDashboardTarefas(
       .not("estorno_de", "is", null)
       .order("criado_em", { ascending: false })
       .limit(2000),
+
+    // Lançamentos retroativos pendentes de reconciliação (P5 §1).
+    // Filtra por galpão quando aplicável (galpao_id é coluna direta em
+    // siso_movimentacoes desde o ledger 3D).
+    (() => {
+      let q = sb
+        .from("siso_movimentacoes")
+        .select(
+          "id, criado_em, quantidade, motivo, galpao_id, produto:siso_produtos(sku, descricao)",
+        )
+        .eq("origem_tipo", "lancamento_retroativo")
+        .is("estorno_de", null)
+        .order("criado_em", { ascending: false })
+        .limit(MAX_DETALHE_POR_SECAO + 1);
+      if (galpao_id) q = q.eq("galpao_id", galpao_id);
+      return q;
+    })(),
   ]);
 
   type SepRow = {
@@ -820,6 +838,13 @@ export async function montarDashboardTarefas(
   }));
   const reservasOrfas = detectarReservasOrfas(reservasRows, movsJaEstornadas);
 
+  // §1 task 1.11 — Retroativos pendentes (descarta os já estornados)
+  const retroativosRows = (retroativosQ.data ?? []) as RetroativoLinha[];
+  const retroativosNaoEstornados = retroativosRows.filter(
+    (r) => !movsJaEstornadas.has(r.id),
+  );
+  const retroativos = mapearRetroativosPendentes(retroativosNaoEstornados);
+
   return {
     galpao_id,
     aprovacao: {
@@ -855,7 +880,7 @@ export async function montarDashboardTarefas(
       transferencias_transito: transferencias,
       inventario_revisao: inventarioRevisao,
       reservas_orfas: reservasOrfas,
-      retroativos: { count: 0, itens: [] },
+      retroativos,
       recebimento_orfao: { count: 0, itens: [] },
     },
   };

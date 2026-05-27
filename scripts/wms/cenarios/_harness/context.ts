@@ -698,12 +698,24 @@ export function createContext(opts: {
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
     const { data: orig } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.origem_loc).single();
     const { data: dest } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.destino_loc).single();
-    await http.post("/api/wms/replenishment", {
-      galpao_id,
-      localizacao_origem_id: orig!.id,
-      localizacao_destino_id: dest!.id,
-      itens: [{ produto_id: prod!.id, qty: p.qty }],
-    });
+    const r = await http.post<{ origem_id: string; mov_ids: string[] }>(
+      "/api/wms/replenishment",
+      {
+        galpao_id,
+        localizacao_origem_id: orig!.id,
+        localizacao_destino_id: dest!.id,
+        itens: [{ produto_id: prod!.id, qty: p.qty }],
+      },
+    );
+    return { origem_id: r.origem_id, mov_ids: r.mov_ids };
+  }
+
+  async function reverterReplenishment(p: { origem_id: string; motivo?: string }) {
+    const motivo = p.motivo ?? "teste cenário reverter replenishment";
+    return http.post<{ movsEstornadas: number }>(
+      `/api/wms/replenishment/${p.origem_id}/reverter`,
+      { motivo },
+    );
   }
 
   async function ajusteManual(p: { sku: string; galpao: "CWB" | "SP"; loc: string; delta: number; motivo: string }) {
@@ -984,7 +996,7 @@ export function createContext(opts: {
     aguardarStatus, aguardarStatusSeparacao, aguardarRealocacao, aguardarFilaVazia,
     comprar, receberCompra, prepararEmbalagem, receber, guardar, desfazerGuarda, aguardarPendenciaGuarda,
     transferirGalpao, criarTransferenciaHeader, receberTransferencia: receberTransferenciaCtx, desfazerRecebimentoTransferencia,
-    replenishment, ajusteManual, lancamentoRetroativo, reconciliarRetroativo,
+    replenishment, reverterReplenishment, ajusteManual, lancamentoRetroativo, reconciliarRetroativo,
     criarVendaDireta, disponibilidadeVenda, cancelarVenda,
     reservar, cleanupReservas,
     classificarDevolucao, desclassificarDevolucao,

@@ -535,3 +535,50 @@ export async function reconciliarRetroativo(
     compra: input.compra_mov_id,
   });
 }
+
+/**
+ * P3 #8.8 reverse: desfaz um replenishment estornando o par S+E completo.
+ *
+ * Replenishment intra-galpão grava par S+E no ledger com o MESMO `origem_id`
+ * e `origem_tipo='transferencia_localizacao'`. Esse helper localiza todas as
+ * movs com esse origem_id e dispara `estornarMovimentacao` em cada uma.
+ *
+ * Idempotente: se uma mov já foi estornada (ou é um estorno), pula a
+ * tentativa e continua com as próximas. `estornarMovimentacao` rejeita
+ * double-estorno via guard `estorno_de IS NOT NULL`.
+ */
+export async function reverterReplenishment(input: {
+  origem_id: string;
+  usuario_id: string;
+  motivo: string;
+}): Promise<{ movsEstornadas: number }> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo é obrigatório (≥3 caracteres)");
+  }
+  const sb = createServiceClient();
+  const { data: movs, error } = await sb
+    .from("siso_movimentacoes")
+    .select("id")
+    .eq("origem_id", input.origem_id)
+    .eq("origem_tipo", "transferencia_localizacao");
+  if (error) throw error;
+  if (!movs || movs.length === 0) {
+    throw new Error("nenhuma mov encontrada com esse origem_id");
+  }
+  let estornadas = 0;
+  for (const m of movs as Array<{ id: string }>) {
+    try {
+      await estornarMovimentacao({
+        mov_id: m.id,
+        usuario_id: input.usuario_id,
+        motivo: `Reverter replenishment ${input.origem_id}: ${input.motivo}`,
+      });
+      estornadas++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/já foi estornada|já é um estorno/.test(msg)) continue;
+      throw err;
+    }
+  }
+  return { movsEstornadas: estornadas };
+}

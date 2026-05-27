@@ -1,15 +1,24 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
- * GET /api/pedidos/[id]/observacoes
+ * GET /api/wms/pedidos/[id]/observacoes
  * Returns all observations for a given order, newest last.
  */
 export async function GET(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Auth + perm (finding 1.7)
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!userCan(session, "pedidos.ver")) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
   const { id: pedidoId } = await params;
   const supabase = createServiceClient();
 
@@ -36,36 +45,36 @@ export async function GET(
 }
 
 /**
- * POST /api/pedidos/[id]/observacoes
- * Create a new observation. Body: { usuarioId, usuarioNome, texto }
+ * POST /api/wms/pedidos/[id]/observacoes
+ * Create a new observation. Body: { texto } — usuarioId/usuarioNome are
+ * derived from the session (impersonation protection).
  */
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Auth + perm (finding 1.7)
+  const session = await getSessionUser(request);
+  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!userCan(session, "pedidos.ver")) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
   const { id: pedidoId } = await params;
   const body = await request.json();
-  const { usuarioId, usuarioNome, texto } = body as {
-    usuarioId?: string;
-    usuarioNome?: string;
-    texto?: string;
-  };
+  const { texto } = body as { texto?: string };
 
-  if (!usuarioId || !usuarioNome || !texto?.trim()) {
-    return NextResponse.json(
-      { error: "usuarioId, usuarioNome e texto são obrigatórios" },
-      { status: 400 },
-    );
+  if (!texto?.trim()) {
+    return NextResponse.json({ error: "texto é obrigatório" }, { status: 400 });
   }
 
   const supabase = createServiceClient();
-
   const { data, error } = await supabase
     .from("siso_pedido_observacoes")
     .insert({
       pedido_id: pedidoId,
-      usuario_id: usuarioId,
-      usuario_nome: usuarioNome,
+      usuario_id: session.id,     // from session — ignore body
+      usuario_nome: session.nome, // from session — ignore body
       texto: texto.trim(),
     })
     .select()
@@ -74,7 +83,7 @@ export async function POST(
   if (error) {
     logger.error("observacoes", "Failed to create observation", {
       pedidoId,
-      usuarioId,
+      usuarioId: session.id,
       error: error.message,
     });
     return NextResponse.json({ error: error.message }, { status: 500 });

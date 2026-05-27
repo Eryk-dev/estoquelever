@@ -2202,3 +2202,153 @@ erros:
       - src/app/api/wms/guarda/[id]/desfazer/route.ts
     commit: "1407fae"
     tags: [wms, guarda, desfazer, parcial, race-condition, atomicidade, fix-final-b, t12, b10]
+
+  - id: wms-fix-final-c-t7-tiny-oauth-by-filial-deprecated
+    date: "2026-05-27"
+    source: src/lib/tiny-oauth.ts
+    category: business_logic
+    message: "getValidTokenByFilial @deprecated removida — schema legacy filial=CWB|SP morreu há vários cycles"
+    cause: >
+      Função era espelho legacy do schema pré-multi-empresa quando estoque
+      era 1:1 por filial CWB/SP. Substituída por getValidTokenByEmpresa
+      (que olha empresa_id em siso_tiny_connections) há tempos. Grep
+      confirmou zero callers ativos — sobrou só a definição.
+    fix: >
+      Função deletada inteira. STAGING_FAKE_CONNECTION_ID preservado —
+      segue usado por getValidTokenByEmpresa.
+    files:
+      - src/lib/tiny-oauth.ts
+    commit: "5f55a54"
+    tags: [tiny, oauth, deprecated, cleanup, filial, fix-final-c, t7, c7]
+
+  - id: wms-fix-final-c-t8-compras-cargo-helpers-deprecated
+    date: "2026-05-27"
+    source: src/lib/compras-utils.ts
+    category: business_logic
+    message: "hasComprasAccess + COMPRAS_ALLOWED_CARGOS @deprecated removidos — RBAC dinâmico (P4) tornou obsoletos"
+    cause: >
+      Helpers cargo do Fase 2 do RBAC dinâmico (P4) foram totalmente
+      migrados pra userCan() em todos os callers. Sobrou só a definição
+      órfã no compras-utils. Grep confirmou zero referências externas.
+    fix: >
+      Função hasComprasAccess + const COMPRAS_ALLOWED_CARGOS deletados.
+      Imports órfãos de userCan/PermissoesPort também removidos.
+    files:
+      - src/lib/compras-utils.ts
+    commit: "d17e09e"
+    tags: [compras, rbac, userCan, deprecated, cleanup, fix-final-c, t8, c8]
+
+  - id: wms-fix-final-c-t9-pedidos-observacoes-old-drop
+    date: "2026-05-27"
+    source: supabase/migrations/20260530_drop_pedidos_observacoes_old.sql
+    category: database
+    message: "siso_pedidos.observacoes_old @deprecated coluna dropada"
+    cause: >
+      Coluna legacy preservada por inércia desde refactor de observações.
+      Em staging não existe mais (possivelmente já dropped via patch
+      anterior), em prod estado desconhecido até promoção.
+    fix: >
+      Migration idempotente DROP COLUMN IF EXISTS aplicada em staging
+      (no-op) — preservada no histórico pra garantir remoção em prod
+      quando promoção acontecer.
+    files:
+      - supabase/migrations/20260530_drop_pedidos_observacoes_old.sql
+    commit: "e59ca36"
+    tags: [db, pedidos, observacoes, deprecated, cleanup, fix-final-c, t9, c9]
+
+  - id: wms-fix-final-c-t10-realocacao-localizacao-id-excluir-alias
+    date: "2026-05-27"
+    source: src/lib/separacao/realocacao-resolver.ts
+    category: business_logic
+    message: "localizacao_id_excluir (singular) @deprecated alias removido em ResolverDeps"
+    cause: >
+      Alias deprecated dentro de ResolverDeps.listarSaldoCandidato —
+      era usado só pela própria fn passthrough (defaultDeps). Zero
+      callers externos. localizacoes_excluir (plural) é o preferido.
+      NB: o plano original mencionava localizacoes_excluir como deprecated
+      mas verificação no código revelou que o alias deprecated é o
+      singular (localizacao_id_excluir).
+    fix: >
+      Campo removido do interface ResolverDeps + branch fallback removido
+      em resolverRealocacao() e defaultDeps(). Test file ajustado.
+      7/7 vitest PASS em src/lib/separacao/realocacao-resolver.test.ts.
+    files:
+      - src/lib/separacao/realocacao-resolver.ts
+      - src/lib/separacao/realocacao-resolver.test.ts
+    commit: "f0ebe8d"
+    tags: [separacao, realocacao, deprecated, cleanup, alias, fix-final-c, t10, c10]
+
+  - id: wms-fix-final-c-t17-desfazer-guarda-atomico-rpc
+    date: "2026-05-27"
+    source: supabase/migrations/20260530_p3_rpc_wms_desfazer_guarda_atomico.sql + src/lib/wms/guarda.ts
+    category: business_logic
+    message: "Race em desfazerGuarda fechada via RPC atômico — Concern A do Fix-B audit"
+    cause: >
+      desfazerGuarda em src/lib/wms/guarda.ts (introduzido em Fix-B T12)
+      lia pendência → loop chamando inserirMovimentacao 2x por par S+E →
+      UPDATE pendência. Sem FOR UPDATE no row da pendência, 2 calls
+      concorrentes de desfazer (ou um confirmar+desfazer simultâneo) liam
+      o mesmo qty_guardada, ambas decrementavam, e o UPDATE final ficava
+      com o valor da última a escrever — over-decremento. Mesmo concern
+      já documentado na entrada wms-fix-final-b-t12-desfazer-guarda-parcial.
+    fix: >
+      Migration cria wms_desfazer_guarda_atomico RPC espelhando estrutura
+      de wms_confirmar_guarda_atomico (P3): SELECT FOR UPDATE no row da
+      pendência → validações dentro do RPC → loop PERFORM
+      wms_inserir_movimentacao 2x → UPDATE final no mesmo lock.
+      desfazerGuarda em TS vira shim que chama o RPC e mapeia resposta.
+      Imports órfãos randomUUID + inserirMovimentacao removidos.
+    files:
+      - supabase/migrations/20260530_p3_rpc_wms_desfazer_guarda_atomico.sql
+      - src/lib/wms/guarda.ts
+    commit: "8eb445d"
+    tags: [wms, guarda, desfazer, atomic, rpc, race-condition, lock, fix-final-c, t17, concern-a, fix-b-audit]
+
+  - id: wms-fix-final-c-t11-t12-siso-pedido-item-estoques-defer
+    date: "2026-05-27"
+    source: src/lib/webhook-processor.ts + src/lib/execution-worker.ts + 15 other consumers
+    category: business_logic
+    message: "Drop siso_pedido_item_estoques deferido — não é cleanup mecânico, é decisão de design"
+    cause: >
+      O plano original (Fix-C T11+T12) tratava drop da tabela como
+      cleanup. Verificação revelou 17 arquivos prod (12 routes + 5 lib)
+      tocando a tabela em hot paths (webhook, separação, compras).
+      Importante: siso_pedido_item_estoques é SNAPSHOT congelado no
+      momento do webhook (`disponivel` naquele instante), não estado
+      live. execution-worker usa esse snapshot pra decidir compras
+      (semântica diferente de ler de siso_estoque, que reflete estado
+      atual e pode ter mudado desde o pedido).
+    fix: >
+      NÃO APLICADO. T11+T12 deferidos pro próximo cycle (Fix-Final D ou
+      Fase 7). Migração exige decisão de design: (a) usar estado live de
+      siso_estoque (mais simples mas muda semântica), ou (b) materializar
+      snapshot de outra forma (campo extra em siso_pedido_itens, ou
+      reservas+ledger). CLAUDE.md mantém entrada "Deprecated / To Remove"
+      pra siso_pedido_item_estoques com nota de "defer reason".
+    files:
+      - (none)
+    commit: "(N/A — deferred)"
+    tags: [wms, siso_pedido_item_estoques, snapshot, deferred, hot-path, design-decision, fix-final-c, t11, t12]
+
+  - id: wms-fix-final-c-qa-401-error-shape-inconsistency
+    date: "2026-05-27"
+    source: docs/superpowers/qa-c3-error-handling-2026-05-27.md
+    category: business_logic
+    message: "Erros 401 retornam 3 shapes diferentes entre rotas /api/wms/* — inconsistência catalogada"
+    cause: >
+      QA C3 testou 3 rotas via curl sem sessão e cada uma retornou um
+      formato distinto de erro 401:
+        /pedidos/aprovar: {"error":"unauthorized"}
+        /separacao/marcar-item: {"error":"sessao_invalida"}
+        /vendas/criar: {"erro":"Sessão inválida ou expirada"}
+      Mesma classe de erro, 3 schemas (chave error vs erro, slug snake_case
+      em inglês vs português, com/sem mensagem amigável). Frontend tem
+      que parsear N shapes diferentes.
+    fix: >
+      Não corrigido — catalogado como P1 no doc de QA. Recomendação backlog:
+      padronizar contrato de erro em {"error": "<slug>", "mensagem": "<user-facing>"}
+      e propagar pro middleware/auth layer. Não bloqueia merge do Fix-C.
+    files:
+      - docs/superpowers/qa-c3-error-handling-2026-05-27.md
+    commit: "7e8b013"
+    tags: [auth, error-handling, schema, inconsistency, qa, fix-final-c, c3, p1, backlog]

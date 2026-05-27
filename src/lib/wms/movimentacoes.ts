@@ -389,12 +389,17 @@ export interface AjusteManualInput {
 /**
  * Ajuste manual de saldo numa tripla. `motivo` é obrigatório (>=3 chars) —
  * ajuste sem justificativa não passa.
+ *
+ * Retorna `{ mov_id }` pra permitir estorno via `estornarAjuste` /
+ * `POST /api/wms/ajuste/[id]/estornar`.
  */
-export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
+export async function ajustarEstoque(
+  input: AjusteManualInput,
+): Promise<{ mov_id: string }> {
   if (!input.motivo || input.motivo.trim().length < 3) {
     throw new Error("motivo do ajuste é obrigatório (≥3 caracteres)");
   }
-  await inserirMovimentacao({
+  const mov = await inserirMovimentacao({
     tripla: input.tripla,
     tipo: input.direcao === "entrada" ? "E" : "S",
     qty: input.qty,
@@ -402,6 +407,45 @@ export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
     origem_detalhes: { direcao: input.direcao },
     motivo: input.motivo.trim(),
     usuario_id: input.usuario_id,
+  });
+  return { mov_id: mov.id };
+}
+
+/**
+ * P3 #3.20 reverse: estorna um ajuste manual via id da mov.
+ *
+ * Valida que a mov é de fato `origem_tipo='ajuste_manual'` antes de delegar
+ * pra `estornarMovimentacao`. Estornar outras origens (nf_compra, venda_manual,
+ * etc) tem caminhos próprios — esse helper é restrito a ajustes feitos via
+ * `ajustarEstoque`/`POST /api/wms/ajuste`.
+ *
+ * Idempotência: `estornarMovimentacao` rejeita double-estorno via guard
+ * `estorno_de IS NOT NULL`.
+ */
+export async function estornarAjuste(input: {
+  mov_id: string;
+  usuario_id: string;
+  motivo: string;
+}): Promise<void> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo é obrigatório (≥3 caracteres)");
+  }
+  const sb = createServiceClient();
+  const { data: mov } = await sb
+    .from("siso_movimentacoes")
+    .select("origem_tipo")
+    .eq("id", input.mov_id)
+    .maybeSingle();
+  if (!mov) throw new Error("mov não encontrada");
+  if ((mov as { origem_tipo: string }).origem_tipo !== "ajuste_manual") {
+    throw new Error(
+      `mov não é ajuste_manual (origem_tipo=${(mov as { origem_tipo: string }).origem_tipo})`,
+    );
+  }
+  await estornarMovimentacao({
+    mov_id: input.mov_id,
+    usuario_id: input.usuario_id,
+    motivo: `Estorno ajuste manual: ${input.motivo}`,
   });
 }
 

@@ -55,14 +55,14 @@ export async function POST(req: NextRequest) {
     );
   }
   try {
-    await ajustarEstoque({
+    const r = await ajustarEstoque({
       tripla,
       qty,
       motivo,
       direcao: body.direcao,
       usuario_id: auth.user.id,
     });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, mov_id: r.mov_id });
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.ajuste",

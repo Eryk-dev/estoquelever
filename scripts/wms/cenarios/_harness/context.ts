@@ -722,7 +722,7 @@ export function createContext(opts: {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
     const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.loc).single();
-    await http.post("/api/wms/ajuste", {
+    const r = await http.post<{ ok: boolean; mov_id: string }>("/api/wms/ajuste", {
       tripla: {
         produto_id: prod!.id,
         galpao_id,
@@ -732,6 +732,12 @@ export function createContext(opts: {
       direcao: p.delta >= 0 ? "entrada" : "saida",
       motivo: p.motivo,
     });
+    return { mov_id: r.mov_id };
+  }
+
+  async function estornarAjuste(p: { mov_id: string; motivo?: string }) {
+    const motivo = p.motivo ?? "teste cenário estornar ajuste";
+    await http.post(`/api/wms/ajuste/${p.mov_id}/estornar`, { motivo });
   }
 
   async function lancamentoRetroativo(p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; tipo: "E" | "S"; custo?: number }) {
@@ -996,7 +1002,7 @@ export function createContext(opts: {
     aguardarStatus, aguardarStatusSeparacao, aguardarRealocacao, aguardarFilaVazia,
     comprar, receberCompra, prepararEmbalagem, receber, guardar, desfazerGuarda, aguardarPendenciaGuarda,
     transferirGalpao, criarTransferenciaHeader, receberTransferencia: receberTransferenciaCtx, desfazerRecebimentoTransferencia,
-    replenishment, reverterReplenishment, ajusteManual, lancamentoRetroativo, reconciliarRetroativo,
+    replenishment, reverterReplenishment, ajusteManual, estornarAjuste, lancamentoRetroativo, reconciliarRetroativo,
     criarVendaDireta, disponibilidadeVenda, cancelarVenda,
     reservar, cleanupReservas,
     classificarDevolucao, desclassificarDevolucao,

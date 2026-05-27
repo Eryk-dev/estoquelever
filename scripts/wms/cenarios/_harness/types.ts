@@ -74,7 +74,8 @@ export type Ctx = {
   desfazerRecebimentoTransferencia: (p: { transferencia_id: string; motivo?: string }) => Promise<{ movsEstornadas: number }>;
   replenishment: (p: { sku: string; galpao: "CWB" | "SP"; origem_loc: string; destino_loc: string; qty: number }) => Promise<{ origem_id: string; mov_ids: string[] }>;
   reverterReplenishment: (p: { origem_id: string; motivo?: string }) => Promise<{ movsEstornadas: number }>;
-  ajusteManual: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; delta: number; motivo: string }) => Promise<void>;
+  ajusteManual: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; delta: number; motivo: string }) => Promise<{ mov_id: string }>;
+  estornarAjuste: (p: { mov_id: string; motivo?: string }) => Promise<void>;
   lancamentoRetroativo: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; tipo: "E" | "S" }) => Promise<{ id: string }>;
   reconciliarRetroativo: (id: string) => Promise<void>;
 

@@ -694,16 +694,20 @@ export async function montarDashboardTarefas(
     comprasOrdensQ,
   ] = await Promise.all([
     // Aprovação pendente — agora retorna rows (não head:true) pra split
-    // marketplace vs manual via `origem_pedido`. §2 vai consertar o filtro
-    // NULL em galpão.
+    // marketplace vs manual via `origem_pedido`.
     (() => {
       let q = sb
         .from("siso_pedidos")
         .select("id, origem_pedido")
         .eq("status", "pendente");
-      // §2 will fix NULL filter (separacao_galpao_id pode ser null em
-      // pedidos sem decisão)
-      if (galpao_id) q = q.eq("separacao_galpao_id", galpao_id);
+      if (galpao_id) {
+        // Pedidos `pendente` podem ter separacao_galpao_id NULL (ainda não
+        // aprovados). Incluir esses no filtro do galpão atual — operador
+        // precisa ver pra decidir.
+        q = q.or(
+          `separacao_galpao_id.eq.${galpao_id},separacao_galpao_id.is.null`,
+        );
+      }
       return q;
     })(),
 

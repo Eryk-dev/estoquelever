@@ -40,22 +40,9 @@ export default {
       items: [{ sku, qty: 3, loc_destino: "A-01-01" }],
     });
 
-    // Aponta o pedido_item pro endereço onde o estoque foi parar
-    // (em prod isso seria resolvido pelo putaway/guarda + signal_loc; no
-    // cenário pulamos a etapa de guarda e setamos manualmente).
-    // siso_pedido_item_estoques.produto_id é o Tiny bigint, não o uuid de
-    // siso_produtos — buscamos via siso_pedido_itens pra pegar o valor certo.
-    const { data: pedidoItem } = await ctx.sb
-      .from("siso_pedido_itens")
-      .select("produto_id")
-      .eq("pedido_id", pedido.id)
-      .eq("sku", sku)
-      .single();
-    await ctx.sb
-      .from("siso_pedido_item_estoques")
-      .update({ localizacao: "A-01-01" })
-      .eq("pedido_id", pedido.id)
-      .eq("produto_id", (pedidoItem as { produto_id: number }).produto_id);
+    // Fix-Final A T20 (#A4): patch SQL removido — marcar-item resolve via
+    // buscarLocComMaiorSaldoNoGalpao quando snapshot está vazio, com
+    // fallback final pra DEFAULT-PICKING (existe em CWB seed P6).
 
     await ctx.aguardarStatusSeparacao(pedido.id, "aguardando_separacao", { timeout_ms: 8_000 });
 

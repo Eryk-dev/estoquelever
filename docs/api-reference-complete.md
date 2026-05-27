@@ -1756,6 +1756,8 @@ Caminhos suportados:
 - Resets pedidos: `status_separacao = "aguardando_separacao"`, `separacao_operador_id = null`, `separacao_iniciada_em = null`
 - Registers evento `separacao_cancelada` em `siso_pedido_historico` com `usuario_id` da sessão.
 
+**Historico detalhes — movs_estornadas (Fix-Final B B3):** O evento `separacao_cancelada` persiste `detalhes.movs_estornadas` como array **truncado a 50 itens** para evitar rows excessivamente grandes. Campos adicionais: `movs_estornadas_total` (int — total real de movs processadas), `movs_estornadas_truncado` (bool — true quando o total excede 50). Para listar todas as movs estornadas de um cancelamento, consulte `siso_movimentacoes WHERE origem_id = pedido.id AND tipo = 'E'`.
+
 **Side Effects:**
 - Updates `siso_pedido_itens` (resets marcado + partial fields)
 - Updates `siso_pedidos` (resets status)
@@ -1763,7 +1765,7 @@ Caminhos suportados:
 - Atualiza `siso_movimentacoes.qty_estornada` na mov fonte
 - Deleta linhas consumidas de `siso_pedido_item_mov_links`
 - Updates `siso_pedido_item_realocacoes.status = 'cancelado'`
-- Registers audit event `separacao_cancelada` (com usuarioId) in `siso_pedido_historico`
+- Registers audit event `separacao_cancelada` (com usuarioId) in `siso_pedido_historico` — `detalhes.movs_estornadas` truncado a 50 + `movs_estornadas_total` + `movs_estornadas_truncado`
 - Logs to `siso_logs`
 
 ---
@@ -4958,16 +4960,22 @@ não atualizada (estado fantasma). Se `qty == qty_pendente` zera, vira `guardada
 
 #### POST /api/wms/guarda/[id]/desfazer
 
-**P3 #5.1** — Reverte a última (ou única) confirmação de guarda. Estorna par S+E,
+**P3 #5.1** — Reverte uma confirmação de guarda (parcial ou total). Gera par S+E na direção
+**inversa** da guarda original (S de `localizacao_destino` → E de `localizacao_origem`/RECEBIMENTO),
 decrementa `qty_guardada`, e recupera status anterior (`pendente` se `qty_guardada` chega a 0,
 `em_guarda` em caso contrário). Útil quando operador bipa loc errada.
 
 **Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars), qty?: number }`.
-`qty` opcional — default = qty da última confirmação. **Response 200:** `{ ok: true, qty_estornada, pendencia }`.
-**400** se pendência cancelada, sem guardas registradas ou motivo curto.
 
-> Limitação MVP: estorna apenas a guarda mais recente. Para desfazer guardas intermediárias
-> de uma pendência multi-step, repita o endpoint até chegar na desejada.
+- `qty` opcional — default = toda a `qty_guardada` atual (desfaz tudo). **(Fix-Final B B10)**
+- Quando `qty` é informado: desfazer parcial — `qty` deve ser `≤ qty_guardada` (400 caso contrário).
+- Par S+E usa o mesmo `origem_id` UUID gerado na hora, permitindo rastreio das movs de desfazer juntas.
+
+**Response 200:** `{ ok: true, qty_estornada, pendencia }`.
+**400** se pendência cancelada, sem guardas registradas, motivo curto ou `qty > qty_guardada`.
+
+> Para desfazer guardas intermediárias de uma pendência multi-step, repita o endpoint
+> com a `qty` desejada até atingir o estado alvo.
 
 #### POST /api/wms/guarda/[id]/cancelar
 
@@ -5400,15 +5408,17 @@ quando a fila filtrada não tem mais a linha (status≠`aguardando_classificacao
 ### POST /api/wms/devolucoes/[id]/desclassificar
 
 **P3 #6.3** — Reverte classificação anterior estornando todas as movs geradas por
-`classificarDevolucao`. Match por janela temporal **±60s** da `classificada_em` filtrando
-por `origem_tipo` (sempre dos 4 valores de devolução) + `nota_fiscal_id` + `produto_id`
-quando presentes. Devolução volta pra `aguardando_classificacao` permitindo re-classificação imediata
+`classificarDevolucao`. Devolução volta pra `aguardando_classificacao` permitindo re-classificação imediata
 (útil quando operador escolheu classificação errada).
+
+**Lookup de movs — determinístico via FK (Fix-Final B B9):** busca `SELECT id FROM siso_movimentacoes WHERE devolucao_id = $id`. Substitui a janela temporal ±60s anterior (que era frágil em sistemas com clock drift ou múltiplas classificações próximas). Cada mov vinculada à devolução é estornada individualmente via `wms_estornar_parcial_movimentacao`.
+
+> **Retrocompat:** movs criadas antes de `20260528_movs_devolucao_id.sql` têm `devolucao_id = NULL`. Para devolucões antigas, o endpoint **cai back** na janela ±60s de `classificada_em` (comportamento P3 original) — garantindo que nenhuma classificação anterior fique sem desfazer.
 
 **Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars) }`.
 
 **Response 200:** `{ ok: true, movsEstornadas, classificacao_anterior }`.
-**400** se devolução não está em `classificada` ou se `classificada_em` é null (não há janela pra match).
+**400** se devolução não está em `classificada`.
 
 ### POST /api/wms/devolucoes/[id]/classificar
 **Body (3D — refactor 2026-05-20):** `{ classificacao: 'A'|'B'|'C'|'D', produto_id, qty, galpao_id, localizacao_id, empresa_referencia_id?, fornecedor_id?, observacoes? }`.

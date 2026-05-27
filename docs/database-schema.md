@@ -773,6 +773,7 @@ Tabela introduzida em 2026-05-14 pelo split do recebimento em 2 etapas (dock + g
 | `cancelada_por` | uuid | YES | FK → siso_usuarios | |
 | `motivo_cancelamento` | text | YES | | Obrigatório (≥3 chars) quando status='cancelada' |
 | `observacoes` | text | YES | | |
+| `tracking_origem_ids` | text[] | YES | | **Fix-Final B (2026-05-28)** — scaffolding futuro para vincular a pendência a múltiplos IDs de NF/tracking. Population adiada — não há campo no payload do webhook atual. Coluna adicionada por `20260528_pendencias_tracking_origem_ids.sql`. |
 | `criada_em` | timestamptz | NO | now() | |
 | `atualizada_em` | timestamptz | NO | now() | Atualizado por trigger |
 
@@ -879,6 +880,23 @@ Objetos introduzidos pelo fix-pack da realocação cascateável (24 achados de a
 
 **Consumido por:**
 - `wms_estornar_parcial_movimentacao` — incrementa após gerar mov contrária
+
+---
+
+### siso_movimentacoes.devolucao_id (new column — Fix-Final B 2026-05-28)
+
+**Coluna adicionada por `20260528_movs_devolucao_id.sql`.**
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `devolucao_id` | uuid | YES | NULL | FK → `siso_devolucoes_pendentes(id)` ON DELETE SET NULL. Populada por `classificarDevolucao` via UPDATE-after-insert (após inserir movs do RPC). Permite lookup determinístico na desclassificação (`desclassificarDevolucao`) em vez de janela temporal ±60s. |
+
+**Index:** `ix_siso_movimentacoes_devolucao_id` — partial index em `(devolucao_id) WHERE devolucao_id IS NOT NULL`. Garante busca O(1) ao estornar movs de uma devolução.
+
+**Populating:** `classificarDevolucao` em `src/lib/wms/devolucoes.ts` faz `UPDATE siso_movimentacoes SET devolucao_id = $devolucao_id WHERE id = ANY($mov_ids)` após inserir. RPC `wms_inserir_movimentacao` não conhece `devolucao_id` — link é feito na camada de aplicação.
+
+**Consumido por:**
+- `desclassificarDevolucao` (`POST /api/wms/devolucoes/[id]/desclassificar`) — busca `SELECT id FROM siso_movimentacoes WHERE devolucao_id = $id` e estorna cada mov determinística, sem janela temporal.
 
 ---
 
@@ -1773,7 +1791,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-05-20 | `20260520b_rpc_inserir_movimentacao.sql` | RPC `wms_inserir_movimentacao` reescrita pra 3D: lock pessimista por (produto, galpão, loc), recalcula `siso_custo_medio` em entradas com `custo_unitario`, grava `custo_medio_anterior/posterior` na mov. |
 | 2026-05-20 | `20260520c_rpc_reservar.sql` | RPC `wms_reservar_atomico` reescrita pra 3D (drop p_empresa_dona). |
 | 2026-05-20 | `20260520d_rpc_reconciliacao.sql` | RPCs `wms_detectar_divergencias_estoque` + `wms_rebuild_linha_estoque` reescritas pra 3D (drop `empresa_dona_id` de todos os JOINs). |
-| 2026-05-20 | `20260520e_rpc_inventario.sql` | RPCs do inventário em 3D: `wms_inventario_proxima_loc` (drop dona de SELECT/UPDATE/JSON) + `wms_inventario_sugerir` (drop param `p_empresa_dona` e filtros). |
+| 2026-05-20 | `20260520e_rpc_inventario.sql` | RPCs do inventário em 3D: `wms_inventario_proxima_loc` (drop dona de SELECT/UPDATE/JSON) + `wms_inventario_sugerir` (drop param `p_empresa_dona` e filtros). Ver também `20260527_inventario_sugerir_excluir_quarentena.sql` — patch posterior adiciona filtro `tipo <> 'quarentena'` nos 3 CTEs. |
 | 2026-05-20 | `20260520f_mviews.sql` | MVs `siso_cobertura_estoque` + `siso_curva_abc` recriadas em 3D (drop dona de saldo_agregado/giro_30d e do GROUP BY). |
 | 2026-05-20 | `20260520g_drop_dona_pendencias.sql` | DROP `empresa_dona_id` de `siso_wms_pendencias_guarda` + recria índice `idx_pendencias_guarda_produto` sem dona. |
 | 2026-05-20 | `20260520h_drop_dona_transferencias.sql` | DROP `empresa_dona_id` de `siso_transferencias_galpao` (header). |
@@ -1785,6 +1803,9 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-05-27 | `20260527_realtime_publication_completeness.sql` | **P1 (não-P3, mas relevante)** — adiciona 6 tabelas faltantes à publication `supabase_realtime`. |
 | 2026-05-27 | `20260527_insights_rpcs_3d_patch.sql` | **P1 (não-P3)** — 4 RPCs insights re-escritas pra schema 3D (remove `siso_estoque.custo_medio`, `empresa_dona_id`, `siso_empresas.galpao_id`). |
 | 2026-05-27 | `20260527_cron_*.sql` (4 jobs) | **P1 (não-P3)** — agendamentos pg_cron para insights/reservas/inventario-cleanup/curva-abc-refresh. |
+| 2026-05-27 | `20260527_inventario_sugerir_excluir_quarentena.sql` | **Fix-Final B B5 — `wms_inventario_sugerir` exclui QUARENTENA.** ALTER RPC: adiciona filtro `loc.tipo <> 'quarentena'` nos 3 CTEs (`curva_a`, `divergentes`, `antigos`). Evita que locs de quarentena apareçam na sugestão inteligente de ciclo de inventário (produto em quarentena não deve ser contado no fluxo normal). Commit `e9201e9`. |
+| 2026-05-28 | `20260528_movs_devolucao_id.sql` | **Fix-Final B B9 — `siso_movimentacoes.devolucao_id`.** ADD COLUMN `devolucao_id uuid REFERENCES siso_devolucoes_pendentes(id) ON DELETE SET NULL` + CREATE INDEX CONCURRENTLY `ix_siso_movimentacoes_devolucao_id ON siso_movimentacoes(devolucao_id) WHERE devolucao_id IS NOT NULL`. Permite lookup determinístico na desclassificação (`desclassificarDevolucao`) em vez de janela temporal ±60s. |
+| 2026-05-28 | `20260528_pendencias_tracking_origem_ids.sql` | **Fix-Final B B11 — `siso_wms_pendencias_guarda.tracking_origem_ids`.** ADD COLUMN `tracking_origem_ids text[]` — scaffolding futuro para múltiplos IDs de NF/tracking por pendência. Population adiada (sem campo no payload do webhook atual). |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging
@@ -1801,6 +1822,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 12. **Phase 12 (May 18 — Realocação Fix-Pack):** 24 achados de auditoria pós-realocação cascateável fechados em 36 tasks. Foundation: tabela ponte `siso_pedido_item_mov_links` (item↔mov N:M com tipo_link), `siso_movimentacoes.qty_estornada` (estorno proporcional), `siso_fila_execucao.payload` (carrega `itens_ja_lancados`). RPCs: `wms_acumular_qty_pega` (UPDATE atômico) e `wms_estornar_parcial_movimentacao` (estorno proporcional de mov compartilhada). `siso_processar_bip_embalagem` ganha `p_strict_qty_pega` (teto = qty pega real em itens parciais). Realtime: `siso_pedido_item_realocacoes` entra na publication. Backfill normaliza `parcial_motivo` legado.
 13. **Phase 13 (May 20 — Ledger Simplificado 3D):** schema 4D (produto × dona × galpão × loc) → 3D (produto × galpão × loc). `siso_estoque` perde `empresa_dona_id` + `custo_medio` e ganha UNIQUE (produto, galpão, loc). `siso_movimentacoes` perde `empresa_dona_id` + `emprestimo_devedora_id` e ganha 9 colunas de metadata (empresa_compradora/vendedora/referencia/fornecedor/motivo/cliente_nome/custo_unitario/custo_medio_anterior/posterior). Nova tabela `siso_custo_medio` (PK produto_id, cache global). CHECK `origem_tipo` enumera 18 valores. DROP `siso_emprestimo_regras`, `siso_wms_mini_swap_config`, RPCs `wms_executar_mini_swap/swap`, `wms_saldos_devedores`. RPCs `wms_inserir_movimentacao`, `wms_reservar_atomico`, `wms_inventario_*` reescritas. MVs `siso_curva_abc` + `siso_cobertura_estoque` recriadas em 3D. `siso_pedido_item_realocacoes.empresa_dona_id/empresa_devedora_id/is_emprestimo` viram legacy (nunca populadas). Migrações 9-fold: `20260520[a-i]`.
 14. **Phase 14 (May 27 — P3 Reverse Paritária + Idempotência):** 22 findings da auditoria WMS endereçados. Schema adds: (a) UNIQUE partial index `uniq_movs_inventario_divergencia` em `siso_movimentacoes` pra idempotência de `aplicarSessao`; (b) coluna `siso_transferencias_galpao.recebimento_em_andamento_por uuid` pra claim lock anti-race no recebimento. New RPCs: `wms_replenishment_intra_galpao` (S+E atômico) e `wms_confirmar_guarda_atomico` (S+E + UPDATE pendência atômico). 7 endpoints reverse novos: `POST /inventario/[id]/estornar` (admin), `POST /guarda/[id]/desfazer`, `POST /devolucoes/[id]/desclassificar`, `POST /replenishment/[id]/reverter` (id = origem_id), `POST /ajuste/[id]/estornar` (id = mov_id), `POST /vendas/[id]/cancelar`, `POST /transferencias/[id]/desfazer-recebimento`. Race fixes: iniciarGuarda condicional, contagens lock-required, receberTransferencia claim, marcar-item desmarcar ordem (S antes de L). Reiniciar embalagem agora reverte cutover (estado fantasma fix). Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p3-reverse-idempotencia.md`.
+15. **Phase 15 (May 27-28 — Fix-Final B — Out-of-scope + P6 órfãs):** 11 itens P2 fechados. Schema: `siso_movimentacoes.devolucao_id` (FK pra `siso_devolucoes_pendentes`, lookup determinístico na desclassificação); `siso_wms_pendencias_guarda.tracking_origem_ids` (scaffolding). RPC `wms_inventario_sugerir` patched com filtro `tipo<>'quarentena'`. Behavior changes: `cancelar` separação escreve `movs_estornadas` truncado a 50 + counter + flag; `computarDivergencias` é idempotente (guard re-execução); `desfazer-guarda` aceita `qty` partial (era all-or-nothing); `desclassificar` usa `devolucao_id` FK em vez de janela ±60s. 3 novos cenários (50/51/52). Plano: `docs/superpowers/plans/2026-05-27-wms-fix-final-B.md`.
 
 ---
 

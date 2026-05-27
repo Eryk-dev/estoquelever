@@ -7,8 +7,8 @@ import {
 } from "./permissions";
 
 describe("PERMISSIONS registry", () => {
-  it("tem exatamente 31 permissões em 8 módulos", () => {
-    expect(PERMISSAO_CODIGOS).toHaveLength(31);
+  it("tem exatamente 33 permissões em 8 módulos", () => {
+    expect(PERMISSAO_CODIGOS).toHaveLength(33);
     const modulos = new Set(Object.values(PERMISSIONS).map((p) => p.modulo));
     expect(modulos.size).toBe(8);
   });

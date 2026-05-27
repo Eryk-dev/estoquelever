@@ -25,6 +25,8 @@ export const PERMISSIONS = {
   "separacao.administrar": { modulo: "vendas",       label: "Forçar status / voltar etapa / reimprimir" },
   "compras.ver":          { modulo: "vendas",        label: "Ver Compras" },
   "compras.executar":     { modulo: "vendas",        label: "Comprar/receber/cancelar OC" },
+  "pedidos.estornar":         { modulo: "vendas",    label: "Estornar pedido (Banner D10 admin)" },
+  "pedidos.liberar_reservas": { modulo: "vendas",    label: "Liberar reservas do pedido (D2 override admin)" },
 
   // ── Visibilidade ──
   "estoque.ver":          { modulo: "visibilidade",  label: "Ver Estoque" },

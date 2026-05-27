@@ -392,6 +392,14 @@ export interface AjusteManualInput {
   motivo: string;
   direcao: "entrada" | "saida";
   usuario_id: string;
+  /**
+   * PR-6 #8.4 — Custo unitário opcional pra ajustes de **entrada**.
+   * Quando informado, alimenta recálculo do custo médio global (igual NF
+   * compra). Em ajustes de saída é ignorado (custo médio só atualiza em
+   * entradas). Ajuste sem custo mantém comportamento atual (entrada não
+   * mexe em `siso_custo_medio`).
+   */
+  custo_unitario?: number;
 }
 
 /**
@@ -409,6 +417,8 @@ export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
     origem_tipo: "ajuste_manual",
     origem_detalhes: { direcao: input.direcao },
     motivo: input.motivo.trim(),
+    custo_unitario:
+      input.direcao === "entrada" ? input.custo_unitario : undefined,
     usuario_id: input.usuario_id,
   });
 }

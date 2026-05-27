@@ -462,12 +462,16 @@ export async function montarDashboardTarefas(
     saldosRecebQ,
     pendenciasVivasQ,
   ] = await Promise.all([
-    // Aprovação pendente
+    // Aprovação pendente — agora retorna rows (não head:true) pra split
+    // marketplace vs manual via `origem_pedido`. §2 vai consertar o filtro
+    // NULL em galpão.
     (() => {
       let q = sb
         .from("siso_pedidos")
-        .select("id", { count: "exact", head: true })
+        .select("id, origem_pedido")
         .eq("status", "pendente");
+      // §2 will fix NULL filter (separacao_galpao_id pode ser null em
+      // pedidos sem decisão)
       if (galpao_id) q = q.eq("separacao_galpao_id", galpao_id);
       return q;
     })(),
@@ -930,12 +934,23 @@ export async function montarDashboardTarefas(
     pendenciasVivasKeys,
   );
 
+  // §1 task 1.15 — Split aprovação manual vs marketplace
+  const aprovacaoRows = (aprovacaoQ.data ?? []) as Array<{
+    origem_pedido: string | null;
+  }>;
+  const aprovacaoMarketplace = aprovacaoRows.filter(
+    (r) => r.origem_pedido !== "manual",
+  ).length;
+  const aprovacaoManual = aprovacaoRows.filter(
+    (r) => r.origem_pedido === "manual",
+  ).length;
+
   return {
     galpao_id,
     aprovacao: {
-      count: aprovacaoQ.count ?? 0,
-      marketplace: 0,
-      manual: 0,
+      count: aprovacaoRows.length,
+      marketplace: aprovacaoMarketplace,
+      manual: aprovacaoManual,
     },
     separacao: {
       count: sepRows.length,

@@ -245,6 +245,29 @@ export default function WmsPedidosPage() {
   // atual filtrada (visualmente "X" pedidos visíveis).
   const countExpedidos = expedidos.length;
 
+  // ── Paginação client-side dos tabs não-expedidos (finding 1.15) ─
+  //
+  // /api/wms/pedidos retorna o conjunto completo de pedidos (limite 200
+  // pra status filter, ou ativos+150 recentes sem filtro). Em volume
+  // alto isso pode renderizar 100+ cards. Aplica-se uma slice client-side
+  // de 50 itens por página em cada lista filtrada (pendentes /
+  // concluidos / autoResolvidos). Sem mudanças no backend — preserva
+  // contrato atual; quando o volume diário escalar a ponto de saturar
+  // o limite de 200 do servidor, migrar pra paginação server-side.
+  const PAGE_SIZE = 50;
+  const pendentesPage = useMemo(
+    () => pendentes.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [pendentes, page],
+  );
+  const concluidosPage = useMemo(
+    () => concluidos.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [concluidos, page],
+  );
+  const autoResolvidosPage = useMemo(
+    () => autoResolvidos.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [autoResolvidos, page],
+  );
+
   // ── Refresh handler ─────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
     if (tab === "expedidos") {
@@ -462,30 +485,57 @@ export default function WmsPedidosPage() {
       {!currentLoading && !currentError && (
         <>
           {tab === "pendente" && (
-            <TabPendente
-              pedidos={pendentes}
-              toCardPedido={toCardPedido}
-              onAprovar={aprovarPedido}
-              onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
-              podeAprovar={podeAprovar}
-            />
+            <>
+              <TabPendente
+                pedidos={pendentesPage}
+                toCardPedido={toCardPedido}
+                onAprovar={aprovarPedido}
+                onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
+                podeAprovar={podeAprovar}
+              />
+              <Pagination
+                total={pendentes.length}
+                pageSize={PAGE_SIZE}
+                page={page}
+                onPageChange={setPage}
+                label="pedidos"
+              />
+            </>
           )}
 
           {tab === "concluidos" && (
-            <TabConcluidos
-              pedidos={concluidos}
-              toCardConcluido={toCardConcluido}
-              onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
-            />
+            <>
+              <TabConcluidos
+                pedidos={concluidosPage}
+                toCardConcluido={toCardConcluido}
+                onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
+              />
+              <Pagination
+                total={concluidos.length}
+                pageSize={PAGE_SIZE}
+                page={page}
+                onPageChange={setPage}
+                label="pedidos"
+              />
+            </>
           )}
 
           {tab === "auto" && (
-            <TabConcluidos
-              pedidos={autoResolvidos}
-              toCardConcluido={toCardConcluido}
-              onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
-              ocultarOperador
-            />
+            <>
+              <TabConcluidos
+                pedidos={autoResolvidosPage}
+                toCardConcluido={toCardConcluido}
+                onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
+                ocultarOperador
+              />
+              <Pagination
+                total={autoResolvidos.length}
+                pageSize={PAGE_SIZE}
+                page={page}
+                onPageChange={setPage}
+                label="pedidos"
+              />
+            </>
           )}
 
           {tab === "expedidos" && (

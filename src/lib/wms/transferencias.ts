@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao } from "./ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────
 
@@ -387,4 +387,107 @@ export async function cancelarTransferencia(
       cancelada_em: new Date().toISOString(),
     })
     .eq("id", transferenciaId);
+}
+
+// ─── Desfazer recebimento (P3 #8.2) ───────────────────────────────────────
+
+/**
+ * Desfaz o recebimento de uma transferência inter-galpão. Estorna **apenas**
+ * a leg E (entrada destino) — a leg S (saída origem) permanece intacta porque
+ * o estoque ainda está "em trânsito" (saiu do galpão origem, só não foi
+ * fisicamente recebido no destino, ou recebido com erro).
+ *
+ * Efeito:
+ * - Cada `mov_entrada_id` setado na transferência é estornado (par E→S na
+ *   loc destino). Estornos já aplicados são ignorados (idempotência via
+ *   `estornarMovimentacao` que rejeita double-estorno).
+ * - Itens resetam `mov_entrada_id=NULL` e `localizacao_destino_id=NULL`.
+ * - Header volta pra `status='em_transito'` e `recebida_em=NULL`.
+ *
+ * Permite re-receber depois.
+ *
+ * Requisitos:
+ * - `motivo` (≥3 chars) obrigatório.
+ * - Header deve estar em `recebida` (única status válida hoje;
+ *   `recebida_parcial` previsto em futuras evoluções).
+ *
+ * @returns `{ movsEstornadas }` — quantas movs E foram efetivamente estornadas
+ */
+export async function desfazerRecebimentoTransferencia(input: {
+  transferencia_id: string;
+  usuario_id: string;
+  motivo: string;
+}): Promise<{ movsEstornadas: number }> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo do undo é obrigatório (≥3 caracteres)");
+  }
+  const sb = createServiceClient();
+
+  // 1) Fetch header
+  const { data: transf, error: errHeader } = await sb
+    .from("siso_transferencias_galpao")
+    .select("id, status, galpao_destino_id")
+    .eq("id", input.transferencia_id)
+    .maybeSingle();
+  if (errHeader) throw errHeader;
+  if (!transf) throw new Error("transferência não encontrada");
+  const t = transf as {
+    id: string;
+    status: StatusTransferencia;
+    galpao_destino_id: string;
+  };
+
+  // 2) Status check — só recebida (ou recebida_parcial se vier no futuro)
+  if (t.status !== "recebida") {
+    throw new Error(
+      `só transferências recebidas podem ter recebimento desfeito (status atual: ${t.status})`,
+    );
+  }
+
+  // 3) Estorna cada leg E (entrada destino)
+  const { data: itens, error: errItens } = await sb
+    .from("siso_transferencia_galpao_itens")
+    .select("id, mov_entrada_id")
+    .eq("transferencia_id", input.transferencia_id);
+  if (errItens) throw errItens;
+
+  type ItemRow = { id: string; mov_entrada_id: string | null };
+  let movsEstornadas = 0;
+  for (const it of ((itens ?? []) as ItemRow[])) {
+    if (!it.mov_entrada_id) continue;
+    try {
+      await estornarMovimentacao({
+        mov_id: it.mov_entrada_id,
+        usuario_id: input.usuario_id,
+        motivo: `Desfaz recebimento de transferência ${input.transferencia_id}: ${input.motivo}`,
+      });
+      movsEstornadas++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Idempotência: ignora se já foi estornada
+      if (/já foi estornada|já é um estorno/.test(msg)) continue;
+      throw err;
+    }
+  }
+
+  // 4) Reseta itens: mov_entrada_id=null, localizacao_destino_id=null
+  await sb
+    .from("siso_transferencia_galpao_itens")
+    .update({
+      mov_entrada_id: null,
+      localizacao_destino_id: null,
+    })
+    .eq("transferencia_id", input.transferencia_id);
+
+  // 5) Volta header pra em_transito
+  await sb
+    .from("siso_transferencias_galpao")
+    .update({
+      status: "em_transito",
+      recebida_em: null,
+      recebida_por: null,
+    })
+    .eq("id", input.transferencia_id);
+
+  return { movsEstornadas };
 }

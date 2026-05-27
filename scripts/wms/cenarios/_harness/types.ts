@@ -69,6 +69,9 @@ export type Ctx = {
 
   // ── movs operacionais ──
   transferirGalpao: (p: { origem: "CWB" | "SP"; destino: "CWB" | "SP"; items: { sku: string; qty: number }[] }) => Promise<{ id: string }>;
+  criarTransferenciaHeader: (p: { origem: "CWB" | "SP"; destino: "CWB" | "SP"; items: { sku: string; loc_origem: string; qty: number }[] }) => Promise<{ id: string }>;
+  receberTransferencia: (p: { transferencia_id: string; itens: { transferencia_item_id: string; loc_destino: string }[] }) => Promise<void>;
+  desfazerRecebimentoTransferencia: (p: { transferencia_id: string; motivo?: string }) => Promise<{ movsEstornadas: number }>;
   replenishment: (p: { sku: string; galpao: "CWB" | "SP"; origem_loc: string; destino_loc: string; qty: number }) => Promise<void>;
   ajusteManual: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; delta: number; motivo: string }) => Promise<void>;
   lancamentoRetroativo: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; tipo: "E" | "S" }) => Promise<{ id: string }>;

@@ -635,6 +635,64 @@ export function createContext(opts: {
     return { id: res.origem_id };
   }
 
+  // ── Transferência com header (fluxo 2 etapas: criar S → receber E) ──
+  async function criarTransferenciaHeader(p: { origem: "CWB" | "SP"; destino: "CWB" | "SP"; items: { sku: string; loc_origem: string; qty: number }[] }) {
+    const galpao_origem_id = staging.galpoes[p.origem.toLowerCase() as "cwb" | "sp"].id;
+    const galpao_destino_id = staging.galpoes[p.destino.toLowerCase() as "cwb" | "sp"].id;
+    const itens: { produto_id: string; localizacao_origem_id: string; qty: number }[] = [];
+    for (const it of p.items) {
+      const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", it.sku).single();
+      const { data: loc } = await sb
+        .from("siso_localizacoes")
+        .select("id")
+        .eq("galpao_id", galpao_origem_id)
+        .eq("codigo", it.loc_origem)
+        .single();
+      itens.push({
+        produto_id: prod!.id,
+        localizacao_origem_id: loc!.id,
+        qty: it.qty,
+      });
+    }
+    return http.post<{ id: string }>("/api/wms/transferencias", {
+      galpao_origem_id,
+      galpao_destino_id,
+      itens,
+    });
+  }
+
+  async function receberTransferenciaCtx(p: { transferencia_id: string; itens: { transferencia_item_id: string; loc_destino: string }[] }) {
+    // Resolve loc destino codigo → id (no galpão destino do header)
+    const { data: header } = await sb
+      .from("siso_transferencias_galpao")
+      .select("galpao_destino_id")
+      .eq("id", p.transferencia_id)
+      .single();
+    const galpaoDestinoId = (header as { galpao_destino_id: string }).galpao_destino_id;
+    const itensApi: { transferencia_item_id: string; localizacao_destino_id: string }[] = [];
+    for (const it of p.itens) {
+      const { data: loc } = await sb
+        .from("siso_localizacoes")
+        .select("id")
+        .eq("galpao_id", galpaoDestinoId)
+        .eq("codigo", it.loc_destino)
+        .single();
+      itensApi.push({
+        transferencia_item_id: it.transferencia_item_id,
+        localizacao_destino_id: loc!.id,
+      });
+    }
+    await http.post(`/api/wms/transferencias/${p.transferencia_id}/receber`, { itens: itensApi });
+  }
+
+  async function desfazerRecebimentoTransferencia(p: { transferencia_id: string; motivo?: string }) {
+    const motivo = p.motivo ?? "teste cenário desfazer recebimento";
+    return http.post<{ movsEstornadas: number }>(
+      `/api/wms/transferencias/${p.transferencia_id}/desfazer-recebimento`,
+      { motivo },
+    );
+  }
+
   async function replenishment(p: { sku: string; galpao: "CWB" | "SP"; origem_loc: string; destino_loc: string; qty: number }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
@@ -921,7 +979,8 @@ export function createContext(opts: {
     concluirSeparacao, embalar, expedir,
     aguardarStatus, aguardarStatusSeparacao, aguardarRealocacao, aguardarFilaVazia,
     comprar, receberCompra, prepararEmbalagem, receber, guardar, desfazerGuarda, aguardarPendenciaGuarda,
-    transferirGalpao, replenishment, ajusteManual, lancamentoRetroativo, reconciliarRetroativo,
+    transferirGalpao, criarTransferenciaHeader, receberTransferencia: receberTransferenciaCtx, desfazerRecebimentoTransferencia,
+    replenishment, ajusteManual, lancamentoRetroativo, reconciliarRetroativo,
     criarVendaDireta, disponibilidadeVenda, cancelarVenda,
     reservar, cleanupReservas,
     classificarDevolucao, desclassificarDevolucao,

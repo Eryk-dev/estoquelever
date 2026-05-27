@@ -101,7 +101,7 @@ export type Ctx = {
   proximaLoc: (sessaoId: string) => Promise<{ localizacao_id: string | null; pool_vazio?: boolean }>;
   bipeInventario: (p: { sessao_id: string; sku: string; loc: string; qty: number }) => Promise<void>;
   finalizarLocInventario: (p: { sessao_id: string; loc: string }) => Promise<void>;
-  aprovarInventario: (sessaoId: string) => Promise<void>;
+  aprovarInventario: (sessaoId: string, opts?: { force?: boolean }) => Promise<void>;
   aplicarInventario: (sessaoId: string) => Promise<void>;
   estornarInventario: (sessaoId: string, motivo?: string) => Promise<{ ok: boolean; movsEstornadas: number }>;
 

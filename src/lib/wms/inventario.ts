@@ -568,8 +568,40 @@ async function registrarContagemSimples(
 // liberados normalmente em aprovarSessao junto com as outras.
 // ─────────────────────────────────────────────────────────────────────
 
+// P3 #4.5: lista de operadores ativos (sem `finalizado_em`) na sessão. Usada
+// pelo gate em `computarDivergencias` (avisa antes de encerrar) e pode ser
+// consumida pela UI pra mostrar "X operadores ativos" no botão de aprovar.
+export async function listarOperadoresAtivos(
+  sessao_id: string,
+): Promise<Array<{ usuario_id: string; nome: string | null }>> {
+  const sb = createServiceClient();
+  const { data } = await sb
+    .from("siso_inventario_operadores")
+    .select("usuario_id, usuario:siso_usuarios(nome)")
+    .eq("sessao_id", sessao_id)
+    .is("finalizado_em", null);
+  // Supabase tipa a relação FK como array; na prática vem 1 objeto (ou null).
+  // Normaliza pra usar tanto array quanto objeto sem quebrar.
+  const rows = (data ?? []) as unknown as Array<{
+    usuario_id: string;
+    usuario: { nome: string | null } | { nome: string | null }[] | null;
+  }>;
+  return rows.map((r) => {
+    const u = Array.isArray(r.usuario) ? r.usuario[0] : r.usuario;
+    return { usuario_id: r.usuario_id, nome: u?.nome ?? null };
+  });
+}
+
+const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface ComputarDivergenciasOpts {
   parcial?: boolean;
+  /**
+   * P3 #4.5: opt-in pra fechar a sessão mesmo com operadores ativos.
+   * Sem essa flag, a função aborta com Error code='OPERADORES_ATIVOS' e
+   * anexa a lista pra UI mostrar quem ainda está dentro.
+   */
+  forceWithActiveOperators?: boolean;
 }
 
 export async function computarDivergencias(
@@ -579,6 +611,17 @@ export async function computarDivergencias(
   const sb = createServiceClient();
   const parcial = opts.parcial === true;
   const cutoff_em = new Date().toISOString();
+
+  // P3 #4.5: aborta cedo se há operador ativo e o caller não confirmou.
+  const ativos = await listarOperadoresAtivos(sessaoId);
+  if (ativos.length > 0 && !opts.forceWithActiveOperators) {
+    const err = new Error(
+      `há ${ativos.length} operador(es) ativo(s) — passe forceWithActiveOperators=true se confirma`,
+    ) as Error & { code?: string; operadores?: typeof ativos };
+    err.code = "OPERADORES_ATIVOS";
+    err.operadores = ativos;
+    throw err;
+  }
 
   // 1. Carrega locs da sessão (filtrando por modo parcial)
   const locsQuery = sb
@@ -770,6 +813,27 @@ export async function computarDivergencias(
       )
       .select("id");
     if (upErr) throw upErr;
+  }
+
+  // P3 #4.6: limpa locs órfãs em em_contagem cujo `bloqueada_por` não é
+  // operador ativo (ex.: usuário saiu da party sem finalizar a loc).
+  // Filtro defensivo via JS: valida UUIDs e exclui ativos.
+  const ativosUserIds = ativos
+    .map((a) => a.usuario_id)
+    .filter((id) => UUID_RX.test(id));
+  const { data: orfasRaw } = await sb
+    .from("siso_inventario_localizacoes")
+    .select("id, bloqueada_por")
+    .eq("sessao_id", sessaoId)
+    .eq("status", "em_contagem")
+    .not("bloqueada_por", "is", null);
+  const orfas = ((orfasRaw ?? []) as Array<{ id: string; bloqueada_por: string }>)
+    .filter((r) => !ativosUserIds.includes(r.bloqueada_por));
+  if (orfas.length > 0) {
+    await sb
+      .from("siso_inventario_localizacoes")
+      .update({ status: "pendente", bloqueada_por: null, bloqueada_em: null })
+      .in("id", orfas.map((o) => o.id));
   }
 
   await sb

@@ -949,8 +949,11 @@ export function createContext(opts: {
     await http.post(`/api/wms/inventario/${p.sessao_id}/localizacoes/${invLocId}/finalizar`);
   }
 
-  async function aprovarInventario(sessaoId: string) {
-    await http.post(`/api/wms/inventario/${sessaoId}/aprovar`);
+  async function aprovarInventario(sessaoId: string, opts?: { force?: boolean }) {
+    // P3 #4.5: cenários geralmente não chamam `sairParty` antes — passa
+    // `force=true` por default pra não quebrar fluxos pré-existentes.
+    const force = opts?.force ?? true;
+    await http.post(`/api/wms/inventario/${sessaoId}/aprovar`, { force });
   }
 
   async function aplicarInventario(sessaoId: string) {

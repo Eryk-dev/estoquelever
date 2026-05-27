@@ -24,6 +24,16 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
  * "todos os galpões"). Quando muda, fecha os channels antigos e
  * reabre com novos filtros.
  *
+ * **Filtro server-side por galpão (finding 1.14):** apenas 3 das 8 tables
+ * têm coluna direta `galpao_id` e ganham `filter:` no `postgres_changes`:
+ *   - `siso_pedidos` (col `separacao_galpao_id`)
+ *   - `siso_wms_pendencias_guarda` (col `galpao_id`)
+ *   - `siso_inventario_sessoes` (col `galpao_id`)
+ * As outras 5 (operadores, pedido_itens, devolucoes, transf-galpao, movs-r)
+ * permanecem sem filtro: ou não têm coluna de galpão na tabela, ou o galpão
+ * só aparece por JOIN (custo aceitável = invalidação ruidosa, não vazamento
+ * de dados — o React Query refaz a query server-side com o filtro correto).
+ *
  * To smoke-test: temporarily add `console.log("[dt-realtime] invalidate", new Date())`
  * inside `invalidate` below, then trigger INSERT/UPDATE em cada uma das 8 tabelas via
  * `mcp__supabase__execute_sql` e confirmar log fires in browser console.
@@ -54,6 +64,9 @@ export function useDashboardTarefasRealtime(galpaoId: string | null) {
           event: "*",
           schema: "public",
           table: "siso_pedidos",
+          ...(galpaoId
+            ? { filter: `separacao_galpao_id=eq.${galpaoId}` }
+            : {}),
         },
         invalidate,
       )
@@ -67,6 +80,7 @@ export function useDashboardTarefasRealtime(galpaoId: string | null) {
           event: "*",
           schema: "public",
           table: "siso_wms_pendencias_guarda",
+          ...(galpaoId ? { filter: `galpao_id=eq.${galpaoId}` } : {}),
         },
         invalidate,
       )
@@ -80,6 +94,7 @@ export function useDashboardTarefasRealtime(galpaoId: string | null) {
           event: "*",
           schema: "public",
           table: "siso_inventario_sessoes",
+          ...(galpaoId ? { filter: `galpao_id=eq.${galpaoId}` } : {}),
         },
         invalidate,
       )

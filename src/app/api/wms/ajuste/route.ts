@@ -75,6 +75,20 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  // PR-6 #8.4 — custo_unitario opcional, só faz sentido em entrada.
+  const custoUnitario =
+    body.custo_unitario !== undefined && body.custo_unitario !== null
+      ? Number(body.custo_unitario)
+      : undefined;
+  if (
+    custoUnitario !== undefined &&
+    (!Number.isFinite(custoUnitario) || custoUnitario < 0)
+  ) {
+    return NextResponse.json(
+      { error: "custo_unitario inválido (≥ 0)" },
+      { status: 400 },
+    );
+  }
   try {
     await ajustarEstoque({
       tripla,
@@ -82,6 +96,8 @@ export async function POST(req: NextRequest) {
       motivo,
       motivo_categoria: motivoCategoria as MotivoCategoria,
       direcao: body.direcao,
+      custo_unitario:
+        body.direcao === "entrada" ? custoUnitario : undefined,
       usuario_id: auth.user.id,
     });
     return NextResponse.json({ ok: true });

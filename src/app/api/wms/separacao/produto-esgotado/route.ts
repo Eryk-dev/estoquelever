@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { getSessionUser } from "@/lib/session";
+import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
 
 /**
  * POST /api/separacao/produto-esgotado
@@ -196,21 +197,44 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Reset separation state on ALL items of affected pedidos
-      const { error: resetItemsErr } = await supabase
+      // Reset separation state em TODOS os itens dos pedidos afetados — pedido inteiro
+      // está saindo do galpão atual, então toda mov S+L emitida durante o picking
+      // precisa ser ESTORNADA antes do encaminhar (#2.8). Bypassar o helper deixava
+      // saldo fantasma no galpão antigo.
+      const { data: todosItens, error: todosItensErr } = await supabase
         .from("siso_pedido_itens")
-        .update({
-          separacao_marcado: false,
-          separacao_marcado_em: null,
-          bipado_completo: false,
-          quantidade_bipada: 0,
-        })
+        .select("id")
         .in("pedido_id", affectedPedidoIds);
 
-      if (resetItemsErr) {
-        logger.error("produto-esgotado", "Erro ao resetar itens separacao", {
-          error: resetItemsErr.message,
+      if (todosItensErr) {
+        logger.error("produto-esgotado", "Erro ao listar itens dos pedidos pra reset", {
+          error: todosItensErr.message,
+          affectedPedidoIds,
         });
+        return NextResponse.json(
+          { error: "Erro ao listar itens pra reset" },
+          { status: 500 },
+        );
+      }
+
+      const todosItemIds = (todosItens ?? []).map((i) => Number(i.id));
+
+      try {
+        await resetarEstadoSeparacaoItens({
+          supabase,
+          itemIds: todosItemIds,
+          usuarioId: session.id,
+          motivo: "esgotado",
+        });
+      } catch (resetErr) {
+        logger.error("produto-esgotado", "Reset com estorno falhou", {
+          error: resetErr instanceof Error ? resetErr.message : String(resetErr),
+          affectedPedidoIds,
+        });
+        return NextResponse.json(
+          { error: "Erro ao estornar movs antes de encaminhar" },
+          { status: 500 },
+        );
       }
 
       // Move pedidos to aguardando_separacao with new galpão
@@ -342,21 +366,28 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Reset separation state on ALL items of affected pedidos
-    const { error: resetItemsErr } = await supabase
-      .from("siso_pedido_itens")
-      .update({
-        separacao_marcado: false,
-        separacao_marcado_em: null,
-        bipado_completo: false,
-        quantidade_bipada: 0,
-      })
-      .in("pedido_id", affectedPedidoIds);
-
-    if (resetItemsErr) {
-      logger.error("produto-esgotado", "Erro ao resetar itens separacao", {
-        error: resetItemsErr.message,
+    // OC branch: só reseta itens do SKU esgotado, não pedido inteiro (#2.14).
+    // Itens de outros SKUs do mesmo pedido continuam picados normalmente — só
+    // o SKU sem cobertura vai virar OC, então preservar pick state dos outros.
+    // Também ESTORNAR S+L emitidas no pick antes do switch pra aguardando_compra
+    // (#2.8 — mesmo bug do branch encaminhar).
+    try {
+      await resetarEstadoSeparacaoItens({
+        supabase,
+        itemIds: itemIds.map((id) => Number(id)),
+        usuarioId: session.id,
+        motivo: "esgotado",
       });
+    } catch (resetErr) {
+      logger.error("produto-esgotado", "Reset com estorno falhou (OC branch)", {
+        error: resetErr instanceof Error ? resetErr.message : String(resetErr),
+        affectedPedidoIds,
+        itemIds,
+      });
+      return NextResponse.json(
+        { error: "Erro ao estornar movs antes de marcar OC" },
+        { status: 500 },
+      );
     }
 
     // Move affected pedidos to aguardando_compra

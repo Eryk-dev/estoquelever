@@ -263,15 +263,35 @@ export async function POST(request: NextRequest) {
 
         kickWorker().catch(() => {});
 
-        // WMS cutover R→L+S: pedido virou embalado pela embalagem direta OC.
-        // Normalmente sem NF ainda (vai ser gerada pelo lancar_estoque worker)
-        // — helper skipa e o executor dispara depois. Idempotente.
-        dispararCutoverSePronto(pedido.id).catch((err) => {
-          logger.warn("confirmar-item-embalagem", "Falha ao disparar cutover (OC direta)", {
-            pedidoId: pedido.id,
-            err: err instanceof Error ? err.message : String(err),
+        // PR-1 safety: só dispara cutover se NF presente. Em OC direta a NF
+        // normalmente ainda não existe (vai ser gerada pelo lancar_estoque
+        // worker) — pular o callsite aqui evita warn log redundante; o helper
+        // será chamado de novo pelo executor após gerar a NF.
+        const { data: pedidoCheck } = await supabase
+          .from("siso_pedidos")
+          .select("nota_fiscal_id")
+          .eq("id", pedido.id)
+          .single();
+        if (!pedidoCheck?.nota_fiscal_id) {
+          logger.warn(
+            "confirmar-item-embalagem",
+            "cutover skipped — NF ausente (OC direta)",
+            { pedidoId: pedido.id },
+          );
+        } else {
+          // WMS cutover R→L+S: pedido virou embalado pela embalagem direta OC.
+          // Idempotente — helper skipa se já lançado.
+          dispararCutoverSePronto(pedido.id).catch((err) => {
+            logger.warn(
+              "confirmar-item-embalagem",
+              "Falha ao disparar cutover (OC direta)",
+              {
+                pedidoId: pedido.id,
+                err: err instanceof Error ? err.message : String(err),
+              },
+            );
           });
-        });
+        }
 
         return NextResponse.json({
           pedido_item_id,
@@ -315,14 +335,34 @@ export async function POST(request: NextRequest) {
         evento: "embalagem_concluida",
       }).catch(() => {});
 
-      // WMS cutover R→L+S: pedido virou embalado. Normalmente já lançado no
-      // /concluir (separado) — helper retorna ja_lancado. Idempotente.
-      dispararCutoverSePronto(item.pedido_id).catch((err) => {
-        logger.warn("confirmar-item-embalagem", "Falha ao disparar cutover (normal)", {
-          pedidoId: item.pedido_id,
-          err: err instanceof Error ? err.message : String(err),
+      // PR-1 safety: só dispara cutover se NF presente. Em fluxo normal a NF
+      // já existe (foi pré-condição pra entrar em separado), mas o guard
+      // explícito evita warn log se algo upstream estiver inconsistente.
+      const { data: pedidoCheck } = await supabase
+        .from("siso_pedidos")
+        .select("nota_fiscal_id")
+        .eq("id", item.pedido_id)
+        .single();
+      if (!pedidoCheck?.nota_fiscal_id) {
+        logger.warn(
+          "confirmar-item-embalagem",
+          "cutover skipped — NF ausente (normal)",
+          { pedidoId: item.pedido_id },
+        );
+      } else {
+        // WMS cutover R→L+S: pedido virou embalado. Normalmente já lançado no
+        // /concluir (separado) — helper retorna ja_lancado. Idempotente.
+        dispararCutoverSePronto(item.pedido_id).catch((err) => {
+          logger.warn(
+            "confirmar-item-embalagem",
+            "Falha ao disparar cutover (normal)",
+            {
+              pedidoId: item.pedido_id,
+              err: err instanceof Error ? err.message : String(err),
+            },
+          );
         });
-      });
+      }
 
       const etiqueta = await buscarEImprimirEtiqueta(item.pedido_id, session.id);
       return NextResponse.json({

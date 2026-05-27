@@ -3,6 +3,8 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { registrarEvento } from "@/lib/historico-service";
+import { estornarReservaIndividual } from "@/lib/wms/reservas";
+import { wmsAsSource } from "@/lib/wms/flags";
 
 /**
  * DELETE /api/separacao/realocacao/[id]
@@ -112,6 +114,77 @@ export async function DELETE(
         },
         usuarioId: session.id,
       });
+    }
+
+    // PR-1 (#2.10): libera Rs do pedido associadas à realocação cancelada.
+    //
+    // Por que per-R (via `estornarReservaIndividual`) em vez de
+    // `liberarReserva` global (por pedido_id): `liberarReserva` tem
+    // short-circuit — se QUALQUER L do pedido já existe (ex.: outro item
+    // já bipado), ele pula todas as Rs sem liberar. Resultado: as Rs da
+    // realocação cancelada ficam zumbis, inflando `reservado` da loc
+    // destino. Per-R é idempotente (acha L com estorno_de=R.id e retorna),
+    // então é seguro pra TODAS as Rs do pedido — as já liberadas por
+    // picking retornam o L existente sem criar novo. Ver #2.9 follow-up
+    // (encaminhar) pro mesmo padrão.
+    //
+    // Granularidade: o loop varre TODAS as Rs abertas do pedido, não só as
+    // ligadas a esta realocação específica. O plano explicita que isso é
+    // aceitável: cancelar uma chain de realocação implica perda de cobertura
+    // pro item — qualquer R associada perdeu sentido. Operador deve
+    // re-aprovar/encaminhar pra reservar de novo.
+    if (wmsAsSource() && item) {
+      try {
+        const { data: reservasAbertas } = await supabase
+          .from("siso_movimentacoes")
+          .select("id")
+          .eq("tipo", "R")
+          .eq("origem_tipo", "reserva_pedido")
+          .eq("origem_id", String(item.pedido_id));
+        const lista = (reservasAbertas ?? []) as Array<{ id: string }>;
+        let liberadas = 0;
+        for (const r of lista) {
+          try {
+            await estornarReservaIndividual({
+              reserva_id: r.id,
+              motivo: "outro",
+              usuario_id: session.id,
+            });
+            liberadas++;
+          } catch (e) {
+            // Idempotente: já liberada retorna o L existente sem throw.
+            // Único erro esperado: "Reserva X não encontrada" (race).
+            logger.warn(
+              "separacao-realocacao-cancel",
+              "falha estornando R individual (segue)",
+              {
+                pedido_id: item.pedido_id,
+                reserva_id: r.id,
+                error: e instanceof Error ? e.message : String(e),
+              },
+            );
+          }
+        }
+        logger.info(
+          "separacao-realocacao-cancel",
+          "Rs liberadas no cancel da chain",
+          {
+            pedido_id: item.pedido_id,
+            realoc_root: realocId,
+            chain_size: todos.length,
+            liberadas,
+            tentadas: lista.length,
+          },
+        );
+      } catch (e) {
+        logger.warn(
+          "separacao-realocacao-cancel",
+          "falha liberando Rs (segue)",
+          {
+            error: e instanceof Error ? e.message : String(e),
+          },
+        );
+      }
     }
 
     return NextResponse.json({

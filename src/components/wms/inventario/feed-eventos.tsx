@@ -20,6 +20,13 @@ interface Evento {
 
 interface Props {
   sessaoId: string;
+  sessaoStatus?:
+    | "planejada"
+    | "em_andamento"
+    | "revisao"
+    | "aprovada"
+    | "aplicada"
+    | "cancelada";
 }
 
 const cores: Record<Evento["cor"], string> = {
@@ -56,7 +63,7 @@ function descricaoEvento(e: Evento): string {
   return `${e.tipo} ${e.quantidade}× ${e.sku} em ${e.loc_codigo} · ${e.origem_tipo}`;
 }
 
-export function FeedEventos({ sessaoId }: Props) {
+export function FeedEventos({ sessaoId, sessaoStatus }: Props) {
   const [eventos, setEventos] = useState<Evento[]>([]);
 
   useEffect(() => {
@@ -72,12 +79,18 @@ export function FeedEventos({ sessaoId }: Props) {
       }
     }
     carregar();
+    const terminal = sessaoStatus === "aplicada" || sessaoStatus === "cancelada";
+    if (terminal) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const t = setInterval(carregar, 5000);
     return () => {
       cancelled = true;
       clearInterval(t);
     };
-  }, [sessaoId]);
+  }, [sessaoId, sessaoStatus]);
 
   if (eventos.length === 0) {
     return (

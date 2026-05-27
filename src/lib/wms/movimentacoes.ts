@@ -418,6 +418,14 @@ export interface AjusteManualInput {
   motivo_categoria: MotivoCategoria;
   direcao: "entrada" | "saida";
   usuario_id: string;
+  /**
+   * PR-6 #8.4 — Custo unitário opcional pra ajustes de **entrada**.
+   * Quando informado, alimenta recálculo do custo médio global (igual NF
+   * compra). Em ajustes de saída é ignorado (custo médio só atualiza em
+   * entradas). Ajuste sem custo mantém comportamento atual (entrada não
+   * mexe em `siso_custo_medio`).
+   */
+  custo_unitario?: number;
 }
 
 /**
@@ -440,6 +448,8 @@ export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
     origem_detalhes: { direcao: input.direcao },
     motivo: input.motivo.trim(),
     motivo_categoria: input.motivo_categoria,
+    custo_unitario:
+      input.direcao === "entrada" ? input.custo_unitario : undefined,
     usuario_id: input.usuario_id,
   });
 }
@@ -456,6 +466,14 @@ export interface LancamentoRetroativoInput {
   fornecedor_id?: string | null;
   /** Pedido associado (opcional — quando o retroativo vem dum pedido específico). */
   pedido_id?: string | null;
+  /**
+   * PR-6 #8.7 — Data efetiva do recebimento (ISO). Carimbar `criado_em` da
+   * mov com essa data exigiria patch na RPC `wms_inserir_movimentacao`
+   * (out of scope nesse PR). Por ora vai como tag em
+   * `origem_detalhes.data_recebimento` pra reports/filtragem
+   * (`origem_detalhes->>'data_recebimento'`).
+   */
+  data_recebimento?: string;
 }
 
 /**
@@ -474,6 +492,9 @@ export async function lancarRetroativo(
     tipo: "E",
     qty: input.qty,
     origem_tipo: "lancamento_retroativo",
+    origem_detalhes: input.data_recebimento
+      ? { data_recebimento: input.data_recebimento }
+      : undefined,
     pedido_id: input.pedido_id ?? null,
     empresa_compradora_id: input.empresa_compradora_id ?? null,
     fornecedor_id: input.fornecedor_id ?? null,

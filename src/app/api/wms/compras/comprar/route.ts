@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { registrarEventos } from "@/lib/historico-service";
+import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 
 /**
  * POST /api/compras/comprar
@@ -54,6 +55,7 @@ export async function POST(request: NextRequest) {
     quantidade_alocada: number;
     quantidade_excedente: number;
   }> = [];
+  let firstOcId: string | null = null;
 
   // Per-pedido audit aggregator (1 evento compra_item_comprado por pedido).
   const eventosPorPedido = new Map<
@@ -65,11 +67,13 @@ export async function POST(request: NextRequest) {
     for (const { sku, quantidade_comprada } of itens) {
       if (!sku || quantidade_comprada <= 0) continue;
 
-      // Fetch all order items for this SKU that are aguardando_compra
+      // Fetch all order items for this SKU that are aguardando_compra.
+      // Include fornecedor_oc + pedido.empresa_origem_id + pedido.separacao_galpao_id
+      // pra resolver find-or-create da OC.
       const { data: orderItems, error: fetchErr } = await supabase
         .from("siso_pedido_itens")
         .select(
-          "id, pedido_id, quantidade_pedida, compra_quantidade_solicitada, siso_pedidos(criado_em)",
+          "id, pedido_id, quantidade_pedida, compra_quantidade_solicitada, fornecedor_oc, siso_pedidos(criado_em, empresa_origem_id, separacao_galpao_id)",
         )
         .eq("sku", sku)
         .eq("compra_status", "aguardando_compra")
@@ -106,16 +110,51 @@ export async function POST(request: NextRequest) {
           Number(item.quantidade_pedida ?? 0);
         const qtyParaEsteItem = Math.min(remaining, qtySolicitada);
 
+        // Resolve fornecedor + galpao_id pra find-or-create da OC.
+        // Prioridade: fornecedor_oc (set pelo operador via validar-oc-item) →
+        // fallback no mapeamento canônico por prefixo de SKU.
+        const fornecedor =
+          ((item as { fornecedor_oc?: string | null }).fornecedor_oc as
+            | string
+            | null) ?? getFornecedorBySku(sku).fornecedor;
+        const pedidoData = item.siso_pedidos as {
+          empresa_origem_id?: string;
+          separacao_galpao_id?: string | null;
+        } | null;
+        const empresaOrigemId = pedidoData?.empresa_origem_id ?? null;
+        let galpaoId = pedidoData?.separacao_galpao_id ?? null;
+        if (!galpaoId && empresaOrigemId) {
+          const { data: pref } = await supabase
+            .from("siso_empresa_galpoes_preferenciais")
+            .select("galpao_id")
+            .eq("empresa_id", empresaOrigemId)
+            .limit(1)
+            .maybeSingle();
+          galpaoId = (pref?.galpao_id as string | null) ?? null;
+        }
+
+        const ocId = await findOrCreateOC(supabase, {
+          fornecedor,
+          galpaoId,
+          empresaId: empresaOrigemId,
+          sku,
+        });
+        if (!firstOcId && ocId) firstOcId = ocId;
+
+        const updatePayload: Record<string, unknown> = {
+          compra_status: "comprado",
+          compra_quantidade_comprada: qtyParaEsteItem,
+          comprado_em: now,
+          comprado_por: session.id,
+          comprado_por_nome: session.nome,
+        };
+        if (ocId) updatePayload.ordem_compra_id = ocId;
+        // P6 #6.29/#3.11 — persiste fornecedor escolhido no body pra audit.
+        if (fornecedorOc) updatePayload.fornecedor_oc = fornecedorOc;
+
         const { error: updateErr } = await supabase
           .from("siso_pedido_itens")
-          .update({
-            compra_status: "comprado",
-            compra_quantidade_comprada: qtyParaEsteItem,
-            comprado_em: now,
-            comprado_por: session.id,
-            comprado_por_nome: session.nome,
-            fornecedor_oc: fornecedorOc,
-          })
+          .update(updatePayload)
           .eq("id", item.id);
 
         if (updateErr) {
@@ -166,9 +205,10 @@ export async function POST(request: NextRequest) {
       usuario: session.nome,
       total_skus: resultados.length,
       total_itens: resultados.reduce((s, r) => s + r.itens_marcados, 0),
+      ordem_id: firstOcId,
     });
 
-    return NextResponse.json({ ok: true, resultados });
+    return NextResponse.json({ ok: true, resultados, ordem_id: firstOcId });
   } catch (err) {
     logger.error("compras-comprar", "Erro ao processar compra", {
       error: err instanceof Error ? err.message : String(err),
@@ -178,4 +218,48 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+// ─── Helper: find or create OC (defense-in-depth para finding #3.2) ──────
+// Mesmo que `validar-oc-item` já faça find-or-create, /compras/comprar
+// precisa garantir vínculo — senão compras-release nunca acha a OC e o
+// pedido fica preso.
+async function findOrCreateOC(
+  supabase: ReturnType<typeof createServiceClient>,
+  args: { fornecedor: string; galpaoId: string | null; empresaId: string | null; sku: string },
+): Promise<string | null> {
+  const { fornecedor, galpaoId, empresaId, sku } = args;
+  if (!fornecedor) return null;
+
+  let query = supabase
+    .from("siso_ordens_compra")
+    .select("id")
+    .eq("fornecedor", fornecedor)
+    .eq("status", "aguardando_compra")
+    .limit(1);
+  if (galpaoId) query = query.eq("galpao_id", galpaoId);
+  else if (empresaId) query = query.eq("empresa_id", empresaId);
+
+  const { data: existing } = await query.maybeSingle();
+  if (existing) return existing.id as string;
+
+  const { data: created, error } = await supabase
+    .from("siso_ordens_compra")
+    .insert({
+      fornecedor,
+      galpao_id: galpaoId,
+      empresa_id: empresaId,
+      status: "aguardando_compra",
+      observacao: `Criada por /compras/comprar — SKU ${sku}`,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    logger.warn("compras-comprar", "Erro criando OC", {
+      error: error.message,
+      fornecedor,
+    });
+    return null;
+  }
+  return created.id as string;
 }

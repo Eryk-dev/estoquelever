@@ -98,19 +98,23 @@ export default function GuardaTabletPage() {
     }
   }, [pend, qtyInput]);
 
-  // Inicia automaticamente quando abre a tela (idempotente)
-  useEffect(() => {
-    if (!pend) return;
-    if (pend.status === "pendente") {
-      sisoFetch(`/api/wms/guarda/${id}/iniciar`, { method: "POST" })
-        .then(() => {
-          qc.invalidateQueries({ queryKey: ["wms-guarda", id] });
-        })
-        .catch(() => {
-          /* ignore — operador pode confirmar mesmo sem o status mudar */
-        });
-    }
-  }, [pend, id, qc]);
+  const iniciarMut = useMutation({
+    mutationFn: async () => {
+      const r = await sisoFetch(`/api/wms/guarda/${id}/iniciar`, {
+        method: "POST",
+      });
+      if (!r.ok) {
+        const b = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error || `HTTP ${r.status}`);
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wms-guarda", id] });
+      toast.success("Guarda iniciada — você é o operador responsável");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const imprimir = useMutation({
     mutationFn: async () => {
@@ -269,7 +273,19 @@ export default function GuardaTabletPage() {
         >
           <Icon name="chevron-r" size={11} /> Fila
         </Link>
-        <StatusBadge status={pend.status} size="lg" />
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {pend?.status === "pendente" ? (
+            <button
+              className="wms-btn wms-btn-primary"
+              onClick={() => iniciarMut.mutate()}
+              disabled={iniciarMut.isPending}
+            >
+              <Icon name="arrow-right" size={12} />
+              {iniciarMut.isPending ? "Iniciando…" : "Começar guarda"}
+            </button>
+          ) : null}
+          <StatusBadge status={pend.status} size="lg" />
+        </div>
       </div>
 
       {/* Produto */}

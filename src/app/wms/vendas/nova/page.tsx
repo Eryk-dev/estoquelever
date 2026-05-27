@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useMemo, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
@@ -19,6 +19,11 @@ import type {
   CriarVendaDiretaResponse,
   ModoVendaDireta,
 } from "@/types";
+
+interface VendedorLite {
+  id: string;
+  nome: string;
+}
 
 const CANAIS = ["Balcão", "WhatsApp", "Telefone", "Outro"];
 
@@ -67,9 +72,36 @@ export default function NovaVendaPage() {
 function NovaVendaBody() {
   const router = useRouter();
   const { user } = useAuth();
-  const { can } = usePermissoes();
+  const { can, permissoes } = usePermissoes();
   const podeCriar = can("vendas.criar");
+  // Permission gate scaffold pra "criar em nome de X" (finding 5.28).
+  // A permissão `vendas.criar_em_nome_de` será adicionada pelo P4. Checa
+  // direto no Set (em vez de can(...)) pra contornar o tipo restrito
+  // PermissaoCodigo. Hoje retorna false sempre — UI fica oculta.
+  const podeCriarEmNomeDe = permissoes.has("vendas.criar_em_nome_de");
   const { data: galpoes } = useGalpoes();
+
+  // Vendedores disponíveis pra atribuir o pedido. Só carrega quando o
+  // operador tem `vendas.criar_em_nome_de` (P4). Endpoint atual exige
+  // sistema.usuarios; P4 deve expor um endpoint mais leve.
+  const vendedoresQuery = useQuery({
+    queryKey: ["wms-vendedores-lite"],
+    queryFn: async () => {
+      const r = await sisoFetch("/api/wms/admin/usuarios");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const list = (await r.json()) as Array<{
+        id: string;
+        nome: string;
+        ativo: boolean;
+        cargos?: string[];
+      }>;
+      return list
+        .filter((u) => u.ativo && (u.cargos ?? []).includes("vendedor"))
+        .map((u) => ({ id: u.id, nome: u.nome }) satisfies VendedorLite);
+    },
+    enabled: podeCriarEmNomeDe,
+    staleTime: 60_000,
+  });
 
   const empresas = useMemo<EmpresaLite[]>(
     () =>
@@ -87,6 +119,13 @@ function NovaVendaBody() {
   const [modo, setModo] = useState<ModoVendaDireta>("separacao");
   const [items, setItems] = useState<ItemForm[]>([emptyItem()]);
   const [enviando, setEnviando] = useState(false);
+  // Override do vendedor (P4 gate — finding 5.28). null = usa o operador
+  // logado (comportamento padrão). Quando setado, o pedido fica em nome
+  // do vendedor escolhido. Backend ignora o campo hoje; P4 deve
+  // implementar `vendedor_id_override` no contrato de /vendas/criar.
+  const [vendedorIdOverride, setVendedorIdOverride] = useState<string | null>(
+    null,
+  );
 
   const addItem = () => setItems((arr) => [...arr, emptyItem()]);
   const updateItem = (idx: number, patch: Partial<ItemForm>) =>
@@ -128,7 +167,9 @@ function NovaVendaBody() {
     if (!valido || enviando) return;
     setEnviando(true);
     try {
-      const payload: CriarVendaDiretaRequest = {
+      const payload: CriarVendaDiretaRequest & {
+        vendedor_id_override?: string;
+      } = {
         cliente_nome: clienteNome.trim(),
         cliente_cpf_cnpj: clienteCpf.trim() || null,
         canal_venda: canal,
@@ -141,6 +182,11 @@ function NovaVendaBody() {
         })),
         idempotency_key: crypto.randomUUID(),
       };
+      // P4 scaffold: envia override quando o operador tem a permissão.
+      // Backend ainda ignora hoje (gravando user.id) — P4 vai consumir.
+      if (podeCriarEmNomeDe && vendedorIdOverride) {
+        payload.vendedor_id_override = vendedorIdOverride;
+      }
 
       const res = await sisoFetch("/api/wms/vendas/criar", {
         method: "POST",
@@ -159,8 +205,10 @@ function NovaVendaBody() {
 
       const data = (await res.json()) as CriarVendaDiretaResponse;
       if (data.degradado && data.motivo_degradacao === "falta_saldo") {
+        const skus = (data.skus_sem_saldo ?? []).join(", ") || "—";
         toast.warning(
-          `Sem saldo de ${(data.skus_sem_saldo ?? []).join(", ")} — pedido foi pra fila de separação.`,
+          `Pedido ${data.numero} criado, mas vai pra separação: sem saldo de ${skus}.`,
+          { duration: 10000 },
         );
       } else if (modo === "baixa_direta") {
         toast.success(`Pedido ${data.numero} criado e baixado do estoque`);
@@ -253,6 +301,40 @@ function NovaVendaBody() {
             </select>
           </Field>
         </div>
+
+        {/* "Criar em nome de X" — gate por permissão vendas.criar_em_nome_de
+            (P4). Hoje renderiza zero porque a perm não existe; quando P4
+            adicionar, esta seção fica visível pra admins/operadores. */}
+        {podeCriarEmNomeDe && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 6 }}>
+            <Field label="Criar em nome de">
+              <select
+                value={vendedorIdOverride ?? ""}
+                onChange={(e) =>
+                  setVendedorIdOverride(e.target.value || null)
+                }
+                className="wms-input"
+                disabled={vendedoresQuery.isLoading || vendedoresQuery.isError}
+              >
+                <option value="">
+                  Eu mesmo ({user?.nome ?? "—"})
+                </option>
+                {(vendedoresQuery.data ?? [])
+                  .filter((v) => v.id !== user?.id)
+                  .map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.nome}
+                    </option>
+                  ))}
+              </select>
+              <p className="wms-td-mute" style={{ fontSize: 11, marginTop: 4 }}>
+                {vendedorIdOverride
+                  ? "Pedido será criado em nome do vendedor selecionado."
+                  : "Pedido será atribuído a você."}
+              </p>
+            </Field>
+          </div>
+        )}
       </section>
 
       {/* Modo */}

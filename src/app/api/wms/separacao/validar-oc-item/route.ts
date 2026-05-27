@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { registrarEvento } from "@/lib/historico-service";
+import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
 
 /**
  * POST /api/separacao/validar-oc-item
@@ -84,19 +85,84 @@ export async function POST(request: NextRequest) {
 
     // ─── Process each item ──────────────────────────────────────
     if (acao === "encontrei") {
-      for (const item of items) {
+      // Pre-fetch pedido contexto pra cada item (empresa + galpão + numero).
+      // Sem isso, não temos como resolver tripla WMS pra emitir o par S+L.
+      const pedidoIds = [...new Set(items.map((i) => i.pedido_id as string))];
+      const { data: pedidosCtx } = await supabase
+        .from("siso_pedidos")
+        .select("id, numero, empresa_origem_id, separacao_galpao_id")
+        .in("id", pedidoIds);
+      const ctxMap = new Map<
+        string,
+        { numero: string; empresa: string | null; galpao: string | null }
+      >(
+        (pedidosCtx ?? []).map((p) => [
+          p.id as string,
+          {
+            numero: (p.numero as string) ?? "",
+            empresa: (p.empresa_origem_id as string | null) ?? null,
+            galpao: (p.separacao_galpao_id as string | null) ?? null,
+          },
+        ]),
+      );
+
+      // Re-fetch items com produto_id (Tiny bigint) + mov_saida_id (pra
+      // short-circuit idempotente em retry — clique duplo do operador).
+      const { data: itensFull } = await supabase
+        .from("siso_pedido_itens")
+        .select("id, pedido_id, produto_id, sku, quantidade_pedida, mov_saida_id")
+        .in(
+          "id",
+          items.map((i) => i.id),
+        );
+
+      for (const item of itensFull ?? []) {
+        // Idempotência: item já picado anteriormente — pula pickMovPicking
+        // pra evitar dupla baixa em retry. O update abaixo é safe (mesmos
+        // campos, sem regredir estado).
+        const jaPicado = Boolean(item.mov_saida_id);
+
+        const ctx = ctxMap.get(item.pedido_id as string);
+        let movSaidaId: string | null = null;
+        if (!jaPicado && ctx) {
+          try {
+            const result = await pickMovPicking({
+              empresa_origem_id: ctx.empresa,
+              galpao_id: ctx.galpao,
+              pedido_id: String(item.pedido_id),
+              pedido_numero: ctx.numero,
+              item_id: Number(item.id),
+              produto_id_tiny: String(item.produto_id),
+              sku: String(item.sku),
+              qty: Number(item.quantidade_pedida ?? 0),
+              usuario_id: user.id,
+              contexto: "encontrei_oc",
+            });
+            movSaidaId = result?.movSaidaId ?? null;
+          } catch (movErr) {
+            logger.warn("validar-oc-item", "pickMovPicking falhou em encontrei", {
+              item_id: item.id,
+              error: movErr instanceof Error ? movErr.message : String(movErr),
+            });
+          }
+        }
+
+        const updates: Record<string, unknown> = {
+          compra_status: null,
+          fornecedor_oc: null,
+          compra_quantidade_solicitada: null,
+          compra_solicitada_em: null,
+          ordem_compra_id: null,
+          separacao_marcado: true,
+          bipado_completo: true,
+          quantidade_bipada: Number(item.quantidade_pedida ?? 0),
+          quantidade_pega: Number(item.quantidade_pedida ?? 0),
+        };
+        if (movSaidaId) updates.mov_saida_id = movSaidaId;
+
         const { error: updErr } = await supabase
           .from("siso_pedido_itens")
-          .update({
-            compra_status: null,
-            fornecedor_oc: null,
-            compra_quantidade_solicitada: null,
-            compra_solicitada_em: null,
-            ordem_compra_id: null,
-            separacao_marcado: true,
-            bipado_completo: true,
-            quantidade_bipada: Number(item.quantidade_pedida ?? 0),
-          })
+          .update(updates)
           .eq("id", item.id);
 
         if (updErr) {
@@ -116,11 +182,17 @@ export async function POST(request: NextRequest) {
           evento: "oc_item_encontrado",
           usuarioId: user.id,
           usuarioNome: user.nome,
-          detalhes: { sku: item.sku, item_id: item.id },
+          detalhes: { sku: item.sku, item_id: item.id, mov_saida_id: movSaidaId },
         });
       }
     } else if (acao === "desfazer_encontrei") {
-      // Undo "encontrei" — restore item to oc_pendente
+      // Undo "encontrei" — restore item to oc_pendente.
+      // TODO(#2.6-followup): com o fix #2.6, o branch "encontrei" agora emite
+      // mov S nf_venda via pickMovPicking e persiste mov_saida_id no item.
+      // Este branch ainda NÃO estorna essa mov nem limpa mov_saida_id /
+      // quantidade_pega — saldo permanece decrementado após desfazer_encontrei.
+      // Mitigação: o flow cancelar/desfazer-parcial estorna via mov_saida_id
+      // se o pedido for cancelado depois. Fix completo escalado pra P3/P6.
       for (const item of items) {
         const fornecedorInfo = getFornecedorBySku(item.sku);
 

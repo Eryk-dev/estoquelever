@@ -53,11 +53,10 @@ interface PedidoCardWmsProps {
   onClick?: () => void;
   /**
    * Modo interativo (aba pendente): renderiza footer com dropdown da decisão +
-   * botão "Aprovar →" e Recusar opcional. Quando undefined, o card é só leitura.
+   * botão "Aprovar →". Quando undefined, o card é só leitura.
    */
   interactive?: {
     onApprove: (decisao: Decisao) => Promise<void> | void;
-    onReject?: () => Promise<void> | void;
     loading?: boolean;
   };
 }
@@ -358,12 +357,6 @@ function PedidoCardWms({ pedido, onClick, interactive }: PedidoCardWmsProps) {
     void interactive.onApprove(decisao);
   }
 
-  function handleReject(e: React.MouseEvent) {
-    e.stopPropagation();
-    if (!interactive?.onReject) return;
-    void interactive.onReject();
-  }
-
   return (
     <article
       className={`wms-pcard-wrap${onClick ? " is-clickable" : ""}`}
@@ -480,16 +473,6 @@ function PedidoCardWms({ pedido, onClick, interactive }: PedidoCardWmsProps) {
               )}
             </div>
             <div className="wms-pcard-footer-right">
-              {interactive.onReject && (
-                <button
-                  type="button"
-                  className="wms-btn wms-btn-ghost wms-btn-sm"
-                  onClick={handleReject}
-                  disabled={interactive.loading}
-                >
-                  Recusar
-                </button>
-              )}
               <button
                 type="button"
                 className="wms-btn-approve"

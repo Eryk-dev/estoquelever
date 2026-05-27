@@ -384,10 +384,19 @@ function ReceberBody() {
                 totalEtiquetas?: number;
                 totalFolhas?: number;
                 fallbackEnvelope?: boolean;
+                ignorados?: string[];
               };
-              toast.success(
-                `${out.totalEtiquetas} etiquetas em ${out.totalFolhas} folhas${out.fallbackEnvelope ? " (impressora de envio — configure uma de produto)" : ""}`,
-              );
+              const ignoradosCount = out.ignorados?.length ?? 0;
+              if (ignoradosCount > 0) {
+                toast.warning(
+                  `${out.totalEtiquetas ?? 0} impressas, ${ignoradosCount} pendência${ignoradosCount === 1 ? "" : "s"} ignorada${ignoradosCount === 1 ? "" : "s"} (sem loc destino). Configurar em /wms/guarda.`,
+                  { duration: 8000 },
+                );
+              } else {
+                toast.success(
+                  `${out.totalEtiquetas} etiquetas em ${out.totalFolhas} folhas${out.fallbackEnvelope ? " (impressora de envio — configure uma de produto)" : ""}`,
+                );
+              }
             })
             .catch((err) => {
               toast.warning(`Recebimento ok, falha impressão: ${err.message}`);

@@ -188,14 +188,43 @@ export async function POST(request: NextRequest) {
         detalhes: { sku, galpao_id },
       }).catch(() => {});
 
-      // WMS cutover R→L+S: pedido virou embalado (forward set).
-      // Helper é idempotente — em modo Tiny não faz nada.
-      dispararCutoverSePronto(result.pedido_id).catch((err) => {
-        logger.warn("bipar-embalagem", "Falha ao disparar cutover", {
-          pedidoId: result.pedido_id,
-          err: err instanceof Error ? err.message : String(err),
+      // PR-1 safety: só dispara cutover quando NF está emitida E todos os itens
+      // estão picados. Sem essa dupla checagem, RPC `pedido_completo=true` pode
+      // disparar mesmo quando algum item OC veio sem qty_solicitada cumprida.
+      // O helper `dispararCutoverSePronto` já gate por NF internamente, mas
+      // o defense-in-depth aqui evita logs de warn em sequência e deixa o
+      // contrato explícito no callsite.
+      const { data: pedidoComp } = await supabase
+        .from("siso_pedidos")
+        .select("nota_fiscal_id, chave_acesso_nf")
+        .eq("id", result.pedido_id)
+        .single();
+      const nfPresente = !!(
+        pedidoComp?.nota_fiscal_id && pedidoComp?.chave_acesso_nf
+      );
+      const { data: faltantes } = await supabase
+        .from("siso_pedido_itens")
+        .select("id, separacao_marcado, compra_status, quantidade_pega")
+        .eq("pedido_id", result.pedido_id)
+        .neq("compra_status", "cancelado")
+        .or("separacao_marcado.eq.false,quantidade_pega.is.null");
+      const allPicked = (faltantes ?? []).length === 0;
+      if (nfPresente && allPicked) {
+        // WMS cutover R→L+S: pedido virou embalado (forward set).
+        // Helper é idempotente — em modo Tiny não faz nada.
+        dispararCutoverSePronto(result.pedido_id).catch((err) => {
+          logger.warn("bipar-embalagem", "Falha ao disparar cutover", {
+            pedidoId: result.pedido_id,
+            err: err instanceof Error ? err.message : String(err),
+          });
         });
-      });
+      } else {
+        logger.info("bipar-embalagem", "cutover skipped — guarda dupla", {
+          pedidoId: result.pedido_id,
+          nfPresente,
+          allPicked,
+        });
+      }
 
       // Fast path: bip RPC already claimed the etiqueta and returned print fields
       // Slow path: claim wasn't included (already claimed elsewhere) → fall back to full flow

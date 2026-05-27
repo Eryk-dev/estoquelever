@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getEmpresaById } from "@/lib/empresa-lookup";
-import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
 import { kickWorker } from "@/lib/execution-worker";
 import { logger } from "@/lib/logger";
 import { registrarEvento } from "@/lib/historico-service";
@@ -12,6 +11,7 @@ import {
   resolverProdutoWms,
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
+import { rotearPedidoDoBanco } from "@/lib/wms/roteamento";
 
 type Decisao = "propria" | "transferencia" | "oc";
 
@@ -105,27 +105,68 @@ export async function POST(request: NextRequest) {
     filialExecucao = filialOrigem;
     separacaoGalpaoId = empresaOrigem.galpaoId;
   } else {
-    // transferencia: find a support empresa in another galpão
-    const empresasDoGrupo = empresaOrigem.grupoId
-      ? await getEmpresasDoGrupo(empresaOrigem.grupoId)
-      : [];
+    // transferencia: usa rotearPedidoDoBanco (geo-priority + saldo real WMS).
+    // Substitui o getEmpresasDoGrupo legacy que ignorava saldo e escolhia
+    // empresa-suporte só pelo grupo+galpão, sem checar cobertura real.
 
-    const empresaSuporte = empresasDoGrupo.find(
-      (e) => e.galpaoId !== empresaOrigem.galpaoId,
-    );
+    // Carrega itens pra alimentar roteamento (precisa quantidade)
+    const { data: itensParaRotear } = await supabase
+      .from("siso_pedido_itens")
+      .select("produto_id, quantidade_pedida")
+      .eq("pedido_id", pedidoId);
 
-    if (empresaSuporte) {
-      empresaExecucaoId = empresaSuporte.empresaId;
-      filialExecucao = empresaSuporte.galpaoNome;
-      separacaoGalpaoId = empresaSuporte.galpaoId;
+    // Map Tiny produto_id → WMS uuid via empresa origem (que é a dona
+    // do tiny_produto_id armazenado em siso_pedido_itens.produto_id).
+    const itens: Array<{ produto_id: string; qty: number }> = [];
+    for (const it of itensParaRotear ?? []) {
+      const { data: map } = await supabase
+        .from("siso_produto_empresas")
+        .select("produto_id")
+        .eq("empresa_id", pedido.empresa_origem_id)
+        .eq("tiny_produto_id", Number(it.produto_id))
+        .maybeSingle();
+      if (map?.produto_id) {
+        itens.push({
+          produto_id: map.produto_id as string,
+          qty: Number(it.quantidade_pedida ?? 0),
+        });
+      }
+    }
+
+    const rota = await rotearPedidoDoBanco(pedido.empresa_origem_id, itens);
+
+    if (rota.decisao === "transferencia" && rota.galpao_id) {
+      // Encontra galpão escolhido
+      const { data: galpaoEsc } = await supabase
+        .from("siso_galpoes")
+        .select("id, nome")
+        .eq("id", rota.galpao_id)
+        .single();
+      // Encontra empresa que tem este galpão como preferred (pra tag de tier
+      // e fila legada). Em 3D não há "empresa dona" física — usamos qualquer
+      // empresa com este galpão como preferred só pra identificar a fila.
+      const { data: empresaSuporte } = await supabase
+        .from("siso_empresa_galpoes_preferenciais")
+        .select("empresa_id")
+        .eq("galpao_id", rota.galpao_id)
+        .limit(1)
+        .maybeSingle();
+
+      empresaExecucaoId =
+        (empresaSuporte?.empresa_id as string | null) ?? pedido.empresa_origem_id;
+      filialExecucao = galpaoEsc?.nome ?? filialOrigem;
+      separacaoGalpaoId = rota.galpao_id;
     } else {
-      // Fallback: use origin (worker will handle gracefully)
+      // Sem cobertura: fallback origem (degrada pra reserva-orphan ou falha
+      // em criarReservasPedido). O front-end já deveria estar bloqueando
+      // este caso via decisaoIsAvailable.
       empresaExecucaoId = pedido.empresa_origem_id;
       filialExecucao = filialOrigem;
       separacaoGalpaoId = empresaOrigem.galpaoId;
-      logger.warn("aprovar", "Transferência sem empresa suporte — fallback para origem", {
+      logger.warn("aprovar", "Roteamento sem cobertura — fallback origem", {
         pedidoId,
-        empresaOrigemId: pedido.empresa_origem_id,
+        rota_decisao: rota.decisao,
+        rota_motivo: (rota as { motivo?: string }).motivo,
       });
     }
   }
@@ -143,7 +184,11 @@ export async function POST(request: NextRequest) {
     const reservaResult = await criarReservasPedido({
       supabase,
       pedidoId,
-      empresaExecucaoId,
+      // empresaOrigemId pra resolver produto: siso_pedido_itens.produto_id é o
+      // tiny_produto_id da empresa origem (gravado pelo webhook). Em
+      // transferência, empresaExecucaoId é a empresa-tag do galpão destino, que
+      // pode ter um tiny_produto_id diferente pro mesmo SKU.
+      empresaOrigemId: pedido.empresa_origem_id,
       separacaoGalpaoId,
     });
     if (!reservaResult.ok) {
@@ -259,10 +304,17 @@ type ReservaResult =
 async function criarReservasPedido(args: {
   supabase: ReturnType<typeof createServiceClient>;
   pedidoId: string;
-  empresaExecucaoId: string;
+  /**
+   * Empresa origem do pedido — usada pra resolver `tiny_produto_id` em
+   * `siso_pedido_itens.produto_id` (que foi gravado pelo webhook com o id
+   * do Tiny da empresa que recebeu o pedido). Em transferência, a empresa
+   * que executa a saída pode ser diferente — mas o tiny_produto_id no item
+   * continua sendo da origem.
+   */
+  empresaOrigemId: string;
   separacaoGalpaoId: string;
 }): Promise<ReservaResult> {
-  const { supabase, pedidoId, empresaExecucaoId, separacaoGalpaoId } = args;
+  const { supabase, pedidoId, empresaOrigemId, separacaoGalpaoId } = args;
 
   // TOCTOU note: o SELECT abaixo + o loop de INSERTs subsequentes formam
   // uma janela onde 2 aprovar() concorrentes pro mesmo pedidoId podem
@@ -358,7 +410,7 @@ async function criarReservasPedido(args: {
 
     try {
       const produtoWmsId = await resolverProdutoWms(
-        empresaExecucaoId,
+        empresaOrigemId,
         String(item.produto_id),
       );
       const locId = await buscarLocComMaiorSaldoNoGalpao(

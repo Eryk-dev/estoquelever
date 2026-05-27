@@ -361,41 +361,33 @@ export function validarTransferenciaIntraGalpao(input: {
 /**
  * Par S+E NEUTRO intra-galpão (replenishment / put-away). Em 3D não há
  * empresa — estoque migra de uma loc física pra outra.
+ *
+ * P3 #8.8: agora delega pra RPC `wms_replenishment_intra_galpao` que envolve
+ * o par S+E na MESMA transação. Garante que se leg 2 (E) falhar, leg 1 (S)
+ * faz rollback — saldo não evapora.
  */
 export async function replenishmentIntraGalpao(
   input: ReplenishmentInput,
-): Promise<{ origem_id: string }> {
+): Promise<{ origem_id: string; mov_ids: string[] }> {
   validarTransferenciaIntraGalpao(input);
-  const origem_id = input.origem_id ?? crypto.randomUUID();
-  for (const item of input.itens) {
-    await inserirMovimentacao({
-      tripla: {
-        produto_id: item.produto_id,
-        galpao_id: input.galpao_id,
-        localizacao_id: input.localizacao_origem_id,
-      },
-      tipo: "S",
-      qty: item.qty,
-      origem_tipo: "transferencia_localizacao",
-      origem_id,
-      usuario_id: input.usuario_id,
-      motivo: input.observacoes,
+  const sb = createServiceClient();
+  const { data, error } = await sb.rpc("wms_replenishment_intra_galpao", {
+    p_galpao_id: input.galpao_id,
+    p_localizacao_origem_id: input.localizacao_origem_id,
+    p_localizacao_destino_id: input.localizacao_destino_id,
+    p_itens: input.itens.map((i) => ({ produto_id: i.produto_id, qty: i.qty })),
+    p_usuario_id: input.usuario_id,
+    p_observacoes: input.observacoes ?? null,
+    p_origem_id: input.origem_id ?? null,
+  });
+  if (error) {
+    logger.error("wms.replenishment", "RPC wms_replenishment_intra_galpao falhou", {
+      error: error.message,
     });
-    await inserirMovimentacao({
-      tripla: {
-        produto_id: item.produto_id,
-        galpao_id: input.galpao_id,
-        localizacao_id: input.localizacao_destino_id,
-      },
-      tipo: "E",
-      qty: item.qty,
-      origem_tipo: "transferencia_localizacao",
-      origem_id,
-      usuario_id: input.usuario_id,
-      motivo: input.observacoes,
-    });
+    throw error;
   }
-  return { origem_id };
+  const r = data as { origem_id: string; mov_ids: string[] };
+  return { origem_id: r.origem_id, mov_ids: r.mov_ids ?? [] };
 }
 
 /**
@@ -432,15 +424,20 @@ export interface AjusteManualInput {
  * Ajuste manual de saldo numa tripla. `motivo` é obrigatório (>=3 chars) e
  * `motivo_categoria` precisa ser uma das 6 categorias estruturadas — ajuste
  * sem justificativa ou sem categoria não passa.
+ *
+ * Retorna `{ mov_id }` pra permitir estorno via `estornarAjuste` /
+ * `POST /api/wms/ajuste/[id]/estornar`.
  */
-export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
+export async function ajustarEstoque(
+  input: AjusteManualInput,
+): Promise<{ mov_id: string }> {
   if (!input.motivo || input.motivo.trim().length < 3) {
     throw new Error("motivo do ajuste é obrigatório (≥3 caracteres)");
   }
   if (!input.motivo_categoria) {
     throw new Error("motivo_categoria do ajuste é obrigatório");
   }
-  await inserirMovimentacao({
+  const mov = await inserirMovimentacao({
     tripla: input.tripla,
     tipo: input.direcao === "entrada" ? "E" : "S",
     qty: input.qty,
@@ -451,6 +448,45 @@ export async function ajustarEstoque(input: AjusteManualInput): Promise<void> {
     custo_unitario:
       input.direcao === "entrada" ? input.custo_unitario : undefined,
     usuario_id: input.usuario_id,
+  });
+  return { mov_id: mov.id };
+}
+
+/**
+ * P3 #3.20 reverse: estorna um ajuste manual via id da mov.
+ *
+ * Valida que a mov é de fato `origem_tipo='ajuste_manual'` antes de delegar
+ * pra `estornarMovimentacao`. Estornar outras origens (nf_compra, venda_manual,
+ * etc) tem caminhos próprios — esse helper é restrito a ajustes feitos via
+ * `ajustarEstoque`/`POST /api/wms/ajuste`.
+ *
+ * Idempotência: `estornarMovimentacao` rejeita double-estorno via guard
+ * `estorno_de IS NOT NULL`.
+ */
+export async function estornarAjuste(input: {
+  mov_id: string;
+  usuario_id: string;
+  motivo: string;
+}): Promise<void> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo é obrigatório (≥3 caracteres)");
+  }
+  const sb = createServiceClient();
+  const { data: mov } = await sb
+    .from("siso_movimentacoes")
+    .select("origem_tipo")
+    .eq("id", input.mov_id)
+    .maybeSingle();
+  if (!mov) throw new Error("mov não encontrada");
+  if ((mov as { origem_tipo: string }).origem_tipo !== "ajuste_manual") {
+    throw new Error(
+      `mov não é ajuste_manual (origem_tipo=${(mov as { origem_tipo: string }).origem_tipo})`,
+    );
+  }
+  await estornarMovimentacao({
+    mov_id: input.mov_id,
+    usuario_id: input.usuario_id,
+    motivo: `Estorno ajuste manual: ${input.motivo}`,
   });
 }
 
@@ -586,9 +622,59 @@ export async function reconciliarRetroativo(
     estorno_de: m.id,
     usuario_id: input.usuario_id,
     motivo: `reconciliado com mov ${input.compra_mov_id}`,
+    // Trilha de auditoria: a mov de "compra" que cobriu o lançamento retroativo
+    // viaja em origem_detalhes pra reconstruir a cadeia retroativo→estorno→compra.
+    origem_detalhes: { compra_mov_id: input.compra_mov_id },
   });
   logger.info("wms.movs", "lançamento retroativo reconciliado", {
     retro: m.id,
     compra: input.compra_mov_id,
   });
+}
+
+/**
+ * P3 #8.8 reverse: desfaz um replenishment estornando o par S+E completo.
+ *
+ * Replenishment intra-galpão grava par S+E no ledger com o MESMO `origem_id`
+ * e `origem_tipo='transferencia_localizacao'`. Esse helper localiza todas as
+ * movs com esse origem_id e dispara `estornarMovimentacao` em cada uma.
+ *
+ * Idempotente: se uma mov já foi estornada (ou é um estorno), pula a
+ * tentativa e continua com as próximas. `estornarMovimentacao` rejeita
+ * double-estorno via guard `estorno_de IS NOT NULL`.
+ */
+export async function reverterReplenishment(input: {
+  origem_id: string;
+  usuario_id: string;
+  motivo: string;
+}): Promise<{ movsEstornadas: number }> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo é obrigatório (≥3 caracteres)");
+  }
+  const sb = createServiceClient();
+  const { data: movs, error } = await sb
+    .from("siso_movimentacoes")
+    .select("id")
+    .eq("origem_id", input.origem_id)
+    .eq("origem_tipo", "transferencia_localizacao");
+  if (error) throw error;
+  if (!movs || movs.length === 0) {
+    throw new Error("nenhuma mov encontrada com esse origem_id");
+  }
+  let estornadas = 0;
+  for (const m of movs as Array<{ id: string }>) {
+    try {
+      await estornarMovimentacao({
+        mov_id: m.id,
+        usuario_id: input.usuario_id,
+        motivo: `Reverter replenishment ${input.origem_id}: ${input.motivo}`,
+      });
+      estornadas++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/já foi estornada|já é um estorno/.test(msg)) continue;
+      throw err;
+    }
+  }
+  return { movsEstornadas: estornadas };
 }

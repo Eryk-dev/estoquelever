@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { wmsApi } from "@/lib/wms/api-client";
@@ -20,9 +21,16 @@ interface DevRow {
 }
 
 export default function DevolucoesPage() {
+  const [verClassificadas, setVerClassificadas] = useState(false);
+
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["wms-devolucoes"],
-    queryFn: () => wmsApi<{ rows: DevRow[] }>("/api/wms/devolucoes"),
+    queryKey: ["wms-devolucoes", verClassificadas ? "classificada" : "pendente"],
+    queryFn: () =>
+      wmsApi<{ rows: DevRow[] }>(
+        verClassificadas
+          ? "/api/wms/devolucoes?status=classificada"
+          : "/api/wms/devolucoes",
+      ),
   });
 
   const rows = data?.rows ?? [];
@@ -31,8 +39,23 @@ export default function DevolucoesPage() {
     <>
       <PageHeader
         title="Devoluções"
-        subtitle="Classificação A/B/C/D antes de aplicar ao ledger"
-      />
+        subtitle={
+          verClassificadas
+            ? "Já classificadas — clique pra desclassificar"
+            : "Classificação A/B/C/D antes de aplicar ao ledger"
+        }
+      >
+        <button
+          type="button"
+          className="wms-btn wms-btn-ghost"
+          onClick={() => setVerClassificadas((v) => !v)}
+        >
+          <Icon name="rotate" size={11} />
+          {verClassificadas
+            ? "Ver pendentes"
+            : "Ver classificadas (pra desclassificar)"}
+        </button>
+      </PageHeader>
 
       {isLoading && (
         <div className="wms-loading-pane">Carregando devoluções…</div>
@@ -45,11 +68,15 @@ export default function DevolucoesPage() {
       )}
       {!isLoading && !isError && rows.length === 0 && (
         <div className="wms-empty-block">
-          <h3>Nenhuma devolução pendente</h3>
+          <h3>
+            {verClassificadas
+              ? "Nenhuma devolução classificada"
+              : "Nenhuma devolução pendente"}
+          </h3>
           <p>
-            Quando uma NF de devolução chegar, ela aparece aqui para
-            classificação A (íntegro), B (avariado), C (garantia) ou D (troca
-            de SKU).
+            {verClassificadas
+              ? "Devoluções já classificadas aparecem aqui pra permitir reverter (desclassificar) caso tenha erro."
+              : "Quando uma NF de devolução chegar, ela aparece aqui para classificação A (íntegro), B (avariado), C (garantia) ou D (troca de SKU)."}
           </p>
         </div>
       )}

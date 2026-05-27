@@ -8,6 +8,7 @@ import { usePermissoes } from "@/lib/auth-context";
 import { TriplaPicker } from "@/components/wms/tripla-picker";
 import {
   Icon,
+  Modal,
   PageHeader,
   Field,
   StatusBadge,
@@ -93,13 +94,18 @@ export default function ClassificarPage({
   }>({});
   const [observacoes, setObservacoes] = useState("");
   const [fornecedorId, setFornecedorId] = useState<string>("");
+  const [desclassificarOpen, setDesclassificarOpen] = useState(false);
+  const [desclassificarMotivo, setDesclassificarMotivo] = useState("");
 
+  // Endpoint dedicado (P5) retorna a devolução mesmo quando ela já saiu da fila
+  // (status≠'aguardando_classificacao') — necessário pro fluxo de desclassificar (P3).
   const { data: devResp } = useQuery({
     queryKey: ["wms-devolucao", id],
     queryFn: () =>
       wmsApi<{ devolucao: DevRow }>(`/api/wms/devolucoes/${id}`),
   });
   const dev = devResp?.devolucao;
+  const jaClassificada = dev?.status === "classificada";
 
   const { data: fornecedoresResp } = useQuery({
     queryKey: ["wms-fornecedores"],
@@ -146,7 +152,36 @@ export default function ClassificarPage({
     onSuccess: () => {
       toast.success("Devolução classificada");
       queryClient.invalidateQueries({ queryKey: ["wms-devolucoes"] });
+      queryClient.invalidateQueries({ queryKey: ["wms-devolucoes-classificadas"] });
       queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
+      router.push("/wms/devolucoes");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const desclassificar = useMutation({
+    mutationFn: (motivo: string) =>
+      wmsApi<{ ok: true; movsEstornadas?: number }>(
+        `/api/wms/devolucoes/${id}/desclassificar`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ motivo }),
+        },
+      ),
+    onSuccess: (r) => {
+      toast.success(
+        r.movsEstornadas != null
+          ? `Devolução desclassificada · ${r.movsEstornadas} mov(s) estornada(s)`
+          : "Devolução desclassificada",
+      );
+      setDesclassificarOpen(false);
+      setDesclassificarMotivo("");
+      queryClient.invalidateQueries({ queryKey: ["wms-devolucao", id] });
+      queryClient.invalidateQueries({ queryKey: ["wms-devolucoes"] });
+      queryClient.invalidateQueries({ queryKey: ["wms-devolucoes-classificadas"] });
+      queryClient.invalidateQueries({ queryKey: ["wms-estoque"] });
+      queryClient.invalidateQueries({ queryKey: ["wms-ledger"] });
       router.push("/wms/devolucoes");
     },
     onError: (e: Error) => toast.error(e.message),
@@ -161,16 +196,34 @@ export default function ClassificarPage({
   return (
     <>
       <PageHeader
-        title="Classificar devolução"
-        subtitle="Defina A/B/C/D para aplicar ao ledger"
+        title={jaClassificada ? "Devolução classificada" : "Classificar devolução"}
+        subtitle={
+          jaClassificada
+            ? "Já aplicada ao ledger — use 'Desclassificar' pra reverter"
+            : "Defina A/B/C/D para aplicar ao ledger"
+        }
       >
+        {jaClassificada && podeClassificar && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-danger"
+            onClick={() => {
+              setDesclassificarMotivo("");
+              setDesclassificarOpen(true);
+            }}
+            title="Estorna as movs geradas pela classificação e devolve pra aguardando_classificacao"
+          >
+            <Icon name="rotate" size={11} />
+            Desclassificar
+          </button>
+        )}
         <button
           type="button"
           className="wms-btn wms-btn-ghost"
           onClick={() => router.push("/wms/devolucoes")}
         >
           <Icon name="x" size={11} />
-          Cancelar
+          {jaClassificada ? "Voltar" : "Cancelar"}
         </button>
       </PageHeader>
 
@@ -209,6 +262,20 @@ export default function ClassificarPage({
         </div>
       )}
 
+      {jaClassificada && (
+        <div className="wms-empty-block" style={{ marginBottom: 16 }}>
+          <h3>Devolução já aplicada ao ledger</h3>
+          <p>
+            Pra reverter, clique em <strong>Desclassificar</strong> no topo. As
+            movimentações geradas pela classificação serão estornadas e a
+            devolução volta pra <strong>aguardando_classificacao</strong>{" "}
+            permitindo nova classificação.
+          </p>
+        </div>
+      )}
+
+      {!jaClassificada && (
+        <>
       <h3 className="wms-sec-h">Classificação</h3>
       <div
         style={{
@@ -341,6 +408,71 @@ export default function ClassificarPage({
           {submit.isPending ? "Aplicando…" : "Aplicar classificação ao ledger"}
         </button>
       </div>
+        </>
+      )}
+
+      {desclassificarOpen && (
+        <Modal
+          title="Desclassificar devolução"
+          subtitle={`NF ${dev?.nota_fiscal_id ?? "—"} · ${dev?.empresa_receptora?.nome ?? "—"}`}
+          width={520}
+          onClose={() =>
+            !desclassificar.isPending && setDesclassificarOpen(false)
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                disabled={desclassificar.isPending}
+                onClick={() => setDesclassificarOpen(false)}
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-danger"
+                disabled={
+                  desclassificar.isPending ||
+                  desclassificarMotivo.trim().length < 3
+                }
+                onClick={() =>
+                  desclassificar.mutate(desclassificarMotivo.trim())
+                }
+              >
+                <Icon name="rotate" size={11} />
+                {desclassificar.isPending ? "Desclassificando…" : "Desclassificar"}
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, marginBottom: 12 }}>
+            Estorna todas as movimentações geradas pela classificação anterior
+            (match por janela temporal ±60s da classificada_em) e devolve o
+            status pra <strong>aguardando_classificacao</strong> permitindo
+            re-classificação imediata.
+          </p>
+          <label
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              display: "block",
+              marginBottom: 6,
+            }}
+          >
+            Motivo (≥3 chars)
+          </label>
+          <textarea
+            className="wms-textarea"
+            value={desclassificarMotivo}
+            onChange={(e) => setDesclassificarMotivo(e.target.value)}
+            placeholder="Ex.: classificação errada (item íntegro foi marcado como avariado)"
+            rows={3}
+            autoFocus
+            disabled={desclassificar.isPending}
+          />
+        </Modal>
+      )}
     </>
   );
 }

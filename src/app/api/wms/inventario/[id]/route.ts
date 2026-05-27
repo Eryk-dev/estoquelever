@@ -98,13 +98,43 @@ export async function PATCH(
   }
   const sb = createServiceClient();
 
-  // Captura estado anterior pra logar diff. Não-bloqueante: se falhar,
-  // segue com o UPDATE mesmo assim (logging best-effort, não invariante).
-  const { data: before } = await sb
+  // P3 #4.7: modo_contagem só pode ser alterado em sessão 'planejada'.
+  // Se a sessão já iniciou, mudar blind↔aberto no meio quebra a semântica
+  // das contagens já feitas pelos operadores. SELECT inclui campos extras
+  // (nome, tolerancia_pct, etc.) pra também alimentar o diff logging abaixo.
+  const { data: sessao, error: fetchError } = await sb
     .from("siso_inventario_sessoes")
-    .select("nome, modo_contagem, tolerancia_pct, exige_aprovacao_acima_valor, observacoes")
+    .select("status, nome, modo_contagem, tolerancia_pct, exige_aprovacao_acima_valor, observacoes")
     .eq("id", id)
-    .single();
+    .maybeSingle();
+  if (fetchError) {
+    return wmsErrorResponse({
+      source: "wms.inventario.patch",
+      error: fetchError,
+      requestPath: `/api/wms/inventario/${id}`,
+      requestMethod: "PATCH",
+      metadata: { sessao_id: id },
+    });
+  }
+  if (!sessao) {
+    return NextResponse.json({ error: "sessão não encontrada" }, { status: 404 });
+  }
+  if (
+    allowed.modo_contagem &&
+    allowed.modo_contagem !== (sessao as { modo_contagem: string }).modo_contagem &&
+    (sessao as { status: string }).status !== "planejada"
+  ) {
+    return NextResponse.json(
+      {
+        error: "modo_contagem só pode ser alterado em sessão 'planejada' (ainda não iniciada)",
+        code: "MODO_LOCKED",
+        status_atual: (sessao as { status: string }).status,
+      },
+      { status: 409 },
+    );
+  }
+  // `before` é usado pra logar diff dos campos que mudaram (logging best-effort).
+  const before = sessao;
 
   const { error } = await sb
     .from("siso_inventario_sessoes")
@@ -151,6 +181,33 @@ export async function DELETE(
 
   const { id } = await params;
   const sb = createServiceClient();
+
+  // P3 #4.4: sessão aplicada não pode ser cancelada. Operadora teria
+  // que ESTORNAR (POST /estornar). Cancelar deletaria a trilha sem
+  // reverter as movs no ledger — saldo ficaria inconsistente.
+  const { data: sessao } = await sb
+    .from("siso_inventario_sessoes")
+    .select("status")
+    .eq("id", id)
+    .maybeSingle();
+  if (!sessao) {
+    return NextResponse.json({ error: "sessão não encontrada" }, { status: 404 });
+  }
+  if ((sessao as { status: string }).status === "aplicada") {
+    return NextResponse.json(
+      {
+        error:
+          "sessão já foi aplicada (movs no ledger). Use POST /api/wms/inventario/[id]/estornar para reverter.",
+        code: "SESSAO_APLICADA",
+      },
+      { status: 409 },
+    );
+  }
+  if ((sessao as { status: string }).status === "cancelada") {
+    // Já cancelada — idempotente.
+    return NextResponse.json({ ok: true });
+  }
+
   const { data: locs } = await sb
     .from("siso_inventario_localizacoes")
     .select("localizacao_id")

@@ -588,6 +588,14 @@ export function createContext(opts: {
     });
   }
 
+  async function desfazerGuarda(p: { pendencia_id: string; motivo?: string }) {
+    const motivo = p.motivo ?? "teste cenário desfazer";
+    return http.post<{ movsEstornadas: number }>(
+      `/api/wms/guarda/${p.pendencia_id}/desfazer`,
+      { motivo },
+    );
+  }
+
   async function aguardarPendenciaGuarda(pendenciaId: string, status: string, opts: { timeout_ms?: number } = {}) {
     const timeout = opts.timeout_ms ?? 5_000;
     const deadline = Date.now() + timeout;
@@ -638,17 +646,87 @@ export function createContext(opts: {
     return { id: res.origem_id };
   }
 
+  // ── Transferência com header (fluxo 2 etapas: criar S → receber E) ──
+  async function criarTransferenciaHeader(p: { origem: "CWB" | "SP"; destino: "CWB" | "SP"; items: { sku: string; loc_origem: string; qty: number }[] }) {
+    const galpao_origem_id = staging.galpoes[p.origem.toLowerCase() as "cwb" | "sp"].id;
+    const galpao_destino_id = staging.galpoes[p.destino.toLowerCase() as "cwb" | "sp"].id;
+    const itens: { produto_id: string; localizacao_origem_id: string; qty: number }[] = [];
+    for (const it of p.items) {
+      const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", it.sku).single();
+      const { data: loc } = await sb
+        .from("siso_localizacoes")
+        .select("id")
+        .eq("galpao_id", galpao_origem_id)
+        .eq("codigo", it.loc_origem)
+        .single();
+      itens.push({
+        produto_id: prod!.id,
+        localizacao_origem_id: loc!.id,
+        qty: it.qty,
+      });
+    }
+    return http.post<{ id: string }>("/api/wms/transferencias", {
+      galpao_origem_id,
+      galpao_destino_id,
+      itens,
+    });
+  }
+
+  async function receberTransferenciaCtx(p: { transferencia_id: string; itens: { transferencia_item_id: string; loc_destino: string }[] }) {
+    // Resolve loc destino codigo → id (no galpão destino do header)
+    const { data: header } = await sb
+      .from("siso_transferencias_galpao")
+      .select("galpao_destino_id")
+      .eq("id", p.transferencia_id)
+      .single();
+    const galpaoDestinoId = (header as { galpao_destino_id: string }).galpao_destino_id;
+    const itensApi: { transferencia_item_id: string; localizacao_destino_id: string }[] = [];
+    for (const it of p.itens) {
+      const { data: loc } = await sb
+        .from("siso_localizacoes")
+        .select("id")
+        .eq("galpao_id", galpaoDestinoId)
+        .eq("codigo", it.loc_destino)
+        .single();
+      itensApi.push({
+        transferencia_item_id: it.transferencia_item_id,
+        localizacao_destino_id: loc!.id,
+      });
+    }
+    await http.post(`/api/wms/transferencias/${p.transferencia_id}/receber`, { itens: itensApi });
+  }
+
+  async function desfazerRecebimentoTransferencia(p: { transferencia_id: string; motivo?: string }) {
+    const motivo = p.motivo ?? "teste cenário desfazer recebimento";
+    return http.post<{ movsEstornadas: number }>(
+      `/api/wms/transferencias/${p.transferencia_id}/desfazer-recebimento`,
+      { motivo },
+    );
+  }
+
   async function replenishment(p: { sku: string; galpao: "CWB" | "SP"; origem_loc: string; destino_loc: string; qty: number }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
     const { data: orig } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.origem_loc).single();
     const { data: dest } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.destino_loc).single();
-    await http.post("/api/wms/replenishment", {
-      galpao_id,
-      localizacao_origem_id: orig!.id,
-      localizacao_destino_id: dest!.id,
-      itens: [{ produto_id: prod!.id, qty: p.qty }],
-    });
+    const r = await http.post<{ origem_id: string; mov_ids: string[] }>(
+      "/api/wms/replenishment",
+      {
+        galpao_id,
+        localizacao_origem_id: orig!.id,
+        localizacao_destino_id: dest!.id,
+        itens: [{ produto_id: prod!.id, qty: p.qty }],
+      },
+    );
+    return { origem_id: r.origem_id, mov_ids: r.mov_ids };
+  }
+
+  async function reverterReplenishment(p: { origem_id: string; motivo?: string }) {
+    const motivo = p.motivo ?? "teste cenário reverter replenishment";
+    return http.post<{ movsEstornadas: number }>(
+      `/api/wms/replenishment/${p.origem_id}/reverter`,
+      { motivo },
+    );
   }
 
   async function ajusteManual(p: {
@@ -668,7 +746,7 @@ export function createContext(opts: {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", p.sku).single();
     const { data: loc } = await sb.from("siso_localizacoes").select("id").eq("galpao_id", galpao_id).eq("codigo", p.loc).single();
-    await http.post("/api/wms/ajuste", {
+    const r = await http.post<{ ok: boolean; mov_id: string }>("/api/wms/ajuste", {
       tripla: {
         produto_id: prod!.id,
         galpao_id,
@@ -681,6 +759,12 @@ export function createContext(opts: {
       // Cenários específicos podem sobrescrever.
       motivo_categoria: p.motivo_categoria ?? "outro",
     });
+    return { mov_id: r.mov_id };
+  }
+
+  async function estornarAjuste(p: { mov_id: string; motivo?: string }) {
+    const motivo = p.motivo ?? "teste cenário estornar ajuste";
+    await http.post(`/api/wms/ajuste/${p.mov_id}/estornar`, { motivo });
   }
 
   async function lancamentoRetroativo(p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; tipo: "E" | "S"; custo?: number }) {
@@ -743,14 +827,14 @@ export function createContext(opts: {
   }
 
   // ── vendas ──
-  async function criarVendaDireta(p: { galpao: "CWB" | "SP"; empresa: "netair" | "netparts"; items: { sku: string; qty: number }[]; modo: "separacao" | "baixa_direta" }) {
+  async function criarVendaDireta(p: { galpao: "CWB" | "SP"; empresa: "netair" | "netparts"; items: { sku: string; qty: number }[]; modo: "separacao" | "baixa_direta"; idempotency_key?: string }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
     const empresa_origem_id = staging.empresas[p.empresa].id;
     const itens = await Promise.all(p.items.map(async (it) => {
       const { data: prod } = await sb.from("siso_produtos").select("id").eq("sku", it.sku).single();
       return { produto_id: prod!.id, quantidade: it.qty };
     }));
-    return http.post<{ id: string; degradado: boolean; motivo_degradacao?: string; skus_sem_saldo?: string[] }>(
+    return http.post<{ id: string; pedido_id?: string; degradado: boolean; motivo_degradacao?: string; skus_sem_saldo?: string[]; idempotente?: boolean }>(
       "/api/wms/vendas/criar",
       {
         cliente_nome: "Cliente Teste Harness",
@@ -760,7 +844,16 @@ export function createContext(opts: {
         empresa_origem_id,
         items: itens,
         modo: p.modo,
+        ...(p.idempotency_key ? { idempotency_key: p.idempotency_key } : {}),
       },
+    );
+  }
+
+  async function cancelarVenda(p: { pedido_id: string; motivo?: string }) {
+    const motivo = (p.motivo ?? "teste cenário — cancelamento de venda").trim();
+    return http.post<{ ok: boolean; movsEstornadas: number; reservasLiberadas: number }>(
+      `/api/wms/vendas/${p.pedido_id}/cancelar`,
+      { motivo },
     );
   }
 
@@ -838,6 +931,14 @@ export function createContext(opts: {
     });
   }
 
+  async function desclassificarDevolucao(p: { devolucao_id: string; motivo?: string }) {
+    const motivo = (p.motivo ?? "teste cenário 43 — desclassifica").trim();
+    return http.post<{ ok: boolean; movsEstornadas: number }>(
+      `/api/wms/devolucoes/${p.devolucao_id}/desclassificar`,
+      { motivo },
+    );
+  }
+
   // ── inventário ──
   async function criarSessaoInventario(p: { galpao: "CWB" | "SP"; locs: string[]; modo?: "blind" | "aberto"; tipo?: "cycle_count" | "completo" }) {
     const galpao_id = staging.galpoes[p.galpao.toLowerCase() as "cwb" | "sp"].id;
@@ -894,12 +995,22 @@ export function createContext(opts: {
     await http.post(`/api/wms/inventario/${p.sessao_id}/localizacoes/${invLocId}/finalizar`);
   }
 
-  async function aprovarInventario(sessaoId: string) {
-    await http.post(`/api/wms/inventario/${sessaoId}/aprovar`);
+  async function aprovarInventario(sessaoId: string, opts?: { force?: boolean }) {
+    // P3 #4.5: cenários geralmente não chamam `sairParty` antes — passa
+    // `force=true` por default pra não quebrar fluxos pré-existentes.
+    const force = opts?.force ?? true;
+    await http.post(`/api/wms/inventario/${sessaoId}/aprovar`, { force });
   }
 
   async function aplicarInventario(sessaoId: string) {
     await http.post(`/api/wms/inventario/${sessaoId}/aplicar`);
+  }
+
+  async function estornarInventario(sessaoId: string, motivo = "teste cenário 41") {
+    return http.post<{ ok: boolean; movsEstornadas: number }>(
+      `/api/wms/inventario/${sessaoId}/estornar`,
+      { motivo },
+    );
   }
 
   // ── asserts (proxies) ──
@@ -916,12 +1027,13 @@ export function createContext(opts: {
     webhook, aprovar, iniciarSeparacao, bipar, parcial, desfazerParcial, encaminhar,
     concluirSeparacao, embalar, expedir,
     aguardarStatus, aguardarStatusSeparacao, aguardarRealocacao, aguardarFilaVazia,
-    comprar, receberCompra, prepararEmbalagem, receber, guardar, aguardarPendenciaGuarda,
-    transferirGalpao, replenishment, ajusteManual, lancamentoRetroativo, reconciliarRetroativo,
-    criarVendaDireta, disponibilidadeVenda,
+    comprar, receberCompra, prepararEmbalagem, receber, guardar, desfazerGuarda, aguardarPendenciaGuarda,
+    transferirGalpao, criarTransferenciaHeader, receberTransferencia: receberTransferenciaCtx, desfazerRecebimentoTransferencia,
+    replenishment, reverterReplenishment, ajusteManual, estornarAjuste, lancamentoRetroativo, reconciliarRetroativo,
+    criarVendaDireta, disponibilidadeVenda, cancelarVenda,
     reservar, cleanupReservas,
-    classificarDevolucao,
-    criarSessaoInventario, entrarParty, proximaLoc, bipeInventario, finalizarLocInventario, aprovarInventario, aplicarInventario,
+    classificarDevolucao, desclassificarDevolucao,
+    criarSessaoInventario, entrarParty, proximaLoc, bipeInventario, finalizarLocInventario, aprovarInventario, aplicarInventario, estornarInventario,
     assertSaldo, assertReservado, assertMovsCount, assertPedidoStatus, assertCustoMedio, assertSemReservasOrfas,
   } as Ctx;
 }

@@ -829,6 +829,11 @@ Dois modos solicitados:
 }
 ```
 
+**P3 #7.7 — idempotency_key filtra cancelados.** Antes, se o caller passasse a mesma
+`idempotency_key` em retry após cancelar a venda anterior, o sistema devolvia o pedido cancelado
+(reaproveitando o registro). Agora o SELECT filtra `status NOT IN ('cancelado')`. Cancelados
+não bloqueiam re-criação com mesma key — comportamento esperado (re-tentar venda manual após cancelar).
+
 **Response (200):**
 ```json
 {
@@ -975,6 +980,23 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
 **Side Effects:**
 - Update em `siso_pedidos.vendedor_id` + `vendedor_nome`
 - `registrarEvento('venda_vendedor_atribuido')` com anterior/novo
+
+### POST /api/wms/vendas/[id]/cancelar
+
+**P3 #7.13** — Cancela venda manual. **File:** `src/app/api/wms/vendas/[id]/cancelar/route.ts`.
+
+Caminhos suportados:
+- `status_separacao ∈ {aguardando_separacao, aguardando_compra}` — libera reservas R via
+  `liberarReserva` (idempotente: skip se já houver L apontando).
+- `status='concluido'` com movs `origem_tipo='venda_manual'` — estorna cada mov S
+  (idempotência por `estorno_de IS NOT NULL` — re-cancelamento retorna 0/0).
+- `status_separacao ∈ {em_separacao, separado, embalado}` — retorna **400**: operador
+  precisa primeiro voltar etapa pra preservar auditoria dos picks.
+- `status='cancelado'` — retorna **200** com `{reservas_liberadas:0, movs_estornadas:0}` (idempotente).
+
+**Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars) }`.
+
+**Response 200:** `{ ok: true, reservas_liberadas, movs_estornadas }`. **400** se status incompatível ou motivo curto.
 
 ---
 
@@ -1383,7 +1405,10 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
 - Blocks if `separacao_parcial = true` (must use `/api/wms/separacao/parcial` instead)
 - Updates separacao_marcado and separacao_marcado_em (null if unmarked)
 - On mark: calls WMS `wms_inserir_movimentacao` (tipo=S, origem_tipo=nf_venda) — graceful failure (logs warn, proceeds). Inserta 1 linha em `siso_pedido_item_mov_links` (tipo_link='saida') pra bridge.
-- On unmark: estorna the ledger movement stored in `mov_saida_id` — graceful failure
+- On unmark **(P3 #2.7)**: agora estorna a leg S **primeiro**, depois a leg L (estorno de
+  liberação de reserva). Antes estornava em ordem trocada, o que violava invariante I2
+  (saldo_anterior+delta=saldo_posterior) porque a leg L re-bloqueava o saldo que a S ainda
+  ocupava. Now S sai do estoque antes da R ser recriada — sequência paritária e invariante-safe.
 
 **Side Effects:**
 - Updates `siso_pedido_itens.separacao_marcado`, `separacao_marcado_em`, `mov_saida_id`
@@ -1994,8 +2019,15 @@ Se nenhuma loc tem saldo: `{ total_disponivel: 0, sugestao: null }`.
 - If etapa = "separacao": resets separacao_marcado, separacao_marcado_em
 - If etapa = "embalagem": resets quantidade_bipada, bipado_completo
 
+**P3 #2.10 — `etapa='embalagem'` reverte cutover do ledger.** Quando reverte-se da etapa
+de embalagem pra separação, agora estorna as movs `'L'` e `'S'` emitidas pelo cutover via
+`reverterCutoverDoPedido` em `src/lib/wms/cutover.ts`. Antes, voltar etapa de embalagem
+deixava saldo permanentemente saído (estado fantasma — reserva já tinha virado L+S e ninguém
+revertia). Now is paritário: re-iniciar embalagem é seguro.
+
 **Side Effects:**
 - Updates `siso_pedido_itens`
+- Em `etapa='embalagem'`: chama `reverterCutoverDoPedido` (estorna L+S e re-cria R com saldo)
 - Logs to `siso_logs`
 
 ---
@@ -4871,19 +4903,41 @@ Detalhe de uma pendência + sugestão de loc destino (filtrada — não sugere v
 
 #### POST /api/wms/guarda/[id]/iniciar
 
-Idempotente. Marca `status='em_guarda'`, registra `iniciada_em/por`. Disparado automaticamente quando a tela tablet abre (não é necessário chamar manualmente).
+Marca `status='em_guarda'`, registra `iniciada_em/por`. **Anti-race (P3 #5.2)** — agora usa
+UPDATE condicional `WHERE status='pendente'` em vez de SELECT+UPDATE. Se dois operadores chegam
+juntos na mesma pendência, só o 1º consegue: o 2º recebe **409 PENDENCIA_OUTRA_GUARDA**
+(antes ambos passavam, gerando dupla guarda). Idempotente quando o caller já é o dono
+(`iniciada_por=usuario_id`).
 
-**Auth:** acesso de armazém. **Response 200:** `{ ok: true, pendencia }`. **400** se status terminal.
+**Auth:** acesso de armazém. **Response 200:** `{ ok: true, pendencia }`. **400** se status terminal. **409** se outro operador já iniciou.
 
 #### POST /api/wms/guarda/[id]/confirmar
 
-Confirma a guarda (parcial ou total). Faz mov par S+E (RECEBIMENTO → loc destino) via `replenishmentIntraGalpao`. Se `qty == qty_pendente` zera, vira `guardada` e fixa `guardada_em`. Senão fica `pendente` com saldo, próxima iteração zera.
+Confirma a guarda (parcial ou total). **P3 #5.3 / #5.8** — agora invoca RPC atômica
+`wms_confirmar_guarda_atomico` que faz S+E e atualização da pendência (`qty_guardada`,
+`status` final) **dentro de uma transação SQL única**. Antes era TS multi-step (mov par via
+RPC + UPDATE da pendência depois) — crash entre os steps deixava saldo movido mas pendência
+não atualizada (estado fantasma). Se `qty == qty_pendente` zera, vira `guardada` e fixa
+`guardada_em`. Senão fica `pendente` com saldo, próxima iteração zera.
 
 **Body:** `{ qty: number>0, localizacao_destino_id: "uuid" }`.
 
-**Validação:** `qty <= qty_pendente`; loc destino existe + ativa + mesmo galpão + ≠ loc origem.
+**Validação:** `qty <= qty_pendente`; loc destino existe + ativa + mesmo galpão + ≠ loc origem (validação dentro da RPC).
 
 **Response 200:** `{ ok: true, pendencia, origem_id, totalmente_guardada: boolean }`. **400** em validação falha; **500** em erro de DB.
+
+#### POST /api/wms/guarda/[id]/desfazer
+
+**P3 #5.1** — Reverte a última (ou única) confirmação de guarda. Estorna par S+E,
+decrementa `qty_guardada`, e recupera status anterior (`pendente` se `qty_guardada` chega a 0,
+`em_guarda` em caso contrário). Útil quando operador bipa loc errada.
+
+**Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars), qty?: number }`.
+`qty` opcional — default = qty da última confirmação. **Response 200:** `{ ok: true, qty_estornada, pendencia }`.
+**400** se pendência cancelada, sem guardas registradas ou motivo curto.
+
+> Limitação MVP: estorna apenas a guarda mais recente. Para desfazer guardas intermediárias
+> de uma pendência multi-step, repita o endpoint até chegar na desejada.
 
 #### POST /api/wms/guarda/[id]/cancelar
 
@@ -4933,13 +4987,52 @@ Transferência inter-galpão **neutra em empresa** (3D — refactor 2026-05-20).
 
 **Side effects:** Por item, 2 movs (S na origem + E no destino) com mesmo `origem_id` (uuid), `origem_tipo='transferencia_galpao'`. Custo médio global do produto (em `siso_custo_medio`) não muda — transferência é neutra em valor.
 
-**Response 200:** `{ origem_id }`.
+**Response 200:** `{ origem_id, transferencia_id, status: "em_transito" }`.
 
 **Erros:** 400 se origem == destino.
+
+### POST /api/wms/transferencias/[id]/receber
+
+Recebe uma transferência em trânsito (galpão destino). Insere a leg E (entrada destino)
+e seta `recebido_em`/`mov_entrada_id` em cada item, vira `status='recebida'`.
+
+**P3 #8.10** — agora protegido por **claim lock** via UPDATE condicional
+`WHERE recebimento_em_andamento_por IS NULL` (coluna nova `siso_transferencias_galpao.recebimento_em_andamento_por uuid`).
+Dois operadores conferindo o mesmo header em paralelo: o 1º ganha, o 2º recebe
+**409 TRANSFERENCIA_OUTRO_RECEBIMENTO** com `bloqueado_por`. Lock é limpo na conclusão ou em erro.
+
+**Body:** `{ localizacao_destino_id: "uuid", itens: [{ produto_id, qty, localizacao_destino_id? }] }`.
+
+**Response 200:** `{ ok: true, mov_entrada_ids: [...] }`. **409** se outro recebimento ativo.
+
+### POST /api/wms/transferencias/[id]/desfazer-recebimento
+
+**P3 #8.2** — Estorna apenas a leg E do recebimento, reseta itens (`mov_entrada_id=NULL`,
+`localizacao_destino_id=NULL`), volta header pra `status='em_transito'`. A leg S (saída origem)
+permanece — estoque continua em trânsito. Permite re-receber depois (mesmo header, talvez na loc certa).
+
+**Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars) }`.
+
+**Response 200:** `{ ok: true, mov_estorno_ids: [...], itens_resetados: number }`.
+**400** se transferência não está em status compatível (`recebida` ou `recebida_parcial`).
+
+### POST /api/wms/transferencias/[id]/cancelar
+
+Cancela transferência. **P3 #8.3** — agora aceita recebimentos parciais:
+- Se nenhum item foi recebido (todas as movs E ausentes), estorna apenas as movs S e marca `status='cancelada'`.
+- Se alguns itens já foram recebidos, retorna **400** apontando pra `/desfazer-recebimento`
+  (operador desfaz recebimento primeiro, depois cancela).
+
+**Auth:** `requireWarehouseAccess`. **Response 200:** `{ ok: true, movs_estornadas: number }`.
+**400** com mensagem indicando próximo passo se recebimento ainda ativo.
 
 ### POST /api/wms/replenishment
 
 Movimenta entre localizações **dentro do mesmo galpão** (3D — refactor 2026-05-20). Antes era escopado por empresa+galpão; agora apenas galpão.
+
+**P3 #5.8 / #8.8** — Implementação migrada pra RPC SQL atômica `wms_replenishment_intra_galpao`
+(insere S+E numa transação única). Antes era TS multi-step que podia deixar a leg S aplicada
+e a leg E falhada (saldo "evaporava"). Agora é tudo ou nada.
 
 **Request body:**
 ```json
@@ -4954,7 +5047,22 @@ Movimenta entre localizações **dentro do mesmo galpão** (3D — refactor 2026
 
 **Side effects:** 2 movs (S+E) com `origem_tipo='transferencia_localizacao'` e mesmo `origem_id`. Neutro em empresa.
 
-**Erros:** 400 se origem_loc == destino_loc.
+**Response 200:** `{ ok: true, origem_id, mov_saida_id, mov_entrada_id }`.
+
+**Erros:** 400 se origem_loc == destino_loc, 400 se saldo insuficiente, 500 em erro RPC.
+
+### POST /api/wms/replenishment/[id]/reverter
+
+**P3 #8.8** — Reverte um replenishment intra-galpão. **`[id]` aqui é o `origem_id` (uuid)
+compartilhado pelas duas movs S+E** — não há header próprio. Capturado na resposta do POST anterior.
+
+**Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars) }`.
+
+**Side effects:** Estorna ambas as legs (S origem + E destino) via `estornarMovimentacao`.
+Idempotente — chamadas repetidas pulam movs já estornadas (`estorno_de IS NOT NULL`).
+
+**Response 200:** `{ ok: true, movsEstornadas: number, movsJaEstornadas: number }`.
+**400** se origem_id não encontra movs.
 
 ### POST /api/wms/ajuste
 
@@ -4973,6 +5081,21 @@ Ajuste manual de estoque (avaria, perda, encontro, erro de contagem). **`motivo`
 > Campo renomeado `quadrupla` → `tripla`; `empresa_dona_id` removido (não é mais coordenada).
 
 **Validação:** `motivo.trim().length >= 3` (era opcional, agora obrigatório). Mov gravada com `origem_tipo='ajuste_manual'`, motivo em `siso_movimentacoes.motivo` (coluna nova) + `observacoes`.
+
+**Response 200:** `{ ok: true, mov_id }`.
+
+### POST /api/wms/ajuste/[id]/estornar
+
+**P3 #3.20** — Estorna uma mov de ajuste manual. **`[id]` é o `mov_id`** retornado pelo POST acima.
+
+**Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars) }`.
+
+**Defesa:** valida que `origem_tipo='ajuste_manual'` antes de estornar (recusa estornar movs
+de outras origens por aqui — cada origem tem seu endpoint reverse próprio). Idempotente —
+double-estorno é bloqueado por guard `estorno_de IS NOT NULL` em `estornarMovimentacao`.
+
+**Response 200:** `{ ok: true }`. **400** se mov não encontrada, não é ajuste_manual,
+já foi estornada, ou já é em si um estorno.
 
 ### POST /api/wms/lancamento-retroativo
 
@@ -5003,9 +5126,14 @@ Reconcilia retroativo com mov real (NF formal que chegou depois). Insere mov de 
 
 **Request body:** `{ "compra_mov_id": "uuid" }` (anotada em `observacoes`).
 
+**P3 #8.6** — agora valida `[id]` e `compra_mov_id` como UUIDs antes de chamar a RPC (regex
+`/^[0-9a-f-]{36}$/i`), e valida que ambas as movs existem antes de inserir o estorno. Bug:
+sem essas validações um caller podia passar `null`/string vazia/uuid inexistente e a RPC
+levantava 23502/23503 com mensagens crípticas.
+
 **Side effects:** 1 mov `origem_tipo='estorno'`, `tipo='S'`, `qty=retro.quantidade`, `estorno_de=retro.id`.
 
-**Response 200:** `{ ok: true }`. **Erros:** 400 se mov não é retroativo.
+**Response 200:** `{ ok: true }`. **Erros:** 400 se mov não é retroativo, se uuid inválido, ou se mov referenciada não existe.
 
 ---
 
@@ -5091,8 +5219,17 @@ Marca o operador como `finalizado_em=now()`. Não cancela contagens já feitas. 
 ### PATCH /api/wms/inventario/[id]
 Update genérico de campos da sessão.
 
+**P3 #4.7** — Mudança de `modo_contagem` (`blind` ↔ `aberto`) só é permitida com `status='planejada'`.
+Tentar trocar após `em_andamento`/`revisao`/`aprovada`/`aplicada` retorna **409 MODO_LOCKED**
+(operadores já estão bipando sob um modo, trocar mid-flow corromperia a comparação).
+Outros campos (`nome`, `tolerancia_pct`, etc.) continuam editáveis.
+
 ### DELETE /api/wms/inventario/[id]
 Cancela (status=cancelada) e libera todos os locks da sessão.
+
+**P3 #4.4** — Retorna **409** se `status='aplicada'`. Sessão aplicada já gerou movs no ledger;
+o caminho correto pra reverter é `POST /api/wms/inventario/[id]/estornar`. Status `revisao`,
+`aprovada`, `em_andamento`, `planejada` permanecem deletáveis (cancelam normalmente).
 
 ### POST /api/wms/inventario/[id]/iniciar
 Cria locks em `siso_localizacao_locks` (motivo='cycle_count') e muda status pra `em_andamento`. **400** se sessão não está em 'planejada'.
@@ -5100,20 +5237,56 @@ Cria locks em `siso_localizacao_locks` (motivo='cycle_count') e muda status pra 
 ### POST /api/wms/inventario/[id]/aprovar
 Computa divergências + aprova sessão. **400** se há divergências `pendente`.
 
-**Body (opcional):** `{ parcial?: boolean }`.
+**P3 #4.5 / #4.6** — Agora avisa se há operadores ativos (`siso_inventario_operadores`
+com `finalizado_em IS NULL`): por default retorna **409 OPERADORES_ATIVOS** com lista
+`operadores_ativos[]`. Caller pode forçar via `force: true` no body (caso supervisor decida
+encerrar mesmo com gente bipando). `computarDivergencias` agora limpa operadores órfãos
+(finaliza quem ficou stale) antes de gerar divergências.
+
+**Body (opcional):** `{ parcial?: boolean, force?: boolean }`.
 - `parcial=false` (default): comportamento histórico — todas as locs do pool são consideradas. Locs com saldo>0 que ninguém bipou viram divergência qty=0.
 - `parcial=true`: só processa locs com status `contada`/`aprovada`. Locs `pendente`/`em_contagem` são puladas (não geram divergência; estoque do sistema mantido). Use quando o supervisor quer encerrar antes de terminar todo o pool e descartar o que não foi contado.
+- `force=true`: ignora 409 OPERADORES_ATIVOS e prossegue mesmo assim (finalizando operadores ativos).
 
-**Response:** `{ ok: true, parcial: boolean }`.
+**Response 200:** `{ ok: true, parcial: boolean }`. **409 OPERADORES_ATIVOS** quando aplicável (com `{ operadores_ativos: [{ usuario_id, usuario_nome }] }`).
+
+### POST /api/wms/inventario/[id]/aprovar-sessao
+Idem `aprovar` mas pra sessão inteira (todas as locs em uma chamada). Mesmo comportamento P3 — aceita `force: true` para bypass do guard `OPERADORES_ATIVOS`.
 
 ### POST /api/wms/inventario/[id]/aplicar
-Gera movs `origem_tipo='inventario'` no ledger pra cada divergência aprovada (E ou S conforme delta). Marca divergências como `aplicada` e libera locks. **Response:** `{ movsGeradas }`.
+Gera movs `origem_tipo='inventario'` no ledger pra cada divergência aprovada (E ou S conforme delta). Marca divergências como `aplicada` e libera locks.
+
+**P3 #4.1 — idempotente.** Migration `20260527_p3_movs_unique_inventario_divergencia.sql`
+adiciona UNIQUE partial index `uniq_movs_inventario_divergencia` em `siso_movimentacoes` (`origem_id`, `origem_tipo`)
+WHERE `origem_tipo IN ('inventario_perda','inventario_ganho')`. Aplicar 2× em paralelo: o 2º bate na UNIQUE e
+recebe **409 SQLSTATE 23505** que é traduzido em ConflictError com `{ code: "DIVERGENCIA_JA_APLICADA", divergencia_id }`.
+Resposta: pula a div já aplicada e segue com as outras. No fim, retorna `movsGeradas` real + `divsJaAplicadas` count.
+
+**Response:** `{ ok: true, movsGeradas, divsJaAplicadas }`.
+
+### POST /api/wms/inventario/[id]/estornar
+
+**P3 #4.2 — Admin-only.** Reverte uma sessão `status='aplicada'`. Para cada divergência
+`aplicada` (com `mov_aplicada_id` não-null), insere mov de estorno via `estornarMovimentacao`
+e volta divergência pra `status='pendente'` (`mov_aplicada_id=NULL`). Sessão volta pra `status='revisao'`.
+
+**Auth:** `requireAdmin`. **Body:** `{ motivo: string (≥3 chars) }`.
+
+**Idempotente:** re-chamada em sessão já estornada (status='revisao') retorna 400. Re-execução durante
+estorno parcial pula movs já estornadas via guard `estorno_de IS NOT NULL`.
+
+**Response 200:** `{ ok: true, movsEstornadas, divergenciasRevertidas }`. **400** se sessão não está em `aplicada`.
 
 ### POST /api/wms/inventario/[id]/contagens
 Registra contagem. **Body (3D — refactor 2026-05-20):** `{ localizacao_id, produto_id, qty_contada, modo? }`. *Campo `empresa_dona_id` removido — bipe é por tripla (produto, galpão da sessão, loc).*
 - `modo='incremental'` (default): soma na contagem do operador (cada bipe = +qty).
 - `modo='absoluto'`: substitui contagem prévia.
-Mesma tripla por outro operador gera nova rodada (suporta duplo blind).
+
+**P3 #4.3 — lock obrigatório.** Antes de gravar, valida que a loc está bloqueada pelo
+caller (`siso_inventario_localizacoes.bloqueada_por = usuario_id`). Sem lock retorna
+**409 LOC_NAO_BLOQUEADA**. Bloqueio é adquirido via `POST /api/wms/inventario/[id]/proxima-loc`
+(pull queue) ou `POST .../localizacoes/[locId]/bloquear`. Mesma tripla por outro operador
+continua suportando duplo-blind, mas o segundo precisa adquirir o lock primeiro (sequencial).
 
 ### POST /api/wms/inventario/[id]/localizacoes/[locId]/bloquear
 Pega localização atomicamente (RPC). **409** se já bloqueada por outro operador.
@@ -5193,6 +5366,19 @@ quando a fila filtrada não tem mais a linha (status≠`aguardando_classificacao
 **Response 200:** `{ devolucao: { id, status, nota_fiscal_id, chave_acesso_nf, criado_em, classificacao, classificada_em, payload_webhook, empresa_receptora: { id, nome }|null } }`.
 **Nota:** `empresa_receptora` é a empresa **receptora física** (quem recebeu a NF de devolução no galpão); NÃO é a vendedora original — alinha com P2 #6.5.
 **Erros:** 401 sem sessão, 404 quando `id` não existe (`PGRST116`), 500 com mensagem do banco.
+
+### POST /api/wms/devolucoes/[id]/desclassificar
+
+**P3 #6.3** — Reverte classificação anterior estornando todas as movs geradas por
+`classificarDevolucao`. Match por janela temporal **±60s** da `classificada_em` filtrando
+por `origem_tipo` (sempre dos 4 valores de devolução) + `nota_fiscal_id` + `produto_id`
+quando presentes. Devolução volta pra `aguardando_classificacao` permitindo re-classificação imediata
+(útil quando operador escolheu classificação errada).
+
+**Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars) }`.
+
+**Response 200:** `{ ok: true, movsEstornadas, classificacao_anterior }`.
+**400** se devolução não está em `classificada` ou se `classificada_em` é null (não há janela pra match).
 
 ### POST /api/wms/devolucoes/[id]/classificar
 **Body (3D — refactor 2026-05-20):** `{ classificacao: 'A'|'B'|'C'|'D', produto_id, qty, galpao_id, localizacao_id, empresa_referencia_id?, fornecedor_id?, observacoes? }`.

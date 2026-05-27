@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao } from "./ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
 import type { TipoMov } from "./types";
 import { reconciliarTemporal } from "./inventario-reconciliacao";
 
@@ -474,6 +474,35 @@ export async function registrarContagem(
 ): Promise<void> {
   const sb = createServiceClient();
 
+  // P3 #4.3: bipe só é aceito se a loc está bloqueada por este operador.
+  // Sem esse guard, qualquer usuário com sessão válida injetaria contagens
+  // em sessões que nunca entrou (silent write vazamento).
+  const { data: locRow } = await sb
+    .from("siso_inventario_localizacoes")
+    .select("bloqueada_por, status")
+    .eq("sessao_id", input.sessao_id)
+    .eq("localizacao_id", input.localizacao_id)
+    .maybeSingle();
+  if (!locRow) {
+    throw new Error("localização não faz parte desta sessão");
+  }
+  const lr = locRow as { bloqueada_por: string | null; status: string };
+  if (lr.status === "contada" || lr.status === "aprovada") {
+    throw new Error(
+      `loc já está em status ${lr.status} — re-abertura via supervisor`,
+    );
+  }
+  if (!lr.bloqueada_por) {
+    throw new Error(
+      "loc não está reivindicada — chame /proxima-loc antes de bipar",
+    );
+  }
+  if (lr.bloqueada_por !== input.contada_por) {
+    throw new Error(
+      `loc reivindicada por outro operador (${lr.bloqueada_por}). Aguarde liberação.`,
+    );
+  }
+
   // Se o produto bipado é um kit, expande pra contagens dos componentes
   // (qty_no_kit × qty_bipada por componente). Não registra contagem pro
   // próprio SKU do kit — kits não têm saldo direto em siso_estoque.
@@ -565,8 +594,40 @@ async function registrarContagemSimples(
 // liberados normalmente em aprovarSessao junto com as outras.
 // ─────────────────────────────────────────────────────────────────────
 
+// P3 #4.5: lista de operadores ativos (sem `finalizado_em`) na sessão. Usada
+// pelo gate em `computarDivergencias` (avisa antes de encerrar) e pode ser
+// consumida pela UI pra mostrar "X operadores ativos" no botão de aprovar.
+export async function listarOperadoresAtivos(
+  sessao_id: string,
+): Promise<Array<{ usuario_id: string; nome: string | null }>> {
+  const sb = createServiceClient();
+  const { data } = await sb
+    .from("siso_inventario_operadores")
+    .select("usuario_id, usuario:siso_usuarios(nome)")
+    .eq("sessao_id", sessao_id)
+    .is("finalizado_em", null);
+  // Supabase tipa a relação FK como array; na prática vem 1 objeto (ou null).
+  // Normaliza pra usar tanto array quanto objeto sem quebrar.
+  const rows = (data ?? []) as unknown as Array<{
+    usuario_id: string;
+    usuario: { nome: string | null } | { nome: string | null }[] | null;
+  }>;
+  return rows.map((r) => {
+    const u = Array.isArray(r.usuario) ? r.usuario[0] : r.usuario;
+    return { usuario_id: r.usuario_id, nome: u?.nome ?? null };
+  });
+}
+
+const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface ComputarDivergenciasOpts {
   parcial?: boolean;
+  /**
+   * P3 #4.5: opt-in pra fechar a sessão mesmo com operadores ativos.
+   * Sem essa flag, a função aborta com Error code='OPERADORES_ATIVOS' e
+   * anexa a lista pra UI mostrar quem ainda está dentro.
+   */
+  forceWithActiveOperators?: boolean;
 }
 
 /**
@@ -587,6 +648,17 @@ export async function computarDivergencias(
   const sb = createServiceClient();
   const parcial = opts.parcial === true;
   const cutoff_em = new Date().toISOString();
+
+  // P3 #4.5: aborta cedo se há operador ativo e o caller não confirmou.
+  const ativos = await listarOperadoresAtivos(sessaoId);
+  if (ativos.length > 0 && !opts.forceWithActiveOperators) {
+    const err = new Error(
+      `há ${ativos.length} operador(es) ativo(s) — passe forceWithActiveOperators=true se confirma`,
+    ) as Error & { code?: string; operadores?: typeof ativos };
+    err.code = "OPERADORES_ATIVOS";
+    err.operadores = ativos;
+    throw err;
+  }
 
   // 1. Carrega locs da sessão (filtrando por modo parcial)
   const locsQuery = sb
@@ -780,6 +852,27 @@ export async function computarDivergencias(
     if (upErr) throw upErr;
   }
 
+  // P3 #4.6: limpa locs órfãs em em_contagem cujo `bloqueada_por` não é
+  // operador ativo (ex.: usuário saiu da party sem finalizar a loc).
+  // Filtro defensivo via JS: valida UUIDs e exclui ativos.
+  const ativosUserIds = ativos
+    .map((a) => a.usuario_id)
+    .filter((id) => UUID_RX.test(id));
+  const { data: orfasRaw } = await sb
+    .from("siso_inventario_localizacoes")
+    .select("id, bloqueada_por")
+    .eq("sessao_id", sessaoId)
+    .eq("status", "em_contagem")
+    .not("bloqueada_por", "is", null);
+  const orfas = ((orfasRaw ?? []) as Array<{ id: string; bloqueada_por: string }>)
+    .filter((r) => !ativosUserIds.includes(r.bloqueada_por));
+  if (orfas.length > 0) {
+    await sb
+      .from("siso_inventario_localizacoes")
+      .update({ status: "pendente", bloqueada_por: null, bloqueada_em: null })
+      .in("id", orfas.map((o) => o.id));
+  }
+
   await sb
     .from("siso_inventario_sessoes")
     .update({ status: "revisao", finalizada_em: new Date().toISOString() })
@@ -846,11 +939,21 @@ export async function aplicarSessao(
   const sb = createServiceClient();
   const { data: sessao } = await sb
     .from("siso_inventario_sessoes")
-    .select("status, galpao_id")
+    .select("status, galpao_id, aplicada_em")
     .eq("id", sessaoId)
     .single();
   if (!sessao) throw new Error("sessão não encontrada");
-  const s = sessao as { status: string; galpao_id: string };
+  const s = sessao as { status: string; galpao_id: string; aplicada_em: string | null };
+
+  // P3 #4.1: idempotência. Sessão já aplicada → no-op com retorno coerente.
+  if (s.status === "aplicada") {
+    const { count } = await sb
+      .from("siso_movimentacoes")
+      .select("id", { count: "exact", head: true })
+      .eq("origem_id", sessaoId)
+      .in("origem_tipo", ["inventario_ganho", "inventario_perda"]);
+    return { movsGeradas: count ?? 0 };
+  }
   if (s.status !== "aprovada") throw new Error("sessão não está aprovada");
 
   const { data: divergencias } = await sb
@@ -891,30 +994,51 @@ export async function aplicarSessao(
       }
     }
 
-    const mov = await inserirMovimentacao({
-      tripla: {
-        produto_id: d.produto_id,
-        galpao_id: s.galpao_id,
-        localizacao_id: d.localizacao_id,
-      },
-      tipo,
-      qty,
-      // 3D: separa ganho de perda (origem_tipo discrimina sinal do ajuste de inventário)
-      origem_tipo: tipo === "E" ? "inventario_ganho" : "inventario_perda",
-      origem_id: sessaoId,
-      origem_detalhes: { divergencia_id: d.id, delta_pct: d.delta_pct },
-      custo_unitario: custoUnitario,
-      usuario_id: usuarioId,
-      motivo: `inventário sessão ${sessaoId}`,
-    });
-    await sb
-      .from("siso_inventario_divergencias")
-      .update({ status: "aplicada", mov_aplicada_id: mov.id })
-      .eq("id", d.id);
-    movsGeradas++;
+    try {
+      const mov = await inserirMovimentacao({
+        tripla: {
+          produto_id: d.produto_id,
+          galpao_id: s.galpao_id,
+          localizacao_id: d.localizacao_id,
+        },
+        tipo,
+        qty,
+        // 3D: separa ganho de perda (origem_tipo discrimina sinal do ajuste de inventário)
+        origem_tipo: tipo === "E" ? "inventario_ganho" : "inventario_perda",
+        origem_id: sessaoId,
+        origem_detalhes: { divergencia_id: d.id, delta_pct: d.delta_pct },
+        custo_unitario: custoUnitario,
+        usuario_id: usuarioId,
+        motivo: `inventário sessão ${sessaoId}`,
+      });
+      await sb
+        .from("siso_inventario_divergencias")
+        .update({ status: "aplicada", mov_aplicada_id: mov.id })
+        .eq("id", d.id);
+      movsGeradas++;
+    } catch (err) {
+      // P3 #4.1: UNIQUE violation = outra chamada já aplicou essa divergência.
+      // No-op pra essa linha; assegurar status='aplicada' via lookup da mov existente.
+      const code = (err as { code?: string })?.code;
+      const msg = err instanceof Error ? err.message : String(err);
+      const isUniq = code === "23505" || /uniq_movs_inventario_divergencia/.test(msg);
+      if (!isUniq) throw err;
+      const { data: movExistente } = await sb
+        .from("siso_movimentacoes")
+        .select("id")
+        .eq("origem_detalhes->>divergencia_id", d.id)
+        .in("origem_tipo", ["inventario_ganho", "inventario_perda"])
+        .maybeSingle();
+      if (movExistente) {
+        await sb
+          .from("siso_inventario_divergencias")
+          .update({ status: "aplicada", mov_aplicada_id: movExistente.id })
+          .eq("id", d.id);
+      }
+    }
   }
 
-  // Libera locks da sessão
+  // Libera locks da sessão (idempotente)
   const { data: locs } = await sb
     .from("siso_inventario_localizacoes")
     .select("localizacao_id")
@@ -930,10 +1054,12 @@ export async function aplicarSessao(
       .is("finalizado_em", null);
   }
 
+  // UPDATE condicional — só transiciona se ainda não foi aplicada (outra request)
   await sb
     .from("siso_inventario_sessoes")
     .update({ status: "aplicada", aplicada_em: new Date().toISOString() })
-    .eq("id", sessaoId);
+    .eq("id", sessaoId)
+    .neq("status", "aplicada");
 
   return { movsGeradas };
 }
@@ -973,4 +1099,90 @@ export async function ultimasContagensDoProduto(
   });
   if (error) throw error;
   return (data ?? []) as UltimaContagemProduto[];
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// P3 #4.2 — Estornar sessão de inventário aplicada
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Estorna uma sessão de inventário aplicada.
+ *
+ * Para cada divergência aplicada (status='aplicada' + mov_aplicada_id):
+ *   1. Estorna a mov no ledger via estornarMovimentacao (cria contra-mov)
+ *   2. Reseta divergencia.status='pendente' (volta pra fila do supervisor)
+ *
+ * Não toca em contagens — preserva trilha histórica do que foi contado.
+ * Sessão volta pra status='revisao' (supervisor decide se re-aplica ou
+ * cancela). Idempotente: re-execução não duplica estornos (estornarMov
+ * recusa double-estorno via "já foi estornada" / "já é um estorno").
+ *
+ * Falha gracefully se algum estorno bater em saldo negativo (ledger
+ * coerência sobrepõe undo).
+ */
+export async function estornarSessaoInventario(input: {
+  sessao_id: string;
+  usuario_id: string;
+  motivo: string;
+}): Promise<{ movsEstornadas: number }> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo do estorno é obrigatório (≥3 caracteres)");
+  }
+  const sb = createServiceClient();
+  const { data: sessao } = await sb
+    .from("siso_inventario_sessoes")
+    .select("id, status")
+    .eq("id", input.sessao_id)
+    .maybeSingle();
+  if (!sessao) throw new Error("sessão não encontrada");
+  const status = (sessao as { status: string }).status;
+  if (status !== "aplicada") {
+    throw new Error(
+      `sessão em status ${status} — apenas 'aplicada' pode ser estornada`,
+    );
+  }
+
+  const { data: divs } = await sb
+    .from("siso_inventario_divergencias")
+    .select("id, mov_aplicada_id, status")
+    .eq("sessao_id", input.sessao_id)
+    .eq("status", "aplicada");
+
+  let estornadas = 0;
+  for (const d of (divs ?? []) as Array<{
+    id: string;
+    mov_aplicada_id: string | null;
+    status: string;
+  }>) {
+    if (!d.mov_aplicada_id) continue;
+    try {
+      await estornarMovimentacao({
+        mov_id: d.mov_aplicada_id,
+        usuario_id: input.usuario_id,
+        motivo: `Estorno sessão inventário ${input.sessao_id}: ${input.motivo}`,
+      });
+      estornadas++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/já foi estornada/.test(msg) || /já é um estorno/.test(msg)) {
+        // Idempotência: outra request já estornou. Segue.
+        continue;
+      }
+      throw err;
+    }
+    await sb
+      .from("siso_inventario_divergencias")
+      .update({ status: "pendente", mov_aplicada_id: null })
+      .eq("id", d.id);
+  }
+
+  // UPDATE condicional — só transiciona se ainda está 'aplicada' (proteção
+  // contra re-execução paralela; idempotente).
+  await sb
+    .from("siso_inventario_sessoes")
+    .update({ status: "revisao", aplicada_em: null })
+    .eq("id", input.sessao_id)
+    .eq("status", "aplicada");
+
+  return { movsEstornadas: estornadas };
 }

@@ -260,7 +260,19 @@ export async function POST(request: NextRequest) {
         .eq("pedido_item_id", item.id)
         .in("tipo_link", ["saida", "liberacao_reserva"]);
 
-      for (const link of links ?? []) {
+      // P3 #2.7 — estorna S (saida) ANTES de L (liberacao_reserva).
+      // Estornar S cria E → saldo += qty; estornar L cria R → reservado += qty.
+      // Estado pós-picking: saldo=N-q, reservado=N-q.
+      // Se L é estornado primeiro: reservado sobe pra N antes do saldo, mid-state
+      // viola invariante I2 (reservado > saldo). Estornar S primeiro recupera o
+      // saldo, depois L recupera o reservado — invariante preservado a cada passo.
+      const sortedLinks = [...(links ?? [])].sort((a, b) => {
+        if (a.tipo_link === "saida" && b.tipo_link !== "saida") return -1;
+        if (a.tipo_link !== "saida" && b.tipo_link === "saida") return 1;
+        return 0;
+      });
+
+      for (const link of sortedLinks) {
         try {
           if (link.tipo_link === "liberacao_reserva") {
             // L de liberação não pode ir pelo estornarMovimentacao genérico —

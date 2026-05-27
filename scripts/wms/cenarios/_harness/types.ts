@@ -64,11 +64,16 @@ export type Ctx = {
   prepararEmbalagem: (p: { pedido_id: string }) => Promise<void>;
   receber: (p: { items: { sku: string; qty: number; loc_destino?: string }[]; galpao: "CWB" | "SP"; entrada_direta?: boolean }) => Promise<{ pendencias: string[] }>;
   guardar: (p: { pendencia_id: string; loc_destino: string; qty?: number }) => Promise<void>;
+  desfazerGuarda: (p: { pendencia_id: string; motivo?: string }) => Promise<{ movsEstornadas: number }>;
   aguardarPendenciaGuarda: (pendenciaId: string, status: "pendente" | "em_guarda" | "guardada", opts?: { timeout_ms?: number }) => Promise<void>;
 
   // ── movs operacionais ──
   transferirGalpao: (p: { origem: "CWB" | "SP"; destino: "CWB" | "SP"; items: { sku: string; qty: number }[] }) => Promise<{ id: string }>;
-  replenishment: (p: { sku: string; galpao: "CWB" | "SP"; origem_loc: string; destino_loc: string; qty: number }) => Promise<void>;
+  criarTransferenciaHeader: (p: { origem: "CWB" | "SP"; destino: "CWB" | "SP"; items: { sku: string; loc_origem: string; qty: number }[] }) => Promise<{ id: string }>;
+  receberTransferencia: (p: { transferencia_id: string; itens: { transferencia_item_id: string; loc_destino: string }[] }) => Promise<void>;
+  desfazerRecebimentoTransferencia: (p: { transferencia_id: string; motivo?: string }) => Promise<{ movsEstornadas: number }>;
+  replenishment: (p: { sku: string; galpao: "CWB" | "SP"; origem_loc: string; destino_loc: string; qty: number }) => Promise<{ origem_id: string; mov_ids: string[] }>;
+  reverterReplenishment: (p: { origem_id: string; motivo?: string }) => Promise<{ movsEstornadas: number }>;
   ajusteManual: (p: {
     sku: string;
     galpao: "CWB" | "SP";
@@ -82,7 +87,8 @@ export type Ctx = {
       | "correcao_inventario"
       | "devolucao_sem_fluxo"
       | "outro";
-  }) => Promise<void>;
+  }) => Promise<{ mov_id: string }>;
+  estornarAjuste: (p: { mov_id: string; motivo?: string }) => Promise<void>;
   lancamentoRetroativo: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; tipo: "E" | "S" }) => Promise<{ id: string }>;
   reconciliarRetroativo: (id: string) => Promise<void>;
 
@@ -92,8 +98,10 @@ export type Ctx = {
     empresa: "netair" | "netparts";
     items: { sku: string; qty: number }[];
     modo: "separacao" | "baixa_direta";
-  }) => Promise<{ id: string; degradado: boolean; motivo_degradacao?: string; skus_sem_saldo?: string[] }>;
+    idempotency_key?: string;
+  }) => Promise<{ id: string; pedido_id?: string; degradado: boolean; motivo_degradacao?: string; skus_sem_saldo?: string[]; idempotente?: boolean }>;
   disponibilidadeVenda: (p: { sku: string; galpao: "CWB" | "SP"; empresa: "netair" | "netparts" }) => Promise<{ localizacao_id?: string; disponivel: number }>;
+  cancelarVenda: (p: { pedido_id: string; motivo?: string }) => Promise<{ movsEstornadas: number; reservasLiberadas: number }>;
 
   // ── reservas ──
   reservar: (p: { sku: string; galpao: "CWB" | "SP"; loc: string; qty: number; ttl_horas?: number; ttl_segundos?: number }) => Promise<{ mov_id: string }>;
@@ -101,6 +109,7 @@ export type Ctx = {
 
   // ── devoluções ──
   classificarDevolucao: (p: { devolucao_id: string; classificacao: "A" | "B" | "C" | "D" }) => Promise<void>;
+  desclassificarDevolucao: (p: { devolucao_id: string; motivo?: string }) => Promise<{ movsEstornadas: number }>;
 
   // ── inventário ──
   criarSessaoInventario: (p: { galpao: "CWB" | "SP"; locs: string[]; modo?: "blind" | "aberto"; tipo?: "cycle_count" | "completo" }) => Promise<{ id: string }>;
@@ -108,8 +117,9 @@ export type Ctx = {
   proximaLoc: (sessaoId: string) => Promise<{ localizacao_id: string | null; pool_vazio?: boolean }>;
   bipeInventario: (p: { sessao_id: string; sku: string; loc: string; qty: number }) => Promise<void>;
   finalizarLocInventario: (p: { sessao_id: string; loc: string }) => Promise<void>;
-  aprovarInventario: (sessaoId: string) => Promise<void>;
+  aprovarInventario: (sessaoId: string, opts?: { force?: boolean }) => Promise<void>;
   aplicarInventario: (sessaoId: string) => Promise<void>;
+  estornarInventario: (sessaoId: string, motivo?: string) => Promise<{ ok: boolean; movsEstornadas: number }>;
 
   // ── asserts ──
   assertSaldo: (sku: string, galpao: "CWB" | "SP", loc: string, qty_esperada: number) => Promise<void>;

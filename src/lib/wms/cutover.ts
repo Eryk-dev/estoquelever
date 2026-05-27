@@ -141,7 +141,11 @@ export interface ReverterResult {
   reservasFalhadas?: number;
 }
 
-export type ReverterMotivo = "desfazer_bip" | "voltar_etapa" | "ajuste_admin";
+export type ReverterMotivo =
+  | "desfazer_bip"
+  | "voltar_etapa"
+  | "ajuste_admin"
+  | "reiniciar_embalagem";
 
 /**
  * Reverte o cutover quando o pedido sai do conjunto forward com
@@ -168,7 +172,12 @@ export async function reverterCutoverSeRetrocedeu(
     return { reverted: false, motivo: "wms_disabled" };
   }
 
-  if (isForwardStatus(novoStatus)) {
+  // 'reiniciar_embalagem' é uma reversão forçada: o operador quer desfazer o
+  // cutover (S movs do ledger) mesmo com o pedido permanecendo em 'separado'
+  // (status forward). Pula a checagem pra esse motivo específico — os demais
+  // (desfazer_bip, voltar_etapa, ajuste_admin) só revertem quando saem do
+  // conjunto forward.
+  if (motivo !== "reiniciar_embalagem" && isForwardStatus(novoStatus)) {
     return { reverted: false, motivo: "ainda_forward" };
   }
 
@@ -187,8 +196,13 @@ export async function reverterCutoverSeRetrocedeu(
     return { reverted: false, motivo: "estoque_nao_lancado" };
   }
 
-  // Busca todas as S do pedido (origem_tipo='nf_venda')
-  const { data: saidas, error: saidasErr } = await sb
+  // Busca todas as S do pedido. Há 2 caminhos que produzem S no fluxo de
+  // separação WMS:
+  //   1. executarEstoquePosNfWms (cutover worker): grava S com origem_id=pedidoId
+  //   2. /separacao/marcar-item: grava S sem origem_id, link via
+  //      siso_pedido_itens.mov_saida_id ou siso_pedido_item_mov_links
+  // Pra cobrir os 2 caminhos, unimos as duas queries.
+  const { data: saidasPorOrigem, error: saidasErr } = await sb
     .from("siso_movimentacoes")
     .select("id, produto_id, galpao_id, localizacao_id, quantidade")
     .eq("origem_id", pedidoId)
@@ -203,13 +217,52 @@ export async function reverterCutoverSeRetrocedeu(
     return { reverted: false, motivo: "query_error" };
   }
 
-  const saidasArr = (saidas ?? []) as Array<{
+  // Lookup via mov_saida_id em siso_pedido_itens (path marcar-item)
+  const { data: itensComMov } = await sb
+    .from("siso_pedido_itens")
+    .select("mov_saida_id")
+    .eq("pedido_id", pedidoId)
+    .not("mov_saida_id", "is", null);
+  const movSaidaIds = (
+    (itensComMov ?? []) as Array<{ mov_saida_id: string | null }>
+  )
+    .map((i) => i.mov_saida_id)
+    .filter((id): id is string => Boolean(id));
+
+  let saidasViaItens: Array<{
     id: string;
     produto_id: string;
     galpao_id: string;
     localizacao_id: string;
     quantidade: number;
-  }>;
+  }> = [];
+  if (movSaidaIds.length > 0) {
+    const { data } = await sb
+      .from("siso_movimentacoes")
+      .select("id, produto_id, galpao_id, localizacao_id, quantidade")
+      .in("id", movSaidaIds)
+      .eq("tipo", "S");
+    saidasViaItens = (data ?? []) as typeof saidasViaItens;
+  }
+
+  // Union dedupe por id
+  const seen = new Set<string>();
+  const saidasArr: Array<{
+    id: string;
+    produto_id: string;
+    galpao_id: string;
+    localizacao_id: string;
+    quantidade: number;
+  }> = [];
+  for (const s of [
+    ...((saidasPorOrigem ?? []) as typeof saidasArr),
+    ...saidasViaItens,
+  ]) {
+    if (!seen.has(s.id)) {
+      seen.add(s.id);
+      saidasArr.push(s);
+    }
+  }
 
   if (saidasArr.length === 0) {
     // estoque_lancado=true mas sem S? Estado inconsistente. Limpa flag.

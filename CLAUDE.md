@@ -186,6 +186,7 @@ src/
         vendas/disponibilidade/route.ts    # Resolve loc+dona+disponivel pra produto+galpão (GET)
         vendas/[id]/route.ts               # Sales order detalhe (GET)
         vendas/[id]/vendedor/route.ts      # Re-assign vendedor (PATCH)
+        vendas/[id]/cancelar/route.ts      # POST — cancela venda manual (libera R ou estorna S) (P3)
         # ── Separação (29 rotas) ──
         separacao/route.ts                 # List separation orders with counts (GET)
         separacao/iniciar/route.ts         # Start separation (POST)
@@ -298,17 +299,21 @@ src/
         guarda/route.ts                    # GET — fila put-away (filtros)
         guarda/rota/route.ts               # GET — fila ordenada por loc destino
         guarda/[id]/route.ts               # GET — detalhe da pendência
-        guarda/[id]/iniciar/route.ts       # POST — marca status='em_guarda'
-        guarda/[id]/confirmar/route.ts     # POST — mov par S+E RECEBIMENTO→loc destino
+        guarda/[id]/iniciar/route.ts       # POST — marca status='em_guarda' (UPDATE condicional anti-race; 409 PENDENCIA_OUTRA_GUARDA)
+        guarda/[id]/confirmar/route.ts     # POST — mov par S+E (RPC wms_confirmar_guarda_atomico)
+        guarda/[id]/desfazer/route.ts      # POST — desfaz última confirmação (P3)
         guarda/[id]/cancelar/route.ts      # POST — cancela com motivo
         guarda/[id]/imprimir/route.ts      # POST — imprime etiqueta de produto
         guarda/imprimir-lote/route.ts      # POST — imprime maço inteiro
         transferir-galpao/route.ts         # POST — transferência inter-galpão
         transferencias/route.ts            # GET — lista + sessões
-        transferencias/[id]/cancelar/route.ts # POST
-        transferencias/[id]/receber/route.ts  # POST
-        replenishment/route.ts             # POST — replenishment intra-galpão
+        transferencias/[id]/cancelar/route.ts # POST (aceita parcial)
+        transferencias/[id]/receber/route.ts  # POST (claim lock anti-race)
+        transferencias/[id]/desfazer-recebimento/route.ts # POST — estorna leg E, volta em_transito (P3)
+        replenishment/route.ts             # POST — replenishment intra-galpão (RPC atômica)
+        replenishment/[id]/reverter/route.ts # POST — estorna par S+E pelo origem_id (P3)
         ajuste/route.ts                    # POST — ajuste manual com motivo
+        ajuste/[id]/estornar/route.ts      # POST — estorna mov de ajuste manual (P3)
         lancamento-retroativo/route.ts                   # POST/GET — registrar + listar
         lancamento-retroativo/[id]/reconciliar/route.ts  # POST — reconcilia com mov real
         # ── WMS fornecedores ──
@@ -331,10 +336,11 @@ src/
         inventario/[id]/party/route.ts     # POST entrar + DELETE sair da party
         inventario/[id]/proxima-loc/route.ts         # POST — pull queue
         inventario/[id]/localizacoes/[locId]/finalizar/route.ts # POST — finaliza loc
-        inventario/[id]/aprovar/route.ts   # POST — computa divergências + aprova
-        inventario/[id]/aprovar-sessao/route.ts # POST — aprova sessão inteira
-        inventario/[id]/aplicar/route.ts   # POST — gera movs origem='inventario'
-        inventario/[id]/contagens/route.ts # POST — registra contagem
+        inventario/[id]/aprovar/route.ts   # POST — computa divergências + aprova (force opcional pra OPERADORES_ATIVOS)
+        inventario/[id]/aprovar-sessao/route.ts # POST — aprova sessão inteira (force opcional)
+        inventario/[id]/aplicar/route.ts   # POST — gera movs origem='inventario' (idempotente via UNIQUE)
+        inventario/[id]/estornar/route.ts  # POST — admin, reverte sessão aplicada (P3)
+        inventario/[id]/contagens/route.ts # POST — registra contagem (exige lock da loc)
         inventario/[id]/divergencias/route.ts # GET, PATCH
         inventario/[id]/eventos/route.ts   # GET — feed classificado verde/amarelo/vermelho pro supervisor
         inventario/metricas/route.ts       # GET — RPCs operador+localização
@@ -342,6 +348,7 @@ src/
         # ── WMS exceções + dashboards + insights ──
         devolucoes/route.ts                # GET fila pendente
         devolucoes/[id]/classificar/route.ts # POST classificação A/B/C/D
+        devolucoes/[id]/desclassificar/route.ts # POST — reverte classificação (P3)
         cobertura/route.ts                 # GET (filtros)
         cobertura/refresh/route.ts         # GET (worker secret) — refresh MV
         dashboard-geral/route.ts           # GET — agrega 7 contadores
@@ -865,6 +872,8 @@ Failure to update documentation means the next developer or LLM will work with s
 - **Aprovar manual completa a reserva (2026-05-25, mesmo dia do cutover).** Quando webhook entrou com saldo=0 (sugestao=oc) mas o operador inseriu estoque depois e aprovou como propria/transferência, o `/api/wms/pedidos/aprovar` agora cria as reservas R correspondentes antes de transitar status. Frontend desabilita os botões propria/transferência se o estoque live não cobre todos os itens (`decisaoIsAvailable` em `pedido-card-wms.tsx`). Spec: `docs/superpowers/specs/2026-05-25-aprovar-cria-reserva-design.md`.
 
 - **WMS Fix P1 (Foundation Realtime + Insights Recovery) — implementado em 2026-05-26.** Restaura a camada de observação: (a) 6 tabelas faltantes adicionadas à publication `supabase_realtime` (`siso_pedidos`, `siso_pedido_itens`, `siso_wms_pendencias_guarda`, `siso_inventario_sessoes`, `siso_devolucoes_pendentes`, `siso_transferencias_galpao`) — restaura PR-3; (b) 4 RPCs insights reescritas para schema 3D — remove `siso_estoque.custo_medio` (→ JOIN `siso_custo_medio`), `siso_estoque.empresa_dona_id` (axis dropado), `siso_empresas.galpao_id` (→ `siso_pedidos.separacao_galpao_id`); `wms_insights_estoque_quadrante` mudou de 3-arg pra 2-arg (`p_empresa_dona_id` removido) — caller em `src/lib/wms/insights/queries.ts:125` atualizado no mesmo PR; (c) 4 cron jobs HTTP agendados (insights 5min, reservas 1h, inventário 30min, curva ABC diária 3am UTC). **Deviação documentada:** WORKER_SECRET armazenado em `supabase_vault` (name `worker_secret`) com expressão `(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'worker_secret' LIMIT 1)` nos cron commands — Supabase staging bloqueia `ALTER DATABASE/ROLE` pra GUCs custom, então a abordagem `current_setting('app.worker_secret')` do plano original não funciona. Mesmo valor configurado em Vercel env `WORKER_SECRET` (Production). Cron usa `net.http_get` (não POST) porque os 3 endpoints exportam apenas `GET`. Validação E2E: motor insights gerou 7 alertas ativos no primeiro tick. Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p1-foundation-realtime-insights.md`. Spec mãe: `docs/superpowers/specs/2026-05-26-auditoria-wms-fixes-design.md` §5. PR #4 merged.
+
+- **WMS Fix P3 (Reverse Paritária + Idempotência) — implementado em 2026-05-27.** 22 findings da auditoria WMS endereçados em 1 PR. **7 novos endpoints reverse** — `POST /api/wms/{inventario/[id]/estornar (admin), guarda/[id]/desfazer, devolucoes/[id]/desclassificar, replenishment/[origem_id]/reverter, ajuste/[mov_id]/estornar, vendas/[id]/cancelar, transferencias/[id]/desfazer-recebimento}`. **5 race fixes** — iniciarGuarda (UPDATE condicional → 409 PENDENCIA_OUTRA_GUARDA), contagens (exige lock da loc → 409 LOC_NAO_BLOQUEADA), confirmarGuarda (atômica via RPC), receberTransferencia (claim lock via nova coluna `recebimento_em_andamento_por`), marcar-item desmarcar (ordem S antes de L pra preservar invariante I2). **2 atomic RPCs** — `wms_replenishment_intra_galpao` e `wms_confirmar_guarda_atomico` (S+E+UPDATE numa transação). **1 UNIQUE constraint** — `uniq_movs_inventario_divergencia` em `siso_movimentacoes` (idempotência de `aplicarSessao`). **Outros fixes:** `aprovar`/`aprovar-sessao` aceita `force:true` pra OPERADORES_ATIVOS; PATCH inventário bloqueia troca de `modo_contagem` fora de planejada (409 MODO_LOCKED); DELETE inventário aplicada → 409; `vendas/criar` idempotency_key filtra cancelados; `reiniciar etapa=embalagem` reverte cutover do ledger (estado fantasma fix #2.10); `lancamento-retroativo/reconciliar` valida UUID + existência. **13 novos cenários** (40, 40b-d, 41, 41b, 42, 43, 44, 45, 45b, 46, 46b, 47, 48, 48b, 49, 49b) — suite cresce de 17 → 30+. Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p3-reverse-idempotencia.md`. PR pendente.
 
 ### Deprecated / To Remove
 - Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)

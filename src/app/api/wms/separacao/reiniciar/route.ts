@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
+import { reverterCutoverSeRetrocedeu } from "@/lib/wms/cutover";
 import { logger } from "@/lib/logger";
 
 /**
@@ -100,6 +101,30 @@ export async function POST(request: NextRequest) {
         motivo: "reiniciar",
       });
     } else {
+      // etapa === 'embalagem'
+      // P3 #2.10: se cutover já aconteceu (estoque_lancado=true), o ledger
+      // já tem S movs descontando saldo. Reiniciar embalagem precisa
+      // estornar essas saídas e recriar reservas R — caso contrário o
+      // operador "des-embala" o pedido mas o saldo continua reduzido.
+      // Status alvo: 'separado' (pedido permanece pronto pra embalar de novo).
+      for (const pid of pedido_ids) {
+        await reverterCutoverSeRetrocedeu(
+          pid,
+          "separado",
+          "reiniciar_embalagem",
+          session.id,
+        ).catch((err) => {
+          logger.warn(
+            "separacao-reiniciar",
+            "Falha ao reverter cutover do embalagem",
+            {
+              pedidoId: pid,
+              err: err instanceof Error ? err.message : String(err),
+            },
+          );
+        });
+      }
+
       const { error: updateError } = await supabase
         .from("siso_pedido_itens")
         .update({

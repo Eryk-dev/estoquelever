@@ -9,6 +9,7 @@ import { sisoFetch, usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   Icon,
+  Modal,
   StatusBadge,
   fmtNum,
   fmtRelative,
@@ -45,6 +46,9 @@ export default function GuardaTabletPage() {
     codigo: string;
   } | null>(null);
   const [scanKey, setScanKey] = useState(0);
+  const [desfazerOpen, setDesfazerOpen] = useState(false);
+  const [desfazerMotivo, setDesfazerMotivo] = useState("");
+  const [desfazerQty, setDesfazerQty] = useState("");
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["wms-guarda", id],
@@ -187,6 +191,42 @@ export default function GuardaTabletPage() {
         setDestinoOverride(null);
         qc.invalidateQueries({ queryKey: ["wms-guarda", id] });
       }
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const desfazer = useMutation({
+    mutationFn: async (input: { motivo: string; qty?: number }) => {
+      const body: Record<string, unknown> = { motivo: input.motivo };
+      if (input.qty !== undefined && input.qty > 0) body.qty = input.qty;
+      const r = await sisoFetch(`/api/wms/guarda/${id}/desfazer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const b = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error || `HTTP ${r.status}`);
+      }
+      return (await r.json()) as {
+        ok: boolean;
+        qtyEstornada?: number;
+        statusFinal?: string;
+      };
+    },
+    onSuccess: (r) => {
+      toast.success(
+        r.qtyEstornada != null
+          ? `Guarda desfeita · ${fmtNum(r.qtyEstornada)} un estornada(s)`
+          : "Guarda desfeita",
+      );
+      setDesfazerOpen(false);
+      setDesfazerMotivo("");
+      setDesfazerQty("");
+      qc.invalidateQueries({ queryKey: ["wms-guarda", id] });
+      qc.invalidateQueries({ queryKey: ["wms-guarda"] });
+      qc.invalidateQueries({ queryKey: ["wms-estoque"] });
+      qc.invalidateQueries({ queryKey: ["wms-ledger"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -559,8 +599,30 @@ export default function GuardaTabletPage() {
             </div>
           </div>
 
-          {/* Cancelar */}
-          <div style={{ textAlign: "center" }}>
+          {/* Cancelar / Desfazer */}
+          <div
+            style={{
+              display: "flex",
+              gap: 14,
+              justifyContent: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            {pend.qty_guardada > 0 && podeGuardar && (
+              <button
+                type="button"
+                className="wms-btn-link"
+                onClick={() => {
+                  setDesfazerMotivo("");
+                  setDesfazerQty(String(pend.qty_guardada));
+                  setDesfazerOpen(true);
+                }}
+                disabled={desfazer.isPending}
+              >
+                <Icon name="rotate" size={11} /> Desfazer guarda (
+                {fmtNum(pend.qty_guardada)} un)
+              </button>
+            )}
             <button
               type="button"
               className="wms-btn-link"
@@ -573,6 +635,101 @@ export default function GuardaTabletPage() {
             </button>
           </div>
         </>
+      )}
+
+      {desfazerOpen && (
+        <Modal
+          title="Desfazer guarda"
+          subtitle={`${pend.produto?.sku ?? "—"} · ${fmtNum(pend.qty_guardada)} un já guardadas`}
+          width={520}
+          onClose={() => !desfazer.isPending && setDesfazerOpen(false)}
+          footer={
+            <>
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                disabled={desfazer.isPending}
+                onClick={() => setDesfazerOpen(false)}
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-danger"
+                disabled={
+                  desfazer.isPending || desfazerMotivo.trim().length < 3
+                }
+                onClick={() => {
+                  const qtyN = Number(desfazerQty);
+                  desfazer.mutate({
+                    motivo: desfazerMotivo.trim(),
+                    qty:
+                      Number.isFinite(qtyN) && qtyN > 0 && qtyN < pend.qty_guardada
+                        ? qtyN
+                        : undefined,
+                  });
+                }}
+              >
+                <Icon name="rotate" size={11} />
+                {desfazer.isPending ? "Desfazendo…" : "Desfazer"}
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, marginBottom: 12 }}>
+            Estorna o par S+E da última confirmação dessa pendência (ou de uma
+            quantidade parcial). A pendência volta pra <strong>pendente</strong>{" "}
+            ou <strong>em_guarda</strong> com qty corrigida.
+          </p>
+          <div style={{ marginBottom: 12 }}>
+            <label
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                display: "block",
+                marginBottom: 6,
+              }}
+              htmlFor="desfazer-qty"
+            >
+              Qty a estornar (max {fmtNum(pend.qty_guardada)})
+            </label>
+            <input
+              id="desfazer-qty"
+              className="wms-input wms-mono wms-tar"
+              type="number"
+              min={1}
+              max={pend.qty_guardada}
+              value={desfazerQty}
+              onChange={(e) => setDesfazerQty(e.target.value)}
+              style={{ width: 140 }}
+              disabled={desfazer.isPending}
+            />
+            <span
+              className="wms-td-mute"
+              style={{ marginLeft: 10, fontSize: 11.5 }}
+            >
+              vazio = estornar todas
+            </span>
+          </div>
+          <label
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              display: "block",
+              marginBottom: 6,
+            }}
+          >
+            Motivo (≥3 chars)
+          </label>
+          <textarea
+            className="wms-textarea"
+            value={desfazerMotivo}
+            onChange={(e) => setDesfazerMotivo(e.target.value)}
+            placeholder="Ex.: guardado na loc errada, recontagem indicou diferença"
+            rows={3}
+            disabled={desfazer.isPending}
+          />
+        </Modal>
       )}
     </div>
   );

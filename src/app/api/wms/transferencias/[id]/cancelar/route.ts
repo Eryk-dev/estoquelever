@@ -11,8 +11,8 @@ export async function POST(
   if (!auth.ok) return auth.response;
   const { id } = await params;
   try {
-    await cancelarTransferencia(id, auth.user.id);
-    return NextResponse.json({ ok: true });
+    const result = await cancelarTransferencia(id, auth.user.id);
+    return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.transferencias.cancelar",

@@ -17,14 +17,22 @@ export async function POST(
 
   const { id } = await params;
   let parcial = false;
+  let force = false;
   try {
-    const body = (await req.json().catch(() => ({}))) as { parcial?: unknown };
+    const body = (await req.json().catch(() => ({}))) as {
+      parcial?: unknown;
+      force?: unknown;
+    };
     parcial = body?.parcial === true;
+    force = body?.force === true;
   } catch {
     // body opcional — ignora erro de parsing
   }
   try {
-    await computarDivergencias(id, { parcial });
+    await computarDivergencias(id, {
+      parcial,
+      forceWithActiveOperators: force,
+    });
 
     const sb = createServiceClient();
     const { data: divs } = await sb
@@ -57,6 +65,22 @@ export async function POST(
       divergencias: { total, pendentes: 0, aprovadas },
     });
   } catch (e) {
+    // P3 #4.5: operadores ativos é cenário de UX (não erro genérico) — 409
+    // com lista pra UI mostrar quem ainda está dentro e pedir confirmação.
+    const code = (e as { code?: string }).code;
+    const operadores = (e as {
+      operadores?: Array<{ usuario_id: string; nome: string | null }>;
+    }).operadores;
+    if (code === "OPERADORES_ATIVOS") {
+      return NextResponse.json(
+        {
+          error: e instanceof Error ? e.message : String(e),
+          code,
+          operadores: operadores ?? [],
+        },
+        { status: 409 },
+      );
+    }
     return wmsErrorResponse({
       source: "wms.inventario.aprovar",
       error: e,

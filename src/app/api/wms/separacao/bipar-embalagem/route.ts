@@ -202,11 +202,16 @@ export async function POST(request: NextRequest) {
       const nfPresente = !!(
         pedidoComp?.nota_fiscal_id && pedidoComp?.chave_acesso_nf
       );
+      // PostgREST .neq trata NULL como FALSE em SQL three-valued (NULL <> 'x'
+      // = NULL), o que excluiria itens normais (compra_status IS NULL) da
+      // listagem de faltantes — tornando a guarda vacuosa pra pedidos sem OC.
+      // Usar .or pra incluir explicitamente NULL (mesmo padrão de
+      // confirmar-item-embalagem.ts).
       const { data: faltantes } = await supabase
         .from("siso_pedido_itens")
         .select("id, separacao_marcado, compra_status, quantidade_pega")
         .eq("pedido_id", result.pedido_id)
-        .neq("compra_status", "cancelado")
+        .or("compra_status.is.null,compra_status.not.in.(cancelado)")
         .or("separacao_marcado.eq.false,quantidade_pega.is.null");
       const allPicked = (faltantes ?? []).length === 0;
       if (nfPresente && allPicked) {

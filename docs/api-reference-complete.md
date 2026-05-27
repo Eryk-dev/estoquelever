@@ -5239,7 +5239,8 @@ Lista devoluções aguardando classificação física. **Response:** `{ rows: [.
 Detalhe consolidado de 1 devolução pendente. Reutilizado pela página `/wms/devolucoes/[id]`
 quando a fila filtrada não tem mais a linha (status≠`aguardando_classificacao`).
 **Auth:** sessão (X-Session-Id).
-**Response 200:** `{ devolucao: { id, status, nota_fiscal_id, chave_acesso_nf, criado_em, classificacao, classificada_em, payload_webhook, empresa_referencia: { id, nome }|null } }`.
+**Response 200:** `{ devolucao: { id, status, nota_fiscal_id, chave_acesso_nf, criado_em, classificacao, classificada_em, payload_webhook, empresa_receptora: { id, nome }|null } }`.
+**Nota:** `empresa_receptora` é a empresa **receptora física** (quem recebeu a NF de devolução no galpão); NÃO é a vendedora original — alinha com P2 #6.5.
 **Erros:** 401 sem sessão, 404 quando `id` não existe (`PGRST116`), 500 com mensagem do banco.
 
 ### POST /api/wms/devolucoes/[id]/classificar

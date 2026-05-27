@@ -33,6 +33,27 @@ export interface NfWebhookPayload {
   };
 }
 
+// ─── Devolução detection (single source of truth) ──────────────────────────
+/**
+ * Detecta se um payload de NF representa devolução.
+ *
+ * Tiny entrega o tipo de devolução em formas variadas dependendo do canal e
+ * do tipo de payload — `tipo` no envelope, `tipoOperacao`/`tipo_operacao`
+ * (E = entrada), `tipo_nota`, ou `finalidade` (Tiny v3 carrega 4=devolução
+ * em alguns webhooks). Centralizar a checagem aqui evita branches divergentes
+ * entre o webhook receiver e o handler.
+ */
+export function isDevolucao(nf: {
+  tipo?: string;
+  tipoOperacao?: string;
+  finalidade?: string;
+}): boolean {
+  if (nf.tipo && nf.tipo.toLowerCase() === "devolucao") return true;
+  if (nf.tipoOperacao === "E") return true;
+  if (nf.finalidade && /devol/i.test(nf.finalidade)) return true;
+  return false;
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function handleNfWebhook(

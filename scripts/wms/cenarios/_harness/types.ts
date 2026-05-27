@@ -60,7 +60,7 @@ export type Ctx = {
 
   // ── compras + recebimento ──
   comprar: (p: { sku: string; qty: number; fornecedor?: string; pedido_id?: string }) => Promise<{ ordem_id: string }>;
-  receberCompra: (p: { ordem_id: string; items: { sku: string; qty: number }[] }) => Promise<void>;
+  receberCompra: (p: { ordem_id: string; items: { sku: string; qty: number; custo_unitario?: number }[] }) => Promise<void>;
   prepararEmbalagem: (p: { pedido_id: string }) => Promise<void>;
   receber: (p: { items: { sku: string; qty: number; loc_destino?: string }[]; galpao: "CWB" | "SP"; entrada_direta?: boolean }) => Promise<{ pendencias: string[] }>;
   guardar: (p: { pendencia_id: string; loc_destino: string; qty?: number }) => Promise<void>;

@@ -34,6 +34,8 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
+import { reservarAtomico, estornarReservaIndividual } from "@/lib/wms/reservas";
+import { wmsAsSource } from "@/lib/wms/flags";
 import { registrarEvento } from "@/lib/historico-service";
 import { resolverDisponibilidadeVenda } from "@/lib/wms/vendas-disponibilidade";
 import type {
@@ -290,6 +292,65 @@ export async function POST(request: NextRequest) {
       { erro: "Falha ao inserir itens", detalhe: itensErr.message },
       { status: 500 },
     );
+  }
+
+  // 2b) Modo separacao + WMS_AS_SOURCE: cria R atomicamente.
+  // Sem isso, marketplace concorrente pode pegar saldo entre a venda manual
+  // e o picking, e a baixa do vendedor falha por reservado>saldo.
+  // Itens sem localizacao_id (sem saldo no galpão) ou com saldo parcial
+  // (quantidade > disponivel — caso típico de degradação) são pulados —
+  // pedido segue como aguardando_separacao sem reserva pra esses itens
+  // (operador resolve no picking). RPC wms_reservar_atomico falharia por
+  // saldo insuficiente nesses casos, então não vale a tentativa.
+  const reservasCriadas: string[] = [];
+  if (modoEfetivo === "separacao" && wmsAsSource()) {
+    try {
+      for (const item of itensResolvidos) {
+        if (!item.localizacao_id) continue; // sem saldo — segue sem reserva
+        if (item.quantidade > item.disponivel) continue; // saldo insuficiente — pula
+        const reservaId = await reservarAtomico({
+          tripla: {
+            produto_id: item.produto_id,
+            galpao_id: galpao_id,
+            localizacao_id: item.localizacao_id,
+          },
+          qty: item.quantidade,
+          pedido_id: pedidoId,
+          ttl_horas: 24 * 30, // 30 dias, alinhado com aprovar e webhook-processor-wms
+          usuario_id: user.id,
+        });
+        reservasCriadas.push(reservaId);
+      }
+    } catch (rErr) {
+      const msg = rErr instanceof Error ? rErr.message : String(rErr);
+      logger.error("vendas.criar", "Falha ao criar R em modo separacao — rollback", {
+        pedidoId,
+        erro: msg,
+        reservas_pra_estornar: reservasCriadas,
+      });
+      // Rollback: estorna parciais + apaga pedido+itens
+      for (const rid of reservasCriadas) {
+        try {
+          await estornarReservaIndividual({
+            reserva_id: rid,
+            motivo: "rollback_aprovacao",
+            usuario_id: user.id,
+          });
+        } catch (estornoErr) {
+          logger.error("vendas.criar", "Falha no rollback de R — DADOS POSSIVELMENTE INCONSISTENTES", {
+            pedidoId,
+            reserva_id: rid,
+            erro: estornoErr instanceof Error ? estornoErr.message : String(estornoErr),
+          });
+        }
+      }
+      await supabase.from("siso_pedido_itens").delete().eq("pedido_id", pedidoId);
+      await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
+      return NextResponse.json(
+        { erro: `Falha criando reservas: ${msg}`, reservas_estornadas: reservasCriadas.length },
+        { status: 409 },
+      );
+    }
   }
 
   // 3) Se modoEfetivo === 'baixa_direta', gera movs 'S' no ledger com rollback manual

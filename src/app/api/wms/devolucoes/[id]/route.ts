@@ -19,12 +19,17 @@ export async function GET(
   const { id } = await params;
   try {
     const sb = createServiceClient();
+    // empresa_id na tabela siso_devolucoes_pendentes representa a empresa
+    // RECEPTORA FÍSICA da NF de devolução (quem recebeu de volta no galpão),
+    // NÃO a vendedora original (essa só é resolvida na classificação a partir
+    // da mov S da venda). Por isso aliasamos como `empresa_receptora` — alinha
+    // com P2 #6.5 que corrige o mesmo bug em listarDevolucoesPendentes.
     const { data, error } = await sb
       .from("siso_devolucoes_pendentes")
       .select(
         `id, status, nota_fiscal_id, chave_acesso_nf, criado_em,
          classificacao, classificada_em, payload_webhook,
-         empresa_referencia:siso_empresas!empresa_id(id, nome)`,
+         empresa_receptora:siso_empresas!empresa_id(id, nome)`,
       )
       .eq("id", id)
       .single();

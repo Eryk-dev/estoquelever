@@ -133,11 +133,12 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
   assertUuidLike(input.nota_fiscal_id, "nota_fiscal_id");
   assertUuidLike(input.usuario_id, "usuario_id");
 
-  // Fix-Final A T8 (R5): origem fiscal exige nota_fiscal_id (uuid em
-  // siso_notas_fiscais). Sem isso, devoluções/vendas/compras quebram
-  // rastreio fiscal e dificultam reconciliação NF↔mov.
-  // ajuste_manual, inventario_*, transferencia_*, reserva_pedido etc.
-  // não exigem NF — operações internas sem documento fiscal.
+  // Fix-Final A T8 (R5) — RELAXADO em 2026-05-27 pós-suite-falha (Fix-A hotfix):
+  // a versão original throw fazia /receber, /parcial e callers legacy retornar
+  // 500 porque populam nota_fiscal_id=null legitimamente (recebimento manual sem NF,
+  // separação parcial, lançamento retroativo). Enforcement movido pros webhook
+  // handlers (nf-webhook-handler + webhook-processor) onde NF realmente existe.
+  // Aqui ficou só warn — observabilidade sem quebrar callers existentes.
   const NF_REQUIRED = new Set<OrigemTipo>([
     "nf_compra",
     "nf_venda",
@@ -147,8 +148,10 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
     "devolucao_fornecedor_enviada",
   ]);
   if (NF_REQUIRED.has(input.origem_tipo) && !input.nota_fiscal_id) {
-    throw new Error(
-      `inserirMovimentacao: nota_fiscal_id obrigatório quando origem_tipo='${input.origem_tipo}'. Use upsertNotaFiscal() pra obter o uuid antes de chamar.`,
+    logger.warn(
+      "wms/ledger",
+      `mov origem_tipo='${input.origem_tipo}' sem nota_fiscal_id — webhook handlers devem popular via upsertNotaFiscal()`,
+      { origem_tipo: input.origem_tipo, produto_id: input.tripla?.produto_id, qty: input.qty },
     );
   }
 

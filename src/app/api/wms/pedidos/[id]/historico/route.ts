@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { getSessionUser } from "@/lib/session";
+import { userCan } from "@/lib/permissions";
 
 /**
  * GET /api/pedidos/[id]/historico
@@ -8,10 +10,19 @@ import { logger } from "@/lib/logger";
  * Returns the full audit trail for an order, sorted chronologically.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: pedidoId } = await params;
+
+  // Auth + perm (finding 1.7)
+  const session = await getSessionUser(request);
+  if (!session) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (!userCan(session, "pedidos.ver")) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
 
   const supabase = createServiceClient();
 

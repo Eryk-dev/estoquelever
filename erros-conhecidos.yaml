@@ -1908,3 +1908,31 @@ erros:
     files: []
     commit: ec7a9cf
     tags: [wms, vendas, disponibilidade, 3d, hardcoded, cwb, sp, fix-final-b, t3, no-op, already-clean]
+
+  - id: wms-fix-final-b-t6-wms-inventario-sugerir-quarentena-already-applied
+    date: "2026-05-27"
+    source: supabase/migrations/20260527_inventario_sugerir_excluir_quarentena.sql
+    category: business_logic
+    message: "RPC wms_inventario_sugerir já filtra loc.tipo='quarentena' — nenhuma nova migration necessária"
+    cause: >
+      Fix-Final-B T6 (B5) planejou criar migration
+      20260528_inventario_sugerir_exclui_quarentena.sql para adicionar filtro
+      `loc.tipo <> 'quarentena'` às 3 CTEs (curva_a, divergentes, antigos) da RPC
+      wms_inventario_sugerir. O commit e9201e9
+      (fix(wms/inventario): sugerir exclui locs tipo=quarentena [#P6-6.10 #P6-6.9])
+      já havia aplicado a migration 20260527_inventario_sugerir_excluir_quarentena.sql
+      antes do plano Fix-Final-B ser executado. O audit docs/audit-workflows/ era stale
+      e apontou a ausência do filtro baseado em código anterior à migration.
+    fix: >
+      Nenhuma ação necessária. Verificação via MCP pg_get_functiondef('wms_inventario_sugerir')
+      contra staging (ehbxpbeijofxtsbezwxd) confirmou que os 3 CTEs já contêm
+      AND loc.tipo <> 'quarentena':
+      1. CTE curva_a — filtro presente.
+      2. CTE divergentes — filtro presente.
+      3. CTE antigos — filtro presente.
+      Migration 20260527_inventario_sugerir_excluir_quarentena.sql já aplicada em staging
+      via commit e9201e9. Nova migration 20260528_... NÃO criada para evitar re-apply.
+    files:
+      - supabase/migrations/20260527_inventario_sugerir_excluir_quarentena.sql
+    commit: e9201e9
+    tags: [wms, inventario, quarentena, no-op, already-applied, fix-final-b, t6, b5]

@@ -5413,7 +5413,7 @@ quando a fila filtrada não tem mais a linha (status≠`aguardando_classificacao
 
 **Lookup de movs — determinístico via FK (Fix-Final B B9):** busca `SELECT id FROM siso_movimentacoes WHERE devolucao_id = $id`. Substitui a janela temporal ±60s anterior (que era frágil em sistemas com clock drift ou múltiplas classificações próximas). Cada mov vinculada à devolução é estornada individualmente via `wms_estornar_parcial_movimentacao`.
 
-> **Retrocompat:** movs criadas antes de `20260528_movs_devolucao_id.sql` têm `devolucao_id = NULL`. Para devolucões antigas, o endpoint **cai back** na janela ±60s de `classificada_em` (comportamento P3 original) — garantindo que nenhuma classificação anterior fique sem desfazer.
+> **Retrocompat:** movs criadas antes de `20260528_movs_devolucao_id.sql` têm `devolucao_id = NULL`. Desclassificar uma devolução antiga retorna `movsEstornadas: 0` — esses registros históricos já foram resolvidos operacionalmente. **Sem fallback** pra janela temporal: a versão antiga era frágil (clock drift, classificações próximas) e foi removida com T11/B9.
 
 **Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars) }`.
 

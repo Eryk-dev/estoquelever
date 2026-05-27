@@ -349,41 +349,33 @@ export function validarTransferenciaIntraGalpao(input: {
 /**
  * Par S+E NEUTRO intra-galpão (replenishment / put-away). Em 3D não há
  * empresa — estoque migra de uma loc física pra outra.
+ *
+ * P3 #8.8: agora delega pra RPC `wms_replenishment_intra_galpao` que envolve
+ * o par S+E na MESMA transação. Garante que se leg 2 (E) falhar, leg 1 (S)
+ * faz rollback — saldo não evapora.
  */
 export async function replenishmentIntraGalpao(
   input: ReplenishmentInput,
-): Promise<{ origem_id: string }> {
+): Promise<{ origem_id: string; mov_ids: string[] }> {
   validarTransferenciaIntraGalpao(input);
-  const origem_id = input.origem_id ?? crypto.randomUUID();
-  for (const item of input.itens) {
-    await inserirMovimentacao({
-      tripla: {
-        produto_id: item.produto_id,
-        galpao_id: input.galpao_id,
-        localizacao_id: input.localizacao_origem_id,
-      },
-      tipo: "S",
-      qty: item.qty,
-      origem_tipo: "transferencia_localizacao",
-      origem_id,
-      usuario_id: input.usuario_id,
-      motivo: input.observacoes,
+  const sb = createServiceClient();
+  const { data, error } = await sb.rpc("wms_replenishment_intra_galpao", {
+    p_galpao_id: input.galpao_id,
+    p_localizacao_origem_id: input.localizacao_origem_id,
+    p_localizacao_destino_id: input.localizacao_destino_id,
+    p_itens: input.itens.map((i) => ({ produto_id: i.produto_id, qty: i.qty })),
+    p_usuario_id: input.usuario_id,
+    p_observacoes: input.observacoes ?? null,
+    p_origem_id: input.origem_id ?? null,
+  });
+  if (error) {
+    logger.error("wms.replenishment", "RPC wms_replenishment_intra_galpao falhou", {
+      error: error.message,
     });
-    await inserirMovimentacao({
-      tripla: {
-        produto_id: item.produto_id,
-        galpao_id: input.galpao_id,
-        localizacao_id: input.localizacao_destino_id,
-      },
-      tipo: "E",
-      qty: item.qty,
-      origem_tipo: "transferencia_localizacao",
-      origem_id,
-      usuario_id: input.usuario_id,
-      motivo: input.observacoes,
-    });
+    throw error;
   }
-  return { origem_id };
+  const r = data as { origem_id: string; mov_ids: string[] };
+  return { origem_id: r.origem_id, mov_ids: r.mov_ids ?? [] };
 }
 
 export interface AjusteManualInput {

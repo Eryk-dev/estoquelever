@@ -15,7 +15,6 @@
 // e a próxima operação zera o restante.
 
 import { createServiceClient } from "@/lib/supabase-server";
-import { replenishmentIntraGalpao } from "./movimentacoes";
 import { estornarMovimentacao } from "./ledger";
 import { logger } from "@/lib/logger";
 
@@ -408,68 +407,40 @@ export async function confirmarGuarda(
     throw new Error("qty deve ser > 0");
   }
 
-  const pend = await obterPendencia(input.pendencia_id);
-  if (!pend) throw new Error("pendência não encontrada");
-  if (pend.status === "guardada" || pend.status === "cancelada") {
-    throw new Error(`pendência em status terminal (${pend.status})`);
-  }
-  if (input.qty > pend.qty_pendente) {
-    throw new Error(
-      `qty (${input.qty}) excede pendente (${pend.qty_pendente})`,
-    );
-  }
-  if (input.localizacao_destino_id === pend.localizacao_origem_id) {
-    throw new Error(
-      "loc destino não pode ser a loc de recebimento (origem da guarda)",
-    );
-  }
-
+  // P3 #5.3 + #5.8: tudo dentro de RPC plpgsql com FOR UPDATE no row da
+  // pendência + replenishment atômico + update de status — na mesma
+  // transação. Concorrentes esperam no lock; race entre leitura e UPDATE
+  // não causa mais over-decremento.
   const sb = createServiceClient();
-  // Valida loc destino: existe, ativa, mesmo galpão.
-  const { data: locDest } = await sb
-    .from("siso_localizacoes")
-    .select("id, galpao_id, ativo, tipo")
-    .eq("id", input.localizacao_destino_id)
-    .maybeSingle();
-  if (!locDest) throw new Error("localização destino não encontrada");
-  if (!locDest.ativo) throw new Error("localização destino inativa");
-  if (locDest.galpao_id !== pend.galpao_id) {
-    throw new Error("localização destino é de outro galpão");
-  }
-
-  // Movimentação par S+E neutra.
-  const { origem_id } = await replenishmentIntraGalpao({
-    galpao_id: pend.galpao_id,
-    localizacao_origem_id: pend.localizacao_origem_id,
-    localizacao_destino_id: input.localizacao_destino_id,
-    itens: [{ produto_id: pend.produto_id, qty: input.qty }],
-    usuario_id: input.usuario_id,
+  const { data, error } = await sb.rpc("wms_confirmar_guarda_atomico", {
+    p_pendencia_id: input.pendencia_id,
+    p_qty: input.qty,
+    p_localizacao_destino_id: input.localizacao_destino_id,
+    p_usuario_id: input.usuario_id,
   });
-
-  const novaQtyGuardada = Number(pend.qty_guardada) + Number(input.qty);
-  const totalmenteGuardada = novaQtyGuardada >= Number(pend.qty_inicial);
-
-  const update: Record<string, unknown> = {
-    qty_guardada: novaQtyGuardada,
-  };
-  if (totalmenteGuardada) {
-    update.status = "guardada";
-    update.guardada_em = new Date().toISOString();
-  } else {
-    // Volta pra pendente — operador pode pegar de novo depois.
-    update.status = "pendente";
+  if (error) {
+    logger.error(LOG_SOURCE, "confirmarGuarda RPC falhou", {
+      pendenciaId: input.pendencia_id,
+      message: error.message,
+    });
+    // Repassa a mensagem do PG sem prefixos pra preservar contratos atuais
+    // (ex.: cenário 8 e 42 esperam strings específicas).
+    throw new Error(error.message);
   }
-  const { error } = await sb
-    .from("siso_wms_pendencias_guarda")
-    .update(update)
-    .eq("id", input.pendencia_id);
-  if (error) throw error;
+  const r = data as {
+    pendencia_id: string;
+    origem_id: string;
+    mov_ids: string[];
+    totalmente_guardada: boolean;
+    qty_guardada: number;
+    status: string;
+  };
 
   logger.info(LOG_SOURCE, "guarda confirmada", {
     pendenciaId: input.pendencia_id,
     qty: String(input.qty),
-    totalmenteGuardada: String(totalmenteGuardada),
-    origemId: origem_id,
+    totalmenteGuardada: String(r.totalmente_guardada),
+    origemId: r.origem_id,
   });
 
   const refresh = await obterPendencia(input.pendencia_id);
@@ -477,8 +448,8 @@ export async function confirmarGuarda(
 
   return {
     pendencia: refresh,
-    origem_id,
-    totalmente_guardada: totalmenteGuardada,
+    origem_id: r.origem_id,
+    totalmente_guardada: r.totalmente_guardada,
   };
 }
 

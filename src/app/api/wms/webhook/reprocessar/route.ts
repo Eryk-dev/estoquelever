@@ -1,73 +1,102 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { createServiceClient } from "@/lib/supabase-server";
 import { processWebhook } from "@/lib/webhook-processor";
-import { getEmpresaByCnpj } from "@/lib/empresa-lookup";
+import { getEmpresaByCnpj, getEmpresaById } from "@/lib/empresa-lookup";
 import { logger } from "@/lib/logger";
+import { requireAdmin } from "@/lib/wms/auth";
 
 /**
- * POST /api/webhook/reprocessar
+ * POST /api/wms/webhook/reprocessar
  *
- * Reprocesses failed webhook logs (status = 'pendente' after reset).
- * Used to retry orders that failed due to bugs that have since been fixed.
+ * Reprocesses a SINGLE failed webhook log identified by `pedidoId` (the
+ * `tiny_pedido_id` text column in siso_webhook_logs). Admin-only.
+ *
+ * Body schema: { pedidoId: string }
+ *
+ * Returns 404 if no matching log exists. Other pending webhooks are NOT
+ * touched.
  */
-export async function POST() {
+const Body = z.object({
+  pedidoId: z.string().min(1, "pedidoId obrigatório"),
+});
+
+export async function POST(req: NextRequest) {
+  // Auth (finding 1.3 — admin only)
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
+
+  let parsed: z.infer<typeof Body>;
+  try {
+    const raw = await req.json();
+    parsed = Body.parse(raw);
+  } catch (e) {
+    const msg =
+      e instanceof z.ZodError
+        ? e.issues.map((er) => `${er.path.join(".")}: ${er.message}`).join("; ")
+        : "body inválido";
+    return NextResponse.json({ error: msg }, { status: 400 });
+  }
+
+  const { pedidoId } = parsed;
   const supabase = createServiceClient();
 
-  const { data: logs, error } = await supabase
+  const { data: log, error } = await supabase
     .from("siso_webhook_logs")
     .select("id, tiny_pedido_id, cnpj, empresa_id")
+    .eq("tiny_pedido_id", pedidoId)
     .eq("codigo_situacao", "aprovado")
-    .eq("status", "pendente")
-    .order("criado_em", { ascending: true });
+    .order("criado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  if (error || !logs?.length) {
-    return NextResponse.json({ message: "Nenhum webhook pendente para reprocessar", count: 0 });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!log) {
+    return NextResponse.json(
+      { error: `Nenhum webhook log encontrado pra pedidoId=${pedidoId}` },
+      { status: 404 },
+    );
   }
 
-  logger.info("reprocessar", `Reprocessando ${logs.length} webhooks`, {
-    pedidoIds: logs.map((l) => l.tiny_pedido_id),
-  });
+  logger.info("reprocessar", `Reprocessando 1 webhook`, { pedidoId, logId: log.id });
 
-  const results: { pedidoId: string; status: string; erro?: string }[] = [];
+  try {
+    let empresaId = log.empresa_id as string | null;
+    let galpaoId: string | null = null;
+    let grupoId: string | null = null;
 
-  for (const log of logs) {
-    try {
-      // Resolve empresa from CNPJ or stored empresa_id
-      let empresaId = log.empresa_id as string | null;
-      let galpaoId: string | null = null;
-      let grupoId: string | null = null;
-
-      if (!empresaId && log.cnpj) {
-        const empresa = await getEmpresaByCnpj(log.cnpj);
-        if (empresa) {
-          empresaId = empresa.empresaId;
-          galpaoId = empresa.galpaoId;
-          grupoId = empresa.grupoId;
-        }
+    if (!empresaId && log.cnpj) {
+      const empresa = await getEmpresaByCnpj(log.cnpj);
+      if (empresa) {
+        empresaId = empresa.empresaId;
+        galpaoId = empresa.galpaoId;
+        grupoId = empresa.grupoId;
       }
+    }
+    if (!empresaId) {
+      return NextResponse.json(
+        { error: "Empresa não encontrada", pedidoId },
+        { status: 422 },
+      );
+    }
+    if (!galpaoId) {
+      const emp = await getEmpresaById(empresaId);
+      galpaoId = emp?.galpaoId ?? null;
+      grupoId = emp?.grupoId ?? null;
+    }
 
-      if (!empresaId) {
-        results.push({ pedidoId: log.tiny_pedido_id, status: "erro", erro: "Empresa não encontrada" });
-        continue;
-      }
-
-      if (!galpaoId) {
-        const { getEmpresaById } = await import("@/lib/empresa-lookup");
-        const emp = await getEmpresaById(empresaId);
-        galpaoId = emp?.galpaoId ?? null;
-        grupoId = emp?.grupoId ?? null;
-      }
-
-      await processWebhook(log.id, log.tiny_pedido_id, empresaId, galpaoId!, grupoId);
-      results.push({ pedidoId: log.tiny_pedido_id, status: "ok" });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message
-        : (typeof err === "object" && err !== null && "message" in err)
+    await processWebhook(log.id, log.tiny_pedido_id, empresaId, galpaoId!, grupoId);
+    return NextResponse.json({ ok: true, pedidoId, logId: log.id });
+  } catch (err) {
+    const msg =
+      err instanceof Error
+        ? err.message
+        : typeof err === "object" && err !== null && "message" in err
           ? String((err as { message: unknown }).message)
           : JSON.stringify(err);
-      results.push({ pedidoId: log.tiny_pedido_id, status: "erro", erro: msg });
-    }
+    logger.error("reprocessar", `Reprocessamento falhou`, { pedidoId, err: msg });
+    return NextResponse.json({ ok: false, pedidoId, error: msg }, { status: 500 });
   }
-
-  return NextResponse.json({ reprocessed: results.length, results });
 }

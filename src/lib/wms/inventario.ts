@@ -254,6 +254,21 @@ export async function sairParty(
   usuarioId: string,
 ): Promise<void> {
   const sb = createServiceClient();
+  // [Fix-D #4.6] Libera locks de loc em_contagem desse operador SÍNCRONO ao
+  // sair da party. Antes dependia do cleanup async (30min) — locks ficavam
+  // órfãos bloqueando colegas durante a janela. RPC cleanup continua como
+  // safety net pra casos de zumbi (operador some sem chamar sairParty).
+  await sb
+    .from("siso_inventario_localizacoes")
+    .update({
+      bloqueada_por: null,
+      bloqueada_em: null,
+      status: "pendente",
+    })
+    .eq("sessao_id", sessaoId)
+    .eq("bloqueada_por", usuarioId)
+    .eq("status", "em_contagem");
+
   await sb
     .from("siso_inventario_operadores")
     .update({ finalizado_em: new Date().toISOString() })

@@ -5,7 +5,8 @@ import { getSessionUser } from "@/lib/session";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { registrarEvento } from "@/lib/historico-service";
 import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
-import { estornarMovimentacao } from "@/lib/wms/ledger";
+import { estornarMovimentacao, inserirMovimentacao } from "@/lib/wms/ledger";
+import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
 
 /**
  * POST /api/separacao/validar-oc-item
@@ -117,6 +118,14 @@ export async function POST(request: NextRequest) {
           items.map((i) => i.id),
         );
 
+      // Decisão 3 (28/05): se o body trouxer localizacao_id (loc bipada pelo
+      // operador via modal "Onde você achou?"), é o caminho "Encontrei sem
+      // cadastro" — produto não tem nenhuma loc com saldo no galpão. Geramos
+      // par E+S na loc indicada. Alternativamente, se o snapshot já tem loc
+      // salva via /separacao/localizacao, usamos essa.
+      const locManualBody =
+        typeof body?.localizacao_id === "string" ? body.localizacao_id : null;
+
       for (const item of itensFull ?? []) {
         // Idempotência: item já picado anteriormente — pula pickMovPicking
         // pra evitar dupla baixa em retry. O update abaixo é safe (mesmos
@@ -125,7 +134,125 @@ export async function POST(request: NextRequest) {
 
         const ctx = ctxMap.get(item.pedido_id as string);
         let movSaidaId: string | null = null;
-        if (!jaPicado && ctx) {
+        if (!jaPicado && ctx && ctx.galpao && ctx.empresa) {
+          const qty = Number(item.quantidade_pedida ?? 0);
+
+          // Verifica se produto tem alguma loc com saldo no galpão
+          const produtoWmsId = await resolverProdutoWms(
+            ctx.empresa,
+            String(item.produto_id),
+          );
+          const { data: locsExistentes } = await supabase
+            .from("siso_estoque")
+            .select("localizacao_id")
+            .eq("produto_id", produtoWmsId)
+            .eq("galpao_id", ctx.galpao)
+            .gt("saldo", 0)
+            .limit(1);
+          const semSaldo = !locsExistentes || locsExistentes.length === 0;
+
+          if (semSaldo) {
+            // Resolve loc: body.localizacao_id (modal "bipe") > snapshot
+            // existente em siso_pedido_item_estoques.localizacao.
+            let locManualId = locManualBody;
+            if (!locManualId) {
+              const { data: snap } = await supabase
+                .from("siso_pedido_item_estoques")
+                .select("localizacao")
+                .eq("pedido_id", item.pedido_id)
+                .eq("produto_id", item.produto_id)
+                .eq("empresa_id", ctx.empresa)
+                .maybeSingle();
+              if (snap?.localizacao) {
+                const { data: locRow } = await supabase
+                  .from("siso_localizacoes")
+                  .select("id")
+                  .eq("galpao_id", ctx.galpao)
+                  .eq("codigo", snap.localizacao)
+                  .maybeSingle();
+                locManualId = (locRow?.id as string | undefined) ?? null;
+              }
+            }
+            if (!locManualId) {
+              return NextResponse.json(
+                {
+                  error: "produto_sem_cadastro",
+                  message:
+                    "Produto sem localização cadastrada. Bipe ou escolha a localização onde achou.",
+                  item_id: item.id,
+                },
+                { status: 422 },
+              );
+            }
+            // Confirma que loc existe e pertence ao galpão
+            const { data: loc } = await supabase
+              .from("siso_localizacoes")
+              .select("id, galpao_id")
+              .eq("id", locManualId)
+              .maybeSingle();
+            if (!loc || loc.galpao_id !== ctx.galpao) {
+              return NextResponse.json(
+                {
+                  error: "loc_invalida",
+                  message:
+                    "Localização não pertence ao galpão do pedido",
+                },
+                { status: 422 },
+              );
+            }
+            try {
+              // Mov E: entrada do que o operador achou
+              await inserirMovimentacao({
+                tripla: {
+                  produto_id: produtoWmsId,
+                  galpao_id: ctx.galpao,
+                  localizacao_id: locManualId,
+                },
+                tipo: "E",
+                qty,
+                origem_tipo: "ajuste_manual",
+                origem_id: `encontrei-sem-cadastro-${item.id}`,
+                origem_detalhes: {
+                  motivo: "encontrei sem cadastro",
+                  item_id: item.id,
+                  pedido_id: item.pedido_id,
+                  sku: item.sku,
+                },
+                motivo: "Achado em pick — produto sem cadastro",
+                motivo_categoria: "achado",
+                usuario_id: user.id,
+                fornecedor_id: null,
+              });
+              logger.info(
+                "validar-oc-item",
+                "encontrei sem cadastro: mov E gerada",
+                {
+                  item_id: item.id,
+                  sku: item.sku,
+                  loc_id: locManualId,
+                  qty,
+                },
+              );
+            } catch (entErr) {
+              logger.logError({
+                error: entErr,
+                source: "validar-oc-item",
+                message: "Falhou gerar mov E em encontrei sem cadastro",
+                category: "business_logic",
+                metadata: { item_id: item.id, sku: item.sku, loc_id: locManualId },
+              });
+              return NextResponse.json(
+                {
+                  error: "falhou_gerar_entrada",
+                  message: "Não foi possível registrar a entrada do produto",
+                },
+                { status: 500 },
+              );
+            }
+          }
+
+          // Caminho normal: pickMovPicking gera mov S (que vai achar a loc
+          // com saldo, possivelmente a que acabamos de criar via mov E acima).
           try {
             const result = await pickMovPicking({
               empresa_origem_id: ctx.empresa,
@@ -135,7 +262,7 @@ export async function POST(request: NextRequest) {
               item_id: Number(item.id),
               produto_id_tiny: String(item.produto_id),
               sku: String(item.sku),
-              qty: Number(item.quantidade_pedida ?? 0),
+              qty,
               usuario_id: user.id,
               contexto: "encontrei_oc",
             });

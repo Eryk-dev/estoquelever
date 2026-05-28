@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { requireWarehouseAccessOrOwnVenda } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { cancelarVendaManual } from "@/lib/wms/vendas-cancelamento";
 
@@ -23,9 +23,9 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireWarehouseAccess(req);
-  if (!auth.ok) return auth.response;
   const { id } = await ctx.params;
+  const auth = await requireWarehouseAccessOrOwnVenda(req, id);
+  if (!auth.ok) return auth.response;
 
   const body = await req.json().catch(() => null);
   const motivo = typeof body?.motivo === "string" ? body.motivo.trim() : "";

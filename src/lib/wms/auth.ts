@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser, type SessionUser } from "@/lib/session";
 import { userCan, userCanAny } from "@/lib/permissions";
+import { createServiceClient } from "@/lib/supabase-server";
 
 type AuthResult =
   | { ok: true; user: SessionUser }
@@ -83,5 +84,87 @@ export async function requireWarehouseAccess(
       response: forbidden("requer admin ou operador de galpão"),
     };
   }
+  return { ok: true, user };
+}
+
+/**
+ * Auth gate composto pra ações no pedido de venda manual:
+ *  - PASS se: admin OR qualquer warehouse perm OR vendedor dono do pedido
+ *  - FAIL caso contrário (403)
+ *
+ * "Dono" = vendedor_id == session.id OR vendedor_nome contém session.nome
+ * (case-insensitive — cobre auto-atribuição ML/Shopee onde vendedor_nome
+ * é `${ecomNome} ${empresaNome}` sem vendedor_id, ver vendas/[id]/route.ts:62-65).
+ *
+ * Use em endpoints de mutação do pedido onde o vendedor "puro" precisa
+ * agir sobre o próprio pedido (cancelar, editar observação, etc).
+ *
+ * Pedido_id é validado: 404 se não existe; 403 se não é venda direta
+ * (manual, ML ou Shopee).
+ */
+export async function requireWarehouseAccessOrOwnVenda(
+  req: Request,
+  pedidoId: string,
+): Promise<AuthResult> {
+  const user = await getSessionUser(req);
+  if (!user) return { ok: false, response: unauthorized() };
+
+  // Fast-path: admin OR warehouse passa sem ler DB
+  const hasWarehouse = userCanAny(
+    user,
+    "operacoes.transferir",
+    "operacoes.replenishment",
+    "operacoes.devolucoes",
+    "operacoes.receber",
+    "operacoes.guarda",
+    "operacoes.ajuste_manual",
+    "inventario.executar",
+    "inventario.supervisionar",
+    "produtos.editar",
+    "localizacoes.editar",
+    "fornecedores.editar",
+  );
+  if (hasWarehouse) return { ok: true, user };
+
+  // Slow-path: vendedor verifica ownership do pedido
+  if (!userCan(user, "vendas.criar")) {
+    return {
+      ok: false,
+      response: forbidden("requer admin/operador ou vendedor dono"),
+    };
+  }
+
+  const sb = createServiceClient();
+  const { data: pedido, error } = await sb
+    .from("siso_pedidos")
+    .select("id, vendedor_id, vendedor_nome, origem_pedido, nome_ecommerce")
+    .eq("id", pedidoId)
+    .maybeSingle();
+  if (error || !pedido) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "pedido não encontrado" },
+        { status: 404 },
+      ),
+    };
+  }
+
+  const isVendaDireta =
+    pedido.origem_pedido === "manual" ||
+    pedido.nome_ecommerce === "Mercado Livre" ||
+    pedido.nome_ecommerce === "Shopee";
+  if (!isVendaDireta) {
+    return { ok: false, response: forbidden("ação restrita a vendas diretas") };
+  }
+
+  const ownedById = pedido.vendedor_id === user.id;
+  const ownedByName = pedido.vendedor_nome
+    ? pedido.vendedor_nome.toLowerCase().includes(user.nome.toLowerCase())
+    : false;
+  if (!ownedById && !ownedByName) {
+    return { ok: false, response: forbidden("não é seu pedido") };
+  }
+
   return { ok: true, user };
 }

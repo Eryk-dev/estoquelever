@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { requireAuth } from "@/lib/wms/auth";
+import { userCan } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { desclassificarDevolucao } from "@/lib/wms/devolucoes";
 
@@ -18,8 +19,15 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireWarehouseAccess(req);
+  const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
+  // [P2 re-audit #6.NEW2] symmetric com classificar (gated em P4 com mesma perm)
+  if (!userCan(auth.user, "operacoes.devolucoes_classificar")) {
+    return NextResponse.json(
+      { error: "requer permissão operacoes.devolucoes_classificar" },
+      { status: 403 },
+    );
+  }
   const { id } = await ctx.params;
 
   const body = await req.json().catch(() => null);

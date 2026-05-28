@@ -215,8 +215,15 @@ export default function WmsPedidosPage() {
   }, [filteredByGalpao, buscaMatch]);
 
   const concluidos = useMemo(() => {
+    // Decisão 6 (28/05): tab Concluídos inclui pedidos com decisão tomada
+    // (decisaoFinal IS NOT NULL) mesmo que ainda estejam executando — operador
+    // precisa ver pedidos OC e em separação que já passaram pela aprovação.
     return filteredByGalpao
-      .filter((p) => p.status === "concluido")
+      .filter(
+        (p) =>
+          p.status === "concluido" ||
+          (p.status === "executando" && !!p.decisaoFinal),
+      )
       .filter(buscaMatch)
       .sort((a, b) => {
         const ta = new Date(a.processadoEm ?? a.criadoEm).getTime();

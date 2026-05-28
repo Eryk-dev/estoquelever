@@ -134,15 +134,77 @@ export async function POST(request: NextRequest) {
           updateData.compra_equivalente_observacao = observacao;
         }
 
-        const { error: updateErr } = await supabase
+        // [Fix-D #3.8] Optimistic lock via .eq("compra_quantidade_recebida", jaRecebido).
+        // Se outro receiver alterou recebida entre o SELECT (linha 116) e este UPDATE,
+        // affected_rows=0 e a request refaz o cálculo com qty atualizada (1 retry).
+        // Padrão P3 (alinhado com iniciarGuarda, contagens, transferencias).
+        const { data: updated, error: updateErr } = await supabase
           .from("siso_pedido_itens")
           .update(updateData)
-          .eq("id", item.id);
+          .eq("id", item.id)
+          .eq("compra_quantidade_recebida", jaRecebido)
+          .select("id");
 
         if (updateErr) {
           logger.error("compras-receber", `Erro ao atualizar item ${item.id}`, {
             error: updateErr.message,
           });
+          continue;
+        }
+
+        if (!updated || updated.length === 0) {
+          // Race detectada: refetch o item, recalcula faltante, tenta 1x mais
+          const { data: refresh } = await supabase
+            .from("siso_pedido_itens")
+            .select(
+              "id, pedido_id, sku, compra_quantidade_solicitada, quantidade_pedida, compra_quantidade_recebida",
+            )
+            .eq("id", item.id)
+            .single();
+          if (!refresh) {
+            logger.warn("compras-receber", "Item desapareceu durante race retry", {
+              id: item.id,
+            });
+            continue;
+          }
+          const novoJaRecebido = Number(refresh.compra_quantidade_recebida ?? 0);
+          const novoFaltante = Math.max(qtySolicitada - novoJaRecebido, 0);
+          if (novoFaltante <= 0) {
+            // Outro receiver já completou — pula sem consumir do `remaining`
+            logger.info("compras-receber", "Race resolveu pra outro receiver", {
+              id: item.id,
+            });
+            continue;
+          }
+          const novaQtyParaEsteItem = Math.min(remaining, novoFaltante);
+          const novoTotal = novoJaRecebido + novaQtyParaEsteItem;
+          const novoTodosRecebidos = novoTotal >= qtySolicitada;
+          const novoUpdateData: Record<string, unknown> = {
+            compra_quantidade_recebida: novoTotal,
+          };
+          if (novoTodosRecebidos) novoUpdateData.compra_status = "recebido";
+          if (observacao) novoUpdateData.compra_equivalente_observacao = observacao;
+          const { data: retryUpdated } = await supabase
+            .from("siso_pedido_itens")
+            .update(novoUpdateData)
+            .eq("id", item.id)
+            .eq("compra_quantidade_recebida", novoJaRecebido)
+            .select("id");
+          if (!retryUpdated || retryUpdated.length === 0) {
+            logger.warn("compras-receber", "Race persistente em retry — abandonando item", {
+              id: item.id,
+            });
+            continue;
+          }
+          allAffectedItemIds.push(String(item.id));
+          remaining -= novaQtyParaEsteItem;
+          atualizados++;
+          alocado += novaQtyParaEsteItem;
+          const pedidoIdRetry = item.pedido_id as string;
+          const curRetry = eventosPorPedido.get(pedidoIdRetry) ?? { qty: 0, skus: [] };
+          curRetry.qty += novaQtyParaEsteItem;
+          if (!curRetry.skus.includes(sku)) curRetry.skus.push(sku);
+          eventosPorPedido.set(pedidoIdRetry, curRetry);
           continue;
         }
 

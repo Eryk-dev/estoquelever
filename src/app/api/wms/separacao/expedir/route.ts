@@ -12,6 +12,13 @@ import { registrarEventos } from "@/lib/historico-service";
  *
  * Headers: X-Session-Id
  * Body: { pedido_ids: string[] }
+ *
+ * [Fix-D T11 / #2.1] Endpoint sem caller UI orgânico em produção (UI atual
+ * fecha o fluxo no embalado). Mantido pra:
+ *   - harness de cenários (markExpedido em scripts/wms/cenarios/_harness)
+ *   - flow de expedição quando UI for criada
+ * Auth já gated: requer session + `userCan('sistema.usuarios')` (admin)
+ * pra cross-galpão; operadores só podem expedir do próprio galpão.
  */
 export async function POST(request: NextRequest) {
   const session = await getSessionUser(request);

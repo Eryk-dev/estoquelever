@@ -16,6 +16,13 @@ import { transferirInterGalpao } from "@/lib/wms/movimentacoes";
  *   - origem_id (optional uuid p/ correlacionar c/ header)
  *
  * Par S+E NEUTRO — em 3D a transferência inter-galpão não carrega dona.
+ *
+ * [Fix-D T11 / #8.1 — Fix-B T2 confirmou: manter] Endpoint sem caller UI
+ * orgânico — UI canônica é `/api/wms/transferencias` (cria header +
+ * recebe via fluxo completo). Este endpoint é usado apenas pelo harness
+ * de cenários (scripts/wms/cenarios/_harness/context.ts:640 e cenário 15).
+ * Auth via requireWarehouseAccess garante que tem ao menos session.
+ * Não remover sem alinhamento com harness.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireWarehouseAccess(req);

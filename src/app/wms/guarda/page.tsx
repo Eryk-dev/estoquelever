@@ -484,8 +484,11 @@ function PendenciaRow({
   p: PendenciaJoined;
   compact?: boolean;
 }) {
+  const isCrossDock = p.prioridade === "cross_dock";
+  const destinoFinal =
+    p.localizacao_destino?.codigo ?? p.destino_sugerido?.codigo ?? null;
   return (
-    <tr>
+    <tr style={isCrossDock ? { background: "rgba(16,185,129,0.06)" } : undefined}>
       <td style={{ width: compact ? 36 : 46 }}>
         {p.produto?.imagem_url && (
           <img
@@ -499,6 +502,24 @@ function PendenciaRow({
       <td>
         <div className="wms-mono" style={{ fontWeight: 600, fontSize: 12 }}>
           {p.produto?.sku ?? "—"}
+          {isCrossDock && (
+            <span
+              style={{
+                marginLeft: 6,
+                padding: "1px 6px",
+                borderRadius: 4,
+                background: "#10b981",
+                color: "white",
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: 0.4,
+                verticalAlign: "middle",
+              }}
+              title={`Cross-dock — ${p.pedidos_vinculados?.length ?? 0} pedidos`}
+            >
+              CROSS-DOCK · {p.pedidos_vinculados?.length ?? 0}
+            </span>
+          )}
         </div>
         <div
           className="wms-td-mute"
@@ -514,7 +535,12 @@ function PendenciaRow({
         </div>
       </td>
       <td className="wms-mono wms-td-mute" style={{ fontSize: 11 }}>
-        {p.localizacao_destino?.codigo ?? "—"}
+        {destinoFinal ?? "—"}
+        {isCrossDock && !p.localizacao_destino?.codigo && p.destino_sugerido?.codigo && (
+          <div style={{ fontSize: 9, color: "#10b981", fontWeight: 600 }}>
+            sugerido
+          </div>
+        )}
       </td>
       <td className="wms-mono wms-tar" style={{ fontSize: 12 }}>
         {fmtNum(p.qty_pendente)}

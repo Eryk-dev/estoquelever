@@ -57,6 +57,10 @@ export interface PendenciaGuarda {
   criada_em: string;
   criada_por: string | null;
   atualizada_em: string;
+  /** Cross-dock (Decisão 7+9, 28/05) */
+  prioridade?: "normal" | "cross_dock";
+  pedidos_vinculados?: string[] | null;
+  destino_sugerido_id?: string | null;
 }
 
 export interface PendenciaJoined extends PendenciaGuarda {
@@ -64,6 +68,7 @@ export interface PendenciaJoined extends PendenciaGuarda {
   galpao: { nome: string } | null;
   localizacao_origem: { codigo: string } | null;
   localizacao_destino: { codigo: string; tipo: string } | null;
+  destino_sugerido?: { codigo: string; tipo: string } | null;
 }
 
 /**
@@ -200,10 +205,13 @@ export async function listarPendencias(
         produto:siso_produtos(sku, descricao, imagem_url),
         galpao:siso_galpoes(nome),
         localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo),
-        localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo)
+        localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo),
+        destino_sugerido:siso_localizacoes!destino_sugerido_id(codigo, tipo)
 `,
     )
     .in("status", statusFiltro)
+    // Decisão (28/05): cross-dock primeiro (alfabético 'cross_dock' < 'normal')
+    .order("prioridade", { ascending: true })
     .order("criada_em", { ascending: true })
     .limit(filtros.limit ?? 200);
   if (filtros.galpao_id) query = query.eq("galpao_id", filtros.galpao_id);

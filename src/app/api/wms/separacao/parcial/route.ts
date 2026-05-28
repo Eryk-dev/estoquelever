@@ -16,6 +16,7 @@ import {
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
 import { resolverRealocacao } from "@/lib/separacao/realocacao-resolver";
+import { mandarItensParaCompras } from "@/lib/wms/mandar-compras";
 
 /**
  * POST /api/separacao/parcial
@@ -962,18 +963,25 @@ async function processarParcialItem(
       }
     }
 
-    // Decisão (28/05): quando cascade esgota 100% (semCoberturaParcial=true E
-    // nenhuma realoc criada), retorna `sem_cobertura` com payload pro frontend
-    // abrir modal "Mandar pra Compras / Realocação manual". Antes retornava
-    // `aguardando_supervisor` (caminho legado que disparava toast "voltou pro
-    // painel SISO" e marcava pendente_realocacao via outro caminho) — bug
-    // reportado no pedido #49818 LIM006 (28/05/2026).
+    // Decisão (28/05 v2): quando cascade esgota 100% E nenhuma realoc criada,
+    // transita automaticamente os itens pra aguardando_compra — sem modal.
+    // A intenção do operador é inequívoca (qty=0 + loc_zerou + cascade vazio
+    // = item esgotado em todos os galpões), então perguntar via modal era
+    // fricção desnecessária. Frontend só mostra toast e redireciona.
     if (semCoberturaParcial && linhasInsertTotais.length === 0) {
+      const result = await mandarItensParaCompras({
+        supabase,
+        pedido_ids: semCoberturaPayload.pedido_ids,
+        item_ids: semCoberturaPayload.item_ids,
+        usuario_id: session.id,
+        usuario_nome: session.nome,
+      });
       return NextResponse.json({
-        status: "sem_cobertura",
-        sem_cobertura: true,
-        sem_cobertura_payload:
-          semCoberturaPayload.item_ids.length > 0 ? semCoberturaPayload : undefined,
+        status: "mandado_pra_compras",
+        itens_atualizados: result.itens_atualizados,
+        pedidos_atualizados: result.pedidos_atualizados,
+        pedido_ids: semCoberturaPayload.pedido_ids,
+        item_ids: semCoberturaPayload.item_ids,
       });
     }
 
@@ -1067,6 +1075,20 @@ async function processarParcialItem(
       }
     }
 
+    // Decisão (28/05 v2): caso misto — alguns itens foram realocados, outros
+    // ficaram sem cobertura. Transita os sem_cobertura pra aguardando_compra
+    // automaticamente (sem modal). Mesma intenção do bloco 100% sem cobertura.
+    let resumoCompras: { itens_atualizados: number; pedidos_atualizados: number } | null = null;
+    if (semCoberturaParcial && semCoberturaPayload.item_ids.length > 0) {
+      resumoCompras = await mandarItensParaCompras({
+        supabase,
+        pedido_ids: semCoberturaPayload.pedido_ids,
+        item_ids: semCoberturaPayload.item_ids,
+        usuario_id: session.id,
+        usuario_nome: session.nome,
+      });
+    }
+
     return NextResponse.json({
       status: "realocado",
       realocacoes: (criadas ?? []).map((c) => ({
@@ -1079,10 +1101,8 @@ async function processarParcialItem(
         is_emprestimo: c.is_emprestimo,
       })),
       sem_cobertura_parcial: semCoberturaParcial ? true : undefined,
-      sem_cobertura: semCoberturaParcial,
-      sem_cobertura_payload: semCoberturaParcial && semCoberturaPayload.item_ids.length > 0
-        ? semCoberturaPayload
-        : undefined,
+      itens_mandados_pra_compras: resumoCompras?.itens_atualizados ?? 0,
+      pedidos_mandados_pra_compras: resumoCompras?.pedidos_atualizados ?? 0,
     });
   } catch (err) {
     logger.logError({

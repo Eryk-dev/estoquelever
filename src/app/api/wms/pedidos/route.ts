@@ -110,10 +110,10 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
  * Returns all orders from siso_pedidos + LIVE stock from siso_estoque (3D
  * WMS cache), mapped to the frontend Pedido interface (camelCase).
  *
- * Stock is aggregated by (sku, galpão), so any movement (recebimento,
- * ajuste, transferência, separação) reflects on the next render. NÃO usa
- * o snapshot congelado de siso_pedido_item_estoques. A `sugestao` do
- * pedido permanece o cálculo histórico do webhook, mas saldo é live.
+ * [Fix-D #12] Filtra server-side por galpão. Operadores galpão-scoped
+ * (operador_cwb / operador_sp) só veem pedidos do seu galpão OU pedidos
+ * ainda sem `separacao_galpao_id` (pré-aprovação — visíveis pra todos).
+ * Admin (sem cargo galpão-scoped) vê tudo.
  *
  * Query params:
  *   ?status=pendente,executando  (comma-separated filter)
@@ -130,15 +130,26 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const statusFilter = searchParams.get("status");
-
   const supabase = createServiceClient();
+
+  // [Fix-D #12] Filtro galpão server-side. Aplica quando session tem galpão
+  // resolvido E user NÃO é admin (admin vê tudo). Pedidos sem
+  // separacao_galpao_id (pré-aprovação) aparecem pra todos via OR is.null.
+  const galpaoSession = session.galpaoId;
+  const isAdmin = session.cargos.includes("admin");
+  const filterGalpao = !isAdmin && galpaoSession;
+  const galpaoOrClause = filterGalpao
+    ? `separacao_galpao_id.eq.${galpaoSession},separacao_galpao_id.is.null`
+    : null;
 
   if (statusFilter) {
     const statuses = statusFilter.split(",").map((s) => s.trim());
-    const { data: pedidos, error } = await supabase
+    let q = supabase
       .from("siso_pedidos")
       .select("*, siso_empresas(nome)")
-      .in("status", statuses)
+      .in("status", statuses);
+    if (galpaoOrClause) q = q.or(galpaoOrClause);
+    const { data: pedidos, error } = await q
       .order("criado_em", { ascending: false })
       .limit(200);
 
@@ -153,24 +164,39 @@ export async function GET(request: Request) {
   // orders awaiting reallocation (pendente_realocacao — status=concluido but need operator) +
   // recent concluido/cancelado. This prevents the limit from hiding pending orders.
   const activeStatuses = ["pendente", "executando", "erro"];
-  const [activeResult, realocacaoResult, recentResult] = await Promise.all([
-    supabase
+
+  function buildActive() {
+    let q = supabase
       .from("siso_pedidos")
       .select("*, siso_empresas(nome)")
-      .in("status", activeStatuses)
-      .order("criado_em", { ascending: false }),
-    supabase
+      .in("status", activeStatuses);
+    if (galpaoOrClause) q = q.or(galpaoOrClause);
+    return q.order("criado_em", { ascending: false });
+  }
+
+  function buildRealocacao() {
+    let q = supabase
       .from("siso_pedidos")
       .select("*, siso_empresas(nome)")
-      .eq("status_separacao", "pendente_realocacao")
-      .order("criado_em", { ascending: false }),
-    supabase
+      .eq("status_separacao", "pendente_realocacao");
+    if (galpaoOrClause) q = q.or(galpaoOrClause);
+    return q.order("criado_em", { ascending: false });
+  }
+
+  function buildRecent() {
+    let q = supabase
       .from("siso_pedidos")
       .select("*, siso_empresas(nome)")
       .not("status", "in", `(${activeStatuses.join(",")})`)
-      .neq("status_separacao", "pendente_realocacao")
-      .order("criado_em", { ascending: false })
-      .limit(150),
+      .neq("status_separacao", "pendente_realocacao");
+    if (galpaoOrClause) q = q.or(galpaoOrClause);
+    return q.order("criado_em", { ascending: false }).limit(150);
+  }
+
+  const [activeResult, realocacaoResult, recentResult] = await Promise.all([
+    buildActive(),
+    buildRealocacao(),
+    buildRecent(),
   ]);
 
   const error = activeResult.error || realocacaoResult.error || recentResult.error;

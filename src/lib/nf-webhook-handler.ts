@@ -47,10 +47,14 @@ export function isDevolucao(nf: {
   tipo?: string;
   tipoOperacao?: string;
   finalidade?: string;
+  origem?: { tipo?: string | null } | null;
 }): boolean {
   if (nf.tipo && nf.tipo.toLowerCase() === "devolucao") return true;
   if (nf.tipoOperacao === "E") return true;
   if (nf.finalidade && /devol/i.test(nf.finalidade)) return true;
+  // [Fix-D #6.12] Tiny v3 carrega 'devolucao' em origem.tipo no /notas/{id}
+  // (TinyNotaFiscal). Garantir que esse caminho também classifica.
+  if (nf.origem?.tipo && nf.origem.tipo.toLowerCase() === "devolucao") return true;
   return false;
 }
 
@@ -218,6 +222,41 @@ export async function handleNfWebhook(
       const nf = await runWithEmpresa(empresaId, () =>
         obterNotaFiscal(token, idNotaFiscalTiny),
       );
+
+      // [Fix-D #6.12] Antes de ignorar como "não-venda", checa se é uma
+      // devolução. Tiny v3 às vezes entrega NF de devolução com
+      // origem.tipo='devolucao' (ou inconsistência onde precisa do hint
+      // composto via isDevolucao). Roteia pra siso_devolucoes_pendentes
+      // best-effort em vez de ignorar — o webhook receiver também roteia
+      // (linhas 94-121 de webhook/tiny/route.ts) mas pode não pegar quando
+      // o payload base não tinha o hint e só o /notas/{id} revela.
+      if (isDevolucao(nf)) {
+        logger.info("nf-webhook", "NF é devolução — roteando pra fila", {
+          idNotaFiscalTiny: String(idNotaFiscalTiny),
+          origemTipo: nf.origem?.tipo ?? "unknown",
+          empresaId,
+        });
+        try {
+          const { registrarDevolucaoPendente } = await import("@/lib/wms/devolucoes");
+          await registrarDevolucaoPendente({
+            nota_fiscal_id: idNotaFiscalTiny,
+            chave_acesso_nf: nf.chaveAcesso ?? undefined,
+            pedido_origem_id: nf.origem?.id ?? undefined,
+            empresa_id: empresaId,
+            payload_webhook: payload as unknown as Record<string, unknown>,
+          });
+        } catch (e) {
+          logger.warn("nf-webhook", "falha ao enfileirar devolução no fallback", {
+            idNotaFiscalTiny: String(idNotaFiscalTiny),
+            e: e instanceof Error ? e.message : String(e),
+          });
+        }
+        await supabase
+          .from("siso_webhook_logs")
+          .update({ status: "roteado_devolucao", processado_em: new Date().toISOString() })
+          .eq("id", webhookLogId);
+        return;
+      }
 
       // Only process sale invoices
       if (nf.origem?.tipo !== "venda") {

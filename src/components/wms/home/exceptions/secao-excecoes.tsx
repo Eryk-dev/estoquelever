@@ -9,6 +9,7 @@ import { CardInventarioRevisao } from "./card-inventario-revisao";
 import { CardReservasOrfas } from "./card-reservas-orfas";
 import { CardRetroativos } from "./card-retroativos";
 import { CardRecebimentoOrfao } from "./card-recebimento-orfao";
+import { CardEntradasDiretas } from "./card-entradas-diretas";
 
 interface Props {
   excecoes: ExcecoesPayload;
@@ -22,6 +23,8 @@ export function SecaoExcecoes({ excecoes }: Props) {
     excecoes.reservas_orfas.count +
     excecoes.retroativos.count +
     excecoes.recebimento_orfao.count;
+  // Entradas diretas não somam pro toggle de "exceções warn" (não é
+  // destrutiva — informativo). Aparece sempre quando há entradas hoje.
 
   // Default expandido se há qualquer exceção. Estado local — operador pode
   // colapsar manualmente, perde no F5 (intencional — primeira impressão importa).
@@ -82,6 +85,10 @@ export function SecaoExcecoes({ excecoes }: Props) {
           <CardRecebimentoOrfao
             count={excecoes.recebimento_orfao.count}
             itens={excecoes.recebimento_orfao.itens}
+          />
+          <CardEntradasDiretas
+            count={excecoes.entradas_diretas.count}
+            itens={excecoes.entradas_diretas.itens}
           />
         </div>
       ) : null}

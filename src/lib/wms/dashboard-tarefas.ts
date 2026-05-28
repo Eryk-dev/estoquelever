@@ -133,6 +133,17 @@ export type RecebimentoOrfaoCard = {
   saldo: number;
 };
 
+/** Entrada direta hoje — movs nf_compra cuja loc destino ≠ recebimento. */
+export type EntradaDiretaCard = {
+  mov_id: string;
+  produto_sku: string;
+  produto_descricao: string;
+  qty: number;
+  galpao_nome: string | null;
+  localizacao_codigo: string;
+  criado_em: string;
+};
+
 export type ExcecoesPayload = {
   devolucoes: { count: number; itens: DevolucaoPendenteCard[] };
   transferencias_transito: { count: number; itens: TransferenciaTransitoCard[] };
@@ -140,6 +151,7 @@ export type ExcecoesPayload = {
   reservas_orfas: { count: number; itens: ReservaOrfaCard[] };
   retroativos: { count: number; itens: RetroativoPendenteCard[] };
   recebimento_orfao: { count: number; itens: RecebimentoOrfaoCard[] };
+  entradas_diretas: { count: number; itens: EntradaDiretaCard[] };
 };
 
 export type DashboardTarefasResult = {
@@ -454,6 +466,7 @@ export async function montarExcecoes(
     retroativosQ,
     saldosRecebQ,
     pendenciasVivasQ,
+    entradasDiretasQ,
   ] = await Promise.all([
     // Devoluções pendentes — global, sem filtro de galpão (a devolução
     // só ganha galpão quando classificada).
@@ -564,6 +577,29 @@ export async function montarExcecoes(
       if (galpao_id) q = q.eq("galpao_id", galpao_id);
       return q;
     })(),
+
+    // [Fix-D #5.2] Entradas diretas hoje — movs nf_compra cuja loc destino
+    // NÃO é tipo='recebimento' (entrada direta pula o dock).
+    (() => {
+      const inicioHoje = new Date();
+      inicioHoje.setHours(0, 0, 0, 0);
+      let q = sb
+        .from("siso_movimentacoes")
+        .select(
+          "id, quantidade, criado_em, " +
+            "produto:siso_produtos(sku, descricao), " +
+            "galpao:siso_galpoes(nome), " +
+            "localizacao:siso_localizacoes!inner(codigo, tipo, galpao_id)",
+        )
+        .eq("tipo", "E")
+        .eq("origem_tipo", "nf_compra")
+        .neq("localizacao.tipo", "recebimento")
+        .gte("criado_em", inicioHoje.toISOString())
+        .order("criado_em", { ascending: false })
+        .limit(MAX_DETALHE_POR_SECAO + 1);
+      if (galpao_id) q = q.eq("localizacao.galpao_id", galpao_id);
+      return q;
+    })(),
   ]);
 
   // Devoluções
@@ -658,6 +694,33 @@ export async function montarExcecoes(
     pendenciasVivasKeys,
   );
 
+  // Entradas diretas hoje
+  const entradasDiretasRows = (entradasDiretasQ.data ?? []) as unknown as Array<{
+    id: string;
+    quantidade: number;
+    criado_em: string;
+    produto: { sku?: string; descricao?: string } | Array<{ sku?: string; descricao?: string }> | null;
+    galpao: { nome?: string } | Array<{ nome?: string }> | null;
+    localizacao: { codigo?: string } | Array<{ codigo?: string }> | null;
+  }>;
+  const entradasDiretas = {
+    count: entradasDiretasRows.length,
+    itens: entradasDiretasRows.slice(0, MAX_DETALHE_POR_SECAO).map((r): EntradaDiretaCard => {
+      const produto = Array.isArray(r.produto) ? r.produto[0] ?? null : r.produto;
+      const galpao = Array.isArray(r.galpao) ? r.galpao[0] ?? null : r.galpao;
+      const loc = Array.isArray(r.localizacao) ? r.localizacao[0] ?? null : r.localizacao;
+      return {
+        mov_id: r.id,
+        produto_sku: produto?.sku ?? "—",
+        produto_descricao: produto?.descricao ?? "",
+        qty: Number(r.quantidade ?? 0),
+        galpao_nome: galpao?.nome ?? null,
+        localizacao_codigo: loc?.codigo ?? "—",
+        criado_em: r.criado_em,
+      };
+    }),
+  };
+
   return {
     devolucoes,
     transferencias_transito: transferencias,
@@ -665,6 +728,7 @@ export async function montarExcecoes(
     reservas_orfas: reservasOrfas,
     retroativos,
     recebimento_orfao: recebimentoOrfao,
+    entradas_diretas: entradasDiretas,
   };
 }
 

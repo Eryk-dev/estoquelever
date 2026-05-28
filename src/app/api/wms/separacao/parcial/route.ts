@@ -359,6 +359,50 @@ async function processarParcialItem(
         });
         movAjusteId = movAj.id;
       }
+
+      // Mudança B (28/05): sync snapshot do pedido pra refletir saldo real
+      // pós-loc_zerou. Sem isso, qualquer re-processamento (worker,
+      // re-aprovação) vê o snapshot estale do webhook ("tinha 1") e degrada
+      // OC pra Própria → loop infinito.
+      try {
+        const { data: estoquePorGalpao } = await supabase
+          .from("siso_estoque")
+          .select("disponivel")
+          .eq("produto_id", produtoWmsId)
+          .eq("galpao_id", galpaoId);
+        const dispTotalGalpao = (estoquePorGalpao ?? []).reduce(
+          (sum, row) => sum + Number(row.disponivel ?? 0),
+          0,
+        );
+        const tinyProdutoIdGrupo = primeiroItem.produto_id;
+        const pedidoIdsGrupo = [...new Set(itemsRaw.map((it) => it.pedido_id))];
+        const { error: snapErr } = await supabase
+          .from("siso_pedido_item_estoques")
+          .update({ disponivel: dispTotalGalpao })
+          .in("pedido_id", pedidoIdsGrupo)
+          .eq("produto_id", tinyProdutoIdGrupo)
+          .eq("empresa_id", empresaOrigemId);
+        if (snapErr) {
+          logger.warn("parcial.snapshot-sync", "falhou update snapshot", {
+            err: snapErr.message,
+            pedido_ids: pedidoIdsGrupo,
+          });
+        } else {
+          logger.info(
+            "parcial.snapshot-sync",
+            "snapshot atualizado pós loc_zerou",
+            {
+              pedido_ids: pedidoIdsGrupo,
+              tiny_produto_id: tinyProdutoIdGrupo,
+              disp_novo: dispTotalGalpao,
+            },
+          );
+        }
+      } catch (syncErr) {
+        logger.warn("parcial.snapshot-sync", "exception update snapshot (continua)", {
+          err: syncErr instanceof Error ? syncErr.message : String(syncErr),
+        });
+      }
     }
 
     // 8. Distribui qty_pega entre items em ordem (first-come-first-served) e
@@ -1301,6 +1345,47 @@ async function processarParcialRealocacao(
           usuario_id: session.id,
         });
         movAjusteId = movAj.id;
+      }
+
+      // Mudança B (28/05): sync snapshot do pedido pra refletir saldo real
+      // pós-loc_zerou. Sem isso, worker degrada OC pra Própria → loop.
+      try {
+        const { data: estoquePorGalpao } = await supabase
+          .from("siso_estoque")
+          .select("disponivel")
+          .eq("produto_id", produtoWmsId)
+          .eq("galpao_id", galpaoId);
+        const dispTotalGalpao = (estoquePorGalpao ?? []).reduce(
+          (sum, row) => sum + Number(row.disponivel ?? 0),
+          0,
+        );
+        const tinyProdutoIdGrupo = primeiroItem.produto_id;
+        const { error: snapErr } = await supabase
+          .from("siso_pedido_item_estoques")
+          .update({ disponivel: dispTotalGalpao })
+          .in("pedido_id", pedidoIds)
+          .eq("produto_id", tinyProdutoIdGrupo)
+          .eq("empresa_id", empresaOrigemPrimeiroPedido);
+        if (snapErr) {
+          logger.warn("parcial-realoc.snapshot-sync", "falhou update snapshot", {
+            err: snapErr.message,
+            pedido_ids: pedidoIds,
+          });
+        } else {
+          logger.info(
+            "parcial-realoc.snapshot-sync",
+            "snapshot atualizado pós loc_zerou (cascade path)",
+            {
+              pedido_ids: pedidoIds,
+              tiny_produto_id: tinyProdutoIdGrupo,
+              disp_novo: dispTotalGalpao,
+            },
+          );
+        }
+      } catch (syncErr) {
+        logger.warn("parcial-realoc.snapshot-sync", "exception (continua)", {
+          err: syncErr instanceof Error ? syncErr.message : String(syncErr),
+        });
       }
     }
 

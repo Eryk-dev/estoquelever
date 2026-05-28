@@ -15,7 +15,8 @@ export default {
     const res = await ctx.receber({ galpao: "CWB", items: [{ sku, qty: 50 }] });
     const pendId = res.pendencias[0];
     await ctx.guardar({ pendencia_id: pendId, loc_destino: "A-01-06", qty: 30 });
-    await ctx.aguardarPendenciaGuarda(pendId, "pendente"); // ainda tem 20
+    // [Fix-D #5.8] parcial preserva 'em_guarda' (não regride pra 'pendente')
+    await ctx.aguardarPendenciaGuarda(pendId, "em_guarda"); // ainda tem 20
     await ctx.guardar({ pendencia_id: pendId, loc_destino: "B-02-01", qty: 20 });
     await ctx.aguardarPendenciaGuarda(pendId, "guardada");
   },

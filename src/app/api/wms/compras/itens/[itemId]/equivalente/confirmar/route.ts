@@ -200,8 +200,6 @@ export async function POST(
         estoque_sp_saldo: estoqueSp?.saldo ?? 0,
         estoque_sp_reservado: estoqueSp?.reservado ?? 0,
         estoque_sp_disponivel: estoqueSp?.disponivel ?? 0,
-        cwb_atende: estoqueCwb?.atende ?? false,
-        sp_atende: estoqueSp?.atende ?? false,
         localizacao_cwb: estoqueCwb?.localizacao ?? null,
         localizacao_sp: estoqueSp?.localizacao ?? null,
         compra_status: "aguardando_compra",

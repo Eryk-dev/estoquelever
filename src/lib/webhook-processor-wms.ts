@@ -540,8 +540,6 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
         estoque_sp_saldo: 0,
         estoque_sp_reservado: 0,
         estoque_sp_disponivel: 0,
-        cwb_atende: false,
-        sp_atende: false,
         fornecedor_oc: fornecedor?.fornecedor ?? null,
         localizacao_cwb: null,
         localizacao_sp: null,

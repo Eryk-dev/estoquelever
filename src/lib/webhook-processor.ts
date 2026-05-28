@@ -56,8 +56,6 @@ interface ProcessedItem {
   estoque_sp_saldo: number;
   estoque_sp_reservado: number;
   estoque_sp_disponivel: number;
-  cwb_atende: boolean;
-  sp_atende: boolean;
   fornecedor_oc: string | null;
   localizacao_cwb: string | null;
   localizacao_sp: string | null;
@@ -882,8 +880,6 @@ async function enrichItemMultiEmpresa(
     estoque_sp_saldo: spAgg.saldo,
     estoque_sp_reservado: spAgg.reservado,
     estoque_sp_disponivel: spAgg.disponivel,
-    cwb_atende: cwbAgg.disponivel >= qtd,
-    sp_atende: spAgg.disponivel >= qtd,
     fornecedor_oc: fornecedor?.fornecedor ?? null,
     localizacao_cwb: cwbLocalizacao,
     localizacao_sp: spLocalizacao,

@@ -431,11 +431,9 @@ export async function POST(request: NextRequest) {
     sku: i.sku,
     descricao: i.descricao,
     quantidade_pedida: i.quantidade,
-    // Legacy compat: cwb_atende/sp_atende são mantidos pra queries legadas
+    // [Fix-D T10] cwb_atende/sp_atende removed (zero readers confirmados)
     // de painéis. Popula com case-insensitive match no nome do galpão.
     // Pra galpões fora de {CWB, SP}, ambos ficam false (sinaliza "outro").
-    cwb_atende: /^cwb\b/i.test(galpaoNome ?? ""),
-    sp_atende: /^sp\b/i.test(galpaoNome ?? ""),
   }));
 
   const { error: itensErr } = await supabase.from("siso_pedido_itens").insert(itensRows);

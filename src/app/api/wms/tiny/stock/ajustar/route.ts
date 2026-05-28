@@ -166,20 +166,21 @@ export async function POST(request: Request) {
     // 9. Also update legacy columns (backwards compat — will be removed)
     const qtdPedida = await getQuantidadePedida(supabase, pedidoId, produtoId);
     if (galpao === "CWB" || galpao === "SP") {
+      // [Fix-D T10] cwb_atende/sp_atende removidos (zero readers)
       const legacyFields =
         galpao === "CWB"
           ? {
               estoque_cwb_saldo: novoSaldo,
               estoque_cwb_reservado: novoReservado,
               estoque_cwb_disponivel: novoDisponivel,
-              cwb_atende: novoDisponivel >= qtdPedida,
             }
           : {
               estoque_sp_saldo: novoSaldo,
               estoque_sp_reservado: novoReservado,
               estoque_sp_disponivel: novoDisponivel,
-              sp_atende: novoDisponivel >= qtdPedida,
             };
+      void qtdPedida; // var era usada só nos campos removidos
+
 
       await supabase
         .from("siso_pedido_itens")

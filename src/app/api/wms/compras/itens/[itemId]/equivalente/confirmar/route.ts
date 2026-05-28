@@ -105,10 +105,11 @@ export async function POST(
       qtdMinimaAtende: quantidadeNecessariaCompra,
     });
 
-    // Mapeamento dinâmico → colunas legacy CWB/SP da tabela siso_pedido_itens.
-    // (Tabela mantém colunas hardcoded até cleanup completo — Plano 6 cutover.)
-    const estoqueCwb = equivalente.estoques["CWB"] ?? null;
-    const estoqueSp = equivalente.estoques["SP"] ?? null;
+    // [re-audit #3.BROKEN] colunas legacy estoque_cwb_*/estoque_sp_* deixaram
+    // de ser escritas — eram zero-readers (grep confirmou). Estoque dinâmico
+    // por empresa segue disponível via siso_pedido_item_estoques (tabela
+    // normalizada) atualizada logo abaixo. Mesma decisão do Fix-D T10 que
+    // removeu cwb_atende/sp_atende neste mesmo arquivo.
 
     const { data: duplicate } = await supabase
       .from("siso_pedido_itens")
@@ -190,18 +191,6 @@ export async function POST(
         fornecedor_oc: item.compra_equivalente_fornecedor ?? equivalente.fornecedor,
         imagem_url: equivalente.imagemUrl,
         gtin: equivalente.gtin,
-        estoque_cwb_deposito_id: estoqueCwb?.deposito_id ?? null,
-        estoque_cwb_deposito_nome: estoqueCwb?.deposito_nome ?? null,
-        estoque_cwb_saldo: estoqueCwb?.saldo ?? 0,
-        estoque_cwb_reservado: estoqueCwb?.reservado ?? 0,
-        estoque_cwb_disponivel: estoqueCwb?.disponivel ?? 0,
-        estoque_sp_deposito_id: estoqueSp?.deposito_id ?? null,
-        estoque_sp_deposito_nome: estoqueSp?.deposito_nome ?? null,
-        estoque_sp_saldo: estoqueSp?.saldo ?? 0,
-        estoque_sp_reservado: estoqueSp?.reservado ?? 0,
-        estoque_sp_disponivel: estoqueSp?.disponivel ?? 0,
-        localizacao_cwb: estoqueCwb?.localizacao ?? null,
-        localizacao_sp: estoqueSp?.localizacao ?? null,
         compra_status: "aguardando_compra",
         ordem_compra_id: null,
         compra_quantidade_solicitada: quantidadeNecessariaCompra,

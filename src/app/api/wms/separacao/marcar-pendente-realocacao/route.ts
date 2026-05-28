@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   if (!session) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
-  if (!userCan(session, "operacoes.separar")) {
+  if (!userCan(session, "separacao.executar")) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 

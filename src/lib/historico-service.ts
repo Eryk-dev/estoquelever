@@ -95,7 +95,10 @@ export type EventoPedido =
   | "inventario_patch_aplicado"
   | "expedido"
   | "estorno_manual_admin"
-  | "liberar_reservas_admin";
+  | "liberar_reservas_admin"
+  | "mandado_pra_compras_via_cascade"
+  | "recebimento_item_zero"
+  | "recebimento_via_oc";
 
 /**
  * Record a single event in the order history.

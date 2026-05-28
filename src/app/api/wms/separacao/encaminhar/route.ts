@@ -7,7 +7,6 @@ import { estornarEstoque, movimentarEstoque } from "@/lib/tiny-api";
 import { registrarEvento } from "@/lib/historico-service";
 import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
-import { wmsAsSource } from "@/lib/wms/flags";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "encaminhar";
@@ -327,45 +326,43 @@ async function reverseStockExecution(
   //
   // motivo: encaminhar é tecnicamente reroute, não cancel — ver #2.9
   // followup pra estender enum de motivo.
-  if (wmsAsSource()) {
-    try {
-      const { data: reservasAbertas } = await supabase
-        .from("siso_movimentacoes")
-        .select("id")
-        .eq("tipo", "R")
-        .eq("origem_tipo", "reserva_pedido")
-        .eq("origem_id", String(pedido.id));
-      const lista = (reservasAbertas ?? []) as Array<{ id: string }>;
-      let liberadas = 0;
-      for (const r of lista) {
-        try {
-          await estornarReservaIndividual({
-            reserva_id: r.id,
-            motivo: "outro",
-            usuario_id: usuarioId,
-          });
-          liberadas++;
-        } catch (e) {
-          // `estornarReservaIndividual` é idempotente (retorna L existente sem
-          // throw). Único erro esperado: "Reserva X não encontrada" (race
-          // raríssima). Em qualquer caso, logamos e seguimos — encaminhar não
-          // pode falhar por causa disso.
-          logger.warn(LOG_SOURCE, "falha estornando R individual (segue)", {
-            pedido_id: pedido.id,
-            reserva_id: r.id,
-            error: e instanceof Error ? e.message : String(e),
-          });
-        }
+  try {
+    const { data: reservasAbertas } = await supabase
+      .from("siso_movimentacoes")
+      .select("id")
+      .eq("tipo", "R")
+      .eq("origem_tipo", "reserva_pedido")
+      .eq("origem_id", String(pedido.id));
+    const lista = (reservasAbertas ?? []) as Array<{ id: string }>;
+    let liberadas = 0;
+    for (const r of lista) {
+      try {
+        await estornarReservaIndividual({
+          reserva_id: r.id,
+          motivo: "outro",
+          usuario_id: usuarioId,
+        });
+        liberadas++;
+      } catch (e) {
+        // `estornarReservaIndividual` é idempotente (retorna L existente sem
+        // throw). Único erro esperado: "Reserva X não encontrada" (race
+        // raríssima). Em qualquer caso, logamos e seguimos — encaminhar não
+        // pode falhar por causa disso.
+        logger.warn(LOG_SOURCE, "falha estornando R individual (segue)", {
+          pedido_id: pedido.id,
+          reserva_id: r.id,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
-      logger.info(LOG_SOURCE, `Rs liberadas no encaminhar: ${liberadas}`, {
-        pedidoId: pedido.id,
-        tentadas: lista.length,
-      });
-    } catch (e) {
-      logger.warn(LOG_SOURCE, "falha liberando Rs (segue com reverse)", {
-        error: e instanceof Error ? e.message : String(e),
-      });
     }
+    logger.info(LOG_SOURCE, `Rs liberadas no encaminhar: ${liberadas}`, {
+      pedidoId: pedido.id,
+      tentadas: lista.length,
+    });
+  } catch (e) {
+    logger.warn(LOG_SOURCE, "falha liberando Rs (segue com reverse)", {
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 
   if (!pedido.estoque_lancado) {

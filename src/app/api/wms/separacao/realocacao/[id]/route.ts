@@ -4,7 +4,6 @@ import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { registrarEvento } from "@/lib/historico-service";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
-import { wmsAsSource } from "@/lib/wms/flags";
 
 /**
  * DELETE /api/separacao/realocacao/[id]
@@ -133,7 +132,7 @@ export async function DELETE(
     // aceitável: cancelar uma chain de realocação implica perda de cobertura
     // pro item — qualquer R associada perdeu sentido. Operador deve
     // re-aprovar/encaminhar pra reservar de novo.
-    if (wmsAsSource() && item) {
+    if (item) {
       try {
         const { data: reservasAbertas } = await supabase
           .from("siso_movimentacoes")

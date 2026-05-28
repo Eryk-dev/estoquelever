@@ -281,8 +281,7 @@ export async function POST(request: NextRequest) {
       ).catch(() => {});
 
       // WMS cutover R→L+S: pedido entrou no conjunto forward (separado).
-      // Helper é idempotente e gateado por wmsAsSource() — em modo Tiny
-      // não faz nada, em WMS dispara se NF já emitida (caso normal).
+      // Helper é idempotente — dispara se NF já emitida (caso normal).
       for (const pid of separadosCompletos) {
         dispararCutoverSePronto(pid).catch((err) => {
           logger.warn("separacao-concluir", "Falha ao disparar cutover", {

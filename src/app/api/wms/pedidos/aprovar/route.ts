@@ -5,7 +5,6 @@ import { getEmpresaById } from "@/lib/empresa-lookup";
 import { kickWorker } from "@/lib/execution-worker";
 import { logger } from "@/lib/logger";
 import { registrarEvento } from "@/lib/historico-service";
-import { wmsAsSource } from "@/lib/wms/flags";
 import { reservarAtomico, estornarReservaIndividual } from "@/lib/wms/reservas";
 import {
   resolverProdutoWms,
@@ -270,11 +269,11 @@ export async function POST(request: NextRequest) {
   const marcadores: string[] =
     decisao === "oc" ? ["OC", filialOrigem, "LVR"] : [filialExecucao, "LVR"];
 
-  // Em WMS_AS_SOURCE, quando decisao manual é propria/transferencia,
-  // criar as reservas R atomicamente ANTES de transitar status. Se algum
-  // item falhar, estorna parciais e devolve 409 sem mexer no pedido.
-  // OC permanece intocado (não reserva).
-  if (wmsAsSource() && (decisao === "propria" || decisao === "transferencia")) {
+  // Quando decisao manual é propria/transferencia, criar as reservas R
+  // atomicamente ANTES de transitar status. Se algum item falhar, estorna
+  // parciais e devolve 409 sem mexer no pedido. OC permanece intocado
+  // (não reserva).
+  if (decisao === "propria" || decisao === "transferencia") {
     const reservaResult = await criarReservasPedido({
       supabase,
       pedidoId,

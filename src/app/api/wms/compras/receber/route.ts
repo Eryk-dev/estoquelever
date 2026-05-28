@@ -6,7 +6,6 @@ import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { userCan } from "@/lib/permissions";
 import { registrarEventos } from "@/lib/historico-service";
 import { inserirMovimentacao } from "@/lib/wms/ledger";
-import { wmsAsSource } from "@/lib/wms/flags";
 
 /**
  * POST /api/compras/receber
@@ -219,53 +218,50 @@ export async function POST(request: NextRequest) {
         if (!cur.skus.includes(sku)) cur.skus.push(sku);
         eventosPorPedido.set(pedidoId, cur);
 
-        // Em WMS_AS_SOURCE, grava mov E no ledger (entrada na loc
-        // RECEBIMENTO do galpão da OC). Failure isolada — não quebra
-        // o loop, apenas marca o pedido pra alerta.
-        if (wmsAsSource()) {
-          try {
-            const pedidoMeta = item.siso_pedidos as {
-              empresa_origem_id?: string | null;
-              separacao_galpao_id?: string | null;
-            } | null;
-            await gravarMovEntradaCompra({
-              supabase,
+        // Grava mov E no ledger (entrada na loc RECEBIMENTO do galpão da OC).
+        // Failure isolada — não quebra o loop, apenas marca o pedido pra alerta.
+        try {
+          const pedidoMeta = item.siso_pedidos as {
+            empresa_origem_id?: string | null;
+            separacao_galpao_id?: string | null;
+          } | null;
+          await gravarMovEntradaCompra({
+            supabase,
+            sku,
+            pedido_id: String(item.pedido_id),
+            pedido_item_id: String(item.id),
+            qty: qtyParaEsteItem,
+            empresa_origem_id: pedidoMeta?.empresa_origem_id ?? null,
+            separacao_galpao_id: pedidoMeta?.separacao_galpao_id ?? null,
+            fornecedor_nome:
+              (item as { fornecedor_oc?: string | null }).fornecedor_oc ??
+              null,
+            custo_unitario: custo_unitario ?? 0,
+            nota_fiscal_id: nota_fiscal_id ?? null,
+            usuario_id: session.id,
+          });
+          movsGeradas++;
+        } catch (movErr) {
+          movsFalhas++;
+          logger.error(
+            "compras-receber",
+            `Falha ao gravar mov E nf_compra pra item ${item.id}`,
+            {
+              error: movErr instanceof Error ? movErr.message : String(movErr),
+              pedido_id: item.pedido_id,
               sku,
-              pedido_id: String(item.pedido_id),
-              pedido_item_id: String(item.id),
               qty: qtyParaEsteItem,
-              empresa_origem_id: pedidoMeta?.empresa_origem_id ?? null,
-              separacao_galpao_id: pedidoMeta?.separacao_galpao_id ?? null,
-              fornecedor_nome:
-                (item as { fornecedor_oc?: string | null }).fornecedor_oc ??
-                null,
-              custo_unitario: custo_unitario ?? 0,
-              nota_fiscal_id: nota_fiscal_id ?? null,
-              usuario_id: session.id,
-            });
-            movsGeradas++;
-          } catch (movErr) {
-            movsFalhas++;
-            logger.error(
-              "compras-receber",
-              `Falha ao gravar mov E nf_compra pra item ${item.id}`,
-              {
-                error: movErr instanceof Error ? movErr.message : String(movErr),
-                pedido_id: item.pedido_id,
-                sku,
-                qty: qtyParaEsteItem,
-              },
-            );
-            // Best-effort: marca o pedido pra alerta. Se a coluna não existir
-            // ou o update falhar, segue em frente — não é fatal.
-            try {
-              await supabase
-                .from("siso_pedidos")
-                .update({ compra_estoque_lancado_alerta: true })
-                .eq("id", item.pedido_id);
-            } catch {
-              // ignora — coluna pode não existir em todos ambientes
-            }
+            },
+          );
+          // Best-effort: marca o pedido pra alerta. Se a coluna não existir
+          // ou o update falhar, segue em frente — não é fatal.
+          try {
+            await supabase
+              .from("siso_pedidos")
+              .update({ compra_estoque_lancado_alerta: true })
+              .eq("id", item.pedido_id);
+          } catch {
+            // ignora — coluna pode não existir em todos ambientes
           }
         }
       }

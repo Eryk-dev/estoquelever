@@ -7,7 +7,6 @@ import { runWithEmpresa } from "@/lib/tiny-queue";
 import { getSessionUser } from "@/lib/session";
 import { inserirMovimentacao } from "@/lib/wms/ledger";
 import { reservarAtomico, estornarReservaIndividual } from "@/lib/wms/reservas";
-import { wmsAsSource } from "@/lib/wms/flags";
 import { resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
 
 /**
@@ -84,7 +83,7 @@ export async function POST(request: NextRequest) {
 
     // 3. WMS — transferir saldos pra nova loc via mov par S+E
     let transferencias = 0;
-    if (wmsAsSource() && trimmed) {
+    if (trimmed) {
       if (!galpaoId) {
         const { data: pref } = await supabase
           .from("siso_empresa_galpoes_preferenciais")

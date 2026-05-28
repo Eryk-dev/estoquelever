@@ -591,154 +591,17 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 ## Inventory & Transfer Modules
 
-### siso_inventarios
-
-**Purpose:** Inventory audit sessions (stock count or movements).
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | uuid | NO | (PK) | Session ID |
-| `empresa_id` | uuid | NO | FK | Conducting empresa |
-| `galpao_id` | uuid | NO | FK | Galpão being counted |
-| `usuario_id` | uuid | NO | FK | User conducting inventory |
-| `deposito_id` | integer | YES | | Tiny deposit to process |
-| `modo` | text | NO | | Mode: `loc_only` (location only) or `loc_estoque` (location + stock count) |
-| `tipo_estoque` | text | YES | | Movement type: `B` (balance), `E` (entry), `S` (exit) |
-| `manter_localizacao_antiga` | boolean | NO | false | Keep old location if not overwriting |
-| `status` | text | NO | 'em_andamento' | Session status: `em_andamento`, `processando`, `concluido`, `cancelado`, `erro`, `revertendo`, `revertido` |
-| `observacoes` | text | YES | | User notes |
-| `created_at` | timestamptz | NO | now() | Session creation |
-| `processado_em` | timestamptz | YES | | When processing started |
-| `concluido_em` | timestamptz | YES | | When processing completed |
-
-**Primary Key:** `id`
-
-**Foreign Keys:**
-- `empresa_id` → `siso_empresas(id)`
-- `galpao_id` → `siso_galpoes(id)`
-- `usuario_id` → `siso_usuarios(id)`
-
-**Indexes:**
-- `idx_inventarios_status` (status)
-- `idx_inventarios_empresa` (empresa_id)
-- `idx_inventarios_usuario` (usuario_id)
-
-**Notes:**
-- `modo` determines what data is collected: location only, or location + quantity
-- `tipo_estoque` specifies the type of inventory movement (Balanço, Entrada, Saída)
-- Status lifecycle: em_andamento → processando → concluido (or error/revert paths)
-
----
-
-### siso_inventario_itens
-
-**Purpose:** Scanned items within an inventory session.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | uuid | NO | (PK) | Item ID |
-| `inventario_id` | uuid | NO | FK | Parent session |
-| `produto_id_tiny` | integer | YES | | Tiny product ID (resolved during processing) |
-| `sku` | text | NO | | Scanned SKU |
-| `nome_produto` | text | YES | | Product name (from Tiny) |
-| `ean` | text | YES | | EAN/GTIN |
-| `localizacao` | text | NO | | Scanned location (e.g., "A1-2-3") |
-| `quantidade` | integer | NO | 1 | Counted/scanned quantity |
-| `status` | text | NO | 'pendente' | Item status: `pendente`, `processando`, `sucesso`, `erro` |
-| `erro_msg` | text | YES | | Error on processing |
-| `localizacao_antiga_tiny` | text | YES | | Previous location in Tiny (snapshot before update) |
-| `saldo_anterior_tiny` | numeric | YES | | Previous balance (snapshot before movement) |
-| `created_at` | timestamptz | NO | now() | Item scanned time |
-
-**Primary Key:** `id`
-
-**Foreign Keys:**
-- `inventario_id` → `siso_inventarios(id)` ON DELETE CASCADE
-
-**Indexes:**
-- `idx_inventario_itens_inv` (inventario_id)
-- `idx_inventario_itens_sku` (inventario_id, sku)
-
-**Notes:**
-- No unique constraint — same SKU can appear multiple times per session
-- `localizacao_antiga_tiny` and `saldo_anterior_tiny` filled during processing before update
-- `status` tracks processing state; `erro_msg` captures Tiny API errors
-
----
-
-### siso_transferencias
-
-**Purpose:** Inter-galpão stock transfer sessions.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | uuid | NO | (PK) | Transfer session ID |
-| `empresa_origem_id` | uuid | NO | FK | Source empresa |
-| `empresa_destino_id` | uuid | NO | FK | Destination empresa |
-| `galpao_origem_id` | uuid | NO | FK | Source galpão |
-| `galpao_destino_id` | uuid | NO | FK | Destination galpão |
-| `usuario_id` | uuid | NO | FK | User initiating transfer |
-| `deposito_origem_id` | integer | YES | | Source deposit |
-| `deposito_destino_id` | integer | YES | | Destination deposit |
-| `status` | text | NO | 'em_andamento' | Session status: `em_andamento`, `processando`, `concluido`, `cancelado`, `erro`, `revertendo`, `revertido` |
-| `observacoes` | text | YES | | Notes |
-| `created_at` | timestamptz | NO | now() | Creation |
-| `processado_em` | timestamptz | YES | | When processing started |
-| `concluido_em` | timestamptz | YES | | When completed |
-
-**Primary Key:** `id`
-
-**Foreign Keys:**
-- `empresa_origem_id` → `siso_empresas(id)`
-- `empresa_destino_id` → `siso_empresas(id)`
-- `galpao_origem_id` → `siso_galpoes(id)`
-- `galpao_destino_id` → `siso_galpoes(id)`
-- `usuario_id` → `siso_usuarios(id)`
-
-**Indexes:**
-- `idx_transferencias_status` (status)
-- `idx_transferencias_empresa_o` (empresa_origem_id)
-- `idx_transferencias_empresa_d` (empresa_destino_id)
-- `idx_transferencias_usuario` (usuario_id)
-
-**Notes:**
-- Source and destination empresas (can be same galpão but different empresas)
-- Status lifecycle mirrors inventario table
-- Items tracked in `siso_transferencia_itens`
-
----
-
-### siso_transferencia_itens
-
-**Purpose:** Individual items within a transfer session.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | uuid | NO | (PK) | Item ID |
-| `transferencia_id` | uuid | NO | FK | Parent transfer session |
-| `produto_id_tiny_origem` | integer | NO | | Product ID in source empresa |
-| `produto_id_tiny_destino` | integer | YES | | Product ID in destination empresa (resolved during processing) |
-| `sku` | text | NO | | Scanned SKU |
-| `nome_produto` | text | YES | | Product name |
-| `ean` | text | YES | | EAN/GTIN |
-| `quantidade` | integer | NO | 1 | Transfer quantity |
-| `clonado` | boolean | NO | false | Flag: product was cloned to destination empresa during processing |
-| `status` | text | NO | 'pendente' | Item status: `pendente`, `processando`, `sucesso`, `erro` |
-| `erro_msg` | text | YES | | Error message if processing failed |
-| `created_at` | timestamptz | NO | now() | Scanned time |
-
-**Primary Key:** `id`
-
-**Foreign Keys:**
-- `transferencia_id` → `siso_transferencias(id)` ON DELETE CASCADE
-
-**Indexes:**
-- `idx_transferencia_itens_tr` (transferencia_id)
-
-**Notes:**
-- `produto_id_tiny_origem` is always set at scan time
-- `produto_id_tiny_destino` may differ due to product cloning
-- `clonado` = true if producto had to be created in destination empresa
+> **Dropadas na Fase 0 (2026-05-28).** As tabelas legadas `siso_inventarios`,
+> `siso_inventario_itens`, `siso_transferencias` e `siso_transferencia_itens`
+> (inventário v1 + modelo de transferência antigo) foram removidas — estavam
+> com 0 linhas e sem leitura no código. Os modelos ativos são:
+>
+> - **Inventário:** `siso_inventario_sessoes` / `siso_inventario_localizacoes` /
+>   `siso_inventario_contagens` / `siso_inventario_divergencias` (v2 pull queue,
+>   documentado em [`CLAUDE.md`](../CLAUDE.md) seção "WMS Tables (Plano 4)").
+> - **Transferência inter-galpão:** `siso_transferencias_galpao` (ledger 3D).
+>
+> Migration: `supabase/migrations/20260606_drop_tabelas_legadas_superadas.sql`.
 
 ---
 

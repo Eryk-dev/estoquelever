@@ -35,7 +35,6 @@ import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import { reservarAtomico, estornarReservaIndividual } from "@/lib/wms/reservas";
-import { wmsAsSource } from "@/lib/wms/flags";
 import { registrarEvento } from "@/lib/historico-service";
 import { userCan } from "@/lib/permissions";
 import {
@@ -446,7 +445,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 2b) Modo separacao + WMS_AS_SOURCE: cria R atomicamente.
+  // 2b) Modo separacao: cria R atomicamente.
   // Sem isso, marketplace concorrente pode pegar saldo entre a venda manual
   // e o picking, e a baixa do vendedor falha por reservado>saldo.
   // Itens sem localizacao_id (sem saldo no galpão) ou com saldo parcial
@@ -455,7 +454,7 @@ export async function POST(request: NextRequest) {
   // (operador resolve no picking). RPC wms_reservar_atomico falharia por
   // saldo insuficiente nesses casos, então não vale a tentativa.
   const reservasCriadas: string[] = [];
-  if (modoEfetivo === "separacao" && wmsAsSource()) {
+  if (modoEfetivo === "separacao") {
     try {
       for (const item of itensResolvidos) {
         if (!item.localizacao_id) continue; // sem saldo — segue sem reserva

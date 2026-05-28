@@ -6,7 +6,6 @@ import { registrarEventos } from "@/lib/historico-service";
 import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/agrupamento-service";
 import { kickWorker } from "@/lib/execution-worker";
 import { dispararCutoverSePronto } from "@/lib/wms/cutover";
-import { wmsAsSource } from "@/lib/wms/flags";
 
 const LOG_SOURCE = "separacao-concluir-oc";
 
@@ -249,7 +248,6 @@ export async function POST(request: NextRequest) {
       // Resolve decisao
       let decisao: "propria" | "transferencia";
       let separacaoGalpaoId: string | null;
-      let empresaExecId = pedido.empresa_origem_id;
 
       if (!ocGalpaoId || !pedidoGalpaoId || ocGalpaoId === pedidoGalpaoId) {
         // Same galpao or no OC linked → propria
@@ -259,19 +257,6 @@ export async function POST(request: NextRequest) {
         // Different galpao → transferencia
         decisao = "transferencia";
         separacaoGalpaoId = ocGalpaoId;
-
-        // Find first active empresa in OC galpao for execution
-        const { data: empresaOcGalpao } = await supabase
-          .from("siso_empresas")
-          .select("id")
-          .eq("galpao_id", ocGalpaoId)
-          .eq("ativo", true)
-          .order("criado_em", { ascending: true })
-          .limit(1)
-          .single();
-        if (empresaOcGalpao) {
-          empresaExecId = empresaOcGalpao.id;
-        }
       }
 
       // Append 'pick oc' tag
@@ -307,36 +292,6 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Fix-Final A T13 (#2.15 re-applied with split): enfileirar
-      // lancar_estoque legacy só faz sentido no caminho Tiny-source. Em
-      // WMS_AS_SOURCE o cutover R→L+S é disparado abaixo via
-      // dispararCutoverSePronto — enfileirar lancar_estoque aqui causaria
-      // dupla baixa (ledger via cutover + escrita em siso_pedido_item_estoques
-      // via worker legado).
-      //
-      // O revert original (c349ead) achou que essa gating quebrava NF.
-      // Re-análise: dispararCutoverSePronto já trata a race "sem NF" (skipa
-      // com motivo='sem_nf'); o nf-webhook-handler chama o helper de novo
-      // quando a NF chega, completando o cutover. Não há "buraco".
-      if (!wmsAsSource()) {
-        const { error: queueError } = await supabase
-          .from("siso_fila_execucao")
-          .insert({
-            pedido_id: pedido.id,
-            tipo: "lancar_estoque",
-            empresa_id: empresaExecId,
-            decisao,
-            tentativas: 0,
-            status: "pendente",
-          });
-
-        if (queueError) {
-          logger.error(LOG_SOURCE, "Erro ao enfileirar job", {
-            pedidoId: pedido.id,
-            error: queueError.message,
-          });
-        }
-      }
     }
 
     // ── 4. Fire-and-forget: kick worker, agrupamentos, history ──

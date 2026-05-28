@@ -5,8 +5,8 @@
  * roteia via rotearPedidoDoBanco (algoritmo WMS-3) e cria reservas no
  * ledger no momento que o pedido é gravado.
  *
- * Chamado por processWebhook() em webhook-processor.ts quando wmsAsSource()
- * retorna true. Estrutura mantida espelhada ao fluxo legado pra não quebrar
+ * Chamado por processWebhook() em webhook-processor.ts (estoque é fonte única
+ * WMS). Estrutura mantida espelhada ao fluxo legado pra não quebrar
  * UI/queries existentes:
  *   - siso_pedidos (mesmas colunas)
  *   - siso_pedido_itens (mesmas colunas; estoque_cwb_* e estoque_sp_* ficam

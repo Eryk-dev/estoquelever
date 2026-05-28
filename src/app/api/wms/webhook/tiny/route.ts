@@ -5,7 +5,6 @@ import { processWebhook } from "@/lib/webhook-processor";
 import { handleNfWebhook, isDevolucao, type NfWebhookPayload } from "@/lib/nf-webhook-handler";
 import { logger, generateCorrelationId } from "@/lib/logger";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
-import { wmsAsSource } from "@/lib/wms/flags";
 
 /**
  * POST /api/webhook/tiny
@@ -208,43 +207,41 @@ export async function POST(request: NextRequest) {
       // Idempotente por R (acha L com estorno_de=R.id antes de criar novo),
       // então seguro chamar pra TODAS as Rs do pedido — as já liberadas por
       // picking retornam o L existente sem criar mov nova.
-      if (wmsAsSource()) {
-        try {
-          const { data: reservasAbertas } = await supabase
-            .from("siso_movimentacoes")
-            .select("id")
-            .eq("tipo", "R")
-            .eq("origem_tipo", "reserva_pedido")
-            .eq("origem_id", String(pedidoId));
-          const lista = (reservasAbertas ?? []) as Array<{ id: string }>;
-          let liberadas = 0;
-          for (const r of lista) {
-            try {
-              await estornarReservaIndividual({
-                reserva_id: r.id,
-                motivo: "outro",
-                // webhook é system-initiated; sem usuário operador
-              });
-              liberadas++;
-            } catch (e) {
-              logger.warn("webhook", "falha estornando R individual (segue)", {
-                pedidoId,
-                reserva_id: r.id,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            }
+      try {
+        const { data: reservasAbertas } = await supabase
+          .from("siso_movimentacoes")
+          .select("id")
+          .eq("tipo", "R")
+          .eq("origem_tipo", "reserva_pedido")
+          .eq("origem_id", String(pedidoId));
+        const lista = (reservasAbertas ?? []) as Array<{ id: string }>;
+        let liberadas = 0;
+        for (const r of lista) {
+          try {
+            await estornarReservaIndividual({
+              reserva_id: r.id,
+              motivo: "outro",
+              // webhook é system-initiated; sem usuário operador
+            });
+            liberadas++;
+          } catch (e) {
+            logger.warn("webhook", "falha estornando R individual (segue)", {
+              pedidoId,
+              reserva_id: r.id,
+              error: e instanceof Error ? e.message : String(e),
+            });
           }
-          logger.info("webhook", "Rs liberadas no cancelamento", {
-            pedidoId,
-            liberadas,
-            tentadas: lista.length,
-          });
-        } catch (e) {
-          logger.warn("webhook", "falha liberando Rs no cancel (segue)", {
-            pedidoId,
-            error: e instanceof Error ? e.message : String(e),
-          });
         }
+        logger.info("webhook", "Rs liberadas no cancelamento", {
+          pedidoId,
+          liberadas,
+          tentadas: lista.length,
+        });
+      } catch (e) {
+        logger.warn("webhook", "falha liberando Rs no cancel (segue)", {
+          pedidoId,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
 
       const cancelUpdate: Record<string, unknown> = {

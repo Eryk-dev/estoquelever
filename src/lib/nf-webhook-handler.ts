@@ -13,8 +13,6 @@ import { runWithEmpresa } from "./tiny-queue";
 import { logger } from "./logger";
 import { registrarEvento } from "./historico-service";
 import { criarAgrupamentoFase1 } from "./agrupamento-service";
-import { kickWorker } from "./execution-worker";
-import { wmsAsSource } from "./wms/flags";
 import { dispararCutoverSePronto } from "./wms/cutover";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -359,66 +357,18 @@ export async function handleNfWebhook(
       .single();
 
     if (pedidoData && ["propria", "transferencia"].includes(pedidoData.decisao_final ?? "")) {
-      if (wmsAsSource()) {
-        // Em modo WMS, o cutover só roda quando status entra no conjunto forward
-        // (separado/embalado/expedido). O webhook da NF só transita pra
-        // aguardando_separacao — o cutover dispara quando o operador concluir.
-        // Mas se o operador concluiu ANTES da NF chegar (race), status já é
-        // forward agora — o helper dispara no ato.
-        const result = await dispararCutoverSePronto(pedidoId);
-        logger.info("nf-webhook", "WMS mode: dispararCutoverSePronto chamado", {
-          pedidoId,
-          decisao: pedidoData.decisao_final,
-          enqueued: result.enqueued,
-          motivo: result.motivo,
-        });
-      } else {
-        // Modo Tiny legado: enfileira pos_nf direto pra rodar via worker.
-        // For transferência, empresa_id in the job must be the separacao_galpao empresa
-        // (the support empresa that will provide stock). Use the empresa from the
-        // original lancar_estoque job if available, otherwise fall back to empresaId.
-        let jobEmpresaId = empresaId;
-        if (pedidoData.decisao_final === "transferencia") {
-          const { data: originalJob } = await supabase
-            .from("siso_fila_execucao")
-            .select("empresa_id")
-            .eq("pedido_id", pedidoId)
-            .eq("tipo", "lancar_estoque")
-            .eq("decisao", "transferencia")
-            .order("criado_em", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (originalJob) jobEmpresaId = originalJob.empresa_id;
-        }
-
-        const { error: insertErr } = await supabase.from("siso_fila_execucao").insert({
-          pedido_id: pedidoId,
-          tipo: "lancar_estoque_pos_nf",
-          empresa_id: jobEmpresaId,
-          decisao: pedidoData.decisao_final,
-          atualizado_em: new Date().toISOString(),
-        });
-
-        if (insertErr) {
-          logger.logError({
-            error: new Error(insertErr.message),
-            source: "nf-webhook",
-            message: `Falha ao enfileirar lancar_estoque_pos_nf para pedido ${pedidoId}`,
-            category: "database",
-            pedidoId,
-            metadata: { decisao: pedidoData.decisao_final, empresaId: jobEmpresaId, code: insertErr.code },
-          });
-          return;
-        }
-
-        logger.info("nf-webhook", "Job lancar_estoque_pos_nf enfileirado", {
-          pedidoId,
-          decisao: pedidoData.decisao_final,
-          empresaId: jobEmpresaId,
-        });
-
-        kickWorker().catch(() => {});
-      }
+      // O cutover só roda quando status entra no conjunto forward
+      // (separado/embalado/expedido). O webhook da NF só transita pra
+      // aguardando_separacao — o cutover dispara quando o operador concluir.
+      // Mas se o operador concluiu ANTES da NF chegar (race), status já é
+      // forward agora — o helper dispara no ato.
+      const result = await dispararCutoverSePronto(pedidoId);
+      logger.info("nf-webhook", "dispararCutoverSePronto chamado", {
+        pedidoId,
+        decisao: pedidoData.decisao_final,
+        enqueued: result.enqueued,
+        motivo: result.motivo,
+      });
     }
   } else {
     logger.info("nf-webhook", "Pedido not in aguardando_nf — NF saved, transition skipped", {

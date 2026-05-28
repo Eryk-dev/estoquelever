@@ -634,17 +634,6 @@ export async function gerarNotaFiscal(
   });
 }
 
-/** Post stock from a nota fiscal */
-export async function lancarEstoqueNota(
-  token: string,
-  notaId: number,
-): Promise<void> {
-  await tinyFetch<void>(`/notas/${notaId}/lancar-estoque`, {
-    token,
-    method: "POST",
-  });
-}
-
 // ─── Expedição (Shipment Groups + Labels) ───────────────────────────────────
 
 /** Response from POST /expedicao */

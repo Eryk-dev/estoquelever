@@ -9,14 +9,10 @@
  * Quem chegar por último na interseção dispara (concluir, executor após NF,
  * webhook NF tardio). Quem sair do conjunto forward com estoque_lancado=true
  * reverte (desfazer-bip, voltar-etapa backward).
- *
- * Toda a lógica é gateada por wmsAsSource() — em modo Tiny legado o
- * comportamento antigo (cutover no webhook da NF) é preservado.
  */
 
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { wmsAsSource } from "./flags";
 import { reservarAtomico } from "./reservas";
 import { inserirMovimentacao } from "./ledger";
 
@@ -53,10 +49,6 @@ export interface DispararResult {
  * e chain `estorno_de`. Skips silenciosos retornam o motivo pra debug.
  */
 export async function dispararCutoverSePronto(pedidoId: string): Promise<DispararResult> {
-  if (!wmsAsSource()) {
-    return { enqueued: false, motivo: "wms_disabled" };
-  }
-
   const sb = createServiceClient();
   const { data: pedido, error } = await sb
     .from("siso_pedidos")
@@ -168,10 +160,6 @@ export async function reverterCutoverSeRetrocedeu(
   motivo: ReverterMotivo,
   usuarioId?: string,
 ): Promise<ReverterResult> {
-  if (!wmsAsSource()) {
-    return { reverted: false, motivo: "wms_disabled" };
-  }
-
   // 'reiniciar_embalagem' é uma reversão forçada: o operador quer desfazer o
   // cutover (S movs do ledger) mesmo com o pedido permanecendo em 'separado'
   // (status forward). Pula a checagem pra esse motivo específico — os demais

@@ -227,6 +227,34 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
       .eq("id", (mov as { id: string }).id);
   }
 
+  // Decisão 5 (28/05): toda entrada de saldo (mov E) varre pedidos em
+  // validacao_oc desse produto+galpão pra marcar flag_saldo_apareceu, e
+  // atualiza snapshot de pedidos em separação aberta. Fire-and-forget pra
+  // não bloquear a transação. Lazy import pra evitar cycle ledger ↔ varredura.
+  if (
+    tipo === "E" &&
+    tripla.localizacao_id &&
+    tripla.produto_id &&
+    tripla.galpao_id
+  ) {
+    void (async () => {
+      try {
+        const { varrerPedidosAfetadosPorEntrada } = await import(
+          "./varredura-validacao-oc"
+        );
+        await varrerPedidosAfetadosPorEntrada({
+          produto_id: tripla.produto_id,
+          galpao_id: tripla.galpao_id,
+          localizacao_id: tripla.localizacao_id,
+        });
+      } catch (err) {
+        logger.warn("ledger", "varredura pós-entrada falhou (não-fatal)", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+  }
+
   return mov as unknown as Movimentacao;
 }
 

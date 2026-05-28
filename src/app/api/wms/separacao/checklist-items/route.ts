@@ -66,13 +66,20 @@ export async function GET(request: NextRequest) {
     // 2. Fetch empresa_origem_id + separacao_galpao_id per pedido
     const { data: pedidos } = await supabase
       .from("siso_pedidos")
-      .select("id, empresa_origem_id, separacao_galpao_id, status_separacao")
+      .select(
+        "id, empresa_origem_id, separacao_galpao_id, status_separacao, flag_saldo_apareceu",
+      )
       .in("id", pedido_ids);
 
     const pedidoStatusMap = new Map<string, string | null>();
     for (const pedido of pedidos ?? []) {
       pedidoStatusMap.set(pedido.id, pedido.status_separacao ?? null);
     }
+    const pedidosResumo = (pedidos ?? []).map((p) => ({
+      id: p.id,
+      status_separacao: p.status_separacao ?? null,
+      flag_saldo_apareceu: Boolean(p.flag_saldo_apareceu),
+    }));
 
     // 2b. Resolve the "separating empresa" — the empresa in the galpão
     //     that will physically separate/ship the order.
@@ -307,7 +314,7 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({ items: result });
+    return NextResponse.json({ items: result, pedidos: pedidosResumo });
   } catch (err) {
     logger.error("checklist-items", "Unexpected error", {
       error: err instanceof Error ? err.message : String(err),

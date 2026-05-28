@@ -240,7 +240,14 @@ export default function WmsChecklistPage() {
       }`;
       const r = await sisoFetch(url);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json() as Promise<{ items: ChecklistItem[] }>;
+      return r.json() as Promise<{
+        items: ChecklistItem[];
+        pedidos?: Array<{
+          id: string;
+          status_separacao: string | null;
+          flag_saldo_apareceu: boolean;
+        }>;
+      }>;
     },
     enabled: pedidoIds.length > 0 && !!user,
   });
@@ -1135,6 +1142,14 @@ export default function WmsChecklistPage() {
               </>
             );
           })()}
+
+          {/* Banner Decisão 5 (28/05): saldo apareceu em outra OC enquanto pedido aguardava */}
+          {(data?.pedidos ?? []).some((p) => p.flag_saldo_apareceu) && (
+            <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+              ⚠️ Saldo apareceu pra algum item desse pedido após o webhook
+              chegar — confere fisicamente antes de marcar Esgotado.
+            </div>
+          )}
 
           {/* ─── Itens OC ─── */}
           {itensOCOrdenados.length > 0 && (

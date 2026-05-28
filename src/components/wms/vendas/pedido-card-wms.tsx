@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/wms/ui/wms-ui";
 import { CrossPopoverButton } from "@/components/wms/cross/cross-popover-button";
 import {
@@ -329,18 +329,11 @@ function PedidoCardWms({ pedido, onClick, interactive }: PedidoCardWmsProps) {
     itens,
   } = pedido;
 
-  // Decisão inicial: oc se nenhum item tem estoque em lugar nenhum, senão sugestao
-  const hasItemSemEstoque = useMemo(
-    () =>
-      itens.some(
-        (it) =>
-          !Object.values(it.estoques).some((e) => e.disponivel >= it.quantidadePedida),
-      ),
-    [itens],
-  );
-  const [decisao, setDecisao] = useState<Decisao>(
-    decisaoFinal ?? (hasItemSemEstoque ? "oc" : sugestao),
-  );
+  // [Fix-D #1.3] Removido `hasItemSemEstoque` recompute client-side. O backend
+  // já persiste a sugestão correta em `siso_pedidos.sugestao` ([#P6-1.15]) — o
+  // GET retorna o snapshot. Recomputar client-side causava flicker visual entre
+  // `propria↔oc` quando o saldo live mudava entre renders. Snapshot wins.
+  const [decisao, setDecisao] = useState<Decisao>(decisaoFinal ?? sugestao);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   // Galpão alvo de transferência (pra mostrar nas labels)

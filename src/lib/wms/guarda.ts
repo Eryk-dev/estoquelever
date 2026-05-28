@@ -458,6 +458,27 @@ export async function confirmarGuarda(
   const refresh = await obterPendencia(input.pendencia_id);
   if (!refresh) throw new Error("pendência sumiu após confirmar");
 
+  // [Fix-D #5.3] Audit destino planejado vs real. localizacao_destino_id na
+  // pendência é a sugestão registrada na criação (recebimento). Se o operador
+  // escolheu OUTRA loc na confirmação, loga divergência pra futuras análises
+  // de qualidade da sugestão automática (resolverLocRecebimento).
+  if (
+    refresh.localizacao_destino_id &&
+    refresh.localizacao_destino_id !== input.localizacao_destino_id
+  ) {
+    logger.info(
+      "wms.guarda.destino_divergente",
+      "operador escolheu loc destino diferente da sugerida",
+      {
+        pendenciaId: input.pendencia_id,
+        destino_planejado: refresh.localizacao_destino_id,
+        destino_real: input.localizacao_destino_id,
+        operador_id: input.usuario_id,
+        qty_guardada_nesta_confirmacao: input.qty,
+      },
+    );
+  }
+
   return {
     pendencia: refresh,
     origem_id: r.origem_id,

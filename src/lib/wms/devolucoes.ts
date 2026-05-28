@@ -507,7 +507,7 @@ export async function listarDevolucoesClassificadas(): Promise<DevolucaoPendente
   const sb = createServiceClient();
   const { data, error } = await sb
     .from("siso_devolucoes_pendentes")
-    .select("*, empresa_referencia:siso_empresas!empresa_id(nome)")
+    .select("*, empresa_receptora:siso_empresas!empresa_id(nome)")
     .eq("status", "classificada")
     .not("classificada_em", "is", null)
     .order("classificada_em", { ascending: false });

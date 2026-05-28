@@ -962,11 +962,18 @@ async function processarParcialItem(
       }
     }
 
-    // Se ninguém achou cobertura, mantém semântica antiga (aguardando_supervisor)
+    // Decisão (28/05): quando cascade esgota 100% (semCoberturaParcial=true E
+    // nenhuma realoc criada), retorna `sem_cobertura` com payload pro frontend
+    // abrir modal "Mandar pra Compras / Realocação manual". Antes retornava
+    // `aguardando_supervisor` (caminho legado que disparava toast "voltou pro
+    // painel SISO" e marcava pendente_realocacao via outro caminho) — bug
+    // reportado no pedido #49818 LIM006 (28/05/2026).
     if (semCoberturaParcial && linhasInsertTotais.length === 0) {
       return NextResponse.json({
-        status: "aguardando_supervisor",
-        motivo: "sem_cobertura_total",
+        status: "sem_cobertura",
+        sem_cobertura: true,
+        sem_cobertura_payload:
+          semCoberturaPayload.item_ids.length > 0 ? semCoberturaPayload : undefined,
       });
     }
 

@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { registrarEvento } from "@/lib/historico-service";
 import { resolverLocRecebimento, criarPendencia } from "@/lib/wms/guarda";
 import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import { detectarCrossDock } from "@/lib/wms/crossdock-detector";
 
 export interface ReceberOCItemInput {
   /** ID do siso_pedido_itens vinculado a essa OC */
@@ -166,19 +167,64 @@ export async function receberItensViaOC(
       continue;
     }
 
+    // Decisão 7 (28/05): detecta demanda viva pra esse SKU+OC e splita
+    // pendência em 2 quando há cross-docking. Pendência cross-dock vai
+    // pra PACKING; resto vira pendência normal (livre escolha de loc).
+    let pendsCriadasItem = 0;
     try {
-      const pendId = await criarPendencia({
+      const split = await detectarCrossDock({
         produto_id: produtoWmsId,
         galpao_id: oc.galpao_id,
-        localizacao_origem_id: locRecebId,
-        mov_entrada_id: movEntradaId,
-        qty_inicial: itemReq.qty_real,
-        origem_tipo: "nf_compra",
-        custo_unitario: itemReq.custo_unitario ?? null,
-        lote_id: loteId,
-        criada_por: args.operadorId,
+        qty_recebida: itemReq.qty_real,
+        ordem_compra_id: args.ocId,
       });
-      pendenciasCriadas.push(pendId);
+
+      if (split.qty_cross_dock > 0 && split.loc_packing_id) {
+        const pendCross = await criarPendencia({
+          produto_id: produtoWmsId,
+          galpao_id: oc.galpao_id,
+          localizacao_origem_id: locRecebId,
+          mov_entrada_id: movEntradaId,
+          qty_inicial: split.qty_cross_dock,
+          origem_tipo: "nf_compra",
+          custo_unitario: itemReq.custo_unitario ?? null,
+          lote_id: loteId,
+          criada_por: args.operadorId,
+          prioridade: "cross_dock",
+          pedidos_vinculados: split.pedidos_vinculados,
+          destino_sugerido_id: split.loc_packing_id,
+        });
+        pendenciasCriadas.push(pendCross);
+        pendsCriadasItem++;
+        logger.info(
+          "receber-oc.crossdock",
+          "pendência cross-dock criada",
+          {
+            pendencia_id: pendCross,
+            qty: split.qty_cross_dock,
+            pedidos: split.pedidos_vinculados.length,
+            oc_id: args.ocId,
+            sku: item.sku,
+          },
+        );
+      }
+
+      if (split.qty_guarda_normal > 0) {
+        const pendNormal = await criarPendencia({
+          produto_id: produtoWmsId,
+          galpao_id: oc.galpao_id,
+          localizacao_origem_id: locRecebId,
+          mov_entrada_id: movEntradaId,
+          qty_inicial: split.qty_guarda_normal,
+          origem_tipo: "nf_compra",
+          custo_unitario: itemReq.custo_unitario ?? null,
+          lote_id: loteId,
+          criada_por: args.operadorId,
+          prioridade: "normal",
+        });
+        pendenciasCriadas.push(pendNormal);
+        pendsCriadasItem++;
+      }
     } catch (pendErr) {
       // Defense-in-depth: estorna mov se falhou pendência (mesmo padrão de receberEstoque)
       try {

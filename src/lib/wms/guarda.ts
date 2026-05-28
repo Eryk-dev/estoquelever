@@ -126,6 +126,12 @@ export interface CriarPendenciaInput {
   lote_id?: string | null;
   /** Usuário que criou a pendência (operador do recebimento). FK pra `siso_usuarios.id`. */
   criada_por: string;
+  /** Cross-dock (Decisão 7+9, 28/05): prioridade='cross_dock' → UI render badge verde. */
+  prioridade?: "normal" | "cross_dock";
+  /** IDs (text) dos pedidos que essa pendência fecha 100% ao ser guardada em PACKING. */
+  pedidos_vinculados?: string[] | null;
+  /** Loc PACKING sugerida pra cross-dock (pré-preenche o form do tablet). */
+  destino_sugerido_id?: string | null;
 }
 
 export async function criarPendencia(input: CriarPendenciaInput): Promise<string> {
@@ -162,6 +168,9 @@ export async function criarPendencia(input: CriarPendenciaInput): Promise<string
       observacoes: input.observacoes ?? null,
       lote_id: input.lote_id ?? null,
       criada_por: input.criada_por,
+      prioridade: input.prioridade ?? "normal",
+      pedidos_vinculados: input.pedidos_vinculados ?? null,
+      destino_sugerido_id: input.destino_sugerido_id ?? null,
     })
     .select("id")
     .single();

@@ -8,11 +8,13 @@
 // (re-imprimir é OK — é um ato voluntário). Erros não revertem o ledger;
 // recebimento e guarda gravam ANTES de imprimir.
 
+import { createHash } from "node:crypto";
 import {
   enviarImpressaoZpl,
   resolverImpressoraProduto,
 } from "@/lib/printnode";
 import { logger } from "@/lib/logger";
+import { createServiceClient } from "@/lib/supabase-server";
 import {
   gerarZplProduto,
   expandirPorQty,
@@ -32,6 +34,10 @@ export interface ImprimirEtiquetasInput {
   linhas: { etiqueta: EtiquetaProdutoInput; qty: number }[];
   /** Título do print job (aparece no PrintNode). */
   titulo: string;
+  /** Contexto pra fila de impressões — ex: 'guarda', 'lote', 'manual'. */
+  contexto?: string;
+  /** ID de referência do contexto (ex: pendencia_id, pedido_id). */
+  contextoRefId?: string;
 }
 
 export interface ImprimirEtiquetasResult {
@@ -89,6 +95,37 @@ export async function imprimirEtiquetasProduto(
 
   const zpl = gerarZplProduto(etiquetas);
 
+  // [Fix-D #5.7] Insert preliminar em siso_impressoes_log com status='enviado'.
+  // Update pra 'sucesso' ou 'erro' depois do PrintNode. Operador pode reimprimir
+  // via /wms/etiquetas (botão Retry) sem perder histórico.
+  const sb = createServiceClient();
+  const payloadHash = createHash("sha256").update(zpl).digest("hex");
+  let logId: string | null = null;
+  try {
+    const { data: logRow } = await sb
+      .from("siso_impressoes_log")
+      .insert({
+        printer_id: printer.printerId,
+        printer_nome: printer.printerNome,
+        payload_zpl: zpl,
+        payload_hash: payloadHash,
+        contexto: input.contexto ?? "manual",
+        contexto_ref_id: input.contextoRefId ?? null,
+        total_etiquetas: totalEtiquetas,
+        status: "enviado",
+        usuario_id: input.usuarioId,
+        galpao_id: input.galpaoId,
+      })
+      .select("id")
+      .single();
+    logId = (logRow as { id: string } | null)?.id ?? null;
+  } catch (e) {
+    // Insert log falhar não bloqueia o print — só perde auditoria
+    logger.warn(LOG_SOURCE, "falha ao inserir siso_impressoes_log (insert)", {
+      e: e instanceof Error ? e.message : String(e),
+    });
+  }
+
   try {
     const { jobId } = await enviarImpressaoZpl({
       apiKey: printer.apiKey,
@@ -96,6 +133,16 @@ export async function imprimirEtiquetasProduto(
       zpl,
       titulo: input.titulo,
     });
+    if (logId) {
+      await sb
+        .from("siso_impressoes_log")
+        .update({
+          printnode_job_id: jobId,
+          status: "sucesso",
+          atualizado_em: new Date().toISOString(),
+        })
+        .eq("id", logId);
+    }
     logger.info(LOG_SOURCE, "etiquetas de produto impressas", {
       jobId: String(jobId),
       totalEtiquetas: String(totalEtiquetas),
@@ -114,6 +161,16 @@ export async function imprimirEtiquetasProduto(
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (logId) {
+      await sb
+        .from("siso_impressoes_log")
+        .update({
+          status: "erro",
+          erro_msg: msg,
+          atualizado_em: new Date().toISOString(),
+        })
+        .eq("id", logId);
+    }
     logger.logError({
       error: err,
       source: LOG_SOURCE,
@@ -123,6 +180,7 @@ export async function imprimirEtiquetasProduto(
         printerId: printer.printerId,
         totalEtiquetas,
         galpaoId: input.galpaoId,
+        impressao_log_id: logId,
       },
     });
     return { ok: false, error: msg };

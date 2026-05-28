@@ -98,13 +98,14 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "operacoes",
     label: "Operações",
-    requires: ["operacoes.transferir", "operacoes.replenishment", "operacoes.devolucoes", "operacoes.receber", "operacoes.guarda"],
+    requires: ["operacoes.transferir", "operacoes.replenishment", "operacoes.devolucoes", "operacoes.receber", "operacoes.guarda", "operacoes.imprimir"],
     itens: [
       { href: "/wms/transferir", icon: "arrows", label: "Transferências", requires: ["operacoes.transferir"] },
       { href: "/wms/replenishment", icon: "shuffle", label: "Realocar", requires: ["operacoes.replenishment"] },
       { href: "/wms/devolucoes", icon: "rotate", label: "Devoluções", requires: ["operacoes.devolucoes"] },
       { href: "/wms/receber", icon: "plus", label: "Receber", requires: ["operacoes.receber"] },
       { href: "/wms/guarda", icon: "box", label: "Guarda", requires: ["operacoes.guarda"] },
+      { href: "/wms/etiquetas", icon: "box", label: "Etiquetas", requires: ["operacoes.imprimir"] },
     ],
   },
   {

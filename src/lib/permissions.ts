@@ -41,6 +41,7 @@ export const PERMISSIONS = {
   "operacoes.guarda":               { modulo: "operacoes", label: "Put-away" },
   "operacoes.ajuste_manual":        { modulo: "operacoes", label: "Ajuste manual de saldo" },
   "operacoes.retroativo":           { modulo: "operacoes", label: "Lançamento retroativo + reconciliar" },
+  "operacoes.imprimir":             { modulo: "operacoes", label: "Ver fila de impressões + retry" },
 
   // ── Inventário ──
   "inventario.ver":            { modulo: "inventario", label: "Ver sessões" },

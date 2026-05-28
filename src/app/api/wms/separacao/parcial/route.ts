@@ -800,6 +800,13 @@ async function processarParcialItem(
     const linhasInsertTotais: LinhaInsert[] = [];
     let semCoberturaParcial = false;
     const codigoPorLocAll = new Map<string, string | null>();
+    // Decisão (28/05): payload com pedido_ids + item_ids cujo cascade não
+    // achou cobertura — frontend abre modal "Mandar pra Compras / Realocação
+    // manual". Substitui a auto-transição pra pendente_realocacao.
+    const semCoberturaPayload: { pedido_ids: string[]; item_ids: string[] } = {
+      pedido_ids: [],
+      item_ids: [],
+    };
 
     for (const [empOrigem, grupo] of porEmpresa) {
       const totalResidualGrupo = grupo.reduce((s, u) => s + u.qty_residual, 0);
@@ -850,12 +857,11 @@ async function processarParcialItem(
 
       if (resolver.status === "sem_cobertura") {
         semCoberturaParcial = true;
-        // Marca os pedidos desse grupo como pendente_realocacao
-        await supabase
-          .from("siso_pedidos")
-          .update({ status_separacao: "pendente_realocacao" })
-          .in("id", pedidoIdsGrupo);
-
+        // Decisão (28/05): NÃO transita mais pra pendente_realocacao automaticamente.
+        // Em vez disso, acumula pedido_ids + item_ids no payload, e o frontend
+        // abre modal com 2 opções: "Mandar pra Compras" (default) ou "Pedir
+        // realocação manual" (link cinza). Mata o loop infinito do cascade que
+        // voltava pra /wms/pedidos Pendentes via pendente_realocacao.
         for (const u of grupo) {
           await registrarEvento({
             pedidoId: u.pedido_id,
@@ -868,6 +874,12 @@ async function processarParcialItem(
             },
             usuarioId: session.id,
           });
+          semCoberturaPayload.item_ids.push(String(u.item.id));
+        }
+        for (const pid of pedidoIdsGrupo) {
+          if (!semCoberturaPayload.pedido_ids.includes(pid)) {
+            semCoberturaPayload.pedido_ids.push(pid);
+          }
         }
         continue;
       }
@@ -1016,6 +1028,10 @@ async function processarParcialItem(
         is_emprestimo: c.is_emprestimo,
       })),
       sem_cobertura_parcial: semCoberturaParcial ? true : undefined,
+      sem_cobertura: semCoberturaParcial,
+      sem_cobertura_payload: semCoberturaParcial && semCoberturaPayload.item_ids.length > 0
+        ? semCoberturaPayload
+        : undefined,
     });
   } catch (err) {
     logger.logError({
@@ -1792,7 +1808,27 @@ async function processarParcialRealocacao(
     }
 
     if (semCoberturaParcial && linhasInsertTotais.length === 0) {
-      return NextResponse.json({ status: "sem_cobertura" });
+      // Decisão (28/05): inclui payload pro frontend abrir modal Mandar pra Compras
+      const payload: { pedido_ids: string[]; item_ids: string[] } = {
+        pedido_ids: [],
+        item_ids: [],
+      };
+      for (const u of realocsSemCobertura) {
+        const item = itemById.get(u.realoc.pedido_item_id);
+        if (!item) continue;
+        const pedido = pedidoById.get(item.pedido_id);
+        if (pedido && !payload.pedido_ids.includes(pedido.id)) {
+          payload.pedido_ids.push(pedido.id);
+        }
+        if (!payload.item_ids.includes(String(item.id))) {
+          payload.item_ids.push(String(item.id));
+        }
+      }
+      return NextResponse.json({
+        status: "sem_cobertura",
+        sem_cobertura: true,
+        sem_cobertura_payload: payload.item_ids.length > 0 ? payload : undefined,
+      });
     }
 
     if (linhasInsertTotais.length === 0) {
@@ -1910,6 +1946,24 @@ async function processarParcialRealocacao(
 
     void empresaOrigemPrimeiroPedido; // mantido pra debug histórico (escopo unificado)
 
+    // Decisão (28/05): payload pro frontend abrir modal Mandar pra Compras
+    // quando o cascade da realocação esgota cobertura.
+    const semCoberturaPayloadCascade: { pedido_ids: string[]; item_ids: string[] } = {
+      pedido_ids: [],
+      item_ids: [],
+    };
+    for (const u of realocsSemCobertura) {
+      const item = itemById.get(u.realoc.pedido_item_id);
+      if (!item) continue;
+      const pedido = pedidoById.get(item.pedido_id);
+      if (pedido && !semCoberturaPayloadCascade.pedido_ids.includes(pedido.id)) {
+        semCoberturaPayloadCascade.pedido_ids.push(pedido.id);
+      }
+      if (!semCoberturaPayloadCascade.item_ids.includes(String(item.id))) {
+        semCoberturaPayloadCascade.item_ids.push(String(item.id));
+      }
+    }
+
     return NextResponse.json({
       status: "realocado",
       realocacoes: (criadas ?? []).map((c) => ({
@@ -1921,6 +1975,11 @@ async function processarParcialRealocacao(
         is_emprestimo: c.is_emprestimo,
       })),
       sem_cobertura_parcial: semCoberturaParcial ? true : undefined,
+      sem_cobertura: semCoberturaParcial,
+      sem_cobertura_payload:
+        semCoberturaParcial && semCoberturaPayloadCascade.item_ids.length > 0
+          ? semCoberturaPayloadCascade
+          : undefined,
     });
   } catch (err) {
     logger.logError({

@@ -13,6 +13,7 @@ import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { naturalLocCompare } from "@/lib/domain-helpers";
 import { ParcialModal } from "@/components/wms/separacao/parcial-modal";
+import { SemCoberturaModal } from "@/components/wms/separacao/sem-cobertura-modal";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 
@@ -193,6 +194,12 @@ export default function WmsChecklistPage() {
     localizacao: string | null;
     quantidade: number;
     loading: boolean;
+  } | null>(null);
+  // Decisão (28/05): modal pós-cascade-exausto. Mandar pra Compras ou
+  // pedir realocação manual. Mata loop /wms/pedidos Pendentes.
+  const [semCoberturaModal, setSemCoberturaModal] = useState<{
+    pedido_ids: string[];
+    item_ids: string[];
   } | null>(null);
   const iniciarRef = useRef(false);
   const submittingActionRef = useRef<boolean>(false);
@@ -496,6 +503,58 @@ export default function WmsChecklistPage() {
     }
   }
 
+  // Decisão (28/05): handlers do SemCoberturaModal
+  async function handleMandarPraCompras() {
+    if (!semCoberturaModal) return;
+    try {
+      const r = await sisoFetch(
+        "/api/wms/separacao/mandar-pra-compras",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(semCoberturaModal),
+        },
+      );
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        toast.error(body.error ?? "Falha ao enviar pra Compras");
+        return;
+      }
+      toast.success(
+        `${body.itens_atualizados ?? 0} item(s) enviado(s) pra Compras`,
+      );
+      setSemCoberturaModal(null);
+      // Pedidos saíram da separação — volta pra lista
+      router.push("/wms/separacao");
+    } catch {
+      toast.error("Erro de conexão");
+    }
+  }
+
+  async function handlePedirRealocacaoManual() {
+    if (!semCoberturaModal) return;
+    try {
+      const r = await sisoFetch(
+        "/api/wms/separacao/marcar-pendente-realocacao",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pedido_ids: semCoberturaModal.pedido_ids }),
+        },
+      );
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        toast.error(body.error ?? "Falha ao marcar realocação manual");
+        return;
+      }
+      toast.warning("Pedido marcado pra realocação manual (supervisor)");
+      setSemCoberturaModal(null);
+      router.push("/wms/separacao");
+    } catch {
+      toast.error("Erro de conexão");
+    }
+  }
+
   // D11: "encontrei" abre fluxo handheld de bipagem de localização
   async function handleOcEncontreiFinalizar(codigoLoc: string) {
     if (!ocLocModal) return;
@@ -651,9 +710,30 @@ export default function WmsChecklistPage() {
         toast.success(
           `${data.realocacoes?.length ?? 0} loc(s) encontrada(s): ${locs}`,
         );
+        // Decisão (28/05): mesmo em "realocado" parcial pode ter grupo sem
+        // cobertura — abre modal Mandar pra Compras pra esses items.
+        if (data.sem_cobertura_payload) {
+          setParcialModal(null);
+          setSemCoberturaModal({
+            pedido_ids: data.sem_cobertura_payload.pedido_ids ?? [],
+            item_ids: data.sem_cobertura_payload.item_ids ?? [],
+          });
+          return;
+        }
       } else if (data.status === "sem_cobertura") {
-        // Cascade falhou — abre modal de encaminhar/OC automaticamente.
-        // O modal usa o componente EsgotadoModal existente, alimentado por handleEsgotadoPreview.
+        // Decisão (28/05): novo fluxo — payload com pedido_ids/item_ids
+        // abre modal Mandar pra Compras. Sem payload (edge case), cai no
+        // fallback legado de EsgotadoModal.
+        if (data.sem_cobertura_payload) {
+          setParcialModal(null);
+          queryClient.invalidateQueries({ queryKey });
+          setSemCoberturaModal({
+            pedido_ids: data.sem_cobertura_payload.pedido_ids ?? [],
+            item_ids: data.sem_cobertura_payload.item_ids ?? [],
+          });
+          return;
+        }
+        // Fallback legado: cascade falhou sem payload — abre EsgotadoModal.
         setParcialModal(null);
         queryClient.invalidateQueries({ queryKey });
         await handleEsgotadoPreview(parcialModal.sku);
@@ -1099,6 +1179,18 @@ export default function WmsChecklistPage() {
           loading={parcialModal.loading}
           onConfirm={handleParcialConfirm}
           onCancel={() => setParcialModal(null)}
+        />
+      )}
+
+      {/* ─── Modal sem cobertura (cascade esgotado) — Decisão 28/05 ─── */}
+      {semCoberturaModal && (
+        <SemCoberturaModal
+          open
+          pedido_ids={semCoberturaModal.pedido_ids}
+          item_ids={semCoberturaModal.item_ids}
+          onMandarPraCompras={handleMandarPraCompras}
+          onPedirRealocacaoManual={handlePedirRealocacaoManual}
+          onCancel={() => setSemCoberturaModal(null)}
         />
       )}
 

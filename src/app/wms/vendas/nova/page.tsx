@@ -121,9 +121,9 @@ function NovaVendaBody() {
   const [enviando, setEnviando] = useState(false);
   // Override do vendedor (P4 gate — finding 5.28). null = usa o operador
   // logado (comportamento padrão). Quando setado, o pedido fica em nome
-  // do vendedor escolhido. Backend ignora o campo hoje; P4 deve
-  // implementar `vendedor_id_override` no contrato de /vendas/criar.
-  const [vendedorIdOverride, setVendedorIdOverride] = useState<string | null>(
+  // do vendedor escolhido. Backend consome `vendedor_id_alvo` (commit
+  // 89577b5) — frontend re-aligned no re-audit fix #7.NEW2.
+  const [vendedorIdAlvo, setVendedorIdAlvo] = useState<string | null>(
     null,
   );
 
@@ -168,7 +168,7 @@ function NovaVendaBody() {
     setEnviando(true);
     try {
       const payload: CriarVendaDiretaRequest & {
-        vendedor_id_override?: string;
+        vendedor_id_alvo?: string;
       } = {
         cliente_nome: clienteNome.trim(),
         cliente_cpf_cnpj: clienteCpf.trim() || null,
@@ -184,8 +184,8 @@ function NovaVendaBody() {
       };
       // P4 scaffold: envia override quando o operador tem a permissão.
       // Backend ainda ignora hoje (gravando user.id) — P4 vai consumir.
-      if (podeCriarEmNomeDe && vendedorIdOverride) {
-        payload.vendedor_id_override = vendedorIdOverride;
+      if (podeCriarEmNomeDe && vendedorIdAlvo) {
+        payload.vendedor_id_alvo = vendedorIdAlvo;
       }
 
       const res = await sisoFetch("/api/wms/vendas/criar", {
@@ -323,9 +323,9 @@ function NovaVendaBody() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 6 }}>
             <Field label="Criar em nome de">
               <select
-                value={vendedorIdOverride ?? ""}
+                value={vendedorIdAlvo ?? ""}
                 onChange={(e) =>
-                  setVendedorIdOverride(e.target.value || null)
+                  setVendedorIdAlvo(e.target.value || null)
                 }
                 className="wms-input"
                 disabled={vendedoresQuery.isLoading || vendedoresQuery.isError}
@@ -342,7 +342,7 @@ function NovaVendaBody() {
                   ))}
               </select>
               <p className="wms-td-mute" style={{ fontSize: 11, marginTop: 4 }}>
-                {vendedorIdOverride
+                {vendedorIdAlvo
                   ? "Pedido será criado em nome do vendedor selecionado."
                   : "Pedido será atribuído a você."}
               </p>

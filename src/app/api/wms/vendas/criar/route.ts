@@ -244,51 +244,108 @@ export async function POST(request: NextRequest) {
   }
   const galpaoNome = galpao.nome;
 
-  // Resolve disponibilidade por item — paralelo
-  const itensResolvidos: ItemResolvido[] = await Promise.all(
-    items.map(async (item) => {
+  // [Fix-D #7.8] Resolve disponibilidade com erros estruturados (não throw).
+  // Antes: throw dentro do Promise.all virava 500 + mensagem perdia estrutura.
+  // Agora: cada item retorna { ok: true, data } ou { ok: false, error } e
+  // o primeiro erro vira 400 com payload {codigo, sku, empresas_disponiveis}.
+  type ResolverError = {
+    codigo: "PRODUTO_NAO_ENCONTRADO" | "PRODUTO_NAO_MAPEADO";
+    sku: string | null;
+    produto_id: string;
+    mensagem: string;
+    empresas_disponiveis?: Array<{ id: string; nome: string }>;
+  };
+  type ResolvedResult =
+    | { ok: true; data: ItemResolvido }
+    | { ok: false; error: ResolverError };
+
+  const resolvedResults: ResolvedResult[] = await Promise.all(
+    items.map(async (item): Promise<ResolvedResult> => {
       const prod = prodMap.get(item.produto_id);
       const tinyId = mapMap.get(item.produto_id);
       if (!prod) {
-        throw new Error(`Produto ${item.produto_id} não encontrado no catálogo`);
+        return {
+          ok: false,
+          error: {
+            codigo: "PRODUTO_NAO_ENCONTRADO",
+            sku: null,
+            produto_id: item.produto_id,
+            mensagem: `Produto ${item.produto_id} não encontrado no catálogo`,
+          },
+        };
       }
       if (!tinyId) {
         // Verifica se produto existe em OUTRAS empresas — sugere
         const { data: outrasEmpresas } = await supabase
           .from("siso_produto_empresas")
-          .select("empresa_id, siso_empresas!inner(nome)")
+          .select("empresa_id, siso_empresas!inner(id, nome)")
           .eq("produto_id", item.produto_id);
-        const sugestoes = (outrasEmpresas ?? [])
-          .map((e: { siso_empresas?: { nome?: string } | { nome?: string }[] }) => {
-            const emp = Array.isArray(e.siso_empresas) ? e.siso_empresas[0] : e.siso_empresas;
-            return emp?.nome ?? null;
-          })
-          .filter((nome): nome is string => Boolean(nome));
+        const empresas = (outrasEmpresas ?? [])
+          .map(
+            (e: {
+              siso_empresas?:
+                | { id?: string; nome?: string }
+                | Array<{ id?: string; nome?: string }>;
+            }) => {
+              const emp = Array.isArray(e.siso_empresas) ? e.siso_empresas[0] : e.siso_empresas;
+              return emp?.id && emp?.nome ? { id: emp.id, nome: emp.nome } : null;
+            },
+          )
+          .filter((e): e is { id: string; nome: string } => Boolean(e));
         const msg =
-          sugestoes.length > 0
-            ? `Produto ${prod.sku} não está cadastrado na empresa origem (${empresa.nome}). Disponível em: ${sugestoes.join(", ")}. Selecione uma dessas ou peça pro admin sincronizar.`
+          empresas.length > 0
+            ? `Produto ${prod.sku} não está cadastrado na empresa origem (${empresa.nome}). Disponível em: ${empresas.map((e) => e.nome).join(", ")}. Selecione uma dessas ou peça pro admin sincronizar.`
             : `Produto ${prod.sku} não está cadastrado em nenhuma empresa — peça pro admin sincronizar via Tiny`;
-        throw new Error(msg);
+        return {
+          ok: false,
+          error: {
+            codigo: "PRODUTO_NAO_MAPEADO",
+            sku: prod.sku,
+            produto_id: item.produto_id,
+            mensagem: msg,
+            empresas_disponiveis: empresas,
+          },
+        };
       }
       const dispon = await resolverDisponibilidadeVenda(supabase as never, {
         produto_id: item.produto_id,
         galpao_id,
       });
       return {
-        produto_id: item.produto_id,
-        tiny_produto_id: tinyId,
-        sku: prod.sku,
-        descricao: prod.descricao,
-        quantidade: item.quantidade,
-        localizacao_id: dispon.sugestao?.localizacao_id ?? null,
-        localizacao_codigo: dispon.sugestao?.localizacao_codigo ?? null,
-        disponivel: dispon.total_disponivel,
-        sugestoes: dispon.sugestoes,
+        ok: true,
+        data: {
+          produto_id: item.produto_id,
+          tiny_produto_id: tinyId,
+          sku: prod.sku,
+          descricao: prod.descricao,
+          quantidade: item.quantidade,
+          localizacao_id: dispon.sugestao?.localizacao_id ?? null,
+          localizacao_codigo: dispon.sugestao?.localizacao_codigo ?? null,
+          disponivel: dispon.total_disponivel,
+          sugestoes: dispon.sugestoes,
+        },
       };
     }),
-  ).catch((err) => {
-    throw err;
-  });
+  );
+
+  // Se algum erro, retorna 400 estruturado com o primeiro (op corrige um por vez)
+  const primeiroErro = resolvedResults.find((r) => !r.ok);
+  if (primeiroErro && !primeiroErro.ok) {
+    return NextResponse.json(
+      {
+        codigo: primeiroErro.error.codigo,
+        sku: primeiroErro.error.sku,
+        produto_id: primeiroErro.error.produto_id,
+        erro: primeiroErro.error.mensagem,
+        empresas_disponiveis: primeiroErro.error.empresas_disponiveis,
+      },
+      { status: 400 },
+    );
+  }
+
+  const itensResolvidos: ItemResolvido[] = resolvedResults
+    .filter((r): r is { ok: true; data: ItemResolvido } => r.ok)
+    .map((r) => r.data);
 
   // Detecta falta de saldo: items cuja quantidade pedida excede o disponível
   // total no galpão escolhido (independente de qual loc/dona).

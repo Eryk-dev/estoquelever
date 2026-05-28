@@ -197,8 +197,22 @@ function NovaVendaBody() {
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as {
           erro?: string;
+          codigo?: string;
           sku?: string;
+          empresas_disponiveis?: Array<{ id: string; nome: string }>;
         };
+        // [Fix-D #7.8] Surface payload estruturado pra PRODUTO_NAO_MAPEADO
+        if (res.status === 400 && err.codigo === "PRODUTO_NAO_MAPEADO") {
+          const empresasMsg =
+            err.empresas_disponiveis && err.empresas_disponiveis.length > 0
+              ? ` Disponível em: ${err.empresas_disponiveis.map((e) => e.nome).join(", ")}.`
+              : "";
+          toast.error(
+            `Produto ${err.sku ?? ""} não cadastrado nessa empresa.${empresasMsg}`,
+            { duration: 8000 },
+          );
+          return;
+        }
         toast.error(err.erro ?? "Erro ao criar pedido");
         return;
       }

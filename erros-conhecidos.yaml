@@ -2352,3 +2352,213 @@ erros:
       - docs/superpowers/qa-c3-error-handling-2026-05-27.md
     commit: "7e8b013"
     tags: [auth, error-handling, schema, inconsistency, qa, fix-final-c, c3, p1, backlog]
+
+  - id: wms-reaudit-p0-cron-transferencias-oom
+    date: "2026-05-28"
+    source: cron job cron_transferencias_em_transito_cleanup
+    category: infrastructure
+    message: "Cron quebrava 100% das execuções com ERROR: Out of memory"
+    cause: >
+      Migration 20260527_cron_transferencias_em_transito_cleanup usava
+      current_setting('app.base_url', true) e current_setting('app.worker_secret', true).
+      Supabase staging bloqueia ALTER DATABASE/ROLE pra GUCs custom, então essas
+      chamadas retornam NULL. concat(NULL, ...) propaga NULL → net.http_get(NULL,...)
+      dispara OOM. 5 últimas execuções consecutivas falhadas verificadas via
+      cron.job_run_details. TTL expira_em + card home viravam decorativos.
+    fix: >
+      Re-schedule do cron usando vault.decrypted_secrets + URL hardcoded
+      (https://estoquelever.vercel.app/api/wms/transferencias/cleanup). Padrão
+      idêntico aos 4 crons já funcionando (insights/reservas/inventário/ABC/Tiny).
+      Validado: trigger one-shot retornou HTTP 200 com {canceladas:1, erros:[]}.
+    files:
+      - supabase/migrations/20260528_cron_transferencias_vault.sql
+    commit: "0ad4093"
+    tags: [cron, vault, pg_cron, oom, supabase, transferencias, re-audit, p0]
+
+  - id: wms-reaudit-p0-guardada-por-regression
+    date: "2026-05-28"
+    source: src/lib/wms/guarda.ts + RPC wms_confirmar_guarda_atomico
+    category: database
+    message: "RPC nunca setava guardada_por — toda confirmação após P3 ficou NULL"
+    cause: >
+      Commit 54c921e (P6) afirmou que confirmarGuarda setava guardada_por (JS).
+      Commit 46e71b4 (P3 #5.3) substituiu por RPC plpgsql atômico sem preservar
+      a escrita. As 2 versões da RPC (20260527_p3_rpc_* e 20260528_p5_8_*) só
+      UPDATEavam qty_guardada, status, guardada_em. grep -rn "guardada_por"
+      retornou só backfill + type def. Métricas de produtividade quebradas.
+    fix: >
+      Migration nova adiciona "guardada_por = p_usuario_id" no UPDATE final da
+      RPC. Em parcial setamos pra rastrear "último operador que tocou"
+      (diferença vs iniciada_por captura trade-offs mid-flow). Validado: cenário
+      38 (38-criada-por-guarda.ts) PASS em 3m36s com asserção guardada_por != null.
+    files:
+      - supabase/migrations/20260528_p7_guardada_por_no_rpc.sql
+    commit: "8a58852"
+    tags: [wms, guarda, rpc, regression, p3, p7, re-audit, p0, atomic]
+
+  - id: wms-reaudit-p0-vendedor-self-cancel
+    date: "2026-05-28"
+    source: src/app/api/wms/vendas/[id]/cancelar/route.ts
+    category: auth
+    message: "Vendedor não conseguia cancelar a própria venda — gate excluía persona-alvo"
+    cause: >
+      Endpoint criado em P3 #7.13 com objetivo explícito de auto-serviço pro
+      vendedor (LOW #3 da auditoria original "não há cancelar venda"). Estava
+      gated por requireWarehouseAccess, cuja whitelist em auth.ts:66-79 não
+      inclui nenhuma perm vendas.*. Cargo vendedor só tem vendas.ver + vendas.criar
+      — falhava o gate sempre. Workflow continuava: vendedor → telefone pro
+      admin → cancelar manual.
+    fix: >
+      Novo helper requireWarehouseAccessOrOwnVenda em src/lib/wms/auth.ts compõe
+      admin/operador OR ownership (vendedor_id === user.id OR vendedor_nome
+      contém user.nome, case-insensitive — mesmo padrão de vendas/[id]/route.ts).
+      Cenário auth/17 cobre 4 casos: V1→V2 (403), V2 self (200), admin (200), op (200).
+    files:
+      - src/lib/wms/auth.ts
+      - src/app/api/wms/vendas/[id]/cancelar/route.ts
+      - scripts/wms/cenarios/auth/17-vendas-cancelar-ownership.ts
+    commit: "104987f"
+    tags: [auth, vendas, vendedor, ownership, helper, re-audit, p0]
+
+  - id: wms-reaudit-p1-vendedor-id-alvo-field-mismatch
+    date: "2026-05-28"
+    source: src/app/wms/vendas/nova/page.tsx
+    category: business_logic
+    message: "Frontend enviava vendedor_id_override, backend lê vendedor_id_alvo — feature dead code"
+    cause: >
+      Backend vendas/criar (commit 89577b5) consome `vendedor_id_alvo`. Frontend
+      nova/page.tsx:188 enviava `payload.vendedor_id_override`. Backend ignorava o
+      campo inexistente e gravava sempre vendedor_id=user.id. Feature "criar em
+      nome de X" e perm vendas.criar_em_nome_de viravam teatro de RBAC — admin
+      escolhia outro vendedor no dropdown, pedido saía como dele mesmo.
+    fix: >
+      Rename de 3 ocorrências: vendedorIdOverride / setVendedorIdOverride /
+      vendedor_id_override → vendedorIdAlvo / setVendedorIdAlvo / vendedor_id_alvo.
+      Comentário stale sobre "P4 deve implementar" atualizado.
+    files:
+      - src/app/wms/vendas/nova/page.tsx
+    commit: "cdea6e9"
+    tags: [vendas, frontend, contract, dead-code, re-audit, p1]
+
+  - id: wms-reaudit-p1-insights-rpcs-8-deprecated
+    date: "2026-05-28"
+    source: 8 RPCs em public schema (funil_etapas, lead_time_percentis, throughput_*, ranking_operadores, fluxo_*)
+    category: database
+    message: "8 das 12 RPCs insights ainda usavam siso_empresas.galpao_id deprecated"
+    cause: >
+      P1 patch (20260527_insights_rpcs_3d_patch) cobriu apenas 4 (hub_kpis +
+      3 estoque). 8 RPCs componentes continuavam fazendo JOIN siso_empresas e
+      WHERE e.galpao_id = p_galpao_id. Como siso_empresas.galpao_id é apenas
+      espelho do primeiro preferencial (deprecated em 2026-05-20), drill-down
+      por galpão em /wms/insights/{fluxo,pessoas,financeiro} retornava números
+      errados — filtrava pelo galpão padrão da empresa, não pelo galpão real
+      do pedido (separacao_galpao_id).
+    fix: >
+      Migration nova reescreve as 8 RPCs aplicando a transformação canônica do
+      P1: drop JOIN siso_empresas, swap e.galpao_id por p.separacao_galpao_id.
+      As 3 RPCs fluxo (que aggregavam por empresa) passam a aggregar direto
+      por separacao_galpao_id (semanticamente correto em 3D). Validado: query
+      pg_get_functiondef retorna OK_3D pras 27 RPCs insights.
+    files:
+      - supabase/migrations/20260528_insights_rpcs_3d_patch_v2.sql
+    commit: "4af38be"
+    tags: [insights, rpc, 3d, schema-migration, p1, re-audit]
+
+  - id: wms-reaudit-p1-equivalente-cwb-sp-hardcoded
+    date: "2026-05-28"
+    source: src/app/api/wms/compras/itens/[itemId]/equivalente/confirmar/route.ts
+    category: business_logic
+    message: "Endpoint escrevia em 10 colunas hardcoded estoque_cwb_*/estoque_sp_* — quebrava 3º galpão"
+    cause: >
+      Linhas 110-111 liam estoques["CWB"]/["SP"] (hardcoded por nome). Linhas
+      193-202 escreviam 10 colunas legacy (estoque_cwb_deposito_id/nome/saldo/
+      reservado/disponivel + estoque_sp_* + localizacao_cwb/sp). Inconsistente
+      com Fix-D T10 (commit 31b6aab) que removeu cwb_atende/sp_atende neste
+      mesmo arquivo.
+    fix: >
+      Estratégia A: grep confirmou zero readers ativos das 10 colunas (apenas
+      4 writers — equivalente, tiny/stock/ajustar, webhook-processor*). Abandona
+      escrita, mesma decisão do Fix-D T10. Estoque dinâmico segue disponível
+      via siso_pedido_item_estoques (normalizado, atualizado logo abaixo no
+      mesmo handler).
+    files:
+      - src/app/api/wms/compras/itens/[itemId]/equivalente/confirmar/route.ts
+    commit: "288d322"
+    tags: [compras, equivalente, hardcoded, legacy-cleanup, re-audit, p1]
+
+  - id: wms-reaudit-p2-desclassificar-umbrella-perm
+    date: "2026-05-28"
+    source: src/app/api/wms/devolucoes/[id]/desclassificar/route.ts
+    category: auth
+    message: "desclassificar usava umbrella requireWarehouseAccess — assimetria com classificar gated por perm granular"
+    cause: >
+      Quando P4 introduziu perm granular operacoes.devolucoes_classificar pra
+      classificar, o symmetric write desclassificar foi missed — continuou
+      gated por requireWarehouseAccess (umbrella). Qualquer sessão com qualquer
+      warehouse perm (incluindo operador-receber só) podia reverter classificação.
+    fix: >
+      Trocar gate por requireAuth + userCan('operacoes.devolucoes_classificar').
+      Simetria com classificar restaurada.
+    files:
+      - src/app/api/wms/devolucoes/[id]/desclassificar/route.ts
+    commit: "984e59b"
+    tags: [auth, devolucoes, perm-granular, symmetric, re-audit, p2]
+
+  - id: wms-reaudit-p2-system-marketplace-webhook-wms
+    date: "2026-05-28"
+    source: src/lib/webhook-processor-wms.ts
+    category: business_logic
+    message: "ML/Shopee pedidos ficavam com vendedor_id NULL no caminho ativo desde 2026-05-25"
+    cause: >
+      webhook-processor.ts (legacy, bloco 8d em linhas 371-384) já fazia lookup
+      do user sintético 'system-marketplace' criado pela migration P6
+      (20260527_user_system_marketplace). Mas WMS_AS_SOURCE=true é default
+      desde 2026-05-25, então caminho ativo é webhook-processor-wms.ts onde
+      vendedorIdFinal = pedidoPrev?.vendedor_id ?? null. Reports "pedidos por
+      vendedor" e filtros vendedor_id perdiam todo tracking de marketplace.
+    fix: >
+      Portar bloco 8d pra webhook-processor-wms.ts. Lookup só dispara se
+      vendedorNomeAuto presente E pedidoPrev?.vendedor_id ausente (preserva
+      manual). Cadeia: pedidoPrev?.vendedor_id ?? vendedorIdAuto.
+    files:
+      - src/lib/webhook-processor-wms.ts
+    commit: "8898ca7"
+    tags: [webhook, vendedor, marketplace, ml, shopee, re-audit, p2]
+
+  - id: wms-reaudit-p3-devolucoes-alias-mismatch
+    date: "2026-05-28"
+    source: src/lib/wms/devolucoes.ts
+    category: database
+    message: "listarDevolucoesClassificadas usava alias errado — UI renderiza coluna empresa_receptora vazia"
+    cause: >
+      Linha 510 usava .select("*, empresa_referencia:siso_empresas!empresa_id(nome)")
+      enquanto listarDevolucoesPendentes (linha 493) e frontend usam
+      empresa_receptora. Toggle "Ver classificadas" mostrava coluna vazia em
+      todas as rows.
+    fix: >
+      Trocar alias empresa_referencia → empresa_receptora na linha 510.
+    files:
+      - src/lib/wms/devolucoes.ts
+    commit: "b1272ee"
+    tags: [devolucoes, alias, ui, re-audit, p3]
+
+  - id: wms-reaudit-p3-banner-d10-button-commented
+    date: "2026-05-28"
+    source: src/app/wms/pedidos/[id]/page.tsx
+    category: business_logic
+    message: "Botão 'Estornar agora' do Banner D10 em comentário com TODO stale apontando pra endpoint já existente"
+    cause: >
+      Endpoint /api/wms/pedidos/[id]/estornar foi entregue no Fix-Final A T23
+      (commit 1ac4a9f). Mutation onEstornar já estava wired no parent. Mas o
+      JSX do botão dentro de BannerEstornoManual seguia em comentário /* ... */
+      com TODO("P5+P3): wire quando P3 entregar /api/wms/pedidos/[id]/estornar-cancelado"
+      — endpoint que já existia. Os statements 'void isAdmin; void onEstornar;'
+      suprimiam unused-vars warnings.
+    fix: >
+      Descomenta o bloco do botão + remove os 2 'void' suppressors. Admin
+      passa a ver "Estornar agora" no Banner D10 (status cancelado com mov
+      posterior ao cancelamento).
+    files:
+      - src/app/wms/pedidos/[id]/page.tsx
+    commit: "19b2ac5"
+    tags: [pedidos, ui, banner-d10, dead-code, re-audit, p3]

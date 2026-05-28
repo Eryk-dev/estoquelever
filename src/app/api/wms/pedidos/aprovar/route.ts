@@ -147,6 +147,48 @@ export async function POST(request: NextRequest) {
 
   const filialOrigem = empresaOrigem.galpaoNome;
 
+  // Decisão 1 (28/05): bloqueia OC quando snapshot do pedido cobre 100% dos itens
+  // na empresa origem. Sem isso o worker degrada silenciosamente pra Própria sem
+  // criar reserva → estoque exposto a outros pedidos.
+  if (decisao === "oc") {
+    const { data: itensOc } = await supabase
+      .from("siso_pedido_itens")
+      .select("id, produto_id, quantidade_pedida")
+      .eq("pedido_id", pedidoId);
+    const { data: estoquesOc } = await supabase
+      .from("siso_pedido_item_estoques")
+      .select("produto_id, empresa_id, disponivel")
+      .in("pedido_id", [pedidoId]);
+
+    if (itensOc && itensOc.length > 0 && estoquesOc) {
+      const dispMap = new Map<string, number>();
+      for (const e of estoquesOc) {
+        if (String(e.empresa_id) === String(pedido.empresa_origem_id)) {
+          dispMap.set(String(e.produto_id), Number(e.disponivel ?? 0));
+        }
+      }
+      const todosCobrem = itensOc.every((it) => {
+        const qty = Number(it.quantidade_pedida ?? 0);
+        const disp = dispMap.get(String(it.produto_id)) ?? 0;
+        return qty > 0 && disp >= qty;
+      });
+      if (todosCobrem) {
+        logger.warn("aprovar", "OC bloqueado: snapshot cobre 100%", {
+          pedidoId,
+          empresa_origem_id: pedido.empresa_origem_id,
+        });
+        return NextResponse.json(
+          {
+            error: "oc_bloqueado_snapshot_cobre",
+            message:
+              "Snapshot mostra saldo completo — aprove como Própria ou Transferência",
+          },
+          { status: 422 },
+        );
+      }
+    }
+  }
+
   // Determine empresa_id, filialExecucao, and separacao galpao based on decisao
   let empresaExecucaoId: string;
   let filialExecucao: string;

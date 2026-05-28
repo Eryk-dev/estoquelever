@@ -107,13 +107,19 @@ function decisaoIsAvailable(
   itens: ItemRow[],
   filialOrigem: string,
 ): boolean {
-  if (decisao === "oc") return true;
   if (decisao === "propria") return galpaoAtendeTudo(itens, filialOrigem);
-  // transferencia: algum outro galpão cobre tudo
-  for (const g of getAllGalpoes(itens)) {
-    if (g !== filialOrigem && galpaoAtendeTudo(itens, g)) return true;
+  if (decisao === "transferencia") {
+    for (const g of getAllGalpoes(itens)) {
+      if (g !== filialOrigem && galpaoAtendeTudo(itens, g)) return true;
+    }
+    return false;
   }
-  return false;
+  // OC: só disponível quando NENHUM galpão (incluindo origem) cobre tudo sozinho.
+  // Decisão 1 (28/05): se snapshot tem cobertura, força Própria/Transferência (que cria reserva).
+  for (const g of getAllGalpoes(itens)) {
+    if (galpaoAtendeTudo(itens, g)) return false;
+  }
+  return true;
 }
 
 function decisaoLabel(

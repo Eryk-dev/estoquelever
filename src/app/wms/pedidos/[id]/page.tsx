@@ -640,9 +640,6 @@ function BannerEstornoManual({
   isAdmin: boolean;
   onEstornar?: () => void;
 }) {
-  // Silence unused warnings while o botão está gated em P3.
-  void isAdmin;
-  void onEstornar;
   return (
     <div
       style={{
@@ -670,9 +667,7 @@ function BannerEstornoManual({
           posição.
         </div>
       </div>
-      {/* TODO(P5+P3): wire quando P3 entregar /api/wms/pedidos/[id]/estornar-cancelado.
-          Por ora, banner mostra apenas a mensagem — sem botão pra não dar false promise. */}
-      {/* {isAdmin && (
+      {isAdmin && (
         <button
           className="wms-btn wms-btn-danger"
           onClick={onEstornar}
@@ -681,7 +676,7 @@ function BannerEstornoManual({
           <Icon name="rotate" size={12} />
           Estornar agora
         </button>
-      )} */}
+      )}
     </div>
   );
 }

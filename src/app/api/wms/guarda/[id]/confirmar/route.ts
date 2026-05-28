@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { confirmarGuarda } from "@/lib/wms/guarda";
+import { dispararTriggerCrossDock } from "@/lib/wms/crossdock-trigger";
+import { logger } from "@/lib/logger";
 
 /**
  * POST /api/wms/guarda/[id]/confirmar
@@ -39,7 +41,35 @@ export async function POST(
       localizacao_destino_id: localizacaoDestinoId,
       usuario_id: auth.user.id,
     });
-    return NextResponse.json({ ok: true, ...r });
+
+    // Decisão (28/05): se pendência era cross-dock + destino é PACKING,
+    // varre pedidos vinculados e dispara prepararPedidosDasOcs pra eles.
+    let pedidosSeparados: string[] = [];
+    try {
+      const trigger = await dispararTriggerCrossDock({
+        pendencia_id: id,
+        destino_final_id: localizacaoDestinoId,
+      });
+      pedidosSeparados = trigger.pedidos_separados;
+    } catch (triggerErr) {
+      logger.warn(
+        "guarda.confirmar",
+        "trigger cross-dock falhou (não-fatal)",
+        {
+          pendencia_id: id,
+          err:
+            triggerErr instanceof Error
+              ? triggerErr.message
+              : String(triggerErr),
+        },
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      ...r,
+      pedidos_separados: pedidosSeparados,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const isClient =

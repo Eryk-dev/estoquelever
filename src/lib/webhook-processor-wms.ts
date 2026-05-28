@@ -479,7 +479,23 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     .select("vendedor_id, vendedor_nome")
     .eq("id", pedido.id)
     .maybeSingle();
-  const vendedorIdFinal = pedidoPrev?.vendedor_id ?? null;
+
+  // [P2 re-audit #7.M2] auto-atribui pedidos ML/Shopee ao user sintético
+  // system-marketplace (criado em migration 20260527_user_system_marketplace).
+  // Preserva manual: se pedido já tem vendedor_id setado, não sobrescreve.
+  // Espelha bloco 8d de webhook-processor.ts:371-384 (legacy path — antes
+  // do cutover WMS_AS_SOURCE este era o caminho ativo).
+  let vendedorIdAuto: string | null = null;
+  if (vendedorNomeAuto && !pedidoPrev?.vendedor_id) {
+    const { data: sysUser } = await sb
+      .from("siso_usuarios")
+      .select("id")
+      .eq("nome", "system-marketplace")
+      .maybeSingle();
+    vendedorIdAuto = sysUser?.id ?? null;
+  }
+
+  const vendedorIdFinal = pedidoPrev?.vendedor_id ?? vendedorIdAuto;
   const vendedorNomeFinal =
     pedidoPrev?.vendedor_id != null ? pedidoPrev.vendedor_nome : vendedorNomeAuto;
 

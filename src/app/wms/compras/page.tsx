@@ -76,6 +76,7 @@ interface ReceberItem {
   quantidade_comprada: number;
   quantidade_recebida: number;
   quantidade_pendente: number;
+  quantidade_excedente: number;
   aging_dias: number;
   comprado_em: string | null;
   pedidos: Array<{
@@ -1102,6 +1103,23 @@ function TabReceber({
                         >
                           {fmtNum(item.quantidade_recebida)}/
                           {fmtNum(item.quantidade_comprada)}
+                          {item.quantidade_excedente > 0 && (
+                            <span
+                              title="Recebimento maior que solicitado. Verifique fornecedor/contagem."
+                              style={{
+                                display: "inline-block",
+                                marginLeft: 6,
+                                padding: "1px 6px",
+                                fontSize: 10,
+                                fontWeight: 600,
+                                borderRadius: 8,
+                                background: "rgba(245, 158, 11, 0.15)",
+                                color: "#b45309",
+                              }}
+                            >
+                              ⚠ +{fmtNum(item.quantidade_excedente)}
+                            </span>
+                          )}
                         </div>
                         <input
                           className="wms-input wms-mono wms-tar"

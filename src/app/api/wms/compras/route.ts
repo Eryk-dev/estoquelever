@@ -47,6 +47,11 @@ interface ReceberSkuEntry {
   quantidade_comprada: number;
   quantidade_recebida: number;
   quantidade_pendente: number;
+  // [Fix-D #3.5] Excesso recebido vs comprado (max(recebida - comprada, 0)).
+  // Surfacing pra alertar fornecedor mandou a mais / contagem errada / ajuste
+  // manual posterior. Backend já tem `getCompraQuantidadeRestante` retornando
+  // negativo, mas o agregado por SKU é computado localmente aqui.
+  quantidade_excedente: number;
   aging_dias: number;
   comprado_em: string | null;
   pedidos: PedidoRef[];
@@ -417,6 +422,7 @@ async function fetchReceber(supabase: SupabaseClient): Promise<FornecedorReceber
           quantidade_comprada: 0,
           quantidade_recebida: 0,
           quantidade_pendente: 0,
+          quantidade_excedente: 0,
           aging_dias: 0,
           comprado_em: null,
           pedidos: [],
@@ -443,6 +449,10 @@ async function fetchReceber(supabase: SupabaseClient): Promise<FornecedorReceber
     for (const [, { entry }] of group.skuMap) {
       entry.quantidade_pendente = Math.max(
         entry.quantidade_comprada - entry.quantidade_recebida,
+        0,
+      );
+      entry.quantidade_excedente = Math.max(
+        entry.quantidade_recebida - entry.quantidade_comprada,
         0,
       );
       entry.pedidos.sort((a, b) => b.aging_dias - a.aging_dias);

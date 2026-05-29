@@ -2966,6 +2966,8 @@ OR
 
 **Purpose:** Comprehensive purchase management dashboard. Returns counts and item groups by supplier, with aging and priority metrics.
 
+> Na tab `comprar`, a `quantidade_necessaria` de cada item é recalculada na leitura (necessidade líquida viva = `max(0, demanda_aberta − estoque_livre − em_transito)`), não um valor congelado. Pode ser 0 quando livre + em-trânsito já cobrem a demanda.
+
 **Auth:** X-Session-Id (required), must have purchase-related cargo (comprador, admin)
 
 **Query Params:**
@@ -2996,7 +2998,14 @@ OR
           "sku": "string",
           "descricao": "string",
           "imagem_url": "string | null",
-          "quantidade_necessaria": "number",
+          "quantidade_necessaria": "number  // VIVO: max(0, demanda_aberta − estoque_livre − em_transito)",
+          "demanda_aberta": "number  // Σ(pedida − pega) dos pedidos em aguardando_compra + comprado",
+          "estoque_livre": "number  // Σ siso_estoque.disponivel ao vivo do SKU",
+          "em_transito": "number  // Σ max(0, solicitada − recebida) dos itens 'comprado'",
+          "giro_diario": "number  // giro 30d agregado (MV siso_cobertura_estoque)",
+          "dias_cobertura": "number | null  // estoque_livre / giro_diario (null se giro=0)",
+          "status_cobertura": "critico | lead_time_risco | atencao | ok | sem_giro  // pior status entre galpões",
+          "lead_time_medio": "number | null  // maior lead time entre galpões (dias) ou null",
           "aging_dias": "number",
           "pedidos": [
             {

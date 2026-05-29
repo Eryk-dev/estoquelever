@@ -539,7 +539,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   const tinyIdsNovos = itensResolvidos.map((i) => i.tinyProdutoId);
   for (const item of itensResolvidos) {
     const fornecedor = getFornecedorBySku(item.sku);
-    await sb.from("siso_pedido_itens").upsert(
+    const { error: itemErr } = await sb.from("siso_pedido_itens").upsert(
       {
         pedido_id: pedido.id,
         produto_id: item.tinyProdutoId,
@@ -553,6 +553,10 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       },
       { onConflict: "pedido_id,produto_id" },
     );
+    // NÃO engolir falha de gravação de item: um pedido salvo sem itens vira
+    // "fantasma" na UI (aparece sem produto) e cai em OC por falta de cobertura.
+    // Falhar o webhook (status=erro → retry) é melhor que persistir pedido vazio.
+    if (itemErr) throw itemErr;
   }
   // Remove órfãos (ex.: kit-pai sobrevivente de processamento legado, agora
   // que expandimos pra componentes). FK em siso_pedido_item_realocacoes /

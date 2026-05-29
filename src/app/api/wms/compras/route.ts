@@ -5,8 +5,10 @@ import { getSessionUser } from "@/lib/session";
 import {
   COMPRA_EXCEPTION_STATUSES,
   getAgingDays,
+  getCompraQuantidadeRestante,
   getCompraQuantidadeSolicitada,
 } from "@/lib/compras-utils";
+import { calcularNecessidadeLiquida } from "@/lib/compras-necessidade";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { userCan } from "@/lib/permissions";
 
@@ -25,7 +27,12 @@ interface ComprarSkuEntry {
   sku: string;
   descricao: string;
   imagem_url: string | null;
+  /** Número VIVO: max(0, demanda_aberta − estoque_livre − em_transito). */
   quantidade_necessaria: number;
+  // Quebra pra transparência do comprador (PR-necessidade-viva 2026-05-29):
+  demanda_aberta: number;
+  estoque_livre: number;
+  em_transito: number;
   aging_dias: number;
   pedidos: PedidoRef[];
 }
@@ -89,6 +96,7 @@ interface RawItem {
   sku: string;
   descricao: string;
   quantidade_pedida: number;
+  quantidade_pega: number | null;
   compra_status: string;
   compra_quantidade_solicitada: number | null;
   compra_quantidade_recebida: number | null;
@@ -219,11 +227,86 @@ async function fetchCounts(supabase: SupabaseClient) {
 
 // ─── Tab: Comprar ───────────────────────────────────────────────────────────
 
+// ─── Contexto vivo por SKU (necessidade líquida) ──────────────────────────────
+
+interface ContextoSku {
+  demandaComprado: number; // Σ(pedida − pega) dos itens já 'comprado' (ainda precisam do SKU)
+  emTransito: number; // Σ max(0, solicitada − recebida) dos itens 'comprado'
+  estoqueLivre: number; // Σ siso_estoque.disponivel (ao vivo) do produto
+}
+
+/**
+ * Carrega, por SKU, os números VIVOS usados pra calcular a necessidade líquida:
+ * demanda dos pedidos já comprados (ainda não recebidos), o que está em trânsito,
+ * e o estoque livre atual lido direto de siso_estoque (não a MV de cobertura,
+ * que é defasada). Chave = sku (UNIQUE em siso_produtos), evitando o legado
+ * produto_id=tiny_produto_id em siso_pedido_itens.
+ */
+async function carregarContextoNecessidade(
+  supabase: SupabaseClient,
+  skus: string[],
+): Promise<Map<string, ContextoSku>> {
+  const ctx = new Map<string, ContextoSku>();
+  for (const sku of skus) {
+    ctx.set(sku, { demandaComprado: 0, emTransito: 0, estoqueLivre: 0 });
+  }
+  if (skus.length === 0) return ctx;
+
+  // 1) Itens já COMPRADOS (a caminho): contam como demanda E como em-trânsito.
+  const { data: comprados } = await supabase
+    .from("siso_pedido_itens")
+    .select(
+      "sku, quantidade_pedida, quantidade_pega, compra_quantidade_solicitada, compra_quantidade_recebida, compra_status",
+    )
+    .eq("compra_status", "comprado")
+    .in("sku", skus);
+
+  for (const it of comprados ?? []) {
+    const c = ctx.get(it.sku as string);
+    if (!c) continue;
+    const residual = Math.max(
+      0,
+      Number(it.quantidade_pedida ?? 0) - Number(it.quantidade_pega ?? 0),
+    );
+    c.demandaComprado += residual;
+    c.emTransito += Math.max(0, getCompraQuantidadeRestante(it));
+  }
+
+  // 2) Estoque livre AO VIVO por SKU: sku → siso_produtos.id → Σ siso_estoque.disponivel.
+  const { data: produtos } = await supabase
+    .from("siso_produtos")
+    .select("id, sku")
+    .in("sku", skus);
+
+  const skuPorUuid = new Map<string, string>();
+  const uuids: string[] = [];
+  for (const p of produtos ?? []) {
+    skuPorUuid.set(p.id as string, p.sku as string);
+    uuids.push(p.id as string);
+  }
+
+  if (uuids.length > 0) {
+    const { data: saldos } = await supabase
+      .from("siso_estoque")
+      .select("produto_id, disponivel")
+      .in("produto_id", uuids);
+
+    for (const s of saldos ?? []) {
+      const sku = skuPorUuid.get(s.produto_id as string);
+      if (!sku) continue;
+      const c = ctx.get(sku);
+      if (c) c.estoqueLivre += Number(s.disponivel ?? 0);
+    }
+  }
+
+  return ctx;
+}
+
 async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprarGroup[]> {
   const { data: items, error } = await supabase
     .from("siso_pedido_itens")
     .select(
-      "id, sku, descricao, quantidade_pedida, compra_status, compra_quantidade_solicitada, compra_solicitada_em, fornecedor_oc, imagem_url, pedido_id, siso_pedidos(numero, cliente_nome, criado_em)",
+      "id, sku, descricao, quantidade_pedida, quantidade_pega, compra_status, compra_quantidade_solicitada, compra_solicitada_em, fornecedor_oc, imagem_url, pedido_id, siso_pedidos(numero, cliente_nome, criado_em)",
     )
     .eq("compra_status", "aguardando_compra");
 
@@ -232,6 +315,10 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
 
   const rawItems = items as unknown as RawItem[];
   const galpaoByNome = await loadGalpaoMap(supabase);
+
+  // Demanda residual dos itens AINDA em aguardando_compra (pedida − pega), por SKU.
+  const demandaAgPorSku = new Map<string, number>();
+  const todosSkus = new Set<string>();
 
   const fornecedorMap = new Map<
     string,
@@ -250,6 +337,13 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
     // pro criado_em caso a solicitada esteja nula.
     const agingBase = item.compra_solicitada_em ?? item.siso_pedidos?.criado_em;
     const itemAging = getAgingDays(agingBase);
+
+    todosSkus.add(item.sku);
+    const residualAg = Math.max(
+      0,
+      Number(item.quantidade_pedida ?? 0) - Number(item.quantidade_pega ?? 0),
+    );
+    demandaAgPorSku.set(item.sku, (demandaAgPorSku.get(item.sku) ?? 0) + residualAg);
 
     if (!fornecedorMap.has(fornecedor)) {
       fornecedorMap.set(fornecedor, {
@@ -279,6 +373,9 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
           descricao: item.descricao,
           imagem_url: item.imagem_url,
           quantidade_necessaria: 0,
+          demanda_aberta: 0,
+          estoque_livre: 0,
+          em_transito: 0,
           aging_dias: 0,
           pedidos: [],
         },
@@ -293,6 +390,8 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
     skuData.pedidoIds.add(item.pedido_id);
   }
 
+  const ctx = await carregarContextoNecessidade(supabase, [...todosSkus]);
+
   const result: FornecedorComprarGroup[] = [];
 
   for (const [fornecedor, group] of fornecedorMap) {
@@ -300,6 +399,18 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
 
     for (const [, { entry }] of group.skuMap) {
       entry.pedidos.sort((a, b) => b.aging_dias - a.aging_dias);
+      const c = ctx.get(entry.sku);
+      const demandaAberta =
+        (demandaAgPorSku.get(entry.sku) ?? 0) + (c?.demandaComprado ?? 0);
+      const res = calcularNecessidadeLiquida({
+        demandaAberta,
+        estoqueLivre: c?.estoqueLivre ?? 0,
+        emTransito: c?.emTransito ?? 0,
+      });
+      entry.quantidade_necessaria = res.necessidadeLiquida;
+      entry.demanda_aberta = res.demandaAberta;
+      entry.estoque_livre = res.estoqueLivre;
+      entry.em_transito = res.emTransito;
       itens.push(entry);
     }
 

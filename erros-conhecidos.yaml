@@ -2709,3 +2709,43 @@ erros:
       - src/lib/wms/reservas-picking.ts
       - src/app/api/wms/separacao/validar-oc-item/route.ts
     tags: [oc, reserva-parcial, pick, invariante, fase3-2, multi-fonte, revertido, diagnosticado-nao-corrigido]
+
+  - id: webhook-wms-itens-nao-gravados-colunas-legadas-dropadas
+    date: "2026-05-29"
+    source: webhook-processor-wms (deploy defasado)
+    category: database
+    message: "column \"estoque_cwb_saldo\" of relation \"siso_pedido_itens\" does not exist (42703) — engolido no upsert de item"
+    cause: >
+      70 pedidos da EasyPeasy salvaram SEM itens (apareciam "sem produto" na UI) e
+      caíram todos em OC ("Sem cobertura de estoque"). Duas causas somadas:
+      (1) O deploy do Vercel estava preso num commit antigo (~71d5370, 28/05) porque
+          o build da develop quebrou desde 93dea14 (import órfão
+          @/lib/wms/galpoes-com-saldo nunca commitado). O código publicado ainda
+          escrevia as colunas legadas estoque_cwb_*/sp_*, cwb_atende, sp_atende,
+          localizacao_cwb/sp no upsert de item — colunas já DROPADAS do schema
+          (Fix-D T10). Cada insert falhava com 42703.
+      (2) O loop do passo 6 (siso_pedido_itens upsert) NÃO checava o erro do
+          .upsert() (diferente do upsert do pedido), então o 42703 era engolido:
+          cabeçalho do pedido salvava, itens sumiam, processamento seguia "concluído".
+      Sem itens → itensPraRotear vazio → rota=oc. (Independentemente, o ledger WMS
+      está ~vazio, então mesmo com itens a sugestão seria OC.)
+    fix: >
+      (a) commit af5a578 — commita o arquivo órfão galpoes-com-saldo.ts (destrava o
+          build → o deploy passa a publicar o código atual, que não escreve colunas
+          legadas).
+      (b) commit c75d81e — passo 6 captura `{ error: itemErr }` e dá throw (espelha o
+          pedidoErr). Pedido sem item nunca mais é persistido em silêncio; o webhook
+          falha (status=erro, retry).
+      (c) backfill SQL dos 70 pedidos pendentes: re-derivou itens do payload_original
+          (já salvo) + mapping siso_produto_empresas → siso_pedido_itens. 0 pedidos
+          itemless após.
+    files:
+      - src/lib/wms/galpoes-com-saldo.ts
+      - src/lib/webhook-processor-wms.ts
+    commit: "af5a578, c75d81e"
+    tags: [webhook, deploy-defasado, build-quebrado, colunas-legadas, 42703, upsert-erro-engolido, pedido-fantasma, sem-produto, easypeasy, backfill, wms-as-source]
+    notes: >
+      Lição: ao investigar bug de dados em staging, conferir se o commit publicado no
+      Vercel == HEAD local — build vermelho na develop congela o deploy num commit
+      antigo, divergindo do schema do banco. A sugestão "Comprar" residual é esperada
+      enquanto siso_estoque (ledger WMS) não tiver saldo da EasyPeasy carregado.

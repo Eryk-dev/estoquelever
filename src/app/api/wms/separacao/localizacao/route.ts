@@ -66,20 +66,8 @@ export async function POST(request: NextRequest) {
       atualizarLocalizacaoProduto(token, produtoId, trimmed),
     );
 
-    // 2. Update all rows in siso_pedido_item_estoques for this product+empresa
-    const { error: dbError } = await supabase
-      .from("siso_pedido_item_estoques")
-      .update({ localizacao: trimmed || null })
-      .eq("produto_id", produtoId)
-      .eq("empresa_id", empresaId);
-
-    if (dbError) {
-      logger.warn("localizacao", "Tiny updated but DB update failed", {
-        produtoId,
-        empresaId,
-        error: dbError.message,
-      });
-    }
+    // 2. (Fase 1.4) REMOVIDO: update de siso_pedido_item_estoques.localizacao.
+    // Tabela dropada — a loc vive em siso_localizacoes / siso_estoque (3D).
 
     // 3. WMS — transferir saldos pra nova loc via mov par S+E
     let transferencias = 0;

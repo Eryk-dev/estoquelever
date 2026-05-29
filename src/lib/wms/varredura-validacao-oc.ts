@@ -82,34 +82,10 @@ export async function varrerPedidosAfetadosPorEntrada(args: {
       if (!error) flagsMarcadas += pedidoIdsValidacao.size;
     }
 
-    // 2. Atualiza snapshot (disp + localizacao) pra pedidos em separação aberta
-    const { data: itensSeparacao } = await supabase
-      .from("siso_pedido_itens")
-      .select(
-        "pedido_id, produto_id, siso_pedidos!inner(status_separacao, separacao_galpao_id, empresa_origem_id)",
-      )
-      .in("produto_id", tinyArr)
-      .in("siso_pedidos.status_separacao", [
-        "aguardando_separacao",
-        "em_separacao",
-      ])
-      .eq("siso_pedidos.separacao_galpao_id", args.galpao_id)
-      .eq("siso_pedidos.empresa_origem_id", empresaId);
-
-    if ((itensSeparacao ?? []).length > 0) {
-      const update: Record<string, unknown> = { disponivel: dispTotalGalpao };
-      if (locInfo?.codigo) update.localizacao = locInfo.codigo;
-      const pedidoIds = [
-        ...new Set((itensSeparacao ?? []).map((i) => String(i.pedido_id))),
-      ];
-      const { error: snapErr } = await supabase
-        .from("siso_pedido_item_estoques")
-        .update(update)
-        .in("pedido_id", pedidoIds)
-        .in("produto_id", tinyArr)
-        .eq("empresa_id", empresaId);
-      if (!snapErr) locsAtualizadas += pedidoIds.length;
-    }
+    // 2. (Fase 1.4 — 2026-05-28) REMOVIDO: sync do snapshot
+    //    siso_pedido_item_estoques (disp + localizacao). A tabela foi dropada —
+    //    pedidos em separação leem saldo/loc vivos de siso_estoque. A flag
+    //    flag_saldo_apareceu (acima) segue marcando os pedidos em validacao_oc.
   }
 
   if (flagsMarcadas > 0 || locsAtualizadas > 0) {

@@ -391,9 +391,6 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     });
   }
 
-  // 2. Ler estoques WMS
-  const estoquesPorProduto = await lerEstoquesDoWms(itensResolvidos);
-
   // 3. Roteamento via algoritmo WMS
   const itensPraRotear = itensResolvidos
     .filter((i) => i.produtoIdWms)
@@ -582,60 +579,9 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     }
   }
 
-  // 7. Grava siso_pedido_item_estoques — pool fungível por galpão.
-  //    Mantemos uma linha por (pedido, produto, empresa_origem) só pra alimentar
-  //    a UI legada — não há mais snapshot por dona em 3D.
-  //    Itens sem mapeamento ficam de fora.
-  const estoqueRows: Array<{
-    pedido_id: string;
-    produto_id: number;
-    empresa_id: string;
-    deposito_id: number | null;
-    deposito_nome: string | null;
-    saldo: number;
-    reservado: number;
-    disponivel: number;
-    localizacao: string | null;
-    produto_id_na_empresa: number | null;
-  }> = [];
-
-  for (const item of itensResolvidos) {
-    if (!item.produtoIdWms) continue;
-    const estoques = estoquesPorProduto.get(item.produtoIdWms) ?? [];
-    // Em 3D agregamos uma linha por galpão. O "empresa_id" da tabela legada
-    // recebe sempre a empresa origem do pedido como tag — saldo é fungível.
-    for (const e of estoques) {
-      estoqueRows.push({
-        pedido_id: pedido.id,
-        produto_id: item.tinyProdutoId,
-        empresa_id: empresaOrigemId,
-        deposito_id: null,
-        deposito_nome: "WMS",
-        saldo: e.saldo,
-        reservado: e.reservado,
-        disponivel: e.disponivel,
-        localizacao: e.localizacao,
-        produto_id_na_empresa: null,
-      });
-    }
-  }
-
-  // Replace-all: garante que linhas antigas (de processamentos anteriores —
-  // ex.: vindas do caminho legado Tiny antes do cutover) não sobrevivam
-  // quando o WMS decide OC sem cobertura. Sem isso, dados do Tiny ficavam
-  // órfãos na tabela e a UI continuava mostrando saldo/loc fantasma.
-  // DEPRECATED [#P6-1.12]: write to siso_pedido_item_estoques (only retained
-  // for legacy consumers in /pedidos/tracking + painel). Future removal blocked
-  // on migration of those consumers to read from siso_estoque + ledger.
-  // See `docs/wms-deprecated-galpao-id-consumers.md` and follow-up issue.
-  await sb.from("siso_pedido_item_estoques").delete().eq("pedido_id", pedido.id);
-  if (estoqueRows.length > 0) {
-    await sb.from("siso_pedido_item_estoques").insert(estoqueRows);
-  }
-  logger.info("webhook.legacy-write", "pedido_item_estoques row written (legacy)", {
-    pedido_id: pedido.id,
-    rows: estoqueRows.length,
-  });
+  // 7. (Fase 1.4 — 2026-05-28) REMOVIDO: escrita do snapshot
+  //    siso_pedido_item_estoques. A tabela foi dropada — todo consumidor lê
+  //    estoque VIVO de siso_estoque / da R viva do ledger. Reservas abaixo.
 
   // 8. Criar reservas (apenas pra propria/transferencia — OC não reserva)
   if (rota.decisao === "propria" || rota.decisao === "transferencia") {

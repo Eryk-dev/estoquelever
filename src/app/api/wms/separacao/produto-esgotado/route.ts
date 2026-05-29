@@ -4,6 +4,8 @@ import { logger } from "@/lib/logger";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { getSessionUser } from "@/lib/session";
 import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
+import { galpoesComSaldo } from "@/lib/wms/galpoes-com-saldo";
+import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
 
 /**
  * POST /api/separacao/produto-esgotado
@@ -124,16 +126,10 @@ export async function POST(request: NextRequest) {
       ...new Set(matchingItems.map((i) => i.produto_id as number)),
     ];
 
-    // 3. Check stock in other galpões (for preview + encaminhar validation)
-    const { data: estoqueOutros } = await supabase
-      .from("siso_pedido_item_estoques")
-      .select(
-        "empresa_id, saldo, siso_empresas!inner(galpao_id, siso_galpoes!siso_empresas_galpao_id_fkey!inner(id, nome))",
-      )
-      .in("pedido_id", affectedPedidoIds)
-      .in("produto_id", produtoIds);
-
-    // Find current galpão(s) of affected pedidos
+    // 3. Check stock in other galpões via LIVE siso_estoque (Fase 1.4 — era
+    //    snapshot siso_pedido_item_estoques). Resolve o produto WMS pela empresa
+    //    origem de um pedido afetado e lista galpões com disponível > 0,
+    //    excluindo o(s) galpão(ões) atual(is) da separação.
     const currentGalpaoIds = new Set<string>();
     for (const p of activePedidos ?? []) {
       if (affectedPedidoIds.includes(p.id) && p.separacao_galpao_id) {
@@ -141,36 +137,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Aggregate stock by galpão (excluding current galpões)
-    const galpaoStock = new Map<
-      string,
-      { galpao_id: string; galpao_nome: string; saldo_total: number }
-    >();
-    for (const est of estoqueOutros ?? []) {
-      const empresa = est.siso_empresas as unknown as {
-        galpao_id: string;
-        siso_galpoes: { id: string; nome: string };
-      } | null;
-      if (!empresa) continue;
-
-      const gId = empresa.siso_galpoes.id;
-      if (currentGalpaoIds.has(gId)) continue; // skip current galpão
-
-      const existing = galpaoStock.get(gId);
-      if (existing) {
-        existing.saldo_total += (est.saldo as number) ?? 0;
-      } else {
-        galpaoStock.set(gId, {
-          galpao_id: gId,
-          galpao_nome: empresa.siso_galpoes.nome,
-          saldo_total: (est.saldo as number) ?? 0,
+    const primeiroAfetado = (activePedidos ?? []).find(
+      (p) => affectedPedidoIds.includes(p.id) && p.empresa_origem_id,
+    );
+    let galpoesAlternativos: Array<{ galpao_id: string; galpao_nome: string }> = [];
+    if (primeiroAfetado?.empresa_origem_id && produtoIds.length > 0) {
+      try {
+        const produtoWmsId = await resolverProdutoWms(
+          primeiroAfetado.empresa_origem_id as string,
+          String(produtoIds[0]),
+        );
+        const alt = await galpoesComSaldo(produtoWmsId);
+        galpoesAlternativos = alt
+          .filter((g) => !currentGalpaoIds.has(g.galpao_id))
+          .map((g) => ({ galpao_id: g.galpao_id, galpao_nome: g.galpao_nome }));
+      } catch (e) {
+        logger.warn("produto-esgotado", "falha resolvendo galpões alternativos (vivo)", {
+          sku,
+          error: e instanceof Error ? e.message : String(e),
         });
       }
     }
-
-    const galpoesAlternativos = [...galpaoStock.values()]
-      .filter((g) => g.saldo_total > 0)
-      .map((g) => ({ galpao_id: g.galpao_id, galpao_nome: g.galpao_nome }));
 
     // ─── Preview mode (no acao) ─────────────────────────────────
     if (!acao) {

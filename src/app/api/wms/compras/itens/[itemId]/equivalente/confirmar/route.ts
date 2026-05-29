@@ -148,34 +148,9 @@ export async function POST(
       });
     }
 
-    await supabase
-      .from("siso_pedido_item_estoques")
-      .delete()
-      .eq("pedido_id", item.pedido_id)
-      .eq("produto_id", item.produto_id);
-
-    if (equivalente.estoquesPorEmpresa.length > 0) {
-      const { error: estoqueError } = await supabase
-        .from("siso_pedido_item_estoques")
-        .upsert(
-          equivalente.estoquesPorEmpresa.map((estoque) => ({
-            pedido_id: item.pedido_id,
-            produto_id: estoque.produto_id,
-            empresa_id: estoque.empresa_id,
-            deposito_id: estoque.deposito_id,
-            deposito_nome: estoque.deposito_nome,
-            saldo: estoque.saldo,
-            reservado: estoque.reservado,
-            disponivel: estoque.disponivel,
-            localizacao: estoque.localizacao,
-          })),
-          { onConflict: "pedido_id,produto_id,empresa_id" },
-        );
-
-      if (estoqueError) {
-        throw new Error(`Erro ao sincronizar estoques do equivalente: ${estoqueError.message}`);
-      }
-    }
+    // (Fase 1.4) REMOVIDO: sync de siso_pedido_item_estoques no swap de SKU
+    // equivalente. A tabela foi dropada — estoque do novo SKU é lido vivo de
+    // siso_estoque quando o pedido for separado.
 
     const { data: updated, error: updateError } = await supabase
       .from("siso_pedido_itens")

@@ -1,14 +1,21 @@
 /**
- * Cutover R→L+S — orquestração entre status de separação e ledger WMS.
+ * Cutover — liga `estoque_lancado` quando a separação chega em status forward.
  *
- * Invariante: o cutover dispara quando, e somente quando:
+ * ARQUITETURA (2026-05-28): a baixa de estoque acontece NO PICK
+ * (marcar-item / parcial / pick-OC), atômica, INDEPENDENTE de NF. Quando o
+ * pedido chega em status forward todas as reservas R já foram convertidas em
+ * L+S pelo pick — então este cutover é um BACKSTOP: liga `estoque_lancado`
+ * (= "todos os itens têm sua saída no ledger") e converte qualquer R residual
+ * que tenha escapado (guard `estorno_de=R.id` evita dupla baixa). NÃO depende
+ * mais de NF — a NF controla só emissão fiscal / expedição.
+ *
+ * Invariante: dispara quando, e somente quando:
  *   status_separacao ∈ {separado, embalado, expedido}
- *   AND nota_fiscal_id IS NOT NULL
+ *   AND decisao_final ∈ {propria, transferencia}
  *   AND estoque_lancado = false
  *
- * Quem chegar por último na interseção dispara (concluir, executor após NF,
- * webhook NF tardio). Quem sair do conjunto forward com estoque_lancado=true
- * reverte (desfazer-bip, voltar-etapa backward).
+ * Quem sair do conjunto forward com estoque_lancado=true reverte
+ * (desfazer-bip, voltar-etapa backward).
  */
 
 import { createServiceClient } from "@/lib/supabase-server";
@@ -72,9 +79,10 @@ export async function dispararCutoverSePronto(pedidoId: string): Promise<Dispara
   if (!isForwardStatus(pedido.status_separacao)) {
     return { enqueued: false, motivo: `status_nao_forward:${pedido.status_separacao}` };
   }
-  if (!pedido.nota_fiscal_id) {
-    return { enqueued: false, motivo: "sem_nf" };
-  }
+  // NF NÃO é mais pré-condição (2026-05-28): a baixa vive no pick, atômica e
+  // independente de NF. estoque_lancado reflete "itens têm saída no ledger",
+  // não "tem NF". Sem este gate, concluir/embalagem sem NF (staging, falha
+  // SEFAZ) ainda liga a flag — antes ficava false pra sempre (P0 dessinc).
   if (!pedido.decisao_final) {
     return { enqueued: false, motivo: "sem_decisao_final" };
   }

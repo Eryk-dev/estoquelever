@@ -152,27 +152,10 @@ export async function POST(request: NextRequest) {
           const semSaldo = !locsExistentes || locsExistentes.length === 0;
 
           if (semSaldo) {
-            // Resolve loc: body.localizacao_id (modal "bipe") > snapshot
-            // existente em siso_pedido_item_estoques.localizacao.
-            let locManualId = locManualBody;
-            if (!locManualId) {
-              const { data: snap } = await supabase
-                .from("siso_pedido_item_estoques")
-                .select("localizacao")
-                .eq("pedido_id", item.pedido_id)
-                .eq("produto_id", item.produto_id)
-                .eq("empresa_id", ctx.empresa)
-                .maybeSingle();
-              if (snap?.localizacao) {
-                const { data: locRow } = await supabase
-                  .from("siso_localizacoes")
-                  .select("id")
-                  .eq("galpao_id", ctx.galpao)
-                  .eq("codigo", snap.localizacao)
-                  .maybeSingle();
-                locManualId = (locRow?.id as string | undefined) ?? null;
-              }
-            }
+            // (Fase 1.4) Loc vem do body (modal "bipe"). Sem fallback de snapshot
+            // siso_pedido_item_estoques (tabela dropada) — se não veio loc e não há
+            // saldo vivo, o operador bipa/escolhe a loc onde achou.
+            const locManualId = locManualBody;
             if (!locManualId) {
               return NextResponse.json(
                 {

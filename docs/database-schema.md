@@ -216,9 +216,15 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 ---
 
-### siso_pedido_item_estoques
+### siso_pedido_item_estoques — ⚠️ DROPADA (Fase 1.4 · 2026-05-28)
 
-**Purpose:** Normalized stock per empresa for each order item. Replaces hardcoded per-galpão columns.
+> **REMOVIDA.** Era um snapshot congelado do estoque no momento do webhook. Virou
+> a raiz do loop de OC (decisões por saldo estale, pedido 937933727) e da loc-de-pick
+> errada (937979990). Todos os ~13 consumidores foram migrados pra ler estoque **VIVO**
+> de `siso_estoque` / da reserva `R` viva do ledger. Migration: `20260528_drop_siso_pedido_item_estoques`.
+> A documentação histórica das colunas abaixo é mantida só pra referência.
+
+**Purpose (histórico):** Normalized stock per empresa for each order item. Replaces hardcoded per-galpão columns.
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|

@@ -103,16 +103,16 @@ export async function POST(request: Request) {
       );
     }
 
-    // 4. Get deposit ID from normalized stock table
-    const { data: estoqueRow } = await supabase
-      .from("siso_pedido_item_estoques")
+    // 4. (Fase 1.4) deposito_id vem da conexão Tiny da empresa (era lido do
+    //    snapshot siso_pedido_item_estoques, agora dropado).
+    const { data: conn } = await supabase
+      .from("siso_tiny_connections")
       .select("deposito_id")
-      .eq("pedido_id", pedidoId)
-      .eq("produto_id", produtoId)
       .eq("empresa_id", empresa.id)
+      .eq("ativo", true)
       .maybeSingle();
 
-    const depositoId = estoqueRow?.deposito_id ?? null;
+    const depositoId = conn?.deposito_id ?? null;
 
     // 5. Get token for the empresa
     const { token } = await getValidTokenByEmpresa(empresa.id);
@@ -151,17 +151,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // 8. Update normalized stock table
-    await supabase
-      .from("siso_pedido_item_estoques")
-      .update({
-        saldo: novoSaldo,
-        reservado: novoReservado,
-        disponivel: novoDisponivel,
-      })
-      .eq("pedido_id", pedidoId)
-      .eq("produto_id", produtoId)
-      .eq("empresa_id", empresa.id);
+    // 8. (Fase 1.4) REMOVIDO: update do snapshot siso_pedido_item_estoques
+    //    (saldo/reservado/disponivel). Tabela dropada — saldo vive em siso_estoque.
 
     // 9. Also update legacy columns (backwards compat — will be removed)
     const qtdPedida = await getQuantidadePedida(supabase, pedidoId, produtoId);

@@ -42,6 +42,7 @@ import { criarAgrupamentoFase1 } from "./agrupamento-service";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { executarEstoquePosNfWms } from "./execution-worker-wms";
 import { dispararCutoverSePronto } from "./wms/cutover";
+import { resolverProdutoWms } from "./separacao/wms-mapping";
 
 // ─── Shared: enrich NF data + transition if already authorized ──────────────
 // After NF generation, checks Tiny API for authorization status.
@@ -478,35 +479,54 @@ async function resolveCompraItemIds(
     }));
   }
 
-  const { data: estoques, error: estoqueError } = await supabase
-    .from("siso_pedido_item_estoques")
-    .select("produto_id, disponivel")
-    .eq("pedido_id", pedidoId)
-    .eq("empresa_id", empresaOrigemId);
+  // (Fase 1.4 — 2026-05-28) Lê disponível VIVO de siso_estoque, não o snapshot
+  // estale siso_pedido_item_estoques. O snapshot congelava o saldo do momento do
+  // webhook; quando outro pedido consumia ou a loc zerava, a decisão de OC saía
+  // errada → loop (pedido 937933727). Resolve produto WMS por (empresa,
+  // tiny_produto_id) e soma disponível ao longo de todos os galpões.
+  const tinyIds = [...new Set(items.map((i) => String(i.produto_id)))];
+  const produtoWmsByTiny = new Map<string, string>();
+  for (const tinyId of tinyIds) {
+    try {
+      const wms = await resolverProdutoWms(empresaOrigemId, tinyId);
+      produtoWmsByTiny.set(tinyId, wms);
+    } catch {
+      // Sem mapeamento em siso_produto_empresas → trata como disponível 0
+      // (compra a qty integral). Não bloqueia o fluxo de compra.
+    }
+  }
 
-  if (estoqueError) {
-    logger.warn(
-      "execution-worker",
-      "Nao foi possivel consultar estoque da empresa de origem para compra",
-      {
+  const disponivelPorWms = new Map<string, number>();
+  const wmsIds = [...new Set(produtoWmsByTiny.values())];
+  if (wmsIds.length > 0) {
+    const { data: estoqueVivo, error: estoqueError } = await supabase
+      .from("siso_estoque")
+      .select("produto_id, disponivel")
+      .in("produto_id", wmsIds);
+    if (estoqueError) {
+      logger.warn("execution-worker", "Falha ao consultar siso_estoque vivo para compra", {
         pedidoId,
         empresaOrigemId,
         error: estoqueError.message,
-      },
-    );
-    return items.map((item) => ({
-      id: String(item.id),
-      quantidadeSolicitada: Number(item.quantidade_pedida ?? 0),
-      sku: String(item.sku ?? ""),
-    }));
+      });
+      return items.map((item) => ({
+        id: String(item.id),
+        quantidadeSolicitada: Number(item.quantidade_pedida ?? 0),
+        sku: String(item.sku ?? ""),
+      }));
+    }
+    for (const e of estoqueVivo ?? []) {
+      disponivelPorWms.set(
+        String(e.produto_id),
+        (disponivelPorWms.get(String(e.produto_id)) ?? 0) + Number(e.disponivel ?? 0),
+      );
+    }
   }
 
+  // Reindexa disponível por tiny_produto_id (chave usada na alocação abaixo).
   const disponivelPorProduto = new Map<string, number>();
-  for (const estoque of estoques ?? []) {
-    disponivelPorProduto.set(
-      String(estoque.produto_id),
-      Number(estoque.disponivel ?? 0),
-    );
+  for (const [tinyId, wms] of produtoWmsByTiny) {
+    disponivelPorProduto.set(tinyId, disponivelPorWms.get(wms) ?? 0);
   }
 
   // Allocate the available stock across repeated products before deciding the

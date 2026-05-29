@@ -2562,3 +2562,91 @@ erros:
       - src/app/wms/pedidos/[id]/page.tsx
     commit: "19b2ac5"
     tags: [pedidos, ui, banner-d10, dead-code, re-audit, p3]
+
+  - id: wms-fase1-overselling-marcar-item-nao-atomico
+    date: "2026-05-28"
+    source: src/app/api/wms/separacao/marcar-item/route.ts
+    category: business_logic
+    message: "Item marcado como pego sem baixa de estoque (overselling) — L+S não-atômico + engole-erro"
+    cause: >
+      marcar-item fazia liberarReservaPicking (L) e inserirMovimentacao (S) em
+      sequência, NÃO-atômico. A loc de pick vinha do snapshot estale ou de
+      buscarLocComMaiorSaldoNoGalpao (filtra disponivel>0), que retornava null
+      quando a própria R já reservava o saldo → caía em DEFAULT-PICKING (saldo 0)
+      → a S estourava "saldo insuficiente". O erro era ENGOLIDO (logger.warn
+      "Mov WMS skipped") e o item marcado assim mesmo (separacao_marcado=true,
+      mov_saida_id=NULL). Produto sai físico, sistema conta como disponível.
+      Evidência: pedido 937979990; cenário 29 (reservado órfão=1).
+    fix: >
+      RPC plpgsql wms_pick_item_atomico (L+S numa transação; rollback total se a S
+      falha). Loc de pick vem da R VIVA do pedido (buscarReservaPendentePorProduto),
+      não de snapshot/heurística. Se a baixa falha, retorna 409 e NÃO marca o item
+      (removido o engole-erro). pick-mov.ts (bipar-checklist) migrado pro mesmo R-loc.
+    files:
+      - supabase/migrations/20260528_wms_pick_item_atomico.sql
+      - src/lib/wms/reservas-picking.ts
+      - src/app/api/wms/separacao/marcar-item/route.ts
+      - src/lib/wms/separacao/pick-mov.ts
+    tags: [separacao, overselling, atomico, ledger, fase1, p0]
+
+  - id: wms-fase1-estoque-lancado-dessinc-nf
+    date: "2026-05-28"
+    source: src/lib/wms/cutover.ts
+    category: business_logic
+    message: "estoque_lancado fica false pra sempre sem NF, apesar da S já existir no ledger"
+    cause: >
+      dispararCutoverSePronto exigia nota_fiscal_id IS NOT NULL (gate sem_nf) pra
+      ligar estoque_lancado. Como a baixa (S) acontece no pick (independente de NF)
+      e a NF pode nunca chegar (staging TINY_DISABLED, falha SEFAZ), a flag ficava
+      dessincronizada: S existe, flag=false. Evidência: pedido 937979807.
+    fix: >
+      Remove o gate sem_nf. A flag reflete "itens têm saída no ledger", não "tem NF".
+      As R já foram convertidas no pick (guard estorno_de=R.id evita dupla baixa).
+      NF segue controlando só emissão fiscal/expedição.
+    files:
+      - src/lib/wms/cutover.ts
+    tags: [cutover, estoque_lancado, nf, ledger, fase1, p0]
+
+  - id: wms-fase1-estorno-parcial-encaminhar-bloqueado
+    date: "2026-05-28"
+    source: src/app/api/wms/separacao/parcial/route.ts
+    category: business_logic
+    message: "Parcial-esgota ia direto pra Compras, bloqueando encaminhar → saída do parcial nunca estornada (saldo fantasma)"
+    cause: >
+      Quando o cascade esgotava no galpão atual, o parcial chamava
+      mandarItensParaCompras (commit e0d106a) → aguardando_compra. O encaminhar
+      só aceita aguardando_separacao/em_separacao/pendente_realocacao → rejeitado
+      → a S do parcial nunca era estornada → saldo origem fantasma.
+      Evidência: cenário 05 (saldo CWB=0, esperado 2).
+    fix: >
+      Quando o cascade esgota MAS há saldo vivo em OUTRO galpão, o parcial NÃO
+      auto-manda pra Compras: deixa em_separacao e retorna tem_em_outro_galpao +
+      galpoes_alternativos (encaminhar-first, backend da Mudança 1). Só vai direto
+      pra Compras quando não há saldo em galpão nenhum (cenário 61). Helper novo
+      galpoesComSaldo (estoque vivo).
+    files:
+      - src/app/api/wms/separacao/parcial/route.ts
+      - src/lib/wms/galpoes-com-saldo.ts
+    tags: [separacao, parcial, encaminhar, estorno, compras, fase1, p1]
+
+  - id: wms-fase1-oc-loop-snapshot-estale
+    date: "2026-05-28"
+    source: src/lib/execution-worker.ts
+    category: business_logic
+    message: "Decisão de OC usava snapshot estale (siso_pedido_item_estoques) → loop / compra errada"
+    cause: >
+      resolveCompraItemIds (worker) e a resolução de loc em marcar-item/parcial
+      liam siso_pedido_item_estoques, retrato congelado do estoque no momento do
+      webhook. Quando o saldo mudava, a decisão de OC saía errada → loop (evidência
+      pedido 937933727 preso em pendente_realocacao). 13 consumidores do snapshot.
+    fix: >
+      Migrados os 13 consumidores pra estoque VIVO (siso_estoque / R viva):
+      resolveCompraItemIds, aprovar (OC-block), validar-oc-item, parcial (loc+cascade),
+      marcar-item, pick-mov, produto-esgotado, encaminhar, tiny/ajustar, compras
+      (trocar-sku/equivalente/cancelamento), varredura, webhook-processor-wms (parou
+      de escrever). Tabela siso_pedido_item_estoques DROPADA.
+    files:
+      - src/lib/execution-worker.ts
+      - src/app/api/wms/pedidos/aprovar/route.ts
+      - supabase/migrations/20260528_drop_siso_pedido_item_estoques.sql
+    tags: [oc, compras, snapshot, estoque-vivo, ledger, fase1, p1]

@@ -198,30 +198,10 @@ export async function POST(request: NextRequest) {
       throw new Error(`Erro ao atualizar itens: ${updateErr.message}`);
     }
 
-    // Delete old stock rows and insert new ones
     const pedidoIds = [...new Set(items.map((i) => i.pedido_id as string))];
-    const oldProdutoId = firstItem.produto_id;
 
-    for (const pedidoId of pedidoIds) {
-      await supabase
-        .from("siso_pedido_item_estoques")
-        .delete()
-        .eq("pedido_id", pedidoId)
-        .eq("produto_id", oldProdutoId);
-    }
-
-    if (novosEstoques.length > 0) {
-      const { error: estErr } = await supabase
-        .from("siso_pedido_item_estoques")
-        .upsert(novosEstoques, {
-          onConflict: "pedido_id,produto_id,empresa_id",
-        });
-      if (estErr) {
-        logger.error("compras-trocar-sku", "Erro ao inserir estoques", {
-          error: estErr.message,
-        });
-      }
-    }
+    // (Fase 1.4) REMOVIDO: delete/upsert de siso_pedido_item_estoques no swap
+    // de SKU. Tabela dropada — estoque do novo SKU é lido vivo de siso_estoque.
 
     // Audit trail: 1 evento compra_sku_trocado por pedido afetado.
     if (pedidoIds.length > 0) {

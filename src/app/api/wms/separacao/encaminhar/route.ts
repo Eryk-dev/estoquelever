@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
-import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
-import { runWithEmpresa } from "@/lib/tiny-queue";
-import { estornarEstoque, movimentarEstoque } from "@/lib/tiny-api";
 import { registrarEvento } from "@/lib/historico-service";
 import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
@@ -312,20 +309,20 @@ async function reverseStockExecution(
   pedido: PedidoForReversal,
   usuarioId: string,
 ): Promise<void> {
-  // PR-1 (#2.9 follow-up): libera CADA R do pedido individualmente via
-  // `estornarReservaIndividual` antes de qualquer reversa Tiny.
+  // Encaminhar só roda em status não-forward (aguardando_separacao /
+  // em_separacao / pendente_realocacao). Nesse ponto estoque_lancado=false e o
+  // cutover nunca rodou, então NÃO há S de cutover a reverter aqui — as S do
+  // PICK (se o operador bipou algo) são estornadas por resetarEstadoSeparacaoItens
+  // no caller (encaminharPedido). Aqui só liberamos as R VIVAS dos itens ainda
+  // não pegos, pra `reservado` voltar a 0 antes do pedido migrar de galpão.
   //
-  // Por que per-R (em vez de `liberarReserva` por pedido): `liberarReserva`
-  // tem short-circuit — se QUALQUER L do pedido já existe (ex.: operador
-  // bipou item A antes de encaminhar), ele pula todas as Rs sem liberar.
-  // Resultado: Rs dos itens não bipados ficam zumbis e a re-aprovação no
-  // destino falha por reservado>saldo. `estornarReservaIndividual` é
-  // idempotente por R (acha L com estorno_de=R.id e retorna), então é
-  // seguro chamar pra TODAS as Rs do pedido — as já liberadas por picking
-  // retornam o L existente sem criar novo.
+  // (Fase 1.3 — 2026-05-28) Removida a reversa via Tiny estornarEstoque/
+  // movimentarEstoque: estoque vive 100% no ledger WMS; Tiny é só camada fiscal.
   //
-  // motivo: encaminhar é tecnicamente reroute, não cancel — ver #2.9
-  // followup pra estender enum de motivo.
+  // Per-R via `estornarReservaIndividual` (idempotente: acha L com
+  // estorno_de=R.id e retorna sem criar novo). Seguro chamar pra TODAS as Rs —
+  // as já liberadas por picking retornam o L existente. Evita o short-circuit
+  // de `liberarReserva` que pulava Rs não-bipadas deixando reservado zumbi.
   try {
     const { data: reservasAbertas } = await supabase
       .from("siso_movimentacoes")
@@ -344,10 +341,6 @@ async function reverseStockExecution(
         });
         liberadas++;
       } catch (e) {
-        // `estornarReservaIndividual` é idempotente (retorna L existente sem
-        // throw). Único erro esperado: "Reserva X não encontrada" (race
-        // raríssima). Em qualquer caso, logamos e seguimos — encaminhar não
-        // pode falhar por causa disso.
         logger.warn(LOG_SOURCE, "falha estornando R individual (segue)", {
           pedido_id: pedido.id,
           reserva_id: r.id,
@@ -363,105 +356,5 @@ async function reverseStockExecution(
     logger.warn(LOG_SOURCE, "falha liberando Rs (segue com reverse)", {
       error: e instanceof Error ? e.message : String(e),
     });
-  }
-
-  if (!pedido.estoque_lancado) {
-    // No stock was posted — nothing more to reverse (Rs já liberadas acima)
-    return;
-  }
-
-  if (pedido.decisao_final === "propria" && pedido.empresa_origem_id) {
-    // Propria: use Tiny's estornarEstoque on the origin empresa
-    const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
-    await runWithEmpresa(pedido.empresa_origem_id, () =>
-      estornarEstoque(token, pedido.id),
-    );
-
-    logger.info(LOG_SOURCE, `Estoque estornado (propria) para pedido ${pedido.numero}`, {
-      pedidoId: pedido.id,
-      empresaId: pedido.empresa_origem_id,
-    });
-    return;
-  }
-
-  if (pedido.decisao_final === "transferencia") {
-    // Transferencia: reverse movimentarEstoque for each deducted item
-    await reverseTransferenciaStock(supabase, pedido);
-    return;
-  }
-
-  // OC or null decisao — no stock to reverse
-}
-
-async function reverseTransferenciaStock(
-  supabase: ReturnType<typeof createServiceClient>,
-  pedido: PedidoForReversal,
-): Promise<void> {
-  // Get items that had stock deducted
-  const { data: itens } = await supabase
-    .from("siso_pedido_itens")
-    .select("produto_id, sku, quantidade_pedida, estoque_saida_lancada, empresa_deducao_id")
-    .eq("pedido_id", pedido.id)
-    .eq("estoque_saida_lancada", true);
-
-  if (!itens?.length) return;
-
-  // Get produto_id_na_empresa from enrichment data
-  const { data: estoques } = await supabase
-    .from("siso_pedido_item_estoques")
-    .select("produto_id, empresa_id, produto_id_na_empresa")
-    .eq("pedido_id", pedido.id);
-
-  // Group items by empresa_deducao_id for efficient token reuse
-  const byEmpresa = new Map<string, typeof itens>();
-  for (const item of itens) {
-    if (!item.empresa_deducao_id) continue;
-    const list = byEmpresa.get(item.empresa_deducao_id) ?? [];
-    list.push(item);
-    byEmpresa.set(item.empresa_deducao_id, list);
-  }
-
-  for (const [empresaId, empresaItens] of byEmpresa) {
-    const { token } = await getValidTokenByEmpresa(empresaId);
-
-    // Get deposito for this empresa
-    const { data: conn } = await supabase
-      .from("siso_tiny_connections")
-      .select("deposito_id")
-      .eq("empresa_id", empresaId)
-      .eq("ativo", true)
-      .single();
-
-    const depositoId = conn?.deposito_id ?? null;
-
-    for (const item of empresaItens) {
-      // Find the product ID in the deducting empresa
-      const cachedEst = estoques?.find(
-        (e) => e.empresa_id === empresaId && e.produto_id === item.produto_id,
-      );
-      const produtoIdNaEmpresa = cachedEst?.produto_id_na_empresa as number | null;
-
-      if (!produtoIdNaEmpresa) {
-        throw new Error(
-          `Produto ${item.sku} sem ID na empresa ${empresaId} — não é possível reverter`,
-        );
-      }
-
-      // Reverse: entry instead of exit
-      await runWithEmpresa(empresaId, () =>
-        movimentarEstoque(token, produtoIdNaEmpresa, {
-          tipo: "E",
-          quantidade: item.quantidade_pedida as number,
-          deposito: depositoId ? { id: depositoId } : undefined,
-          observacoes: `Estorno encaminhar pedido ${pedido.numero}`,
-        }),
-      );
-
-      logger.info(LOG_SOURCE, `Estoque revertido: ${item.sku} x${item.quantidade_pedida}`, {
-        pedidoId: pedido.id,
-        empresaId,
-        sku: item.sku,
-      });
-    }
   }
 }

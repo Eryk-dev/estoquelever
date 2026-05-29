@@ -2,7 +2,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { inserirMovimentacao } from "@/lib/wms/ledger";
 import {
-  buscarReservaPendente,
+  buscarReservaPendentePorProduto,
   liberarReservaPicking,
 } from "@/lib/wms/reservas-picking";
 import {
@@ -19,11 +19,13 @@ import {
  *
  * O caller passa contexto do item (pedido, sku, qty, usuario) e o helper:
  * 1. Resolve produto WMS via empresa+tinyProdutoId
- * 2. Resolve loc destino (snapshot → live → DEFAULT-PICKING)
- * 3. Procura R pendente daquela tripla pro pedido
- * 4. Se R existe: emite L (liberacao_reserva) + S pareados
+ * 2. Resolve loc destino A PARTIR DA R VIVA do pedido (Fase 1.4 — antes lia o
+ *    snapshot estale siso_pedido_item_estoques; agora a loc vem da reserva que
+ *    `aprovar` criou na posição com saldo). Sem R, cai pra loc com maior saldo
+ *    vivo → DEFAULT-PICKING.
+ * 3. Se R existe: emite L (liberacao_reserva) + S pareados
  *    Se não: emite só S (com warn log — caminho legado/órfão)
- * 5. Registra ambos em siso_pedido_item_mov_links pra estorno simétrico
+ * 4. Registra ambos em siso_pedido_item_mov_links pra estorno simétrico
  *
  * Retorna { movSaidaId, movLiberacaoId } ou null se contexto incompleto
  * (sem empresa_origem ou sem galpão — ainda em modo legacy).
@@ -33,15 +35,16 @@ import {
  * do caller checar `siso_pedido_itens.mov_saida_id` (ou `separacao_marcado` +
  * `quantidade_pega`) ANTES de invocar, e pular itens já picados.
  *
- * ⚠ NULL RETURN: tem 3 casos distintos e silenciosos:
- *   1. empresa_origem_id ausente (legacy mode)
- *   2. galpao_id ausente (legacy mode)
- *   3. qty <= 0 (no-op)
- * Caller que precise distinguir esses casos deve validar `input` antes da chamada.
+ * ⚠ ATOMICIDADE: ao contrário do marcar-item (que usa wms_pick_item_atomico),
+ * este helper ainda emite L e S em chamadas separadas (não-atômico). Aceitável
+ * porque o caller (bipar-checklist) não é termômetro de gate e o guard de dupla
+ * baixa via `mov_saida_id` cobre re-execução. TODO: migrar pro RPC atômico.
+ *
+ * ⚠ NULL RETURN: 3 casos silenciosos: empresa_origem ausente, galpao_id ausente,
+ * qty <= 0. Caller que precise distinguir deve validar `input` antes.
  *
  * ⚠ LINKS BEST-EFFORT: falha ao inserir em `siso_pedido_item_mov_links` é
- * logada como warn mas NÃO falha o helper. O caller observa via `linksFailed`
- * no resultado se precisar tomar ação compensatória (rollback de mov, retry, ...).
+ * logada como warn mas NÃO falha o helper (observável via `linksFailed`).
  */
 
 export interface PickMovInput {
@@ -66,14 +69,24 @@ export interface PickMovResult {
   linksFailed: boolean;
 }
 
+interface ReservaResolvida {
+  id: string;
+  quantidade: number;
+  localizacao_id: string;
+}
+
 export interface PickMovDeps {
   resolverProdutoWms: (empresaId: string, tinyId: string) => Promise<string>;
   resolverLocalizacaoWms: (galpaoId: string, codigo: string | null) => Promise<string>;
   buscarLocComMaiorSaldoNoGalpao: (galpaoId: string, produtoUuid: string) => Promise<string | null>;
-  buscarSnapshotLoc: (pedidoId: string, produtoIdTiny: string, empresaId: string) => Promise<string | null>;
-  buscarReservaPendente: (args: { pedido_id: string; tripla: { produto_id: string; galpao_id: string; localizacao_id: string } }) => Promise<{ id: string; quantidade: number } | null>;
+  /** Resolve a R viva do pedido por (produto, galpão) — a loc vem dela. */
+  buscarReservaPorProduto: (args: {
+    pedido_id: string;
+    produto_id: string;
+    galpao_id: string;
+  }) => Promise<ReservaResolvida | null>;
   liberarReservaPicking: (args: {
-    reserva: { id: string; quantidade: number };
+    reserva: { id: string; quantidade: number; localizacao_id: string; produto_id: string; galpao_id: string };
     qty: number;
     pedido_id: string;
     motivo: string;
@@ -90,20 +103,14 @@ function defaultDeps(): PickMovDeps {
     resolverProdutoWms,
     resolverLocalizacaoWms,
     buscarLocComMaiorSaldoNoGalpao,
-    buscarSnapshotLoc: async (pedidoId, produtoIdTiny, empresaId) => {
-      const { data } = await sb
-        .from("siso_pedido_item_estoques")
-        .select("localizacao")
-        .eq("pedido_id", pedidoId)
-        .eq("produto_id", produtoIdTiny)
-        .eq("empresa_id", empresaId)
-        .maybeSingle();
-      return (data?.localizacao as string | null | undefined) ?? null;
+    buscarReservaPorProduto: async ({ pedido_id, produto_id, galpao_id }) => {
+      const r = await buscarReservaPendentePorProduto({ pedido_id, produto_id, galpao_id });
+      if (!r) return null;
+      return { id: r.id, quantidade: Number(r.quantidade), localizacao_id: r.localizacao_id };
     },
-    buscarReservaPendente,
-    // O real liberarReservaPicking espera ReservaPendenteRow (com produto_id/galpao_id/localizacao_id);
-    // a interface narrowed pro helper só expõe { id, quantidade } pra simplificar os testes — em runtime
-    // passamos o row inteiro retornado por buscarReservaPendente, então funciona estruturalmente.
+    // O real liberarReservaPicking espera ReservaPendenteRow completa; passamos o
+    // row inteiro (com produto_id/galpao_id/localizacao_id) em runtime — funciona
+    // estruturalmente. A interface narrowed simplifica os testes.
     liberarReservaPicking: liberarReservaPicking as unknown as PickMovDeps["liberarReservaPicking"],
     inserirMov: inserirMovimentacao,
     registrarLinks: async (links) => {
@@ -131,15 +138,17 @@ export async function pickMovPicking(
     input.produto_id_tiny,
   );
 
-  const snapshotLoc = await deps.buscarSnapshotLoc(
-    input.pedido_id,
-    input.produto_id_tiny,
-    input.empresa_origem_id,
-  );
+  // Loc do pick vem da R VIVA do pedido (posição reservada por aprovar). Sem R,
+  // cai pra loc com maior saldo vivo → DEFAULT-PICKING.
+  const reserva = await deps.buscarReservaPorProduto({
+    pedido_id: input.pedido_id,
+    produto_id: produtoWmsId,
+    galpao_id: input.galpao_id,
+  });
 
   let locId: string;
-  if (snapshotLoc) {
-    locId = await deps.resolverLocalizacaoWms(input.galpao_id, snapshotLoc);
+  if (reserva) {
+    locId = reserva.localizacao_id;
   } else {
     const liveLocId = await deps.buscarLocComMaiorSaldoNoGalpao(input.galpao_id, produtoWmsId);
     locId = liveLocId ?? (await deps.resolverLocalizacaoWms(input.galpao_id, null));
@@ -152,10 +161,15 @@ export async function pickMovPicking(
   };
 
   let movLiberacaoId: string | null = null;
-  const reserva = await deps.buscarReservaPendente({ pedido_id: input.pedido_id, tripla });
   if (reserva) {
     const movL = await deps.liberarReservaPicking({
-      reserva,
+      reserva: {
+        id: reserva.id,
+        quantidade: reserva.quantidade,
+        localizacao_id: locId,
+        produto_id: produtoWmsId,
+        galpao_id: input.galpao_id,
+      },
       qty: input.qty,
       pedido_id: input.pedido_id,
       motivo: `Picking pedido #${input.pedido_numero} — libera reserva (${input.contexto ?? "pick"})`,

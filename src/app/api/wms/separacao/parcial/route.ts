@@ -5,6 +5,7 @@ import { logger } from "@/lib/logger";
 import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import {
   buscarReservaPendente,
+  buscarReservaPendentePorProduto,
   liberarReservaPicking,
   criarReservaCascade,
   type ReservaPendenteRow,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/separacao/wms-mapping";
 import { resolverRealocacao } from "@/lib/separacao/realocacao-resolver";
 import { mandarItensParaCompras } from "@/lib/wms/mandar-compras";
+import { galpoesComSaldo } from "@/lib/wms/galpoes-com-saldo";
 
 /**
  * POST /api/separacao/parcial
@@ -208,27 +210,29 @@ async function processarParcialItem(
     const produtoTinyId = String(primeiroItem.produto_id);
     const produtoWmsId = await resolverProdutoWms(empresaOrigemId, produtoTinyId);
 
-    // 5. Loc original — usa a do primeiro item (no wave picking, todos compartilham a mesma loc consolidada)
-    const { data: estoque } = await supabase
-      .from("siso_pedido_item_estoques")
-      .select("localizacao")
-      .eq("pedido_id", primeiroItem.pedido_id)
-      .eq("produto_id", primeiroItem.produto_id)
-      .eq("empresa_id", empresaOrigemId)
-      .maybeSingle();
-
-    const locCodigo = (estoque?.localizacao as string | null | undefined) ?? null;
-    // Fallback live: pedidos aprovados manual após cutover WMS_AS_SOURCE entram
-    // sem snapshot em siso_pedido_item_estoques. Sem fallback, cai em
-    // DEFAULT-PICKING (saldo=0) e dispara 'posicao_reservada' falso.
-    // Mesmo pattern do marcar-item/route.ts:99-109.
+    // 5. Loc original — vem da R VIVA do pedido (posição que `aprovar` reservou).
+    // No wave picking todos compartilham a mesma loc consolidada. (Fase 1.4: era
+    // lido do snapshot estale siso_pedido_item_estoques; agora da R / estoque vivo,
+    // mesmo padrão do marcar-item.) Fallback pra loc com maior saldo se não houver R.
+    const reservaOriginal = await buscarReservaPendentePorProduto({
+      pedido_id: String(primeiroItem.pedido_id),
+      produto_id: produtoWmsId,
+      galpao_id: galpaoId,
+    });
     let locOriginalId: string;
-    if (locCodigo) {
-      locOriginalId = await resolverLocalizacaoWms(galpaoId, locCodigo);
+    if (reservaOriginal) {
+      locOriginalId = reservaOriginal.localizacao_id;
     } else {
       const liveLocId = await buscarLocComMaiorSaldoNoGalpao(galpaoId, produtoWmsId);
       locOriginalId = liveLocId ?? (await resolverLocalizacaoWms(galpaoId, null));
     }
+    // Código da loc (informativo, usado nos eventos de auditoria).
+    const { data: locOrigRow } = await supabase
+      .from("siso_localizacoes")
+      .select("codigo")
+      .eq("id", locOriginalId)
+      .maybeSingle();
+    const locCodigo = (locOrigRow?.codigo as string | null | undefined) ?? null;
 
     // 6. Saldo / reservado (3D: produto + galpao + loc)
     const { data: estoqueWms } = await supabase
@@ -361,49 +365,10 @@ async function processarParcialItem(
         movAjusteId = movAj.id;
       }
 
-      // Mudança B (28/05): sync snapshot do pedido pra refletir saldo real
-      // pós-loc_zerou. Sem isso, qualquer re-processamento (worker,
-      // re-aprovação) vê o snapshot estale do webhook ("tinha 1") e degrada
-      // OC pra Própria → loop infinito.
-      try {
-        const { data: estoquePorGalpao } = await supabase
-          .from("siso_estoque")
-          .select("disponivel")
-          .eq("produto_id", produtoWmsId)
-          .eq("galpao_id", galpaoId);
-        const dispTotalGalpao = (estoquePorGalpao ?? []).reduce(
-          (sum, row) => sum + Number(row.disponivel ?? 0),
-          0,
-        );
-        const tinyProdutoIdGrupo = primeiroItem.produto_id;
-        const pedidoIdsGrupo = [...new Set(itemsRaw.map((it) => it.pedido_id))];
-        const { error: snapErr } = await supabase
-          .from("siso_pedido_item_estoques")
-          .update({ disponivel: dispTotalGalpao })
-          .in("pedido_id", pedidoIdsGrupo)
-          .eq("produto_id", tinyProdutoIdGrupo)
-          .eq("empresa_id", empresaOrigemId);
-        if (snapErr) {
-          logger.warn("parcial.snapshot-sync", "falhou update snapshot", {
-            err: snapErr.message,
-            pedido_ids: pedidoIdsGrupo,
-          });
-        } else {
-          logger.info(
-            "parcial.snapshot-sync",
-            "snapshot atualizado pós loc_zerou",
-            {
-              pedido_ids: pedidoIdsGrupo,
-              tiny_produto_id: tinyProdutoIdGrupo,
-              disp_novo: dispTotalGalpao,
-            },
-          );
-        }
-      } catch (syncErr) {
-        logger.warn("parcial.snapshot-sync", "exception update snapshot (continua)", {
-          err: syncErr instanceof Error ? syncErr.message : String(syncErr),
-        });
-      }
+      // (Fase 1.4 — 2026-05-28) REMOVIDO: sync do snapshot
+      // siso_pedido_item_estoques pós-loc_zerou. A tabela foi dropada — o
+      // worker/aprovação leem disponível VIVO de siso_estoque, então não há
+      // mais snapshot estale pra ressincronizar (matava o loop OC→Própria).
     }
 
     // 8. Distribui qty_pega entre items em ordem (first-come-first-served) e
@@ -856,23 +821,14 @@ async function processarParcialItem(
     for (const [empOrigem, grupo] of porEmpresa) {
       const totalResidualGrupo = grupo.reduce((s, u) => s + u.qty_residual, 0);
 
-      // Locs originais do grupo (mapeadas pela empresa origem)
       const itemIdsGrupo = grupo.map((u) => Number(u.item.id));
       const pedidoIdsGrupo = [...new Set(grupo.map((u) => u.pedido_id))];
-      const { data: estoquesLeg } = await supabase
-        .from("siso_pedido_item_estoques")
-        .select("localizacao, produto_id, pedido_id")
-        .in("pedido_id", pedidoIdsGrupo)
-        .eq("empresa_id", empOrigem);
 
+      // (Fase 1.4) Loc original a excluir do cascade = a R viva consolidada
+      // (locOriginalId), que é a posição que acabou de esvaziar. Antes lia o
+      // snapshot siso_pedido_item_estoques pra coletar locs por pedido; com a
+      // tabela dropada, locOriginalId (vindo da R) já é a fonte de verdade.
       const locsOriginais = new Set<string>();
-      for (const e of estoquesLeg ?? []) {
-        const locId = await resolverLocalizacaoWms(galpaoId, e.localizacao);
-        if (locId) locsOriginais.add(locId);
-      }
-      // Loc original calculada upstream também entra (caso o item residual
-      // venha de um pedido cujo registro em pedido_item_estoques esteja
-      // ausente, fallback é a do primeiro item).
       if (locOriginalId) locsOriginais.add(locOriginalId);
 
       // Todas as realocs já tentadas em items desse grupo
@@ -963,12 +919,28 @@ async function processarParcialItem(
       }
     }
 
-    // Decisão (28/05 v2): quando cascade esgota 100% E nenhuma realoc criada,
-    // transita automaticamente os itens pra aguardando_compra — sem modal.
-    // A intenção do operador é inequívoca (qty=0 + loc_zerou + cascade vazio
-    // = item esgotado em todos os galpões), então perguntar via modal era
-    // fricção desnecessária. Frontend só mostra toast e redireciona.
+    // Mudança 1 (Fase 1.5): cascade esgotou no galpão atual e nenhuma realoc
+    // criada. ANTES de mandar pra Compras, checa saldo VIVO (siso_estoque) em
+    // OUTRO galpão. Se houver, NÃO auto-manda pra Compras — deixa o pedido
+    // em_separacao e devolve `tem_em_outro_galpao` + lista de galpões, pro
+    // frontend abrir modal "Encaminhar p/ Galpão X" como 1ª opção (encaminhar-
+    // first). Só vai DIRETO pra Compras quando não há saldo em galpão nenhum
+    // (caso do cenário 61).
     if (semCoberturaParcial && linhasInsertTotais.length === 0) {
+      const alternativos = await galpoesComSaldo(produtoWmsId, galpaoId);
+      if (alternativos.length > 0) {
+        return NextResponse.json({
+          status: "sem_cobertura_outro_galpao",
+          tem_em_outro_galpao: true,
+          galpoes_alternativos: alternativos.map((g) => ({
+            galpao_id: g.galpao_id,
+            galpao_nome: g.galpao_nome,
+            disponivel: g.disponivel,
+          })),
+          pedido_ids: semCoberturaPayload.pedido_ids,
+          item_ids: semCoberturaPayload.item_ids,
+        });
+      }
       const result = await mandarItensParaCompras({
         supabase,
         pedido_ids: semCoberturaPayload.pedido_ids,
@@ -978,6 +950,7 @@ async function processarParcialItem(
       });
       return NextResponse.json({
         status: "mandado_pra_compras",
+        tem_em_outro_galpao: false,
         itens_atualizados: result.itens_atualizados,
         pedidos_atualizados: result.pedidos_atualizados,
         pedido_ids: semCoberturaPayload.pedido_ids,
@@ -1374,46 +1347,8 @@ async function processarParcialRealocacao(
         movAjusteId = movAj.id;
       }
 
-      // Mudança B (28/05): sync snapshot do pedido pra refletir saldo real
-      // pós-loc_zerou. Sem isso, worker degrada OC pra Própria → loop.
-      try {
-        const { data: estoquePorGalpao } = await supabase
-          .from("siso_estoque")
-          .select("disponivel")
-          .eq("produto_id", produtoWmsId)
-          .eq("galpao_id", galpaoId);
-        const dispTotalGalpao = (estoquePorGalpao ?? []).reduce(
-          (sum, row) => sum + Number(row.disponivel ?? 0),
-          0,
-        );
-        const tinyProdutoIdGrupo = primeiroItem.produto_id;
-        const { error: snapErr } = await supabase
-          .from("siso_pedido_item_estoques")
-          .update({ disponivel: dispTotalGalpao })
-          .in("pedido_id", pedidoIds)
-          .eq("produto_id", tinyProdutoIdGrupo)
-          .eq("empresa_id", empresaOrigemPrimeiroPedido);
-        if (snapErr) {
-          logger.warn("parcial-realoc.snapshot-sync", "falhou update snapshot", {
-            err: snapErr.message,
-            pedido_ids: pedidoIds,
-          });
-        } else {
-          logger.info(
-            "parcial-realoc.snapshot-sync",
-            "snapshot atualizado pós loc_zerou (cascade path)",
-            {
-              pedido_ids: pedidoIds,
-              tiny_produto_id: tinyProdutoIdGrupo,
-              disp_novo: dispTotalGalpao,
-            },
-          );
-        }
-      } catch (syncErr) {
-        logger.warn("parcial-realoc.snapshot-sync", "exception (continua)", {
-          err: syncErr instanceof Error ? syncErr.message : String(syncErr),
-        });
-      }
+      // (Fase 1.4 — 2026-05-28) REMOVIDO: sync do snapshot
+      // siso_pedido_item_estoques pós-loc_zerou (cascade path). Tabela dropada.
     }
 
     // 8. Distribui qty_pega entre realocs em ordem (FCFS)
@@ -1818,23 +1753,14 @@ async function processarParcialRealocacao(
         ...new Set(grupo.map((u) => Number(u.realoc.pedido_item_id))),
       ];
 
-      // Locs originais dos pedidos desse grupo (lookup via siso_pedido_item_estoques)
       const itemsGrupo = itemIdsGrupo
         .map((id) => itemById.get(id))
         .filter((i): i is NonNullable<typeof i> => !!i);
-      const pedidoIdsGrupo = [...new Set(itemsGrupo.map((i) => i.pedido_id))];
-      const { data: estoquesLeg } = await supabase
-        .from("siso_pedido_item_estoques")
-        .select("localizacao, produto_id, pedido_id")
-        .in("pedido_id", pedidoIdsGrupo)
-        .eq("empresa_id", empOrigem);
 
+      // (Fase 1.4) Loc original a excluir do cascade = a loc do cascade atual
+      // (localizacaoId), que acabou de esvaziar. Antes coletava locs via snapshot
+      // siso_pedido_item_estoques; tabela dropada — estoque é lido vivo.
       const locsOriginais = new Set<string>();
-      for (const e of estoquesLeg ?? []) {
-        const locId = await resolverLocalizacaoWms(galpaoId, e.localizacao);
-        if (locId) locsOriginais.add(locId);
-      }
-      // Loc atual do cascade (já visitada) também entra
       locsOriginais.add(localizacaoId);
 
       // Todas as realocs já tentadas em items desse grupo

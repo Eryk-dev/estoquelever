@@ -70,18 +70,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Rejeição explícita: `pendente_realocacao` significa "wave bloqueada
-    // aguardando ação do supervisor sobre realocações órfãs". Tentar iniciar
-    // nesse estado contornaria o gate. Operador precisa resolver realocações
-    // (confirmar/cancelar) antes de re-disparar `iniciar`.
+    // `pendente_realocacao` = wave bloqueada aguardando resolução de realocações.
+    // Iniciar contornaria o gate, então 409. (Fase 1.5/1.6 — 2026-05-28: o parcial
+    // NÃO transita mais automaticamente pra este estado; cascade-esgota vai pra
+    // Compras ou oferece encaminhar-first. Logo este 409 só ocorre em dado legado
+    // ou ação admin via voltar-etapa.) Caminho de saída claro: ENCAMINHAR pra
+    // outro galpão (a rota /separacao/encaminhar aceita pendente_realocacao) ou
+    // resolver/cancelar as realocações pendentes.
     const pendenteRealocacao = (pedidos ?? []).filter(
       (p) => p.status_separacao === "pendente_realocacao",
     );
     if (pendenteRealocacao.length > 0) {
       return NextResponse.json(
         {
-          error:
-            "pedido em pendente_realocacao — resolver realocações antes de iniciar",
+          error: "pedido_em_pendente_realocacao",
+          message:
+            "Pedido travado em realocação. Saída: encaminhe pra outro galpão, ou " +
+            "resolva/cancele as realocações pendentes — depois inicie de novo.",
+          acoes_disponiveis: ["encaminhar", "cancelar_realocacao"],
           pedido_ids: pendenteRealocacao.map((p) => p.id),
         },
         { status: 409 },

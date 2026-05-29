@@ -146,33 +146,49 @@ export async function POST(request: NextRequest) {
 
   const filialOrigem = empresaOrigem.galpaoNome;
 
-  // Decisão 1 (28/05): bloqueia OC quando snapshot do pedido cobre 100% dos itens
-  // na empresa origem. Sem isso o worker degrada silenciosamente pra Própria sem
-  // criar reserva → estoque exposto a outros pedidos.
-  if (decisao === "oc") {
+  // Decisão 1 (28/05): bloqueia OC quando há saldo VIVO cobrindo 100% dos itens.
+  // Sem isso o worker degrada silenciosamente pra Própria sem criar reserva →
+  // estoque exposto a outros pedidos. (Fase 1.4: lê disponível vivo de
+  // siso_estoque, não o snapshot estale siso_pedido_item_estoques.)
+  if (decisao === "oc" && pedido.empresa_origem_id) {
     const { data: itensOc } = await supabase
       .from("siso_pedido_itens")
       .select("id, produto_id, quantidade_pedida")
       .eq("pedido_id", pedidoId);
-    const { data: estoquesOc } = await supabase
-      .from("siso_pedido_item_estoques")
-      .select("produto_id, empresa_id, disponivel")
-      .in("pedido_id", [pedidoId]);
 
-    if (itensOc && itensOc.length > 0 && estoquesOc) {
-      const dispMap = new Map<string, number>();
-      for (const e of estoquesOc) {
-        if (String(e.empresa_id) === String(pedido.empresa_origem_id)) {
-          dispMap.set(String(e.produto_id), Number(e.disponivel ?? 0));
+    if (itensOc && itensOc.length > 0) {
+      // Resolve produto WMS por tiny_produto_id + soma disponível vivo (todos galpões).
+      const tinyIds = [...new Set(itensOc.map((it) => String(it.produto_id)))];
+      const wmsPorTiny = new Map<string, string>();
+      for (const t of tinyIds) {
+        try {
+          wmsPorTiny.set(t, await resolverProdutoWms(pedido.empresa_origem_id as string, t));
+        } catch {
+          // sem mapeamento → disponível 0 (não cobre)
+        }
+      }
+      const dispPorWms = new Map<string, number>();
+      const wmsIds = [...new Set(wmsPorTiny.values())];
+      if (wmsIds.length > 0) {
+        const { data: estVivo } = await supabase
+          .from("siso_estoque")
+          .select("produto_id, disponivel")
+          .in("produto_id", wmsIds);
+        for (const e of estVivo ?? []) {
+          dispPorWms.set(
+            String(e.produto_id),
+            (dispPorWms.get(String(e.produto_id)) ?? 0) + Number(e.disponivel ?? 0),
+          );
         }
       }
       const todosCobrem = itensOc.every((it) => {
         const qty = Number(it.quantidade_pedida ?? 0);
-        const disp = dispMap.get(String(it.produto_id)) ?? 0;
+        const wms = wmsPorTiny.get(String(it.produto_id));
+        const disp = wms ? dispPorWms.get(wms) ?? 0 : 0;
         return qty > 0 && disp >= qty;
       });
       if (todosCobrem) {
-        logger.warn("aprovar", "OC bloqueado: snapshot cobre 100%", {
+        logger.warn("aprovar", "OC bloqueado: saldo vivo cobre 100%", {
           pedidoId,
           empresa_origem_id: pedido.empresa_origem_id,
         });
@@ -180,7 +196,7 @@ export async function POST(request: NextRequest) {
           {
             error: "oc_bloqueado_snapshot_cobre",
             message:
-              "Snapshot mostra saldo completo — aprove como Própria ou Transferência",
+              "Saldo vivo cobre os itens — aprove como Própria ou Transferência",
           },
           { status: 422 },
         );

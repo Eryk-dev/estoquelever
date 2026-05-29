@@ -93,6 +93,119 @@ export async function buscarReservaPendente(opts: {
 }
 
 /**
+ * Busca a R viva do pedido pra um produto+galpão SEM precisar saber a loc.
+ *
+ * A R é a fonte de verdade da posição reservada — `aprovar` criou a R na loc
+ * com saldo, então a baixa do pick deve sair DESSA loc, não de uma heurística
+ * sobre snapshot/maior-saldo (que erra quando disponivel=0 por causa da própria
+ * reserva). Retorna a R pendente (sem L pareado) com a localizacao_id embutida.
+ *
+ * Em caso de múltiplas R pendentes (cascade criou em locs diferentes), retorna
+ * a de maior quantidade — a re-marcação simples (checkbox) lida com a R única
+ * do item; o fluxo de realocação trata as cascade explicitamente.
+ */
+export async function buscarReservaPendentePorProduto(opts: {
+  pedido_id: string;
+  produto_id: string;
+  galpao_id: string;
+}): Promise<ReservaPendenteRow | null> {
+  const sb = createServiceClient();
+
+  const { data: candidates, error } = await sb
+    .from("siso_movimentacoes")
+    .select("id, produto_id, galpao_id, localizacao_id, quantidade")
+    .eq("origem_id", opts.pedido_id)
+    .eq("origem_tipo", "reserva_pedido")
+    .eq("tipo", "R")
+    .eq("produto_id", opts.produto_id)
+    .eq("galpao_id", opts.galpao_id);
+
+  if (error) {
+    logger.error("wms.reservas-picking", "falha ao buscar R por produto", {
+      error: error.message,
+      pedido_id: opts.pedido_id,
+      produto_id: opts.produto_id,
+      galpao_id: opts.galpao_id,
+    });
+    throw error;
+  }
+
+  if (!candidates || candidates.length === 0) return null;
+
+  const reservaIds = (candidates as ReservaPendenteRow[]).map((r) => r.id);
+  const { data: liberadas } = await sb
+    .from("siso_movimentacoes")
+    .select("estorno_de")
+    .in("estorno_de", reservaIds)
+    .eq("tipo", "L");
+
+  const liberadasSet = new Set<string>(
+    (liberadas ?? [])
+      .map((l) => l.estorno_de as string | null)
+      .filter((id): id is string => !!id),
+  );
+
+  const pendentes = (candidates as ReservaPendenteRow[])
+    .filter((r) => !liberadasSet.has(r.id))
+    .sort((a, b) => Number(b.quantidade) - Number(a.quantidade));
+
+  return pendentes[0] ?? null;
+}
+
+export interface PickAtomicoResult {
+  mov_l_id: string | null;
+  mov_s_id: string;
+  produto_id: string;
+  galpao_id: string;
+  localizacao_id: string;
+  qty: number;
+}
+
+/**
+ * Baixa atômica do pick (Fase 1.1) — chama a RPC wms_pick_item_atomico que
+ * faz L (libera R) + S (saída nf_venda) numa única transação. Se a S falhar,
+ * a transação inteira faz rollback (a L também) — nunca deixa reserva liberada
+ * sem saída nem saída sem liberação.
+ *
+ *  - `reserva_id` setado → loc vem da R; L+S pareados.
+ *  - `reserva_id` null   → S-only na `tripla` passada (completar parcial cuja R
+ *                          já foi liberada, ou item OC sem reserva).
+ *
+ * Throw em qualquer falha (saldo insuficiente, R já liberada, etc) — o caller
+ * NÃO deve marcar o item se isto lançar.
+ */
+export async function pickItemAtomico(opts: {
+  reserva_id: string | null;
+  tripla: Tripla;
+  qty: number;
+  pedido_id: string;
+  empresa_vendedora_id: string;
+  usuario_id?: string;
+  nota_fiscal_id?: string | null;
+  motivo?: string;
+  origem_detalhes?: Record<string, unknown>;
+}): Promise<PickAtomicoResult> {
+  const sb = createServiceClient();
+  const { data, error } = await sb.rpc("wms_pick_item_atomico", {
+    p_reserva_id: opts.reserva_id,
+    p_produto_id: opts.tripla.produto_id,
+    p_galpao_id: opts.tripla.galpao_id,
+    p_localizacao_id: opts.tripla.localizacao_id,
+    p_qty: opts.qty,
+    p_pedido_id: opts.pedido_id,
+    p_empresa_vendedora_id: opts.empresa_vendedora_id,
+    p_usuario_id: opts.usuario_id ?? null,
+    p_nota_fiscal_id: opts.nota_fiscal_id ?? null,
+    p_motivo: opts.motivo ?? null,
+    p_origem_detalhes: opts.origem_detalhes ?? null,
+  });
+  if (error) {
+    throw new Error(`pick atômico falhou: ${error.message}`);
+  }
+  return data as PickAtomicoResult;
+}
+
+/**
  * Emite L apontando pra R (estorno_de=R.id) que libera `qty` do reservado.
  * `qty` pode ser menor, igual ou maior que R.quantidade — `wms_inserir_movimentacao`
  * valida que `reservado >= qty` no momento da inserção.

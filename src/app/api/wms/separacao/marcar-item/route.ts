@@ -2,15 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
-import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
+import { estornarMovimentacao } from "@/lib/wms/ledger";
 import {
-  buscarReservaPendente,
-  liberarReservaPicking,
   estornarLiberacaoReserva,
+  buscarReservaPendentePorProduto,
+  pickItemAtomico,
 } from "@/lib/wms/reservas-picking";
 import {
   resolverProdutoWms,
-  resolverLocalizacaoWms,
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
 
@@ -81,115 +80,102 @@ export async function POST(request: NextRequest) {
     const nowIso = new Date().toISOString();
 
     if (marcado) {
-      let movSaidaId: string | null = null;
-      let movLiberacaoId: string | null = null;
-      let triplaProdutoWmsId: string | null = null;
-      let triplaLocId: string | null = null;
-
       // Item "em progresso" — já teve parcial sem loc_zerou anteriormente.
-      // quantidade_pega tem o qty já pego. Completar via checkbox só descontava
+      // quantidade_pega tem o qty já pego. Completar via checkbox só desconta
       // o RESTANTE (qty_pedida - qty_pega). Se qty_pega === qty_pedida, item já
       // está 100% pego — checkbox só marca como complete sem nova mov.
       const qtyJaPega = Number(item.quantidade_pega ?? 0);
       const qtyADescontar = Number(item.quantidade_pedida) - qtyJaPega;
 
-      if (empresaOrigemId && galpaoId && qtyADescontar > 0) {
-        try {
-          const produtoWmsId = await resolverProdutoWms(
-            empresaOrigemId,
-            String(item.produto_id),
+      let movSaidaId: string | null = null;
+      let movLiberacaoId: string | null = null;
+
+      if (qtyADescontar > 0) {
+        // Sem empresa/galpão não há como dar baixa — fail-loud, NÃO marca.
+        // (antes: pulava silenciosamente e marcava sem baixa → overselling).
+        if (!empresaOrigemId || !galpaoId) {
+          return NextResponse.json(
+            { error: "pedido sem empresa/galpão — não é possível dar baixa no estoque" },
+            { status: 400 },
           );
-          const { data: estoque } = await supabase
-            .from("siso_pedido_item_estoques")
-            .select("localizacao")
-            .eq("pedido_id", pedido.id)
-            .eq("produto_id", item.produto_id)
-            .eq("empresa_id", empresaOrigemId)
-            .maybeSingle();
-          const snapshotLoc = (estoque?.localizacao as string | null | undefined) ?? null;
-          // Fallback live: se o snapshot está vazio (saldo era 0 no
-          // webhook, ou loc nunca preenchida), escolhe a loc com maior
-          // saldo do produto no galpão atual. Evita cair em DEFAULT-PICKING.
-          let locId: string;
-          if (snapshotLoc) {
-            locId = await resolverLocalizacaoWms(galpaoId, snapshotLoc);
-          } else {
-            const liveLocId = await buscarLocComMaiorSaldoNoGalpao(galpaoId, produtoWmsId);
-            locId = liveLocId ?? (await resolverLocalizacaoWms(galpaoId, null));
-          }
+        }
 
-          triplaProdutoWmsId = produtoWmsId;
-          triplaLocId = locId;
+        const produtoWmsId = await resolverProdutoWms(
+          empresaOrigemId,
+          String(item.produto_id),
+        );
 
-          // R↔L↔S pairing: busca a R criada no aprovar pra essa tripla
-          // e libera ela junto com a saída. Sem isso, a reserva fica
-          // órfã e o cutover do concluir duplica a baixa.
-          const reserva = await buscarReservaPendente({
-            pedido_id: String(pedido.id),
-            tripla: {
-              produto_id: produtoWmsId,
-              galpao_id: galpaoId,
-              localizacao_id: locId,
-            },
-          });
+        // Loc do pick vem da R VIVA do pedido (posição reservada por aprovar),
+        // não de snapshot/heurística — a R é a fonte de verdade da loc.
+        const reserva = await buscarReservaPendentePorProduto({
+          pedido_id: String(pedido.id),
+          produto_id: produtoWmsId,
+          galpao_id: galpaoId,
+        });
 
-          if (reserva) {
-            // Libera apenas qty restante (qty_pedida - qty_pega). Se item já
-            // teve parcial anterior, qty_pega>0 e libera só o residual.
-            const movL = await liberarReservaPicking({
-              reserva,
-              qty: qtyADescontar,
-              pedido_id: String(pedido.id),
-              motivo: `Picking pedido #${pedido.numero} — libera reserva (checkbox)`,
-              usuario_id: session.id,
-              origem_detalhes: {
-                pedido_numero: pedido.numero,
-                pedido_item_id: item.id,
-                sku: item.sku,
-                contexto: "checkbox",
-                qty_ja_pega: qtyJaPega,
+        let locId: string;
+        let reservaId: string | null;
+        if (reserva) {
+          locId = reserva.localizacao_id;
+          reservaId = reserva.id;
+        } else {
+          // Sem R viva (ex.: completar parcial-em-progresso cuja R já foi
+          // liberada, ou item OC). Baixa na loc com saldo disponível vivo.
+          const liveLocId = await buscarLocComMaiorSaldoNoGalpao(galpaoId, produtoWmsId);
+          if (!liveLocId) {
+            return NextResponse.json(
+              {
+                error: "sem_saldo_para_baixa",
+                message: "Sem saldo disponível pra dar baixa neste produto no galpão.",
               },
-            });
-            movLiberacaoId = movL.id;
-          } else {
-            logger.warn("separacao-marcar-item", "R não encontrada — S sem L par", {
-              pedido_item_id,
-              pedido_id: pedido.id,
-              tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: locId },
-            });
+              { status: 409 },
+            );
           }
+          locId = liveLocId;
+          reservaId = null;
+        }
 
-          const mov = await inserirMovimentacao({
+        // Baixa ATÔMICA (L+S numa transação via RPC). Se falhar → NÃO marca o
+        // item: o operador vê o erro em vez de seguir com saldo fantasma.
+        try {
+          const pick = await pickItemAtomico({
+            reserva_id: reservaId,
             tripla: {
               produto_id: produtoWmsId,
               galpao_id: galpaoId,
               localizacao_id: locId,
             },
-            tipo: "S",
             qty: qtyADescontar,
-            origem_tipo: "nf_venda",
+            pedido_id: String(pedido.id),
+            empresa_vendedora_id: empresaOrigemId,
+            usuario_id: session.id,
             origem_detalhes: {
               pedido_id_tiny: pedido.id,
               pedido_numero: pedido.numero,
               pedido_item_id: item.id,
               sku: item.sku,
               contexto: qtyJaPega > 0 ? "checkbox_completa_parcial" : "checkbox",
-              reserva_origem: reserva?.id ?? null,
               qty_ja_pega: qtyJaPega,
             },
-            empresa_vendedora_id: empresaOrigemId,
             motivo:
               qtyJaPega > 0
                 ? `Picking pedido #${pedido.numero} — completa parcial (${qtyADescontar}+${qtyJaPega})`
                 : `Picking pedido #${pedido.numero} — checkbox completo`,
-            usuario_id: session.id,
           });
-          movSaidaId = mov.id;
-        } catch (wmsErr) {
-          logger.warn("separacao-marcar-item", "Mov WMS skipped", {
-            error: wmsErr instanceof Error ? wmsErr.message : String(wmsErr),
+          movSaidaId = pick.mov_s_id;
+          movLiberacaoId = pick.mov_l_id;
+        } catch (pickErr) {
+          const msg = pickErr instanceof Error ? pickErr.message : String(pickErr);
+          logger.warn("separacao-marcar-item", "Baixa atômica falhou — item NÃO marcado", {
+            error: msg,
             pedido_item_id,
+            pedido_id: pedido.id,
+            reserva_id: reservaId,
           });
+          return NextResponse.json(
+            { error: "falha_baixa_estoque", message: msg },
+            { status: 409 },
+          );
         }
       }
 
@@ -231,9 +217,6 @@ export async function POST(request: NextRequest) {
           });
         }
       }
-
-      void triplaProdutoWmsId;
-      void triplaLocId;
 
       const { data: updated, error: updErr } = await supabase
         .from("siso_pedido_itens")

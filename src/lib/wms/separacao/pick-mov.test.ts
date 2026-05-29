@@ -4,10 +4,9 @@ import { pickMovPicking, type PickMovDeps } from "./pick-mov";
 function fakeDeps(overrides: Partial<PickMovDeps> = {}): PickMovDeps {
   return {
     resolverProdutoWms: vi.fn().mockResolvedValue("prod-uuid"),
-    resolverLocalizacaoWms: vi.fn().mockResolvedValue("loc-uuid"),
+    resolverLocalizacaoWms: vi.fn().mockResolvedValue("default-loc-uuid"),
     buscarLocComMaiorSaldoNoGalpao: vi.fn().mockResolvedValue("live-loc-uuid"),
-    buscarSnapshotLoc: vi.fn().mockResolvedValue(null),
-    buscarReservaPendente: vi.fn().mockResolvedValue(null),
+    buscarReservaPorProduto: vi.fn().mockResolvedValue(null),
     liberarReservaPicking: vi.fn().mockResolvedValue({ id: "L-mov-id" }),
     inserirMov: vi.fn().mockResolvedValue({ id: "S-mov-id" }),
     registrarLinks: vi.fn().mockResolvedValue(true),
@@ -26,31 +25,38 @@ describe("pickMovPicking", () => {
     expect(deps.inserirMov).not.toHaveBeenCalled();
   });
 
-  it("uses snapshot loc when present", async () => {
+  it("uses the live reservation's loc when an R exists", async () => {
     const deps = fakeDeps({
-      buscarSnapshotLoc: vi.fn().mockResolvedValue("A-01-01"),
+      buscarReservaPorProduto: vi
+        .fn()
+        .mockResolvedValue({ id: "R-mov-id", quantidade: 5, localizacao_id: "R-loc-uuid" }),
     });
     const result = await pickMovPicking(
       { empresa_origem_id: "e", galpao_id: "g", pedido_id: "p", pedido_numero: "n", item_id: 1, produto_id_tiny: "t", sku: "s", qty: 3, usuario_id: "u" },
       deps,
     );
     expect(result?.movSaidaId).toBe("S-mov-id");
-    expect(deps.resolverLocalizacaoWms).toHaveBeenCalledWith("g", "A-01-01");
+    expect(result?.tripla.localizacao_id).toBe("R-loc-uuid");
+    // loc veio da R — não usou a heurística de maior saldo
+    expect(deps.buscarLocComMaiorSaldoNoGalpao).not.toHaveBeenCalled();
   });
 
-  it("falls back to live loc when snapshot empty", async () => {
+  it("falls back to live loc when no R found", async () => {
     const deps = fakeDeps();
     const result = await pickMovPicking(
       { empresa_origem_id: "e", galpao_id: "g", pedido_id: "p", pedido_numero: "n", item_id: 1, produto_id_tiny: "t", sku: "s", qty: 3, usuario_id: "u" },
       deps,
     );
     expect(deps.buscarLocComMaiorSaldoNoGalpao).toHaveBeenCalled();
+    expect(result?.tripla.localizacao_id).toBe("live-loc-uuid");
     expect(result?.movSaidaId).toBe("S-mov-id");
   });
 
   it("liberates R reservation when present (par L+S)", async () => {
     const deps = fakeDeps({
-      buscarReservaPendente: vi.fn().mockResolvedValue({ id: "R-mov-id", quantidade: 5 }),
+      buscarReservaPorProduto: vi
+        .fn()
+        .mockResolvedValue({ id: "R-mov-id", quantidade: 5, localizacao_id: "R-loc-uuid" }),
     });
     const result = await pickMovPicking(
       { empresa_origem_id: "e", galpao_id: "g", pedido_id: "p", pedido_numero: "n", item_id: 1, produto_id_tiny: "t", sku: "s", qty: 3, usuario_id: "u" },
@@ -63,7 +69,9 @@ describe("pickMovPicking", () => {
 
   it("registers links for both L and S when both created", async () => {
     const deps = fakeDeps({
-      buscarReservaPendente: vi.fn().mockResolvedValue({ id: "R-mov-id", quantidade: 5 }),
+      buscarReservaPorProduto: vi
+        .fn()
+        .mockResolvedValue({ id: "R-mov-id", quantidade: 5, localizacao_id: "R-loc-uuid" }),
     });
     await pickMovPicking(
       { empresa_origem_id: "e", galpao_id: "g", pedido_id: "p", pedido_numero: "n", item_id: 1, produto_id_tiny: "t", sku: "s", qty: 3, usuario_id: "u" },
@@ -88,9 +96,9 @@ describe("pickMovPicking", () => {
     expect(deps.resolverProdutoWms).not.toHaveBeenCalled();
   });
 
-  it("falls back to DEFAULT-PICKING when both snapshot and live loc are absent", async () => {
+  it("falls back to DEFAULT-PICKING when no R and no live loc", async () => {
     const deps = fakeDeps({
-      buscarSnapshotLoc: vi.fn().mockResolvedValue(null),
+      buscarReservaPorProduto: vi.fn().mockResolvedValue(null),
       buscarLocComMaiorSaldoNoGalpao: vi.fn().mockResolvedValue(null),
       resolverLocalizacaoWms: vi.fn().mockResolvedValue("default-loc-uuid"),
     });
@@ -99,13 +107,12 @@ describe("pickMovPicking", () => {
       deps,
     );
     expect(result?.tripla.localizacao_id).toBe("default-loc-uuid");
-    // resolverLocalizacaoWms called with null code = DEFAULT-PICKING semantics
     expect(deps.resolverLocalizacaoWms).toHaveBeenCalledWith("g", null);
   });
 
   it("registers ONLY 'saida' link when no R found (S-only path)", async () => {
     const deps = fakeDeps({
-      buscarReservaPendente: vi.fn().mockResolvedValue(null),
+      buscarReservaPorProduto: vi.fn().mockResolvedValue(null),
     });
     await pickMovPicking(
       { empresa_origem_id: "e", galpao_id: "g", pedido_id: "p", pedido_numero: "n", item_id: 1, produto_id_tiny: "t", sku: "s", qty: 4, usuario_id: "u" },

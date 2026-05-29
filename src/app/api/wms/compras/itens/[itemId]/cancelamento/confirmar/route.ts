@@ -44,11 +44,8 @@ export async function POST(
       );
     }
 
-    await supabase
-      .from("siso_pedido_item_estoques")
-      .delete()
-      .eq("pedido_id", item.pedido_id)
-      .eq("produto_id", item.produto_id);
+    // (Fase 1.4) REMOVIDO: delete de siso_pedido_item_estoques no cancelamento.
+    // Tabela dropada — nada a limpar; o estoque vivo é a fonte de verdade.
 
     const now = new Date().toISOString();
     const { data: updated, error: updateError } = await supabase

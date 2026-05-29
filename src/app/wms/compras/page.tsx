@@ -44,11 +44,20 @@ interface PedidoVinc {
   item_id: string;
 }
 
+type StatusCobertura = "critico" | "atencao" | "ok" | "sem_giro" | "lead_time_risco";
+
 interface ComprarItem {
   sku: string;
   descricao: string;
   imagem_url: string | null;
   quantidade_necessaria: number;
+  demanda_aberta: number;
+  estoque_livre: number;
+  em_transito: number;
+  giro_diario: number;
+  dias_cobertura: number | null;
+  status_cobertura: StatusCobertura;
+  lead_time_medio: number | null;
   aging_dias: number;
   pedidos: PedidoVinc[];
 }
@@ -126,6 +135,21 @@ function agingClass(dias: number): "is-fresh" | "is-aging" | "is-overdue" {
   if (dias < 1) return "is-fresh";
   if (dias < 3) return "is-aging";
   return "is-overdue";
+}
+
+function coberturaLabel(s: StatusCobertura): { txt: string; color: string } {
+  switch (s) {
+    case "critico":
+      return { txt: "crítico", color: "#dc2626" };
+    case "lead_time_risco":
+      return { txt: "risco lead time", color: "#d97706" };
+    case "atencao":
+      return { txt: "atenção", color: "#d97706" };
+    case "ok":
+      return { txt: "ok", color: "#16a34a" };
+    default:
+      return { txt: "sem giro", color: "#71717a" };
+  }
 }
 
 // ── Página ──────────────────────────────────────────────────────────
@@ -719,6 +743,37 @@ function TabComprar({
                           </div>
                           <div className="wms-pcard-item-desc">
                             {item.descricao}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 8,
+                              alignItems: "center",
+                              fontSize: 11,
+                              marginTop: 3,
+                            }}
+                          >
+                            <span style={{ fontWeight: 600 }}>
+                              precisa {item.quantidade_necessaria}
+                            </span>
+                            <span className="wms-td-mute">
+                              demanda {item.demanda_aberta} · livre {item.estoque_livre} · a
+                              caminho {item.em_transito}
+                            </span>
+                            {item.giro_diario > 0 ? (
+                              <span
+                                style={{ color: coberturaLabel(item.status_cobertura).color }}
+                              >
+                                gira {item.giro_diario.toFixed(1)}/d
+                                {item.dias_cobertura != null
+                                  ? ` · ${item.dias_cobertura}d cob`
+                                  : ""}{" "}
+                                · {coberturaLabel(item.status_cobertura).txt}
+                              </span>
+                            ) : (
+                              <span className="wms-td-mute">sem giro</span>
+                            )}
                           </div>
                           <div
                             className="wms-td-mute"

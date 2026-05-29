@@ -8,7 +8,8 @@ import {
   getCompraQuantidadeRestante,
   getCompraQuantidadeSolicitada,
 } from "@/lib/compras-utils";
-import { calcularNecessidadeLiquida } from "@/lib/compras-necessidade";
+import { calcularNecessidadeLiquida, piorStatusCobertura } from "@/lib/compras-necessidade";
+import type { StatusCobertura } from "@/lib/wms/cobertura";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { userCan } from "@/lib/permissions";
 
@@ -33,6 +34,10 @@ interface ComprarSkuEntry {
   demanda_aberta: number;
   estoque_livre: number;
   em_transito: number;
+  giro_diario: number;
+  dias_cobertura: number | null;
+  status_cobertura: StatusCobertura;
+  lead_time_medio: number | null;
   aging_dias: number;
   pedidos: PedidoRef[];
 }
@@ -233,6 +238,9 @@ interface ContextoSku {
   demandaComprado: number; // Σ(pedida − pega) dos itens já 'comprado' (ainda precisam do SKU)
   emTransito: number; // Σ max(0, solicitada − recebida) dos itens 'comprado'
   estoqueLivre: number; // Σ siso_estoque.disponivel (ao vivo) do produto
+  giroDiario: number;
+  statusCobertura: StatusCobertura;
+  leadTimeMedio: number | null;
 }
 
 /**
@@ -248,7 +256,14 @@ async function carregarContextoNecessidade(
 ): Promise<Map<string, ContextoSku>> {
   const ctx = new Map<string, ContextoSku>();
   for (const sku of skus) {
-    ctx.set(sku, { demandaComprado: 0, emTransito: 0, estoqueLivre: 0 });
+    ctx.set(sku, {
+      demandaComprado: 0,
+      emTransito: 0,
+      estoqueLivre: 0,
+      giroDiario: 0,
+      statusCobertura: "sem_giro",
+      leadTimeMedio: null,
+    });
   }
   if (skus.length === 0) return ctx;
 
@@ -296,6 +311,29 @@ async function carregarContextoNecessidade(
       if (!sku) continue;
       const c = ctx.get(sku);
       if (c) c.estoqueLivre += Number(s.disponivel ?? 0);
+    }
+  }
+
+  // 3) Giro/cobertura da MV (defasada, mas giro muda devagar — ok pra âncora).
+  if (uuids.length > 0) {
+    const { data: cob } = await supabase
+      .from("siso_cobertura_estoque")
+      .select("produto_id, giro_diario, lead_time_medio, status_cobertura")
+      .in("produto_id", uuids);
+
+    for (const r of cob ?? []) {
+      const sku = skuPorUuid.get(r.produto_id as string);
+      if (!sku) continue;
+      const c = ctx.get(sku);
+      if (!c) continue;
+      c.giroDiario += Number(r.giro_diario ?? 0);
+      c.statusCobertura = piorStatusCobertura(
+        c.statusCobertura,
+        (r.status_cobertura ?? "sem_giro") as StatusCobertura,
+      );
+      if (r.lead_time_medio != null) {
+        c.leadTimeMedio = Math.max(c.leadTimeMedio ?? 0, Number(r.lead_time_medio));
+      }
     }
   }
 
@@ -376,6 +414,10 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
           demanda_aberta: 0,
           estoque_livre: 0,
           em_transito: 0,
+          giro_diario: 0,
+          dias_cobertura: null,
+          status_cobertura: "sem_giro",
+          lead_time_medio: null,
           aging_dias: 0,
           pedidos: [],
         },
@@ -411,6 +453,11 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
       entry.demanda_aberta = res.demandaAberta;
       entry.estoque_livre = res.estoqueLivre;
       entry.em_transito = res.emTransito;
+      entry.giro_diario = c?.giroDiario ?? 0;
+      entry.dias_cobertura =
+        c && c.giroDiario > 0 ? Math.round(c.estoqueLivre / c.giroDiario) : null;
+      entry.status_cobertura = c?.statusCobertura ?? "sem_giro";
+      entry.lead_time_medio = c?.leadTimeMedio ?? null;
       itens.push(entry);
     }
 

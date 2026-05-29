@@ -375,6 +375,26 @@ This is the **authoritative, comprehensive reference** for every API route in th
 }
 ```
 
+**Response (422 - OC bloqueado, Fase 1):**
+```json
+{
+  "error": "oc_bloqueado_snapshot_cobre",
+  "message": "Saldo vivo cobre os itens — aprove como Própria ou Transferência"
+}
+```
+> **Fase 1:** quando `decisao='oc'` mas o saldo **vivo** de `siso_estoque` (somado em todos os galpões, resolvido por `tiny_produto_id`→WMS) cobre 100% dos itens, o endpoint recusa a OC e força Própria/Transferência. Lê estoque vivo (não snapshot) — era a raiz do loop de OC.
+
+**Response (409 - Reserva sem cobertura, Fase 1):**
+```json
+{
+  "error": "reserva_falhou",
+  "motivo": "sem_saldo | mapeamento_ausente | saldo_insuficiente | erro_runtime",
+  "item": { "sku": "...", "produto_id_tiny": 0, "qty": 0 },
+  "rollback": { "tentativas": 0, "sucesso": 0, "falhou": 0, "orfas_ids": [] }
+}
+```
+> **Fase 1:** `propria`/`transferencia` criam as reservas R atomicamente ANTES de transitar status (tudo-ou-nada). Se algum item não tem cobertura no runtime, estorna as N-1 já criadas e devolve 409 sem mexer no pedido.
+
 **Business Logic:**
 - **decisao = "rejeitado" short-circuit (botão Recusar):**
   - Atualiza pedido: `decisao_final='rejeitado'`, `status='cancelado'`, `status_separacao=null`
@@ -392,6 +412,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
   - Finds another empresa in same grupo with different galpão
   - If found: uses that empresa for execution
   - If not found: falls back to origin empresa (with warning)
+- **Fase 1 — OC-block:** se `decisao='oc'` e o saldo vivo cobre 100% dos itens → 422 `oc_bloqueado_snapshot_cobre` (força Própria/Transferência).
+- **Fase 1 — reservas:** se `decisao ∈ {propria, transferencia}`, cria 1 R por item via `criarReservasPedido` (loc = maior saldo no galpão de separação) **antes** de transitar status; tudo-ou-nada → 409 `reserva_falhou` se algum item sem cobertura no runtime. `oc` **não** reserva (compra/baixa acontece depois). _(Feature "parcial na entrada" — reservar a parte coberta no caminho OC — está especificada mas ainda não implementada; ver relatório da Fase 3.)_
 - Sets status = "executando", decisao_final, tipo_resolucao = "manual"
 - Sets separacao_status = "aguardando_separacao" (if NF already arrived) or "aguardando_nf"
 - Builds marcadores: ["OC", filialOrigem] for OC decisions, else [filialExecucao]
@@ -1434,7 +1456,14 @@ Caminhos suportados:
 - Validates parent pedido has status_separacao = "em_separacao", "aguardando_separacao" **ou `pendente_realocacao`** (fix-pack 2026-05-18 I7 — permite marcar item em pedido travado por realocação sem cobertura)
 - Blocks if `separacao_parcial = true` (must use `/api/wms/separacao/parcial` instead)
 - Updates separacao_marcado and separacao_marcado_em (null if unmarked)
-- On mark: calls WMS `wms_inserir_movimentacao` (tipo=S, origem_tipo=nf_venda) — graceful failure (logs warn, proceeds). Inserta 1 linha em `siso_pedido_item_mov_links` (tipo_link='saida') pra bridge.
+- **On mark (Fase 1 — fail-loud):** chama a RPC atômica `wms_pick_item_atomico` (L libera a R viva + S `nf_venda`, numa transação). A loc vem da **R viva** do pedido (`buscarReservaPendentePorProduto`), não de heurística. **Se a baixa falhar (saldo insuficiente, R já liberada), retorna 409 e NÃO marca o item** — antes marcava com "graceful failure" (logava warn e seguia), o que deixava item marcado sem saída no ledger (invariante A violado). Item sem R viva (OC já comprado / R liberada) cai no fallback S-only na loc com maior saldo.
+- On unmark: estorna a S e **ressuscita a R** (ordem: S antes de L, pra preservar o invariante reservado≤saldo).
+
+**Response (409 — baixa atômica falhou, Fase 1):**
+```json
+{ "error": "pick_falhou", "detalhe": "<motivo do RPC>" }
+```
+O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/posição mudou) e reabrir o checklist.
 - On unmark **(P3 #2.7)**: agora estorna a leg S **primeiro**, depois a leg L (estorno de
   liberação de reserva). Antes estornava em ordem trocada, o que violava invariante I2
   (saldo_anterior+delta=saldo_posterior) porque a leg L re-bloqueava o saldo que a S ainda
@@ -1803,7 +1832,8 @@ Caminhos suportados:
 - Insere 1 linha em `siso_pedido_item_mov_links` por (item, realocação?, mov, tipo_link) — bridge N:M item↔mov pra estorno proporcional posterior.
 - Se `loc_zerou` e `saldo > qty_pega`, gera mov S de ajuste `ajuste_pick_zerou` pra delta (também registrada na bridge).
 - Marca registro como parcial:
-  - Modo item: `siso_pedido_itens.separacao_parcial = true` + `separacao_marcado = true`.
+  - Modo item, `loc_zerou=true` (ou pegou tudo): `siso_pedido_itens.separacao_parcial = true` + `separacao_marcado = true`.
+  - Modo item, `loc_zerou=false` + residual (**Fase 3 #3**): item fica **aberto** (`separacao_parcial = false`, `separacao_marcado = false`, `quantidade_pega` acumulada) + pedido reenfileirado pro fim da fila. **NÃO** seta `separacao_parcial` (senão `marcar-item`/`parcial`/`bipar-checklist` rejeitariam o re-pick e o residual ficaria impossível de completar).
   - Modo realocação: `siso_pedido_item_realocacoes.status = 'picado_parcial'` (ou `'picado'` se cobriu integral).
 - Acumula `quantidade_pega` no item pai via RPC `wms_acumular_qty_pega` (UPDATE atômico — evita race em wave consolidado).
 - Se sobra residual: dispara `resolverRealocacao` excluindo loc original do item + todas as locs de realocações do mesmo item (qualquer status). Em wave consolidado a cascade roda em **todos** os itens afetados (multi-empresa). Cria novas linhas em `siso_pedido_item_realocacoes` com `parent_realocacao_id = realoc.id` no modo realocação, ou sem parent no modo item.
@@ -1813,9 +1843,12 @@ Caminhos suportados:
 | Status | Significado | Modo |
 |---|---|---|
 | `{ status: 'completo' }` | Sem residual — pegou tudo ou pegou o suficiente | ambos |
-| `{ status: 'realocado', realocacoes: [...] }` | Cascade criou linhas novas pra cobrir o residual | ambos |
+| `{ status: 'realocado', realocacoes: [...] }` | Cascade criou linhas novas (mesmo galpão) pra cobrir o residual | ambos |
+| `{ status: 'parcial_reenfileirado', pedidos_reenfileirados, items_parciais, items_residuais_a_fazer }` | **Fase 3 #3:** `loc_zerou=false` + residual (prateleira ainda tem). O pedido inteiro volta pro FIM da fila (`aguardando_separacao` + `separacao_reenfileirado_em=now`, `quantidade_pega` preservada). Os itens residuais ficam **abertos** (`separacao_parcial=false`, `separacao_marcado=false`) pra poderem ser completados/re-pickados depois (os 3 paths de pick rejeitam `separacao_parcial=true`); o badge "Parcial X/Y" deriva de `quantidade_pega`. Frontend dá toast + redirect pra `/wms/separacao`. | item |
+| `{ status: 'sem_cobertura_outro_galpao', tem_em_outro_galpao: true, galpoes_alternativos: [{galpao_id, galpao_nome, disponivel}], pedido_ids, item_ids }` | **Fase 1:** cascade esgotou no galpão atual mas há saldo VIVO em outro galpão. Frontend abre o `EsgotadoModal` (encaminhar-first): "Encaminhar p/ Galpão X" como 1ª opção, OC como fallback. | item (loc_zerou) |
+| `{ status: 'mandado_pra_compras', tem_em_outro_galpao: false, itens_atualizados, pedidos_atualizados }` | **Fase 1:** cascade esgotou e nenhum galpão tem saldo → itens transitam direto pra `aguardando_compra` (sem modal). | item (loc_zerou) |
 | `{ status: 'sem_cobertura' }` | Modo realocação: galpão sem cobertura pro residual. Frontend abre modal encaminhar/OC. **NÃO** marca pedido pendente_realocacao. | realocação |
-| `{ status: 'aguardando_supervisor', motivo: 'sem_cobertura_total' }` | Modo item: galpão sem cobertura. Pedido marcado `pendente_realocacao` automaticamente. | item |
+| `{ status: 'aguardando_supervisor', motivo: 'sem_grupos_elegiveis' }` | Defensivo — `porEmpresa` vazio (edge raro). | item |
 
 **Erros:**
 - 400 — body inválido, qty > sugerida, ou pedido sem empresa_origem.
@@ -4833,6 +4866,30 @@ Detecta divergências entre `siso_movimentacoes` (autoritativo) e `siso_estoque`
 **Query params:** `fix=true` corrige automaticamente via `wms_rebuild_linha_estoque`.
 
 **Response 200:** `{ divergencias: [...], corrigidas: number }`.
+
+### GET /api/wms/reconciliacao-pedidos
+
+**File:** `src/app/api/wms/reconciliacao-pedidos/route.ts` (Fase 2.1 — safety net)
+
+Sinaliza os 3 padrões de inconsistência do fluxo Pedido→Separação→Estoque via RPC `wms_detectar_pedidos_inconsistentes()`. A Fase 1 (pick atômico fail-loud) tornou esses padrões impossíveis daqui pra frente; o endpoint é rede de segurança (pega histórico + detecta regressões caso uma feature reintroduza baixa paralela). Cron-friendly.
+
+**Auth:** Header `x-worker-secret` = `WORKER_SECRET` (403 caso contrário).
+
+**Padrões detectados:**
+- `A_marcado_sem_saida` — item `separacao_marcado=true` + `quantidade_pega>0` mas `mov_saida_id IS NULL`.
+- `B_saida_sem_estoque_lancado` — pedido FORWARD (`separado/embalado/expedido`) com mov S `nf_venda` viva mas `estoque_lancado=false` (filtro forward evita falso-positivo em pedidos em meio de separação).
+- `C_forward_com_reserva_viva` — pedido `separado/embalado/expedido` com reserva R sem L estornando.
+
+**Response 200:**
+```json
+{
+  "ok": true,
+  "total": 0,
+  "por_padrao": { "A_marcado_sem_saida": 0, "B_saida_sem_estoque_lancado": 0, "C_forward_com_reserva_viva": 0 },
+  "amostras": []
+}
+```
+`amostras` traz até 50 linhas `{ padrao, pedido_id, produto_id, status_separacao, estoque_lancado, detalhe }`.
 
 ---
 

@@ -179,7 +179,12 @@ export async function GET(request: NextRequest) {
         .order("embalagem_concluida_em", { ascending: false, nullsFirst: false })
         .order("data", { ascending: true });
     } else {
-      pedidosQuery = pedidosQuery.order("data", { ascending: true });
+      // Fase 3 #3: pedidos reenfileirados (parcial com saldo na prateleira) vão
+      // pro FIM da fila. nullsFirst → não-reenfileirados (NULL) primeiro por
+      // data; reenfileirados depois, na ordem em que voltaram.
+      pedidosQuery = pedidosQuery
+        .order("separacao_reenfileirado_em", { ascending: true, nullsFirst: true })
+        .order("data", { ascending: true });
     }
 
     // 1c. Fetch all active galpões (for encaminhar dropdown)

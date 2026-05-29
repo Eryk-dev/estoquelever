@@ -652,6 +652,16 @@ export default function WmsChecklistPage() {
       }
       if (data.status === "completo") {
         toast.success("Item marcado como completo");
+      } else if (data.status === "parcial_reenfileirado") {
+        // Fase 3 #3: parcial com saldo restante na prateleira — pedido inteiro
+        // voltou pro FIM da fila. Sai do wave atual e pega o próximo.
+        toast.success("Parcial registrado — pedido voltou pro fim da fila de separação", {
+          duration: 5000,
+        });
+        setParcialModal(null);
+        queryClient.invalidateQueries({ queryKey });
+        router.push("/wms/separacao");
+        return;
       } else if (data.status === "realocado") {
         const locs = (data.realocacoes ?? [])
           .map((r: Realocacao) => r.localizacao_codigo)
@@ -677,6 +687,25 @@ export default function WmsChecklistPage() {
         setParcialModal(null);
         queryClient.invalidateQueries({ queryKey });
         router.push("/wms/separacao");
+        return;
+      } else if (data.status === "sem_cobertura_outro_galpao") {
+        // Fase 3 #1: cascade esgotou no galpão atual, mas há saldo VIVO em
+        // outro galpão. Abre o modal de esgotado (encaminhar-first): "Encaminhar
+        // p/ Galpão X" como 1ª opção, OC como fallback. Encaminhar move o pedido
+        // inteiro (via /produto-esgotado acao=encaminhar).
+        const sku = parcialModal.sku;
+        setParcialModal(null);
+        setEsgotadoModal({
+          sku,
+          loading: false,
+          galpoes: (data.galpoes_alternativos ?? []).map(
+            (g: { galpao_id: string; galpao_nome: string }) => ({
+              galpao_id: g.galpao_id,
+              galpao_nome: g.galpao_nome,
+            }),
+          ),
+          pedidos_afetados: (data.pedido_ids ?? []).length,
+        });
         return;
       } else if (data.status === "aguardando_supervisor") {
         // Caminho defensivo (sem_grupos_elegiveis — edge case raro)
@@ -934,8 +963,17 @@ export default function WmsChecklistPage() {
                 const underlyingItems = items.filter((i) =>
                   p.item_ids.includes(String(i.id)),
                 );
+                // Badge "Parcial X/Y": mostra pra itens com flag separacao_parcial
+                // (cascade loc_zerou, já marcados) E pra parciais EM PROGRESSO
+                // (Fase 3 #3: pegou parte, prateleira tem, pedido reenfileirado —
+                // separacao_parcial fica false pra não travar o re-pick, então
+                // derivamos do quantidade_pega).
                 const parcialItem = underlyingItems.find(
-                  (i) => i.separacao_parcial,
+                  (i) =>
+                    i.separacao_parcial ||
+                    (Number(i.quantidade_pega ?? 0) > 0 &&
+                      Number(i.quantidade_pega ?? 0) < i.quantidade &&
+                      !i.separacao_marcado),
                 );
                 const isParcial = !!parcialItem;
                 const firstItemId = p.item_ids[0] ?? "";
@@ -1278,7 +1316,11 @@ function ItemRow({
         className="wms-tar"
         style={{ display: "flex", flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "flex-end" }}
       >
-        {!done && !isParcial && (
+        {!done && (
+          // Fase 3 #3: mostra "Parcial" mesmo em item já parcial-em-progresso
+          // (isParcial && !done) — operador pode pegar mais um pouco e adiar de
+          // novo se a prateleira ainda não cobre o restante. Itens parcial+done
+          // (cascade loc_zerou) seguem sem o botão (done=true).
           <button
             type="button"
             className="wms-btn wms-btn-ghost"

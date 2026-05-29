@@ -64,6 +64,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `separacao_operador_id` | uuid | YES | FK | User performing separation |
 | `separacao_iniciada_em` | timestamptz | YES | | When wave picking started |
 | `separacao_concluida_em` | timestamptz | YES | | When picking completed |
+| `separacao_reenfileirado_em` | timestamptz | YES | null | **Fase 3 #3:** set when a partial pick with shelf stock left (loc_zerou=false + residual) sends the whole order back to the END of the separation queue. NULL = never re-queued (ordered by `data`); listing sorts NULL first by `data`, then re-queued by this timestamp. |
 | `embalagem_concluida_em` | timestamptz | YES | | When packing completed |
 | `embalagem_operador_id` | uuid | YES | FK | User who packed the order (may differ from separacao_operador_id) |
 | `etiqueta_status` | text | YES | | Shipping label status: `pendente`, `imprimindo`, `impresso`, `falhou` |
@@ -98,6 +99,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `idx_pedidos_separacao_aguardando` (separacao_galpao_id) WHERE status_separacao = 'aguardando_nf'
 - `idx_pedidos_separacao_embalado` (separacao_galpao_id) WHERE status_separacao = 'embalado'
 - `idx_pedidos_separacao_data` (separacao_galpao_id, data ASC) WHERE status_separacao IN ('aguardando_separacao', 'em_separacao')
+- `idx_pedidos_reenfileirado` (separacao_reenfileirado_em) WHERE separacao_reenfileirado_em IS NOT NULL — **Fase 3 #3:** acelera ordenação "fim da fila" de parciais re-enfileirados
 - `idx_siso_pedidos_separacao_tags` GIN index on separacao_tags
 - `idx_pedidos_vendedor_id` (vendedor_id) WHERE vendedor_id IS NOT NULL — acelera filtro "Meus pedidos" do vendedor
 - `idx_pedidos_vendas_diretas` (status, criado_em DESC) WHERE origem_pedido = 'manual' OR nome_ecommerce IN ('Mercado Livre','Shopee') — acelera listagem /wms/vendas
@@ -121,6 +123,8 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 ### siso_pedido_itens
 
 **Purpose:** Line items for each order, with barcode tracking and purchase information.
+
+> **Fase 2.3 (2026-05-30) — colunas legadas 2-galpão DROPADAS.** `estoque_cwb_saldo/reservado/disponivel/deposito_id/deposito_nome`, `estoque_sp_*` (idem), `cwb_atende`, `sp_atende`, `localizacao_cwb`, `localizacao_sp` foram removidas (14 colunas). Herdadas do schema pré-WMS (estoque hardcoded a CWB|SP); estoque hoje é 3D em `siso_estoque`. Zero leitura no código; writes mortos removidos. Migration: `20260530_drop_legacy_2galpao_cols`.
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -170,9 +174,9 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `compra_equivalente_descricao_original` | text | YES | | Original description |
 | `compra_equivalente_produto_id_original` | bigint | YES | | Original Tiny product ID |
 | **Short pick (parcial) columns:** | | | | |
-| `quantidade_pega` | integer | YES | null | Qty actually picked in a partial pick |
-| `separacao_parcial` | boolean | NO | false | Flag: item had a short pick |
-| `parcial_motivo` | text | YES | null | Reason text for the short pick |
+| `quantidade_pega` | integer | YES | null | Qty actually picked in a partial pick (preserved across re-queue — Fase 3 #3) |
+| `separacao_parcial` | boolean | NO | false | Flag: short pick **com `loc_zerou=true`** (cascade/encaminhar/OC; item fica marcado). **NÃO** é setado no caso "prateleira ainda tem" (Fase 3 #3): lá o item fica aberto (flag=false) pra poder ser re-pickado — `marcar-item`/`parcial`/`bipar-checklist` rejeitam `separacao_parcial=true`. O badge "Parcial X/Y" do checklist deriva de `quantidade_pega` (0 < pega < pedida && !marcado), não do flag. |
+| `parcial_motivo` | text | YES | null | Reason: `loc_zerou` (cascade/encaminhar/OC). |
 | `parcial_em` | timestamptz | YES | null | When the short pick was registered |
 | `parcial_por` | uuid | YES | FK | User who registered the short pick |
 | `mov_saida_id` | uuid | YES | FK | WMS movement ID for the saida created on mark/parcial |
@@ -766,6 +770,44 @@ Objetos introduzidos pelo fix-pack da realocação cascateável (24 achados de a
 
 **Consumido por:**
 - `desclassificarDevolucao` (`POST /api/wms/devolucoes/[id]/desclassificar`) — busca `SELECT id FROM siso_movimentacoes WHERE devolucao_id = $id` e estorna cada mov determinística, sem janela temporal.
+
+---
+
+### RPC `wms_detectar_pedidos_inconsistentes` (Fase 2.1 — safety net)
+
+```sql
+wms_detectar_pedidos_inconsistentes()
+RETURNS TABLE(padrao text, pedido_id text, produto_id text,
+              status_separacao text, estoque_lancado boolean, detalhe text)
+```
+
+Detecta os 3 padrões de inconsistência do fluxo Pedido→Separação→Estoque que a
+Fase 1 (pick atômico fail-loud) tornou impossíveis daqui pra frente, mas que
+podem existir em histórico ou reaparecer se uma feature reintroduzir baixa paralela:
+- `A_marcado_sem_saida` — item `separacao_marcado=true` com `quantidade_pega>0` mas `mov_saida_id IS NULL`.
+- `B_saida_sem_estoque_lancado` — pedido FORWARD (`separado/embalado/expedido`) com mov S `nf_venda` viva mas `estoque_lancado=false` (filtro forward evita falso-positivo em pedidos em meio de separação — a S nasce no pick, antes do cutover flipar o flag).
+- `C_forward_com_reserva_viva` — pedido `separado/embalado/expedido` com reserva R sem L estornando.
+
+`LANGUAGE sql STABLE` (read-only). Consumido por `GET /api/wms/reconciliacao-pedidos`
+(worker-secret, cron-friendly). Migration: `20260530_wms_detectar_pedidos_inconsistentes`.
+
+---
+
+### RPC `wms_pick_item_atomico` (Fase 1.1)
+
+```sql
+wms_pick_item_atomico(p_reserva_id uuid, p_produto_id uuid, p_galpao_id uuid,
+  p_localizacao_id uuid, p_qty numeric, p_pedido_id text, p_empresa_vendedora_id uuid,
+  p_usuario_id uuid, p_nota_fiscal_id uuid, p_motivo text, p_origem_detalhes jsonb)
+RETURNS jsonb
+```
+
+Baixa atômica do pick: L (libera a R) + S (saída `nf_venda`) numa única transação
+plpgsql. **Fail-loud:** se a S falhar (saldo insuficiente), a transação inteira faz
+rollback — inclusive a L. Garante o invariante "S sempre criada junto com seu L, ou
+nada". `marcar-item` retorna 409 e NÃO marca o item se isto lançar. Dois modos:
+`p_reserva_id != NULL` → loc derivada da R viva, L+S pareados; `p_reserva_id = NULL`
+→ S-only na tripla passada (item sem reserva). Migration: `20260528_wms_pick_item_atomico`.
 
 ---
 
@@ -1675,6 +1717,12 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-05-27 | `20260527_inventario_sugerir_excluir_quarentena.sql` | **Fix-Final B B5 — `wms_inventario_sugerir` exclui QUARENTENA.** ALTER RPC: adiciona filtro `loc.tipo <> 'quarentena'` nos 3 CTEs (`curva_a`, `divergentes`, `antigos`). Evita que locs de quarentena apareçam na sugestão inteligente de ciclo de inventário (produto em quarentena não deve ser contado no fluxo normal). Commit `e9201e9`. |
 | 2026-05-28 | `20260528_movs_devolucao_id.sql` | **Fix-Final B B9 — `siso_movimentacoes.devolucao_id`.** ADD COLUMN `devolucao_id uuid REFERENCES siso_devolucoes_pendentes(id) ON DELETE SET NULL` + CREATE INDEX CONCURRENTLY `ix_siso_movimentacoes_devolucao_id ON siso_movimentacoes(devolucao_id) WHERE devolucao_id IS NOT NULL`. Permite lookup determinístico na desclassificação (`desclassificarDevolucao`) em vez de janela temporal ±60s. |
 | 2026-05-28 | `20260528_pendencias_tracking_origem_ids.sql` | **Fix-Final B B11 — `siso_wms_pendencias_guarda.tracking_origem_ids`.** ADD COLUMN `tracking_origem_ids text[]` — scaffolding futuro para múltiplos IDs de NF/tracking por pendência. Population adiada (sem campo no payload do webhook atual). |
+| 2026-05-28 | `20260528_wms_pick_item_atomico.sql` | **Fase 1.1 — RPC `wms_pick_item_atomico`.** Baixa atômica L+S no pick, fail-loud. `marcar-item` retorna 409 e não marca se a baixa falhar. |
+| 2026-05-28 | `20260528_drop_siso_pedido_item_estoques.sql` | **Fase 1.4 — DROP `siso_pedido_item_estoques`** (snapshot estale). 13 consumidores migrados pra estoque vivo (`siso_estoque` / R viva). |
+| 2026-05-29 | `20260529_consolidar_separacao_loc_viva.sql` | **Fase 1.4 follow-up — `siso_consolidar_produtos_separacao`** lê loc da reserva R viva (regressão do drop corrigida). |
+| 2026-05-30 | `20260530_drop_legacy_2galpao_cols.sql` | **Fase 2.3 — DROP 14 colunas legadas 2-galpão** de `siso_pedido_itens` (`estoque_cwb_*`, `estoque_sp_*`, `cwb_atende`, `sp_atende`, `localizacao_cwb/sp`). Zero leitura no código. |
+| 2026-05-30 | `20260530_wms_detectar_pedidos_inconsistentes.sql` | **Fase 2.1 — RPC safety net** que sinaliza os 3 padrões (marcado-sem-S / S-sem-estoque_lancado / forward-com-R-viva). Consumido por `GET /api/wms/reconciliacao-pedidos`. |
+| 2026-05-30 | `20260530_separacao_reenfileirado_em.sql` | **Fase 3 #3 — `siso_pedidos.separacao_reenfileirado_em`** + index parcial. Parcial com saldo na prateleira manda o pedido pro FIM da fila de separação. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

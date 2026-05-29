@@ -2650,3 +2650,62 @@ erros:
       - src/app/api/wms/pedidos/aprovar/route.ts
       - supabase/migrations/20260528_drop_siso_pedido_item_estoques.sql
     tags: [oc, compras, snapshot, estoque-vivo, ledger, fase1, p1]
+
+  - id: wms-vendas-criar-galpao-fora-enum-siso-filial
+    date: "2026-05-29"
+    source: src/app/api/wms/vendas/criar/route.ts
+    category: database
+    message: "vendas/criar 500 em galpão fora de CWB|SP — siso_pedidos.filial_origem é enum legado siso_filial {CWB,SP}"
+    cause: >
+      vendas/criar grava o NOME do galpão em siso_pedidos.filial_origem, que é um
+      enum legado siso_filial com apenas {CWB, SP}. Pedido em galpão arbitrário
+      (ex.: 'PR-TEST-28-...') estoura 'invalid input value for enum siso_filial'.
+      filial_origem é coluna LEGADA (source of truth é empresa_origem_id).
+      Descoberto ao rodar o cenário 28 (antes sempre skipado, nunca executado).
+    fix: >
+      NÃO corrigido — fora de escopo da Fase 2/3 (bug de vendas + enum legado, não
+      do fluxo Pedido->Separacao->Estoque). DEFERIDO pra Fase 2.4 (cleanup de legados):
+      ALTER filial_origem pra text OU fazer vendas/criar parar de escrever o galpão
+      no enum (usar só empresa_origem_id). Vendas baixa_direta em galpão válido
+      (CWB/SP) funciona — coberto por cenários 12/13. O cenário 28 (que testava as
+      colunas cwb_atende/sp_atende, dropadas na Fase 2.3) foi removido.
+    files:
+      - src/app/api/wms/vendas/criar/route.ts
+    tags: [vendas, filial_origem, siso_filial, enum, legado, fase2.4, diagnosticado-nao-corrigido]
+
+  - id: wms-fase3-2-reserva-parcial-quebra-pick
+    date: "2026-05-29"
+    source: src/app/api/wms/pedidos/aprovar/route.ts
+    category: business_logic
+    message: "Reserva PARCIAL na entrada (aprovar OC reserva o coberto + compra faltante) quebra o pick downstream — REVERTIDA"
+    cause: >
+      A feature 'parcial na entrada' (reservar coberto por-unidade + OC do faltante)
+      cria uma R parcial/multi-loc (ex.: R=2 num item de qty=5). Mas TODO o pick
+      downstream assume R == qty cheia do item, em UMA loc, fonte ÚNICA:
+      - marcar-item/wms_pick_item_atomico libera a qty cheia (5) contra a R(2) →
+        wms_inserir_movimentacao estoura 'liberação excede reservado: 2−5<0' → 409
+        → item impossível de pickar, R órfã.
+      - validar-oc-item/bipar-checklist (pickMovPicking→liberarReservaPicking) ENGOLE
+        o overflow (warn + movSaidaId=null) → item marcado SEM S → saída faltando +
+        R órfã + under-ship silencioso (viola a regra de ouro 2×).
+      - cross-galpão: R órfã no galpão A é cutoverada enquanto o pick já saiu do
+        galpão B → DUPLA saída S (coberto deduzido 2×).
+      - itens de OC recebidos caem em RECEBIMENTO (sem putaway no resume) → estoque
+        do item fica fragmentado (coberto loc A + recebido loc X), e o pick é
+        single-loc → falha mesmo sem reserva.
+      9 findings confirmados empiricamente em staging por review adversarial.
+    fix: >
+      REVERTIDA (git checkout HEAD nos 2 arquivos + delete do cenário 70). O estado
+      pré-feature (OC sem reserva; faltante via disponível-vivo; pick S-only live)
+      funciona pro caso comum. O fix CORRETO exige reescrever o pick pra suportar:
+      (a) R parcial (cap do L em reservado), (b) R multi-loc (consumir N reservas),
+      (c) pick multi-fonte (loc-reservada-coberta + loc-OC-recebida), (d) coordenação
+      cross-galpão, (e) cutover/cleanup de reservas parciais. É um projeto na trilha
+      crítica de invariante — fazer com design dedicado + suite completa, não inline.
+    files:
+      - src/app/api/wms/pedidos/aprovar/route.ts
+      - src/lib/execution-worker.ts
+      - src/lib/wms/separacao/pick-mov.ts
+      - src/lib/wms/reservas-picking.ts
+      - src/app/api/wms/separacao/validar-oc-item/route.ts
+    tags: [oc, reserva-parcial, pick, invariante, fase3-2, multi-fonte, revertido, diagnosticado-nao-corrigido]

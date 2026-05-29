@@ -245,7 +245,10 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
   for (const item of rawItems) {
     const fornecedor = item.fornecedor_oc ?? "Sem fornecedor";
     const qtySolicitada = getCompraQuantidadeSolicitada(item);
-    const agingBase = item.siso_pedidos?.criado_em ?? item.compra_solicitada_em;
+    // Fase 3 #4: tempo de espera = desde quando a compra foi SOLICITADA
+    // (compra_solicitada_em), não desde a criação do pedido. Fallback defensivo
+    // pro criado_em caso a solicitada esteja nula.
+    const agingBase = item.compra_solicitada_em ?? item.siso_pedidos?.criado_em;
     const itemAging = getAgingDays(agingBase);
 
     if (!fornecedorMap.has(fornecedor)) {
@@ -505,7 +508,7 @@ async function fetchExcecoes(supabase: SupabaseClient): Promise<ExcecaoItem[]> {
       imagem_url: item.imagem_url as string | null,
       compra_status: item.compra_status as string,
       quantidade: qty,
-      aging_dias: getAgingDays(pedido?.criado_em ?? (item.compra_solicitada_em as string | null)),
+      aging_dias: getAgingDays((item.compra_solicitada_em as string | null) ?? pedido?.criado_em ?? null),
       fornecedor_oc: item.fornecedor_oc as string | null,
       pedido_id: item.pedido_id as string,
       numero_pedido: pedido?.numero ?? "?",

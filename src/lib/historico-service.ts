@@ -68,6 +68,7 @@ export type EventoPedido =
   | "oc_item_confirmado"
   | "parcial_loc_zerou"
   | "parcial_em_progresso"
+  | "parcial_reenfileirado"
   | "realocacao_picada"
   | "realocacao_parcial"
   | "realocacao_cancelada"

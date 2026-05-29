@@ -154,31 +154,9 @@ export async function POST(request: Request) {
     // 8. (Fase 1.4) REMOVIDO: update do snapshot siso_pedido_item_estoques
     //    (saldo/reservado/disponivel). Tabela dropada — saldo vive em siso_estoque.
 
-    // 9. Also update legacy columns (backwards compat — will be removed)
-    const qtdPedida = await getQuantidadePedida(supabase, pedidoId, produtoId);
-    if (galpao === "CWB" || galpao === "SP") {
-      // [Fix-D T10] cwb_atende/sp_atende removidos (zero readers)
-      const legacyFields =
-        galpao === "CWB"
-          ? {
-              estoque_cwb_saldo: novoSaldo,
-              estoque_cwb_reservado: novoReservado,
-              estoque_cwb_disponivel: novoDisponivel,
-            }
-          : {
-              estoque_sp_saldo: novoSaldo,
-              estoque_sp_reservado: novoReservado,
-              estoque_sp_disponivel: novoDisponivel,
-            };
-      void qtdPedida; // var era usada só nos campos removidos
-
-
-      await supabase
-        .from("siso_pedido_itens")
-        .update(legacyFields)
-        .eq("pedido_id", pedidoId)
-        .eq("produto_id", produtoId);
-    }
+    // 9. (Fase 2.3) REMOVIDO: write das colunas legadas 2-galpão de
+    //    siso_pedido_itens (estoque_cwb_*/estoque_sp_*) — colunas dropadas.
+    //    Saldo vive em siso_estoque (ledger).
 
     return NextResponse.json({
       ok: true,
@@ -195,18 +173,4 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
-}
-
-async function getQuantidadePedida(
-  supabase: ReturnType<typeof createServiceClient>,
-  pedidoId: string,
-  produtoId: number,
-): Promise<number> {
-  const { data } = await supabase
-    .from("siso_pedido_itens")
-    .select("quantidade_pedida")
-    .eq("pedido_id", pedidoId)
-    .eq("produto_id", produtoId)
-    .single();
-  return data?.quantidade_pedida ?? 0;
 }

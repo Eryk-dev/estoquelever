@@ -773,12 +773,55 @@ async function processarParcialItem(
     }
 
     if (!loc_zerou) {
-      // Operador pegou menos que pedido mas não zerou a loc — items residuais
-      // NÃO foram marcados (deveMarcar=false acima), continuam a fazer no checklist.
-      // Não roda cascade.
+      // Fase 3 #3: operador pegou menos que o pedido mas NÃO zerou a loc
+      // (prateleira ainda tem saldo). Reenfileira o pedido INTEIRO pro FIM da
+      // fila (volta pra aguardando_separacao preservando quantidade_pega).
+      //
+      // Os itens residuais ficam ABERTOS — separacao_parcial=false,
+      // separacao_marcado=false, quantidade_pega acumulada (igual baseline).
+      // NÃO setamos separacao_parcial=true de propósito: marcar-item,
+      // /parcial e /bipar-checklist TODOS rejeitam (409 / skip) itens com
+      // separacao_parcial=true, então setar o flag deixaria o residual
+      // impossível de completar (pedido travado). Com o flag em false o
+      // operador completa normalmente depois (marcar-item desconta só
+      // quantidade_pedida-quantidade_pega). O badge "Parcial X/Y" no checklist
+      // deriva de quantidade_pega (0 < pega < pedida && !marcado), não do flag.
+      const beneficiariosResiduais = itemsResiduais.filter((u) => u.qty_para_este > 0);
+      // Reenfileira pro fim da fila os pedidos que ficaram com residual.
+      const pedidosReenfileirar = [...new Set(itemsResiduais.map((u) => u.item.pedido_id))];
+      const { error: reenfErr } = await supabase
+        .from("siso_pedidos")
+        .update({
+          status_separacao: "aguardando_separacao",
+          separacao_reenfileirado_em: nowIso,
+          separacao_iniciada_em: null,
+          separacao_operador_id: null,
+        })
+        .in("id", pedidosReenfileirar);
+      if (reenfErr) {
+        logger.logError({
+          error: reenfErr,
+          source: "separacao-parcial",
+          message: "Falhou reenfileirar pedido parcial pro fim da fila",
+          category: "database",
+          requestPath: "/api/wms/separacao/parcial",
+          requestMethod: "POST",
+          metadata: { pedidosReenfileirar },
+        });
+        return NextResponse.json({ error: "erro reenfileirando parcial" }, { status: 500 });
+      }
+      for (const pid of pedidosReenfileirar) {
+        await registrarEvento({
+          pedidoId: pid,
+          evento: "parcial_reenfileirado",
+          detalhes: { motivo: "prateleira_com_saldo", reenfileirado_em: nowIso },
+          usuarioId: session.id,
+        });
+      }
       return NextResponse.json({
-        status: "completo",
-        items_marcados: itemUpdates.filter((u) => u.qty_para_este > 0).length,
+        status: "parcial_reenfileirado",
+        pedidos_reenfileirados: pedidosReenfileirar,
+        items_parciais: beneficiariosResiduais.length,
         items_residuais_a_fazer: itemsResiduais.length,
       });
     }

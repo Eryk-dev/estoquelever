@@ -2788,3 +2788,32 @@ erros:
       Caminho de leitura: só a fila lia destino_sugerido; detalhe/rota foram
       esquecidos. Ao adicionar coluna/feature que alimenta UI, conferir TODOS os
       consumidores (lista + detalhe + rota), não só o primeiro.
+
+  - id: separacao-realtime-querykey-mismatch-poll-10s
+    date: "2026-05-31"
+    source: wms.separacao (lista)
+    category: business_logic
+    message: "Realtime da lista de separação não atualizava — pedido só aparecia no próximo poll de 10s"
+    cause: >
+      useRealtimeSeparacao() em modo no-arg (usado pela /wms/separacao) invalidava a
+      queryKey ["separacao"], mas a query da lista é registrada sob
+      ["wms-separacao", galpao, tab, ...]. invalidateQueries do React Query faz
+      prefix-match: ["wms-separacao", ...] NÃO começa com ["separacao"], então o
+      evento realtime não invalidava nada. O push instantâneo estava morto; a lista
+      só atualizava pelo refetchInterval:10_000 — ao transitar o status de um pedido,
+      o operador esperava até ~10s (o próximo tick do poll) pra ver. Os handlers de
+      mutação no mesmo arquivo já usavam ["wms-separacao"] correto — a key do hook era
+      a única desalinhada.
+    fix: >
+      use-realtime-separacao.ts:116 passa a invalidar ["wms-separacao"] (prefix que
+      casa todas as variações de filtro). Com o realtime funcionando, o UPDATE em
+      siso_pedidos (já na publication supabase_realtime) refaz a lista dentro da
+      janela de debounce de 500ms.
+    files:
+      - src/hooks/use-realtime-separacao.ts
+    tags: [separacao, realtime, react-query, querykey, prefix-match, poll, latencia, performance]
+    notes: >
+      Descoberto na auditoria de performance 2026-05-31. Sintoma: "leva 10s pra um
+      pedido aprovado aparecer na separação". Lição: a queryKey de invalidação
+      realtime deve casar (por prefixo) a key da query — um mismatch desliga o push
+      silenciosamente e cai pro poll.

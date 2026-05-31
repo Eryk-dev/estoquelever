@@ -291,6 +291,16 @@ export default function WmsPedidosPage() {
         toast.error("Sessão inválida");
         return;
       }
+
+      // Remoção otimista: o POST + refetch da lista levam ~1-2s cross-region.
+      // Tira o card da lista na hora; reconcilia no servidor em background e
+      // faz rollback se a aprovação falhar.
+      await queryClient.cancelQueries({ queryKey: ["wms-pedidos"] });
+      const snapshot = queryClient.getQueryData<Pedido[]>(["wms-pedidos"]);
+      queryClient.setQueryData<Pedido[]>(["wms-pedidos"], (old) =>
+        (old ?? []).filter((x) => x.id !== p.id),
+      );
+
       try {
         const r = await sisoFetch(`/api/wms/pedidos/aprovar`, {
           method: "POST",
@@ -307,9 +317,14 @@ export default function WmsPedidosPage() {
           throw new Error(b.error || `HTTP ${r.status}`);
         }
         toast.success(`Pedido #${p.numero} aprovado → ${decisao}`);
-        queryClient.invalidateQueries({ queryKey: ["wms-pedidos"] });
       } catch (e) {
+        // rollback — o card volta pra lista
+        if (snapshot) queryClient.setQueryData(["wms-pedidos"], snapshot);
         toast.error(e instanceof Error ? e.message : "Erro ao aprovar");
+      } finally {
+        // reconcilia com o servidor sem bloquear a UI (success: confirma a
+        // saída; erro: o refetch traz o estado real de volta)
+        queryClient.invalidateQueries({ queryKey: ["wms-pedidos"] });
       }
     },
     [queryClient, user],

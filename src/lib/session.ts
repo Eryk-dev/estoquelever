@@ -12,6 +12,64 @@ export interface SessionUser {
   galpaoId: string | null;
 }
 
+// ── Cache de sessão (in-memory, por instância serverless) ──────────────────
+// getSessionUser roda em TODA chamada /api/wms/* e faz 2-4 round-trips
+// sequenciais ao banco (sessão+usuário, roles/permissões, validação de
+// galpão). Sem cache, é taxa fixa em cada request. Cacheamos o SessionUser
+// resolvido por (sessionId + header de galpão) com TTL curto — espelha o
+// padrão de empresa-lookup.ts. TTL curto (30s) garante que mudanças de
+// role/permissão/galpão propaguem rápido, mesmo sem invalidação explícita.
+const SESSION_CACHE_TTL_MS = 30_000;
+
+interface SessionCacheEntry {
+  user: SessionUser;
+  expiresAt: number;
+}
+
+const sessionCache = new Map<string, SessionCacheEntry>();
+
+/** Chave do cache: o galpão resolvido depende do header X-Galpao-Id. */
+export function sessionCacheKey(
+  sessionId: string,
+  galpaoIdHeader: string | null,
+): string {
+  return `${sessionId}|${galpaoIdHeader ?? ""}`;
+}
+
+export function getCachedSession(
+  key: string,
+  now: number = Date.now(),
+): SessionUser | null {
+  const entry = sessionCache.get(key);
+  if (entry && entry.expiresAt > now) return entry.user;
+  if (entry) sessionCache.delete(key); // evict expired
+  return null;
+}
+
+export function setCachedSession(
+  key: string,
+  user: SessionUser,
+  now: number = Date.now(),
+): void {
+  sessionCache.set(key, { user, expiresAt: now + SESSION_CACHE_TTL_MS });
+}
+
+/**
+ * Invalida o cache de sessão. Sem argumento, limpa tudo; com sessionId,
+ * remove todas as entradas daquela sessão (qualquer galpão). Chamar após
+ * logout/edição de role/galpão para propagação imediata na mesma instância.
+ */
+export function clearSessionCache(sessionId?: string): void {
+  if (!sessionId) {
+    sessionCache.clear();
+    return;
+  }
+  const prefix = `${sessionId}|`;
+  for (const k of sessionCache.keys()) {
+    if (k.startsWith(prefix)) sessionCache.delete(k);
+  }
+}
+
 /**
  * Validates a session ID from the X-Session-Id header and returns the
  * authenticated user with their resolved galpão.
@@ -27,6 +85,12 @@ export async function getSessionUser(
 ): Promise<SessionUser | null> {
   const sessionId = request.headers.get("X-Session-Id");
   if (!sessionId) return null;
+
+  // Cache hit short-circuits all 2-4 DB round-trips below.
+  const galpaoIdHeader = request.headers.get("X-Galpao-Id");
+  const cacheKey = sessionCacheKey(sessionId, galpaoIdHeader);
+  const cached = getCachedSession(cacheKey);
+  if (cached) return cached;
 
   const supabase = createServiceClient();
 
@@ -58,7 +122,7 @@ export async function getSessionUser(
   const cargoOut = cargosOut[0] ?? usuario.cargo ?? "";
 
   // ── Galpão (lógica existente, sem mudanças funcionais) ──
-  const galpaoIdHeader = request.headers.get("X-Galpao-Id");
+  // galpaoIdHeader já foi lido no topo (pra chave do cache).
   if (galpaoIdHeader) {
     const { data: valid } = await supabase
       .from("siso_usuario_galpoes")
@@ -68,7 +132,7 @@ export async function getSessionUser(
       .maybeSingle();
 
     if (valid) {
-      return {
+      const result: SessionUser = {
         id: usuario.id,
         nome: usuario.nome,
         cargo: cargoOut,
@@ -77,6 +141,8 @@ export async function getSessionUser(
         permissoes: permissoesSet,
         galpaoId: galpaoIdHeader,
       };
+      setCachedSession(cacheKey, result);
+      return result;
     }
   }
 
@@ -93,7 +159,7 @@ export async function getSessionUser(
     galpaoId = galpao?.id ?? null;
   }
 
-  return {
+  const result: SessionUser = {
     id: usuario.id,
     nome: usuario.nome,
     cargo: cargoOut,
@@ -102,6 +168,8 @@ export async function getSessionUser(
     permissoes: permissoesSet,
     galpaoId,
   };
+  setCachedSession(cacheKey, result);
+  return result;
 }
 
 // ── Session-based rate limiter for bip endpoint ──

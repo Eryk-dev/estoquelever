@@ -773,6 +773,21 @@ Objetos introduzidos pelo fix-pack da realocação cascateável (24 achados de a
 
 ---
 
+### Índices de performance P0 (`20260531_perf_p0_indexes.sql`)
+
+Adicionados pela auditoria de performance 2026-05-31 (cobrem predicados de hot paths que faziam Seq Scan).
+
+| Index | Tabela | Definição | Cobre |
+|-------|--------|-----------|-------|
+| `idx_produtos_sku_trgm` | `siso_produtos` | `gin (sku gin_trgm_ops)` | Busca `sku ILIKE '%termo%'` (era Seq Scan em 46k linhas, ~1043ms → ~3,5ms) |
+| `idx_produtos_descricao_trgm` | `siso_produtos` | `gin (descricao gin_trgm_ops)` | Busca `descricao ILIKE '%termo%'` (mesma busca de produtos/estoque) |
+| `idx_mov_saldos_empresa` | `siso_movimentacoes` | `(galpao_id) WHERE estorno_de IS NULL AND tipo IN ('E','S')` | Relatório `saldos-por-empresa` (varria o ledger inteiro) — preventivo p/ escala |
+| `idx_mov_criado_em` | `siso_movimentacoes` | `(criado_em) WHERE estorno_de IS NULL` | Relatório `movs-por-empresa` (range de data) — preventivo p/ escala |
+
+> `pg_trgm` já estava habilitado (a tabela `siso_produtos_catalogo` do módulo Cross já usava trigram). Os 2 índices de `siso_movimentacoes` são latentes em staging (poucos movs) — valem na escala de produção.
+
+---
+
 ### RPC `wms_detectar_pedidos_inconsistentes` (Fase 2.1 — safety net)
 
 ```sql

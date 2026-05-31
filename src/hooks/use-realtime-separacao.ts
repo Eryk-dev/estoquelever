@@ -38,7 +38,7 @@ interface RealtimeSeparacaoConfig {
  * Subscribes to siso_pedidos changes via Supabase Realtime.
  *
  * - When called with no args (legacy mode): invalidates the global
- *   ["separacao"] queryKey on any siso_pedidos change. Used by the
+ *   ["wms-separacao"] queryKey on any siso_pedidos change. Used by the
  *   /wms/separacao list page.
  * - When called with a config: additionally subscribes to
  *   siso_pedido_item_realocacoes and invalidates the supplied queryKey
@@ -113,7 +113,11 @@ export function useRealtimeSeparacao(config?: RealtimeSeparacaoConfig) {
               debouncedInvalidate(scopedQueryKey);
             }
           } else {
-            debouncedInvalidate(["separacao"]);
+            // The separação list query is keyed ["wms-separacao", ...]; React
+            // Query invalidation is prefix-matched, so invalidating the legacy
+            // ["separacao"] key matched nothing and the realtime push was dead
+            // (list only refreshed via the 10s poll). Use the real key prefix.
+            debouncedInvalidate(["wms-separacao"]);
           }
         },
       )

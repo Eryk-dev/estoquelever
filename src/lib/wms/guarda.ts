@@ -263,7 +263,8 @@ export async function listarRotaPendencias(input: {
         produto:siso_produtos(sku, descricao, imagem_url),
         galpao:siso_galpoes(nome),
         localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo),
-        localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo)
+        localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo),
+        destino_sugerido:siso_localizacoes!destino_sugerido_id(codigo, tipo)
       `,
     )
     .in("status", ["pendente", "em_guarda"]);
@@ -304,7 +305,8 @@ export async function obterPendencia(id: string): Promise<PendenciaJoined | null
         produto:siso_produtos(sku, descricao, imagem_url),
         galpao:siso_galpoes(nome),
         localizacao_origem:siso_localizacoes!localizacao_origem_id(codigo),
-        localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo)
+        localizacao_destino:siso_localizacoes!localizacao_destino_id(codigo, tipo),
+        destino_sugerido:siso_localizacoes!destino_sugerido_id(codigo, tipo)
 `,
     )
     .eq("id", id)

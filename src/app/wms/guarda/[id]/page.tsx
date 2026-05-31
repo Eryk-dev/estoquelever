@@ -77,22 +77,31 @@ export default function GuardaTabletPage() {
   // Prioridade do destino:
   //   1) override do scan/troca do operador
   //   2) loc destino decidida no recebimento (pendência)
-  //   3) sugestão dinâmica de putaway
+  //   3) destino cross-dock sugerido (PACKING — pra fechar pedido em espera)
+  //   4) sugestão dinâmica de putaway
   const destinoEscolhido = destinoOverride ?? {
     id:
       pend?.localizacao_destino_id ??
+      pend?.destino_sugerido_id ??
       data?.sugestao?.localizacao_id ??
       "",
     codigo:
       pend?.localizacao_destino?.codigo ??
+      pend?.destino_sugerido?.codigo ??
       data?.sugestao?.codigo ??
       "",
   };
   const destinoVemDoRecebimento =
     !destinoOverride && !!pend?.localizacao_destino_id;
+  const destinoEhCrossDock =
+    !destinoOverride &&
+    !pend?.localizacao_destino_id &&
+    !!pend?.destino_sugerido_id &&
+    pend?.destino_sugerido_id === destinoEscolhido.id;
   const destinoEhSugestao =
     !destinoOverride &&
     !pend?.localizacao_destino_id &&
+    !pend?.destino_sugerido_id &&
     data?.sugestao?.localizacao_id === destinoEscolhido.id;
 
   // Quando carregar a pendência, popula o input de qty com qty_pendente
@@ -450,6 +459,13 @@ export default function GuardaTabletPage() {
               {destinoVemDoRecebimento && (
                 <span className="wms-td-mute" style={{ fontSize: 11 }}>
                   <Icon name="sparkle" size={10} /> decidido no recebimento
+                </span>
+              )}
+              {destinoEhCrossDock && (
+                <span style={{ fontSize: 11, color: "#10b981", fontWeight: 600 }}>
+                  <Icon name="sparkle" size={10} /> cross-dock — fecha{" "}
+                  {pend.pedidos_vinculados?.length ?? 0} pedido
+                  {(pend.pedidos_vinculados?.length ?? 0) === 1 ? "" : "s"}
                 </span>
               )}
               {destinoEhSugestao && data?.sugestao?.razao && (

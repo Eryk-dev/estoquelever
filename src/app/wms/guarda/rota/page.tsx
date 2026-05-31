@@ -347,11 +347,21 @@ function PendenciaCard({
   }, [locsResp]);
 
   const destinoEscolhido = destinoOverride ?? {
-    id: pendencia.localizacao_destino_id ?? "",
-    codigo: pendencia.localizacao_destino?.codigo ?? "",
+    id:
+      pendencia.localizacao_destino_id ??
+      pendencia.destino_sugerido_id ??
+      "",
+    codigo:
+      pendencia.localizacao_destino?.codigo ??
+      pendencia.destino_sugerido?.codigo ??
+      "",
   };
   const destinoVemDoRecebimento =
     !destinoOverride && !!pendencia.localizacao_destino_id;
+  const destinoEhCrossDock =
+    !destinoOverride &&
+    !pendencia.localizacao_destino_id &&
+    !!pendencia.destino_sugerido_id;
 
   // Inicia ao montar (idempotente)
   useEffect(() => {
@@ -629,6 +639,13 @@ function PendenciaCard({
           {destinoVemDoRecebimento && (
             <span className="wms-td-mute" style={{ fontSize: 11 }}>
               <Icon name="sparkle" size={10} /> decidido no recebimento
+            </span>
+          )}
+          {destinoEhCrossDock && (
+            <span style={{ fontSize: 11, color: "#10b981", fontWeight: 600 }}>
+              <Icon name="sparkle" size={10} /> cross-dock — fecha{" "}
+              {pendencia.pedidos_vinculados?.length ?? 0} pedido
+              {(pendencia.pedidos_vinculados?.length ?? 0) === 1 ? "" : "s"}
             </span>
           )}
           {destinoOverride && (

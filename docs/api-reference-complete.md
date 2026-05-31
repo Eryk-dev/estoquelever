@@ -4997,7 +4997,7 @@ Lista pendências. **Query:** `galpao_id?`, `status=pendente,em_guarda` (CSV, de
 
 Detalhe de uma pendência + sugestão de loc destino (filtrada — não sugere voltar pra RECEBIMENTO) + lista de locs onde o SKU já tem saldo (atalhos de UI).
 
-**Response 200:** `{ pendencia, sugestao: { localizacao_id, codigo?, razao } | null, locais_existentes: [...] }`.
+**Response 200:** `{ pendencia, sugestao: { localizacao_id, codigo?, razao } | null, locais_existentes: [...] }`. O `pendencia` (via `obterPendencia`) traz o join `destino_sugerido` (`{ codigo, tipo }`) além de `localizacao_destino` — usado pelo tablet pra pré-preencher o destino **cross-dock** (PACKING) quando a pendência tem `prioridade='cross_dock'` e `localizacao_destino_id` nulo. Prioridade do prefill no form: override do operador → `localizacao_destino_id` → `destino_sugerido_id` (cross-dock) → `sugestao` dinâmica.
 
 #### POST /api/wms/guarda/[id]/iniciar
 

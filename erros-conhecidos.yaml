@@ -2749,3 +2749,42 @@ erros:
       Vercel == HEAD local — build vermelho na develop congela o deploy num commit
       antigo, divergindo do schema do banco. A sugestão "Comprar" residual é esperada
       enquanto siso_estoque (ledger WMS) não tiver saldo da EasyPeasy carregado.
+
+  - id: guarda-cross-dock-destino-sugerido-nao-preenche-tablet
+    date: "2026-05-29"
+    source: wms.guarda (detalhe + rota)
+    category: business_logic
+    message: "Pendência cross-dock não pré-preenche a loc PACKING sugerida ao abrir a guarda no tablet"
+    cause: >
+      O destino cross-dock (ex.: PACKING-CWB) é gravado na coluna
+      siso_wms_pendencias_guarda.destino_sugerido_id (localizacao_destino_id fica
+      NULL). A feature foi entregue pela metade: só a tela de FILA (/wms/guarda,
+      via listarPendencias + PendenciaRow) foi ligada pra ler esse campo — mostrava
+      "PACKING-CWB · sugerido". As telas de DETALHE (/wms/guarda/[id]) e ROTA
+      (/wms/guarda/rota) nunca foram:
+      (1) obterPendencia() e listarRotaPendencias() NÃO faziam o JOIN destino_sugerido,
+          então pendencia.destino_sugerido.codigo vinha undefined no client.
+      (2) o prefill destinoEscolhido das duas páginas só olhava localizacao_destino_id
+          (null) e a sugestão GENÉRICA de putaway (sugerirLocalizacaoPutaway) — nunca
+          destino_sugerido_id. No detalhe caía pra DEFAULT-PICKING; na rota pra
+          "— sem destino".
+      O JSDoc do criarPendencia já dizia que destino_sugerido_id "pré-preenche o form
+      do tablet" — a intenção existia, faltou consumir.
+    fix: >
+      (a) obterPendencia() e listarRotaPendencias() em src/lib/wms/guarda.ts ganharam
+          o JOIN destino_sugerido:siso_localizacoes!destino_sugerido_id(codigo, tipo)
+          (espelha listarPendencias).
+      (b) prefill destinoEscolhido do detalhe e da rota insere destino_sugerido_id na
+          cadeia de prioridade: override do operador → localizacao_destino_id →
+          destino_sugerido_id (cross-dock) → sugestão genérica. Label verde
+          "cross-dock — fecha N pedido(s)" quando o destino vem do destino_sugerido_id.
+    files:
+      - src/lib/wms/guarda.ts
+      - src/app/wms/guarda/[id]/page.tsx
+      - src/app/wms/guarda/rota/page.tsx
+      - docs/api-reference-complete.md
+    tags: [guarda, putaway, cross-dock, destino-sugerido, packing, prefill, tablet, rota, feature-pela-metade, ui]
+    notes: >
+      Caminho de leitura: só a fila lia destino_sugerido; detalhe/rota foram
+      esquecidos. Ao adicionar coluna/feature que alimenta UI, conferir TODOS os
+      consumidores (lista + detalhe + rota), não só o primeiro.

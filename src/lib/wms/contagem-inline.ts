@@ -24,6 +24,9 @@ export interface ContagemInlineResult {
   delta: number;
 }
 
+// TODO(v2): a sessão contínua acumula contagens/locs indefinidamente. Volume
+// atual é baixo (só itens OC encontrados) e as métricas filtram 30d, mas
+// considerar arquivamento/rotação se crescer.
 async function getOrCreateSessaoOperacional(
   sb: ReturnType<typeof createServiceClient>,
   galpao_id: string,
@@ -93,6 +96,14 @@ export async function registrarContagemInline(
   const saldo = Number((estoqueRow as { saldo?: number } | null)?.saldo ?? 0);
   const delta = input.qty_contada - saldo;
 
+  // ⚠ NÃO-ATÔMICO (limitação aceita v1): a mov de reconciliação e os inserts de
+  // contagem/divergência não estão numa transação única. Se um insert falhar
+  // após a mov, fica um ganho/perda sem registro de contagem; o caller retorna
+  // 500 e o operador re-tenta. No retry, como reconciliamos *para* qty_contada,
+  // o delta vira 0 (nenhum ganho duplicado — saldo não dobra); a linha de
+  // contagem (INSERT por evento, sem unique) pode duplicar, inflando levemente
+  // a contagem do operador na acuracidade. Aceitável pro volume atual; revisitar
+  // com uma RPC transacional se virar problema.
   let movId: string | null = null;
   if (delta !== 0) {
     const mov = await inserirMovimentacao({

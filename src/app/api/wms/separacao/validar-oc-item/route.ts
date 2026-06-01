@@ -148,6 +148,12 @@ export async function POST(request: NextRequest) {
 
           if (qtyContadaBody !== null) {
             // ─── Contagem inline (Fase 1): só cobre contado >= pedido ───
+            if (qtyContadaBody <= 0) {
+              return NextResponse.json(
+                { error: "contagem_invalida", message: "Quantidade contada deve ser maior que zero.", item_id: item.id },
+                { status: 422 },
+              );
+            }
             if (qtyContadaBody < qty) {
               return NextResponse.json(
                 {
@@ -215,6 +221,9 @@ export async function POST(request: NextRequest) {
                 { status: 500 },
               );
             }
+            // Fase 1 é OC-only: o produto não tinha saldo em outra loc, então o
+            // pickMovPicking (que resolve por maior saldo no galpão) sai da loc
+            // que acabamos de reconciliar. Revisitar se estender a itens não-OC.
             try {
               const result = await pickMovPicking({
                 empresa_origem_id: ctx.empresa,
@@ -230,10 +239,20 @@ export async function POST(request: NextRequest) {
               });
               movSaidaId = result?.movSaidaId ?? null;
             } catch (movErr) {
-              logger.warn("validar-oc-item", "pickMovPicking falhou em encontrei (inline)", {
-                item_id: item.id,
-                error: movErr instanceof Error ? movErr.message : String(movErr),
+              logger.logError({
+                error: movErr instanceof Error ? movErr : new Error(String(movErr)),
+                source: "validar-oc-item",
+                message: "pickMovPicking falhou em encontrei (inline) — item segue pendente p/ retry",
+                category: "business_logic",
+                metadata: { item_id: item.id, sku: item.sku },
               });
+              // Falha de pick NÃO deve marcar o item como pego: sem o continue,
+              // a atualização compartilhada abaixo gravaria separacao_marcado/
+              // bipado_completo=true com mov_saida_id nulo (item falsamente "pego",
+              // saldo inflado). O ganho de reconciliação já foi emitido e reflete a
+              // realidade física — deixamos. O operador re-tenta (retry: delta=0,
+              // sem novo ganho; o pick é refeito).
+              continue;
             }
           } else {
             // ─── caminho legado (sem qty_contada) ───

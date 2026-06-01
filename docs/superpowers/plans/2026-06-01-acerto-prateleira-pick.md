@@ -12,6 +12,20 @@
 
 ---
 
+## ⚠ CORREÇÕES descobertas na execução (2026-06-01) — leia ANTES das Tasks 2-4
+
+A análise que gerou este plano leu **arquivos de migration** (stale) em vez do schema vivo. O staging real (verificado via `information_schema`) difere em 3 pontos. **Onde o código abaixo conflitar com isto, isto vence:**
+
+1. **3D dropou `empresa_dona_id`.** `siso_inventario_contagens` e `siso_inventario_divergencias` **não têm** `empresa_dona_id`. No helper (Task 3): NÃO gravar `empresa_dona_id`; remover o param `empresa_origem_id`. Unique real de divergências = `(sessao_id, localizacao_id, produto_id)` → upsert `onConflict: "sessao_id,localizacao_id,produto_id"`.
+2. **`siso_inventario_contagens` só tem PK (`id`)** — sem unique com `contada_por`. A contagem é um **INSERT simples por evento** (sem `onConflict`). Cada contagem inline = 1 linha (correto para `COUNT(DISTINCT c.id)` da acuracidade).
+3. **A loc bipada NÃO é persistida** (snapshot `siso_pedido_item_estoques` removido da rota). Então: (a) a rota (Task 4) resolve a loc-alvo de `localizacao_id` (uuid) **OU** `localizacao_codigo` (string, dentro do galpão do pedido); (b) o cenário 71 (Task 2) passa o **`localizacao_id` REAL** da A-06-01 (não o galpão id); (c) o frontend (Task 5) passa `localizacao_codigo` (o código bipado) + `qty_contada`.
+4. **Acuracidade (D2) já corrigida fora desta fatia:** `wms_metricas_operador` estava quebrada (JOIN em `empresa_dona` dropada) e foi migrada pra 3D (commit `634a039`, migration `20260601b_metricas_operador_3d.sql`). NÃO mexer nela.
+5. **Cenário 63 (`encontrei-sem-cadastro`) está VERMELHO no baseline** (pré-existente: o `run()` dele não envia `localizacao_id` e a rota responde `produto_sem_cadastro` 422, pois o snapshot foi removido). **NÃO** é critério de aceite; é bug pré-existente da rota legada. O aceite é **só o cenário 71 verde**.
+
+> O código das Tasks 3 e 4 abaixo está escrito com as suposições antigas (empresa_dona/snapshot). Use a versão corrigida fornecida no prompt do implementador. Demais partes (estrutura, fases, intenção) seguem válidas.
+
+---
+
 ## File Structure
 
 | Arquivo | Responsabilidade | Ação |

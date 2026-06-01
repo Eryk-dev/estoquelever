@@ -2723,9 +2723,14 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 ```json
 {
   "item_ids": ["uuid", "uuid"],
-  "acao": "encontrei | esgotado | desfazer_encontrei"
+  "acao": "encontrei | esgotado | desfazer_encontrei",
+  "qty_contada": "number (optional, only acao=encontrei)",
+  "localizacao_codigo": "string (optional, only acao=encontrei)"
 }
 ```
+
+- `qty_contada` (number, optional — only meaningful when `acao='encontrei'`): total de unidades contadas fisicamente na prateleira (acerto de prateleira / contagem inline). Quando presente, o backend reconcilia o saldo da loc registrando uma contagem oficial (gera mov `inventario_ganho`/`inventario_perda` conforme o delta vs. saldo de sistema) antes de separar o pedido. Exige `qty_contada >= quantidade_pedida` do item — caso contrário responde **422** `contagem_menor_que_pedido`. `qty_contada <= 0` responde **422** `contagem_invalida`. Ausente = comportamento legado (pick sem contagem).
+- `localizacao_codigo` (string, optional — only meaningful when `acao='encontrei'`): código da prateleira bipada. Alternativa a `localizacao_id` (uuid) pra resolver a loc-alvo da contagem dentro do galpão do pedido (`siso_localizacoes` filtrado por `galpao_id` do pedido + `codigo`). Usado em conjunto com `qty_contada`.
 
 **Response (200):**
 ```json
@@ -2740,8 +2745,19 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 }
 ```
 
+**Response (422 - Contagem inline inválida, only acao=encontrei):**
+```json
+{
+  "error": "contagem_menor_que_pedido | contagem_invalida | loc_obrigatoria | loc_invalida",
+  "message": "string",
+  "item_id": "uuid",
+  "qty_contada": "number (contagem_menor_que_pedido)",
+  "qty_pedido": "number (contagem_menor_que_pedido)"
+}
+```
+
 **Business Logic:**
-- **encontrei:** Clears all compra fields (compra_status, fornecedor_oc, compra_quantidade_solicitada, compra_solicitada_em, ordem_compra_id) and marks item as picked (separacao_marcado = true, bipado_completo = true, quantidade_bipada = quantidade_pedida)
+- **encontrei:** Clears all compra fields (compra_status, fornecedor_oc, compra_quantidade_solicitada, compra_solicitada_em, ordem_compra_id) and marks item as picked (separacao_marcado = true, bipado_completo = true, quantidade_bipada = quantidade_pedida). Quando o body traz `qty_contada` (acerto de prateleira / Fase 1), reconcilia o saldo da loc-alvo (resolvida por `localizacao_id` ou `localizacao_codigo`) via `registrarContagemInline` registrando uma contagem oficial antes do pick. Exige `qty_contada >= quantidade_pedida`.
 - **esgotado:** Sets compra_status = aguardando_compra, fills fornecedor_oc via getFornecedorBySku, sets compra_quantidade_solicitada and compra_solicitada_em. Auto-creates or finds existing OC (siso_ordens_compra) by fornecedor + galpao and links item.
 - **desfazer_encontrei:** Restores compra_status = oc_pendente, fills fornecedor_oc via getFornecedorBySku, clears separacao_marcado/bipado_completo/quantidade_bipada. Reverts decisao_final to "oc" if it was flipped to "propria".
 - **Auto-transition FR-9:** When all OC items resolved and none have compra_status (all found), sets decisao_final = propria. If pedido in validacao_oc, transitions to aguardando_separacao.

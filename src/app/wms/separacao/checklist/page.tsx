@@ -578,7 +578,10 @@ export default function WmsChecklistPage() {
 
 
   // D11: "encontrei" abre fluxo handheld de bipagem de localização
-  async function handleOcEncontreiFinalizar(codigoLoc: string) {
+  // Fase 1 (acerto de prateleira): o operador informa quantas unidades tem na
+  // prateleira (qtyContada). O backend reconcilia o saldo da loc (contagem oficial)
+  // e separa o pedido. Ver POST /api/wms/separacao/validar-oc-item acao=encontrei.
+  async function handleOcEncontreiFinalizar(codigoLoc: string, qtyContada: number) {
     if (!ocLocModal) return;
     const { produto } = ocLocModal;
     setOcLocModal((p) => (p ? { ...p, bipando: true } : null));
@@ -606,18 +609,21 @@ export default function WmsChecklistPage() {
       }
       toast.success(`Localização: ${codigoLoc.trim()}`);
 
-      // 2) valida OC item (endpoint legado — TODO Plano 3: criar reserva atômica
-      //    em wms_inserir_movimentacao com origem_tipo=reserva_pedido_encontrei)
+      // 2) valida OC item — envia a contagem da prateleira (qty_contada) +
+      //    o código da loc bipada (localizacao_codigo) pro backend reconciliar.
       const rVal = await sisoFetch("/api/wms/separacao/validar-oc-item", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           item_ids: produto.item_ids,
           acao: "encontrei",
+          qty_contada: qtyContada,
+          localizacao_codigo: codigoLoc.trim(),
         }),
       });
       if (!rVal.ok) {
         const body = await rVal.json().catch(() => ({}));
+        // erroApiTexto surfaça a `message` do backend (ex.: 422 contagem_menor_que_pedido / contagem_invalida).
         toastErroApi(erroApiTexto(body, "Erro ao validar item OC"));
         setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
         return;
@@ -1800,20 +1806,36 @@ function OcEncontreiModal({
   produto: ConsolidatedProduct;
   bipando: boolean;
   onClose: () => void;
-  onConfirmar: (codigoLoc: string) => void;
+  onConfirmar: (codigoLoc: string, qtyContada: number) => void;
 }) {
   const [feedback, setFeedback] = useState<ScanFeedback>({
-    text: `Bipe a localização onde encontrou ${produto.sku}`,
+    text: `Conte as unidades e bipe a localização onde encontrou ${produto.sku}`,
     tone: "neutral",
   });
+  const [qtdContada, setQtdContada] = useState("");
 
   function handleSubmit(codigo: string) {
     if (!codigo.trim()) {
       setFeedback({ text: "Código vazio", tone: "warn" });
       return;
     }
+    const n = Number(qtdContada);
+    if (qtdContada.trim() === "" || !Number.isFinite(n) || n <= 0) {
+      setFeedback({
+        text: "Informe quantas unidades tem na prateleira (maior que zero).",
+        tone: "warn",
+      });
+      return;
+    }
+    if (n < produto.quantidade_total) {
+      setFeedback({
+        text: `Contou ${n}, mas o pedido pede ${produto.quantidade_total}. Use 'Esgotado' pro restante.`,
+        tone: "warn",
+      });
+      return;
+    }
     setFeedback({ text: `Salvando ${codigo.trim()}…`, tone: "neutral" });
-    onConfirmar(codigo.trim());
+    onConfirmar(codigo.trim(), n);
   }
 
   return (
@@ -1862,6 +1884,31 @@ function OcEncontreiModal({
             >
               {produto.quantidade_total}
             </div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label
+              className="wms-td-mute"
+              style={{
+                display: "block",
+                fontSize: 10.5,
+                letterSpacing: 1,
+                marginBottom: 6,
+              }}
+            >
+              QUANTAS UNIDADES TEM NESSA PRATELEIRA?
+            </label>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              step={1}
+              className="wms-input"
+              value={qtdContada}
+              onChange={(e) => setQtdContada(e.target.value)}
+              placeholder={`Ex: ${produto.quantidade_total}`}
+              disabled={bipando}
+              autoFocus
+            />
           </div>
           <HandheldScan
             label="Bipe a localização do item encontrado"

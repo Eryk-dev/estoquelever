@@ -544,13 +544,15 @@ export async function POST(request: NextRequest) {
       transicoes,
     });
   } catch (err) {
-    logger.logError({
+    const { id: erro_id, timestamp: erro_em } = logger.logError({
       error: err,
       source: "validar-oc-item",
       message: "Erro inesperado",
       category: "business_logic",
+      requestPath: "/api/wms/separacao/validar-oc-item",
+      requestMethod: "POST",
     });
-    return NextResponse.json({ error: "Erro interno" }, { status: 500 });
+    return NextResponse.json({ error: "Erro interno", erro_id, erro_em }, { status: 500 });
   }
 }
 

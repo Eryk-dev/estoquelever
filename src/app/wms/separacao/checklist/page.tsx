@@ -97,7 +97,74 @@ type ScanFeedback = {
 // Helpers
 
 function isOcStatus(s: ChecklistItem["compra_status"]): boolean {
-  return s === "comprado" || s === "aguardando_compra" || s === "recebido";
+  // `oc_pendente` = item OC aguardando validação (fase validacao_oc). Precisa
+  // cair no bucket OC (UI Encontrei/Esgotado), NÃO no de pick normal — senão
+  // o operador tenta marcar/parcial um item sem saldo/reserva e leva 409 mudo.
+  return (
+    s === "oc_pendente" ||
+    s === "comprado" ||
+    s === "aguardando_compra" ||
+    s === "recebido"
+  );
+}
+
+// Extrai a string de erro mais completa de um body de resposta da API:
+// junta o código (`error`) com o detalhe (`message`) quando ambos existem e
+// diferem, pra não perder informação útil pro diagnóstico.
+function erroApiTexto(body: unknown, fallback: string): string {
+  if (body && typeof body === "object") {
+    const b = body as {
+      error?: unknown;
+      message?: unknown;
+      erro_id?: unknown;
+      erro_em?: unknown;
+    };
+    const codigo = typeof b.error === "string" ? b.error : null;
+    const detalhe = typeof b.message === "string" ? b.message : null;
+    let txt =
+      codigo && detalhe && codigo !== detalhe
+        ? `${codigo}: ${detalhe}`
+        : (detalhe ?? codigo ?? fallback);
+    // Rastreio: hora do erro + id em siso_erros (quando a API devolve no 500) —
+    // pro operador achar o log exato (com stack trace) direto no Supabase.
+    const rastreio: string[] = [];
+    if (typeof b.erro_em === "string") {
+      const d = new Date(b.erro_em);
+      rastreio.push(Number.isNaN(d.getTime()) ? b.erro_em : d.toLocaleString("pt-BR"));
+    }
+    if (typeof b.erro_id === "string") rastreio.push(`erro ${b.erro_id}`);
+    if (rastreio.length > 0) txt += `\n${rastreio.join(" · ")}`;
+    return txt;
+  }
+  return fallback;
+}
+
+// Toast de erro padrão deste fluxo: mostra a mensagem real do sistema, dura 5s
+// e copia o texto completo pro clipboard quando o operador clica no toast
+// (afordância via tooltip). Facilita reportar/corrigir o erro exato.
+function toastErroApi(msg: string) {
+  toast.error(
+    <span
+      role="button"
+      tabIndex={0}
+      title="Clique para copiar o erro"
+      onClick={() => {
+        navigator.clipboard
+          ?.writeText(msg)
+          .then(() => toast.success("Erro copiado", { duration: 2000 }))
+          .catch(() => {});
+      }}
+      style={{
+        cursor: "pointer",
+        display: "block",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+      }}
+    >
+      {msg}
+    </span>,
+    { duration: 5000 },
+  );
 }
 
 function consolidar(items: ChecklistItem[]): {
@@ -315,7 +382,13 @@ export default function WmsChecklistPage() {
           }),
         ),
       );
-      if (results.some((r) => !r.ok)) throw new Error("erro_marcar");
+      // Propaga o erro completo da API (código + detalhe do sistema) em vez de
+      // engolir tudo num "erro_marcar" mudo.
+      const falhou = results.find((r) => !r.ok);
+      if (falhou) {
+        const body = await falhou.json().catch(() => ({}));
+        throw new Error(erroApiTexto(body, "Erro ao salvar marcação"));
+      }
     },
   });
 
@@ -432,8 +505,8 @@ export default function WmsChecklistPage() {
 
     try {
       await toggleMutation.mutateAsync({ produto, marcado: novo });
-    } catch {
-      toast.error("Erro ao salvar marcação");
+    } catch (e) {
+      toastErroApi((e as Error).message || "Erro ao salvar marcação");
       queryClient.invalidateQueries({ queryKey });
     }
   }
@@ -447,7 +520,7 @@ export default function WmsChecklistPage() {
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
-        toast.error(body.error ?? "Erro ao verificar estoque");
+        toastErroApi(erroApiTexto(body, "Erro ao verificar estoque"));
         return;
       }
       setEsgotadoModal({
@@ -457,7 +530,7 @@ export default function WmsChecklistPage() {
         pedidos_afetados: body.pedidos_afetados ?? 0,
       });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
     }
   }
 
@@ -478,7 +551,7 @@ export default function WmsChecklistPage() {
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
-        toast.error(body.error ?? "Erro ao processar");
+        toastErroApi(erroApiTexto(body, "Erro ao processar"));
         setEsgotadoModal((p) => (p ? { ...p, loading: false } : null));
         return;
       }
@@ -498,7 +571,7 @@ export default function WmsChecklistPage() {
       }
       queryClient.invalidateQueries({ queryKey });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
       setEsgotadoModal((p) => (p ? { ...p, loading: false } : null));
     }
   }
@@ -511,7 +584,7 @@ export default function WmsChecklistPage() {
     setOcLocModal((p) => (p ? { ...p, bipando: true } : null));
     try {
       if (!produto.empresa_origem_id) {
-        toast.error("Empresa de origem não encontrada");
+        toastErroApi("Empresa de origem não encontrada");
         setOcLocModal(null);
         return;
       }
@@ -527,7 +600,7 @@ export default function WmsChecklistPage() {
       });
       if (!rLoc.ok) {
         const body = await rLoc.json().catch(() => ({}));
-        toast.error(body.error ?? "Erro ao salvar localização");
+        toastErroApi(erroApiTexto(body, "Erro ao salvar localização"));
         setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
         return;
       }
@@ -545,7 +618,7 @@ export default function WmsChecklistPage() {
       });
       if (!rVal.ok) {
         const body = await rVal.json().catch(() => ({}));
-        toast.error(body.error ?? "Erro ao validar item OC");
+        toastErroApi(erroApiTexto(body, "Erro ao validar item OC"));
         setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
         return;
       }
@@ -567,7 +640,7 @@ export default function WmsChecklistPage() {
         }
       }
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
       setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
     }
   }
@@ -584,13 +657,13 @@ export default function WmsChecklistPage() {
       });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        toast.error(body.error ?? "Erro ao confirmar esgotado");
+        toastErroApi(erroApiTexto(body, "Erro ao confirmar esgotado"));
         return;
       }
       toast.success(`Item OC esgotado confirmado: ${produto.sku}`);
       queryClient.invalidateQueries({ queryKey });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
     }
   }
 
@@ -606,12 +679,12 @@ export default function WmsChecklistPage() {
       });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        toast.error(body.error ?? "Erro ao desfazer");
+        toastErroApi(erroApiTexto(body, "Erro ao desfazer"));
         return;
       }
       queryClient.invalidateQueries({ queryKey });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
     }
   }
 
@@ -645,7 +718,7 @@ export default function WmsChecklistPage() {
           toast.warning("Outro operador picou primeiro — atualizando…", { duration: 4000 });
           queryClient.invalidateQueries({ queryKey });
         } else {
-          toast.error(data.error ?? data.message ?? "Erro ao processar parcial");
+          toastErroApi(erroApiTexto(data, "Erro ao processar parcial"));
         }
         setParcialModal(null);
         return;
@@ -678,16 +751,16 @@ export default function WmsChecklistPage() {
           );
         }
       } else if (data.status === "mandado_pra_compras") {
-        // Decisão (28/05 v2): cascade esgotou 100% — backend transitou direto.
-        // Sem modal, sem clique extra.
+        // Decisão (28/05 v2): cascade esgotou 100% — backend transitou o(s)
+        // item(s) sem cobertura pra Compras automaticamente.
+        // Fix (01/06): NÃO navega de volta pra /wms/separacao — fica no checklist
+        // (igual ao branch `realocado`). O item vai pra Compras e some da lista no
+        // refetch (checklist-items filtra compra_status!=null em pedido
+        // aguardando_compra); o operador segue pickando o resto do wave.
         toast.success(
           `${data.itens_atualizados ?? 0} item(s) sem cobertura enviado(s) pra Compras`,
           { duration: 5000 },
         );
-        setParcialModal(null);
-        queryClient.invalidateQueries({ queryKey });
-        router.push("/wms/separacao");
-        return;
       } else if (data.status === "sem_cobertura_outro_galpao") {
         // Fase 3 #1: cascade esgotou no galpão atual, mas há saldo VIVO em
         // outro galpão. Abre o modal de esgotado (encaminhar-first): "Encaminhar
@@ -716,7 +789,7 @@ export default function WmsChecklistPage() {
       setParcialModal(null);
       queryClient.invalidateQueries({ queryKey });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
       setParcialModal(null);
     } finally {
       submittingActionRef.current = false;
@@ -759,10 +832,11 @@ export default function WmsChecklistPage() {
         } else if (jaPicada) {
           toast.warning("Outro operador picou primeiro — atualizando…", { duration: 4000 });
         } else {
-          toast.error(
+          const detalhe = erroApiTexto(erradas[0]?.data, "Erro ao marcar realocação");
+          toastErroApi(
             erradas.length === ids.length
-              ? "Erro ao marcar realocação"
-              : `${ids.length - erradas.length}/${ids.length} marcada(s) — algumas falharam`,
+              ? detalhe
+              : `${ids.length - erradas.length}/${ids.length} marcada(s) — algumas falharam: ${detalhe}`,
           );
         }
       } else {
@@ -772,7 +846,7 @@ export default function WmsChecklistPage() {
       }
       queryClient.invalidateQueries({ queryKey });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
     } finally {
       submittingActionRef.current = false;
     }
@@ -807,7 +881,7 @@ export default function WmsChecklistPage() {
         router.push("/wms/separacao?tab=separado");
       }
     } catch (e) {
-      toast.error((e as Error).message || "Erro ao concluir");
+      toastErroApi((e as Error).message || "Erro ao concluir");
     }
   }
 
@@ -823,7 +897,7 @@ export default function WmsChecklistPage() {
       toast.success("Progresso reiniciado");
       queryClient.invalidateQueries({ queryKey });
     } catch (e) {
-      toast.error((e as Error).message || "Erro ao reiniciar");
+      toastErroApi((e as Error).message || "Erro ao reiniciar");
     }
   }
 
@@ -842,7 +916,7 @@ export default function WmsChecklistPage() {
       queryClient.invalidateQueries({ queryKey: ["wms-separacao"] });
       router.push("/wms/separacao");
     } catch (e) {
-      toast.error((e as Error).message || "Erro ao cancelar");
+      toastErroApi((e as Error).message || "Erro ao cancelar");
     }
   }
 

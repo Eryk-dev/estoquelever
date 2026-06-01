@@ -1856,7 +1856,7 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 - 409 — código estável no payload `{ error, code }`:
   - `realocacao_ja_picada` — race no `UPDATE … WHERE status='aguardando_picking'` (a realoc foi marcada como `picado`/`cancelado` por outra request entre o fetch e o UPDATE pessimista).
   - `race_item_ja_picado` — race no `UPDATE … WHERE separacao_marcado=false` (outro operador marcou o item entre o fetch e o UPDATE).
-  - `posicao_reservada` — saldo da quádrupla reservado por outro pedido.
+  - `posicao_reservada` — saldo reservado por **outros** pedidos não cobre a `quantidade_pega`. Gate compara `quantidade_pega` contra `saldo − reservado_de_outros` (= disponível + reserva viva do próprio lote nesta loc), **não** contra `disponivel` cru. A reserva do próprio pedido (R que o `aprovar` criou e que o passo 7a libera) não bloqueia — o pedido tem direito a ela. Fix 2026-06-01: antes usava `disponivel` cru e travava o pedido de pegar a própria reserva quando a loc estava 100% alocada entre vários pedidos (disponivel=0). Payload `{ error, saldo, reservado (de outros), disponivel (pra você), quantidade_pega }`.
   - Item já processado / realocação não-`aguardando_picking` (versões anteriores ao fix-pack — agora coberto pelos códigos acima).
 
 **Side Effects (resumo):**

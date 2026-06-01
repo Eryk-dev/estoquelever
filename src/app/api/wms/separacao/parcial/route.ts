@@ -247,16 +247,33 @@ async function processarParcialItem(
     const reservadoWms = Number(estoqueWms?.reservado ?? 0);
     const disponivelWms = Number(estoqueWms?.disponivel ?? saldoWms - reservadoWms);
 
-    if (quantidade_pega > 0 && disponivelWms < quantidade_pega) {
+    // A reserva do PRÓPRIO lote (R viva que o aprovar criou nesta loc, que o
+    // passo 7a abaixo libera) não pode contar como indisponível — o pedido tem
+    // direito às unidades reservadas pra ele. Só a reserva de OUTROS pedidos
+    // restringe a saída. (Mesma lógica já aplicada no marcar-item via reserva_id;
+    // sem isso, picking parcial num galpão com saldo 100% alocado entre pedidos
+    // bloqueava todo mundo de pegar a própria reserva — disponivel=0.)
+    let minhaReservaNestaLoc = 0;
+    for (const pid of pedidoIds) {
+      const r = await buscarReservaPendente({
+        pedido_id: String(pid),
+        tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: locOriginalId },
+      });
+      if (r) minhaReservaNestaLoc += Number(r.quantidade);
+    }
+    const reservadoDeOutros = Math.max(0, reservadoWms - minhaReservaNestaLoc);
+    const disponivelParaMim = saldoWms - reservadoDeOutros;
+
+    if (quantidade_pega > 0 && disponivelParaMim < quantidade_pega) {
       return NextResponse.json(
         {
           error: "posicao_reservada",
           message:
-            `Posição reservada por outro pedido (saldo ${saldoWms}, reservado ${reservadoWms}, disponível ${disponivelWms}). ` +
+            `Posição reservada por outro pedido (saldo ${saldoWms}, reservado por outros ${reservadoDeOutros}, disponível pra você ${disponivelParaMim}). ` +
             `Não é possível dar saída de ${quantidade_pega}. Avise o supervisor pra liberar a reserva.`,
           saldo: saldoWms,
-          reservado: reservadoWms,
-          disponivel: disponivelWms,
+          reservado: reservadoDeOutros,
+          disponivel: disponivelParaMim,
           quantidade_pega,
         },
         { status: 409 },
@@ -340,8 +357,21 @@ async function processarParcialItem(
     }
 
     let movAjusteId: string | null = null;
+    // loc_zerou: o ajuste "phantom" zera o que o operador não achou na loc, mas
+    // NÃO pode derrubar o saldo abaixo do reservado que SOBRA na loc (reservas de
+    // OUTROS pedidos que este fluxo não liberou). Senão o ajuste viola o CHECK
+    // reservado<=saldo e estoura 500. liberadoNaLoc = reservas DESTE wave já
+    // liberadas no passo 7a (reduzem o reservado vivo da loc).
+    const liberadoNaLoc = Array.from(liberacoesPorPedido.values()).reduce(
+      (s, info) => s + Number(info.reserva.quantidade),
+      0,
+    );
+    const reservadoRestanteLoc = Math.max(0, reservadoWms - liberadoNaLoc);
+    const deltaAjuste = loc_zerou
+      ? Math.max(0, saldoWms - quantidade_pega - reservadoRestanteLoc)
+      : 0;
     if (loc_zerou) {
-      const delta = saldoWms - quantidade_pega;
+      const delta = deltaAjuste;
       if (delta > 0) {
         const movAj = await inserirMovimentacao({
           tripla: {
@@ -446,7 +476,7 @@ async function processarParcialItem(
     }
 
     if (movAjusteId && loc_zerou) {
-      const delta = saldoWms - quantidade_pega;
+      const delta = deltaAjuste;
       if (delta > 0) {
         // ajuste é da loc, não rateado entre itens — vai no primeiro beneficiado
         const { error: linkAjErr } = await supabase
@@ -655,7 +685,7 @@ async function processarParcialItem(
               quantidade_pedida: Number(it.quantidade_pedida),
               loc_codigo: locCodigo,
               loc_zerou,
-              delta_ajuste: ehBeneficiario && movAjusteId ? saldoWms - quantidade_pega : 0,
+              delta_ajuste: ehBeneficiario && movAjusteId ? deltaAjuste : 0,
               wave_consolidado: itemsRaw.length > 1,
             },
             usuarioId: session.id,
@@ -1121,7 +1151,7 @@ async function processarParcialItem(
       pedidos_mandados_pra_compras: resumoCompras?.pedidos_atualizados ?? 0,
     });
   } catch (err) {
-    logger.logError({
+    const { id: erro_id, timestamp: erro_em } = logger.logError({
       error: err,
       source: "separacao-parcial",
       message: "Erro inesperado em parcial",
@@ -1130,7 +1160,7 @@ async function processarParcialItem(
       requestMethod: "POST",
       metadata: { pedido_item_ids, quantidade_pega, loc_zerou },
     });
-    return NextResponse.json({ error: "erro interno" }, { status: 500 });
+    return NextResponse.json({ error: "erro interno", erro_id, erro_em }, { status: 500 });
   }
 }
 
@@ -1251,16 +1281,30 @@ async function processarParcialRealocacao(
     const reservadoWms = Number(estoqueWms?.reservado ?? 0);
     const disponivelWms = Number(estoqueWms?.disponivel ?? saldoWms - reservadoWms);
 
-    if (quantidade_pega > 0 && disponivelWms < quantidade_pega) {
+    // Reserva do próprio lote (R cascade nesta loc, liberada no passo 7a abaixo)
+    // não conta como indisponível — só a reserva de outros pedidos restringe.
+    // Espelha o gate do caminho item acima.
+    let minhaReservaNestaLoc = 0;
+    for (const pid of pedidoIds) {
+      const r = await buscarReservaPendente({
+        pedido_id: String(pid),
+        tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: localizacaoId },
+      });
+      if (r) minhaReservaNestaLoc += Number(r.quantidade);
+    }
+    const reservadoDeOutros = Math.max(0, reservadoWms - minhaReservaNestaLoc);
+    const disponivelParaMim = saldoWms - reservadoDeOutros;
+
+    if (quantidade_pega > 0 && disponivelParaMim < quantidade_pega) {
       return NextResponse.json(
         {
           error: "posicao_reservada",
           message:
-            `Posição reservada por outro pedido (saldo ${saldoWms}, reservado ${reservadoWms}, disponível ${disponivelWms}). ` +
+            `Posição reservada por outro pedido (saldo ${saldoWms}, reservado por outros ${reservadoDeOutros}, disponível pra você ${disponivelParaMim}). ` +
             `Não é possível dar saída de ${quantidade_pega}. Avise o supervisor pra liberar a reserva.`,
           saldo: saldoWms,
-          reservado: reservadoWms,
-          disponivel: disponivelWms,
+          reservado: reservadoDeOutros,
+          disponivel: disponivelParaMim,
           quantidade_pega,
         },
         { status: 409 },
@@ -1364,8 +1408,20 @@ async function processarParcialRealocacao(
     }
 
     let movAjusteId: string | null = null;
+    // loc_zerou: idem modo-item — o ajuste não pode derrubar o saldo abaixo do
+    // reservado que SOBRA na loc (reservas de OUTROS pedidos não liberadas aqui),
+    // senão viola o CHECK reservado<=saldo e estoura 500. liberadoNaLoc = R cascade
+    // DESTE batch já liberadas no passo 7a.
+    const liberadoNaLoc = Array.from(liberacoesRealocPorPedido.values()).reduce(
+      (s, info) => s + Number(info.reserva.quantidade),
+      0,
+    );
+    const reservadoRestanteLoc = Math.max(0, reservadoWms - liberadoNaLoc);
+    const deltaAjuste = loc_zerou
+      ? Math.max(0, saldoWms - quantidade_pega - reservadoRestanteLoc)
+      : 0;
     if (loc_zerou) {
-      const delta = saldoWms - quantidade_pega;
+      const delta = deltaAjuste;
       if (delta > 0) {
         const movAj = await inserirMovimentacao({
           tripla: {
@@ -1464,7 +1520,7 @@ async function processarParcialRealocacao(
     }
 
     if (movAjusteId && loc_zerou) {
-      const delta = saldoWms - quantidade_pega;
+      const delta = deltaAjuste;
       if (delta > 0) {
         const primeiraComQty = updates.find((u) => u.qty_para_esta > 0) ?? updates[0];
         const { error: linkAjErr } = await supabase
@@ -2063,7 +2119,7 @@ async function processarParcialRealocacao(
           : undefined,
     });
   } catch (err) {
-    logger.logError({
+    const { id: erro_id, timestamp: erro_em } = logger.logError({
       error: err,
       source: "separacao-parcial-realoc",
       message: "Erro inesperado em parcial realocação",
@@ -2072,6 +2128,6 @@ async function processarParcialRealocacao(
       requestMethod: "POST",
       metadata: { realocacao_ids, quantidade_pega, loc_zerou },
     });
-    return NextResponse.json({ error: "erro interno" }, { status: 500 });
+    return NextResponse.json({ error: "erro interno", erro_id, erro_em }, { status: 500 });
   }
 }

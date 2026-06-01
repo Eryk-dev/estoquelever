@@ -9,19 +9,20 @@ import type { Cenario, ScenarioResult } from "./_harness/types";
 import { createContext } from "./_harness/context";
 import { createHttp } from "./_harness/http";
 import { seedInicial, truncateOperacional } from "./_harness/seed";
-import { loginTestRunner, startDevServer, waitForHealth, type DevServerHandle } from "./_harness/dev-server";
+import { loginTestRunner, startDevServer, waitForHealth, buildProd, isHealthy, type DevServerHandle } from "./_harness/dev-server";
 import { rodarInvariantes } from "./_harness/invariantes";
 import { writeReport } from "./_harness/relatorio";
 
-interface Args { only?: string; filter?: string; keepServer: boolean; port: number; }
+interface Args { only?: string; filter?: string; keepServer: boolean; port: number; prod: boolean; }
 
 function parseArgs(): Args {
-  const a: Args = { keepServer: false, port: 3001 };
+  const a: Args = { keepServer: false, port: 3001, prod: false };
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--only") a.only = argv[++i];
     else if (argv[i] === "--filter") a.filter = argv[++i];
     else if (argv[i] === "--keep-server") a.keepServer = true;
+    else if (argv[i] === "--prod") a.prod = true;
     else if (argv[i].startsWith("--port=")) a.port = Number(argv[i].slice(7));
   }
   return a;
@@ -83,8 +84,13 @@ async function main() {
 
   const baseUrl = `http://localhost:${args.port}`;
 
-  console.log(`[1/6] subindo Next dev server em :${args.port}`);
-  const server: DevServerHandle = await startDevServer({ port: args.port });
+  if (args.prod) {
+    console.log(`[0/6] next build (modo prod)`);
+    await buildProd();
+  }
+
+  console.log(`[1/6] subindo Next ${args.prod ? "start" : "dev"} server em :${args.port}`);
+  let server: DevServerHandle = await startDevServer({ port: args.port, prod: args.prod });
   process.on("SIGINT", () => server.kill().then(() => process.exit(130)));
 
   try {

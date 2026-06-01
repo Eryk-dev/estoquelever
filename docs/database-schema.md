@@ -613,6 +613,14 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 >
 > Migration: `supabase/migrations/20260606_drop_tabelas_legadas_superadas.sql`.
 
+> **`siso_inventario_sessoes.continua boolean DEFAULT false` (acerto de prateleira, Fase 1).**
+> Marca a sessão operacional contínua (1 por galpão, índice único parcial
+> `uniq_sessao_continua_galpao`) que hospeda as contagens inline do pick — a
+> reconciliação de saldo disparada pelo `acao='encontrei'` + `qty_contada` em
+> `POST /api/wms/separacao/validar-oc-item`. Não é uma sessão de ciclo normal:
+> fica sempre aberta e acumula contagens avulsas conforme o operador acerta
+> prateleiras durante a separação.
+
 ---
 
 ## WMS — Guarda (put-away)

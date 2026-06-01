@@ -1,0 +1,46 @@
+name: WMS Stock Ledger Suite
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC = 03:00 BRT (horário ocioso)
+  workflow_dispatch: {}
+
+concurrency:
+  group: wms-stock-suite
+  cancel-in-progress: false
+
+jobs:
+  scenarios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      WORKER_SECRET: ${{ secrets.STAGING_WORKER_SECRET }}
+      STOCK_SUITE_WEBHOOK_URL: ${{ secrets.STOCK_SUITE_WEBHOOK_URL }}
+      TINY_DISABLED: "true"
+      PRINTNODE_DISABLED: "true"
+      ML_DISABLED: "true"
+      TEST_RUNNER_NOME: "test-runner"
+      TEST_RUNNER_PIN: "9999"
+      TEST_RUNNER_BASE_URL: "http://localhost:3001"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - name: Bateria de cenários de estoque (prod build)
+        run: npm run scenarios:ci
+      - name: Subir relatório
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-suite-report
+          path: scripts/wms/cenarios/reports/
+          retention-days: 30
+      - name: Alertar Slack/Discord
+        if: always()
+        run: npm run notify:stock

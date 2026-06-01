@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acerto de prateleira no pick — Fluxo em diagramas</title>
+<style>
+  :root{
+    --bg:#fafafa; --card:#fff; --ink:#18181b; --muted:#71717a; --line:#e4e4e7; --accent:#2563eb;
+    --feliz:#16a34a; --feliz-bg:#dcfce7;
+    --borda:#d97706; --borda-bg:#fef3c7;
+    --erro:#dc2626;  --erro-bg:#fee2e2;
+    --div:#a21caf;   --div-bg:#fae8ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);line-height:1.5;padding:48px 24px 96px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto}
+  header.top h1{font-size:30px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+  header.top p{margin:0;color:var(--muted);font-size:15px}
+  .legenda{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin:22px 0 40px;
+    padding:12px 16px;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    font-size:13px;color:var(--muted)}
+  .legenda b{color:var(--ink);font-weight:600;margin-right:4px}
+  .chip{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:12px;height:12px;border-radius:4px;border:1.5px solid}
+  .dot.feliz{background:var(--feliz-bg);border-color:var(--feliz)}
+  .dot.borda{background:var(--borda-bg);border-color:var(--borda)}
+  .dot.erro{background:var(--erro-bg);border-color:var(--erro)}
+  .dot.dec{background:#dbeafe;border-color:var(--accent)}
+  .dot.div{background:var(--div-bg);border-color:var(--div);border-style:dashed}
+  section.diag{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:28px 28px 18px;margin-bottom:28px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  section.diag>h2{font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 2px}
+  section.diag>.cap{margin:0 0 18px;color:var(--muted);font-size:14px}
+  .mermaid{display:flex;justify-content:center;min-height:60px}
+  .mermaid svg{max-width:100%;height:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>Acerto de prateleira no pick</h1>
+    <p>Quando o operador acha um item que o sistema dava como zerado — ou a prateleira esvazia no meio do pick — ele conta na hora e acerta o saldo, ou joga a prateleira pra fila de recontagem.</p>
+  </header>
+
+  <div class="legenda">
+    <b>Legenda:</b>
+    <span class="chip"><span class="dot feliz"></span> caminho feliz</span>
+    <span class="chip"><span class="dot borda"></span> borda (acontece, tratável)</span>
+    <span class="chip"><span class="dot erro"></span> erro (precisa de atenção)</span>
+    <span class="chip"><span class="dot dec"></span> decisão</span>
+    <span class="chip"><span class="dot div"></span> ⚠ divergência / gambiarra</span>
+  </div>
+
+  <!-- 1. MAPA DO FLUXO -->
+  <section class="diag">
+    <h2>Mapa do fluxo</h2>
+    <p class="cap">Os dois gatilhos, e as duas saídas: contar agora ou pedir recontagem.</p>
+    <pre class="mermaid">
+flowchart TD
+  P["Operador separando<br/>um pedido"]:::start --> G{"O que aconteceu<br/>na prateleira?"}:::dec
+  G -->|"item de compra:<br/>sistema dava 0,<br/>mas achei aqui"| M["Pergunta:<br/>quanto tem<br/>nessa prateleira?"]:::n
+  G -->|"peguei só parte /<br/>a prateleira esvaziou"| M
+  M --> D{"Consigo contar<br/>agora?"}:::dec
+  D -->|"sim, são poucas"| CT["Digito quantas tem"]:::feliz
+  D -->|"não dá agora"| SC["Peço recontagem"]:::borda
+  CT --> AC["Sistema acerta o saldo<br/>da prateleira na hora<br/>e separa o pedido"]:::feliz
+  AC --> OF["Vira contagem oficial:<br/>entra no placar de acerto<br/>e a prateleira pula a fila"]:::feliz
+  SC --> SS["Pedido sai na hora<br/>do mesmo jeito"]:::borda
+  SS --> FILA["Prateleira entra na fila<br/>de recontagem do galpão"]:::borda
+  FILA --> DP["Alguém conta depois,<br/>pelo inventário"]:::n
+  classDef start fill:#1e293b,color:#fff,stroke:#1e293b,stroke-width:0px;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+    </pre>
+  </section>
+
+  <!-- 2. EXEMPLO REAL -->
+  <section class="diag">
+    <h2>Exemplo real · achei 8, pedido pede 5</h2>
+    <p class="cap">Item de compra na prateleira A-03-02 (galpão CWB), pedido #9381. Os números vivem dentro dos balões.</p>
+    <pre class="mermaid">
+flowchart LR
+  A["Sistema dava: 0<br/>Pedido #9381 pede: 5"]:::n --> B["Operador acha o item<br/>e conta: tem 8"]:::feliz
+  B --> C["Acerta prateleira<br/>0 → 8<br/>(dava 0, achou 8 = +8)"]:::feliz
+  C --> D["Separa 5 pro pedido<br/>8 → 3"]:::feliz
+  D --> E["Sobram 3 reais na prateleira<br/>(antes sumiam como fantasma)"]:::feliz
+  D --> F["Contagem entra no placar<br/>do João · A-03-02 contada hoje"]:::feliz
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    </pre>
+  </section>
+
+  <!-- 3. ESTADOS -->
+  <section class="diag">
+    <h2>Estados da prateleira pedida pra recontagem</h2>
+    <p class="cap">Quando o operador não conta na hora e pede recontagem.</p>
+    <pre class="mermaid">
+flowchart LR
+  s1["Pedida<br/>no pick"]:::borda --> s2["Na fila<br/>do galpão"]:::borda --> s3["Alguém<br/>contando"]:::feliz --> s4["Saldo<br/>acertado"]:::feliz
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 4. BORDA · achou menos que o pedido -->
+  <section class="diag">
+    <h2>Borda · achei menos do que o pedido pede</h2>
+    <p class="cap">Pedido pede 5, contei só 3 na prateleira.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Pedido pede 5<br/>contei: tem 3"]:::borda --> B["Separa os 3<br/>prateleira → 0"]:::borda
+  B --> C{"Faltam 2.<br/>Tem em outra<br/>prateleira?"}:::dec
+  C -->|"sim"| D["Manda buscar na<br/>outra prateleira"]:::borda
+  C -->|"não"| E["Os 2 que faltam<br/>viram compra"]:::borda
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 5. BORDA · parcial, prateleira esvaziou -->
+  <section class="diag">
+    <h2>Borda · peguei e a prateleira esvaziou</h2>
+    <p class="cap">Peguei 4 e não sobrou nada.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Peguei 4 da prateleira<br/>e ela esvaziou (sobrou 0)"]:::borda --> B["Separa 4"]:::borda
+  B --> C["Confirma prateleira vazia<br/>(antes era chute,<br/>agora é contagem)"]:::feliz
+  C --> D["Registra contagem oficial<br/>da A-03-02"]:::feliz
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    </pre>
+  </section>
+
+  <!-- 6. BORDA · parcial, sobrou diferente -->
+  <section class="diag">
+    <h2>Borda · sobrou diferente do que o sistema achava</h2>
+    <p class="cap">Peguei 4; o sistema achava que sobravam 2, mas contei 6.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Peguei 4<br/>sistema achava: sobram 2<br/>contei: sobram 6"]:::borda --> B["Separa 4"]:::borda
+  B --> C["Acerta prateleira pra 6<br/>(achou 4 a mais)"]:::feliz
+  C --> D["Registra contagem oficial<br/>da A-03-02"]:::feliz
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    </pre>
+  </section>
+
+  <!-- 7. BORDA · pediu recontagem (muitas unidades) -->
+  <section class="diag">
+    <h2>Borda · são muitas, não dá pra contar agora</h2>
+    <p class="cap">O pedido não espera a contagem.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["São muitas unidades,<br/>não dá pra contar agora"]:::borda --> B["Pedido sai na hora<br/>(separa o que precisa)"]:::feliz
+  B --> C["Prateleira entra na fila<br/>de recontagem do galpão"]:::borda
+  C --> D["Sai da fila quando<br/>alguém contar"]:::n
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+    </pre>
+  </section>
+
+  <!-- 8. ERRO · dois operadores na mesma prateleira -->
+  <section class="diag">
+    <h2>Erro · dois operadores na mesma prateleira ao mesmo tempo</h2>
+    <p class="cap">Os dois contam A-03-02 quase juntos.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Dois operadores mexem na<br/>mesma prateleira ao mesmo tempo"]:::erro --> B["Sistema fecha<br/>o primeiro"]:::erro
+  B --> C["O segundo recebe aviso:<br/>'a prateleira mudou,<br/>confira e refaça'"]:::erro
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+    </pre>
+  </section>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad:true,
+    theme:'base',
+    themeVariables:{
+      fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+      fontSize:'16px', lineColor:'#a1a1aa',
+      primaryColor:'#f4f4f5', primaryBorderColor:'#a1a1aa', primaryTextColor:'#18181b'
+    },
+    flowchart:{ useMaxWidth:true, htmlLabels:true, curve:'basis', nodeSpacing:55, rankSpacing:55, padding:14 }
+  });
+</script>
+</body>
+</html>

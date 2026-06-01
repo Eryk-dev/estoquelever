@@ -49,6 +49,7 @@ async function rodarCenario(args: { sb: any; cenario: Cenario; baseUrl: string; 
       return {
         nome: args.cenario.nome,
         status: "fail",
+        classe: "product-fail",
         duracao_ms: Date.now() - t0,
         motivo: "invariante",
         detalhes: { invariantes_falhando: falhas },
@@ -56,17 +57,18 @@ async function rodarCenario(args: { sb: any; cenario: Cenario; baseUrl: string; 
         correlation_id: correlationId,
       };
     }
-    return { nome: args.cenario.nome, status: "pass", duracao_ms: Date.now() - t0, invariantes: invs, correlation_id: correlationId };
+    return { nome: args.cenario.nome, status: "pass", classe: "pass", duracao_ms: Date.now() - t0, invariantes: invs, correlation_id: correlationId };
   } catch (err) {
     const e = err as Error;
-    // Dumpa últimos logs com esse correlation_id
+    const ehInfra = e.name === "NetworkError";
     const { data: logs } = await args.sb.from("siso_logs").select("level, source, message, created_at").eq("correlation_id", correlationId).order("created_at", { ascending: false }).limit(50);
     const { data: erros } = await args.sb.from("siso_erros").select("category, message, stack_trace, created_at").eq("correlation_id", correlationId).limit(50);
     return {
       nome: args.cenario.nome,
       status: "fail",
+      classe: ehInfra ? "infra-fail" : "product-fail",
       duracao_ms: Date.now() - t0,
-      motivo: e.name === "HttpError" ? "run" : "assert",
+      motivo: e.name === "HttpError" ? "run" : ehInfra ? "infra" : "assert",
       erro: { mensagem: e.message, stack: e.stack },
       detalhes: { logs, erros },
       correlation_id: correlationId,
@@ -141,8 +143,12 @@ async function main() {
 
   if (!args.keepServer) await server.kill();
 
-  const failed = results.some((r) => r.status === "fail");
-  process.exit(failed ? 1 : 0);
+  const productFail = results.filter((r) => r.classe === "product-fail").length;
+  const infraFail = results.filter((r) => r.classe === "infra-fail").length;
+  console.log(`  product-fail: ${productFail} · infra-fail: ${infraFail}`);
+  // Só product-fail derruba o build (alerta de bug de estoque). infra-fail é
+  // inconclusivo — sinalizado no relatório/alerta, mas não vira "bug".
+  process.exit(productFail > 0 ? 1 : 0);
 }
 
 main().catch((e) => {

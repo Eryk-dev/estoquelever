@@ -106,11 +106,33 @@ async function main() {
   const staging = await seedInicial(sb);
 
   console.log(`[3/6] login test-runner`);
-  const sessionId = await loginTestRunner({
+  let sessionId = await loginTestRunner({
     baseUrl,
     nome: process.env.TEST_RUNNER_NOME ?? "test-runner",
     pin: process.env.TEST_RUNNER_PIN ?? "9999",
   });
+
+  // Recuperação de saúde: se o servidor caiu, reinicia uma vez e re-loga, em
+  // vez de deixar todo cenário subsequente falhar com "fetch failed".
+  async function garantirServidor(): Promise<boolean> {
+    if (await isHealthy(`${baseUrl}/api/auth/me`)) return true;
+    console.warn(`  ⚠️ servidor não responde — reiniciando`);
+    try {
+      await server.kill();
+      server = await startDevServer({ port: args.port, prod: args.prod });
+      await waitForHealth(`${baseUrl}/api/auth/me`, { timeout_ms: 60_000 });
+      sessionId = await loginTestRunner({
+        baseUrl,
+        nome: process.env.TEST_RUNNER_NOME ?? "test-runner",
+        pin: process.env.TEST_RUNNER_PIN ?? "9999",
+      });
+      console.warn(`  ✅ servidor reiniciado`);
+      return true;
+    } catch (e) {
+      console.error(`  ❌ falha ao reiniciar servidor: ${(e as Error).message}`);
+      return false;
+    }
+  }
 
   console.log(`[4/6] descobrindo cenários`);
   const catalogoDir = resolve("scripts/wms/cenarios/catalogo");
@@ -134,6 +156,11 @@ async function main() {
     if (cenario.skip || !filterMatches(cenario, args)) {
       results.push({ nome: cenario.nome, status: "skip" });
       console.log(`  ⏭️  ${cenario.nome}`);
+      continue;
+    }
+    if (!(await garantirServidor())) {
+      results.push({ nome: cenario.nome, status: "fail", classe: "infra-fail", motivo: "infra", duracao_ms: 0, erro: { mensagem: "servidor não recuperável" } });
+      console.log(`  ❌ ${cenario.nome} — infra (servidor caiu)`);
       continue;
     }
     console.log(`  ▶️  ${cenario.nome}`);

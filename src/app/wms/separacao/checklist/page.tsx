@@ -78,6 +78,9 @@ interface ConsolidatedProduct {
   localizacao: string | null;
   empresa_origem_id: string | null;
   quantidade_total: number;
+  /** Quanto ainda falta separar (total − quantidade_pega já pega). */
+  quantidade_restante: number;
+  quantidade_pega: number; // Σ quantidade_pega do bucket (derivado) — base da linha "PEGO"
   all_marcado: boolean;
   item_ids: string[];
   is_oc: boolean;
@@ -180,6 +183,11 @@ function consolidar(items: ChecklistItem[]): {
     const existing = buckets.get(key);
     if (existing) {
       existing.quantidade_total += it.quantidade;
+      existing.quantidade_restante += Math.max(
+        0,
+        it.quantidade - Number(it.quantidade_pega ?? 0),
+      );
+      existing.quantidade_pega += Number(it.quantidade_pega ?? 0);
       existing.item_ids.push(itemId);
       if (!it.separacao_marcado) existing.all_marcado = false;
     } else {
@@ -193,6 +201,8 @@ function consolidar(items: ChecklistItem[]): {
         localizacao: it.localizacao,
         empresa_origem_id: it.empresa_origem_id,
         quantidade_total: it.quantidade,
+        quantidade_restante: Math.max(0, it.quantidade - Number(it.quantidade_pega ?? 0)),
+        quantidade_pega: Number(it.quantidade_pega ?? 0),
         all_marcado: it.separacao_marcado,
         item_ids: [itemId],
         is_oc: oc,
@@ -208,6 +218,26 @@ function consolidar(items: ChecklistItem[]): {
     itensNormais: all.filter((p) => !p.is_oc),
     itensOC: all.filter((p) => p.is_oc),
   };
+}
+
+type LinhaRender = { produto: ConsolidatedProduct; modo: "normal" | "pego" | "pegar" };
+
+// Expande cada produto consolidado em 1 ou 2 linhas de render. Parcial em
+// progresso (pegou algo E ainda falta) vira DUAS linhas: PEGO ✓ + PEGAR.
+// Caso contrário, uma única linha "normal" (comportamento atual).
+function expandirLinhas(produtos: ConsolidatedProduct[]): LinhaRender[] {
+  const out: LinhaRender[] = [];
+  for (const p of produtos) {
+    const pego = p.quantidade_pega;
+    const restante = p.quantidade_restante;
+    if (pego > 0 && restante > 0) {
+      out.push({ produto: p, modo: "pego" });
+      out.push({ produto: p, modo: "pegar" });
+    } else {
+      out.push({ produto: p, modo: "normal" });
+    }
+  }
+  return out;
 }
 
 function ordenar(rows: ConsolidatedProduct[], sort: SortMode) {
@@ -731,16 +761,14 @@ export default function WmsChecklistPage() {
       }
       if (data.status === "completo") {
         toast.success("Item marcado como completo");
-      } else if (data.status === "parcial_reenfileirado") {
-        // Fase 3 #3: parcial com saldo restante na prateleira — pedido inteiro
-        // voltou pro FIM da fila. Sai do wave atual e pega o próximo.
-        toast.success("Parcial registrado — pedido voltou pro fim da fila de separação", {
-          duration: 5000,
+      } else if (data.status === "parcial_em_progresso") {
+        // Parcial com saldo restante na prateleira (não zerou): o item fica
+        // ABERTO no MESMO checklist mostrando só o que falta. NÃO sai da
+        // separação — o operador pega o restante quando puder.
+        toast.success("Parcial registrado — pegue o restante quando puder", {
+          duration: 4000,
         });
-        setParcialModal(null);
-        queryClient.invalidateQueries({ queryKey });
-        router.push("/wms/separacao");
-        return;
+        // cai pro setParcialModal(null) + invalidate abaixo (sem router.push)
       } else if (data.status === "realocado") {
         const locs = (data.realocacoes ?? [])
           .map((r: Realocacao) => r.localizacao_codigo)
@@ -1039,7 +1067,8 @@ export default function WmsChecklistPage() {
             </div>
           ) : (
             <div>
-              {itensNormaisOrdenados.map((p) => {
+              {expandirLinhas(itensNormaisOrdenados).map((linha) => {
+                const p = linha.produto;
                 const underlyingItems = items.filter((i) =>
                   p.item_ids.includes(String(i.id)),
                 );
@@ -1056,11 +1085,11 @@ export default function WmsChecklistPage() {
                       !i.separacao_marcado),
                 );
                 const isParcial = !!parcialItem;
-                const firstItemId = p.item_ids[0] ?? "";
                 return (
                   <ItemRow
-                    key={p.key}
+                    key={`${p.key}__${linha.modo}`}
                     produto={p}
+                    modo={linha.modo}
                     isParcial={isParcial}
                     parcialItem={parcialItem}
                     submitting={toggleMutation.isPending}
@@ -1071,7 +1100,9 @@ export default function WmsChecklistPage() {
                         isRealocacao: false,
                         sku: p.sku,
                         localizacao: p.localizacao,
-                        quantidade: p.quantidade_total,
+                        // Em item parcial-em-progresso o modal sugere/limita ao
+                        // que falta (não o total) — evita re-pegar além do pedido.
+                        quantidade: isParcial ? p.quantidade_restante : p.quantidade_total,
                         loading: false,
                       })
                     }
@@ -1287,6 +1318,7 @@ export default function WmsChecklistPage() {
 
 function ItemRow({
   produto,
+  modo = "normal",
   isParcial,
   parcialItem,
   submitting,
@@ -1294,16 +1326,31 @@ function ItemRow({
   onParcial,
 }: {
   produto: ConsolidatedProduct;
+  modo?: "normal" | "pego" | "pegar";
   isParcial: boolean;
   parcialItem: ChecklistItem | undefined;
   submitting?: boolean;
   onToggle: () => void;
   onParcial: () => void;
 }) {
-  const done = produto.all_marcado;
-  const multi = produto.quantidade_total > 1;
+  // Linha "pego" = registro visual do que já foi separado (✓ verde, sem ação).
+  // Linha "pegar" = o que falta (reservado), checkbox aberto + ações ativas.
+  // Linha "normal" = comportamento atual (sem split de parcial-em-progresso).
+  const isPego = modo === "pego";
+  const isPegar = modo === "pegar";
+  const done = isPego ? true : isPegar ? false : produto.all_marcado;
+  // Qtd exibida por modo. No "normal" usa restante quando já houve pick
+  // (restante < total), senão o total — sem depender da heurística frágil.
+  const qtyExibida = isPego
+    ? produto.quantidade_pega
+    : isPegar
+      ? produto.quantidade_restante
+      : produto.quantidade_restante < produto.quantidade_total
+        ? produto.quantidade_restante
+        : produto.quantidade_total;
+  const multi = qtyExibida > 1;
   const handleToggleClick = () => {
-    if (submitting) return;
+    if (submitting || isPego) return;
     onToggle();
   };
   return (
@@ -1311,21 +1358,32 @@ function ItemRow({
       className={`wms-hand-item${done ? " is-done" : ""}`}
       style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 56px 170px" }}
     >
-      <div
-        role="button"
-        tabIndex={0}
-        className="wms-hand-item-check"
-        onClick={handleToggleClick}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleToggleClick();
-          }
-        }}
-        aria-label={done ? "Desmarcar item" : "Marcar item"}
-      >
-        {done ? <Icon name="check" size={12} /> : null}
-      </div>
+      {isPego ? (
+        // Linha PEGO: checkbox marcado e desabilitado (só registro visual).
+        <div
+          className="wms-hand-item-check"
+          style={{ cursor: "default" }}
+          aria-label="Já pego"
+        >
+          <Icon name="check" size={12} />
+        </div>
+      ) : (
+        <div
+          role="button"
+          tabIndex={0}
+          className="wms-hand-item-check"
+          onClick={handleToggleClick}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleToggleClick();
+            }
+          }}
+          aria-label={done ? "Desmarcar item" : "Marcar item"}
+        >
+          {done ? <Icon name="check" size={12} /> : null}
+        </div>
+      )}
       {produto.imagem_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -1352,7 +1410,25 @@ function ItemRow({
           style={{ fontWeight: 600, fontSize: 13, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}
         >
           {produto.sku}
-          {isParcial && parcialItem && (
+          {isPego && (
+            <span
+              className="wms-badge wms-badge-ok"
+              style={{ fontSize: 10, fontWeight: 700 }}
+            >
+              PEGO {produto.quantidade_pega}
+            </span>
+          )}
+          {isPegar && (
+            <span
+              className="wms-badge wms-badge-warn"
+              style={{ fontSize: 10, fontWeight: 700 }}
+            >
+              PEGAR {produto.quantidade_restante}
+            </span>
+          )}
+          {/* Badge "Parcial X/Y" só na linha acionável (pegar) ou no modo normal,
+              nunca na linha PEGO (que já comunica o que foi separado). */}
+          {!isPego && isParcial && parcialItem && (
             <span
               className="wms-badge wms-badge-warn"
               style={{ fontSize: 10, fontWeight: 700 }}
@@ -1390,7 +1466,7 @@ function ItemRow({
           color: multi ? "#0d9488" : undefined,
         }}
       >
-        {produto.quantidade_total}
+        {qtyExibida}
       </div>
       <div
         className="wms-tar"
@@ -1813,6 +1889,7 @@ function OcEncontreiModal({
     tone: "neutral",
   });
   const [qtdContada, setQtdContada] = useState("");
+  const [locInput, setLocInput] = useState("");
 
   function handleSubmit(codigo: string) {
     if (!codigo.trim()) {
@@ -1914,6 +1991,7 @@ function OcEncontreiModal({
             label="Bipe a localização do item encontrado"
             placeholder="Ex: A1-02 ou QR da loc..."
             onSubmit={handleSubmit}
+            onValueChange={setLocInput}
             feedback={feedback}
             pending={bipando}
           />
@@ -1926,6 +2004,14 @@ function OcEncontreiModal({
             disabled={bipando}
           >
             Cancelar
+          </button>
+          <button
+            type="button"
+            className="wms-btn wms-btn-primary"
+            onClick={() => handleSubmit(locInput)}
+            disabled={bipando}
+          >
+            {bipando ? "Salvando…" : "Confirmar"}
           </button>
         </div>
       </div>

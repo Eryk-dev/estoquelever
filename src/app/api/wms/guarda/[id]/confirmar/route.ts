@@ -65,6 +65,29 @@ export async function POST(
       );
     }
 
+    // O estoque acabou de chegar numa loc via put-away. O par S+E do
+    // replenishment é puro-RPC (não passa pelo gancho de mov E do ledger),
+    // então disparamos o reconciliador aqui pra devolver ao picking os
+    // pedidos OC parados cujo saldo agora cobre. Awaited + não-fatal.
+    try {
+      const { reconciliarEntradaEstoque } = await import(
+        "@/lib/wms/reconciliador-oc"
+      );
+      await reconciliarEntradaEstoque({
+        produtoId: r.pendencia.produto_id,
+        galpaoId: r.pendencia.galpao_id,
+      });
+    } catch (recErr) {
+      logger.warn(
+        "guarda.confirmar",
+        "reconciliador pós-guarda falhou (não-fatal)",
+        {
+          pendencia_id: id,
+          err: recErr instanceof Error ? recErr.message : String(recErr),
+        },
+      );
+    }
+
     return NextResponse.json({
       ok: true,
       ...r,

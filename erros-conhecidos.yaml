@@ -2788,3 +2788,45 @@ erros:
       Caminho de leitura: só a fila lia destino_sugerido; detalhe/rota foram
       esquecidos. Ao adicionar coluna/feature que alimenta UI, conferir TODOS os
       consumidores (lista + detalhe + rota), não só o primeiro.
+
+  - id: oc-item-preso-em-esgotado-mesmo-com-estoque
+    date: "2026-06-02"
+    source: wms.separacao / wms.compras
+    category: business_logic
+    message: "Item aprovado como OC fica preso em Esgotado/aguardando_compra mesmo depois que o estoque chega — nunca volta ao picking"
+    cause: >
+      A decisão de roteamento OC era congelada (tomada uma vez no webhook, nunca
+      reavaliada quando o estoque chega). A única reação a uma entrada de estoque era
+      um banner cosmético `flag_saldo_apareceu` (e só em `validacao_oc`). O checklist
+      de separação bucketiza por `compra_status`, ignorando saldo vivo — pedidos em
+      `aguardando_compra` ficavam na aba "Esgotado" independente de haver saldo.
+      Além disso havia DOIS caminhos de recebimento divergentes: `/api/wms/receber/oc/[id]`
+      (`receberItensViaOC`) incrementava `compra_quantidade_recebida` mas NÃO setava
+      `compra_status='recebido'` nem chamava `checkAndReleasePedidos`, deixando o pedido
+      preso mesmo após recebimento físico completo (bug relacionado ao já registrado
+      `compras-autofix-no-release`). O reconciliador event-driven não existia — a entrada
+      de estoque (mov tipo E) não tinha gancho algum que atualizasse os pedidos OC
+      bloqueados sobre aquele produto/galpão.
+    fix: >
+      Mecanismo 1 — `reconciliador-oc.ts`: reconciliador event-driven disparado
+      fire-and-forget pelo gancho de mov tipo E em `ledger.ts` (toda entrada de estoque).
+      Para o par (produto_id, galpao_id) recém-entrado, busca pedidos com
+      `compra_status IN (oc_pendente, aguardando_compra)` e `status_separacao IN
+      (validacao_oc, aguardando_compra)`, ordena FIFO por `criado_em` e, para cada
+      pedido que o saldo livre (`disponivel` no ledger, respeitando reservas existentes)
+      cobrir, cria reserva atômica via `wms_reservar_atomico`, desvincula a OC
+      (`cancelOcIfEmpty`), e transiciona o pedido de volta para própria
+      (`decisao_final='propria'`, `status_separacao='aguardando_nf'`, enfileira
+      `lancar_estoque`) — espelhando exatamente a degradação OC→própria já feita pelo
+      worker. Para na primeira vez que o saldo livre não cobrir (FIFO estrito).
+      Mecanismo 2 — `receberItensViaOC` (`receber-oc.ts`): passa a setar
+      `compra_status='recebido'` quando `compra_quantidade_recebida >= compra_quantidade_solicitada`
+      (com lock otimista via `.select()` + checagem de linhas afetadas), e a chamar
+      `checkAndReleasePedidos` logo após — unificando o comportamento com o endpoint
+      `/api/wms/compras/receber`.
+    files:
+      - src/lib/wms/reconciliador-oc.ts
+      - src/lib/wms/ledger.ts
+      - src/lib/wms/receber-oc.ts
+      - src/lib/historico-service.ts
+    tags: [reconciliador, oc, esgotado, estoque, fifo, recebimento, release, wms]

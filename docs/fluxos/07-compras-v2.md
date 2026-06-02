@@ -37,8 +37,9 @@
 27. [Distribuição por aging (FIFO)](#27-distribuição-por-aging-fifo)
 28. [Diagramas Mermaid](#28-diagramas-mermaid)
 29. [Side effects consolidados](#29-side-effects-consolidados)
-30. [Erros conhecidos](#30-erros-conhecidos)
-31. [Glossário](#31-glossário)
+30. [Reconciliação de saldo OC (event-driven)](#30-reconciliação-de-saldo-oc-event-driven)
+31. [Erros conhecidos (histórico)](#31-erros-conhecidos-histórico)
+32. [Glossário](#32-glossário)
 
 ---
 
@@ -1927,7 +1928,37 @@ Todos os endpoints fazem `logger.info`/`warn`/`error` com `source` no padrão `c
 
 ---
 
-## 30. Erros conhecidos
+## 30. Reconciliação de saldo OC (event-driven)
+
+> Implementado em 2026-06-02. Resolve o caso onde um pedido aprovado como OC ficava preso em `Esgotado/aguardando_compra` mesmo após o estoque chegar. Ver também `erros-conhecidos.yaml` entrada `oc-item-preso-em-esgotado-mesmo-com-estoque`.
+
+### Mecanismo 1 — `reconciliador-oc.ts` (disparado por entrada de estoque)
+
+Toda vez que `ledger.ts` registra uma movimentação de tipo `E` (entrada), dispara `reconciliarPedidosOcComSaldo(produtoId, galpaoId)` fire-and-forget. O reconciliador:
+
+1. Busca pedidos com itens em `compra_status IN ('oc_pendente', 'aguardando_compra')` e `status_separacao IN ('validacao_oc', 'aguardando_compra')` para aquele produto e galpão.
+2. Ordena FIFO por `siso_pedidos.criado_em` (mais antigo primeiro).
+3. Para cada pedido, verifica o saldo livre (`siso_estoque.disponivel`, que já desconta reservas existentes).
+4. Se o saldo livre cobre a quantidade do item: cria reserva atômica via `wms_reservar_atomico`, desvincula a OC (`cancelOcIfEmpty`), e transiciona o pedido de volta para própria (`decisao_final='propria'`, `status_separacao='aguardando_nf'`, enfileira `lancar_estoque`). Espelha exatamente a degradação OC→própria feita pelo worker.
+5. Para na primeira vez que o saldo livre não cobrir (FIFO estrito — não pula pedidos).
+
+### Mecanismo 2 — unificação de recebimento (`receberItensViaOC`)
+
+`src/lib/wms/receber-oc.ts` (`receberItensViaOC`), chamado por `/api/wms/receber/oc/[id]`, passa a:
+- Setar `compra_status='recebido'` quando `compra_quantidade_recebida >= compra_quantidade_solicitada` (com lock otimista).
+- Chamar `checkAndReleasePedidos` após atualização — liberando o pedido igual ao `/api/wms/compras/receber`.
+
+Antes, esse caminho incrementava `compra_quantidade_recebida` mas nunca setava `recebido` nem chamava o release, deixando o pedido preso indefinidamente após recebimento físico via OC formal.
+
+### Arquivos
+
+- `src/lib/wms/reconciliador-oc.ts` — reconciliador event-driven (Mec. 1)
+- `src/lib/wms/ledger.ts` — gancho que dispara o reconciliador após mov tipo E
+- `src/lib/wms/receber-oc.ts` — recebimento via OC corrigido (Mec. 2)
+
+---
+
+## 31. Erros conhecidos (histórico)
 
 > Mantenha em sincronia com `erros-conhecidos.yaml` na raiz do projeto.
 
@@ -1947,7 +1978,7 @@ Todos os endpoints fazem `logger.info`/`warn`/`error` com `source` no padrão `c
 
 ---
 
-## 31. Glossário
+## 32. Glossário
 
 | Termo | Definição |
 |---|---|

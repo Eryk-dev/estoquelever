@@ -46,11 +46,14 @@ export default {
 
     // Parcial CONSOLIDADO: manda os 2 item_ids numa chamada só (= o que o
     // checklist faz no wave). Pega 1, loc NÃO zerou.
-    await ctx.http.post(
+    const resp = await ctx.http.post<{ status?: string }>(
       "/api/wms/separacao/parcial",
       { pedido_item_ids: itemIds, quantidade_pega: 1, loc_zerou: false },
       galpaoId ? { "X-Galpao-Id": galpaoId } : {},
     );
+    if (resp.status !== "parcial_em_progresso") {
+      throw new Error(`esperava status parcial_em_progresso; real=${resp.status}`);
+    }
 
     // ── Asserções do fix ──
     await ctx.assertSaldo(sku, "CWB", "A-01-04", 4); // 1 S de 1
@@ -73,6 +76,19 @@ export default {
     await ctx.assertSaldo(sku, "CWB", "A-01-04", 3); // 5 - 1 - 1
     await ctx.assertReservado(sku, "CWB", "A-01-04", 0); // tudo separado
     await ctx.assertSemReservasOrfas();
+
+    // Estado final: AMBOS os itens separados (pega=1, marcado=true).
+    const { data: itensFinais } = await ctx.sb
+      .from("siso_pedido_itens")
+      .select("quantidade_pega, separacao_marcado, sku")
+      .eq("sku", sku);
+    const rows = (itensFinais ?? []) as Array<{ quantidade_pega: number | null; separacao_marcado: boolean | null }>;
+    if (rows.length !== 2) throw new Error(`esperava 2 itens do sku ${sku}; achei ${rows.length}`);
+    for (const r of rows) {
+      if (Number(r.quantidade_pega ?? 0) !== 1 || r.separacao_marcado !== true) {
+        throw new Error(`item final deveria ter pega=1 e marcado=true; real pega=${r.quantidade_pega} marcado=${r.separacao_marcado}`);
+      }
+    }
   },
 } satisfies Cenario<{ sku: string }>;
 

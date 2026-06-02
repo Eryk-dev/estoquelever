@@ -2968,3 +2968,169 @@ erros:
       (parcial-qty0-loczerou-ejeta-operador-do-checklist) só fez o 500 ficar mais
       visível — o operador para na tela e vê o toast em vez de ser levado embora. O 500
       é independente e pré-existente. Verificado contra estado vivo em staging.
+
+  - id: parcial-sem-loczerou-reenfileira-e-pede-qty-cheia
+    date: 2026-06-01
+    source: separacao-parcial
+    category: business_logic
+    message: "Parcial sem 'loc zerou' fechava a separação e ao reabrir pedia a qty inteira"
+    cause: >
+      Dois problemas + um bug latente no Parcial item com loc_zerou=false e residual.
+      (1) Comportamento ("Fase 3 #3"): o branch !loc_zerou reenfileirava o pedido INTEIRO
+      pro fim da fila (status_separacao='aguardando_separacao' + zera separacao_operador_id
+      e separacao_iniciada_em) e o frontend fazia router.push('/wms/separacao') — tirando
+      o operador da separação. O esperado é manter o item ABERTO no mesmo checklist com só
+      a quantidade restante. (2) Display: o ItemRow mostrava produto.quantidade_total (a
+      qty cheia) como alvo, só com um badge pequeno "Parcial X/Y" — o operador via "pegar
+      10" mesmo já tendo pego 6 (a baixa em si estava correta: marcar-item descontava só
+      quantidade_pedida - quantidade_pega). (3) Bug latente: qty_para_este/qty_residual em
+      parcial/route.ts eram calculados sobre quantidade_pedida, IGNORANDO o quantidade_pega
+      já existente — refazer Parcial num item já parcial nunca fechava o item (residual
+      sempre >0) e reenfileirava em loop. Ficava escondido porque o reenfileiramento
+      expulsava o operador antes do 2º Parcial; some assim que o item passa a ficar no
+      checklist.
+    fix: >
+      (1) Branch !loc_zerou não reenfileira mais: pedido continua em_separacao com o mesmo
+      operador, item fica aberto (separacao_parcial=false, separacao_marcado=false,
+      quantidade_pega acumulada), retorna status 'parcial_em_progresso'. Frontend só dá
+      toast + invalidate, sem router.push. concluir já trata item inacabado (fica pendente,
+      não conclui errado). (2) Extraído helper puro distribuirQtyPega() que desconta o
+      quantidade_pega já pego ao calcular qty_para_este/qty_residual (qty_residual=0 fecha
+      o item) — 6 testes unitários (TDD). Guard do teto trocado de quantidade_pedida pra
+      "o que falta" (totalFaltante). (3) Display: ConsolidatedProduct ganhou
+      quantidade_restante (total − quantidade_pega); ItemRow mostra o restante quando
+      parcial-em-progresso e o modal Parcial sugere/limita ao restante.
+    files:
+      - src/lib/separacao/distribuir-qty-pega.ts
+      - src/lib/separacao/distribuir-qty-pega.test.ts
+      - src/app/api/wms/separacao/parcial/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+      - scripts/wms/cenarios/catalogo/69-parcial-fila-prateleira.ts
+      - docs/api-reference-complete.md
+    tags: [separacao, parcial, loc-zerou, em-progresso, quantidade-pega, qty-residual, reenfileirar, checklist, wms, distribuirQtyPega]
+    notes: >
+      Reverte o design "Fase 3 #3" (reenfileirar pro fim da fila) a pedido do user em
+      2026-06-01 — confirmado via AskUserQuestion. Cenário 69 reescrito pro novo
+      comportamento (era o teste do comportamento antigo). Reserva: o passo 7a continua
+      liberando 100% da R original (comportamento pré-existente); marcar-item completa o
+      restante via saldo vivo quando não há R. Verificado por unit (distribuir-qty-pega
+      6/6) + typecheck; cenário 69 deve ser rodado via `npm run scenarios` contra staging.
+
+  - id: encontrei-modal-sem-botao-confirmar
+    date: "2026-06-02"
+    source: wms.separacao.checklist
+    category: business_logic
+    message: "Modal 'Encontrei' (OC) não tem onde confirmar loc + quantidade — só botão Cancelar; operador preenche qty/loc e fica travado"
+    cause: >
+      OcEncontreiModal (src/app/wms/separacao/checklist/page.tsx) só submetia via Enter
+      dentro do HandheldScan da localização (comportamento de leitor handheld que emite
+      Return ao bipar). O rodapé (wms-md-ft) tinha APENAS 'Cancelar'. Quem digita a
+      localização na mão (ou bipa sem Enter, ou simplesmente procura um botão) preenche
+      qty + loc e não acha como confirmar. Além disso, o valor da loc vivia no estado
+      interno do HandheldScan, então um botão de rodapé não tinha acesso ao texto digitado.
+    fix: >
+      (1) HandheldScan ganhou prop opcional onValueChange?(value) que espelha o valor
+      digitado pro pai a cada mudança (e ao limpar no Enter/Escape) — retrocompatível, o
+      outro uso (Bipe SKU/GTIN) não passa a prop. (2) OcEncontreiModal passou a guardar
+      locInput via onValueChange e ganhou botão primário 'Confirmar' no rodapé que chama o
+      mesmo handleSubmit(locInput) — mesma validação (loc vazia → 'Código vazio', qty vazia,
+      qty < pedido → usar Esgotado). Caminho do leitor handheld (Enter) inalterado.
+    files:
+      - src/components/wms/vendas/handheld-scan.tsx
+      - src/app/wms/separacao/checklist/page.tsx
+    tags: [separacao, checklist, encontrei, oc, modal, handheld-scan, confirmar, ux, wms, qty-contada]
+    notes: >
+      Reportado pelo user com screenshot do modal 'Encontrei: ACD003' (qty=70, loc=A-01-1
+      preenchidos, só 'Cancelar' no rodapé). Verificado por typecheck (tsc --noEmit limpo
+      nos 2 arquivos; o único erro do tsc é pré-existente e não relacionado: teste que
+      importa @testing-library/react ausente).
+
+  - id: wms-lista-sugestao-oc-stale-snapshot
+    date: "2026-06-02"
+    source: src/app/api/wms/pedidos/route.ts
+    category: business_logic
+    message: "Listagem de pedidos servia a sugestão OC congelada do webhook mesmo com estoque vivo cobrindo → operador via 'Comprar' e podia tentar OC indevida (pedido #50117 / ACD003)"
+    cause: >
+      GET /api/wms/pedidos (buildResponse) retornava siso_pedidos.sugestao — o
+      snapshot calculado no webhook. O #50117 (EasyPeasy/CWB, id 938046201, SKU
+      ACD003 qty 1) caiu OC porque no momento do webhook o ledger WMS não tinha
+      saldo; depois CWB passou a ter 69 disponíveis, mas a listagem continuava
+      sugerindo OC. O card (pedido-card-wms) inicializa a decisão default a partir
+      desse `sugestao`, então o operador via/defaultava OC. O detalhe
+      (/pedidos/[id]/detalhe) JÁ recomputava ao vivo via recomputarSugestaoBatch —
+      a listagem ficou pra trás (divergência lista↔detalhe). A premissa anti-flicker
+      [#P6-1.15 / Fix-D #1.3] mantinha a lista presa no snapshot.
+    fix: >
+      buildResponse passou a recomputar a sugestão pra pedidos em decisão
+      (status pendente/erro com empresa_origem_id) via recomputarSugestaoBatch
+      (1 chamada batch, 5 queries fixas independente de N) e a servir o valor VIVO
+      na resposta, com o snapshot persistido só como fallback. Espelha o detalhe.
+      Frontend inalterado (o valor vivo flui pelo prop `sugestao`; decisaoIsAvailable
+      e o OC-block do backend já liam estoque vivo). siso_pedidos.sugestao segue
+      congelado no DB (auditoria). Reverte conscientemente a premissa anti-flicker:
+      a sugestão da lista agora reflete o estoque vivo (era o pedido explícito do user).
+      O recompute é envolto em .catch → degrada pro snapshot persistido se falhar
+      (timeout/DB), nunca derruba a listagem com 500.
+    files:
+      - src/app/api/wms/pedidos/route.ts
+      - src/components/wms/vendas/pedido-card-wms.tsx
+      - scripts/wms/cenarios/catalogo/72-lista-sugestao-recalcula-vivo.ts
+    tags: [wms, pedidos, sugestao, oc, estoque-vivo, snapshot-estale, listagem, recomputarSugestaoBatch, p6, regressao]
+    notes: >
+      Verificado: (a) tsc --noEmit limpo nos arquivos alterados (único erro é
+      pré-existente: teste que importa @testing-library/react ausente); (b) eslint
+      limpo; (c) prova de dados NÃO-destrutiva em staging — replicando a regra de
+      recomputarSugestaoBatch sobre o #50117 real dá `propria` (CWB é home da
+      EasyPeasy e tem 69 ≥ 1, loc picking, sem lock ativo). Cenário 72 (regressão,
+      OC→Própria na listagem) escrito e auto-descoberto pelo run-all, mas NÃO rodado
+      aqui: o harness trunca tabelas operacionais de staging — deixado pra suite
+      controlada. Revisão adversarial (4 lentes + verify) validou correção/segurança/
+      ausência de regressão; única ação aplicada foi o .catch de degradação graciosa.
+      Limitações PRÉ-EXISTENTES anotadas (fora de escopo, não introduzidas aqui):
+      (1) recomputarSugestaoBatch não faz chunking do .in(produto_id) — ok pro
+      working set real de pendentes/erro (pequeno), revisitar se a fila empilhar;
+      (2) o OC-block de aprovar soma global entre galpões enquanto rotearPedido exige
+      cobertura por-galpão — diverge só em pedido multi-item espalhado (split_galpoes),
+      não no caso reportado (item único coberto no galpão casa).
+
+  - id: oc-item-preso-em-esgotado-mesmo-com-estoque
+    date: "2026-06-02"
+    source: wms.separacao / wms.compras
+    category: business_logic
+    message: "Item aprovado como OC fica preso em Esgotado/aguardando_compra mesmo depois que o estoque chega — nunca volta ao picking"
+    cause: >
+      A decisão de roteamento OC era congelada (tomada uma vez no webhook, nunca
+      reavaliada quando o estoque chega). A única reação a uma entrada de estoque era
+      um banner cosmético `flag_saldo_apareceu` (e só em `validacao_oc`). O checklist
+      de separação bucketiza por `compra_status`, ignorando saldo vivo — pedidos em
+      `aguardando_compra` ficavam na aba "Esgotado" independente de haver saldo.
+      Além disso havia DOIS caminhos de recebimento divergentes: `/api/wms/receber/oc/[id]`
+      (`receberItensViaOC`) incrementava `compra_quantidade_recebida` mas NÃO setava
+      `compra_status='recebido'` nem chamava `checkAndReleasePedidos`, deixando o pedido
+      preso mesmo após recebimento físico completo (bug relacionado ao já registrado
+      `compras-autofix-no-release`). O reconciliador event-driven não existia — a entrada
+      de estoque (mov tipo E) não tinha gancho algum que atualizasse os pedidos OC
+      bloqueados sobre aquele produto/galpão.
+    fix: >
+      Mecanismo 1 — `reconciliador-oc.ts`: reconciliador event-driven disparado
+      fire-and-forget pelo gancho de mov tipo E em `ledger.ts` (toda entrada de estoque).
+      Para o par (produto_id, galpao_id) recém-entrado, busca pedidos com
+      `compra_status IN (oc_pendente, aguardando_compra)` e `status_separacao IN
+      (validacao_oc, aguardando_compra)`, ordena FIFO por `criado_em` e, para cada
+      pedido que o saldo livre (`disponivel` no ledger, respeitando reservas existentes)
+      cobrir, cria reserva atômica via `wms_reservar_atomico`, desvincula a OC
+      (`cancelOcIfEmpty`), e transiciona o pedido de volta para própria
+      (`decisao_final='propria'`, `status_separacao='aguardando_nf'`, enfileira
+      `lancar_estoque`) — espelhando exatamente a degradação OC→própria já feita pelo
+      worker. Para na primeira vez que o saldo livre não cobrir (FIFO estrito).
+      Mecanismo 2 — `receberItensViaOC` (`receber-oc.ts`): passa a setar
+      `compra_status='recebido'` quando `compra_quantidade_recebida >= compra_quantidade_solicitada`
+      (com lock otimista via `.select()` + checagem de linhas afetadas), e a chamar
+      `checkAndReleasePedidos` logo após — unificando o comportamento com o endpoint
+      `/api/wms/compras/receber`.
+    files:
+      - src/lib/wms/reconciliador-oc.ts
+      - src/lib/wms/ledger.ts
+      - src/lib/wms/receber-oc.ts
+      - src/lib/historico-service.ts
+    tags: [reconciliador, oc, esgotado, estoque, fifo, recebimento, release, wms]

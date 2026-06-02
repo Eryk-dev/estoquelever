@@ -3,8 +3,10 @@ import { createServiceClient } from "@/lib/supabase-server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GalpaoEstoque } from "@/types";
 import { aggregateLiveStockBySku } from "@/lib/wms/live-stock";
+import { recomputarSugestaoBatch } from "@/lib/wms/sugestao-dinamica";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
+import { logger } from "@/lib/logger";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
@@ -28,15 +30,58 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
 
   // Estoque LIVE: agrega siso_estoque (3D) por (sku, galpão) — não usa o snapshot
   // de siso_pedido_item_estoques, que congela na hora do webhook.
+  // + fotos do produto (siso_produtos.imagens) por SKU, em paralelo — alimenta o lightbox.
   const skus = Array.from(new Set(itensList.map((i) => i.sku).filter((s): s is string => !!s)));
-  const stockBySku = await aggregateLiveStockBySku(supabase, skus);
+  const [stockBySku, produtosImgs] = await Promise.all([
+    aggregateLiveStockBySku(supabase, skus),
+    supabase.from("siso_produtos").select("sku, imagens").in("sku", skus),
+  ]);
+  const imagensBySku = new Map<string, string[]>();
+  for (const p of (produtosImgs.data ?? []) as { sku: string; imagens: string[] | null }[]) {
+    if (p.sku && p.imagens && p.imagens.length > 0) imagensBySku.set(p.sku, p.imagens);
+  }
 
-  // [#P6-1.15] GET retorna sugestão PERSISTIDA sempre — sem recompute aqui.
-  // Recomputação em GET causava flicker visual: o saldo live mudava entre
-  // renders e a sugestão pulava propria↔transferencia↔oc, criando "flash"
-  // sem o operador agir. Recompute fica em endpoint dedicado (aprovar) ou
-  // background job. Snapshot em siso_pedidos.sugestao é a fonte de verdade
-  // pro card até decisão manual.
+  // Sugestão VIVA pra pedidos ainda em decisão (pendente/erro): recomputa a
+  // rota contra o estoque atual de siso_estoque em vez de servir o snapshot
+  // congelado no webhook. Um pedido que caiu OC por falta de saldo e depois
+  // ganhou estoque passa a sugerir Própria/Transferência — o operador nunca
+  // vê (nem aprova) OC com estoque coberto. Espelha o que /pedidos/[id]/detalhe
+  // já faz; recomputarSugestaoBatch custa 5 queries fixas pro lote inteiro
+  // (independe de N). Snapshot em siso_pedidos.sugestao vira só fallback
+  // (pedidos já decididos ou sem empresa_origem_id).
+  const decidiveis = pedidos.filter(
+    (p) => (p.status === "pendente" || p.status === "erro") && p.empresa_origem_id,
+  );
+  // O recompute é um realce de exibição — se falhar (timeout/erro DB), degrada
+  // pro snapshot persistido (?? p.sugestao abaixo) em vez de derrubar a listagem
+  // inteira com 500. O detalhe é blindado pelo try-catch do handler; aqui o
+  // .catch local cobre o mesmo.
+  const sugestoesVivas =
+    decidiveis.length > 0
+      ? await recomputarSugestaoBatch(
+          supabase,
+          decidiveis.map((p) => ({
+            pedidoId: p.id,
+            empresaOrigemId: p.empresa_origem_id,
+            itens: (itensByPedido.get(p.id) ?? [])
+              .filter((it) => !!it.sku)
+              .map((it) => ({
+                sku: it.sku as string,
+                quantidade: Number(it.quantidade_pedida) || 0,
+              })),
+          })),
+        ).catch((err) => {
+          logger.warn(
+            "pedidos-lista",
+            "recompute de sugestão falhou — servindo snapshot persistido",
+            {
+              error: err instanceof Error ? err.message : String(err),
+              pedidos: decidiveis.length,
+            },
+          );
+          return null;
+        })
+      : null;
 
   return pedidos.map((p) => {
     const dbItens = itensByPedido.get(p.id) ?? [];
@@ -86,10 +131,11 @@ async function buildResponse(supabase: SupabaseClient, pedidos: any[]) {
           estoques: estoquesMap,
           fornecedorOC: item.fornecedor_oc ?? null,
           imagemUrl: item.imagem_url ?? undefined,
+          imagens: imagensBySku.get(item.sku ?? "") ?? [],
         };
       }),
-      sugestao: p.sugestao ?? "propria",
-      sugestaoMotivo: p.sugestao_motivo ?? "",
+      sugestao: sugestoesVivas?.get(p.id)?.sugestao ?? p.sugestao ?? "propria",
+      sugestaoMotivo: sugestoesVivas?.get(p.id)?.motivo ?? p.sugestao_motivo ?? "",
       status: p.status ?? "pendente",
       tipoResolucao: p.tipo_resolucao ?? undefined,
       decisaoFinal: p.decisao_final ?? undefined,

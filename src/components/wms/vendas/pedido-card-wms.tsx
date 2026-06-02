@@ -4,6 +4,7 @@ import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/wms/ui/wms-ui";
 import { CrossPopoverButton } from "@/components/wms/cross/cross-popover-button";
+import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import {
   getEcommerceAbbr,
   getMarketplaceName,
@@ -29,6 +30,7 @@ interface ItemRow {
   descricao: string;
   quantidadePedida: number;
   imagemUrl?: string | null;
+  imagens?: string[];
   estoques: Record<string, ItemEstoque>;
   fornecedorOC?: string | null;
 }
@@ -240,8 +242,16 @@ function ItemRowV2({
   const semEstoqueLugar = !Object.values(item.estoques).some(
     (e) => e.disponivel >= item.quantidadePedida,
   );
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const fotos =
+    item.imagens && item.imagens.length > 0
+      ? item.imagens
+      : item.imagemUrl
+        ? [item.imagemUrl]
+        : [];
 
   return (
+    <>
     <div className="wms-pcard-item-v2">
       <div className="wms-pcard-thumb">
         {item.imagemUrl ? (
@@ -249,7 +259,11 @@ function ItemRowV2({
             src={item.imagemUrl}
             loading="lazy"
             alt=""
-            className="wms-pcard-thumb-img"
+            className="wms-pcard-thumb-img wms-thumb-click"
+            onClick={(e) => {
+              e.stopPropagation();
+              setLightboxOpen(true);
+            }}
           />
         ) : (
           <div className="wms-pcard-thumb-placeholder">
@@ -314,6 +328,15 @@ function ItemRowV2({
         </div>
       </div>
     </div>
+    {lightboxOpen && fotos.length > 0 && (
+      <ProdutoLightbox
+        imagens={fotos}
+        sku={item.sku}
+        descricao={item.descricao}
+        onClose={() => setLightboxOpen(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -335,10 +358,11 @@ function PedidoCardWms({ pedido, onClick, interactive }: PedidoCardWmsProps) {
     itens,
   } = pedido;
 
-  // [Fix-D #1.3] Removido `hasItemSemEstoque` recompute client-side. O backend
-  // já persiste a sugestão correta em `siso_pedidos.sugestao` ([#P6-1.15]) — o
-  // GET retorna o snapshot. Recomputar client-side causava flicker visual entre
-  // `propria↔oc` quando o saldo live mudava entre renders. Snapshot wins.
+  // [Fix-D #1.3 / sugestão viva] Sem recompute client-side. O GET /api/wms/pedidos
+  // já recomputa a sugestão contra o estoque vivo pra pedidos em decisão
+  // (pendente/erro), então `sugestao` aqui já chega atualizado — um pedido que
+  // ganhou saldo depois do webhook vem como propria/transferencia, não OC.
+  // Recomputar de novo no cliente só traria o flicker que removemos. Server wins.
   const [decisao, setDecisao] = useState<Decisao>(decisaoFinal ?? sugestao);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 

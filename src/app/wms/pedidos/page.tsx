@@ -357,6 +357,7 @@ export default function WmsPedidosPage() {
       descricao: it.descricao,
       quantidadePedida: it.quantidadePedida,
       imagemUrl: it.imagemUrl,
+      imagens: it.imagens ?? [],
       fornecedorOC: it.fornecedorOC,
       estoques: Object.fromEntries(
         Object.entries(it.estoques ?? {}).map(([galpao, ge]) => [

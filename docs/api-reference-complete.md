@@ -271,7 +271,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
           }
         },
         "fornecedorOC": "string | null",
-        "imagemUrl": "string | null"
+        "imagemUrl": "string | null",
+        "imagens": "string[] (fotos do produto via siso_produtos.imagens por SKU; [] se nenhuma)"
       }
     ],
     "sugestao": "propria" | "transferencia" | "oc",
@@ -762,6 +763,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
       "descricao": "string",
       "quantidade": "number",
       "imagem_url": "string | null",
+      "imagens": "string[] (fotos do produto via siso_produtos.imagens por SKU; [] se nenhuma)",
       "fornecedor_oc": "string | null",
       "compra_status": "string | null",
       "compra_quantidade_solicitada": "number | null",
@@ -1833,7 +1835,7 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 - Se `loc_zerou` e `saldo > qty_pega`, gera mov S de ajuste `ajuste_pick_zerou` pra delta (também registrada na bridge).
 - Marca registro como parcial:
   - Modo item, `loc_zerou=true` (ou pegou tudo): `siso_pedido_itens.separacao_parcial = true` + `separacao_marcado = true`.
-  - Modo item, `loc_zerou=false` + residual (**Fase 3 #3**): item fica **aberto** (`separacao_parcial = false`, `separacao_marcado = false`, `quantidade_pega` acumulada) + pedido reenfileirado pro fim da fila. **NÃO** seta `separacao_parcial` (senão `marcar-item`/`parcial`/`bipar-checklist` rejeitariam o re-pick e o residual ficaria impossível de completar).
+  - Modo item, `loc_zerou=false` + residual (**parcial-em-progresso**, 2026-06-01): item fica **aberto** (`separacao_parcial = false`, `separacao_marcado = false`, `quantidade_pega` acumulada) e o pedido **continua `em_separacao`** com o mesmo operador — **não** reenfileira nem solta a onda. O operador completa o restante na mesma onda (`marcar-item`/`bipar`/novo `parcial` descontam `quantidade_pedida − quantidade_pega`). **NÃO** seta `separacao_parcial` (senão `marcar-item`/`parcial`/`bipar-checklist` rejeitariam o re-pick e o residual ficaria impossível de completar).
   - Modo realocação: `siso_pedido_item_realocacoes.status = 'picado_parcial'` (ou `'picado'` se cobriu integral).
 - Acumula `quantidade_pega` no item pai via RPC `wms_acumular_qty_pega` (UPDATE atômico — evita race em wave consolidado).
 - Se sobra residual: dispara `resolverRealocacao` excluindo loc original do item + todas as locs de realocações do mesmo item (qualquer status). Em wave consolidado a cascade roda em **todos** os itens afetados (multi-empresa). Cria novas linhas em `siso_pedido_item_realocacoes` com `parent_realocacao_id = realoc.id` no modo realocação, ou sem parent no modo item.
@@ -1844,7 +1846,7 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 |---|---|---|
 | `{ status: 'completo' }` | Sem residual — pegou tudo ou pegou o suficiente | ambos |
 | `{ status: 'realocado', realocacoes: [...] }` | Cascade criou linhas novas (mesmo galpão) pra cobrir o residual | ambos |
-| `{ status: 'parcial_reenfileirado', pedidos_reenfileirados, items_parciais, items_residuais_a_fazer }` | **Fase 3 #3:** `loc_zerou=false` + residual (prateleira ainda tem). O pedido inteiro volta pro FIM da fila (`aguardando_separacao` + `separacao_reenfileirado_em=now`, `quantidade_pega` preservada). Os itens residuais ficam **abertos** (`separacao_parcial=false`, `separacao_marcado=false`) pra poderem ser completados/re-pickados depois (os 3 paths de pick rejeitam `separacao_parcial=true`); o badge "Parcial X/Y" deriva de `quantidade_pega`. Frontend dá toast + redirect pra `/wms/separacao`. | item |
+| `{ status: 'parcial_em_progresso', items_parciais, items_residuais_a_fazer }` | **2026-06-01:** `loc_zerou=false` + residual (prateleira ainda tem). O item fica **aberto no MESMO checklist** mostrando só o que falta; o pedido **continua `em_separacao`** com o mesmo operador (não reenfileira, não solta a onda; `separacao_reenfileirado_em` permanece null). Os itens residuais ficam `separacao_parcial=false`, `separacao_marcado=false`, `quantidade_pega` acumulada (os 3 paths de pick rejeitam `separacao_parcial=true`); o badge "Parcial X/Y" e a qty exibida derivam de `quantidade_pega`. Frontend dá toast e **permanece** no checklist (sem redirect). O `concluir` só fecha o pedido quando todos os itens estiverem marcados. | item |
 | `{ status: 'sem_cobertura_outro_galpao', tem_em_outro_galpao: true, galpoes_alternativos: [{galpao_id, galpao_nome, disponivel}], pedido_ids, item_ids }` | **Fase 1:** cascade esgotou no galpão atual mas há saldo VIVO em outro galpão. Frontend abre o `EsgotadoModal` (encaminhar-first): "Encaminhar p/ Galpão X" como 1ª opção, OC como fallback. | item (loc_zerou) |
 | `{ status: 'mandado_pra_compras', tem_em_outro_galpao: false, itens_atualizados, pedidos_atualizados }` | **Fase 1:** cascade esgotou e nenhum galpão tem saldo → itens transitam direto pra `aguardando_compra` (sem modal). | item (loc_zerou) |
 | `{ status: 'sem_cobertura' }` | Modo realocação: galpão sem cobertura pro residual. Frontend abre modal encaminhar/OC. **NÃO** marca pedido pendente_realocacao. | realocação |

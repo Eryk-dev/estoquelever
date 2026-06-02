@@ -1,26 +1,30 @@
 import type { Cenario, Ctx } from "../_harness/types";
 
 /**
- * Cenário 69 (Fase 3 #3) — Parcial na separação com prateleira ainda com saldo
- * → pedido volta pro FIM da fila; depois o operador RETOMA e completa o residual.
+ * Cenário 69 — Parcial na separação com prateleira ainda com saldo (loc NÃO zerou)
+ * → item fica ABERTO no MESMO checklist mostrando só o que falta; o operador
+ * completa o residual na mesma onda (sem sair da separação).
  *
  * Semeia CWB A-01-03 com 10. Pedido de 5 (NetAir→CWB), auto-aprovado própria.
  * Operador inicia e faz Parcial qty=3 loc_zerou=FALSE (pegou 3, prateleira tem 7).
  * Esperado pós-parcial:
- *   - pedido volta pra aguardando_separacao com separacao_reenfileirado_em setado
+ *   - pedido CONTINUA em_separacao (NÃO reenfileira, NÃO solta o operador)
+ *   - separacao_reenfileirado_em permanece null
  *   - item: quantidade_pega=3 (preservada), separacao_marcado=false
  *   - item NÃO fica separacao_parcial=true (senão marcar-item/parcial/bipar
  *     rejeitariam o re-pick e o residual ficaria impossível de completar)
- *   - saldo CWB cai 10→7 (S de 3); a R foi totalmente liberada (não fica reservada)
- * Depois o operador retoma (iniciar) e completa o residual via marcar-item:
+ *   - saldo CWB cai 10→7 (S de 3); a R original é liberada e o residual (2) é
+ *     re-reservado na MESMA loc (reservado=2) — a linha "PEGAR" fica protegida
+ * Depois o operador completa o residual com um 2º Parcial qty=2 (sem re-iniciar):
+ *   - 2º parcial fecha o item (qty_residual desconta o quantidade_pega já pego)
  *   - pedido → separado, quantidade_pega=5, saldo CWB 7→5 (S de 2)
  *   - net: 2 saídas S (3 + 2 = 5 = pedido); SEM dupla-baixa (saldo final = 5)
  */
 export default {
-  nome: "69 — Parcial (prateleira tem) volta pro fim da fila + retoma e completa",
+  nome: "69 — Parcial (prateleira tem) fica no checklist + completa na mesma onda",
   descricao:
-    "Parcial qty<pedido + loc_zerou=false → reenfileira (quantidade_pega preservada, item re-pickável); depois completa o residual sem dupla-baixa.",
-  tags: ["separacao", "parcial", "fila", "p3-fase3"],
+    "Parcial qty<pedido + loc_zerou=false → item fica aberto no mesmo checklist (pedido segue em_separacao); 2º parcial completa o residual sem dupla-baixa.",
+  tags: ["separacao", "parcial", "checklist", "em-progresso"],
 
   setup: async (ctx: Ctx) => {
     const sku = ctx.skuUnico("69");
@@ -41,7 +45,7 @@ export default {
     // Parcial: pegou 3 de 5, NÃO zerou a loc (prateleira ainda tem 7).
     await ctx.parcial({ pedido: pedido.id, item: sku, qty: 3, loc_zerou: false });
 
-    // ── Asserções intermediárias: estado pós-reenfileiramento ──
+    // ── Asserções intermediárias: item aberto, pedido segue em_separacao ──
     const itemMid = await carregarItem(ctx, sku, pedido.id);
     if (Number(itemMid.quantidade_pega) !== 3) {
       throw new Error(`pós-parcial: quantidade_pega deve ser 3; real=${itemMid.quantidade_pega}`);
@@ -55,17 +59,21 @@ export default {
       );
     }
     const pedMid = await carregarPedido(ctx, pedido.id);
-    if (pedMid.status_separacao !== "aguardando_separacao") {
-      throw new Error(`pós-parcial: status deve ser aguardando_separacao; real=${pedMid.status_separacao}`);
+    if (pedMid.status_separacao !== "em_separacao") {
+      throw new Error(
+        `pós-parcial: status deve CONTINUAR em_separacao (sem reenfileirar); real=${pedMid.status_separacao}`,
+      );
     }
-    if (!pedMid.separacao_reenfileirado_em) {
-      throw new Error("pós-parcial: separacao_reenfileirado_em deve estar setado (fim da fila)");
+    if (pedMid.separacao_reenfileirado_em) {
+      throw new Error("pós-parcial: separacao_reenfileirado_em deve permanecer null (não reenfileira)");
     }
     await ctx.assertSaldo(sku, "CWB", "A-01-03", 7);
+    await ctx.assertReservado(sku, "CWB", "A-01-03", 2); // residual re-reservado na mesma loc
 
-    // ── Operador RETOMA e completa o residual (path que o dead-end quebrava) ──
-    await ctx.iniciarSeparacao(pedido.id);
-    await ctx.bipar({ pedido: pedido.id, item: sku, qty: 2 }); // marcar-item desconta 5-3=2
+    // ── Completa o residual com 2º Parcial qty=2 na MESMA onda (sem re-iniciar) ──
+    // Exercita o fix: qty_residual desconta o quantidade_pega já pego (3),
+    // então pegar os 2 que faltam FECHA o item em vez de re-abrir em loop.
+    await ctx.parcial({ pedido: pedido.id, item: sku, qty: 2, loc_zerou: false });
     await ctx.concluirSeparacao(pedido.id);
     await ctx.aguardarStatusSeparacao(pedido.id, "separado");
 
@@ -82,6 +90,7 @@ export default {
     }
     // Net: 10 - 3 (parcial) - 2 (completar) = 5. saldo<5 indicaria dupla-baixa.
     await ctx.assertSaldo(sku, "CWB", "A-01-03", 5);
+    await ctx.assertReservado(sku, "CWB", "A-01-03", 0); // tudo separado, sem reserva sobrando
   },
 } satisfies Cenario<{ sku: string }>;
 

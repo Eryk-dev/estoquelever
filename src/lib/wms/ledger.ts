@@ -247,6 +247,13 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
           galpao_id: tripla.galpao_id,
           localizacao_id: tripla.localizacao_id,
         });
+        // Reconciliador OC: devolve ao picking pedidos parados por falta cujo
+        // saldo livre agora cobre (FIFO). Fire-and-forget; erros não fatais.
+        const { reconciliarEntradaEstoque } = await import("./reconciliador-oc");
+        await reconciliarEntradaEstoque({
+          produtoId: tripla.produto_id,
+          galpaoId: tripla.galpao_id,
+        });
       } catch (err) {
         logger.warn("ledger", "varredura pós-entrada falhou (não-fatal)", {
           error: err instanceof Error ? err.message : String(err),

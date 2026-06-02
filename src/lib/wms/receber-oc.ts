@@ -5,6 +5,7 @@ import { registrarEvento } from "@/lib/historico-service";
 import { resolverLocRecebimento, criarPendencia } from "@/lib/wms/guarda";
 import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
 import { detectarCrossDock } from "@/lib/wms/crossdock-detector";
+import { checkAndReleasePedidos } from "@/lib/compras-release";
 
 export interface ReceberOCItemInput {
   /** ID do siso_pedido_itens vinculado a essa OC */
@@ -59,6 +60,7 @@ export async function receberItensViaOC(
 
   const pendenciasCriadas: string[] = [];
   const divergencias: ReceberOCResult["divergencias"] = [];
+  const itensRecebidosIds: string[] = [];
 
   // Resolve loc RECEBIMENTO do galpão da OC (uma vez por chamada)
   const { id: locRecebId } = await resolverLocRecebimento(oc.galpao_id);
@@ -243,13 +245,38 @@ export async function receberItensViaOC(
       continue;
     }
 
-    // Atualiza compra_quantidade_recebida
-    const novaQtyReceb =
-      Number(item.compra_quantidade_recebida ?? 0) + itemReq.qty_real;
-    await supabase
+    // Atualiza compra_quantidade_recebida (optimistic lock + flip compra_status)
+    const jaRecebido = Number(item.compra_quantidade_recebida ?? 0);
+    const novaQtyReceb = jaRecebido + itemReq.qty_real;
+    const qtySolic = Number(item.compra_quantidade_solicitada ?? 0);
+    const updatePayload: Record<string, unknown> = {
+      compra_quantidade_recebida: novaQtyReceb,
+    };
+    if (qtySolic > 0 && novaQtyReceb >= qtySolic) {
+      updatePayload.compra_status = "recebido";
+    }
+    const { data: updRows, error: updRecebErr } = await supabase
       .from("siso_pedido_itens")
-      .update({ compra_quantidade_recebida: novaQtyReceb })
-      .eq("id", item.id);
+      .update(updatePayload)
+      .eq("id", item.id)
+      .eq("compra_quantidade_recebida", jaRecebido) // optimistic lock
+      .select("id");
+    if (updRecebErr) {
+      logger.warn("receber-oc", "update de recebimento falhou; pulando item", {
+        item_id: item.id,
+        error: updRecebErr.message,
+      });
+      continue;
+    }
+    // 0 linhas = outro recebimento concorrente já incrementou (a guarda .eq
+    // não casou). Pula pra não dobrar a contagem — o vencedor já contou.
+    if (!updRows || updRows.length === 0) {
+      logger.warn("receber-oc", "recebimento concorrente detectado; pulando item", {
+        item_id: item.id,
+      });
+      continue;
+    }
+    itensRecebidosIds.push(String(item.id));
 
     if (itemReq.motivo_divergencia) {
       divergencias.push({
@@ -293,6 +320,18 @@ export async function receberItensViaOC(
       .from("siso_ordens_compra")
       .update({ status: "recebido" })
       .eq("id", args.ocId);
+  }
+
+  // Mec. 2: libera os pedidos cujos itens de compra agora estão todos resolvidos.
+  // checkAndReleasePedidos é idempotente (guarda de status + índice único).
+  if (itensRecebidosIds.length > 0) {
+    try {
+      await checkAndReleasePedidos(itensRecebidosIds);
+    } catch (err) {
+      logger.warn("receber-oc", "checkAndReleasePedidos falhou (não-fatal)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   return {

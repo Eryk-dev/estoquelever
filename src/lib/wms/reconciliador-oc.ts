@@ -311,6 +311,26 @@ async function transicionarPedidoSeReconciliado(
       });
     }
   }
+
+  // Acorda o worker pra processar o lancar_estoque. Diferente do worker (que já
+  // está no loop de drenagem), o reconciliador roda fora dele — sem o kick, o
+  // job ficaria pendente pra sempre (não há cron drenando a fila). Lazy import
+  // pra evitar cycle (reconciliador-oc é carregado lazy pelos callers).
+  try {
+    const { kickWorker } = await import("@/lib/execution-worker");
+    void kickWorker().catch((err) => {
+      logger.warn("reconciliador-oc", "kickWorker falhou (não-fatal)", {
+        pedidoId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    });
+  } catch (err) {
+    logger.warn("reconciliador-oc", "import kickWorker falhou (não-fatal)", {
+      pedidoId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   logger.info("reconciliador-oc", "pedido OC devolvido ao fluxo próprio por saldo", {
     pedidoId,
   });

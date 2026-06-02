@@ -105,6 +105,10 @@ export default {
     await ctx.aguardarStatusSeparacao(r1.id, "aguardando_nf", {
       timeout_ms: 15000,
     });
+
+    // ── 6. Drena o lancar_estoque que o reconciliador enfileirou (kickWorker),
+    //       senão o invariante "fila vazia" falha. p1 segue em aguardando_nf. ──
+    await ctx.aguardarFilaVazia({ timeout_ms: 20000 });
   },
 
   assertEsperado: async (ctx: Ctx, setup: Setup): Promise<void> => {

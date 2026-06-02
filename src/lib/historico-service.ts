@@ -99,7 +99,8 @@ export type EventoPedido =
   | "liberar_reservas_admin"
   | "mandado_pra_compras_via_cascade"
   | "recebimento_item_zero"
-  | "recebimento_via_oc";
+  | "recebimento_via_oc"
+  | "oc_item_saldo_reconciliado";
 
 /**
  * Record a single event in the order history.

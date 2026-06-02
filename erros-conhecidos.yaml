@@ -3134,3 +3134,24 @@ erros:
       - src/lib/wms/receber-oc.ts
       - src/lib/historico-service.ts
     tags: [reconciliador, oc, esgotado, estoque, fifo, recebimento, release, wms]
+
+  - id: parcial-wave-libera-reserva-residual
+    date: "2026-06-02"
+    source: wms/separacao/parcial
+    category: business_logic
+    message: "Parcial de wave consolidado destruía a reserva dos pedidos não atendidos (liberava 100% da R de TODOS os pedidos, sem recriar quando loc_zerou=false)."
+    cause: >
+      Loop 7a em parcial/route.ts liberava Number(r.quantidade) pra cada pedido_id do
+      wave incondicionalmente; cascade que recria R só roda em loc_zerou=true, então o
+      residual de loc_zerou=false ficava sem reserva (e o checklist voltava a pedir a
+      qty cheia).
+    fix: >
+      Computar alocação FCFS por pedido antes da liberação; com loc_zerou=false, só
+      liberar a R de pedidos com picked>0 e re-reservar o residual na mesma loc via
+      criarReservaCascade. Frontend deriva linha PEGO (Σ quantidade_pega) + linha PEGAR
+      (Σ restante).
+    files:
+      - src/app/api/wms/separacao/parcial/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+      - scripts/wms/cenarios/catalogo/70-parcial-wave-reserva.ts
+    tags: [separacao, parcial, reserva, wave, checklist]

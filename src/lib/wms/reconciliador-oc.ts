@@ -112,21 +112,15 @@ export async function reconciliarEntradaEstoque(args: {
   // 4. saldo LIVRE em locs de PICKING. Estoque recém-chegado fica em
   //    RECEBIMENTO (e há quarentena/packing/expedição) — NÃO é pickável.
   //    Reservar fora do picking quebraria a guarda reservado<=saldo quando o
-  //    put-away tira o estoque dali (tipo S). Só conta/reserva picking.
-  const { data: locsPick } = await supabase
-    .from("siso_localizacoes")
-    .select("id")
-    .eq("galpao_id", galpaoId)
-    .eq("tipo", "picking");
-  const locIdsPick = (locsPick ?? []).map((l) => l.id as string);
-  if (locIdsPick.length === 0) return;
-
+  //    put-away tira o estoque dali (tipo S). Filtramos por loc tipo='picking'
+  //    via JOIN embedded (o galpão tem centenas de locs picking; um .in() com
+  //    todos os ids estoura o tamanho da URL do PostgREST → Bad Request).
   const { data: est } = await supabase
     .from("siso_estoque")
-    .select("disponivel")
+    .select("disponivel, siso_localizacoes!inner(tipo)")
     .eq("produto_id", produtoId)
     .eq("galpao_id", galpaoId)
-    .in("localizacao_id", locIdsPick)
+    .eq("siso_localizacoes.tipo", "picking")
     .gt("disponivel", 0);
   const saldoLivre = (est ?? []).reduce(
     (acc, row) => acc + Number(row.disponivel ?? 0),
@@ -139,10 +133,10 @@ export async function reconciliarEntradaEstoque(args: {
   async function melhorLocPicking(): Promise<string | null> {
     const { data } = await supabase
       .from("siso_estoque")
-      .select("localizacao_id")
+      .select("localizacao_id, siso_localizacoes!inner(tipo)")
       .eq("produto_id", produtoId)
       .eq("galpao_id", galpaoId)
-      .in("localizacao_id", locIdsPick)
+      .eq("siso_localizacoes.tipo", "picking")
       .gt("disponivel", 0)
       .order("disponivel", { ascending: false })
       .limit(1)

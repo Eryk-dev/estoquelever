@@ -306,11 +306,14 @@ async function processarParcialItem(
     //    com lista completa de items cobertos em origem_detalhes pra rastreabilidade.
     const itemIdsList = itemsRaw.map((it) => Number(it.id));
 
-    // 7a. R↔L↔S pairing: pra cada pedido_id do wave, libera 100% da R
-    // criada no aprovar nessa loc original. Mesmo que pegamos só X<Y
-    // unidades, a R original perde sentido inteira porque a loc esvaziou
-    // (ou estamos forçando a saída parcial). O cascade re-emite R nas
-    // locs destino pra qty residual.
+    // 7a. R↔L↔S pairing por pedido do wave:
+    //   - loc_zerou=false: só libera a R de quem pegou unidade (guard abaixo);
+    //     a R de pedido não-atendido fica INTACTA, e o residual do próprio pick
+    //     é re-reservado na mesma loc mais adiante (passo 10, ramo !loc_zerou).
+    //   - loc_zerou=true: libera 100% da R de todos (a loc esvaziou); o cascade
+    //     re-emite R nas locs destino pra qty residual.
+    // Quando libera, libera a R inteira (Number(r.quantidade)) — o pareamento
+    // com a qty pega é resolvido pela re-reserva (false) ou pelo cascade (true).
     const liberacoesPorPedido = new Map<string, { reserva: ReservaPendenteRow; movL_id: string }>();
     for (const pid of pedidoIds) {
       const alloc = allocPorPedido.get(pid) ?? { picked: 0, residual: 0 };

@@ -6,7 +6,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { reservarAtomico } from "@/lib/wms/reservas";
-import { buscarLocComMaiorSaldoNoGalpao } from "@/lib/separacao/wms-mapping";
 import { cancelOcIfEmpty } from "@/lib/compras-utils";
 import { registrarEvento } from "@/lib/historico-service";
 
@@ -72,19 +71,8 @@ export async function reconciliarEntradaEstoque(args: {
     .in("siso_pedidos.status_separacao", STATUS_PEDIDO_OC as unknown as string[]);
   if (!rows || rows.length === 0) return;
 
-  // 3. desconta partes já picadas (parcial + realocações) — igual qtyEfetiva
-  const itemIds = rows.map((r) => r.id as string);
-  const { data: realocs } = await supabase
-    .from("siso_pedido_item_realocacoes")
-    .select("pedido_item_id, qty_picada")
-    .in("pedido_item_id", itemIds)
-    .eq("status", "picado");
-  const picadoPorItem = new Map<string, number>();
-  for (const r of realocs ?? []) {
-    const k = r.pedido_item_id as string;
-    picadoPorItem.set(k, (picadoPorItem.get(k) ?? 0) + Number(r.qty_picada ?? 0));
-  }
-
+  // 3. outstanding = pedida − já pega. (Picks via realocação JÁ incrementam
+  //    quantidade_pega — não há coluna/subtração extra a fazer aqui.)
   type Linha = {
     id: string;
     pedido_id: string;
@@ -101,9 +89,7 @@ export async function reconciliarEntradaEstoque(args: {
         : (pedRaw as { id: string; criado_em?: string } | null);
       const outstanding = Math.max(
         0,
-        Number(r.quantidade_pedida ?? 0) -
-          Number(r.quantidade_pega ?? 0) -
-          (picadoPorItem.get(r.id as string) ?? 0),
+        Number(r.quantidade_pedida ?? 0) - Number(r.quantidade_pega ?? 0),
       );
       return {
         id: r.id as string,
@@ -123,12 +109,24 @@ export async function reconciliarEntradaEstoque(args: {
     );
   if (pendentes.length === 0) return;
 
-  // 4. saldo LIVRE do produto no galpão
+  // 4. saldo LIVRE em locs de PICKING. Estoque recém-chegado fica em
+  //    RECEBIMENTO (e há quarentena/packing/expedição) — NÃO é pickável.
+  //    Reservar fora do picking quebraria a guarda reservado<=saldo quando o
+  //    put-away tira o estoque dali (tipo S). Só conta/reserva picking.
+  const { data: locsPick } = await supabase
+    .from("siso_localizacoes")
+    .select("id")
+    .eq("galpao_id", galpaoId)
+    .eq("tipo", "picking");
+  const locIdsPick = (locsPick ?? []).map((l) => l.id as string);
+  if (locIdsPick.length === 0) return;
+
   const { data: est } = await supabase
     .from("siso_estoque")
     .select("disponivel")
     .eq("produto_id", produtoId)
     .eq("galpao_id", galpaoId)
+    .in("localizacao_id", locIdsPick)
     .gt("disponivel", 0);
   const saldoLivre = (est ?? []).reduce(
     (acc, row) => acc + Number(row.disponivel ?? 0),
@@ -136,30 +134,35 @@ export async function reconciliarEntradaEstoque(args: {
   );
   if (saldoLivre <= 0) return;
 
+  // Escolhe a loc de PICKING com maior disponível pra colocar a reserva.
+  // Re-consultado a cada item (o disponível cai conforme reservamos).
+  async function melhorLocPicking(): Promise<string | null> {
+    const { data } = await supabase
+      .from("siso_estoque")
+      .select("localizacao_id")
+      .eq("produto_id", produtoId)
+      .eq("galpao_id", galpaoId)
+      .in("localizacao_id", locIdsPick)
+      .gt("disponivel", 0)
+      .order("disponivel", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return (data?.localizacao_id as string | null | undefined) ?? null;
+  }
+
   // 5. seleção FIFO estrita (função pura já no arquivo)
   const selecao = selecionarLiberaveisFifo(pendentes, saldoLivre);
 
-  // 6. liberar: reserva atômica → desvincula OC → limpa campos
+  // 6. liberar cada item: CLAIM atômico → reserva em loc de picking → desvincula OC
   const pedidosAfetados = new Set<string>();
   for (const linha of selecao) {
     if (!linha.libera) continue;
-    const locId = await buscarLocComMaiorSaldoNoGalpao(galpaoId, produtoId);
-    if (!locId) continue;
-    try {
-      await reservarAtomico({
-        tripla: { produto_id: produtoId, galpao_id: galpaoId, localizacao_id: locId },
-        qty: linha.outstanding,
-        pedido_id: linha.pedido_id,
-        ttl_horas: 24 * 30,
-      });
-    } catch (err) {
-      logger.warn("reconciliador-oc", "reserva falhou; item segue na compra", {
-        item_id: linha.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      continue;
-    }
-    const { error: updErr } = await supabase
+
+    // CLAIM atômico (compare-and-swap): limpa os campos de compra SÓ se o item
+    // ainda está pendente. Se uma varredura concorrente já reconciliou, o
+    // filtro não casa e voltam 0 linhas → pula. Garante 1 reserva por item
+    // (sem reserva dupla / oversell sob entradas E concorrentes).
+    const { data: claimed, error: claimErr } = await supabase
       .from("siso_pedido_itens")
       .update({
         compra_status: null,
@@ -168,16 +171,40 @@ export async function reconciliarEntradaEstoque(args: {
         compra_solicitada_em: null,
         fornecedor_oc: null,
       })
-      .eq("id", linha.id);
-    if (updErr) {
+      .eq("id", linha.id)
+      .in("compra_status", COMPRA_PENDENTE as unknown as string[])
+      .select("id");
+    if (claimErr) {
       logger.logError({
-        error: updErr,
+        error: claimErr,
         source: "reconciliador-oc",
-        message: `Falha ao limpar campos de compra do item ${linha.id}`,
+        message: `Falha ao reivindicar item ${linha.id}`,
         category: "database",
       });
       continue;
     }
+    if (!claimed || claimed.length === 0) continue; // perdeu a corrida
+
+    // Reserva o outstanding numa loc de PICKING (nunca recebimento).
+    const locId = await melhorLocPicking();
+    if (locId) {
+      try {
+        await reservarAtomico({
+          tripla: { produto_id: produtoId, galpao_id: galpaoId, localizacao_id: locId },
+          qty: linha.outstanding,
+          pedido_id: linha.pedido_id,
+          ttl_horas: 24 * 30,
+        });
+      } catch (err) {
+        // Loc esgotou na corrida — o item já voltou ao picking e será pego do
+        // saldo vivo no pick (atômico, anti-oversell). Fica sem R, sem travar.
+        logger.warn("reconciliador-oc", "reserva falhou pós-claim; item sem R", {
+          item_id: linha.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     await cancelOcIfEmpty(supabase, linha.ordem_compra_id, "reconciliador-oc");
     pedidosAfetados.add(linha.pedido_id);
     void registrarEvento({
@@ -217,9 +244,14 @@ async function transicionarPedidoSeReconciliado(
     .maybeSingle();
   if (!pedido) return;
 
-  if (pedido.status_separacao === "em_separacao") {
-    // Operador já está separando (NF já passou) — só rotula como própria,
-    // sem reenfileirar lancar_estoque nem regredir o status.
+  // I2: só os estados OC reentram no portão de NF. Qualquer estado mais
+  // avançado (em_separacao/aguardando_separacao/separado/embalado/expedido)
+  // NÃO regride — só rotula decisao=propria (operador pode já estar separando
+  // ou o pedido pode ter avançado numa corrida entre o SELECT e aqui).
+  if (
+    pedido.status_separacao !== "validacao_oc" &&
+    pedido.status_separacao !== "aguardando_compra"
+  ) {
     const { error: updErr } = await supabase
       .from("siso_pedidos")
       .update({ decisao_final: "propria" })
@@ -228,23 +260,27 @@ async function transicionarPedidoSeReconciliado(
       logger.logError({
         error: updErr,
         source: "reconciliador-oc",
-        message: `Falha ao marcar pedido ${pedidoId} como própria (em_separacao)`,
+        message: `Falha ao marcar pedido ${pedidoId} como própria (estado avançado)`,
         category: "database",
       });
     }
     return;
   }
 
-  const { error: pedidoUpdErr } = await supabase
+  // validacao_oc / aguardando_compra → vira própria e reentra no portão de NF.
+  // O filtro .in(status_separacao) torna a transição condicional: se uma
+  // corrida já avançou o pedido, voltam 0 linhas e NÃO enfileiramos o job
+  // (evita lancar_estoque órfão / regressão).
+  const { data: transRows, error: pedidoUpdErr } = await supabase
     .from("siso_pedidos")
     .update({
       decisao_final: "propria",
       status: "executando",
       status_separacao: "aguardando_nf",
     })
-    .eq("id", pedidoId);
-  // Se o pedido não transicionou, NÃO enfileira o job — evita lancar_estoque
-  // órfão pra um pedido ainda preso em validacao_oc/aguardando_compra.
+    .eq("id", pedidoId)
+    .in("status_separacao", ["validacao_oc", "aguardando_compra"])
+    .select("id");
   if (pedidoUpdErr) {
     logger.logError({
       error: pedidoUpdErr,
@@ -254,6 +290,7 @@ async function transicionarPedidoSeReconciliado(
     });
     return;
   }
+  if (!transRows || transRows.length === 0) return; // corrida: já avançou
 
   const { data: jobExistente } = await supabase
     .from("siso_fila_execucao")

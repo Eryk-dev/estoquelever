@@ -50,9 +50,9 @@ export default {
     setup.p1Id = r1.id;
     setup.p2Id = r2.id;
 
-    // Sem estoque → ambos vão pra pendente (OC) após o worker processar
-    await ctx.aguardarStatus(r1.id, "concluido");
-    await ctx.aguardarStatus(r2.id, "concluido");
+    // Sem estoque → OC: ficam em status='pendente' (aguardando aprovação humana).
+    await ctx.aguardarStatus(r1.id, "pendente", undefined, { timeout_ms: 20000 });
+    await ctx.aguardarStatus(r2.id, "pendente", undefined, { timeout_ms: 20000 });
 
     // ── 2. FIFO determinístico: p1 mais antigo que p2 ──
     // O reconciliador ordena por criado_em; forçamos aqui para evitar empate
@@ -73,17 +73,38 @@ export default {
     await ctx.aguardarStatusSeparacao(r1.id, "validacao_oc");
     await ctx.aguardarStatusSeparacao(r2.id, "validacao_oc");
 
-    // ── 4. Semear saldo de 15 unidades → dispara reconciliador (mov E) ──
-    // 15 ≥ 13 (p1) mas 15 - 13 = 2 < 10 (p2): FIFO libera só p1.
-    await ctx.semearSaldo({
-      produto: sku,
-      galpao: "CWB",
-      loc: "A-01-03",
+    // ── 4. Entrada de 15 numa loc de PICKING via /api/wms/ajuste ──
+    // IMPORTANTE: usar o endpoint (passa pelo TS inserirMovimentacao → dispara
+    // o gancho do reconciliador). semearSaldo chama a RPC crua e NÃO dispara.
+    // 15 ≥ 13 (p1) mas 15 − 13 = 2 < 10 (p2): FIFO libera só p1.
+    const { data: prod } = await ctx.sb
+      .from("siso_produtos")
+      .select("id")
+      .eq("sku", sku)
+      .single();
+    const galpaoId = ctx.staging.galpoes.cwb.id;
+    const { data: loc } = await ctx.sb
+      .from("siso_localizacoes")
+      .select("id")
+      .eq("galpao_id", galpaoId)
+      .eq("codigo", "A-01-03")
+      .single();
+    await ctx.http.post("/api/wms/ajuste", {
+      tripla: {
+        produto_id: (prod as { id: string }).id,
+        galpao_id: galpaoId,
+        localizacao_id: (loc as { id: string }).id,
+      },
       qty: 15,
+      direcao: "entrada",
+      motivo: "harness cenário 80",
+      motivo_categoria: "achado",
     });
 
-    // ── 5. Aguardar o reconciliador fire-and-forget ──
-    await ctx.aguardar(2000);
+    // ── 5. Reconciliador é fire-and-forget no server: espera p1 voltar ──
+    await ctx.aguardarStatusSeparacao(r1.id, "aguardando_nf", {
+      timeout_ms: 15000,
+    });
   },
 
   assertEsperado: async (ctx: Ctx, setup: Setup): Promise<void> => {

@@ -25,7 +25,7 @@ export default {
     "Pedido 100%-OC, esgotado → aguardando_compra. Comprador registra compra. " +
     "Recebimento via POST /api/wms/receber/oc/[id] deve liberar o pedido " +
     "(status_separacao != 'aguardando_compra').",
-  tags: ["recebimento", "oc", "destravar", "mecanismo2", "aguardando_compra"],
+  tags: ["reconciliador", "recebimento", "oc", "destravar", "mecanismo2"],
 
   setup: async (ctx: Ctx): Promise<Setup> => {
     const sku = ctx.skuUnico("81");
@@ -44,8 +44,8 @@ export default {
     });
     setup.pedidoId = id;
 
-    // Worker processa: sem estoque → decisao_final=oc, status=concluido
-    await ctx.aguardarStatus(id, "concluido");
+    // Sem estoque → OC: fica em status='pendente' (aguardando aprovação humana).
+    await ctx.aguardarStatus(id, "pendente", undefined, { timeout_ms: 20000 });
 
     // ── 2. Aprovar como OC → validacao_oc ──
     await ctx.aprovar(id, "oc");

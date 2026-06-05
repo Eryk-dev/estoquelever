@@ -3215,3 +3215,19 @@ erros:
       - src/app/api/wms/guarda/[id]/iniciar/route.ts
       - src/app/wms/guarda/[id]/page.tsx
     tags: [guarda, lock, force-unlock, takeover, P127]
+  - id: wms-inventario-aprovar-sessao-nao-idempotente
+    date: "2026-06-05"
+    source: wms.inventario.aprovar
+    category: business_logic
+    message: "dupla aprovação de sessão de inventário reprocessa contagem"
+    cause: >
+      aprovarSessao fazia UPDATE status='aprovada' WHERE id=sessaoId sem
+      condicionar à etapa atual. Duas aprovações concorrentes ambas passavam,
+      reprocessando a contagem e sobrescrevendo aprovada_por.
+    fix: >
+      Compare-and-set .eq('status','revisao').select(): 0 linhas → no-op
+      idempotente (throw 'não está em revisão'), sem reaplicar nem liberar
+      locks de novo. Status correto é 'revisao' (não 'em_revisao').
+    files:
+      - src/lib/wms/inventario.ts
+    tags: [inventario, aprovacao, idempotencia, compare-and-set, P160]

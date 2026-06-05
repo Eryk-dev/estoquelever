@@ -298,7 +298,10 @@ export async function receberTransferencia(
   // (qualquer chamada concorrente) leva 0 rows → 409.
   const { data: claimed, error: errClaim } = await sb
     .from("siso_transferencias_galpao")
-    .update({ recebimento_em_andamento_por: input.usuario_id })
+    .update({
+      recebimento_em_andamento_por: input.usuario_id,
+      recebimento_em_andamento_em: new Date().toISOString(),
+    })
     .eq("id", t.id)
     .eq("status", "em_transito")
     .is("recebimento_em_andamento_por", null)

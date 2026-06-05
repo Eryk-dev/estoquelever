@@ -1017,6 +1017,7 @@ function Fornecedores({ produto }: { produto: Produto }) {
             key={f.id}
             row={f}
             onPatch={(patch) => atualizar.mutate({ id: f.id, patch })}
+            mutationPending={atualizar.isPending}
             onRemove={() => {
               if (confirm(`Remover fornecedor ${f.fornecedor?.nome}?`)) {
                 remover.mutate(f.id);
@@ -1118,10 +1119,11 @@ function AdicionarFornecedorForm({
   );
 }
 
-function FornecedorEditCard({
+export function FornecedorEditCard({
   row,
   onPatch,
   onRemove,
+  mutationPending,
 }: {
   row: FornecRow;
   onPatch: (
@@ -1135,6 +1137,7 @@ function FornecedorEditCard({
     }>,
   ) => void;
   onRemove: () => void;
+  mutationPending?: boolean;
 }) {
   return (
     <div
@@ -1173,6 +1176,7 @@ function FornecedorEditCard({
             <button
               className="wms-btn wms-btn-sm wms-btn-ghost"
               onClick={() => onPatch({ preferencial: true })}
+              disabled={mutationPending}
               title="Marcar como preferencial"
             >
               <Icon name="check" size={11} /> Tornar preferencial

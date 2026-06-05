@@ -3319,3 +3319,19 @@ erros:
       - supabase/migrations/20260607_mov_estorno_unique.sql
       - src/lib/wms/ledger.ts
     tags: [estorno, unique, idempotencia, ledger, concorrencia]
+  - id: wms-fornecedor-preferencial-duplo
+    date: "2026-06-05"
+    source: wms.produto-fornecedores
+    category: business_logic
+    message: "Marcar preferencial em corrida deixava 0 ou 2 preferenciais por produto"
+    cause: >
+      idx_pf_preferencial era índice comum; troca feita em 2 UPDATEs não-atômicos
+      (despromove+promove) na rota PATCH; botão sem disabled permitia duplo-clique.
+    fix: >
+      idx_pf_preferencial vira UNIQUE parcial (backstop banco); PATCH mapeia 23505 a
+      409; botão "Tornar preferencial" disabled durante a mutation.
+    files:
+      - supabase/migrations/20260607_pf_preferencial_unique.sql
+      - src/app/api/wms/produto-fornecedores/[id]/route.ts
+      - src/components/wms/produto-drawer.tsx
+    tags: [fornecedor, preferencial, unique, frontend, idempotencia]

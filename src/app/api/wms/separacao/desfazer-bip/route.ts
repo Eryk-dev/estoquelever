@@ -89,30 +89,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Decrement quantidade_bipada by 1
-    const newBipada = currentBipada - 1;
-    const newBipadoCompleto = newBipada >= item.quantidade_pedida;
-
-    const { error: updateItemError } = await supabase
-      .from("siso_pedido_itens")
-      .update({
-        quantidade_bipada: newBipada,
-        bipado_completo: newBipadoCompleto,
-      })
-      .eq("pedido_id", pedido_id)
-      .eq("produto_id", produto_id);
-
-    if (updateItemError) {
-      logger.error("separacao-desfazer-bip", "Failed to update item", {
-        error: updateItemError.message,
+    // 3. Decrement quantidade_bipada by 1 — P021: decremento atômico no SQL
+    // (dois cliques rápidos decrementam exatamente 1 cada, sem perder
+    // decrementos). Usa o valor RETORNADO pela RPC pra decidir status.
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc(
+      "wms_desfazer_bip_atomico",
+      { p_pedido_id: pedido_id, p_produto_id: produto_id },
+    );
+    if (rpcErr) {
+      logger.error("separacao-desfazer-bip", "RPC atomica falhou", {
+        error: rpcErr.message,
         pedido_id,
         produto_id,
       });
-      return NextResponse.json(
-        { error: updateItemError.message },
-        { status: 500 },
-      );
+      return NextResponse.json({ error: rpcErr.message }, { status: 500 });
     }
+    const decRes = (rpcRes ?? {}) as {
+      quantidade_bipada?: number;
+      bipado_completo?: boolean;
+    };
+    const newBipada = Number(decRes.quantidade_bipada ?? currentBipada - 1);
+    const newBipadoCompleto = Boolean(decRes.bipado_completo ?? false);
 
     // 4. Check if pedido status needs reverting
     let newStatusSeparacao = pedido.status_separacao;

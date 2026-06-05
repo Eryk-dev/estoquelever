@@ -331,7 +331,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(updated);
     }
   } catch (err) {
-    logger.logError({
+    const { id: erro_id, timestamp: erro_em } = logger.logError({
       error: err,
       source: "separacao-marcar-item",
       message: "Erro inesperado",
@@ -340,6 +340,6 @@ export async function POST(request: NextRequest) {
       requestMethod: "POST",
       metadata: { pedido_item_id, marcado },
     });
-    return NextResponse.json({ error: "erro interno" }, { status: 500 });
+    return NextResponse.json({ error: "erro interno", erro_id, erro_em }, { status: 500 });
   }
 }

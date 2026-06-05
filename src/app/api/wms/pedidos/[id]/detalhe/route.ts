@@ -96,7 +96,15 @@ export async function GET(
     // Estoque LIVE por (sku, galpão) — reflete movimentações pós-webhook.
     const itensList = itensResult.data ?? [];
     const skus = Array.from(new Set(itensList.map((i) => i.sku).filter((s): s is string => !!s)));
-    const stockBySku = await aggregateLiveStockBySku(supabase, skus);
+    // Estoque live + fotos do produto (siso_produtos.imagens) por SKU, em paralelo.
+    const [stockBySku, produtosImgs] = await Promise.all([
+      aggregateLiveStockBySku(supabase, skus),
+      supabase.from("siso_produtos").select("sku, imagens").in("sku", skus),
+    ]);
+    const imagensBySku = new Map<string, string[]>();
+    for (const p of (produtosImgs.data ?? []) as { sku: string; imagens: string[] | null }[]) {
+      if (p.sku && p.imagens && p.imagens.length > 0) imagensBySku.set(p.sku, p.imagens);
+    }
 
     // Sugestão dinâmica pra pedidos ainda em decisão (pendente/erro).
     const ehDecidivel = pedido.status === "pendente" || pedido.status === "erro";
@@ -152,6 +160,7 @@ export async function GET(
         descricao: item.descricao ?? "",
         quantidade: item.quantidade_pedida ?? 0,
         imagem_url: item.imagem_url ?? null,
+        imagens: imagensBySku.get(item.sku ?? "") ?? [],
         fornecedor_oc: item.fornecedor_oc ?? null,
         compra_status: item.compra_status ?? null,
         compra_quantidade_solicitada: item.compra_quantidade_solicitada ?? null,

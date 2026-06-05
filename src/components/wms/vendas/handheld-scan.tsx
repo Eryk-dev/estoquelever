@@ -16,6 +16,8 @@ export interface HandheldScanProps {
   placeholder?: string;
   /** Disparado em Enter. Recebe o valor capturado (já trim()). */
   onSubmit: (codigo: string) => void;
+  /** Notifica o pai a cada mudança do valor (pra um botão externo poder submeter o que foi digitado). */
+  onValueChange?: (value: string) => void;
   /** Feedback dinâmico abaixo do input — string ou objeto com tone */
   feedback?: { text: string; tone: "ok" | "warn" | "error" | "neutral" } | null;
   /** Desabilita input enquanto processa */
@@ -36,6 +38,7 @@ export function HandheldScan({
   label,
   placeholder,
   onSubmit,
+  onValueChange,
   feedback,
   pending = false,
   autoFocus = true,
@@ -45,6 +48,11 @@ export function HandheldScan({
   const fallbackRef = useRef<HTMLInputElement | null>(null);
   const inputRef = autoFocus ? autoRef : fallbackRef;
   const prevPending = useRef(pending);
+
+  function updateValue(next: string) {
+    setValue(next);
+    onValueChange?.(next);
+  }
 
   // Refoca o input quando `pending` muda de true → false (operador
   // continua bipando sem precisar clicar).
@@ -64,12 +72,12 @@ export function HandheldScan({
       const trimmed = value.trim();
       if (!trimmed || pending) return;
       onSubmit(trimmed);
-      setValue("");
+      updateValue("");
       return;
     }
     if (e.key === "Escape") {
       e.preventDefault();
-      setValue("");
+      updateValue("");
     }
   }
 
@@ -89,7 +97,7 @@ export function HandheldScan({
         autoCapitalize="off"
         spellCheck={false}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => updateValue(e.target.value)}
         onKeyDown={handleKeyDown}
         disabled={pending}
         placeholder={placeholder ?? "Bipe ou digite e Enter..."}

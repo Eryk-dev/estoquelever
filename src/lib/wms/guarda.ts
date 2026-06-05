@@ -345,6 +345,7 @@ function normalizarNumeros(p: PendenciaJoined): PendenciaJoined {
 export async function iniciarGuarda(input: {
   pendencia_id: string;
   usuario_id: string;
+  forcar?: boolean;
 }): Promise<PendenciaJoined> {
   const sb = createServiceClient();
   const pend = await obterPendencia(input.pendencia_id);
@@ -356,8 +357,11 @@ export async function iniciarGuarda(input: {
   if (pend.status === "em_guarda" && pend.iniciada_por === input.usuario_id) {
     return pend;
   }
-  // Já reivindicada por outro operador — não tenta sobrescrever.
+  // Já reivindicada por outro operador — não tenta sobrescrever, EXCETO
+  // quando forcar=true (takeover explícito "Tomar de Fulano"). O takeover
+  // preserva qty_guardada/qty_pendente — continua do ponto onde o dono parou.
   if (
+    !input.forcar &&
     pend.status === "em_guarda" &&
     pend.iniciada_por &&
     pend.iniciada_por !== input.usuario_id
@@ -369,10 +373,12 @@ export async function iniciarGuarda(input: {
     err.iniciada_por = pend.iniciada_por;
     throw err;
   }
-  // UPDATE condicional: só ganha se `iniciada_por` ainda for NULL ou já
-  // for o usuário atual, E o status não tiver virado terminal entre o
-  // SELECT e este UPDATE. Race-perdedor recebe 0 rows updated.
-  const { data: updated, error } = await sb
+  // UPDATE condicional: no caminho normal só ganha se `iniciada_por` ainda
+  // for NULL ou já for o usuário atual, E o status não tiver virado terminal
+  // entre o SELECT e este UPDATE. Race-perdedor recebe 0 rows updated.
+  // No takeover (forcar) reivindica de qualquer dono, mantendo apenas o
+  // guard de status terminal (não tomar pendência já guardada/cancelada).
+  let upd = sb
     .from("siso_wms_pendencias_guarda")
     .update({
       status: "em_guarda",
@@ -380,10 +386,12 @@ export async function iniciarGuarda(input: {
       iniciada_por: input.usuario_id,
     })
     .eq("id", input.pendencia_id)
-    .or(`iniciada_por.is.null,iniciada_por.eq.${input.usuario_id}`)
     .neq("status", "guardada")
-    .neq("status", "cancelada")
-    .select("id, iniciada_por");
+    .neq("status", "cancelada");
+  if (!input.forcar) {
+    upd = upd.or(`iniciada_por.is.null,iniciada_por.eq.${input.usuario_id}`);
+  }
+  const { data: updated, error } = await upd.select("id, iniciada_por");
   if (error) throw error;
   if (!updated || updated.length === 0) {
     // Race perdida: outro operador ganhou. Re-lê pra anexar o dono atual.

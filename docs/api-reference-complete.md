@@ -271,7 +271,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
           }
         },
         "fornecedorOC": "string | null",
-        "imagemUrl": "string | null"
+        "imagemUrl": "string | null",
+        "imagens": "string[] (fotos do produto via siso_produtos.imagens por SKU; [] se nenhuma)"
       }
     ],
     "sugestao": "propria" | "transferencia" | "oc",
@@ -762,6 +763,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
       "descricao": "string",
       "quantidade": "number",
       "imagem_url": "string | null",
+      "imagens": "string[] (fotos do produto via siso_produtos.imagens por SKU; [] se nenhuma)",
       "fornecedor_oc": "string | null",
       "compra_status": "string | null",
       "compra_quantidade_solicitada": "number | null",
@@ -1833,7 +1835,7 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 - Se `loc_zerou` e `saldo > qty_pega`, gera mov S de ajuste `ajuste_pick_zerou` pra delta (também registrada na bridge).
 - Marca registro como parcial:
   - Modo item, `loc_zerou=true` (ou pegou tudo): `siso_pedido_itens.separacao_parcial = true` + `separacao_marcado = true`.
-  - Modo item, `loc_zerou=false` + residual (**Fase 3 #3**): item fica **aberto** (`separacao_parcial = false`, `separacao_marcado = false`, `quantidade_pega` acumulada) + pedido reenfileirado pro fim da fila. **NÃO** seta `separacao_parcial` (senão `marcar-item`/`parcial`/`bipar-checklist` rejeitariam o re-pick e o residual ficaria impossível de completar).
+  - Modo item, `loc_zerou=false` + residual (**parcial-em-progresso**, 2026-06-01): item fica **aberto** (`separacao_parcial = false`, `separacao_marcado = false`, `quantidade_pega` acumulada) e o pedido **continua `em_separacao`** com o mesmo operador — **não** reenfileira nem solta a onda. O operador completa o restante na mesma onda (`marcar-item`/`bipar`/novo `parcial` descontam `quantidade_pedida − quantidade_pega`). **NÃO** seta `separacao_parcial` (senão `marcar-item`/`parcial`/`bipar-checklist` rejeitariam o re-pick e o residual ficaria impossível de completar).
   - Modo realocação: `siso_pedido_item_realocacoes.status = 'picado_parcial'` (ou `'picado'` se cobriu integral).
 - Acumula `quantidade_pega` no item pai via RPC `wms_acumular_qty_pega` (UPDATE atômico — evita race em wave consolidado).
 - Se sobra residual: dispara `resolverRealocacao` excluindo loc original do item + todas as locs de realocações do mesmo item (qualquer status). Em wave consolidado a cascade roda em **todos** os itens afetados (multi-empresa). Cria novas linhas em `siso_pedido_item_realocacoes` com `parent_realocacao_id = realoc.id` no modo realocação, ou sem parent no modo item.
@@ -1844,7 +1846,7 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 |---|---|---|
 | `{ status: 'completo' }` | Sem residual — pegou tudo ou pegou o suficiente | ambos |
 | `{ status: 'realocado', realocacoes: [...] }` | Cascade criou linhas novas (mesmo galpão) pra cobrir o residual | ambos |
-| `{ status: 'parcial_reenfileirado', pedidos_reenfileirados, items_parciais, items_residuais_a_fazer }` | **Fase 3 #3:** `loc_zerou=false` + residual (prateleira ainda tem). O pedido inteiro volta pro FIM da fila (`aguardando_separacao` + `separacao_reenfileirado_em=now`, `quantidade_pega` preservada). Os itens residuais ficam **abertos** (`separacao_parcial=false`, `separacao_marcado=false`) pra poderem ser completados/re-pickados depois (os 3 paths de pick rejeitam `separacao_parcial=true`); o badge "Parcial X/Y" deriva de `quantidade_pega`. Frontend dá toast + redirect pra `/wms/separacao`. | item |
+| `{ status: 'parcial_em_progresso', items_parciais, items_residuais_a_fazer }` | **2026-06-01:** `loc_zerou=false` + residual (prateleira ainda tem). O item fica **aberto no MESMO checklist** mostrando só o que falta; o pedido **continua `em_separacao`** com o mesmo operador (não reenfileira, não solta a onda; `separacao_reenfileirado_em` permanece null). Os itens residuais ficam `separacao_parcial=false`, `separacao_marcado=false`, `quantidade_pega` acumulada (os 3 paths de pick rejeitam `separacao_parcial=true`); o badge "Parcial X/Y" e a qty exibida derivam de `quantidade_pega`. Frontend dá toast e **permanece** no checklist (sem redirect). O `concluir` só fecha o pedido quando todos os itens estiverem marcados. | item |
 | `{ status: 'sem_cobertura_outro_galpao', tem_em_outro_galpao: true, galpoes_alternativos: [{galpao_id, galpao_nome, disponivel}], pedido_ids, item_ids }` | **Fase 1:** cascade esgotou no galpão atual mas há saldo VIVO em outro galpão. Frontend abre o `EsgotadoModal` (encaminhar-first): "Encaminhar p/ Galpão X" como 1ª opção, OC como fallback. | item (loc_zerou) |
 | `{ status: 'mandado_pra_compras', tem_em_outro_galpao: false, itens_atualizados, pedidos_atualizados }` | **Fase 1:** cascade esgotou e nenhum galpão tem saldo → itens transitam direto pra `aguardando_compra` (sem modal). | item (loc_zerou) |
 | `{ status: 'sem_cobertura' }` | Modo realocação: galpão sem cobertura pro residual. Frontend abre modal encaminhar/OC. **NÃO** marca pedido pendente_realocacao. | realocação |
@@ -1856,7 +1858,7 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 - 409 — código estável no payload `{ error, code }`:
   - `realocacao_ja_picada` — race no `UPDATE … WHERE status='aguardando_picking'` (a realoc foi marcada como `picado`/`cancelado` por outra request entre o fetch e o UPDATE pessimista).
   - `race_item_ja_picado` — race no `UPDATE … WHERE separacao_marcado=false` (outro operador marcou o item entre o fetch e o UPDATE).
-  - `posicao_reservada` — saldo da quádrupla reservado por outro pedido.
+  - `posicao_reservada` — saldo reservado por **outros** pedidos não cobre a `quantidade_pega`. Gate compara `quantidade_pega` contra `saldo − reservado_de_outros` (= disponível + reserva viva do próprio lote nesta loc), **não** contra `disponivel` cru. A reserva do próprio pedido (R que o `aprovar` criou e que o passo 7a libera) não bloqueia — o pedido tem direito a ela. Fix 2026-06-01: antes usava `disponivel` cru e travava o pedido de pegar a própria reserva quando a loc estava 100% alocada entre vários pedidos (disponivel=0). Payload `{ error, saldo, reservado (de outros), disponivel (pra você), quantidade_pega }`.
   - Item já processado / realocação não-`aguardando_picking` (versões anteriores ao fix-pack — agora coberto pelos códigos acima).
 
 **Side Effects (resumo):**
@@ -2723,9 +2725,14 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 ```json
 {
   "item_ids": ["uuid", "uuid"],
-  "acao": "encontrei | esgotado | desfazer_encontrei"
+  "acao": "encontrei | esgotado | desfazer_encontrei",
+  "qty_contada": "number (optional, only acao=encontrei)",
+  "localizacao_codigo": "string (optional, only acao=encontrei)"
 }
 ```
+
+- `qty_contada` (number, optional — only meaningful when `acao='encontrei'`): total de unidades contadas fisicamente na prateleira (acerto de prateleira / contagem inline). Quando presente, o backend reconcilia o saldo da loc registrando uma contagem oficial (gera mov `inventario_ganho`/`inventario_perda` conforme o delta vs. saldo de sistema) antes de separar o pedido. Exige `qty_contada >= quantidade_pedida` do item — caso contrário responde **422** `contagem_menor_que_pedido`. `qty_contada <= 0` responde **422** `contagem_invalida`. Ausente = comportamento legado (pick sem contagem).
+- `localizacao_codigo` (string, optional — only meaningful when `acao='encontrei'`): código da prateleira bipada. Alternativa a `localizacao_id` (uuid) pra resolver a loc-alvo da contagem dentro do galpão do pedido (`siso_localizacoes` filtrado por `galpao_id` do pedido + `codigo`). Usado em conjunto com `qty_contada`.
 
 **Response (200):**
 ```json
@@ -2740,8 +2747,19 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 }
 ```
 
+**Response (422 - Contagem inline inválida, only acao=encontrei):**
+```json
+{
+  "error": "contagem_menor_que_pedido | contagem_invalida | loc_obrigatoria | loc_invalida",
+  "message": "string",
+  "item_id": "uuid",
+  "qty_contada": "number (contagem_menor_que_pedido)",
+  "qty_pedido": "number (contagem_menor_que_pedido)"
+}
+```
+
 **Business Logic:**
-- **encontrei:** Clears all compra fields (compra_status, fornecedor_oc, compra_quantidade_solicitada, compra_solicitada_em, ordem_compra_id) and marks item as picked (separacao_marcado = true, bipado_completo = true, quantidade_bipada = quantidade_pedida)
+- **encontrei:** Clears all compra fields (compra_status, fornecedor_oc, compra_quantidade_solicitada, compra_solicitada_em, ordem_compra_id) and marks item as picked (separacao_marcado = true, bipado_completo = true, quantidade_bipada = quantidade_pedida). Quando o body traz `qty_contada` (acerto de prateleira / Fase 1), reconcilia o saldo da loc-alvo (resolvida por `localizacao_id` ou `localizacao_codigo`) via `registrarContagemInline` registrando uma contagem oficial antes do pick. Exige `qty_contada >= quantidade_pedida`.
 - **esgotado:** Sets compra_status = aguardando_compra, fills fornecedor_oc via getFornecedorBySku, sets compra_quantidade_solicitada and compra_solicitada_em. Auto-creates or finds existing OC (siso_ordens_compra) by fornecedor + galpao and links item.
 - **desfazer_encontrei:** Restores compra_status = oc_pendente, fills fornecedor_oc via getFornecedorBySku, clears separacao_marcado/bipado_completo/quantidade_bipada. Reverts decisao_final to "oc" if it was flipped to "propria".
 - **Auto-transition FR-9:** When all OC items resolved and none have compra_status (all found), sets decisao_final = propria. If pedido in validacao_oc, transitions to aguardando_separacao.

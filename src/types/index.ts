@@ -47,6 +47,8 @@ export interface EstoqueItem {
   fornecedorOC: string | null;
   /** Product image URL (from Tiny anexos) */
   imagemUrl?: string;
+  /** All product photos (siso_produtos.imagens, by SKU) — for the lightbox */
+  imagens?: string[];
 }
 
 /** A complete order with stock enrichment */

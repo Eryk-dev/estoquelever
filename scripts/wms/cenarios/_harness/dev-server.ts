@@ -6,16 +6,30 @@ export interface DevServerHandle {
   kill: () => Promise<void>;
 }
 
-export async function startDevServer(opts: { port: number; cwd?: string }): Promise<DevServerHandle> {
-  const env = { ...process.env, PORT: String(opts.port), NODE_ENV: "development" };
-  const proc = spawn("npx", ["next", "dev", "-p", String(opts.port)], {
+export async function buildProd(opts: { cwd?: string } = {}): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn("npx", ["next", "build"], {
+      cwd: opts.cwd ?? process.cwd(),
+      env: process.env,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    proc.once("exit", (code) => (code === 0 ? resolve() : reject(new Error(`next build saiu com código ${code}`))));
+  });
+}
+
+export async function startDevServer(opts: { port: number; cwd?: string; prod?: boolean }): Promise<DevServerHandle> {
+  const env = { ...process.env, PORT: String(opts.port), NODE_ENV: opts.prod ? "production" : "development" };
+  const cmd = opts.prod
+    ? ["next", "start", "-p", String(opts.port)]
+    : ["next", "dev", "-p", String(opts.port)];
+  const proc = spawn("npx", cmd, {
     cwd: opts.cwd ?? process.cwd(),
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  proc.stdout?.on("data", (chunk) => process.stderr.write(`[dev] ${chunk}`));
-  proc.stderr?.on("data", (chunk) => process.stderr.write(`[dev:err] ${chunk}`));
+  proc.stdout?.on("data", (chunk) => process.stderr.write(`[srv] ${chunk}`));
+  proc.stderr?.on("data", (chunk) => process.stderr.write(`[srv:err] ${chunk}`));
 
   return {
     process: proc,
@@ -28,6 +42,15 @@ export async function startDevServer(opts: { port: number; cwd?: string }): Prom
       });
     },
   };
+}
+
+export async function isHealthy(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { method: "GET" });
+    return res.status > 0;
+  } catch {
+    return false;
+  }
 }
 
 export async function waitForHealth(url: string, opts: { timeout_ms?: number } = {}): Promise<void> {

@@ -10,12 +10,14 @@ export async function writeReport(results: ScenarioResult[], iniciadoEm: Date, d
   const pass = results.filter((r) => r.status === "pass").length;
   const fail = results.filter((r) => r.status === "fail").length;
   const skip = results.filter((r) => r.status === "skip").length;
+  const productFail = results.filter((r) => r.classe === "product-fail").length;
+  const infraFail = results.filter((r) => r.classe === "infra-fail").length;
 
-  const md = buildMarkdown(results, iniciadoEm, duracaoMs, pass, fail, skip);
+  const md = buildMarkdown(results, iniciadoEm, duracaoMs, pass, fail, skip, productFail, infraFail);
   const json = JSON.stringify({
     iniciado_em: iniciadoEm.toISOString(),
     duracao_ms: duracaoMs,
-    totais: { pass, fail, skip },
+    totais: { pass, fail, skip, product_fail: productFail, infra_fail: infraFail },
     cenarios: results,
   }, null, 2);
 
@@ -25,12 +27,12 @@ export async function writeReport(results: ScenarioResult[], iniciadoEm: Date, d
   return { mdPath: `${REPORTS_DIR}/${ts}-summary.md`, jsonPath: `${REPORTS_DIR}/${ts}-detail.json` };
 }
 
-function buildMarkdown(results: ScenarioResult[], iniciado: Date, duracaoMs: number, pass: number, fail: number, skip: number): string {
+function buildMarkdown(results: ScenarioResult[], iniciado: Date, duracaoMs: number, pass: number, fail: number, skip: number, productFail: number, infraFail: number): string {
   const dur = formatarDuracao(duracaoMs);
   const lines: string[] = [];
   lines.push(`# Suite Scenarios — ${iniciado.toISOString()}`);
   lines.push("");
-  lines.push(`**Total:** ${results.length} cenários · **Pass:** ${pass} · **Fail:** ${fail} · **Skip:** ${skip} · **Tempo:** ${dur}`);
+  lines.push(`**Total:** ${results.length} · **Pass:** ${pass} · **Fail:** ${fail} (🔴 ${productFail} bug · 🟡 ${infraFail} infra) · **Skip:** ${skip} · **Tempo:** ${dur}`);
   lines.push("");
 
   if (fail > 0) {

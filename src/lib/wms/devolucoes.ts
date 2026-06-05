@@ -100,6 +100,22 @@ export interface ClassificarInput {
 
 export async function classificarDevolucao(input: ClassificarInput): Promise<void> {
   const sb = createServiceClient();
+
+  // P052: claim atômico de status (compare-and-set). Fecha a janela
+  // concorrente: só uma chamada reivindica a devolução; a 2ª leva 0 rows e
+  // rejeita. O status segue 'aguardando_classificacao' (a CHECK proíbe
+  // 'classificando') — usamos o lease classificacao_em_andamento_por.
+  const { data: claimed } = await sb
+    .from("siso_devolucoes_pendentes")
+    .update({ classificacao_em_andamento_por: input.usuario_id })
+    .eq("id", input.devolucao_id)
+    .eq("status", "aguardando_classificacao")
+    .is("classificacao_em_andamento_por", null)
+    .select("id");
+  if (!claimed || claimed.length === 0) {
+    throw new Error("já classificada ou em classificação por outro operador");
+  }
+
   const { data: dev, error } = await sb
     .from("siso_devolucoes_pendentes")
     .select("*")
@@ -115,7 +131,8 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
     payload_webhook: unknown;
   };
   const d = dev as DevRow;
-  if (d.status !== "aguardando_classificacao") throw new Error("já classificada");
+
+  try {
 
   // [#P6-6.17] origem_id compartilhado entre todas as movs do mesmo
   // classify (Classe B = par S+E quarentena; Classe C = E + S fornecedor).
@@ -330,6 +347,7 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
       classificada_por: input.usuario_id,
       classificada_em: new Date().toISOString(),
       observacoes: input.observacoes,
+      classificacao_em_andamento_por: null,
     })
     .eq("id", input.devolucao_id);
 
@@ -337,6 +355,17 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
     devolucao_id: input.devolucao_id,
     classificacao: input.classificacao,
   });
+
+  } catch (e) {
+    // P052 sad-path: libera o lease pra a devolução não ficar presa. Só limpa
+    // se ainda formos o dono (proteção contra interleavings).
+    await sb
+      .from("siso_devolucoes_pendentes")
+      .update({ classificacao_em_andamento_por: null })
+      .eq("id", input.devolucao_id)
+      .eq("classificacao_em_andamento_por", input.usuario_id);
+    throw e;
+  }
 }
 
 /**

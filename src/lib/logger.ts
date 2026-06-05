@@ -213,7 +213,11 @@ function persistToSupabase(
 }
 
 /** Persist a structured error to siso_erros (fire-and-forget) */
-function persistErrorToSupabase(opts: ErrorLogOptions): void {
+function persistErrorToSupabase(
+  opts: ErrorLogOptions,
+  id: string,
+  timestamp: string,
+): void {
   try {
     const supabase = createServiceClient();
     const errorMsg = extractErrorMessage(opts.error);
@@ -222,6 +226,10 @@ function persistErrorToSupabase(opts: ErrorLogOptions): void {
 
     Promise.resolve(
       supabase.from("siso_erros").insert({
+        // id + timestamp explícitos pra casar com o que devolvemos pro caller
+        // (o front mostra esse id; o operador acha esta linha exata no Supabase).
+        id,
+        timestamp,
         source: opts.source,
         category: opts.category ?? "unknown",
         severity: opts.severity ?? "error",
@@ -316,7 +324,14 @@ export const logger = {
    * });
    * ```
    */
-  logError(opts: ErrorLogOptions): void {
+  logError(opts: ErrorLogOptions): { id: string; timestamp: string } {
+    // Gera id + timestamp aqui pra (a) inserir explicitamente em siso_erros e
+    // (b) devolver pro caller incluir na resposta da API — assim o front mostra
+    // o id e o operador localiza o log exato (com stack trace) no Supabase.
+    const id =
+      globalThis.crypto?.randomUUID?.() ??
+      `err-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const timestamp = new Date().toISOString();
     try {
       const errorMsg = extractErrorMessage(opts.error);
 
@@ -330,9 +345,10 @@ export const logger = {
       });
 
       // Write to siso_erros (rich structure)
-      persistErrorToSupabase(opts);
+      persistErrorToSupabase(opts, id, timestamp);
     } catch {
       // Never crash
     }
+    return { id, timestamp };
   },
 };

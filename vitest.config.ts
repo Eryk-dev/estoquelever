@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     environment: "happy-dom",
     globals: true,
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "scripts/wms/cenarios/**/*.test.ts"],
     exclude: ["**/node_modules/**", "**/dist/**", "src/lib/wms/_archive/**"],
   },
   resolve: {

@@ -151,8 +151,9 @@ export interface InvariantResult {
 export interface ScenarioResult {
   nome: string;
   status: "pass" | "fail" | "skip";
+  classe?: "pass" | "product-fail" | "infra-fail";
   duracao_ms?: number;
-  motivo?: "assert" | "invariante" | "timeout" | "setup" | "run";
+  motivo?: "assert" | "invariante" | "timeout" | "setup" | "run" | "infra";
   erro?: { mensagem: string; stack?: string };
   invariantes?: InvariantResult[];
   detalhes?: unknown;

@@ -120,6 +120,20 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
   };
 
   const now = new Date().toISOString();
+
+  // P145: reclaim de jobs estagnados. Um job que ficou 'executando' (worker
+  // crashou, deploy no meio, exceção fora do try) nunca volta a ser selecionado
+  // porque o SELECT abaixo filtra só 'pendente'. Aqui devolvemos pra 'pendente'
+  // qualquer job 'executando' cujo atualizado_em (marca de início, escrita no
+  // claim) seja mais antigo que 5min. Reprocessar é seguro: executeJob é
+  // idempotente por reserva (estorno_de) e por estoque_lancado.
+  const cincoMinAtras = new Date(Date.now() - 5 * 60_000).toISOString();
+  await supabase
+    .from("siso_fila_execucao")
+    .update({ status: "pendente", proximo_retry_em: now, atualizado_em: now })
+    .eq("status", "executando")
+    .lt("atualizado_em", cincoMinAtras);
+
   const { data: jobs, error } = await supabase
     .from("siso_fila_execucao")
     .select(

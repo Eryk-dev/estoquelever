@@ -12,7 +12,18 @@ export function Providers({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 5000,
+            staleTime: 30_000,
+            gcTime: 5 * 60_000,
+            // Cold starts cross-region (us-east fn ↔ us-west DB) make the v5
+            // default retry:3 (≈1+2+4s backoff) feel like a multi-second hang.
+            retry: 1,
+            retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
+            // Operational lists are kept fresh by realtime + per-query polling;
+            // refiring every query on tab-focus just re-pays the auth tax.
+            refetchOnWindowFocus: false,
+          },
+          mutations: {
+            retry: 0,
           },
         },
       }),

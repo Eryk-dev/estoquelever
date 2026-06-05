@@ -657,6 +657,37 @@ erros:
       - src/app/api/separacao/parcial/route.ts
       - supabase/migrations/20260518_pick_multi_loc_prereq_consolidar.sql
     tags: [separacao, parcial, wms, reserva, ledger, staging, picking, plano-3]
+  - id: separacao-parcial-bloqueia-reserva-propria
+    date: "2026-06-01"
+    source: separacao-parcial
+    category: business_logic
+    message: "Posição reservada por outro pedido — saldo 5, disponível 0. Avise o supervisor."
+    cause: >
+      O gate `disponivel < quantidade_pega` (criado em 2026-05-18, ver
+      separacao-parcial-reservado-excede-saldo) era amplo demais: `disponivel
+      = saldo − reservado` subtrai TODO o reservado, inclusive a R viva do
+      PRÓPRIO pedido (a que o aprovar criou nesta loc e que o passo 7a libera
+      logo em seguida). Quando o saldo da loc está 100% alocado entre vários
+      pedidos (ex.: ACD003 saldo 5 = pedido 50039 reserva 2 + 50056 reserva 1
+      + 49941 reserva 2 → disponivel 0), o operador não conseguia registrar
+      nem um parcial da própria reserva — todo pedido era bloqueado. O caminho
+      de pick completo (marcar-item) nunca teve o bug porque passa o reserva_id
+      pro RPC atômico wms_pick_item_atomico. O texto "reservada por OUTRO
+      pedido" era suposição embutida — o gate nunca checava o dono da reserva.
+    fix: >
+      Nos dois gates (caminho item ~L250 e realocação ~L1254) calcular
+      `minhaReservaNestaLoc = Σ buscarReservaPendente(pedidoIds do lote nesta
+      loc)` e comparar `quantidade_pega` contra `saldo − reservado_de_outros`
+      (= disponivel + minhaReservaNestaLoc), não contra `disponivel` cru.
+      Mantém a proteção da reserva alheia (over-pick além da própria reserva
+      ainda dá 409) e a invariante reservado≤saldo (o RPC de S só valida
+      saldo≥qty, então este gate é a única proteção da reserva de terceiros —
+      por isso devolve só a reserva própria). Verificado read-only na data real
+      de staging + cenário de regressão 70.
+    files:
+      - src/app/api/wms/separacao/parcial/route.ts
+      - scripts/wms/cenarios/catalogo/70-parcial-reserva-propria-saldo-alocado.ts
+    tags: [separacao, parcial, wms, reserva, ledger, picking, disponivel, regressao]
 
 - id: ERR-2026-05-18-001
   date: 2026-05-18
@@ -2789,6 +2820,279 @@ erros:
       esquecidos. Ao adicionar coluna/feature que alimenta UI, conferir TODOS os
       consumidores (lista + detalhe + rota), não só o primeiro.
 
+  - id: separacao-realtime-querykey-mismatch-poll-10s
+    date: "2026-05-31"
+    source: wms.separacao (lista)
+    category: business_logic
+    message: "Realtime da lista de separação não atualizava — pedido só aparecia no próximo poll de 10s"
+    cause: >
+      useRealtimeSeparacao() em modo no-arg (usado pela /wms/separacao) invalidava a
+      queryKey ["separacao"], mas a query da lista é registrada sob
+      ["wms-separacao", galpao, tab, ...]. invalidateQueries do React Query faz
+      prefix-match: ["wms-separacao", ...] NÃO começa com ["separacao"], então o
+      evento realtime não invalidava nada. O push instantâneo estava morto; a lista
+      só atualizava pelo refetchInterval:10_000 — ao transitar o status de um pedido,
+      o operador esperava até ~10s (o próximo tick do poll) pra ver. Os handlers de
+      mutação no mesmo arquivo já usavam ["wms-separacao"] correto — a key do hook era
+      a única desalinhada.
+    fix: >
+      use-realtime-separacao.ts:116 passa a invalidar ["wms-separacao"] (prefix que
+      casa todas as variações de filtro). Com o realtime funcionando, o UPDATE em
+      siso_pedidos (já na publication supabase_realtime) refaz a lista dentro da
+      janela de debounce de 500ms.
+    files:
+      - src/hooks/use-realtime-separacao.ts
+    tags: [separacao, realtime, react-query, querykey, prefix-match, poll, latencia, performance]
+    notes: >
+      Descoberto na auditoria de performance 2026-05-31. Sintoma: "leva 10s pra um
+      pedido aprovado aparecer na separação". Lição: a queryKey de invalidação
+      realtime deve casar (por prefixo) a key da query — um mismatch desliga o push
+      silenciosamente e cai pro poll.
+
+  - id: parcial-qty0-loczerou-ejeta-operador-do-checklist
+    date: "2026-06-01"
+    source: wms.separacao (checklist — parcial)
+    category: business_logic
+    message: "Parcial com qty=0 + loc zerou tirava o operador da lista de separação (navegava pra /wms/separacao)"
+    cause: >
+      No fluxo de Parcial (qty_pega=0 + loc_zerou=true), quando o cascade não acha
+      cobertura em nenhuma loc do galpão nem em outro galpão, o backend
+      (/api/wms/separacao/parcial) manda o item pra Compras automaticamente
+      (mandarItensParaCompras) e retorna status="mandado_pra_compras". O handler
+      handleParcialConfirm em checklist/page.tsx tratava esse status com
+      router.push("/wms/separacao") — ejetando o operador do checklist de volta pra
+      fila, mesmo quando ainda havia outros itens do wave pra pickar. O branch irmão
+      "realocado" não navega (só fecha o modal e refetcha), então a UX era
+      inconsistente: item realocado = fica na lista; item sem cobertura = sai da tela.
+    fix: >
+      Removido o router.push("/wms/separacao")+return do branch mandado_pra_compras.
+      Agora ele só dá o toast e cai no setParcialModal(null)+invalidateQueries
+      compartilhado (igual ao branch realocado): modal fecha, operador fica no
+      checklist, o item sem cobertura some da lista no refetch (checklist-items filtra
+      compra_status!=null em pedido aguardando_compra) e os demais itens do wave
+      seguem pickáveis (marcar-item e bipar-checklist permitem status
+      aguardando_compra).
+    files:
+      - src/app/wms/separacao/checklist/page.tsx
+    tags: [separacao, parcial, loc-zerou, checklist, navegacao, router-push, mandado-pra-compras, ux, wave-picking]
+    notes: >
+      Escopo cirúrgico: só o branch mandado_pra_compras. parcial_reenfileirado (que
+      também navega) é outro cenário (qty>0 + !loc_zerou, prateleira ainda com saldo →
+      pedido inteiro pro fim da fila) e fica intacto — com loc_zerou=true o backend
+      nunca retorna parcial_reenfileirado.
+
+  - id: separacao-oc-pendente-renderizado-como-item-pickavel
+    date: "2026-06-01"
+    source: wms.separacao.checklist
+    category: business_logic
+    message: "Itens OC (compra_status=oc_pendente) aparecem em 'Itens a separar' e dão erro mudo ao marcar (checkbox desselecciona, sem mensagem)"
+    cause: >
+      isOcStatus() em src/app/wms/separacao/checklist/page.tsx classificava só
+      'comprado' | 'aguardando_compra' | 'recebido' como OC — OMITIA 'oc_pendente'
+      (status setado pelo execution-worker quando o pedido vira OC, fase
+      validacao_oc). Existe desde a criação do arquivo (commit 46dc797). Resultado:
+      consolidar() jogava os itens oc_pendente no bucket de pick NORMAL (checkbox +
+      Parcial) em vez do bucket OC (Encontrei/Esgotado). Esses itens não têm saldo
+      disponível pro próprio pedido (disponivel=0 — sem estoque, reservado por OUTRO
+      pedido, ou sub-reservado), então marcar-item/parcial recusavam corretamente
+      (anti-oversell → 409 sem_saldo_para_baixa / posicao_reservada). Mas o
+      toggleMutation engolia a mensagem do 409 num throw genérico "erro_marcar" e o
+      handleToggle mostrava "Erro ao salvar marcação" + invalidate (revertia o
+      checkbox otimista). Daí o sintoma "dá erro, não fala nada, desseleciona o
+      checkbox". Os pedidos chegaram em em_separacao porque eram pure-OC em
+      validacao_oc e a wave os puxou (iniciar permite validacao_oc; a BLINDAGEM de
+      iniciar só bloqueia compra_status aguardando_compra|comprado, não oc_pendente —
+      isso é intencional: oc_pendente é validado inline na wave).
+    fix: >
+      (1) isOcStatus() agora inclui 'oc_pendente' → os itens caem no bucket OC e
+      renderizam como ItemRowOC (Encontrei = achou no físico / Esgotado = manda pra
+      Compras). validar-oc-item funciona de em_separacao: 'esgotado' num pedido
+      100% OC transita pra aguardando_compra (FR-8). (2) Toasts de erro do checklist
+      unificados num helper toastErroApi(): mostram o erro REAL do sistema
+      (erroApiTexto junta `error`+`message`), duram 5s e copiam o texto completo pro
+      clipboard ao clicar no toast — corrige o "não fala mais nada". (3) Rastreio
+      Supabase: logger.logError() passou a gerar id+timestamp, inseri-los
+      explicitamente em siso_erros e RETORNÁ-LOS; os catch 500 de
+      marcar-item/parcial/validar-oc-item devolvem {erro_id, erro_em} no body e o
+      toast mostra/copia "hora · erro <uuid>" → operador acha o log exato (stack
+      trace) direto no Supabase.
+    files:
+      - src/app/wms/separacao/checklist/page.tsx
+      - src/lib/logger.ts
+      - src/app/api/wms/separacao/marcar-item/route.ts
+      - src/app/api/wms/separacao/parcial/route.ts
+      - src/app/api/wms/separacao/validar-oc-item/route.ts
+    tags: [separacao, checklist, oc, oc_pendente, validacao_oc, isOcStatus, marcar-item, parcial, toggleMutation, erro-mudo, toast-copiavel, siso_erros, erro_id, logError, anti-oversell, wave-picking]
+    notes: >
+      Dados (staging) que reproduziram: pedidos 938028727/FRM012, 937871815/ACD003,
+      938028590/ESC002-P, 938019361/ESC009, 938001164/TEN001-4, 9084419679/TEST-70 —
+      todos 1 item oc_pendente, compra_quantidade_recebida=0, em_separacao.
+      FOLLOW-UP (não corrigido, bug separado): /api/wms/separacao/parcial linha ~250
+      checa `disponivel < quantidade_pega` ANTES de liberar a R do próprio pedido —
+      pra item normal/própria que pica do próprio reserve numa loc "justa"
+      (saldo=reservado, disponivel=0) isso vira falso "posicao_reservada (reservado
+      por outro pedido)". marcar-item já trata certo (acha a R + pickItemAtomico);
+      o /parcial deveria somar de volta a R própria da loc antes do gate.
+
+  - id: parcial-ajuste-loc-zerou-viola-reservado-excede-saldo
+    date: "2026-06-01"
+    source: separacao-parcial (/api/wms/separacao/parcial)
+    category: business_logic
+    message: "reservado (1) excederia saldo (0) — 500 erro interno no Parcial com loc zerou"
+    cause: >
+      No Parcial com loc_zerou=true, o mov de ajuste 'ajuste_pick_zerou' zerava o saldo
+      da loc com delta = saldoWms - quantidade_pega, IGNORANDO o reservado. Quando a loc
+      tinha reservado de OUTRO pedido (R que este fluxo não libera no passo 7a), a saída
+      derrubava saldo abaixo do reservado → validarCoerencia em inserirMovimentacao
+      estourava (CHECK reservado<=saldo) → catch devolvia {error:"erro interno"} 500.
+      Caso real: item 1475 (FRM012, pedido 50064), loc DEFAULT-PICKING saldo=1 reservado=1
+      onde o reservado=1 pertencia ao pedido 938012283 (não ao da separação). Operador
+      pegou 0 + loc zerou → delta=1 → saldo 1→0 com reservado=1 → violação.
+    fix: >
+      Capa o delta do ajuste pelo reservado que SOBRA na loc após as liberações deste
+      wave: deltaAjuste = max(0, saldoWms - quantidade_pega - reservadoRestanteLoc), onde
+      reservadoRestanteLoc = max(0, reservadoWms - liberadoNaLoc) e liberadoNaLoc = soma
+      das R deste wave já liberadas no passo 7a (liberacoesPorPedido /
+      liberacoesRealocPorPedido). Hoisted num único const deltaAjuste por função, reusado
+      no mov, no link da tabela ponte e no evento de auditoria. Aplicado nos DOIS modos
+      (processarParcialItem + processarParcialRealocacao). Semântica: operador do pedido A
+      não zera estoque reservado pro pedido B — esse reservado só é zerado quando B
+      processar a própria loc_zerou (aí o passo 7a libera a R de B e o ajuste fecha a loc).
+      Complementa o fix pré-existente do check posicao_reservada (disponivelParaMim /
+      reservadoDeOutros) que já tratava o caso qty>0.
+    files:
+      - src/app/api/wms/separacao/parcial/route.ts
+    tags: [separacao, parcial, loc-zerou, ajuste-pick-zerou, reservado, reserva, validarCoerencia, check-constraint, 500, ledger, wms]
+    notes: >
+      Erro de origem cliente "erro interno" (toast). O fix da navegação
+      (parcial-qty0-loczerou-ejeta-operador-do-checklist) só fez o 500 ficar mais
+      visível — o operador para na tela e vê o toast em vez de ser levado embora. O 500
+      é independente e pré-existente. Verificado contra estado vivo em staging.
+
+  - id: parcial-sem-loczerou-reenfileira-e-pede-qty-cheia
+    date: 2026-06-01
+    source: separacao-parcial
+    category: business_logic
+    message: "Parcial sem 'loc zerou' fechava a separação e ao reabrir pedia a qty inteira"
+    cause: >
+      Dois problemas + um bug latente no Parcial item com loc_zerou=false e residual.
+      (1) Comportamento ("Fase 3 #3"): o branch !loc_zerou reenfileirava o pedido INTEIRO
+      pro fim da fila (status_separacao='aguardando_separacao' + zera separacao_operador_id
+      e separacao_iniciada_em) e o frontend fazia router.push('/wms/separacao') — tirando
+      o operador da separação. O esperado é manter o item ABERTO no mesmo checklist com só
+      a quantidade restante. (2) Display: o ItemRow mostrava produto.quantidade_total (a
+      qty cheia) como alvo, só com um badge pequeno "Parcial X/Y" — o operador via "pegar
+      10" mesmo já tendo pego 6 (a baixa em si estava correta: marcar-item descontava só
+      quantidade_pedida - quantidade_pega). (3) Bug latente: qty_para_este/qty_residual em
+      parcial/route.ts eram calculados sobre quantidade_pedida, IGNORANDO o quantidade_pega
+      já existente — refazer Parcial num item já parcial nunca fechava o item (residual
+      sempre >0) e reenfileirava em loop. Ficava escondido porque o reenfileiramento
+      expulsava o operador antes do 2º Parcial; some assim que o item passa a ficar no
+      checklist.
+    fix: >
+      (1) Branch !loc_zerou não reenfileira mais: pedido continua em_separacao com o mesmo
+      operador, item fica aberto (separacao_parcial=false, separacao_marcado=false,
+      quantidade_pega acumulada), retorna status 'parcial_em_progresso'. Frontend só dá
+      toast + invalidate, sem router.push. concluir já trata item inacabado (fica pendente,
+      não conclui errado). (2) Extraído helper puro distribuirQtyPega() que desconta o
+      quantidade_pega já pego ao calcular qty_para_este/qty_residual (qty_residual=0 fecha
+      o item) — 6 testes unitários (TDD). Guard do teto trocado de quantidade_pedida pra
+      "o que falta" (totalFaltante). (3) Display: ConsolidatedProduct ganhou
+      quantidade_restante (total − quantidade_pega); ItemRow mostra o restante quando
+      parcial-em-progresso e o modal Parcial sugere/limita ao restante.
+    files:
+      - src/lib/separacao/distribuir-qty-pega.ts
+      - src/lib/separacao/distribuir-qty-pega.test.ts
+      - src/app/api/wms/separacao/parcial/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+      - scripts/wms/cenarios/catalogo/69-parcial-fila-prateleira.ts
+      - docs/api-reference-complete.md
+    tags: [separacao, parcial, loc-zerou, em-progresso, quantidade-pega, qty-residual, reenfileirar, checklist, wms, distribuirQtyPega]
+    notes: >
+      Reverte o design "Fase 3 #3" (reenfileirar pro fim da fila) a pedido do user em
+      2026-06-01 — confirmado via AskUserQuestion. Cenário 69 reescrito pro novo
+      comportamento (era o teste do comportamento antigo). Reserva: o passo 7a continua
+      liberando 100% da R original (comportamento pré-existente); marcar-item completa o
+      restante via saldo vivo quando não há R. Verificado por unit (distribuir-qty-pega
+      6/6) + typecheck; cenário 69 deve ser rodado via `npm run scenarios` contra staging.
+
+  - id: encontrei-modal-sem-botao-confirmar
+    date: "2026-06-02"
+    source: wms.separacao.checklist
+    category: business_logic
+    message: "Modal 'Encontrei' (OC) não tem onde confirmar loc + quantidade — só botão Cancelar; operador preenche qty/loc e fica travado"
+    cause: >
+      OcEncontreiModal (src/app/wms/separacao/checklist/page.tsx) só submetia via Enter
+      dentro do HandheldScan da localização (comportamento de leitor handheld que emite
+      Return ao bipar). O rodapé (wms-md-ft) tinha APENAS 'Cancelar'. Quem digita a
+      localização na mão (ou bipa sem Enter, ou simplesmente procura um botão) preenche
+      qty + loc e não acha como confirmar. Além disso, o valor da loc vivia no estado
+      interno do HandheldScan, então um botão de rodapé não tinha acesso ao texto digitado.
+    fix: >
+      (1) HandheldScan ganhou prop opcional onValueChange?(value) que espelha o valor
+      digitado pro pai a cada mudança (e ao limpar no Enter/Escape) — retrocompatível, o
+      outro uso (Bipe SKU/GTIN) não passa a prop. (2) OcEncontreiModal passou a guardar
+      locInput via onValueChange e ganhou botão primário 'Confirmar' no rodapé que chama o
+      mesmo handleSubmit(locInput) — mesma validação (loc vazia → 'Código vazio', qty vazia,
+      qty < pedido → usar Esgotado). Caminho do leitor handheld (Enter) inalterado.
+    files:
+      - src/components/wms/vendas/handheld-scan.tsx
+      - src/app/wms/separacao/checklist/page.tsx
+    tags: [separacao, checklist, encontrei, oc, modal, handheld-scan, confirmar, ux, wms, qty-contada]
+    notes: >
+      Reportado pelo user com screenshot do modal 'Encontrei: ACD003' (qty=70, loc=A-01-1
+      preenchidos, só 'Cancelar' no rodapé). Verificado por typecheck (tsc --noEmit limpo
+      nos 2 arquivos; o único erro do tsc é pré-existente e não relacionado: teste que
+      importa @testing-library/react ausente).
+
+  - id: wms-lista-sugestao-oc-stale-snapshot
+    date: "2026-06-02"
+    source: src/app/api/wms/pedidos/route.ts
+    category: business_logic
+    message: "Listagem de pedidos servia a sugestão OC congelada do webhook mesmo com estoque vivo cobrindo → operador via 'Comprar' e podia tentar OC indevida (pedido #50117 / ACD003)"
+    cause: >
+      GET /api/wms/pedidos (buildResponse) retornava siso_pedidos.sugestao — o
+      snapshot calculado no webhook. O #50117 (EasyPeasy/CWB, id 938046201, SKU
+      ACD003 qty 1) caiu OC porque no momento do webhook o ledger WMS não tinha
+      saldo; depois CWB passou a ter 69 disponíveis, mas a listagem continuava
+      sugerindo OC. O card (pedido-card-wms) inicializa a decisão default a partir
+      desse `sugestao`, então o operador via/defaultava OC. O detalhe
+      (/pedidos/[id]/detalhe) JÁ recomputava ao vivo via recomputarSugestaoBatch —
+      a listagem ficou pra trás (divergência lista↔detalhe). A premissa anti-flicker
+      [#P6-1.15 / Fix-D #1.3] mantinha a lista presa no snapshot.
+    fix: >
+      buildResponse passou a recomputar a sugestão pra pedidos em decisão
+      (status pendente/erro com empresa_origem_id) via recomputarSugestaoBatch
+      (1 chamada batch, 5 queries fixas independente de N) e a servir o valor VIVO
+      na resposta, com o snapshot persistido só como fallback. Espelha o detalhe.
+      Frontend inalterado (o valor vivo flui pelo prop `sugestao`; decisaoIsAvailable
+      e o OC-block do backend já liam estoque vivo). siso_pedidos.sugestao segue
+      congelado no DB (auditoria). Reverte conscientemente a premissa anti-flicker:
+      a sugestão da lista agora reflete o estoque vivo (era o pedido explícito do user).
+      O recompute é envolto em .catch → degrada pro snapshot persistido se falhar
+      (timeout/DB), nunca derruba a listagem com 500.
+    files:
+      - src/app/api/wms/pedidos/route.ts
+      - src/components/wms/vendas/pedido-card-wms.tsx
+      - scripts/wms/cenarios/catalogo/72-lista-sugestao-recalcula-vivo.ts
+    tags: [wms, pedidos, sugestao, oc, estoque-vivo, snapshot-estale, listagem, recomputarSugestaoBatch, p6, regressao]
+    notes: >
+      Verificado: (a) tsc --noEmit limpo nos arquivos alterados (único erro é
+      pré-existente: teste que importa @testing-library/react ausente); (b) eslint
+      limpo; (c) prova de dados NÃO-destrutiva em staging — replicando a regra de
+      recomputarSugestaoBatch sobre o #50117 real dá `propria` (CWB é home da
+      EasyPeasy e tem 69 ≥ 1, loc picking, sem lock ativo). Cenário 72 (regressão,
+      OC→Própria na listagem) escrito e auto-descoberto pelo run-all, mas NÃO rodado
+      aqui: o harness trunca tabelas operacionais de staging — deixado pra suite
+      controlada. Revisão adversarial (4 lentes + verify) validou correção/segurança/
+      ausência de regressão; única ação aplicada foi o .catch de degradação graciosa.
+      Limitações PRÉ-EXISTENTES anotadas (fora de escopo, não introduzidas aqui):
+      (1) recomputarSugestaoBatch não faz chunking do .in(produto_id) — ok pro
+      working set real de pendentes/erro (pequeno), revisitar se a fila empilhar;
+      (2) o OC-block de aprovar soma global entre galpões enquanto rotearPedido exige
+      cobertura por-galpão — diverge só em pedido multi-item espalhado (split_galpoes),
+      não no caso reportado (item único coberto no galpão casa).
+
   - id: oc-item-preso-em-esgotado-mesmo-com-estoque
     date: "2026-06-02"
     source: wms.separacao / wms.compras
@@ -2830,3 +3134,172 @@ erros:
       - src/lib/wms/receber-oc.ts
       - src/lib/historico-service.ts
     tags: [reconciliador, oc, esgotado, estoque, fifo, recebimento, release, wms]
+
+  - id: parcial-wave-libera-reserva-residual
+    date: "2026-06-02"
+    source: wms/separacao/parcial
+    category: business_logic
+    message: "Parcial de wave consolidado destruía a reserva dos pedidos não atendidos (liberava 100% da R de TODOS os pedidos, sem recriar quando loc_zerou=false)."
+    cause: >
+      Loop 7a em parcial/route.ts liberava Number(r.quantidade) pra cada pedido_id do
+      wave incondicionalmente; cascade que recria R só roda em loc_zerou=true, então o
+      residual de loc_zerou=false ficava sem reserva (e o checklist voltava a pedir a
+      qty cheia).
+    fix: >
+      Computar alocação FCFS por pedido antes da liberação; com loc_zerou=false, só
+      liberar a R de pedidos com picked>0 e re-reservar o residual na mesma loc via
+      criarReservaCascade. Frontend deriva linha PEGO (Σ quantidade_pega) + linha PEGAR
+      (Σ restante).
+    files:
+      - src/app/api/wms/separacao/parcial/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+      - scripts/wms/cenarios/catalogo/70-parcial-wave-reserva.ts
+    tags: [separacao, parcial, reserva, wave, checklist]
+
+  - id: wms-fila-job-estagnado-nunca-reclamado
+    date: "2026-06-05"
+    source: wms.execution-worker
+    category: infrastructure
+    message: "job preso em status='executando' para sempre após crash do worker"
+    cause: >
+      processQueue só selecionava jobs 'pendente' e fazia claim atômico
+      executando. Se o worker morria entre o claim e o update final, o job
+      ficava 'executando' indefinidamente — nenhuma rotina o devolvia.
+    fix: >
+      Antes do SELECT de pendentes, processQueue reclama jobs 'executando'
+      cujo atualizado_em (marca de início escrita no claim) é mais antigo que
+      5min, devolvendo-os a 'pendente'. Reprocessar é seguro (idempotência por
+      reserva e estoque_lancado).
+    files:
+      - src/lib/execution-worker.ts
+    tags: [fila, worker, reclaim, timeout, idempotencia, P145]
+
+  - id: wms-transferencia-cancel-ignora-lock-recebimento
+    date: "2026-06-05"
+    source: wms.transferencias.cancelar
+    category: business_logic
+    message: "caixa órfã / dupla-contagem ao cancelar transferência durante recebimento"
+    cause: >
+      receberTransferencia tinha claim via recebimento_em_andamento_por mas
+      cancelarTransferencia não lia nem respeitava o lock. Cancel e receive
+      rodavam concorrentes na mesma tripla (estorno leg S vs insert leg E),
+      deixando estoque inconsistente. Faltava timestamp do lock pro timeout.
+    fix: >
+      Adicionada coluna recebimento_em_andamento_em. cancelarTransferencia
+      seleciona o lock, bloqueia (409 TRANSFERENCIA_RECEBIMENTO_EM_ANDAMENTO)
+      se outro operador recebe dentro de 30min, e faz claim atômico de
+      cancelamento (mutex compartilhado) pro próprio recebedor ou lock stale.
+    files:
+      - supabase/migrations/20260605_transferencia_recebimento_em_andamento_em.sql
+      - src/lib/wms/transferencias.ts
+      - src/app/api/wms/transferencias/[id]/cancelar/route.ts
+    tags: [transferencia, lock, recebimento, cancelamento, race, P062, P066, P068]
+
+  - id: wms-guarda-item-preso-sem-force-unlock
+    date: "2026-06-05"
+    source: wms.guarda.iniciar
+    category: business_logic
+    message: "item de guarda preso ao operador original (PENDENCIA_OUTRA_GUARDA sempre 409)"
+    cause: >
+      iniciarGuarda sempre lançava 409 quando iniciada_por != usuario, sem
+      caminho de takeover. Se o operador sumia (tablet travou), o item ficava
+      preso. O paliativo de presença era só cosmético (nula iniciada_por no
+      render, mas o backend seguia dando 409).
+    fix: >
+      Param forcar:true em iniciarGuarda faz takeover preservando
+      qty_guardada/qty_pendente. A tela de detalhe da guarda mostra botão
+      'Assumir guarda' (forcar) e badge '>30min'. Sem reset automático
+      (rejeitado).
+    files:
+      - src/lib/wms/guarda.ts
+      - src/app/api/wms/guarda/[id]/iniciar/route.ts
+      - src/app/wms/guarda/[id]/page.tsx
+    tags: [guarda, lock, force-unlock, takeover, P127]
+  - id: wms-inventario-aprovar-sessao-nao-idempotente
+    date: "2026-06-05"
+    source: wms.inventario.aprovar
+    category: business_logic
+    message: "dupla aprovação de sessão de inventário reprocessa contagem"
+    cause: >
+      aprovarSessao fazia UPDATE status='aprovada' WHERE id=sessaoId sem
+      condicionar à etapa atual. Duas aprovações concorrentes ambas passavam,
+      reprocessando a contagem e sobrescrevendo aprovada_por.
+    fix: >
+      Compare-and-set .eq('status','revisao').select(): 0 linhas → no-op
+      idempotente (throw 'não está em revisão'), sem reaplicar nem liberar
+      locks de novo. Status correto é 'revisao' (não 'em_revisao').
+    files:
+      - src/lib/wms/inventario.ts
+    tags: [inventario, aprovacao, idempotencia, compare-and-set, P160]
+  - id: wms-embalagem-confirmar-item-lost-update-e-duplo-clique
+    date: "2026-06-05"
+    source: wms.separacao.confirmar-item-embalagem
+    category: business_logic
+    message: "quantidade_bipada errada: lost update concorrente e duplo-clique soma 2x"
+    cause: >
+      A rota fazia read-modify-write (lê quantidade_bipada, soma em JS,
+      sobrescreve). Concorrência perdia incrementos; duplo-clique/retry sem
+      chave de idempotência somava o delta 2x e disparava conclusão/etiqueta 2x.
+    fix: >
+      RPC wms_confirmar_item_embalagem_atomico: FOR UPDATE da linha + soma
+      clampada (GREATEST(0, ...)) + dedup por client_request_id (janela 60s,
+      tabela siso_idempotencia_embalagem). Front envia uuid por clique.
+    files:
+      - supabase/migrations/20260605_wms_confirmar_item_embalagem_atomico.sql
+      - src/app/api/wms/separacao/confirmar-item-embalagem/route.ts
+      - src/app/wms/separacao/embalagem/page.tsx
+    tags: [embalagem, idempotencia, lost-update, rpc, atomic, P129, P130, P131]
+  - id: wms-desfazer-bip-decremento-nao-atomico
+    date: "2026-06-05"
+    source: wms.separacao.desfazer-bip
+    category: business_logic
+    message: "dois cliques no desfazer-bip decrementam só 1 (read-modify-write)"
+    cause: >
+      A rota lia quantidade_bipada, calculava N-1 em JS e gravava. Dois cliques
+      rápidos liam o mesmo N e ambos gravavam N-1, perdendo um decremento.
+    fix: >
+      RPC wms_desfazer_bip_atomico(p_pedido_id, p_produto_id) faz
+      GREATEST(quantidade_bipada-1, 0) atômico sob FOR UPDATE, identificando o
+      item por (pedido_id, tiny_produto_id). A rota usa o valor retornado pra
+      decidir bipado_completo e reversão de status.
+    files:
+      - supabase/migrations/20260605_wms_desfazer_bip_atomico.sql
+      - src/app/api/wms/separacao/desfazer-bip/route.ts
+      - scripts/wms/cenarios/catalogo/82-desfazer-bip-concorrente.ts
+    tags: [separacao, desfazer-bip, decremento, atomic, rpc, P021]
+  - id: wms-set-role-permissoes-delete-insert-nao-atomico
+    date: "2026-06-05"
+    source: wms.admin.roles.permissoes
+    category: business_logic
+    message: "role fica sem permissões / perda silenciosa ao editar permissões"
+    cause: >
+      A rota fazia delete+insert em duas chamadas client-side (sem transação).
+      Falha no insert após o delete deixava o role vazio (P138); edições
+      concorrentes intercalavam delete/insert → last-write-wins (P139).
+    fix: >
+      RPC wms_set_role_permissoes(p_role_id, p_codigos): SELECT FOR UPDATE do
+      role (serializa concorrência) + delete+insert na mesma transação
+      (tudo-ou-nada). Rollback total em qualquer erro mantém o conjunto antigo.
+    files:
+      - supabase/migrations/20260605_wms_set_role_permissoes.sql
+      - src/app/api/wms/admin/roles/[id]/permissoes/route.ts
+    tags: [roles, permissoes, rpc, atomic, for-update, P138, P139]
+  - id: wms-devolucao-classificar-toctou-movs-duplicadas
+    date: "2026-06-05"
+    source: wms.devolucoes.classificar
+    category: business_logic
+    message: "classify concorrente de devolução duplica movimentações (TOCTOU)"
+    cause: >
+      classificarDevolucao lia o status (aguardando_classificacao), emitia N
+      movs e só no fim setava classificada. Duas chamadas concorrentes ambas
+      passavam o read-check e geravam movs duplicadas. A CHECK de status proíbe
+      um estado intermediário 'classificando'.
+    fix: >
+      Claim atômico via lease classificacao_em_andamento_por (UPDATE condicional
+      WHERE status=aguardando_classificacao AND col IS NULL): a 2ª chamada leva
+      0 rows e rejeita. Lease limpo no flip pra classificada e no sad-path.
+      Base reusável pela RPC wms_classificar_devolucao (fase 4).
+    files:
+      - supabase/migrations/20260605_devolucao_classificacao_em_andamento.sql
+      - src/lib/wms/devolucoes.ts
+    tags: [devolucao, classificar, toctou, claim, race, P052]

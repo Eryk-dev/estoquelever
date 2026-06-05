@@ -17,7 +17,9 @@
     "test:integration": "vitest run -c vitest.integration.config.ts",
     "scenarios": "tsx scripts/wms/cenarios/run-all.ts",
     "auth-matrix": "tsx scripts/wms/cenarios/auth/run-all-auth.ts",
-    "scenarios:only": "tsx scripts/wms/cenarios/run-all.ts --only"
+    "scenarios:only": "tsx scripts/wms/cenarios/run-all.ts --only",
+    "scenarios:ci": "tsx scripts/wms/cenarios/run-all.ts --prod",
+    "notify:stock": "tsx scripts/wms/cenarios/notify-slack.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",

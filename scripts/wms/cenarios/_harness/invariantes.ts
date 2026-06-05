@@ -23,13 +23,28 @@ async function i1LedgerVsCache(sb: SupabaseClient): Promise<InvariantResult> {
   };
 }
 
+// I8 — Reservado ↔ ledger coerente (fecha o ponto-cego do I1, que só checa saldo)
+async function i8ReservadoVsLedger(sb: SupabaseClient): Promise<InvariantResult> {
+  const t0 = Date.now();
+  const { data, error } = await sb.rpc("wms_detectar_divergencias_reservado");
+  if (error) {
+    return { nome: "I8: reservado↔ledger", ok: false, detalhes: { error: error.message }, duracao_ms: Date.now() - t0 };
+  }
+  const linhas = (data as unknown[]) ?? [];
+  return {
+    nome: "I8: reservado↔ledger",
+    ok: linhas.length === 0,
+    detalhes: linhas.length > 0 ? { divergencias: linhas } : undefined,
+    duracao_ms: Date.now() - t0,
+  };
+}
+
 // I2 — disponivel = saldo - reservado (sanity da coluna GENERATED)
 async function i2DisponivelGenerated(sb: SupabaseClient): Promise<InvariantResult> {
   const t0 = Date.now();
   const { data, error } = await sb
     .from("siso_estoque")
-    .select("id, saldo, reservado, disponivel")
-    .gt("saldo", 0);
+    .select("id, saldo, reservado, disponivel");
   if (error) return { nome: "I2: disponivel", ok: false, detalhes: { error: error.message }, duracao_ms: Date.now() - t0 };
   const ruins = (data ?? []).filter((r) => r.disponivel !== r.saldo - r.reservado);
   return {
@@ -53,6 +68,7 @@ async function i3CustoMedio(sb: SupabaseClient): Promise<InvariantResult> {
       .eq("produto_id", p.id)
       .eq("tipo", "E")
       .not("custo_unitario", "is", null)
+      .in("origem_tipo", ["nf_compra", "devolucao_cliente_integra", "lancamento_retroativo", "ajuste_manual", "inventario_inicial"])
       .order("criado_em", { ascending: true });
     if (!movs || movs.length === 0) continue;
     let custoMed = 0;
@@ -179,6 +195,7 @@ async function i7FilaVazia(sb: SupabaseClient): Promise<InvariantResult> {
 export async function rodarInvariantes(sb: SupabaseClient): Promise<InvariantResult[]> {
   return [
     await i1LedgerVsCache(sb),
+    await i8ReservadoVsLedger(sb),
     await i2DisponivelGenerated(sb),
     await i3CustoMedio(sb),
     await i4ReservasOrfas(sb),

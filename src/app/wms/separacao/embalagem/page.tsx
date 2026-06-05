@@ -336,12 +336,14 @@ function WmsEmbalagemPage() {
     { item: PedidoItem; delta: number }
   >({
     mutationFn: async ({ item, delta }) => {
+      const clientRequestId = crypto.randomUUID();
       const r = await sisoFetch("/api/wms/separacao/confirmar-item-embalagem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pedido_item_id: item.id,
           quantidade: delta,
+          client_request_id: clientRequestId,
         }),
       });
       if (!r.ok) {

@@ -24,6 +24,7 @@ import {
   fmtNum,
 } from "@/components/wms/ui/wms-ui";
 import { TimelinePedido } from "@/components/wms/vendas/timeline-pedido";
+import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import {
   EstoquePorGalpaoBar,
   DecisaoLabel,
@@ -56,6 +57,7 @@ interface DetalheItem {
   descricao: string;
   quantidade: number;
   imagem_url: string | null;
+  imagens: string[];
   fornecedor_oc: string | null;
   compra_status: string | null;
   compra_quantidade_solicitada: number | null;
@@ -694,6 +696,12 @@ function TabItens({
   mostrarColunaCompra: boolean;
   mostrarColunaSeparacao: boolean;
 }) {
+  const [lightbox, setLightbox] = useState<{
+    imagens: string[];
+    sku: string;
+    descricao: string;
+  } | null>(null);
+
   return (
     <div className="wms-tbl">
       <table>
@@ -756,7 +764,18 @@ function TabItens({
                       src={item.imagem_url}
                       alt=""
                       loading="lazy"
-                      className="wms-thumb wms-thumb-sm"
+                      className="wms-thumb wms-thumb-sm wms-thumb-click"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setLightbox({
+                          imagens:
+                            item.imagens.length > 0
+                              ? item.imagens
+                              : [item.imagem_url!],
+                          sku: item.sku,
+                          descricao: item.descricao,
+                        });
+                      }}
                     />
                   )}
                 </td>
@@ -824,6 +843,14 @@ function TabItens({
           })}
         </tbody>
       </table>
+      {lightbox && (
+        <ProdutoLightbox
+          imagens={lightbox.imagens}
+          sku={lightbox.sku}
+          descricao={lightbox.descricao}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }

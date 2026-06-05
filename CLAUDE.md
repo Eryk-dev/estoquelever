@@ -1,933 +1,280 @@
-# SISO - Sistema Inteligente de Separacao de Ordens
+# SISO / WMS — Sistema Inteligente de Separação de Ordens
 
-## What This Project Is
+App fullstack que substitui um workflow n8n para processar pedidos multi-empresa de autopeças. Empresas (Tiny ERP, cada uma com seu CNPJ) vendem em marketplaces (Mercado Livre, Shopee). Quando um pedido chega via webhook do Tiny, o sistema checa estoque (fonte única WMS), roteia (própria / transferência / OC) e auto-aprova ou manda pro painel humano. Cobre o pós-aprovação inteiro: separação (wave picking), embalagem, etiqueta, compras (OC), recebimento, guarda (put-away), inventário, devoluções e expedição.
 
-A fullstack web app that replaces an n8n workflow for processing multi-company auto parts orders. Multiple companies (Empresas) — grouped by business affinity (Grupo) and operating across multiple physical warehouses (Galpoes) — sell on marketplaces (Mercado Livre, Shopee). When an order arrives via Tiny ERP webhook, the system checks stock across all companies in the same group and either auto-approves or routes to a human operator.
+**Volume:** ~500 pedidos/dia. Tudo vive sob o módulo **`/wms`**.
 
-The system also handles the full post-approval workflow: separation (wave picking), packing, label printing, purchase orders (OC), and expedition.
+---
 
-**Volume:** ~500 orders/day across all companies.
+## ⚠️ Working Environment (LEIA PRIMEIRO)
 
-## Working Environment (LEIA PRIMEIRO)
+**Trabalhamos exclusivamente em staging.** Toda mudança de schema, RPC, dado de teste ou query exploratória vai pra staging — nunca toque em prod sem pedido explícito.
 
-**Estamos trabalhando exclusivamente no ambiente de staging.** Toda alteração de schema, RPC, dado de teste ou query exploratória vai pra staging — nunca toque em prod sem pedido explícito do user.
+| | Branch | Supabase project | Estado |
+|---|---|---|---|
+| **Staging (ativo)** | `develop` → `estoquelever.vercel.app` | `ehbxpbeijofxtsbezwxd` | **fonte da verdade** |
+| Prod (dormente) | `main` | `wrbrbhuhsaaupqsimkqz` | não tocar |
 
-| | Branch | Vercel deploy | Supabase project_id | Nome |
-|---|---|---|---|---|
-| **Ativo (staging)** | `develop` | `estoquelever.vercel.app` | `ehbxpbeijofxtsbezwxd` | "100M" |
-| Prod (dormente) | `main` | — | `wrbrbhuhsaaupqsimkqz` | "parts-catalogs" |
-
-- O Vercel mostra `Environment: production` mesmo nos deploys da `develop` — isso é só o "production deployment" do Vercel (o publicado), **não** indica ambiente prod-real. Confiar em `Branch:` do log, não em `Environment:`.
-- `wrbrbhuhsaaupqsimkqz` aparece em vários lugares deste CLAUDE.md (Stack, env vars, exemplos antigos) por inércia histórica — ignore essas referências ao decidir onde aplicar mudanças. Source of truth é a tabela acima.
+- O `.env` ativo aponta pra `ehbxpbeijofxtsbezwxd` (a linha do prod está comentada).
+- Vercel rotula deploys da `develop` como `Environment: production` — isso é só o "published deployment", **não** é prod-real. Confiar na **branch**, não no rótulo.
 - Migrations: criar arquivo em `supabase/migrations/` + aplicar via `mcp__supabase__apply_migration` no project `ehbxpbeijofxtsbezwxd`.
 
-## Direção Estratégica (firmada 2026-05-18 — atualizada 2026-05-18)
-
-O app foi unificado sob o módulo **WMS**. Decisões arquiteturais não-negociáveis:
-
-- **`/wms` é a porta de entrada.** Login redireciona direto pra `/wms`. A home (`/`) é apenas um redirect. **Nenhuma rota fora de `/wms` existe além de `/login`.**
-- **Todas as APIs vivem em `/api/wms/*`.** Webhook do Tiny, OAuth callbacks, worker, separação, compras, cross, admin — tudo. A única exceção é `/api/auth/*` (login/me).
-- **WMS é source of truth absoluta de estoque.** Todo saldo vive em `siso_estoque` + `siso_movimentacoes` (ledger imutável). A tabela `siso_pedido_item_estoques` (e todo o caminho legado de escrita) será descontinuada. Toda escrita de saldo passa por `wms_inserir_movimentacao`.
-- **Tiny ERP é camada fiscal/marketplace apenas.** Tiny deixa de controlar estoque próprio — recebe saldo do SISO como *downstream sync* (fire-and-forget). Continua responsável por emissão de NF e propagação pra Mercado Livre / Shopee.
-- **Fluxos físicos são eventos timestamped.** Recebimento e putaway são passos separados — saldo entra em `RECEBIMENTO` (staging), e a mov de transferência pra localização final só acontece quando o operador confirma o putaway. Cada movimentação é evento auditável no ledger.
-- **Concorrência via reconciliação temporal.** Operações continuam durante inventário; aprovação de divergências calcula `saldo_esperado = saldo_no_bipe + Σ(movs entre contado_em e aprovado_em)` e só sinaliza divergência real se `qty_contada ≠ saldo_esperado`.
-- **Realtime é cross-module.** Toda tabela que afeta operação ao vivo (`siso_estoque`, `siso_movimentacoes`, `siso_pedidos`, `siso_pedido_itens`, `siso_fila_execucao`, `siso_localizacao_locks`) entra na publication `supabase_realtime`. Clientes reagem por subscrição, não por polling.
-- **Empresa dona deixou de ser coordenada física em 2026-05-20.** Estoque é 3D (produto × galpão × localização). Ledger carrega empresa como TAG em movs com NF (`empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`) + `fornecedor_id` + `custo_unitario`. Apuração por empresa = report (`/wms/relatorios/*`). Custo médio é global por produto (`siso_custo_medio`). Empréstimo/swap/mini-swap arquivados. Detalhes: `docs/superpowers/specs/2026-05-20-ledger-simplificado-design.md`.
-
-**Cutover de superfície concluído em 2026-05-18 (commit `f8b7dbb`):** todas as páginas SISO legadas (`/siso`, `/separacao`, `/compras`, `/pedidos`, `/cross`, `/inventario`, `/transferencias`, `/configuracoes`, `/painel`, `/monitoramento`, `/etiquetas`, `/admin`) e suas APIs foram apagadas ou migradas pra `/api/wms/*`. Restam apenas pendências externas (URL do webhook no Tiny ERP, callbacks OAuth) e o cutover lógico (Plano 6) — que troca `webhook-processor.ts` → `webhook-processor-wms.ts` e `execution-worker.ts` → `execution-worker-wms.ts` pra escrever só no ledger.
+---
 
 ## Stack
 
-- **Framework:** Next.js 16.1.6 (App Router), React 19, TypeScript
-- **Styling:** Tailwind CSS 4 (no component library — all custom)
-- **Database:** Supabase — ambiente ativo é staging `ehbxpbeijofxtsbezwxd` (org `100M`). Prod `wrbrbhuhsaaupqsimkqz` (org `parts-catalogs`) está dormente. Ver seção "Working Environment" acima.
-- **ERP:** Tiny ERP API v3 (OAuth2 via Keycloak)
-- **Printing:** PrintNode API (thermal labels — ZPL + PDF)
-- **State:** TanStack React Query (client), no global store
-- **Realtime:** Supabase Realtime (used in separacao module)
-- **UI libs:** Sonner (toasts), Lucide (icons), clsx + tailwind-merge
-- **Fonts:** Outfit (sans) + JetBrains Mono (mono)
+- **Framework:** Next.js `16.1.6` (App Router, `output: "standalone"`) · React `19.2.3` · TypeScript `5.9.3` (`strict`, alias `@/* → ./src/*`)
+- **Styling:** Tailwind CSS 4 **CSS-first** (sem `tailwind.config.*`; tokens em `@theme inline` dentro de `src/app/globals.css`) + design system manual `wms-*` em `src/app/wms/wms.css`. Sem component library — tudo custom.
+- **DB:** Supabase (`@supabase/supabase-js`). Server usa **service role** (`createServiceClient()`), bypassa RLS.
+- **State client:** TanStack React Query (sem store global). Realtime via Supabase Realtime + Presence.
+- **Validação:** Zod. **Toasts:** Sonner. **Ícones:** Lucide (+ alguns SVGs inline em `wms-ui.tsx`).
+- **Fonts:** Outfit (sans) + JetBrains Mono (mono).
+- **Integrações:** Tiny ERP API v3 (OAuth2/Keycloak) · Mercado Livre (OAuth2) · PrintNode (etiquetas ZPL/PDF, multi-conta).
 
-## Architecture
+### Comandos
 
-```
-Tiny ERP webhook (POST)
-    |
-    v
-/api/wms/webhook/tiny/route.ts   <-- validates, identifies empresa by CNPJ, dedup
-    |                                 discriminates: pedido vs nota_fiscal
-    |
-    ├─ pedido ───> webhook-processor.ts
-    |              resolves grupo, fetches order, enriches stock across ALL
-    |              empresas in grupo, aggregates by galpao, calculates
-    |              suggestion, saves to DB, auto-approves if propria
-    |
-    └─ nota_fiscal ───> nf-webhook-handler.ts
-                        transitions pedido aguardando_nf → aguardando_separacao
-                        reconciles NF that arrives before/after pedido
-
-Pedidos (/wms/pedidos)            <-- operators see filtered orders, approve/reject
-    |
-    v
-/api/wms/pedidos/aprovar          <-- enqueues stock-posting job
-    |
-    v
-execution-worker.ts               <-- post-approval: deducts stock following tier order
-    |                                  (cutover Plano 6 troca por execution-worker-wms.ts)
-    v
-Separacao (/wms/separacao)        <-- wave picking → checklist → packing → expedition
-    |
-    └─ /api/wms/separacao/*       <-- bipar, marcar, concluir, embalar, expedir, parcial
-    └─ agrupamento-service.ts     <-- pre-creates Tiny agrupamentos, downloads ZPL
-    └─ etiqueta-service.ts        <-- prints shipping labels via PrintNode
-
-Compras (/wms/compras)            <-- purchase order management for OC decisions
-    |
-    └─ /api/wms/compras/*         <-- ordens, conferencia, devolver, indisponivel
-    └─ compras-release.ts         <-- when all items received → resume execution
-
-Recebimento físico (/wms/receber + /wms/guarda)
-    |
-    └─ /api/wms/receber           <-- dock RECEBIMENTO (staging)
-    └─ /api/wms/guarda/*          <-- put-away (etapa 2/2) — 1 mov par S+E por confirmação
+```bash
+npm run dev              # dev server
+npm run build / start    # produção
+npm run lint             # ESLint (flat config)
+npm test                 # vitest unit (happy-dom)
+npm run test:integration # vitest contra staging real (serializado, trunca tabelas operacionais)
+npm run scenarios        # E2E HTTP em /api/wms/* (run-all.ts); :only, :ci (--prod)
+npm run auth-matrix      # matriz de auth/permissões
+# seeds/utils: seed:cross, seed:staging, seed:cenarios, fake:webhook, verificar:saldos, notify:stock
 ```
 
-### Domain Model: Empresa, Galpao, Grupo
+> ⚠️ **integration + scenarios rodam contra o staging real e truncam tabelas operacionais antes de cada run.** Nunca apontar pra prod.
 
-**Importante:** empresa **não pertence** a um galpão. Toda empresa pode operar em **todos** os galpões. O que existe é **preferência** (geo-priority) via tabela N:N `siso_empresa_galpoes_preferenciais` — uma empresa pode ter 0..N galpões preferenciais.
+### Environment variables (só nomes — nunca commitar valores)
 
-- **Galpao**: physical warehouse location (e.g., CWB, SP). Independent of empresa.
-- **Empresa**: Tiny ERP account with its own CNPJ (e.g., NetAir, NetParts, 141AIR, EasyPeasy, Bellator). Operates across all galpões; may have preferred galpões via `siso_empresa_galpoes_preferenciais` (geo-priority=0 in routing).
-- **Grupo**: business affinity grouping (e.g., Autopecas). Empresas in the same grupo check stock across each other.
-- **Tier**: deduction priority within a grupo. The empresa that received the order gets tier 1 override at runtime.
+**Obrigatórias:** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (server; cai pra anon key se ausente — degrada silenciosamente pra RLS).
+**Opcionais:** `WORKER_SECRET` (protege worker + crons), `TINY_DISABLED` / `PRINTNODE_DISABLED` / `ML_DISABLED` (roteiam pros stubs locais; default `false`), `TINY_RATE_LIMIT_PER_MIN` (55), `TINY_MAX_CONCURRENT` (5).
+**Stubs:** com `*_DISABLED=true`, `tiny-api`/`printnode`/`ml-api` roteiam pra `tiny-stub`/`printnode-stub`/`ml-stub` (lêem `siso_*`, writes retornam IDs fake).
 
-> ⚠️ A coluna `siso_empresas.galpao_id` é **DEPRECADA** — fica nullable e é apenas espelho do primeiro galpão preferencial (mantido por trigger pra compat de consumidores legados). **Não usar** essa coluna em código novo; consultar `siso_empresa_galpoes_preferenciais`.
+---
 
-### Current Data
-
-| Empresa | CNPJ | Galpões preferenciais | Grupo | Tier |
-|---|---|---|---|---|
-| NetAir   | `34857388000163` | CWB | Autopecas | 1 |
-| NetParts | `34857388000244` | SP  | Autopecas | 1 |
-| 141AIR   | `56959528000147` | CWB | —         | — |
-| EasyPeasy| `45341545000108` | CWB | —         | — |
-| Bellator | `55973586000162` | (sem preferência fixa) | — | — |
-
-### Decision Logic (per order, not per item)
-
-1. Origin galpao has all items -> `propria` -> **auto-approve** (no human review)
-2. Other galpao has all items -> `transferencia` -> human panel
-3. Neither has everything, partial -> `propria` or `transferencia` (whichever covers more) -> human panel
-4. Neither has any stock -> `oc` (purchase order) -> human panel
-
-Auto-approval ONLY happens for case 1. Everything else goes to the operator panel.
-
-### Separation Flow (post-approval)
+## Arquitetura & Pipeline
 
 ```
-aguardando_compra → aguardando_nf → aguardando_separacao → em_separacao → separado → embalado
+Tiny webhook (pedido)
+  → api/wms/webhook/tiny           valida, dedup (siso_webhook_logs), CNPJ→empresa, discrimina pedido vs nota_fiscal
+  → processWebhook                 resolve galpão + busca pedido no Tiny (camada fiscal); IGNORA não-marketplace
+  → processWebhookWms              ⬅ AQUI o processamento real acontece
+       · resolverItensWms          Tiny produto_id → uuid WMS via siso_produto_empresas; expande kits
+       · rotearPedidoDoBanco       lê siso_estoque → propria | transferencia | oc (geo-priority)
+       · upsert siso_pedidos/itens · cria reservas R (TTL 30d) p/ propria+transferencia (OC não reserva)
+       · propria → AUTO-APROVA (executando, aguardando_nf, enfileira lancar_estoque)
+       · transferencia/oc → pendente (painel humano)
+  ──────────────────────────────────────────────────────────────
+Aprovação humana (api/wms/pedidos/aprovar)   [transferencia/oc; "rejeitado" cancela]
+  · cria reservas R se faltarem; 409 se estoque live não cobre → enfileira lancar_estoque
+  ──────────────────────────────────────────────────────────────
+execution-worker (siso_fila_execucao, backoff exponencial, claim atômico)
+  · lancar_estoque: marcadores Tiny + gera NF; OC valida shortfall contra siso_estoque LIVE
+  · lancar_estoque_pos_nf → executarEstoquePosNfWms (R→L+S, estoque_lancado, aguardando_nf→aguardando_separacao)
+  ──────────────────────────────────────────────────────────────
+NF webhook (nota_fiscal) → nf-webhook-handler   aguardando_nf → aguardando_separacao; isDevolucao → siso_devolucoes_pendentes
+  ──────────────────────────────────────────────────────────────
+Entrada de estoque (mov tipo E) → reconciliador-oc.ts (fire-and-forget via ledger.ts)
+  · por (produto, galpão), busca pedidos OC parados (aguardando_compra/validacao_oc)
+  · FIFO por criado_em: para cada que o saldo livre cobre → reserva atômica + OC desvinculada
+  · transiciona de volta a propria (decisao_final=propria, aguardando_nf, enfileira lancar_estoque)
+  · receber via /api/wms/receber/oc/[id] (receberItensViaOC) agora seta recebido + chama release
+  ──────────────────────────────────────────────────────────────
+Separação: iniciar → em_separacao → marcar-item (L+S atômico no pick) → concluir → separado
+           → confirmar-item-embalagem → embalado → expedir → expedido
+           (parcial = 2 movs + re-busca cascade; encaminhar = manda pra outro galpão)
 ```
 
-- `aguardando_compra`: OC items not yet purchased
-- `aguardando_nf`: waiting for Tiny nota fiscal webhook
-- `aguardando_separacao`: ready for operator to start picking
-- `em_separacao`: wave picking in progress (barcode scanning)
-- `pendente_realocacao`: short pick happened and galpão has no coverage for remaining qty; needs supervisor action
-- `separado`: picking complete, ready for packing
-- `embalado`: packing done, ready for expedition
+**`webhook-processor.ts` e `execution-worker.ts` são shells finos** — sempre delegam pros `-wms`. **Não existe mais flag `WMS_AS_SOURCE` / `flags.ts`**: o caminho WMS-as-source é permanente. A lógica legada de tier/multi-empresa nos arquivos base está dormante.
 
-**Realocação cascateável (2026-05-18):** quando uma loc sugerida (original
-ou realocação anterior) dá parcial/zerou, o sistema busca automaticamente
-a próxima loc no galpão, excluindo todas as locs já tentadas no item. A
-chain é rastreada via `siso_pedido_item_realocacoes.parent_realocacao_id`.
-Cascade que esgota cobertura dispara o modal encaminhar/OC no frontend
-(sem marcar `pendente_realocacao` automaticamente — operador decide).
-Botão "Esgotado" das linhas normais removido — caso particular do Parcial
-com qty=0 + loc_zerou=true. Spec: `docs/superpowers/specs/2026-05-18-realocacao-cascateavel-design.md`.
+---
 
-**Design: `mov_ajuste_loc_zerou_id` é preservado em cancelamento (2026-05-26).**
-Quando o operador faz Parcial marcando `loc_zerou=true`, o sistema gera uma
-mov `ajuste_pick_zerou` no ledger zerando o saldo da loc — isso registra
-uma **realidade física** (a loc estava vazia quando o operador chegou).
-`POST /api/wms/separacao/cancelar` **não estorna** essa mov: cancelar a
-separação não desfaz a constatação física. O FK em `siso_pedido_itens` é
-limpo (pra liberar o item pra nova separação), mas a mov no ledger fica
-intacta. Pra desfazer explicitamente, usar `POST /api/wms/separacao/desfazer-parcial`.
+## Domínio: Empresa / Galpão / Grupo
 
-## Project Structure
+- **Galpão** — local físico (CWB, SP). Independente de empresa.
+- **Empresa** — conta Tiny com CNPJ próprio (NetAir, NetParts, 141AIR, EasyPeasy, Bellator). **NÃO pertence a um galpão** — opera em todos. "Casa" é só **preferência** via `siso_empresa_galpoes_preferenciais` (0..N, geo-priority=0 no roteamento).
+- **Grupo** — afinidade de negócio (Autopecas) com tier. **Não dirige mais roteamento/dedução** (pós-3D, estoque é fungível por `(produto, galpão, loc)`). `grupo-resolver.ts` sobrevive só como lookup pra CRUD admin / display.
 
-**Pós-cutover de superfície (2026-05-18):** apenas `/login`, `/wms/*` e `/api/{auth,wms}/*` existem.
+### Decisão (por pedido, em `wms/roteamento.ts`)
+
+Conjunto: `propria | transferencia | oc` (sem empréstimo/swap no 3D).
+
+1. Por galpão, tenta cobrir **todo** item a 100% de `siso_estoque` (fungível, exclui locks, prefere `tipo='picking'`).
+2. Mantém os que cobrem 100%, ordena por `geoPriority` (0=casa/sem-preferência · 1=mesma cidade+UF · 2=mesma UF · 3=outro).
+3. `geoPriority===0` → **propria** · cobre 100% mas não-casa → **transferencia** · ninguém cobre 100% mas há parcial → **oc** (`split_galpoes`) · ninguém tem nada → **oc** (`sem_cobertura`).
+
+**Auto-aprovação:** SÓ `propria`. Resto vai pro painel.
+
+### Status
+
+- **Pedido** (`StatusPedido`): `pendente · executando · concluido · cancelado · erro`. `decisao_final`: `propria | transferencia | oc | rejeitado`.
+- **Separação** (`StatusSeparacao`): `aguardando_compra → aguardando_nf → validacao_oc → aguardando_separacao → em_separacao → separado → embalado` (+ `pendente_realocacao`). `expedido` é escrito na coluna mas não está no type. Ordem canônica de `voltar-etapa`: `aguardando_compra → aguardando_nf → aguardando_separacao → em_separacao → pendente_realocacao → separado → embalado → expedido`.
+
+---
+
+## Ledger de Estoque (3D)
+
+Fonte única de estoque. Cada posição é única por **`(produto_id, galpao_id, localizacao_id)`**. Empresa **não é coordenada física** — viaja como **TAG** em movs com NF.
+
+- **`siso_movimentacoes`** — ledger **imutável** (CORE). `tipo ∈ E/S/R/L` + `saldo/reservado anterior/posterior` (CHECKs de coerência) + `origem_tipo` (CHECK enumera ~18 valores) + tags nullable (`empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`, `fornecedor_id`, `custo_unitario`, `custo_medio_anterior/posterior`, `motivo`, `cliente_nome`) + `pedido_id` (text), `nota_fiscal_id` (uuid FK), `estorno_de`.
+- **`siso_estoque`** — cache materializado. `saldo`, `reservado`, `disponivel` (GENERATED `saldo - reservado`), `UNIQUE(produto, galpão, loc)`, `CHECK(reservado <= saldo)`.
+- **`siso_custo_medio`** — custo médio **global por produto** (PK `produto_id`). Recalculado (ponderado) só em entradas `E` com `custo_unitario` de origem `nf_compra` / `devolucao_cliente_integra` / `lancamento_retroativo`.
+
+**`wms_inserir_movimentacao(...)` é o ÚNICO caminho de escrita no ledger.** Lock pessimista (`SELECT FOR UPDATE`), valida saldo/reservado, insere mov, atualiza cache e custo médio — tudo atômico.
+
+---
+
+## Estrutura do Projeto
 
 ```
 src/
   app/
-    page.tsx                       # Redirect: autenticado → /wms, senão → /login
-    layout.tsx                     # Root layout (Outfit + JetBrains Mono fonts) + Providers
-    login/page.tsx                 # PIN login — após sucesso redireciona pra /wms
-    api/
-      auth/
-        login/route.ts             # PIN auth (POST)
-        me/route.ts                # Current session user (GET)
-      wms/                         # ⬇ TODO O BACKEND vive aqui
-        # ── Webhook + worker ──
-        webhook/tiny/route.ts              # Webhook receiver (POST) — pedido + nota_fiscal
-        webhook/reprocessar/route.ts       # Retry failed webhooks (POST)
-        worker/processar/route.ts          # Execution worker trigger (POST/GET) — WORKER_SECRET
-        # ── Pedidos ──
-        pedidos/route.ts                   # List orders (GET)
-        pedidos/tracking/route.ts          # Universal tracking list (GET)
-        pedidos/aprovar/route.ts           # Order approval (POST) — enqueues execution. Em WMS_AS_SOURCE, cria reservas R antes do enqueue (idempotente); 409 se runtime sem cobertura. decisao='rejeitado' (botão Recusar) marca cancelado + decisao_final='rejeitado' sem enfileirar
-        pedidos/[id]/detalhe/route.ts      # Order detail consolidated (GET)
-        pedidos/[id]/historico/route.ts    # Order history/audit trail (GET)
-        pedidos/[id]/observacoes/route.ts  # Order comments (GET/POST)
-        # ── Vendas Diretas (5 rotas) ──
-        vendas/route.ts                    # List manual+ML/Shopee orders w/ auto-filter (GET)
-        vendas/criar/route.ts              # Create manual order (POST) — modo separacao | baixa_direta (degrada pra separação se faltar saldo)
-        vendas/disponibilidade/route.ts    # Resolve loc+dona+disponivel pra produto+galpão (GET)
-        vendas/[id]/route.ts               # Sales order detalhe (GET)
-        vendas/[id]/vendedor/route.ts      # Re-assign vendedor (PATCH)
-        vendas/[id]/cancelar/route.ts      # POST — cancela venda manual (libera R ou estorna S) (P3)
-        # ── Separação (29 rotas) ──
-        separacao/route.ts                 # List separation orders with counts (GET)
-        separacao/iniciar/route.ts         # Start separation (POST)
-        separacao/bipar/route.ts           # Barcode scan during picking (POST)
-        separacao/bipar-checklist/route.ts # Barcode scan in checklist phase (POST)
-        separacao/marcar-item/route.ts     # Mark item picked (POST) — gera mov ledger WMS
-        separacao/desfazer-bip/route.ts    # Undo a barcode scan (POST)
-        separacao/concluir/route.ts        # Complete separation (POST)
-        separacao/concluir-oc/route.ts     # Complete OC separation (POST)
-        separacao/bipar-embalagem/route.ts # Barcode scan during packing (POST)
-        separacao/bipar-embalagem-oc/route.ts  # Barcode scan packing OC items (POST)
-        separacao/confirmar-item-embalagem/route.ts  # Confirm item packed (POST)
-        separacao/expedir/route.ts         # Dispatch order (POST)
-        separacao/retry-etiqueta/route.ts  # Retry label printing after failure (POST)
-        separacao/checklist-items/route.ts # Get checklist items (GET)
-        separacao/encaminhar/route.ts      # Forward order to another galpão (POST)
-        separacao/cancelar/route.ts        # Cancel separation (POST)
-        separacao/reiniciar/route.ts       # Restart separation (POST)
-        separacao/voltar-etapa/route.ts    # Go back one step (POST)
-        separacao/tags/route.ts            # Manage separacao tags (GET/POST)
-        separacao/produto-esgotado/route.ts          # Mark product out of stock (POST)
-        separacao/validar-oc-item/route.ts           # Validate OC item (POST)
-        separacao/reimprimir/route.ts                # Reprint label (POST)
-        separacao/forcar-pendente/route.ts           # Force orders pending (batch POST)
-        separacao/[pedidoId]/forcar-pendente/route.ts # Force single pending (PATCH)
-        separacao/localizacao/route.ts               # Update product location (POST)
-        separacao/parcial/route.ts                   # Parcial: 2 movs + re-busca cascade (POST)
-        separacao/marcar-realocacao/route.ts         # Confirma pick da realocação no WMS (POST)
-        separacao/realocacao/[id]/route.ts           # Cancela realocação pendente (DELETE)
-        separacao/desfazer-parcial/route.ts          # Estorna parcial + reseta campos (POST)
-        # ── Compras (16 rotas) ──
-        compras/route.ts                   # List purchase items (GET)
-        compras/comprar/route.ts           # Mark items purchased by SKU (POST)
-        compras/receber/route.ts           # Receive/consolidate purchases (POST)
-        compras/preparar-embalagem/route.ts          # Stage orders for packing (POST)
-        compras/trocar-sku/route.ts                  # Change product SKU (POST)
-        compras/ordens/route.ts                      # List POs by supplier (GET)
-        compras/conferencia/[ordemCompraId]/route.ts # Receive items for PO (GET/POST)
-        compras/pedidos/[pedidoId]/cancelar/route.ts # Cancel purchase decision (POST)
-        compras/itens/[itemId]/indisponivel/route.ts # Mark item unavailable (POST)
-        compras/itens/[itemId]/devolver/route.ts     # Return received item (POST)
-        compras/itens/[itemId]/cancelamento/route.ts          # Propose cancelamento (POST)
-        compras/itens/[itemId]/cancelamento/confirmar/route.ts # Confirm cancelamento (POST)
-        compras/itens/[itemId]/equivalente/route.ts           # Propose equivalente SKU (POST)
-        compras/itens/[itemId]/equivalente/confirmar/route.ts # Confirm equivalente (POST)
-        # ── Cross (14 rotas) ──
-        cross/search/route.ts              # GET busca (SKU/OEM/nome)
-        cross/produtos/[sku]/route.ts      # GET detalhe (com lazy fetch Tiny)
-        cross/produtos/[sku]/refetch/route.ts        # POST atualizar do Tiny
-        cross/produtos/[sku]/oems/route.ts           # POST adicionar OEM
-        cross/produtos/[sku]/oems/[codigo]/route.ts  # DELETE remover OEM
-        cross/produtos/[sku]/veiculos/route.ts       # POST adicionar veículo
-        cross/produtos/[sku]/veiculos/[id]/route.ts  # DELETE remover veículo
-        cross/produtos/[sku]/equivalentes-rapidos/route.ts # GET equivalências curtas
-        cross/produtos/[sku]/estoque/route.ts        # GET estoque agregado
-        cross/produtos/[sku]/has-cross/route.ts      # GET flag rápida
-        cross/produtos/[sku]/links/route.ts          # GET/POST links manuais
-        cross/produtos/[sku]/links/[skuAlvo]/route.ts # DELETE link manual
-        cross/sugestoes/marcas/route.ts              # GET sugestão de marcas
-        cross/sugestoes/modelos/route.ts             # GET sugestão de modelos
-        # ── Admin (galpões, empresas, grupos, usuários, printnode) ──
-        admin/usuarios/route.ts            # User CRUD (GET/POST/PUT/DELETE)
-        admin/galpoes/route.ts             # Galpao CRUD (GET/POST) — GET inclui hierarquia
-        admin/galpoes/[id]/route.ts        # Galpao by ID (PUT/DELETE)
-        admin/empresas/route.ts            # Empresa CRUD (GET/POST)
-        admin/empresas/[id]/route.ts       # Empresa by ID (PUT/DELETE)
-        admin/grupos/route.ts              # Grupo CRUD — SISO legacy (mantido pra compat)
-        admin/grupos/[id]/route.ts         # Grupo by ID
-        admin/grupos/[id]/empresas/route.ts            # Add empresa to grupo
-        admin/grupos/[id]/empresas/[empresaId]/route.ts # Tier / remove
-        admin/printnode/contas/route.ts            # Contas PrintNode CRUD (GET list, POST create)
-        admin/printnode/contas/[id]/route.ts       # PATCH (label/key/ativo) + DELETE
-        admin/printnode/contas/[id]/test/route.ts  # POST — testa key via /whoami (body opcional `{api_key}` pra testar antes de salvar)
-        admin/printnode/printers/route.ts          # GET — impressoras agregadas de todas contas ativas, agrupadas por conta
-        admin/backfill-agrupamentos/route.ts # Backfill Tiny agrupamentos (admin)
-        admin/backfill-lvr/route.ts        # Backfill LVR (admin)
-        # ── Tiny OAuth ──
-        tiny/connections/route.ts          # Tiny connections CRUD (empresa-scoped)
-        tiny/test-connection/route.ts      # Test Tiny connection
-        tiny/deposits/route.ts             # List Tiny deposits per empresa
-        tiny/stock/ajustar/route.ts        # Adjust stock in Tiny
-        tiny/oauth/route.ts                # OAuth2 initiation (step 1)
-        tiny/oauth/callback/route.ts       # OAuth2 callback (step 2)
-        # ── Mercado Livre ──
-        ml/anuncios/route.ts               # ML anúncios sync (GET)
-        ml/app/route.ts                    # ML app config (GET/PATCH)
-        ml/connections/route.ts            # ML connections CRUD
-        ml/connections/[id]/route.ts       # ML connection by ID
-        ml/connections/[id]/test/route.ts  # Test ML connection
-        ml/oauth/route.ts                  # ML OAuth2 initiation
-        ml/oauth/callback/route.ts         # ML OAuth2 callback
-        # ── WMS core (estoque, ledger, localizações) ──
-        produtos/route.ts                  # GET (list/search), POST (create)
-        produtos/[id]/route.ts             # GET, PATCH
-        produtos/[id]/sync/route.ts        # POST — força sync com Tiny
-        produtos/[id]/kit/route.ts         # GET/POST kit components
-        produtos/[id]/ultimas-contagens/route.ts  # GET — última contagem por loc+dona
-        produtos/backfill-imagens/route.ts # POST — backfill de imagens (admin)
-        localizacoes/route.ts              # GET (por galpão), POST
-        localizacoes/lote/route.ts         # POST — cria em lote com preview
-        localizacoes/[id]/route.ts         # PATCH, DELETE (protege saldo>0)
-        localizacoes/[id]/saldos/route.ts  # GET — saldos > 0
-        localizacoes/[id]/substituir-e-excluir/route.ts # POST — move tudo + desativa
-        estoque/route.ts                   # GET ?view=dono|galpao|localizacao|produto
-        ledger/route.ts                    # GET — histórico imutável
-        snapshot-inicial/route.ts          # POST (admin, idempotente, ?dryRun=true)
-        reconciliacao/route.ts             # GET (worker-secret, ?fix=true)
-        # ── WMS movimentações operacionais ──
-        receber/route.ts                   # POST — dock RECEBIMENTO + cria pendências
-        guarda/route.ts                    # GET — fila put-away (filtros)
-        guarda/rota/route.ts               # GET — fila ordenada por loc destino
-        guarda/[id]/route.ts               # GET — detalhe da pendência
-        guarda/[id]/iniciar/route.ts       # POST — marca status='em_guarda' (UPDATE condicional anti-race; 409 PENDENCIA_OUTRA_GUARDA)
-        guarda/[id]/confirmar/route.ts     # POST — mov par S+E (RPC wms_confirmar_guarda_atomico)
-        guarda/[id]/desfazer/route.ts      # POST — desfaz última confirmação (P3)
-        guarda/[id]/cancelar/route.ts      # POST — cancela com motivo
-        guarda/[id]/imprimir/route.ts      # POST — imprime etiqueta de produto
-        guarda/imprimir-lote/route.ts      # POST — imprime maço inteiro
-        transferir-galpao/route.ts         # POST — transferência inter-galpão
-        transferencias/route.ts            # GET — lista + sessões
-        transferencias/[id]/cancelar/route.ts # POST (aceita parcial)
-        transferencias/[id]/receber/route.ts  # POST (claim lock anti-race)
-        transferencias/[id]/desfazer-recebimento/route.ts # POST — estorna leg E, volta em_transito (P3)
-        replenishment/route.ts             # POST — replenishment intra-galpão (RPC atômica)
-        replenishment/[id]/reverter/route.ts # POST — estorna par S+E pelo origem_id (P3)
-        ajuste/route.ts                    # POST — ajuste manual com motivo
-        ajuste/[id]/estornar/route.ts      # POST — estorna mov de ajuste manual (P3)
-        lancamento-retroativo/route.ts                   # POST/GET — registrar + listar
-        lancamento-retroativo/[id]/reconciliar/route.ts  # POST — reconcilia com mov real
-        # ── WMS fornecedores ──
-        fornecedores/route.ts              # GET, POST
-        fornecedores/[id]/route.ts         # PATCH, DELETE (soft)
-        fornecedores/auto-cadastro/route.ts # POST (admin) — semeia mapeamento canônico
-        produto-fornecedores/route.ts      # GET (?produto_id=), POST
-        produto-fornecedores/[id]/route.ts # PATCH, DELETE (soft)
-        rotear/route.ts                    # POST — testa algoritmo de roteamento
-        reservas/cleanup/route.ts          # GET (worker secret) — libera reservas expiradas
-        # ── WMS relatórios (apuração por empresa via tags em movs) ──
-        relatorios/movs-por-empresa/route.ts    # GET — filtra movs por empresa_compradora|vendedora|referencia
-        relatorios/historico-custo/route.ts     # GET — série temporal custo_medio_anterior/posterior por produto
-        relatorios/saldos-por-empresa/route.ts  # GET — recompõe saldo "virtual" por empresa a partir das movs
-        # ── WMS inventário (v2 pull queue) ──
-        inventario/route.ts                # GET (lista), POST (criar)
-        inventario/sugerir/route.ts        # POST — sugestão inteligente
-        inventario/[id]/route.ts           # GET, PATCH, DELETE
-        inventario/[id]/iniciar/route.ts   # POST — inicia sessão
-        inventario/[id]/party/route.ts     # POST entrar + DELETE sair da party
-        inventario/[id]/proxima-loc/route.ts         # POST — pull queue
-        inventario/[id]/localizacoes/[locId]/finalizar/route.ts # POST — finaliza loc
-        inventario/[id]/aprovar/route.ts   # POST — computa divergências + aprova (force opcional pra OPERADORES_ATIVOS)
-        inventario/[id]/aprovar-sessao/route.ts # POST — aprova sessão inteira (force opcional)
-        inventario/[id]/aplicar/route.ts   # POST — gera movs origem='inventario' (idempotente via UNIQUE)
-        inventario/[id]/estornar/route.ts  # POST — admin, reverte sessão aplicada (P3)
-        inventario/[id]/contagens/route.ts # POST — registra contagem (exige lock da loc)
-        inventario/[id]/divergencias/route.ts # GET, PATCH
-        inventario/[id]/eventos/route.ts   # GET — feed classificado verde/amarelo/vermelho pro supervisor
-        inventario/metricas/route.ts       # GET — RPCs operador+localização
-        inventario/cleanup/route.ts        # GET (worker secret) — libera locks órfãos
-        # ── WMS exceções + dashboards + insights ──
-        devolucoes/route.ts                # GET fila pendente
-        devolucoes/[id]/classificar/route.ts # POST classificação A/B/C/D
-        devolucoes/[id]/desclassificar/route.ts # POST — reverte classificação (P3)
-        cobertura/route.ts                 # GET (filtros)
-        cobertura/refresh/route.ts         # GET (worker secret) — refresh MV
-        dashboard-geral/route.ts           # GET — agrega 7 contadores
-        dashboard-tarefas/route.ts         # GET — 6 cards da home /wms (contadores + executores)
-        insights/hub/route.ts              # GET — dashboard hub de insights
-        insights/pessoas/route.ts          # GET — lista pessoas + KPIs
-        insights/pessoas/[id]/route.ts     # GET — detalhe pessoa
-        insights/fluxo/route.ts            # GET — fluxo operacional
-        insights/estoque/route.ts          # GET — insights de estoque
-        insights/financeiro/route.ts       # GET — insights financeiros
-        insights/devolucoes/route.ts       # GET — insights de devoluções
-        insights/regras/route.ts           # GET/POST — CRUD de regras
-        insights/regras/[id]/route.ts      # PATCH, DELETE
-        insights/regras/[id]/test/route.ts # POST — testa regra
-        insights/refresh/route.ts          # POST (worker secret) — refresh agregados
-        insights/ativos/[id]/dispensar/route.ts # POST — dispensa alerta ativo
-    wms/                                   # ⬇ TODO O FRONTEND vive aqui
-      layout.tsx                           # WmsShell + sidebar de navegação
-      page.tsx                             # Home WMS — 4 cards (catálogo/locs/saldos/ledger)
-      wms.css                              # Estilos do shell
-      pedidos/page.tsx + [id]/page.tsx     # Order tracking + detalhe
-      vendas/page.tsx + nova/page.tsx + [id]/page.tsx  # Vendas Diretas — listagem, criar venda (page completa), detalhe
-      separacao/page.tsx + checklist + embalagem  # Wave picking flow
-      compras/page.tsx                     # Compras (Comprar/Receber tabs)
-      cross/page.tsx + [sku]/page.tsx      # Cross — busca + detalhe OEMs/veículos
-      produtos/page.tsx                    # Catálogo unificado
-      localizacoes/page.tsx                # CRUD localizações por galpão
-      estoque/page.tsx                     # Saldos em 4 perspectivas
-      ledger/page.tsx                      # Histórico imutável
-      receber/page.tsx                     # Etapa 1/2 — dock RECEBIMENTO
-      guarda/page.tsx + rota + [id]        # Etapa 2/2 — put-away (handheld)
-      transferir/page.tsx                  # Transferência inter-galpão
-      replenishment/page.tsx               # Replenishment intra-galpão
-      ajuste/page.tsx                      # Ajuste manual com motivo
-      retroativos/page.tsx                 # Pendências de reconciliação retroativa
-      fornecedores/page.tsx                # CRUD fornecedores
-      cobertura/page.tsx                   # Cobertura por giro
-      devolucoes/page.tsx + [id]/page.tsx  # Classificação A/B/C/D
-      dashboard/page.tsx                   # Dashboard geral (4 cards, refresh 30s)
-      inventario/page.tsx + [id]/...       # Sessões + supervisor + handheld + divergências
-      inventario/metricas/page.tsx         # Acuracidade por operador/localização
-      insights/page.tsx + subrotas         # Hub + pessoas + fluxo + estoque + financeiro + ...
-      relatorios/                          # Apuração por empresa (3D)
-        movs-por-empresa/page.tsx          # Movs filtradas por compradora/vendedora/referência
-        historico-custo/page.tsx           # Série temporal de custo médio por produto
-        saldos-por-empresa/page.tsx        # Saldo "virtual" recomposto por empresa
-      configuracoes/page.tsx + conexoes    # Settings + OAuth (aba "otimizações" removida em 2026-05-20)
+    api/auth/{login,me}/route.ts        # ÚNICAS rotas fora de /api/wms (PIN login + sessão)
+    api/wms/**/route.ts                 # 203 rotas — TODO o backend
+    wms/**                              # 57 pages (+layout) — TODO o frontend, todas "use client"
+    login/page.tsx · page.tsx           # login + redirect pra /wms
+    globals.css                         # Tailwind v4 (@theme inline)
   components/
-    app-shell.tsx, app-header.tsx          # Shell wrappers (auth + header)
-    galpao-selector.tsx                    # Dropdown filtro galpão
-    sw-register.tsx                        # Service worker registration
-    providers.tsx                          # QueryClientProvider + Toaster
-    ui/                                    # Componentes genéricos (tabs, empty-state, spinner, etc.)
-    wms/                                   # ⬇ TODOS os components específicos vivem aqui
-      wms-shell.tsx                        # Sidebar de navegação (6 grupos: Vendas/Visibilidade/Operações/Inventário/Insights/Cadastros)
-      sidebar-galpao-switcher.tsx          # Trocador de galpão na sidebar
-      produto-drawer.tsx                   # Drawer de detalhe de produto
-      saldo-perspectiva-tabs.tsx           # Tabs entre as 3 perspectivas (galpão/loc/produto)
-      tripla-picker.tsx                    # Seletor galpão+localização (3D, renomeado em 2026-05-20)
-      scan-contagem.tsx                    # Input de bipe pro inventário
-      configuracoes-types.ts               # Types compartilhados das telas de config
-      ml-anuncios-block.tsx                # Bloco de anúncios ML
-      cross/cross-popover-button.tsx       # Popover Cross reutilizável
-      separacao/parcial-modal.tsx          # Modal qty + loc zerou (Parcial)
-      separacao/types.ts                   # SeparacaoPedido + CompraStatsData types
-      inventario/loc-vazia-modal.tsx       # Modal "está vazia?" handheld
-      inventario/feed-eventos.tsx          # Feed ao vivo classificado pro supervisor
-      configuracoes/aba-*.tsx              # Abas das configurações
-      vendas/pedido-card-wms.tsx           # Card de pedido (WMS-styled)
-      ui/{modals,wms-ui}.tsx               # Modais reutilizáveis (Receber/Ajuste/Transferir/Realocar)
+    providers.tsx                       # QueryClient + AuthProvider + Toaster + SW
+    ui/                                 # genéricos (loading-spinner, error-banner usados; resto legado)
+    wms/
+      wms-shell.tsx                     # sidebar (8 grupos perm-gated) + CommandK (⌘K) + modal context
+      home/quadro-tarefas.tsx           # home /wms: pipeline + kanban + exceções
+      {separacao,cross,insights,inventario,vendas,configuracoes,home}/  # por feature
+      ui/{wms-ui.tsx,modals.tsx,avatar.tsx}   # PageHeader, StatusBadge, Modal, formatters...
+  hooks/                                # 5 realtime hooks (postgres_changes + Presence → invalidate React Query)
   lib/
-    # ── Webhook + worker (escreve no caminho legado siso_pedido_item_estoques) ──
-    webhook-processor.ts                   # Core: fetch → enrich → calc → save
-    webhook-processor-wms.ts               # Versão WMS-first (Plano 6 cutover, ainda dormante)
-    nf-webhook-handler.ts                  # nota_fiscal webhooks → aguardando_separacao
-    execution-worker.ts                    # Post-approval: deduct stock por tier
-    execution-worker-wms.ts                # Versão WMS-first (Plano 6 cutover, ainda dormante)
-    empresa-lookup.ts                      # CNPJ → empresa (cached 5min)
-    grupo-resolver.ts                      # Resolve grupo, tier order, aggregate stock
-    # ── Compras ──
-    compras-release.ts                     # All OC items received → resume execution
-    compras-equivalencia.ts                # Equivalente SKU resolution
-    compras-embalagem.ts                   # Staging compras → packing
-    compras-utils.ts                       # Allowed cargos, field reset
-    # ── Separação (short pick + re-alocação) ──
-    separacao/
-      wms-mapping.ts                       # Resolve Tiny produto/loc → uuids WMS
-      realocacao-resolver.ts               # Cascade re-busca (empresa → tipo loc → qty)
-      *.test.ts                            # Testes unitários
-    # ── Cross (catálogo e equivalência) ──
-    cross/types.ts, oem-extractor.ts, produto-fetcher.ts, catalogo-queries.ts
-    # ── Tiny ERP integration ──
-    tiny-api.ts                            # Tiny ERP API v3 client (com fallback tiny-stub)
-    tiny-stub.ts                           # Stub completo do Tiny pra staging (TINY_DISABLED=true)
-    tiny-oauth.ts                          # OAuth2 token management — getValidTokenByEmpresa()
-    tiny-queue.ts                          # Rate limiting per empresa_id
-    rate-limiter.ts                        # Underlying rate limiter
-    sku-fornecedor.ts                      # SKU prefix → supplier/galpao
-    # ── Mercado Livre ──
-    ml-api.ts, ml-oauth.ts, ml-anuncios.ts
-    # ── Printing & labels ──
-    agrupamento-service.ts                 # Pre-cria Tiny agrupamentos + baixa ZPL
-    etiqueta-service.ts                    # Print shipping labels via PrintNode
-    etiqueta-download.ts                   # Download/extract ZPL de ZIP do Tiny
-    printnode.ts                           # PrintNode API client (PDF + ZPL)
-    # ── Auth & sessions ──
-    auth-context.tsx                       # AuthProvider + useAuth + sisoFetch
-    session.ts                             # Server-side session validation
-    # ── Infrastructure ──
-    historico-service.ts                   # Order audit trail
-    config.ts                              # System config KV store
-    domain-helpers.ts                      # UI helpers
-    supabase.ts, supabase-server.ts        # Clients
-    logger.ts                              # Structured logger
-    utils.ts                               # cn() helper
-  hooks/
-    use-realtime-separacao.ts              # Supabase Realtime — separação
-    use-inventario-realtime.ts             # Supabase Realtime — inventário
-  types/index.ts                           # Central type definitions
-supabase/
-  migrations/                              # Database migrations (YYYYMMDD_description.sql)
-scripts/
-  seed-cross-catalogo.ts                   # Seed inicial Cross
-  wms-seed-test.ts                         # Seed pra validar pipeline WMS
-
-# ─── WMS library (src/lib/wms/) — toda lógica de negócio WMS ────────────
-src/lib/wms/
-    types.ts                       # Produto, Localizacao, EstoqueLinha, Movimentacao, Tripla, PerspectivaEstoque
-    ledger.ts                      # inserirMovimentacao() + validarCoerencia() (3D, metadata por empresa em movs)
-    ledger.test.ts                 # Unit tests da lógica do ledger
-    custo-medio.ts                 # Cache global de custo médio por produto (siso_custo_medio)
-    produtos.ts                    # CRUD do catálogo unificado
-    localizacoes.ts                # CRUD de localizações por galpão
-    estoque.ts                     # Queries de saldos com 3 perspectivas (galpão / loc / produto)
-    sync-tiny.ts                   # Sincroniza siso_produtos com Tiny
-    snapshot-inicial.ts            # Bulk-load idempotente do Tiny (Fase 0)
-    reconciliacao.ts               # Detecta + corrige divergências ledger↔cache
-    putaway.ts                     # Heurística de sugestão de localização
-    movimentacoes.ts               # Helpers: receber, transferir, replenishment, ajuste, retroativo
-    fornecedores.ts                # CRUD fornecedores + auto-cadastro mapeamento sku-fornecedor
-    roteamento.ts                  # Algoritmo PURO (geo-priority) + rotearPedidoDoBanco
-    reservas.ts                    # Reservas atômicas com TTL + cleanup
-    inventario.ts                  # v2 pull queue (slots + claim hierárquico)
-    inventario-reconciliacao.ts    # Função PURA: reconcilia temporalmente (cutoff_em + saldo_no_bipe via ledger)
-    inventario-recovery.ts         # Detecta sessões e locks órfãos
-    devolucoes.ts                  # Classificação A/B/C/D + recálculo de custo médio
-    cobertura.ts                   # Service de cobertura por giro
-    dashboard-geral.ts             # Agrega contadores cross-módulo
-    guarda.ts                      # Lógica de put-away (resolverLocRecebimento + confirmar)
-    zpl-produto.ts                 # ZPL pra etiqueta de produto (PW800, 2-por-folha)
-    etiqueta-produto-service.ts    # ZPL + PrintNode (fire-and-forget no recebimento)
-    api-client.ts                  # Cliente fetch wrapper consumido pelas páginas /wms
-    _archive/                      # Código histórico — arquivado em 2026-05-20 com o ledger simplificado 3D
-      emprestimos.ts, mini-swap.ts, mini-swap-types.ts, mini-swap.test.ts (e correlatos)
+    webhook-processor(-wms).ts          # entry shell → -wms (ativo)
+    execution-worker(-wms).ts           # entry shell → -wms (ativo)
+    nf-webhook-handler.ts               # nota_fiscal → aguardando_separacao; upsertNotaFiscal()
+    empresa-lookup.ts                   # CNPJ→empresa (cache 5min)
+    grupo-resolver.ts                   # lookup de grupo (não roteia mais)
+    compras-*.ts                        # release, equivalencia, embalagem, necessidade, utils
+    cross/**                            # busca universal, OEM, fetch Tiny
+    separacao/**                        # bridge Tiny↔WMS (wms-mapping, realocacao-resolver, ...)
+    tiny-{api,oauth,stub,queue}.ts · rate-limiter.ts · sku-fornecedor.ts
+    ml-{api,oauth,anuncios,stub}.ts
+    printnode.ts · etiqueta-*.ts · zpl-produto.ts · agrupamento-service.ts
+    session.ts · permissions.ts · roles-loader.ts · auth-context.tsx
+    logger.ts · supabase-server.ts · config.ts · historico-service.ts · utils.ts
+    wms/
+      cutover.ts                        # BACKSTOP de lançamento de estoque (NÃO é feature-flag!)
+      ledger.ts                         # inserirMovimentacao(), estornarMovimentacao(), venderKit()
+      custo-medio.ts · estoque.ts · live-stock.ts · produtos.ts · localizacoes.ts · kits.ts
+      roteamento.ts · sugestao-dinamica.ts · reservas.ts · reservas-picking.ts
+      movimentacoes.ts · guarda.ts · putaway.ts · receber-oc.ts · transferencias.ts
+      crossdock-{detector,trigger}.ts · contagem-inline.ts
+      inventario.ts · inventario-reconciliacao.ts (pura) · inventario-recovery.ts
+      vendas-{disponibilidade,cancelamento}.ts · mandar-compras.ts · varredura-validacao-oc.ts
+      fornecedores.ts · sync-tiny.ts · snapshot-inicial.ts · galpoes-com-saldo.ts
+      reconciliacao.ts · reconciliacao-tiny.ts · cobertura.ts
+      devolucoes.ts · devolucao-detector.ts (puro) · dashboard-{geral,tarefas}.ts
+      insights/{motor,queries,types}.ts
+      separacao/{pick-mov,distribuir-qty-pega,reset-state}.ts
+      _archive/                         # código 4D morto — excluído do typecheck, NÃO ressuscitar
+supabase/migrations/                    # 184 .sql — YYYYMMDD_description.sql (sufixo b/c p/ mesmo dia)
+scripts/wms/cenarios/                   # runner E2E + cenários + auth matrix
+docs/                                   # ground-truth gerada (ver abaixo)
+erros-conhecidos.yaml                   # base de erros (grep antes, adicionar depois)
 ```
 
-## Database Tables (Supabase)
+### API — grupos por domínio (203 rotas em `/api/wms`)
 
-All tables are prefixed with `siso_`:
+`separacao` (31) · `admin` (21) · `inventario` (16) · `cross` (14) · `compras` (14) · `insights` (12) · `guarda` (10) · `pedidos` (8) · `ml` (7) · `tiny` (6) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `relatorios` (3) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
 
-### Core Tables
+### Database — tabelas principais
 
-| Table | Purpose |
+| Tabela | Propósito |
 |---|---|
-| `siso_pedidos` | Orders with stock enrichment, suggestion, status, separation status. Has `empresa_origem_id` FK. `separacao_tags text[]` for user-created tags (separate from Tiny `marcadores`). `status_separacao` includes `pendente_realocacao` (short pick without coverage). |
-| `siso_pedido_itens` | Per-item data (unique: `pedido_id + produto_id`). Has legacy `estoque_cwb_*`/`estoque_sp_*` columns + normalized FK. New cols: `quantidade_pega`, `separacao_parcial`, `parcial_motivo/em/por`, `mov_saida_id`, `mov_ajuste_loc_zerou_id`. |
-| `siso_pedido_item_estoques` | **Primary stock source.** Normalized stock per empresa (pedido_id, produto_id, empresa_id). API reads from here. |
-| `siso_pedido_item_realocacoes` | Re-allocation rows created when a short pick zeroes a location and another location must be used. FK to `siso_pedido_itens`. Status: `aguardando_picking`, `picado`, `cancelado`. |
-| `siso_fila_execucao` | Execution queue with empresa_id, retry logic, exponential backoff |
-| `siso_usuarios` | Users with name, PIN, cargo, active flag, printnode printer config |
-| `siso_sessoes` | Server-side sessions (id, usuario_id, expira_em) |
-| `siso_pedido_historico` | Immutable audit trail (evento, detalhes, timestamps) |
-| `siso_ordens_compra` | Purchase orders by supplier |
-| `siso_inventarios` | Inventory sessions with empresa, galpao, mode, stock type, status lifecycle |
-| `siso_inventario_itens` | Per-item scan data (SKU, location, qty). No unique constraint — same SKU can appear multiple times |
-| `siso_transferencias` | Inter-galpão transfer sessions with origin/destination empresa+galpao+deposito |
-| `siso_transferencia_itens` | Per-item transfer data (SKU, qty, clonado flag for auto-created products) |
+| `siso_pedidos` | Pedidos. `id` é **text** (Tiny). `sugestao`/`decisao_final`, `status`+`status_separacao`, `empresa_origem_id`, `separacao_galpao_id`, `separacao_tags[]`. |
+| `siso_pedido_itens` | Itens. ⚠ `produto_id` = **tiny_produto_id**, não uuid WMS. `quantidade_pega`, `separacao_parcial`, `mov_saida_id`. |
+| `siso_estoque` / `siso_movimentacoes` / `siso_custo_medio` | Ledger 3D (acima). |
+| `siso_produtos` | Catálogo unificado. `sku UNIQUE`, `eh_kit`, fiscal. |
+| `siso_produto_empresas` | N:N produto↔empresa com `tiny_produto_id`. **Bridge Tiny→WMS.** |
+| `siso_localizacoes` | Locs por galpão. `UNIQUE(galpao_id, codigo)`, `tipo ∈ picking/overstock/recebimento/expedicao/quarentena/packing`. Auto-seed `DEFAULT-PICKING`/`QUARENTENA`/`RECEBIMENTO`. |
+| `siso_galpoes` / `siso_empresas` / `siso_empresa_galpoes_preferenciais` | Hierarquia. ⚠ `siso_empresas.galpao_id` DEPRECADA. |
+| `siso_usuarios` / `siso_roles` / `siso_role_permissoes` / `siso_usuario_roles` | RBAC dinâmico (roles = dado, não código). |
+| `siso_fila_execucao` | Fila pós-aprovação. ⚠ CHECKs legados `filial_execucao IN ('CWB','SP')`. |
+| `siso_notas_fiscais` | NF canônica. `chave_acesso UNIQUE`. Alvo do FK `siso_movimentacoes.nota_fiscal_id`. |
+| `siso_inventario_{sessoes,operadores,localizacoes,contagens,divergencias}` | Inventário v2 (pull queue + claim hierárquico). |
+| `siso_wms_pendencias_guarda` | Fila put-away. `qty_pendente` GENERATED. status `pendente→em_guarda→guardada\|cancelada`. |
+| `siso_transferencias_galpao` (+itens) | Transferência inter-galpão (2 pernas S→E). |
+| `siso_devolucoes_pendentes` · `siso_fornecedores` (+`produto_fornecedores`) · `siso_impressoes_log` · `siso_localizacao_locks` | Devoluções / fornecedores / log de impressão / locks. |
 
-### Hierarchy Tables
+> **Dropadas (não referenciar):** `siso_pedido_item_estoques`, `siso_emprestimo_regras`, `siso_wms_mini_swap_config`, `siso_transferencias`(+itens), `siso_inventarios`(+itens).
 
-| Table | Purpose |
+### RPCs-chave
+
+`wms_inserir_movimentacao` (único write do ledger) · `wms_reservar_atomico` (wrapper `tipo='R'`) · `wms_pick_item_atomico` (L+S no pick) · `wms_confirmar_guarda_atomico` / `wms_desfazer_guarda_atomico` · `wms_replenishment_intra_galpao` (par S+E) · `wms_inventario_proxima_loc` (pull queue + claim) / `wms_inventario_sugerir` · `wms_detectar_divergencias_estoque` / `wms_rebuild_linha_estoque` · `wms_refresh_curva_abc` / `wms_refresh_cobertura` (MVs `siso_curva_abc`, `siso_cobertura_estoque`) · `wms_truncate_operacional` (test harness).
+
+---
+
+## Convenções
+
+- **TypeScript strict.** Types centrais em `src/types/index.ts`; types WMS em `src/lib/wms/types.ts`. **Sem barrel exports** — importar direto da fonte.
+- **Idioma:** Português pra domínio (`pedido`, `galpao`, `separacao`); inglês pra termos técnicos e **todos** os nomes de arquivo/função.
+- **DB no server:** só via `createServiceClient()` (`supabase-server.ts`, memoizado, service role). Cliente browser quase não acessa Supabase direto — fala com `/api/wms/*`.
+- **Logging:** nunca `console.*`. Usar `logger.info/warn/error(source, msg, meta?)`. Erros reais via `logger.logError({...})` → escreve em `siso_logs` + `siso_erros` (stack, categoria, correlation id). Categorias: `validation | database | external_api | auth | config | business_logic | infrastructure | unknown`.
+- **Respostas de erro:** preferir `wmsErrorResponse({...})` de `lib/wms/api-errors.ts` (mascara 5xx pra `internal_error`, revela só 4xx, desempacota `PostgrestError`). Rotas simples: `NextResponse.json({ error: "..." }, { status })`.
+- **Webhook é fire-and-forget** (200 imediato, processa async). Histórico via `registrarEvento()` (fire-and-forget safe).
+
+### Auth (PIN custom, sem Supabase Auth)
+
+- Login: `POST /api/auth/login` `{ nome, pin }` (PIN comparado em plaintext). Cria `siso_sessoes`, retorna `sessionId`.
+- Cliente manda `X-Session-Id` (+ `X-Galpao-Id` opcional) em todo request. `getSessionUser(req)` valida e carrega roles/permissões. **Cache in-memory 30s** por instância (edições de role/galpão propagam em ≤30s).
+- `auth-context.tsx`: persiste `siso_user` no localStorage; `sisoFetch` injeta os headers; 401 não-login limpa storage e redireciona pra `/login`.
+
+### Permissões (RBAC dinâmico)
+
+- **38 códigos em 8 módulos** (`vendas, visibilidade, operacoes, inventario, insights, relatorios, cadastros, sistema`) no registry `src/lib/permissions.ts` (formato `"modulo.acao"`).
+- Roles em `siso_roles`/`siso_role_permissoes` (editáveis em `/wms/configuracoes/roles`). 6 system roles: `admin, operador, operador_cwb, operador_sp, comprador, vendedor`.
+- **Checagem:**
+  - Backend registry: `userCan(session, ...)` (TODAS; lista vazia ⇒ true) · `userCanAny(session, ...)` (PELO MENOS uma; lista vazia ⇒ false).
+  - Backend guards (`lib/wms/auth.ts`): `requireAuth` · `requireAdmin` (proxy = `userCan("sistema.usuarios")`) · `requireWarehouseAccess` (exclui comprador/vendedor) · `requireWarehouseAccessOrOwnVenda`.
+  - Frontend: `usePermissoes()` → `{ can, canAny }`. Sidebar items têm `requires: PermissaoCodigo[]`.
+- ⚠ Nunca gate em `cargo` — sempre `userCan`. `siso_usuarios.cargo/cargos[]` são espelho legado dos roles (trigger).
+
+---
+
+## Gotchas (NÃO TROPECE NISSO)
+
+1. **`siso_pedido_itens.produto_id` é o `tiny_produto_id`, NÃO o uuid de `siso_produtos`** (JSDoc em `types/index.ts:225`). Pra resolver: JOIN `siso_produto_empresas` ON `tiny_produto_id` filtrando por `empresa_origem_id` do pedido. Renomear é high-risk.
+2. **`siso_pedidos.id` é `text`** (id Tiny numérico). Por isso `siso_movimentacoes.origem_id`/`pedido_id` são **text** (uma migration anterior que os fez uuid quebrou todos os callers de `wms_reservar_atomico`).
+3. **Não existe `WMS_AS_SOURCE`/`flags.ts`** — o caminho WMS é permanente; `webhook-processor`/`execution-worker` sempre delegam pros `-wms`. `WMS_AS_SOURCE` no `.env.example` está **stale**.
+4. **`cutover.ts` NÃO é feature-flag** — é o backstop que flipa `estoque_lancado` quando o pedido atinge `separado/embalado/expedido` e reverte (estorno + recria R) no retrocesso. **NF não é mais pré-condição** (2026-05-28) — o S sai no pick, atômico.
+5. **`inserirMovimentacao` lança erro se faltar `nota_fiscal_id`** em movs de origem NF — chamar `upsertNotaFiscal()` antes.
+6. **`pickMovPicking` não é idempotente nem atômico** — guardar via `mov_saida_id` antes, ou usar a RPC `wms_pick_item_atomico` (caminho de `marcar-item`).
+7. **`live-stock.ts` / `galpoes-com-saldo.ts` lêem `siso_estoque` (live).** `siso_pedido_item_estoques` foi **dropada** — não conflate com snapshot.
+8. **Todas as chamadas Tiny devem rodar dentro de `runWithEmpresa(empresaId, …)`** (AsyncLocalStorage carrega o contexto pro rate-limit e pro stub).
+9. **TTL de reserva é inconsistente por design:** `reservas.ts` default 48h, mas pick-cascade/aprovar/webhook usam 30 dias (`24*30`).
+10. **`createServiceClient()` cai pra anon key** se `SUPABASE_SERVICE_ROLE_KEY` ausente — degrada pra RLS silenciosamente.
+11. **Colunas legadas 2-galpão dropadas** (`estoque_cwb_*`/`estoque_sp_*`/`cwb_atende`/`sp_atende`). Mas `siso_fila_execucao` ainda tem CHECK `filial_execucao IN ('CWB','SP')`.
+12. **Comentário stale em `lib/wms/types.ts`** chama o custo de `siso_produto_custo_medio` — a tabela real é `siso_custo_medio`. Confiar na migration, não no comentário.
+13. **Shape de erro 401 inconsistente** pela API (`{error:"unauthorized"}` vs `{error:"sessao_invalida"}` vs `{erro:"..."}`) — não assumir uma chave única.
+14. **Rotas Tiny/ML de conexão+OAuth não têm session check** (`tiny/connections`, `tiny/stock/ajustar`, `ml/anuncios` etc.) — gap conhecido. `webhook/tiny` é público por design (valida por CNPJ + dedup).
+
+---
+
+## Integrações
+
+- **Tiny ERP v3** (`api tiny.json` na raiz pra contratos). Base `https://api.tiny.com.br/public-api/v3`. OAuth2 via Keycloak (token curto, auto-refresh 60s de buffer). Respostas **sem** wrapper `{data}`. Depósitos vêm do endpoint de estoque (não há `/depositos`). Rate-limit per-empresa (`tiny-queue` + `rate-limiter`). Tiny é só camada **fiscal/marketplace** (emite NF, propaga pra ML/Shopee) — não controla mais estoque.
+- **Mercado Livre** (`ml-*.ts`). OAuth2; `refresh_token` single-use; access 6h.
+- **PrintNode** multi-conta (`siso_printnode_contas`). `resolverImpressora` = override-do-usuário > default-do-galpão. Etiquetas de envio (ZPL/PDF) + de produto (`zpl-produto.ts`, 2-por-folha). Jobs logados em `siso_impressoes_log` (retry manual).
+
+---
+
+## Documentação (MANTER ATUALIZADA NO MESMO COMMIT)
+
+`docs/` tem documentação ground-truth gerada do código (verificar contra a fonte ao usar):
+
+| Doc | Quando consultar |
 |---|---|
-| `siso_galpoes` | Physical locations (id, nome unique, descricao, ativo, printnode config). WMS adds: cidade, estado, pais |
-| `siso_empresas` | Tiny ERP accounts (id, nome, cnpj unique, ativo). **`galpao_id` é DEPRECADO** (mantido nullable como espelho do primeiro preferencial via trigger). Empresa não pertence mais a um galpão. |
-| `siso_empresa_galpoes_preferenciais` | **N:N opcional** (empresa_id, galpao_id, PK composta). Galpões preferenciais (geo-priority=0 no roteamento). Empresa pode ter 0..N. Trigger AFTER mantém `siso_empresas.galpao_id` espelhando primeiro preferencial (ordem alfabética por nome) pra compat de consumidores legados. |
-| `siso_grupos` | Business affinity groups (id, nome unique) — usado pelo SISO legacy, não pelo WMS. |
-| `siso_grupo_empresas` | N:1 empresa→grupo with tier (empresa_id unique) — SISO legacy. |
-
-### WMS Tables (Plano 1 — Foundation)
-
-Schema 3D (a partir de 2026-05-20): cada posição de estoque é única por **(produto, galpão, localização)**. Empresa deixou de ser coordenada física — passa a viajar como TAG em movs com NF (`empresa_compradora_id` / `empresa_vendedora_id` / `empresa_referencia_id`).
-
-| Table | Purpose |
-|---|---|
-| `siso_produtos` | **Catálogo unificado.** id, sku unique, descricao, gtin, imagem_url, unidade, ncm, cest, origem_fiscal, sincronizado_em, ativo |
-| `siso_produto_empresas` | Mapeamento N:N produto↔empresa com tiny_produto_id (PK composto produto_id+empresa_id, UNIQUE empresa_id+tiny_produto_id) |
-| `siso_localizacoes` | Localizações dentro do galpão (id, galpao_id FK, codigo, tipo: picking/overstock/recebimento/expedicao/quarentena, ativo). UNIQUE(galpao_id, codigo) |
-| `siso_estoque` | **Cache materializado** da posição atual. saldo, reservado, disponivel (GENERATED saldo-reservado). UNIQUE `siso_estoque_unique_3d (produto_id, galpao_id, localizacao_id)`. CHECK reservado<=saldo. Sem `empresa_dona_id` e sem `custo_medio` (custo migrou pra `siso_custo_medio`). |
-| `siso_movimentacoes` | **Ledger imutável.** Tipo (E/S/R/L) + saldo_anterior/posterior + reservado_anterior/posterior + `origem_tipo` (CHECK enumera 18 valores: nf_compra, devolucao_cliente_integra/avariada, devolucao_fornecedor_recebida/enviada, nf_venda, venda_manual, ajuste_manual, ajuste_pick_zerou, inventario_perda/ganho/inicial, transferencia_galpao/localizacao, reserva_pedido, liberacao_reserva, lancamento_retroativo, estorno) + observacoes + estorno_de. **Metadata por empresa/fornecedor**: `empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`, `fornecedor_id`, `motivo`, `cliente_nome`, `custo_unitario`, `custo_medio_anterior`, `custo_medio_posterior` (todos nullable). CHECKs garantem coerência aritmética. |
-| `siso_custo_medio` | **Cache global de custo médio por produto.** PK `produto_id`, `custo_medio numeric NOT NULL CHECK ≥ 0` (default 0), `ultima_movimentacao_id` FK pra `siso_movimentacoes`, `atualizado_em`. Atualizado pelo RPC em toda entrada com `custo_unitario`. Substitui `siso_estoque.custo_medio` (4D). Tabela entra na publication `supabase_realtime`. |
-
-**RPC `wms_inserir_movimentacao(...)`** (3D): única forma de escrever no ledger. Lock pessimista via `SELECT FOR UPDATE`, valida saldo/reservado, insere mov, atualiza cache atomicamente. Em entradas com `custo_unitario`, recalcula custo médio ponderado e grava `custo_medio_anterior`/`custo_medio_posterior` na mov + atualiza `siso_custo_medio`.
-
-**RPC `wms_detectar_divergencias_estoque()` / `wms_rebuild_linha_estoque(p_id)`** (3D): reconciliação ledger↔cache. Endpoint `/api/wms/reconciliacao` (worker-secret) é cron-friendly.
-
-### WMS Tables (Plano 3 — Roteamento)
-
-| Table | Purpose |
-|---|---|
-| `siso_fornecedores` | Fornecedores únicos (nome unique, prefixo_sku, cnpj, lead_time_dias_min/medio/max nullable). 11 cadastrados via auto-cadastro do mapeamento canônico. Lead time aqui é **default**: ao vincular um produto via `vincularProdutoFornecedor`/`upsertProdutoFornecedor` (sync Tiny) sem lead_time explícito, herda esses valores. |
-| `siso_produto_fornecedores` | Relação produto↔fornecedor com lead_time min/medio/max + custo_unitario + qty_minima_pedido + multiplo_compra + flag preferencial. UNIQUE(produto, fornecedor). Lead time pode ser sobrescrito por produto; defaults vêm de `siso_fornecedores` no insert. |
-| `siso_localizacao_locks` | Locks operacionais de localização (cycle_count, contagem_completa, manutencao). UNIQUE parcial WHERE finalizado_em IS NULL. |
-
-> Tabela `siso_emprestimo_regras` **dropada em 2026-05-20** com o ledger simplificado 3D. Empresas não são mais coordenada física — não há débito/crédito entre elas. Apuração por empresa = report sobre tags de movs (`/api/wms/relatorios/*`).
-
-**RPC `wms_reservar_atomico(...)`** (3D): wrapper sobre `wms_inserir_movimentacao` com tipo='R', expira_em=now()+ttl_horas. Retorna mov_id.
-
-### WMS Tables (Plano 4 — Inventário v2: pull queue + slots)
-
-**v2 rewrite (2026-05-12):** trocamos divisão estática por áreas (causava operador ocioso) por pool compartilhado com pull queue. Operadores assumem slots OP1-OP5 e puxam locs sob demanda com smart routing. Realtime via Supabase Realtime.
-
-| Table | Purpose |
-|---|---|
-| `siso_inventario_sessoes` | Sessão master. nome (opcional), tipo cycle_count\|completo, modo aberto\|blind (default blind, sem duplo_blind), tolerancia_pct, exige_aprovacao_acima_valor, tamanho_pool. Status workflow: planejada→em_andamento→revisao→aprovada→aplicada\|cancelada. |
-| `siso_inventario_operadores` | Party dinâmica de operadores ativos. **Sem slot numerado** — identidade = `usuario_id`. UNIQUE parcial (sessao_id, usuario_id) WHERE finalizado_em IS NULL evita duplicação. Reentrada (após `sairParty`) reativa registro existente: zera `finalizado_em`, seta `ultima_reentrada_em`, preserva `locs_contadas`. **+ Claim hierárquico ativo**: `claim_tipo` (rua\|predio\|colisao\|NULL), `claim_codigo` (ex: 'A' ou 'A-03'), `claim_direcao` (asc\|desc), `claim_atualizado_em`. Trigger BEFORE UPDATE limpa claim quando `finalizado_em` é setado (sairParty). |
-| `siso_inventario_localizacoes` | Pool de locs da sessão (sem area_id, sem slot_atribuido). status pendente\|em_contagem\|contada\|divergente\|aprovada (sem recontagem). motivo (curva_a\|divergente_recente\|sem_contagem_recente\|manual\|completo). bloqueada_por + bloqueada_em pra lock atômico por operador. contagem_iniciada_em + contagem_finalizada_em pra cálculo de tempo médio. |
-| `siso_inventario_contagens` | Cada bipe individual. Sem `rodada` (1 contagem por loc). Indexada por tripla (produto, galpão, localização) — sem empresa_dona desde 2026-05-20. Múltiplos operadores podem contar a mesma loc (caso edge: sairSlot mid-loc), `computarDivergencias` soma todas as contagens da tripla. |
-| `siso_inventario_divergencias` | Saldo sistema vs contagem final por tripla. delta + delta_pct GENERATED. Status: pendente\|aprovada\|rejeitada\|aplicada (sem recontagem_solicitada). mov_aplicada_id liga ao ledger ao aplicar. |
-
-Ajustes em `siso_localizacoes`: ADD `ultima_contagem_em timestamptz` (trigger atualiza em cada bipe — usado pela sugestão inteligente) + `zona text` (override manual pro roteamento; default = prefixo antes do "-").
-
-### WMS Tables (Plano 5 — Exceções+Dashboards)
-
-| Table | Purpose |
-|---|---|
-| `siso_devolucoes_pendentes` | Fila de NFs de entrada esperando classificação física. UNIQUE parcial em nota_fiscal_id e chave_acesso_nf (dedup webhook re-entregue). Status: aguardando_classificacao→classificada\|cancelada. |
-
-### WMS Tables (Recebimento em 2 etapas — 2026-05-14)
-
-| Table | Purpose |
-|---|---|
-| `siso_wms_pendencias_guarda` | Fila de pendências de put-away. 1 linha por linha de recebimento (preserva NF/lote). `qty_pendente = qty_inicial - qty_guardada` GENERATED. Status: pendente → em_guarda → guardada\|cancelada. Indexada por (galpao_id, status, criada_em). Trigger atualiza `atualizada_em`. CHECK garante coerência (guardada exige qty_guardada=qty_inicial+guardada_em). **Auditoria (2026-05-27)**: `criada_por uuid` (FK `siso_usuarios.id`, operador do recebimento) + `guardada_por uuid` (FK `siso_usuarios.id`, operador que confirmou a guarda final). |
-
-> Tabela `siso_wms_mini_swap_config` e RPCs `wms_executar_mini_swap` / `wms_executar_swap` **dropadas em 2026-05-20** com o ledger simplificado 3D. Mini-swap intra-galpão e swap N×N entre empresas perderam o sentido — não há mais empresa dona física a consolidar. Código arquivado em `src/lib/wms/_archive/mini-swap*.ts`.
-
-Ajustes em `siso_galpoes` + `siso_usuarios`: ADD `printnode_printer_id_produto bigint` + `printnode_printer_nome_produto text` — impressora dedicada pra etiqueta de produto, com fallback pra impressora de envio se vazia.
-
-### PrintNode multi-conta (2026-05-19)
-
-| Table | Purpose |
-|---|---|
-| `siso_printnode_contas` | Contas PrintNode (multi-key). `(id, label UNIQUE, api_key, ativo)`. Substitui `siso_configuracoes['PRINTNODE_API_KEY']`. |
-
-Ajustes em `siso_galpoes` + `siso_usuarios`: ADD `printnode_account_id uuid FK ON DELETE SET NULL` + `printnode_account_id_produto uuid FK ON DELETE SET NULL` — apontam pra conta dona da impressora. `resolverImpressora`/`resolverImpressoraProduto` fazem JOIN com `siso_printnode_contas` pra carregar a `api_key` certa ao enviar o print job. Migration `20260519_printnode_multi_contas` migra a key existente pra uma conta `'Default'` (zero downtime).
-
-Loc auto-criada: a migration semeia 1 `siso_localizacoes` tipo='recebimento' (`codigo='RECEBIMENTO'`) por galpão ativo se não existir uma.
-
-**Materialized view `siso_cobertura_estoque`** (3D — recriada em 2026-05-20): agrega disponivel por (produto, galpão) + giro 30d + lead time fornecedor preferencial → `status_cobertura` (ok\|atencao\|critico\|lead_time_risco\|sem_giro). Refresh via `wms_refresh_cobertura()`.
-
-**RPC `wms_inventario_proxima_loc(p_sessao, p_user)`**: pull queue com **claim hierárquico**. Endereço = rua-prédio-andar (3 segmentos do código). Operador "reivindica" uma unidade e desce nela até esgotar. Algoritmo:
-1. **FASE 1**: tem claim ativo (`claim_tipo` IS NOT NULL)? Procura próxima loc dentro do claim respeitando `claim_direcao` (asc default, desc só em colisão).
-2. **FASE 2a — claim de rua livre**: rua sem nenhum op (claim ou em_contagem); escolhe a com mais pendentes.
-3. **FASE 2b — prédio com buffer ≥1**: prédio livre com gap ≥1 prédio de qualquer ativo. Se a rua tem outro op com claim 'rua', **auto-degrade** o claim dele pra 'predio' (no prédio atual).
-4. **FASE 2c — prédio sem buffer**: pega o prédio mais distante de qualquer ativo (maximiza distância mesmo violando buffer).
-5. **FASE 2d — último prédio + colisão controlada**: se sobra exatamente 1 prédio com pendentes E ele já tem 1 op, permite 2º entrar com `claim_tipo='colisao'` + `claim_direcao='desc'` (entra pela ponta oposta). Máx 2 ops simultâneos. 3º vai pro pool_vazio.
-6. Senão → `{ pool_vazio: true }`.
-
-Helpers: `wms_loc_rua(codigo)` ('A-03-02' → 'A'), `wms_loc_predio(codigo)` ('A-03-02' → 'A-03'), `wms_loc_horizontal_int(codigo)` ('A-03-02' → 3). Lock atômico via `FOR UPDATE OF inv_loc SKIP LOCKED`. Retorna `claim_tipo`/`claim_codigo`/`claim_direcao` no payload pra UI mostrar status do operador. Em modo aberto, anexa SKUs esperados.
-
-**RPC `wms_inventario_sugerir(p_galpao, p_tamanho)`** (3D — assinatura sem `p_empresa_dona` desde 2026-05-20): algoritmo de sugestão inteligente. Mix 50% locs com produtos curva A (giro 30d via `siso_curva_abc`) + 30% locs com divergências aplicadas nos últimos 60d + 20% locs sem contagem em 30d+ (ou nunca contadas). Filtra apenas locs com saldo > 0. Dedupe automático (loc só aparece em uma categoria, priorizada por peso).
-
-**RPCs métricas**: `wms_metricas_operador()` (acuracidade 30d por user) + `wms_metricas_localizacao()` (cobertura+erro 5000 últimas localizações).
-
-**Materialized view `siso_curva_abc`** (3D — recriada em 2026-05-20): ranking ABC automático via giro 30d (movs origem `nf_venda` + `venda_manual`, não-estornadas). Função `wms_refresh_curva_abc()` pra cron job de refresh.
-
-### Infrastructure Tables
-
-| Table | Purpose |
-|---|---|
-| `siso_tiny_connections` | Tiny API connections per empresa. Has `empresa_id` FK. |
-| `siso_webhook_logs` | Webhook dedup + processing status (unique: `dedup_key`). Has `empresa_id` FK. |
-| `siso_api_calls` | API call tracking. Has `empresa_id` FK. |
-| `siso_logs` | Structured application logs (info/warn/error) |
-| `siso_erros` | **Dedicated error tracking** with stack traces, categories, correlation IDs, resolution tracking. Queryable for diagnostics. |
-| `siso_configuracoes` | Key-value config store |
-
-### Cross Module Tables
-
-| Table | Purpose |
-|---|---|
-| `siso_produtos_catalogo` | Cache de produtos do Tiny (módulo Cross) |
-| `siso_produto_oems` | Códigos OEM por produto (com audit) |
-| `siso_produto_veiculos` | Compatibilidade veicular por produto (com audit) |
-| `siso_cross_logs` | Telemetria de buscas no Cross |
-
-> **Note:** `siso_pedido_itens` still has deprecated `estoque_cwb_*` / `estoque_sp_*` columns. The API reads from `siso_pedido_item_estoques` (normalized). The webhook processor writes to both for backwards compat. Legacy columns will be removed in a future migration.
-
-## Reports (Apuração por Empresa — 3D)
-
-Com o ledger simplificado, apuração por empresa virou **report sobre tags de movs** em vez de coordenada física. 3 endpoints + 3 páginas:
-
-| Endpoint | Page | Purpose |
-|---|---|---|
-| `GET /api/wms/relatorios/movs-por-empresa` | `/wms/relatorios/movs-por-empresa` | Movs filtradas por `empresa_compradora_id` / `empresa_vendedora_id` / `empresa_referencia_id` + intervalo de data + origem_tipo |
-| `GET /api/wms/relatorios/historico-custo` | `/wms/relatorios/historico-custo` | Série temporal de `custo_medio_anterior` → `custo_medio_posterior` por produto, reconstruída a partir das entradas com `custo_unitario` |
-| `GET /api/wms/relatorios/saldos-por-empresa` | `/wms/relatorios/saldos-por-empresa` | Saldo "virtual" por empresa recomposto a partir das movs: Σ entradas com `empresa_compradora_id=X` − Σ saídas com `empresa_vendedora_id=X`. Não é coordenada física, é um corte contábil sobre o ledger. |
-
-## Key Domain Concepts
-
-### Roles & Permissões (dinâmico)
-
-Acesso é controlado por **roles editáveis** no UI (`/wms/configuracoes/roles`). Cada role tem um conjunto de permissões (granularidade módulo + ação) do registry em `src/lib/permissions.ts` (37 permissões em 8 módulos).
-
-**Roles padrão (sistema=true, não-deletáveis):**
-- `admin` — todas 37 permissões (inclui P4: `operacoes.devolucoes_classificar`+`operacoes.retroativo`; Fix-Final A: `pedidos.estornar`+`pedidos.liberar_reservas`)
-- `operador` — vendas (exceto criar), separação, compras.ver, estoque, cobertura, operações (incl. devolucoes_classificar, retroativo), inventário ver/executar, insights.ver, relatórios, cadastros
-- `operador_cwb` / `operador_sp` — idem `operador` (galpão é dimensão à parte, não permissão)
-- `comprador` — pedidos.ver, compras.*, estoque, cobertura, relatórios
-- `vendedor` — vendas.ver, vendas.criar
-
-**Cargo legado:** colunas `siso_usuarios.cargo` e `siso_usuarios.cargos[]` ficam nullable como espelho do `siso_usuario_roles` (trigger AFTER mantém sincronizado). Código novo **sempre** checa permissão (`userCan(session, "compras.executar")`), nunca cargo (`cargos.includes("comprador")`).
-
-**Check de acesso no código:**
-- Backend: `import { userCan } from "@/lib/permissions"; if (!userCan(session, "perm.x")) return 403;`
-- Frontend: `const { can } = usePermissoes(); if (!can("perm.x")) return <SemAcesso />;`
-- Sidebar: items em `wms-shell.tsx` têm `requires: PermissaoCodigo[]`.
-
-**Spec/plan:** `docs/superpowers/specs/2026-05-21-roles-permissoes-design.md` + `docs/superpowers/plans/2026-05-21-roles-permissoes.md`.
-
-> **Updated 2026-05-27 (P4):** Permissions registry now has 33 perms in 8 modules (added `operacoes.devolucoes_classificar` and `operacoes.retroativo` to split granular write actions from `requireWarehouseAccess` umbrella).
-
-### Order Statuses
-- `pendente` — awaiting operator decision
-- `executando` — being processed
-- `concluido` — finished
-- `cancelado` — cancelled via webhook
-- `erro` — processing failed
-
-### Decisions (Decisoes)
-- `propria` — fulfilled by origin galpao
-- `transferencia` — inter-galpao transfer needed
-- `oc` — purchase order from supplier
-
-### Stock Data Model
-
-Stock is stored normalized in `siso_pedido_item_estoques` (one row per empresa per item). The API aggregates by galpão and returns a dynamic `estoques: Record<string, GalpaoEstoque>` map keyed by galpão name. This supports any number of galpões without hardcoded references.
-
-### SKU-to-Supplier Mapping
-| Prefix | Supplier | Default Galpao |
-|---|---|---|
-| `19` | Diversos | CWB |
-| `EW`, `TG` | Tiger | SP |
-| `LD` | LDRU | SP |
-| `L0` | LEFS | SP |
-| 6-digit numeric | ACA | CWB |
-| `GB`, `GE`, `GS`, `GI` | GAUSS | CWB |
-| `MK`, `M0`, `B0` | MRMK | SP |
-| `CAK`, `CS` | Delphi | SP |
-| `KT` | Kintop | SP |
-| `MQ`, `APX`, `WDC`, `AT`, `FD`, `FI`, `GM`, `HO`, `HY`, `KI`, `MAN`, `MB`, `NI`, `PG`, `RN`, `SC`, `TO`, `UN`, `VO`, `VW`, `AG`, `BI`, `BA` | Multiqualita | CWB |
-
-## Environment Variables
-
-Required in `.env.local` (use credenciais do projeto staging ativo — ver "Working Environment"):
-```
-NEXT_PUBLIC_SUPABASE_URL=https://ehbxpbeijofxtsbezwxd.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
-SUPABASE_SERVICE_ROLE_KEY=<service-role-key>   # Required for server-side operations
-```
-
-Optional:
-```
-WORKER_SECRET=<secret>   # Protects POST /api/wms/worker/processar + cron endpoints
-TINY_DISABLED=true       # Staging only — routes all Tiny API calls to tiny-stub.ts
-```
-
-OAuth2 credentials for Tiny are stored in the `siso_tiny_connections` table (not env vars).
-PrintNode suporta múltiplas contas (uma key por conta) via `siso_printnode_contas`. Galpões e usuários guardam `printnode_account_id` (+ `_produto`) pra lembrar qual key usar ao imprimir. A entrada legacy `siso_configuracoes['PRINTNODE_API_KEY']` foi migrada pra uma conta `Default` em 2026-05-19.
-
-## Development Commands
-
-```bash
-npm run dev       # Start dev server (turbopack)
-npm run build     # Production build
-npm run start     # Start production server
-npm run lint      # ESLint
-```
-
-## Authentication
-
-- No Supabase Auth — uses custom PIN-based auth
-- Login: `POST /api/auth/login` with `{ nome, pin }` (este é o **único** endpoint fora de `/api/wms/*`)
-- Após login, redireciona direto pra `/wms` (não passa por home)
-- Session: server-side `siso_sessoes` table + `X-Session-Id` header
-- Client persists session in localStorage (`siso_user` key)
-- `sisoFetch` wrapper in `auth-context.tsx` auto-sends session header
-- Server validates via `getSessionUser()` in `session.ts`
-- Seed user: `Eryk / 1234 / admin`
-
-## Documentation
-
-The `docs/` directory contains comprehensive, ground-truth documentation generated from source code:
-
-| Document | Purpose | When to consult |
-|---|---|---|
-| [`docs/api-reference-complete.md`](docs/api-reference-complete.md) | **All API routes** (175+ em `/api/wms/*` + 2 em `/api/auth/*`) — method, path, auth, request/response shapes, business logic, side effects | Before making any API change; understanding any endpoint contract |
-| [`docs/database-schema.md`](docs/database-schema.md) | **All 20+ tables** — columns, types, FKs, indexes, constraints, ER diagram (Mermaid), migration history | Before writing migrations; understanding data model; debugging queries |
-| [`docs/architecture-and-flows.md`](docs/architecture-and-flows.md) | **System architecture** — webhook pipeline, state machines, separation/compras/inventario/transfer flows, Tiny/PrintNode integration, auth, error handling | Understanding business flows; onboarding; debugging cross-module issues |
-| [`docs/fluxos-siso.md`](docs/fluxos-siso.md) | **Visual flow diagrams** — Mermaid state machines and flowcharts for all business processes | Quick visual reference for status transitions and decision logic |
-| [`docs/api-reference.md`](docs/api-reference.md) | Legacy API reference (may be incomplete) | Superseded by `api-reference-complete.md` — kept for reference |
-
-### MANDATORY: Keeping Documentation Updated
-
-**When you modify any API route**, update `docs/api-reference-complete.md` in the same commit:
-- Adding a new route -> add full documentation entry
-- Changing request/response shape -> update the documented shapes
-- Adding/removing query params or body fields -> update the docs
-- Changing auth requirements -> update the docs
-- Changing business logic or side effects -> update the docs
-- Removing a route -> remove from docs
-
-**When you modify database schema** (new migration, alter table, new index), update `docs/database-schema.md` in the same commit.
-
-**When you change any business flow** (state transitions, decision logic, webhook handling, separation steps, compras flow, auth, label printing), update both `docs/architecture-and-flows.md` and `docs/fluxos-siso.md` in the same commit.
-
-**When you modify `CLAUDE.md` itself** (project structure, conventions, architecture), ensure it stays consistent with the docs above.
-
-**When you add new lib services**, update the Project Structure section in this file.
-
-Failure to update documentation means the next developer or LLM will work with stale information and introduce bugs.
-
-## Coding Conventions
-
-### General
-- TypeScript strict mode. All types in `src/types/index.ts`.
-- Portuguese for domain terms (pedido, filial, cargo, decisao, galpao, empresa, grupo). English for technical terms (webhook, token, logger).
-- File and function names in English (e.g., `empresa-lookup.ts`, `getEmpresaByCnpj`).
-- No barrel exports. Import directly from the source file.
-- Stock data is dynamic per galpão — never hardcode "CWB" or "SP" in type definitions or rendering logic.
-
-### Frontend
-- All pages are `"use client"` except layout.
-- Tailwind classes directly on elements (no CSS modules, no styled-components).
-- Design: zinc-based neutral palette, dark mode supported, mobile-first (max-w-3xl).
-- Icons: only Lucide (`lucide-react`). No SVG files except favicon.
-- Toasts: `sonner` (via `toast.success()`, `toast.error()`).
-- No component library (no shadcn, no Radix). All components are custom.
-- `AppShell` wraps all pages for consistent layout and auth.
-
-### Backend (API Routes)
-- Next.js App Router route handlers (`route.ts` with named exports `GET`, `POST`, etc.).
-- All DB access via `createServiceClient()` from `supabase-server.ts` (service role).
-- Error responses: `NextResponse.json({ error: "..." }, { status: N })`.
-- Logging via `logger.info/warn/error(source, message, meta?)` — never `console.log` directly.
-- **Error logging:** Use `logger.logError(opts)` for actual errors — writes to both `siso_logs` and `siso_erros` with stack traces, categories, correlation IDs. See `ErrorLogOptions` in `logger.ts`.
-- **Error categories:** `validation`, `database`, `external_api`, `auth`, `config`, `business_logic`, `infrastructure`, `unknown`.
-- **Correlation IDs:** Generated at webhook entry via `generateCorrelationId()`, auto-attached to all `logError` calls in the same request.
-- Webhook processor is fire-and-forget (returns 200 immediately, processes async).
-- History events recorded via `registrarEvento()` — fire-and-forget safe.
-
-### Error Knowledge Base
-- **`erros-conhecidos.yaml`** at project root tracks every error that was diagnosed and fixed.
-- **MANDATORY:** When you fix any error or bug, add an entry to `erros-conhecidos.yaml` following the format in the file (id, date, source, category, message, cause, fix, files, tags).
-- **Before debugging:** Always check `erros-conhecidos.yaml` first — the error may have been fixed before.
-- Tags are searchable keywords for fast lookup.
-
-### Database
-- All tables prefixed with `siso_`.
-- Migrations in `supabase/migrations/` with format `YYYYMMDD_description.sql`.
-- Upserts for idempotency (dedup on unique constraints).
-
-### Notas legados (NÃO TROPECE NISSO)
-- **`siso_pedido_itens.produto_id` é `tiny_produto_id`, NÃO o uuid de `siso_produtos`.** Herdado do schema pré-WMS quando produto era 1:1 com Tiny. Pra resolver pro uuid WMS, JOIN via `siso_produto_empresas` (filtrar por `empresa_id = empresa_origem_id` do pedido). Documentado com JSDoc em `src/types/index.ts:PedidoItem.produto_id`. Renomear esse campo numa próxima refactor é high-risk (módulos webhook/separação/compras dependem desse nome).
-- **`siso_pedido_itens.estoque_cwb_*` / `estoque_sp_*`**: colunas legacy hard-coded a 2 galpões. API lê de `siso_pedido_item_estoques` (normalizado). Serão removidas em migration futura.
-
-## Current Status
-
-### Fully Working
-- Full order pipeline (webhook → stock check → approval → execution)
-- Separation/picking/packing flow with barcode scanning and real-time updates
-- Advanced purchase order management (v2):
-  - SKU-based purchasing with supplier consolidation (comprar tab)
-  - Receiving with validation and exceptions (receber tab)
-  - Equivalente SKU resolution for unavailable items
-  - Cancelamento workflow with credit notes
-  - Preparation/staging orders for packing (preparar-embalagem)
-- Label printing via PrintNode (ZPL + PDF)
-- Galpao/Empresa/Grupo hierarchy CRUD with tier-based stock deduction
-- Operational dashboard (painel/operacao) with real-time wave picking status
-- Management dashboard (painel/gerencial) with KPIs and analytics
-- User management with role-based access control (admin, operador_cwb/sp, comprador)
-- Tiny OAuth2 connection management per empresa
-- NF webhook reconciliation (aguardando_nf transition)
-- OC auto-resolution in wave picking (concluir-oc endpoint)
-- Módulo Cross: busca universal de produtos (SKU/OEM/nome), edição de OEMs e veículos com audit, equivalência por OEM compartilhado, lazy fetch do Tiny + refresh manual
-
-### In Progress / Minor
-- Real-time notifications for new pending orders (polling at 30s for now)
-- PWA service worker registration (basic structure in place)
-- **WMS Fase 0 (Foundation) — implementado, validado em staging** (projeto Supabase `ehbxpbeijofxtsbezwxd`). Schema 4D original + ledger imutável + RPC com lock + 4 telas de visualização (catálogo, localizações, saldos por 4 perspectivas, ledger). Dependente de promoção pra prod (Fase 1+ ainda pendente). Spec: `docs/superpowers/specs/2026-05-07-wms-design.md`. Plano executado: `docs/superpowers/plans/2026-05-08-wms-1-foundation.md`. > **Nota 2026-05-20**: schema migrado pra 3D — ver bullet "WMS Ledger Simplificado 3D" abaixo.
-- **WMS Plano 2 (Movimentações operacionais) — implementado, validado em staging.** 5 fluxos (receber, transferir inter-galpão, replenishment intra-galpão, ajuste manual com motivo, lançamento retroativo + reconciliação) + sugestão automática de putaway + recálculo de custo médio em entradas com custo. Validação E2E: receber 50 + ajustar -10 = saldo 40, 0 divergências. Plano: `docs/superpowers/plans/2026-05-15-wms-2-movimentacoes.md`.
-- **WMS Plano 3 (Roteamento) — implementado, validado em staging.** Schema fornecedores + matriz de empréstimos N×N (com limites por par+produto) + algoritmo de roteamento puro com geo-priority (home=0, mesma_cidade=1, mesmo_estado=2, outro=3) + reservas atômicas com TTL 48h + cleanup cron-friendly + shadow logging no webhook (legado vs novo, sem mudar comportamento). 9 testes de roteamento + 3 de reservas. Plano: `docs/superpowers/plans/2026-05-22-wms-3-roteamento.md`.
-- **WMS Plano 4 v1 (Inventário robusto) — substituído por v2 em 2026-05-12.** Schema original tinha divisão estática por "áreas" (1 área = 1 operador, locs pré-atribuídas), o que causava operador ocioso quando um terminava antes dos outros. Plano original: `docs/superpowers/plans/2026-05-29-wms-4-inventario.md`.
-
-- **WMS Plano 4 v2 (Inventário pull queue + slots) — implementado em staging, 2026-05-12.** Mudança fundamental: pool compartilhado em vez de divisão estática. Operadores assumem slots OP1-OP5 dinâmicos e puxam próxima loc sob demanda. Sugestão inteligente via RPC `wms_inventario_sugerir` (mix 50% curva A + 30% divergentes recentes + 20% sem contagem 30d+) — roda sob demanda quando supervisor abre "Cycle Inteligente". 3 tipos de sessão: Inteligente / Manual / Completo (estruturalmente idênticas, só muda quem escolhe o pool de locs). Modo aberto|blind (default blind). Sem recontagem mid-flow — divergências aparecem no relatório do supervisor após encerrar. Tela handheld: slot picker → botão "PRÓXIMA LOC" → confirmar (QR ou manual) → bipar produtos → finalizar → loop → resumo final. Encerrar parcial: supervisor pode encerrar antes do pool esgotar — modal escolhe entre subir parcial ou cancelar tudo. Migration: `supabase/migrations/20260512_wms_inventario_rewrite.sql`. **Refatorado 2026-05-18 — modelo party:** dropados `siso_inventario_operadores.slot` e `siso_inventario_sessoes.num_operadores`. Operadores agora são lista dinâmica sem cap rígido — identidade = usuário, reentrada preserva `locs_contadas`. Rotas `/slots/*` viram `/party`. Migration: `supabase/migrations/20260518_wms_inventario_party_model.sql`. Spec: `docs/superpowers/specs/2026-05-18-inventario-party-model-design.md`.
-
-- **WMS Inventário · Claim hierárquico (rua > prédio > buffer > colisão) — implementado em staging, 2026-05-13.** Substitui o slot_atribuido / LPT / smart routing por zonas. Modelo: endereço = rua-prédio-andar (3 segmentos do código); operador "reivindica" uma unidade (rua livre → prédio com buffer ≥1 → prédio sem buffer → colisão controlada no último prédio com max 2 ops + distância vertical máxima) e desce nela até esgotar. Auto-degrade: quando 2º op é forçado a entrar numa rua claimed por colega, o claim do colega cai pra 'predio'. Buffer físico (≥1 prédio de gap entre ops na mesma rua) vale sempre, nos 3 tipos de sessão. Sem `slot_atribuido` — distribuição 100% dinâmica via RPC `wms_inventario_proxima_loc` reescrita. Schema: 4 colunas claim_* em `siso_inventario_operadores` + trigger limpa claim em sairSlot. Frontend mostra "rua A ↓", "prédio A-03 ↓" ou "prédio A-03 ↑ (compartilhando)" no painel do supervisor e na tela do operador. Migration: `supabase/migrations/20260513_wms_inventario_claim_hierarquico.sql`.
-- **WMS Inventário · Reconciliação temporal (estoque online) — implementado em 2026-05-18.** Algoritmo `reconciliarTemporal` reconstrói saldo no instante do bipe usando `siso_movimentacoes.saldo_anterior` da primeira mov após `T_ref`. Pure function testada por TDD (16+ testes em `inventario-reconciliacao.test.ts`). `computarDivergencias` agora faz snapshot `cutoff_em` e delega cálculo. Handheld ganha modal "loc vazia?" pra distinguir loc visitada-vazia de não-visitada. Supervisor ganha feed ao vivo classificado (verde/amarelo/vermelho) em `/api/wms/inventario/[id]/eventos`. Spec: `docs/superpowers/specs/2026-05-18-estoque-online-fluxo.html`. Plano: `docs/superpowers/plans/2026-05-18-estoque-online.md`.
-- **WMS Plano 5 (Exceções + dashboards) — implementado, validado em staging. Encerra Fase 0.** Devoluções classificadas A/B/C/D com recálculo de custo médio + transferência pra QUARENTENA + RMA. Troca SKU na separação (2 movs com mesma origem_id) com validação Cross opcional. Webhook NF detecta devolução (best-effort). Materialized view `siso_cobertura_estoque` com status crítico/atenção/lead_time_risco/ok/sem_giro. Dashboard geral (4 cards, refresh 30s). Shell e home reorganizados em 4 grupos. Plano: `docs/superpowers/plans/2026-06-05-wms-5-excecoes-dashboards.md`. Checklist Fase 0: `docs/superpowers/plans/wms-fase0-checklist.md`. **Próximo: Plano 6 (cutover big bang).**
-- **WMS Fix P5 (Visibilidade Home + UI Fixes) — implementado em 2026-05-26.** Quadro home `/wms` ganhou seção colapsável "Exceções" com 6 cards (devoluções pendentes, transferências em_transito, inventário em revisão, reservas órfãs de pedido cancelado, lançamentos retroativos pendentes, saldo órfão em RECEBIMENTO) + split marketplace vs manual no card Aprovação. Filtro de galpão corrigido pra incluir pedidos com `separacao_galpao_id IS NULL` via `OR(eq, is.null)` (escondia ~69% dos pendentes em prod). Hook `useDashboardTarefasRealtime` estendido pra 8 tabelas (3 novas: `siso_devolucoes_pendentes`, `siso_transferencias_galpao`, `siso_movimentacoes` filtrado `tipo=eq.R`) + invalidate debounced 250ms + handheld inventário ganha toast+redirect em cancelamento de sessão (finding 4.9). 12 UI fixes cirúrgicos: Devolução Classe C select de fornecedor, devolução detalhe fetch dedicado em novo endpoint `GET /api/wms/devolucoes/[id]`, label "Forçar pra separação (bypass NF)" coerente com comportamento, banner D10 estornar gated em P3 (botão comentado com TODO), botão Recusar pedido sem fluxo removido, guarda `[id]` substitui useEffect-iniciar por botão explícito, `FeedEventos` para polling em sessão `aplicada`/`cancelada`, `LocalizacaoCombo` no modal Receber com `allowCreate=false`, toast `imprimir-lote` expõe contagem de `ignorados[]` quando faltam locs destino, paginação client-side em `/wms/pedidos` tabs não-expedidos + `/wms/compras` tab Histórico (backend migration pendente quando volume saturar), vendas/nova com toast de `motivo_degradacao` detalhado + scaffold "criar em nome de X" gated na perm `vendas.criar_em_nome_de` (criada em P4). `<QuadroTarefas>` usa `staleTime=0 + refetchInterval=30_000` como safety net da publication. **Princípios restaurados:** PR-3 (realtime cross-module) e PR-8 (exceções visíveis na home). Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p5-visibilidade-home-ui-fixes.md`. Spec mãe: `docs/superpowers/specs/2026-05-26-auditoria-wms-fixes-design.md` §9.
-- **WMS Recebimento em 2 etapas (Recebimento + Guarda) — implementado em staging, 2026-05-14.** Quebra o recebimento em duas fases pra alinhar com o fluxo físico: dock RECEBIMENTO (chega caminhão, registra qty) → guarda no tablet (imprime etiqueta, bipa QR da loc destino, confirma). 1 pendência em `siso_wms_pendencias_guarda` por linha de recebimento. Suporta guarda parcial (qty<qty_pendente fica aberta) + cancelamento com motivo. Etiqueta de produto em ZPL pareado 2-por-folha (`gerarZplProduto` em `src/lib/wms/zpl-produto.ts`), N etiquetas por unidade. Impressora dedicada de produto (`printnode_printer_id_produto`) com fallback automático pra impressora de envio se não configurada. Migration: `supabase/migrations/20260514_wms_guarda_pendencias.sql`. APIs: `/api/wms/guarda` (lista + detalhe + iniciar/confirmar/cancelar/imprimir + imprimir-lote bulk).
-  - **Entrada direta (2026-05-19):** flag `entrada_direta` em `/api/wms/receber` (tanto no modal individual quanto no lote em `/wms/receber`) pula o dock RECEBIMENTO e grava 1 mov direto na `localizacao_destino_id` de cada item — sem criar pendência. Exige loc destino em **todos** os itens (frontend bloqueia o confirm e mostra alerta em vermelho se faltar). Impressão de etiqueta segue funcionando: `/api/wms/guarda/imprimir-lote` ganhou um modo alternativo `{ linhas: [{produto_id, galpao_id, qty, localizacao_id?}] }` pra cobrir o caso sem pendência. Pra casos onde o operador já vai guardando direto na prateleira (pequenas entradas, lançamento retroativo, achados).
-- **WMS Mini-Swap Intra-Galpão** — **arquivado em 2026-05-20** com o ledger simplificado 3D. Empresa deixou de ser coordenada física, não há mais o que swappear/consolidar entre empresas no mesmo galpão. Código preservado em `src/lib/wms/_archive/mini-swap*.ts` pra referência histórica.
-- **WMS Ledger Simplificado 3D — rollout em 2026-05-20.** Substitui o schema 4D (produto × dona × galpão × loc) por 3D (produto × galpão × loc). Empresa passa a ser TAG em movs com NF (`empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`) + `fornecedor_id` + `custo_unitario`. Custo médio migrou pra cache global `siso_custo_medio` (PK produto_id). 3 RPCs reescritas (`wms_inserir_movimentacao`, `wms_reservar_atomico`, `wms_inventario_proxima_loc/sugerir`), 2 MVs recriadas (`siso_cobertura_estoque`, `siso_curva_abc`), 2 tabelas dropadas (`siso_emprestimo_regras`, `siso_wms_mini_swap_config`), 3 RPCs dropadas (`wms_executar_mini_swap`, `wms_executar_swap`, `wms_saldos_devedores`). Apuração por empresa virou report (`/wms/relatorios/movs-por-empresa`, `/historico-custo`, `/saldos-por-empresa`). Frontend: páginas `/wms/emprestimos` e `/wms/configuracoes/otimizacoes` removidas; `QuadruplaPicker` → `TriplaPicker`; sidebar com novo grupo "Relatórios". Migration: `supabase/migrations/20260520_ledger_simplificado*.sql`. Spec: `docs/superpowers/specs/2026-05-20-ledger-simplificado-design.md`. Plano: `docs/superpowers/plans/2026-05-20-ledger-simplificado-3d.md`.
-- **Vendas Diretas + role vendedor — implementado em 2026-05-19.** Nova aba `/wms/vendas` agregando pedidos manuais inseridos por vendedores + marketplaces rastreados (ML, Shopee). Cargo `vendedor` adicionado à whitelist. 2 modos de criação: (a) `separacao` — pula NF e entra direto em `status_separacao='aguardando_separacao'`; (b) `baixa_direta` — sistema gera mov `'S'` no ledger via `wms_inserir_movimentacao(origem_tipo='venda_manual')` com rollback manual em caso de falha. `webhook-processor.ts` auto-atribui `vendedor_nome='{nome_ecommerce} {empresa_nome}'` pra ML/Shopee, preservando atribuição manual em re-entregas (SELECT-then-update). Sidebar com visibility por cargo (vendedor só vê Vendas Diretas). Migration: `supabase/migrations/20260519_vendas_diretas_vendedor.sql`. Rotas: `POST /api/wms/vendas/criar`, `GET /api/wms/vendas`, `GET /api/wms/vendas/[id]`, `PATCH /api/wms/vendas/[id]/vendedor`. Funciona em ambiente WMS (staging hoje); em prod só funciona modo `separacao` até promoção das tabelas WMS.
-  - **Auto-resolve loc + page completa (2026-05-19):** criação de venda saiu do modal e virou page completa em `/wms/vendas/nova`. Vendedor não escolhe mais empresa dona nem localização — escolhe **1 galpão** pro pedido inteiro e o sistema resolve via novo helper `resolverDisponibilidadeVenda` em `src/lib/wms/vendas-disponibilidade.ts` (ordem: empresa origem com saldo > tipo='picking' > maior disponivel). Novo endpoint `GET /api/wms/vendas/disponibilidade?produto_id=X&galpao_id=Y&empresa_origem_id=Z` alimenta a UI mostrando "Loc sugerida + qty disponível" read-only por item. `POST /api/wms/vendas/criar` mudou contrato: `galpao_id` no top-level, `items[]` só carrega `{produto_id, quantidade}`. **Degradação automática**: se vendedor pediu `baixa_direta` mas algum item não tem saldo no galpão, pedido inteiro vira `aguardando_separacao` (igual marketplace sem estoque); resposta inclui `degradado:true, motivo_degradacao:'falta_saldo', skus_sem_saldo:[]`. Modal antigo `src/components/wms/vendas/form-criar-pedido.tsx` deletado.
-- **Quadro de Tarefas Pendentes na home `/wms` — implementado em 2026-05-21, refatorado pra kanban vertical em 2026-05-21.** A home `/wms` agora é **apenas** PageHeader + QuadroTarefas (as 5 seções de navegação Visibilidade/Operações/Inventário/Relatórios/Cadastros foram removidas — já estão na sidebar). **Pipeline do pedido** (Aprovação · Separação · Embalagem) fica no topo como 3 cards de contador. **Guarda · Inventário · Compras** viraram um kanban vertical de 3 colunas lado a lado, cada coluna com cards empilhados verticalmente: cada pendência de guarda é um card (SKU + qty + status + avatar + tempo na fila, truncado em 50 por coluna), cada ciclo de inventário é um card com barra de progresso (`locs_contadas / locs_total`), e Compras agrupa por fornecedor (1 card por fornecedor com `a_comprar / a_receber`). Colunas vazias mostram placeholder dashed dim (clicável). Endpoint: `GET /api/wms/dashboard-tarefas?galpao_id?` — retorna `guarda.itens[]`, `inventario.ciclos[]` e `compras.fornecedores[]` além dos contadores. Realtime via Supabase em 5 tabelas (`siso_pedidos`, `siso_wms_pendencias_guarda`, `siso_inventario_sessoes`, `siso_inventario_operadores`, `siso_pedido_itens`). Spec: `docs/superpowers/specs/2026-05-21-quadro-tarefas-home-design.md`. Plano: `docs/superpowers/plans/2026-05-21-quadro-tarefas-home.md`.
-
-- **Sistemática de Testes de Estoque (Camadas 1-3) — implementada 2026-05-21, 17/17 cenários passando (100%) — atualizado 2026-05-22 round 3.** Pirâmide completa: unit (vitest, já existia) + integration (vitest config separado `vitest.integration.config.ts` rodando contra staging) + scenarios (17 fluxos ponta-a-ponta via HTTP em `/api/wms/*`, com runner em `scripts/wms/cenarios/run-all.ts`). 7 invariantes globais property-based rodam ao fim de todo cenário (`I1..I7` — ver `scripts/wms/cenarios/README.md`). Stubs PrintNode + ML criados (`src/lib/printnode-stub.ts`, `src/lib/ml-stub.ts`); Tiny reaproveita stub existente. Migration `20260521_test_harness_rpc.sql` adiciona `wms_truncate_operacional()`. Rodar: `npm run scenarios`. Spec: `docs/superpowers/specs/2026-05-21-sistematica-testes-estoque-design.md`. Plano original: `docs/superpowers/plans/2026-05-21-sistematica-testes-estoque.md`. Plano de destravo: `docs/superpowers/plans/2026-05-21-destravar-cenarios-estoque.md`. Smoke report: `docs/superpowers/smoke-2026-05-21-cenarios-estoque.md`. **Bugs prod fixados nos rounds anteriores:** (a) migration `20260522_add_validacao_oc_status.sql` adiciona `validacao_oc` ao CHECK constraint de `siso_pedidos.status_separacao` (round 2, commit `7576546`); (b) `vendas/criar` em baixa_direta usa `randomUUID()` em `origem_id` e preserva `MAN-...` em `origem_detalhes.pedido_id_manual` (round 2, commit `7b1b960`); (c) validação defensiva uuid em `inserirMovimentacao` via `assertUuidLike` em 12 campos (round 2, commit `f8ae05f`); (d) tiny-stub filtra estoque por galpão preferido da empresa (round 2, commit `a751e09`). **Destravo round 3 (2026-05-22):** cenários 02/03/05 passam após (i) `tiny-stub.handleListProdutos` filtrar `siso_produto_empresas` por contexto de empresa via `getContextEmpresaId()` do AsyncLocalStorage — corrige cross-empresa stock enrichment no webhook-processor; (ii) harness `tinyProdutoIdFromSku(sku, salt)` gera IDs distintos por empresa; (iii) ajustes nos scripts dos 3 cenários pra contratos atuais. **Concern documentado, não fixado**: marcar-item/parcial em fluxo transferencia resolve localização via `empresa_origem_id` em vez de `separacao_galpao_id` — cenários 02/03 patcham `siso_pedido_item_estoques.localizacao` pra workaround; fix prod fica pro Plano 6 cutover.
-
-- **WMS_AS_SOURCE ativado por default (cutover Plano 6, 2026-05-25).** `src/lib/wms/flags.ts` agora retorna `true` por default — opt-out via env `WMS_AS_SOURCE=false`. Efeito imediato: webhook lê estoque de `siso_estoque` (não Tiny), roteia via `rotearPedidoDoBanco` (geo-priority WMS-3), cria reserva R no ledger no recebimento do pedido, e converte R→L+S quando `status_separacao ∈ {separado,embalado,expedido}` + NF emitida. Tiny continua emitindo NF e propagando pra ML/Shopee (camada fiscal), apenas perdeu o papel de source-of-truth de estoque. **Estado inicial:** WMS começou com saldo zero (16 produtos × 224 unidades no momento do flip) — pedidos de SKU sem saldo viram `sugestao='oc'` até recebimentos cobrirem a curva. **Pré-condições verificadas:** CWB e SP têm `DEFAULT-PICKING` ativo (migration `20260525_default_picking_safety_net.sql`); 99,97% dos produtos têm mapeamento `siso_produto_empresas`. **Rollback:** `WMS_AS_SOURCE=false` no Vercel + redeploy (~5min).
-
-- **Aprovar manual completa a reserva (2026-05-25, mesmo dia do cutover).** Quando webhook entrou com saldo=0 (sugestao=oc) mas o operador inseriu estoque depois e aprovou como propria/transferência, o `/api/wms/pedidos/aprovar` agora cria as reservas R correspondentes antes de transitar status. Frontend desabilita os botões propria/transferência se o estoque live não cobre todos os itens (`decisaoIsAvailable` em `pedido-card-wms.tsx`). Spec: `docs/superpowers/specs/2026-05-25-aprovar-cria-reserva-design.md`.
-
-- **Fix-Final A — Cobertura ledger (2026-05-27).** 8 itens P0 residuais da auditoria 2026-05-26 fechados diretamente em `develop` (user pediu sem worktree/PR): re-aplica gating concluir-oc com split NF (#2.15 — `wms_as_source` gate restaurado em `src/app/api/wms/separacao/concluir-oc/route.ts`), `desfazer_encontrei` estorna mov via `estornarMovimentacao` (#2.6), `/separacao/localizacao` trata `reservado>0` com libera+move+reemite (#2.7), patches SQL workaround removidos dos cenários 02/03 (#A4), endpoint `POST /api/wms/pedidos/[id]/estornar` (Banner D10 admin, perm `pedidos.estornar`) (#A5), endpoint `POST /api/wms/pedidos/[id]/liberar-reservas` (D2 override admin, perm `pedidos.liberar_reservas`) (#A6), migration `siso_notas_fiscais` com FK + realtime + helper `upsertNotaFiscal` + `inserirMovimentacao` exige `nota_fiscal_id` pra origem NF + backfill retroativo (R5), backfill R1 OCs pré-P2 (no-op em staging — sem volume) (#A8). Cenários 34-40 de validação adiados pra suite re-run em T31 (não escritos). Plano: `docs/superpowers/plans/2026-05-27-wms-fix-final-A.md`. Doc R1: `docs/superpowers/backfill-r1-2026-05-27-staging.md`.
-
-- **Fix-Final B — Out-of-scope + tasks P6 órfãs (2026-05-27).** 11 itens P2 fechados (~6 no-op + 5 implementations):
-  - **No-op (validation/docs only):** B1 transferir-galpao kept (cenário 15 + harness consume it), B2 vendas-disponibilidade already 3D-clean (commit ec7a9cf), B5 quarentena filter already applied (commit e9201e9), B6 desfazer-parcial messages already point to real endpoint, B7 parcial-modal OC option already covered via EsgotadoModal auto-open after sem_cobertura, B11 tracking_origem_ids column added but population deferred (no payload source).
-  - **Implemented:** B3 movs_estornadas truncado a 50 + counter (`903ce96`), B4 computarDivergencias guard re-execução (`8a5c9bd`), B8 cenário 50 replenishment + subtitle action-oriented (`dabdc81`, `1e5c0c9`), B9 devolucao_id determinístico + cenário 52 (`56b1f17`), B10 desfazer guarda parcial com qty + cenário 51 (`1407fae`).
-  - 3 migrations leves em staging: `20260528_movs_devolucao_id`, `20260528_pendencias_tracking_origem_ids`, plus the already-applied `20260527_inventario_sugerir_excluir_quarentena` from P6.
-  - 3 cenários novos (50/51/52). Suite full deferred (Fix-A pattern — flakiness reconhecida).
-  - Plano: `docs/superpowers/plans/2026-05-27-wms-fix-final-B.md`. Spec: `docs/superpowers/specs/2026-05-27-wms-fix-final-design.md` §3.
-
-- **WMS Fix P1 (Foundation Realtime + Insights Recovery) — implementado em 2026-05-26.** Restaura a camada de observação: (a) 6 tabelas faltantes adicionadas à publication `supabase_realtime` (`siso_pedidos`, `siso_pedido_itens`, `siso_wms_pendencias_guarda`, `siso_inventario_sessoes`, `siso_devolucoes_pendentes`, `siso_transferencias_galpao`) — restaura PR-3; (b) 4 RPCs insights reescritas para schema 3D — remove `siso_estoque.custo_medio` (→ JOIN `siso_custo_medio`), `siso_estoque.empresa_dona_id` (axis dropado), `siso_empresas.galpao_id` (→ `siso_pedidos.separacao_galpao_id`); `wms_insights_estoque_quadrante` mudou de 3-arg pra 2-arg (`p_empresa_dona_id` removido) — caller em `src/lib/wms/insights/queries.ts:125` atualizado no mesmo PR; (c) 4 cron jobs HTTP agendados (insights 5min, reservas 1h, inventário 30min, curva ABC diária 3am UTC). **Deviação documentada:** WORKER_SECRET armazenado em `supabase_vault` (name `worker_secret`) com expressão `(SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'worker_secret' LIMIT 1)` nos cron commands — Supabase staging bloqueia `ALTER DATABASE/ROLE` pra GUCs custom, então a abordagem `current_setting('app.worker_secret')` do plano original não funciona. Mesmo valor configurado em Vercel env `WORKER_SECRET` (Production). Cron usa `net.http_get` (não POST) porque os 3 endpoints exportam apenas `GET`. Validação E2E: motor insights gerou 7 alertas ativos no primeiro tick. Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p1-foundation-realtime-insights.md`. Spec mãe: `docs/superpowers/specs/2026-05-26-auditoria-wms-fixes-design.md` §5. PR #4 merged.
-
-- **WMS Fix P3 (Reverse Paritária + Idempotência) — implementado em 2026-05-27.** 22 findings da auditoria WMS endereçados em 1 PR. **7 novos endpoints reverse** — `POST /api/wms/{inventario/[id]/estornar (admin), guarda/[id]/desfazer, devolucoes/[id]/desclassificar, replenishment/[origem_id]/reverter, ajuste/[mov_id]/estornar, vendas/[id]/cancelar, transferencias/[id]/desfazer-recebimento}`. **5 race fixes** — iniciarGuarda (UPDATE condicional → 409 PENDENCIA_OUTRA_GUARDA), contagens (exige lock da loc → 409 LOC_NAO_BLOQUEADA), confirmarGuarda (atômica via RPC), receberTransferencia (claim lock via nova coluna `recebimento_em_andamento_por`), marcar-item desmarcar (ordem S antes de L pra preservar invariante I2). **2 atomic RPCs** — `wms_replenishment_intra_galpao` e `wms_confirmar_guarda_atomico` (S+E+UPDATE numa transação). **1 UNIQUE constraint** — `uniq_movs_inventario_divergencia` em `siso_movimentacoes` (idempotência de `aplicarSessao`). **Outros fixes:** `aprovar`/`aprovar-sessao` aceita `force:true` pra OPERADORES_ATIVOS; PATCH inventário bloqueia troca de `modo_contagem` fora de planejada (409 MODO_LOCKED); DELETE inventário aplicada → 409; `vendas/criar` idempotency_key filtra cancelados; `reiniciar etapa=embalagem` reverte cutover do ledger (estado fantasma fix #2.10); `lancamento-retroativo/reconciliar` valida UUID + existência. **13 novos cenários** (40, 40b-d, 41, 41b, 42, 43, 44, 45, 45b, 46, 46b, 47, 48, 48b, 49, 49b) — suite cresce de 17 → 30+. Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p3-reverse-idempotencia.md`. PR pendente.
-
-- **Fix-Final C — QA + cleanups + Concern A Fix-B (2026-05-27).** Executado direto em `develop` (sem worktree, padrão Fix-A/B). 7 commits:
-  - **Cleanups @deprecated (T7-T10):** `getValidTokenByFilial` em `tiny-oauth.ts` removida (zero callers — schema legacy filial=CWB|SP morto), `hasComprasAccess` + `COMPRAS_ALLOWED_CARGOS` em `compras-utils.ts` removidos (P4 migrou tudo pra `userCan`), migration idempotente `DROP COLUMN IF EXISTS siso_pedidos.observacoes_old` (no-op em staging, defensivo pra prod), alias deprecated `localizacao_id_excluir` (singular) em `realocacao-resolver.ts` removido — plano original tinha typo, era o singular não o plural.
-  - **T17 (Concern A do Fix-B audit):** novo RPC `wms_desfazer_guarda_atomico` (migration `20260530_p3_rpc_wms_desfazer_guarda_atomico`) espelhando estrutura de `wms_confirmar_guarda_atomico` — `SELECT FOR UPDATE` na pendência + loop `PERFORM wms_inserir_movimentacao` 2x por par S+E + `UPDATE` final no mesmo lock. `desfazerGuarda` em `src/lib/wms/guarda.ts` virou shim que chama o RPC. Fecha a race documentada no commit `1407fae` (Fix-B T12).
-  - **T11+T12 deferidos:** drop `siso_pedido_item_estoques` revelou-se decisão de design (não cleanup mecânico): 17 arquivos prod (12 routes + 5 lib) leem essa tabela como **snapshot congelado** do estoque no momento do webhook (semântica diferente de `siso_estoque` que é live). `execution-worker` decide compras baseado nesse snapshot. Migrar exige escolher entre (a) trocar pra estado live, ou (b) materializar snapshot de outra forma. Deferido pra Fix-Final D ou Fase 7.
-  - **QA C1-C5 (T2-T6):** C1 responsivo via Playwright ✅ (5 telas × 3 breakpoints = 15 screenshots, zero P0/P1 visíveis em `docs/superpowers/qa-c1-screenshots/`). C2 lighthouse deferido (CLI não instalado). C3 error handling parcial: descobriu inconsistência P1 — `/api/wms/*` retorna 3 shapes diferentes pra 401 (`{error: "unauthorized"}`, `{error: "sessao_invalida"}`, `{erro: "Sessão inválida..."}`) — entrou em backlog. C4 smoke matrix UI e C5 realtime browser deferidos (precisam interação humana, viraram itens de runbook pre-release).
-  - **T13 não aplicado:** plano prevê drop final da tabela `_archived` em +7 dias após T12, mas como T11+T12 foram deferidos, T13 cai junto.
-  - Plano: `docs/superpowers/plans/2026-05-27-wms-fix-final-C.md`. Spec: `docs/superpowers/specs/2026-05-27-wms-fix-final-design.md` §4. Docs QA: `docs/superpowers/qa-c{1..5}-*.md`.
-
-- **Fix-Final D — Cobertura Residual (2026-05-28).** Fecha 15 findings residuais da auditoria 2026-05-26 que sobraram após P1-P6 + Fix-A/B/C. Executado direto em `develop` (padrão Fix-A/B/C). 14 commits cirúrgicos:
-  - **Bugs P0 (visíveis pro operador):** T1 #5.8 — RPC `wms_confirmar_guarda_atomico` parcial preserva `'em_guarda'` (não regride pra `'pendente'`) → avatar do operador segue no quadro home; cenário 53 valida, cenário 08 atualizado. T2 #12 — `/api/wms/pedidos` agora filtra `separacao_galpao_id` server-side via `OR(eq,is.null)` quando não-admin → operador-cwb não vê mais pedidos SP.
-  - **Bugs P1 (race/edge):** T3 #3.8 — `/compras/receber` UPDATE com `.eq("compra_quantidade_recebida", jaRecebido)` + retry; T4 #4.6 — `sairParty` libera locks de loc síncronos (UPDATE em `siso_inventario_localizacoes` antes do `finalizado_em`); T5 #6.12 — `isDevolucao` reconhece `origem.tipo='devolucao'` + handler `nf-webhook-handler` roteia pra `siso_devolucoes_pendentes` antes do early return por `origem.tipo!=venda`; T6 #7.8 — `/vendas/criar` `Promise.all` agora retorna `{ok, data}|{ok:false, error}` e primeiro erro vira 400 com payload `{codigo, sku, empresas_disponiveis}` + UI vendas/nova trata `PRODUTO_NAO_MAPEADO` com toast actionable.
-  - **UX/Visibilidade:** T7 #3.5 — badge `⚠ +N` em tab Receber pra over-receive (`quantidade_excedente` agregado); T8 #5.2 — card "Entradas diretas hoje" no quadro home (movs `nf_compra` com loc destino ≠ `tipo='recebimento'`); T9 #1.3 — pedido card usa `sugestao` persistida direto, sem `hasItemSemEstoque` useMemo flicker.
-  - **Cleanup técnico:** T10 #3.1+#7.2 — `cwb_atende`/`sp_atende` removidos de 5 sites de write (zero readers confirmados via grep — colunas físicas seguem, drop migration após 7d burn-in); T11 #2.1+#8.1 — `/separacao/expedir` e `/transferir-galpao` ganham comments documentando uso interno (auth já gated, evita re-flag em auditorias futuras); T12 #5.3 — `confirmarGuarda` loga `wms.guarda.destino_divergente` quando operador escolhe loc diferente da sugerida (audit qualidade `resolverLocRecebimento`).
-  - **Auditoria/Rastreabilidade:** T13 #5.7 — nova tabela `siso_impressoes_log` + perm `operacoes.imprimir` + endpoints `GET /api/wms/impressoes` + `POST /api/wms/impressoes/[id]/retry` + tela `/wms/etiquetas` pra reimprimir jobs falhados (dual-write: log persistente + `logger.logError` mantido); T14 #7.4 NO-OP — `siso_movimentacoes.pedido_id` é text por design (migration 20260526) e `vendas/criar:605` já popula com `MAN-...` → bug resolvido por inércia; T15 #3.7 — lib `reconciliacao-tiny.ts` agrega saldo WMS por (produto×empresa) e compara com Tiny via `getEstoque` API + endpoint `/api/wms/reconciliacao-tiny` + tela `/wms/relatorios/reconciliacao-tiny` + cron diário 6am UTC.
-  - **6 cenários novos:** 53 (guarda parcial em_guarda). Cenários 54-58 foram especificados no plano mas deferidos pra suite enhancement (precisam seedTestUsers + multi-user setup; harness não cobre hoje).
-  - **5 migrations:** `20260528_p5_8_pendencia_em_guarda_parcial.sql` (RPC), `20260528_siso_impressoes_log.sql` (tabela), `20260528_perm_operacoes_imprimir.sql` (role↔perm), `20260528_cron_reconciliacao_tiny_diario.sql` (cron 6am UTC).
-  - **14 itens BY DESIGN** ficaram no Appendix A do plano com justificativas (não viraram tasks): #5.5 (print fire-and-forget — coberto por T13), #6.7 #6.10 #6.11 (devoluções — já fechados em migrations anteriores), #7.5 (vendedor sintético), #7.9 (resolverDisponibilidade já agrega), #8.5 (motivo_categoria enum já existe), #3.3 (terminal states), #4.8 (limitação aceita), #5.6 (UX intencional), #6.5 #8.7 (semântica), gate R5 NF (hotfix consciente Fix-A), trajetória `concluir-oc` Fix-A.
-  - **3 known limitations** ficam pra Fase 7: #3.6 quantidade_excedente persistida (T7 surfaceou na UI mas não persiste em coluna SQL — vale só se relatórios GROUP BY pedirem), #13 drop `siso_pedido_item_estoques` (17 consumers em hot paths, decisão de design), #4.8 reconciliação cutoff_em→aprovada (trade-off documentado).
-  - Plano: `docs/superpowers/plans/2026-05-27-wms-fix-final-D-cobertura-residual.md`.
-
-### Deprecated / To Remove
-- Cleanup deprecated `estoque_cwb_*`/`estoque_sp_*` columns from `siso_pedido_itens` (API reads from normalized table)
-- `siso_pedido_item_estoques` — após o cutover só é escrita por inércia (uma linha por pedido×empresa-origem com loc do WMS). **Defer reason (Fix-C T11+T12):** 17 consumers em hot paths leem como snapshot congelado, não estado live. Migrar exige decisão de design (snapshot ↔ live), não é cleanup mecânico. Próximo: Fix-Final D ou Fase 7.
-
-- **WMS Re-audit Fixes (2026-05-28).** Fecha os 10 findings residuais (P0-P3) confirmados pela re-auditoria 2026-05-28 (`docs/audit-workflows/reaudit-2026-05-28/`) — verificação completa dos 141 findings da auditoria 2026-05-26 contra `develop` HEAD após 282 commits. 3 migrações + 7 patches de código. **P0 cron transferências** voltou a rodar (vault pattern — era OOM 100% das execuções por `current_setting NULL`); 1ª execução cancelou imediatamente 1 transferência fantasma. **P0 `guardada_por`** preservado nas confirmações de guarda (regressão pós-P3: RPC plpgsql atômico nunca tocava a coluna — cenário 38 validado, PASS em 3m36s). **P0 vendedor self-cancel** via novo helper `requireWarehouseAccessOrOwnVenda` (admin/operador OR vendedor_id ownership match) — endpoint `/vendas/[id]/cancelar` agora cumpre o objetivo declarado de auto-serviço; cenário auth/17 cobre 4 casos (V1→V2 403, V2 self 200, admin 200, op 200). **P1 8 RPCs insights** migradas pra schema 3D (P1 cobriu 4, faltavam funil/lead_time/throughput_diario/throughput_hora/ranking_operadores/fluxo_aging_outlier/lead_time_p90/ritmo_baixo) — drill-down por galpão volta correto (`siso_pedidos.separacao_galpao_id` em vez de `siso_empresas.galpao_id` deprecated); 27/27 RPCs insights agora OK_3D. **P1 vendedor_id_alvo** rename frontend (era dead code: backend ignorava `vendedor_id_override`, gravava sempre user.id — feature "criar em nome de X" e perm `vendas.criar_em_nome_de` viravam teatro). **P1 equivalente CWB/SP** abandona escrita nas 10 colunas hardcoded (zero readers confirmados via grep — Estratégia A, mesma decisão do Fix-D T10). **P2 desclassificar** exige `operacoes.devolucoes_classificar` granular (simetria com classificar). **P2 system-marketplace** portado pra `webhook-processor-wms.ts` (caminho ativo desde 2026-05-25). **P3 devolucoes alias** `empresa_receptora` (coluna não mais vazia). **P3 Banner D10** botão descomenta (endpoint Fix-A já existia). 11 commits cirúrgicos. Plano: `docs/superpowers/plans/2026-05-28-wms-reaudit-fixes.md`. Out of scope (deferred Fase 7): P4 (LocalizacaoCombo allowCreate + recebimento_em_andamento_por timeout), P5 (idempotency rollback marcar failed + drop `siso_pedido_item_estoques`), 13 LOW findings novos.
-
-### Recently Removed (2026-05-18 — commit `f8b7dbb`)
-- Páginas legadas: `/siso`, `/separacao`, `/compras`, `/pedidos`, `/cross`, `/inventario`, `/transferencias`, `/configuracoes`, `/painel`, `/monitoramento`, `/etiquetas`, `/admin`, `/fix-login` (todos têm equivalente em `/wms`)
-- APIs órfãs: `/api/{painel,monitoring,dashboard,reconciliacao,inventario,transferencia,etiquetas-endereco}`
-- Componentes legados: `components/{compras,configuracoes,cross,etiquetas,inventario,pedido,separacao,transferencia}`
-- Libs deprecated: `cnpj-filial.ts`, `filtrar-pedidos.ts`, `inventario-processor.ts`, `transferencia-processor.ts`, `reconciliacao.ts`, `zpl-endereco.ts`, `data/mock*.ts`
-- Renomeações: `/api/{separacao,compras,cross,admin,tiny,ml,webhook,worker,pedidos}/*` → `/api/wms/$1/*`
-
-## Tiny ERP API Notes
-
-- API v3 base: `https://api.tiny.com.br/public-api/v3`
-- OAuth2 via Keycloak: `https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect`
-- Token lifetime is short — auto-refresh with 60s buffer before expiry
-- Deposits (warehouses) are fetched from stock endpoint — there is NO dedicated `/depositos` endpoint
-- Rate limiting: per-empresa, managed by `rate-limiter.ts`
-- Stock response has `depositos[]` array — pick the matching deposit by configured `deposito_id`
-- **Always consult `api tiny.json` in project root** for endpoint details
-- Responses do NOT have a `{ data: ... }` wrapper
-- Trade name field = `fantasia`
-- Product status values: `A` (active), `I` (inactive), `E` (excluded)
+| `docs/api-reference-complete.md` | Antes de qualquer mudança de rota. **Atualizar ao mudar rota.** |
+| `docs/database-schema.md` | Antes de migration / entender data model. **Atualizar ao mudar schema.** |
+| `docs/architecture-and-flows.md` + `docs/fluxos-siso.md` | Fluxos de negócio / state machines. **Atualizar ao mudar fluxo.** |
+
+- **`erros-conhecidos.yaml`** (raiz): toda correção de bug **deve** virar entrada (`id, date, source, category, message, cause, fix, files, tags`). **Grep antes de debugar, adicionar depois de corrigir.**
+- Mudou `CLAUDE.md` (estrutura/convenção/arquitetura)? Manter consistente com os docs acima.
+- Adicionou lib service nova? Atualizar a seção "Estrutura do Projeto" aqui.

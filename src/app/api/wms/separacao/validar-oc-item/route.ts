@@ -7,6 +7,7 @@ import { registrarEvento } from "@/lib/historico-service";
 import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
 import { estornarMovimentacao, inserirMovimentacao } from "@/lib/wms/ledger";
 import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import { registrarContagemInline } from "@/lib/wms/contagem-inline";
 
 /**
  * POST /api/separacao/validar-oc-item
@@ -29,6 +30,13 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const itemIds: unknown = body?.item_ids;
   const acao: unknown = body?.acao;
+
+  const qtyContadaBody =
+    typeof body?.qty_contada === "number" && Number.isFinite(body.qty_contada)
+      ? Math.trunc(body.qty_contada)
+      : null;
+  const locCodigoBody =
+    typeof body?.localizacao_codigo === "string" ? body.localizacao_codigo.trim() : null;
 
   if (
     !Array.isArray(itemIds) ||
@@ -136,125 +144,233 @@ export async function POST(request: NextRequest) {
         let movSaidaId: string | null = null;
         if (!jaPicado && ctx && ctx.galpao && ctx.empresa) {
           const qty = Number(item.quantidade_pedida ?? 0);
+          const produtoWmsId = await resolverProdutoWms(ctx.empresa, String(item.produto_id));
 
-          // Verifica se produto tem alguma loc com saldo no galpão
-          const produtoWmsId = await resolverProdutoWms(
-            ctx.empresa,
-            String(item.produto_id),
-          );
-          const { data: locsExistentes } = await supabase
-            .from("siso_estoque")
-            .select("localizacao_id")
-            .eq("produto_id", produtoWmsId)
-            .eq("galpao_id", ctx.galpao)
-            .gt("saldo", 0)
-            .limit(1);
-          const semSaldo = !locsExistentes || locsExistentes.length === 0;
-
-          if (semSaldo) {
-            // (Fase 1.4) Loc vem do body (modal "bipe"). Sem fallback de snapshot
-            // siso_pedido_item_estoques (tabela dropada) — se não veio loc e não há
-            // saldo vivo, o operador bipa/escolhe a loc onde achou.
-            const locManualId = locManualBody;
-            if (!locManualId) {
+          if (qtyContadaBody !== null) {
+            // ─── Contagem inline (Fase 1): só cobre contado >= pedido ───
+            if (qtyContadaBody <= 0) {
+              return NextResponse.json(
+                { error: "contagem_invalida", message: "Quantidade contada deve ser maior que zero.", item_id: item.id },
+                { status: 422 },
+              );
+            }
+            if (qtyContadaBody < qty) {
               return NextResponse.json(
                 {
-                  error: "produto_sem_cadastro",
+                  error: "contagem_menor_que_pedido",
                   message:
-                    "Produto sem localização cadastrada. Bipe ou escolha a localização onde achou.",
+                    "Contou menos do que o pedido pede. Use 'Esgotado' pra mandar o restante pra compra.",
                   item_id: item.id,
+                  qty_contada: qtyContadaBody,
+                  qty_pedido: qty,
                 },
                 { status: 422 },
               );
             }
-            // Confirma que loc existe e pertence ao galpão
-            const { data: loc } = await supabase
-              .from("siso_localizacoes")
-              .select("id, galpao_id")
-              .eq("id", locManualId)
-              .maybeSingle();
-            if (!loc || loc.galpao_id !== ctx.galpao) {
+            // Resolve loc-alvo: localizacao_id (uuid) OU localizacao_codigo (string).
+            let locAlvoId: string | null = locManualBody;
+            if (!locAlvoId && locCodigoBody) {
+              const { data: locByCod } = await supabase
+                .from("siso_localizacoes")
+                .select("id")
+                .eq("galpao_id", ctx.galpao)
+                .eq("codigo", locCodigoBody)
+                .maybeSingle();
+              locAlvoId = (locByCod as { id?: string } | null)?.id ?? null;
+            }
+            if (!locAlvoId) {
               return NextResponse.json(
-                {
-                  error: "loc_invalida",
-                  message:
-                    "Localização não pertence ao galpão do pedido",
-                },
+                { error: "loc_obrigatoria", message: "Bipe/escolha a localização onde contou o item.", item_id: item.id },
                 { status: 422 },
               );
+            }
+            // Se veio por uuid, confirma que pertence ao galpão.
+            if (locManualBody) {
+              const { data: locChk } = await supabase
+                .from("siso_localizacoes")
+                .select("id, galpao_id")
+                .eq("id", locManualBody)
+                .maybeSingle();
+              if (!locChk || (locChk as { galpao_id?: string }).galpao_id !== ctx.galpao) {
+                return NextResponse.json(
+                  { error: "loc_invalida", message: "Localização não pertence ao galpão do pedido" },
+                  { status: 422 },
+                );
+              }
             }
             try {
-              // Mov E: entrada do que o operador achou
-              await inserirMovimentacao({
-                tripla: {
-                  produto_id: produtoWmsId,
-                  galpao_id: ctx.galpao,
-                  localizacao_id: locManualId,
-                },
-                tipo: "E",
-                qty,
-                origem_tipo: "ajuste_manual",
-                origem_id: `encontrei-sem-cadastro-${item.id}`,
-                origem_detalhes: {
-                  motivo: "encontrei sem cadastro",
-                  item_id: item.id,
-                  pedido_id: item.pedido_id,
-                  sku: item.sku,
-                },
-                motivo: "Achado em pick — produto sem cadastro",
-                motivo_categoria: "achado",
-                usuario_id: user.id,
-                fornecedor_id: null,
+              await registrarContagemInline({
+                produto_id: produtoWmsId,
+                galpao_id: ctx.galpao,
+                localizacao_id: locAlvoId,
+                qty_contada: qtyContadaBody,
+                contada_por: user.id,
+                sku: String(item.sku),
+                pedido_id: String(item.pedido_id),
               });
-              logger.info(
-                "validar-oc-item",
-                "encontrei sem cadastro: mov E gerada",
-                {
-                  item_id: item.id,
-                  sku: item.sku,
-                  loc_id: locManualId,
-                  qty,
-                },
-              );
-            } catch (entErr) {
+            } catch (contErr) {
               logger.logError({
-                error: entErr,
+                error: contErr instanceof Error ? contErr : new Error(String(contErr)),
                 source: "validar-oc-item",
-                message: "Falhou gerar mov E em encontrei sem cadastro",
+                message: "Falhou registrar contagem inline",
                 category: "business_logic",
-                metadata: { item_id: item.id, sku: item.sku, loc_id: locManualId },
+                metadata: { item_id: item.id, sku: item.sku, loc_id: locAlvoId },
               });
               return NextResponse.json(
-                {
-                  error: "falhou_gerar_entrada",
-                  message: "Não foi possível registrar a entrada do produto",
-                },
+                { error: "falhou_contagem_inline", message: "Não foi possível registrar a contagem" },
                 { status: 500 },
               );
             }
-          }
+            // Fase 1 é OC-only: o produto não tinha saldo em outra loc, então o
+            // pickMovPicking (que resolve por maior saldo no galpão) sai da loc
+            // que acabamos de reconciliar. Revisitar se estender a itens não-OC.
+            try {
+              const result = await pickMovPicking({
+                empresa_origem_id: ctx.empresa,
+                galpao_id: ctx.galpao,
+                pedido_id: String(item.pedido_id),
+                pedido_numero: ctx.numero,
+                item_id: Number(item.id),
+                produto_id_tiny: String(item.produto_id),
+                sku: String(item.sku),
+                qty,
+                usuario_id: user.id,
+                contexto: "encontrei_oc",
+              });
+              movSaidaId = result?.movSaidaId ?? null;
+            } catch (movErr) {
+              logger.logError({
+                error: movErr instanceof Error ? movErr : new Error(String(movErr)),
+                source: "validar-oc-item",
+                message: "pickMovPicking falhou em encontrei (inline) — item segue pendente p/ retry",
+                category: "business_logic",
+                metadata: { item_id: item.id, sku: item.sku },
+              });
+              // Falha de pick NÃO deve marcar o item como pego: sem o continue,
+              // a atualização compartilhada abaixo gravaria separacao_marcado/
+              // bipado_completo=true com mov_saida_id nulo (item falsamente "pego",
+              // saldo inflado). O ganho de reconciliação já foi emitido e reflete a
+              // realidade física — deixamos. O operador re-tenta (retry: delta=0,
+              // sem novo ganho; o pick é refeito).
+              continue;
+            }
+          } else {
+            // ─── caminho legado (sem qty_contada) ───
+            // Verifica se produto tem alguma loc com saldo no galpão
+            const { data: locsExistentes } = await supabase
+              .from("siso_estoque")
+              .select("localizacao_id")
+              .eq("produto_id", produtoWmsId)
+              .eq("galpao_id", ctx.galpao)
+              .gt("saldo", 0)
+              .limit(1);
+            const semSaldo = !locsExistentes || locsExistentes.length === 0;
 
-          // Caminho normal: pickMovPicking gera mov S (que vai achar a loc
-          // com saldo, possivelmente a que acabamos de criar via mov E acima).
-          try {
-            const result = await pickMovPicking({
-              empresa_origem_id: ctx.empresa,
-              galpao_id: ctx.galpao,
-              pedido_id: String(item.pedido_id),
-              pedido_numero: ctx.numero,
-              item_id: Number(item.id),
-              produto_id_tiny: String(item.produto_id),
-              sku: String(item.sku),
-              qty,
-              usuario_id: user.id,
-              contexto: "encontrei_oc",
-            });
-            movSaidaId = result?.movSaidaId ?? null;
-          } catch (movErr) {
-            logger.warn("validar-oc-item", "pickMovPicking falhou em encontrei", {
-              item_id: item.id,
-              error: movErr instanceof Error ? movErr.message : String(movErr),
-            });
+            if (semSaldo) {
+              // (Fase 1.4) Loc vem do body (modal "bipe"). Sem fallback de snapshot
+              // siso_pedido_item_estoques (tabela dropada) — se não veio loc e não há
+              // saldo vivo, o operador bipa/escolhe a loc onde achou.
+              const locManualId = locManualBody;
+              if (!locManualId) {
+                return NextResponse.json(
+                  {
+                    error: "produto_sem_cadastro",
+                    message:
+                      "Produto sem localização cadastrada. Bipe ou escolha a localização onde achou.",
+                    item_id: item.id,
+                  },
+                  { status: 422 },
+                );
+              }
+              // Confirma que loc existe e pertence ao galpão
+              const { data: loc } = await supabase
+                .from("siso_localizacoes")
+                .select("id, galpao_id")
+                .eq("id", locManualId)
+                .maybeSingle();
+              if (!loc || loc.galpao_id !== ctx.galpao) {
+                return NextResponse.json(
+                  {
+                    error: "loc_invalida",
+                    message:
+                      "Localização não pertence ao galpão do pedido",
+                  },
+                  { status: 422 },
+                );
+              }
+              try {
+                // Mov E: entrada do que o operador achou
+                await inserirMovimentacao({
+                  tripla: {
+                    produto_id: produtoWmsId,
+                    galpao_id: ctx.galpao,
+                    localizacao_id: locManualId,
+                  },
+                  tipo: "E",
+                  qty,
+                  origem_tipo: "ajuste_manual",
+                  origem_id: `encontrei-sem-cadastro-${item.id}`,
+                  origem_detalhes: {
+                    motivo: "encontrei sem cadastro",
+                    item_id: item.id,
+                    pedido_id: item.pedido_id,
+                    sku: item.sku,
+                  },
+                  motivo: "Achado em pick — produto sem cadastro",
+                  motivo_categoria: "achado",
+                  usuario_id: user.id,
+                  fornecedor_id: null,
+                });
+                logger.info(
+                  "validar-oc-item",
+                  "encontrei sem cadastro: mov E gerada",
+                  {
+                    item_id: item.id,
+                    sku: item.sku,
+                    loc_id: locManualId,
+                    qty,
+                  },
+                );
+              } catch (entErr) {
+                logger.logError({
+                  error: entErr,
+                  source: "validar-oc-item",
+                  message: "Falhou gerar mov E em encontrei sem cadastro",
+                  category: "business_logic",
+                  metadata: { item_id: item.id, sku: item.sku, loc_id: locManualId },
+                });
+                return NextResponse.json(
+                  {
+                    error: "falhou_gerar_entrada",
+                    message: "Não foi possível registrar a entrada do produto",
+                  },
+                  { status: 500 },
+                );
+              }
+            }
+
+            // Caminho normal: pickMovPicking gera mov S (que vai achar a loc
+            // com saldo, possivelmente a que acabamos de criar via mov E acima).
+            try {
+              const result = await pickMovPicking({
+                empresa_origem_id: ctx.empresa,
+                galpao_id: ctx.galpao,
+                pedido_id: String(item.pedido_id),
+                pedido_numero: ctx.numero,
+                item_id: Number(item.id),
+                produto_id_tiny: String(item.produto_id),
+                sku: String(item.sku),
+                qty,
+                usuario_id: user.id,
+                contexto: "encontrei_oc",
+              });
+              movSaidaId = result?.movSaidaId ?? null;
+            } catch (movErr) {
+              logger.warn("validar-oc-item", "pickMovPicking falhou em encontrei", {
+                item_id: item.id,
+                error: movErr instanceof Error ? movErr.message : String(movErr),
+              });
+            }
           }
         }
 
@@ -544,13 +660,15 @@ export async function POST(request: NextRequest) {
       transicoes,
     });
   } catch (err) {
-    logger.logError({
+    const { id: erro_id, timestamp: erro_em } = logger.logError({
       error: err,
       source: "validar-oc-item",
       message: "Erro inesperado",
       category: "business_logic",
+      requestPath: "/api/wms/separacao/validar-oc-item",
+      requestMethod: "POST",
     });
-    return NextResponse.json({ error: "Erro interno" }, { status: 500 });
+    return NextResponse.json({ error: "Erro interno", erro_id, erro_em }, { status: 500 });
   }
 }
 

@@ -78,6 +78,9 @@ interface ConsolidatedProduct {
   localizacao: string | null;
   empresa_origem_id: string | null;
   quantidade_total: number;
+  /** Quanto ainda falta separar (total − quantidade_pega já pega). */
+  quantidade_restante: number;
+  quantidade_pega: number; // Σ quantidade_pega do bucket (derivado) — base da linha "PEGO"
   all_marcado: boolean;
   item_ids: string[];
   is_oc: boolean;
@@ -97,7 +100,74 @@ type ScanFeedback = {
 // Helpers
 
 function isOcStatus(s: ChecklistItem["compra_status"]): boolean {
-  return s === "comprado" || s === "aguardando_compra" || s === "recebido";
+  // `oc_pendente` = item OC aguardando validação (fase validacao_oc). Precisa
+  // cair no bucket OC (UI Encontrei/Esgotado), NÃO no de pick normal — senão
+  // o operador tenta marcar/parcial um item sem saldo/reserva e leva 409 mudo.
+  return (
+    s === "oc_pendente" ||
+    s === "comprado" ||
+    s === "aguardando_compra" ||
+    s === "recebido"
+  );
+}
+
+// Extrai a string de erro mais completa de um body de resposta da API:
+// junta o código (`error`) com o detalhe (`message`) quando ambos existem e
+// diferem, pra não perder informação útil pro diagnóstico.
+function erroApiTexto(body: unknown, fallback: string): string {
+  if (body && typeof body === "object") {
+    const b = body as {
+      error?: unknown;
+      message?: unknown;
+      erro_id?: unknown;
+      erro_em?: unknown;
+    };
+    const codigo = typeof b.error === "string" ? b.error : null;
+    const detalhe = typeof b.message === "string" ? b.message : null;
+    let txt =
+      codigo && detalhe && codigo !== detalhe
+        ? `${codigo}: ${detalhe}`
+        : (detalhe ?? codigo ?? fallback);
+    // Rastreio: hora do erro + id em siso_erros (quando a API devolve no 500) —
+    // pro operador achar o log exato (com stack trace) direto no Supabase.
+    const rastreio: string[] = [];
+    if (typeof b.erro_em === "string") {
+      const d = new Date(b.erro_em);
+      rastreio.push(Number.isNaN(d.getTime()) ? b.erro_em : d.toLocaleString("pt-BR"));
+    }
+    if (typeof b.erro_id === "string") rastreio.push(`erro ${b.erro_id}`);
+    if (rastreio.length > 0) txt += `\n${rastreio.join(" · ")}`;
+    return txt;
+  }
+  return fallback;
+}
+
+// Toast de erro padrão deste fluxo: mostra a mensagem real do sistema, dura 5s
+// e copia o texto completo pro clipboard quando o operador clica no toast
+// (afordância via tooltip). Facilita reportar/corrigir o erro exato.
+function toastErroApi(msg: string) {
+  toast.error(
+    <span
+      role="button"
+      tabIndex={0}
+      title="Clique para copiar o erro"
+      onClick={() => {
+        navigator.clipboard
+          ?.writeText(msg)
+          .then(() => toast.success("Erro copiado", { duration: 2000 }))
+          .catch(() => {});
+      }}
+      style={{
+        cursor: "pointer",
+        display: "block",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+      }}
+    >
+      {msg}
+    </span>,
+    { duration: 5000 },
+  );
 }
 
 function consolidar(items: ChecklistItem[]): {
@@ -113,6 +183,11 @@ function consolidar(items: ChecklistItem[]): {
     const existing = buckets.get(key);
     if (existing) {
       existing.quantidade_total += it.quantidade;
+      existing.quantidade_restante += Math.max(
+        0,
+        it.quantidade - Number(it.quantidade_pega ?? 0),
+      );
+      existing.quantidade_pega += Number(it.quantidade_pega ?? 0);
       existing.item_ids.push(itemId);
       if (!it.separacao_marcado) existing.all_marcado = false;
     } else {
@@ -126,6 +201,8 @@ function consolidar(items: ChecklistItem[]): {
         localizacao: it.localizacao,
         empresa_origem_id: it.empresa_origem_id,
         quantidade_total: it.quantidade,
+        quantidade_restante: Math.max(0, it.quantidade - Number(it.quantidade_pega ?? 0)),
+        quantidade_pega: Number(it.quantidade_pega ?? 0),
         all_marcado: it.separacao_marcado,
         item_ids: [itemId],
         is_oc: oc,
@@ -141,6 +218,26 @@ function consolidar(items: ChecklistItem[]): {
     itensNormais: all.filter((p) => !p.is_oc),
     itensOC: all.filter((p) => p.is_oc),
   };
+}
+
+type LinhaRender = { produto: ConsolidatedProduct; modo: "normal" | "pego" | "pegar" };
+
+// Expande cada produto consolidado em 1 ou 2 linhas de render. Parcial em
+// progresso (pegou algo E ainda falta) vira DUAS linhas: PEGO ✓ + PEGAR.
+// Caso contrário, uma única linha "normal" (comportamento atual).
+function expandirLinhas(produtos: ConsolidatedProduct[]): LinhaRender[] {
+  const out: LinhaRender[] = [];
+  for (const p of produtos) {
+    const pego = p.quantidade_pega;
+    const restante = p.quantidade_restante;
+    if (pego > 0 && restante > 0) {
+      out.push({ produto: p, modo: "pego" });
+      out.push({ produto: p, modo: "pegar" });
+    } else {
+      out.push({ produto: p, modo: "normal" });
+    }
+  }
+  return out;
 }
 
 function ordenar(rows: ConsolidatedProduct[], sort: SortMode) {
@@ -315,7 +412,13 @@ export default function WmsChecklistPage() {
           }),
         ),
       );
-      if (results.some((r) => !r.ok)) throw new Error("erro_marcar");
+      // Propaga o erro completo da API (código + detalhe do sistema) em vez de
+      // engolir tudo num "erro_marcar" mudo.
+      const falhou = results.find((r) => !r.ok);
+      if (falhou) {
+        const body = await falhou.json().catch(() => ({}));
+        throw new Error(erroApiTexto(body, "Erro ao salvar marcação"));
+      }
     },
   });
 
@@ -432,8 +535,8 @@ export default function WmsChecklistPage() {
 
     try {
       await toggleMutation.mutateAsync({ produto, marcado: novo });
-    } catch {
-      toast.error("Erro ao salvar marcação");
+    } catch (e) {
+      toastErroApi((e as Error).message || "Erro ao salvar marcação");
       queryClient.invalidateQueries({ queryKey });
     }
   }
@@ -447,7 +550,7 @@ export default function WmsChecklistPage() {
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
-        toast.error(body.error ?? "Erro ao verificar estoque");
+        toastErroApi(erroApiTexto(body, "Erro ao verificar estoque"));
         return;
       }
       setEsgotadoModal({
@@ -457,7 +560,7 @@ export default function WmsChecklistPage() {
         pedidos_afetados: body.pedidos_afetados ?? 0,
       });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
     }
   }
 
@@ -478,7 +581,7 @@ export default function WmsChecklistPage() {
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
-        toast.error(body.error ?? "Erro ao processar");
+        toastErroApi(erroApiTexto(body, "Erro ao processar"));
         setEsgotadoModal((p) => (p ? { ...p, loading: false } : null));
         return;
       }
@@ -498,20 +601,23 @@ export default function WmsChecklistPage() {
       }
       queryClient.invalidateQueries({ queryKey });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
       setEsgotadoModal((p) => (p ? { ...p, loading: false } : null));
     }
   }
 
 
   // D11: "encontrei" abre fluxo handheld de bipagem de localização
-  async function handleOcEncontreiFinalizar(codigoLoc: string) {
+  // Fase 1 (acerto de prateleira): o operador informa quantas unidades tem na
+  // prateleira (qtyContada). O backend reconcilia o saldo da loc (contagem oficial)
+  // e separa o pedido. Ver POST /api/wms/separacao/validar-oc-item acao=encontrei.
+  async function handleOcEncontreiFinalizar(codigoLoc: string, qtyContada: number) {
     if (!ocLocModal) return;
     const { produto } = ocLocModal;
     setOcLocModal((p) => (p ? { ...p, bipando: true } : null));
     try {
       if (!produto.empresa_origem_id) {
-        toast.error("Empresa de origem não encontrada");
+        toastErroApi("Empresa de origem não encontrada");
         setOcLocModal(null);
         return;
       }
@@ -527,25 +633,28 @@ export default function WmsChecklistPage() {
       });
       if (!rLoc.ok) {
         const body = await rLoc.json().catch(() => ({}));
-        toast.error(body.error ?? "Erro ao salvar localização");
+        toastErroApi(erroApiTexto(body, "Erro ao salvar localização"));
         setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
         return;
       }
       toast.success(`Localização: ${codigoLoc.trim()}`);
 
-      // 2) valida OC item (endpoint legado — TODO Plano 3: criar reserva atômica
-      //    em wms_inserir_movimentacao com origem_tipo=reserva_pedido_encontrei)
+      // 2) valida OC item — envia a contagem da prateleira (qty_contada) +
+      //    o código da loc bipada (localizacao_codigo) pro backend reconciliar.
       const rVal = await sisoFetch("/api/wms/separacao/validar-oc-item", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           item_ids: produto.item_ids,
           acao: "encontrei",
+          qty_contada: qtyContada,
+          localizacao_codigo: codigoLoc.trim(),
         }),
       });
       if (!rVal.ok) {
         const body = await rVal.json().catch(() => ({}));
-        toast.error(body.error ?? "Erro ao validar item OC");
+        // erroApiTexto surfaça a `message` do backend (ex.: 422 contagem_menor_que_pedido / contagem_invalida).
+        toastErroApi(erroApiTexto(body, "Erro ao validar item OC"));
         setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
         return;
       }
@@ -567,7 +676,7 @@ export default function WmsChecklistPage() {
         }
       }
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
       setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
     }
   }
@@ -584,13 +693,13 @@ export default function WmsChecklistPage() {
       });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        toast.error(body.error ?? "Erro ao confirmar esgotado");
+        toastErroApi(erroApiTexto(body, "Erro ao confirmar esgotado"));
         return;
       }
       toast.success(`Item OC esgotado confirmado: ${produto.sku}`);
       queryClient.invalidateQueries({ queryKey });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
     }
   }
 
@@ -606,12 +715,12 @@ export default function WmsChecklistPage() {
       });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        toast.error(body.error ?? "Erro ao desfazer");
+        toastErroApi(erroApiTexto(body, "Erro ao desfazer"));
         return;
       }
       queryClient.invalidateQueries({ queryKey });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
     }
   }
 
@@ -645,23 +754,21 @@ export default function WmsChecklistPage() {
           toast.warning("Outro operador picou primeiro — atualizando…", { duration: 4000 });
           queryClient.invalidateQueries({ queryKey });
         } else {
-          toast.error(data.error ?? data.message ?? "Erro ao processar parcial");
+          toastErroApi(erroApiTexto(data, "Erro ao processar parcial"));
         }
         setParcialModal(null);
         return;
       }
       if (data.status === "completo") {
         toast.success("Item marcado como completo");
-      } else if (data.status === "parcial_reenfileirado") {
-        // Fase 3 #3: parcial com saldo restante na prateleira — pedido inteiro
-        // voltou pro FIM da fila. Sai do wave atual e pega o próximo.
-        toast.success("Parcial registrado — pedido voltou pro fim da fila de separação", {
-          duration: 5000,
+      } else if (data.status === "parcial_em_progresso") {
+        // Parcial com saldo restante na prateleira (não zerou): o item fica
+        // ABERTO no MESMO checklist mostrando só o que falta. NÃO sai da
+        // separação — o operador pega o restante quando puder.
+        toast.success("Parcial registrado — pegue o restante quando puder", {
+          duration: 4000,
         });
-        setParcialModal(null);
-        queryClient.invalidateQueries({ queryKey });
-        router.push("/wms/separacao");
-        return;
+        // cai pro setParcialModal(null) + invalidate abaixo (sem router.push)
       } else if (data.status === "realocado") {
         const locs = (data.realocacoes ?? [])
           .map((r: Realocacao) => r.localizacao_codigo)
@@ -678,16 +785,16 @@ export default function WmsChecklistPage() {
           );
         }
       } else if (data.status === "mandado_pra_compras") {
-        // Decisão (28/05 v2): cascade esgotou 100% — backend transitou direto.
-        // Sem modal, sem clique extra.
+        // Decisão (28/05 v2): cascade esgotou 100% — backend transitou o(s)
+        // item(s) sem cobertura pra Compras automaticamente.
+        // Fix (01/06): NÃO navega de volta pra /wms/separacao — fica no checklist
+        // (igual ao branch `realocado`). O item vai pra Compras e some da lista no
+        // refetch (checklist-items filtra compra_status!=null em pedido
+        // aguardando_compra); o operador segue pickando o resto do wave.
         toast.success(
           `${data.itens_atualizados ?? 0} item(s) sem cobertura enviado(s) pra Compras`,
           { duration: 5000 },
         );
-        setParcialModal(null);
-        queryClient.invalidateQueries({ queryKey });
-        router.push("/wms/separacao");
-        return;
       } else if (data.status === "sem_cobertura_outro_galpao") {
         // Fase 3 #1: cascade esgotou no galpão atual, mas há saldo VIVO em
         // outro galpão. Abre o modal de esgotado (encaminhar-first): "Encaminhar
@@ -716,7 +823,7 @@ export default function WmsChecklistPage() {
       setParcialModal(null);
       queryClient.invalidateQueries({ queryKey });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
       setParcialModal(null);
     } finally {
       submittingActionRef.current = false;
@@ -759,10 +866,11 @@ export default function WmsChecklistPage() {
         } else if (jaPicada) {
           toast.warning("Outro operador picou primeiro — atualizando…", { duration: 4000 });
         } else {
-          toast.error(
+          const detalhe = erroApiTexto(erradas[0]?.data, "Erro ao marcar realocação");
+          toastErroApi(
             erradas.length === ids.length
-              ? "Erro ao marcar realocação"
-              : `${ids.length - erradas.length}/${ids.length} marcada(s) — algumas falharam`,
+              ? detalhe
+              : `${ids.length - erradas.length}/${ids.length} marcada(s) — algumas falharam: ${detalhe}`,
           );
         }
       } else {
@@ -772,7 +880,7 @@ export default function WmsChecklistPage() {
       }
       queryClient.invalidateQueries({ queryKey });
     } catch {
-      toast.error("Erro de conexão");
+      toastErroApi("Erro de conexão");
     } finally {
       submittingActionRef.current = false;
     }
@@ -807,7 +915,7 @@ export default function WmsChecklistPage() {
         router.push("/wms/separacao?tab=separado");
       }
     } catch (e) {
-      toast.error((e as Error).message || "Erro ao concluir");
+      toastErroApi((e as Error).message || "Erro ao concluir");
     }
   }
 
@@ -823,7 +931,7 @@ export default function WmsChecklistPage() {
       toast.success("Progresso reiniciado");
       queryClient.invalidateQueries({ queryKey });
     } catch (e) {
-      toast.error((e as Error).message || "Erro ao reiniciar");
+      toastErroApi((e as Error).message || "Erro ao reiniciar");
     }
   }
 
@@ -842,7 +950,7 @@ export default function WmsChecklistPage() {
       queryClient.invalidateQueries({ queryKey: ["wms-separacao"] });
       router.push("/wms/separacao");
     } catch (e) {
-      toast.error((e as Error).message || "Erro ao cancelar");
+      toastErroApi((e as Error).message || "Erro ao cancelar");
     }
   }
 
@@ -959,7 +1067,8 @@ export default function WmsChecklistPage() {
             </div>
           ) : (
             <div>
-              {itensNormaisOrdenados.map((p) => {
+              {expandirLinhas(itensNormaisOrdenados).map((linha) => {
+                const p = linha.produto;
                 const underlyingItems = items.filter((i) =>
                   p.item_ids.includes(String(i.id)),
                 );
@@ -976,11 +1085,11 @@ export default function WmsChecklistPage() {
                       !i.separacao_marcado),
                 );
                 const isParcial = !!parcialItem;
-                const firstItemId = p.item_ids[0] ?? "";
                 return (
                   <ItemRow
-                    key={p.key}
+                    key={`${p.key}__${linha.modo}`}
                     produto={p}
+                    modo={linha.modo}
                     isParcial={isParcial}
                     parcialItem={parcialItem}
                     submitting={toggleMutation.isPending}
@@ -991,7 +1100,9 @@ export default function WmsChecklistPage() {
                         isRealocacao: false,
                         sku: p.sku,
                         localizacao: p.localizacao,
-                        quantidade: p.quantidade_total,
+                        // Em item parcial-em-progresso o modal sugere/limita ao
+                        // que falta (não o total) — evita re-pegar além do pedido.
+                        quantidade: isParcial ? p.quantidade_restante : p.quantidade_total,
                         loading: false,
                       })
                     }
@@ -1207,6 +1318,7 @@ export default function WmsChecklistPage() {
 
 function ItemRow({
   produto,
+  modo = "normal",
   isParcial,
   parcialItem,
   submitting,
@@ -1214,16 +1326,31 @@ function ItemRow({
   onParcial,
 }: {
   produto: ConsolidatedProduct;
+  modo?: "normal" | "pego" | "pegar";
   isParcial: boolean;
   parcialItem: ChecklistItem | undefined;
   submitting?: boolean;
   onToggle: () => void;
   onParcial: () => void;
 }) {
-  const done = produto.all_marcado;
-  const multi = produto.quantidade_total > 1;
+  // Linha "pego" = registro visual do que já foi separado (✓ verde, sem ação).
+  // Linha "pegar" = o que falta (reservado), checkbox aberto + ações ativas.
+  // Linha "normal" = comportamento atual (sem split de parcial-em-progresso).
+  const isPego = modo === "pego";
+  const isPegar = modo === "pegar";
+  const done = isPego ? true : isPegar ? false : produto.all_marcado;
+  // Qtd exibida por modo. No "normal" usa restante quando já houve pick
+  // (restante < total), senão o total — sem depender da heurística frágil.
+  const qtyExibida = isPego
+    ? produto.quantidade_pega
+    : isPegar
+      ? produto.quantidade_restante
+      : produto.quantidade_restante < produto.quantidade_total
+        ? produto.quantidade_restante
+        : produto.quantidade_total;
+  const multi = qtyExibida > 1;
   const handleToggleClick = () => {
-    if (submitting) return;
+    if (submitting || isPego) return;
     onToggle();
   };
   return (
@@ -1231,21 +1358,32 @@ function ItemRow({
       className={`wms-hand-item${done ? " is-done" : ""}`}
       style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 56px 170px" }}
     >
-      <div
-        role="button"
-        tabIndex={0}
-        className="wms-hand-item-check"
-        onClick={handleToggleClick}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleToggleClick();
-          }
-        }}
-        aria-label={done ? "Desmarcar item" : "Marcar item"}
-      >
-        {done ? <Icon name="check" size={12} /> : null}
-      </div>
+      {isPego ? (
+        // Linha PEGO: checkbox marcado e desabilitado (só registro visual).
+        <div
+          className="wms-hand-item-check"
+          style={{ cursor: "default" }}
+          aria-label="Já pego"
+        >
+          <Icon name="check" size={12} />
+        </div>
+      ) : (
+        <div
+          role="button"
+          tabIndex={0}
+          className="wms-hand-item-check"
+          onClick={handleToggleClick}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleToggleClick();
+            }
+          }}
+          aria-label={done ? "Desmarcar item" : "Marcar item"}
+        >
+          {done ? <Icon name="check" size={12} /> : null}
+        </div>
+      )}
       {produto.imagem_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -1272,7 +1410,25 @@ function ItemRow({
           style={{ fontWeight: 600, fontSize: 13, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}
         >
           {produto.sku}
-          {isParcial && parcialItem && (
+          {isPego && (
+            <span
+              className="wms-badge wms-badge-ok"
+              style={{ fontSize: 10, fontWeight: 700 }}
+            >
+              PEGO {produto.quantidade_pega}
+            </span>
+          )}
+          {isPegar && (
+            <span
+              className="wms-badge wms-badge-warn"
+              style={{ fontSize: 10, fontWeight: 700 }}
+            >
+              PEGAR {produto.quantidade_restante}
+            </span>
+          )}
+          {/* Badge "Parcial X/Y" só na linha acionável (pegar) ou no modo normal,
+              nunca na linha PEGO (que já comunica o que foi separado). */}
+          {!isPego && isParcial && parcialItem && (
             <span
               className="wms-badge wms-badge-warn"
               style={{ fontSize: 10, fontWeight: 700 }}
@@ -1310,7 +1466,7 @@ function ItemRow({
           color: multi ? "#0d9488" : undefined,
         }}
       >
-        {produto.quantidade_total}
+        {qtyExibida}
       </div>
       <div
         className="wms-tar"
@@ -1726,20 +1882,37 @@ function OcEncontreiModal({
   produto: ConsolidatedProduct;
   bipando: boolean;
   onClose: () => void;
-  onConfirmar: (codigoLoc: string) => void;
+  onConfirmar: (codigoLoc: string, qtyContada: number) => void;
 }) {
   const [feedback, setFeedback] = useState<ScanFeedback>({
-    text: `Bipe a localização onde encontrou ${produto.sku}`,
+    text: `Conte as unidades e bipe a localização onde encontrou ${produto.sku}`,
     tone: "neutral",
   });
+  const [qtdContada, setQtdContada] = useState("");
+  const [locInput, setLocInput] = useState("");
 
   function handleSubmit(codigo: string) {
     if (!codigo.trim()) {
       setFeedback({ text: "Código vazio", tone: "warn" });
       return;
     }
+    const n = Number(qtdContada);
+    if (qtdContada.trim() === "" || !Number.isFinite(n) || n <= 0) {
+      setFeedback({
+        text: "Informe quantas unidades tem na prateleira (maior que zero).",
+        tone: "warn",
+      });
+      return;
+    }
+    if (n < produto.quantidade_total) {
+      setFeedback({
+        text: `Contou ${n}, mas o pedido pede ${produto.quantidade_total}. Use 'Esgotado' pro restante.`,
+        tone: "warn",
+      });
+      return;
+    }
     setFeedback({ text: `Salvando ${codigo.trim()}…`, tone: "neutral" });
-    onConfirmar(codigo.trim());
+    onConfirmar(codigo.trim(), n);
   }
 
   return (
@@ -1789,10 +1962,36 @@ function OcEncontreiModal({
               {produto.quantidade_total}
             </div>
           </div>
+          <div style={{ marginBottom: 12 }}>
+            <label
+              className="wms-td-mute"
+              style={{
+                display: "block",
+                fontSize: 10.5,
+                letterSpacing: 1,
+                marginBottom: 6,
+              }}
+            >
+              QUANTAS UNIDADES TEM NESSA PRATELEIRA?
+            </label>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              step={1}
+              className="wms-input"
+              value={qtdContada}
+              onChange={(e) => setQtdContada(e.target.value)}
+              placeholder={`Ex: ${produto.quantidade_total}`}
+              disabled={bipando}
+              autoFocus
+            />
+          </div>
           <HandheldScan
             label="Bipe a localização do item encontrado"
             placeholder="Ex: A1-02 ou QR da loc..."
             onSubmit={handleSubmit}
+            onValueChange={setLocInput}
             feedback={feedback}
             pending={bipando}
           />
@@ -1805,6 +2004,14 @@ function OcEncontreiModal({
             disabled={bipando}
           >
             Cancelar
+          </button>
+          <button
+            type="button"
+            className="wms-btn wms-btn-primary"
+            onClick={() => handleSubmit(locInput)}
+            disabled={bipando}
+          >
+            {bipando ? "Salvando…" : "Confirmar"}
           </button>
         </div>
       </div>

@@ -17,6 +17,7 @@ import {
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
 import { resolverRealocacao } from "@/lib/separacao/realocacao-resolver";
+import { distribuirQtyPega } from "@/lib/separacao/distribuir-qty-pega";
 import { mandarItensParaCompras } from "@/lib/wms/mandar-compras";
 import { galpoesComSaldo } from "@/lib/wms/galpoes-com-saldo";
 
@@ -116,7 +117,7 @@ async function processarParcialItem(
     const { data: itemsRaw, error: itemsErr } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, quantidade_pedida, separacao_marcado, separacao_parcial",
+        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_marcado, separacao_parcial",
       )
       .in("id", pedido_item_ids)
       .order("id", { ascending: true });
@@ -152,13 +153,17 @@ async function processarParcialItem(
       );
     }
 
-    const totalPedido = itemsRaw.reduce(
-      (s, it) => s + Number(it.quantidade_pedida),
+    // Teto = o que AINDA falta separar (desconta o que cada item já pegou em
+    // parciais anteriores) — não o total do pedido. Sem isso, re-fazer parcial
+    // num item já parcial acumularia além do pedido.
+    const totalFaltante = itemsRaw.reduce(
+      (s, it) =>
+        s + Math.max(0, Number(it.quantidade_pedida) - Number(it.quantidade_pega ?? 0)),
       0,
     );
-    if (quantidade_pega > totalPedido) {
+    if (quantidade_pega > totalFaltante) {
       return NextResponse.json(
-        { error: `quantidade_pega não pode exceder o total pedido (${totalPedido})` },
+        { error: `quantidade_pega não pode exceder o que falta separar (${totalFaltante})` },
         { status: 400 },
       );
     }
@@ -247,33 +252,76 @@ async function processarParcialItem(
     const reservadoWms = Number(estoqueWms?.reservado ?? 0);
     const disponivelWms = Number(estoqueWms?.disponivel ?? saldoWms - reservadoWms);
 
-    if (quantidade_pega > 0 && disponivelWms < quantidade_pega) {
+    // A reserva do PRÓPRIO lote (R viva que o aprovar criou nesta loc, que o
+    // passo 7a abaixo libera) não pode contar como indisponível — o pedido tem
+    // direito às unidades reservadas pra ele. Só a reserva de OUTROS pedidos
+    // restringe a saída. (Mesma lógica já aplicada no marcar-item via reserva_id;
+    // sem isso, picking parcial num galpão com saldo 100% alocado entre pedidos
+    // bloqueava todo mundo de pegar a própria reserva — disponivel=0.)
+    let minhaReservaNestaLoc = 0;
+    for (const pid of pedidoIds) {
+      const r = await buscarReservaPendente({
+        pedido_id: String(pid),
+        tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: locOriginalId },
+      });
+      if (r) minhaReservaNestaLoc += Number(r.quantidade);
+    }
+    const reservadoDeOutros = Math.max(0, reservadoWms - minhaReservaNestaLoc);
+    const disponivelParaMim = saldoWms - reservadoDeOutros;
+
+    if (quantidade_pega > 0 && disponivelParaMim < quantidade_pega) {
       return NextResponse.json(
         {
           error: "posicao_reservada",
           message:
-            `Posição reservada por outro pedido (saldo ${saldoWms}, reservado ${reservadoWms}, disponível ${disponivelWms}). ` +
+            `Posição reservada por outro pedido (saldo ${saldoWms}, reservado por outros ${reservadoDeOutros}, disponível pra você ${disponivelParaMim}). ` +
             `Não é possível dar saída de ${quantidade_pega}. Avise o supervisor pra liberar a reserva.`,
           saldo: saldoWms,
-          reservado: reservadoWms,
-          disponivel: disponivelWms,
+          reservado: reservadoDeOutros,
+          disponivel: disponivelParaMim,
           quantidade_pega,
         },
         { status: 409 },
       );
     }
 
+    // Distribuição FCFS (movida pra ANTES da liberação): define, por pedido,
+    // quanto foi pego (picked) e quanto sobra (residual). Isso governa QUAIS
+    // reservas liberar (só de quem recebeu unidade) e qual residual re-reservar.
+    const itemUpdates = distribuirQtyPega(itemsRaw, quantidade_pega).map((d) => ({
+      item: d.item,
+      qty_para_este: d.qty_para_este,
+      qty_residual: d.qty_residual,
+      pedido_id: d.item.pedido_id as string,
+    }));
+    const allocPorPedido = new Map<string, { picked: number; residual: number }>();
+    for (const u of itemUpdates) {
+      const cur = allocPorPedido.get(u.pedido_id) ?? { picked: 0, residual: 0 };
+      cur.picked += u.qty_para_este;
+      cur.residual += u.qty_residual;
+      allocPorPedido.set(u.pedido_id, cur);
+    }
+
     // 7. Gera mov S única (qty_pega total) e mov ajuste única — ambas vinculadas ao primeiro pedido,
     //    com lista completa de items cobertos em origem_detalhes pra rastreabilidade.
     const itemIdsList = itemsRaw.map((it) => Number(it.id));
 
-    // 7a. R↔L↔S pairing: pra cada pedido_id do wave, libera 100% da R
-    // criada no aprovar nessa loc original. Mesmo que pegamos só X<Y
-    // unidades, a R original perde sentido inteira porque a loc esvaziou
-    // (ou estamos forçando a saída parcial). O cascade re-emite R nas
-    // locs destino pra qty residual.
+    // 7a. R↔L↔S pairing por pedido do wave:
+    //   - loc_zerou=false: só libera a R de quem pegou unidade (guard abaixo);
+    //     a R de pedido não-atendido fica INTACTA, e o residual do próprio pick
+    //     é re-reservado na mesma loc mais adiante (passo 10, ramo !loc_zerou).
+    //   - loc_zerou=true: libera 100% da R de todos (a loc esvaziou); o cascade
+    //     re-emite R nas locs destino pra qty residual.
+    // Quando libera, libera a R inteira (Number(r.quantidade)) — o pareamento
+    // com a qty pega é resolvido pela re-reserva (false) ou pelo cascade (true).
     const liberacoesPorPedido = new Map<string, { reserva: ReservaPendenteRow; movL_id: string }>();
     for (const pid of pedidoIds) {
+      const alloc = allocPorPedido.get(pid) ?? { picked: 0, residual: 0 };
+      // loc_zerou=false: NÃO liberar a R de pedido que não recebeu unidade
+      // (FCFS deu tudo a outro do wave). Senão ele perde a reserva sem ter
+      // sido separado — bug #50144/#50189. Com loc_zerou=true mantém o
+      // comportamento antigo (libera todas; cascade recria em outra loc).
+      if (!loc_zerou && alloc.picked === 0) continue;
       try {
         const r = await buscarReservaPendente({
           pedido_id: String(pid),
@@ -340,8 +388,21 @@ async function processarParcialItem(
     }
 
     let movAjusteId: string | null = null;
+    // loc_zerou: o ajuste "phantom" zera o que o operador não achou na loc, mas
+    // NÃO pode derrubar o saldo abaixo do reservado que SOBRA na loc (reservas de
+    // OUTROS pedidos que este fluxo não liberou). Senão o ajuste viola o CHECK
+    // reservado<=saldo e estoura 500. liberadoNaLoc = reservas DESTE wave já
+    // liberadas no passo 7a (reduzem o reservado vivo da loc).
+    const liberadoNaLoc = Array.from(liberacoesPorPedido.values()).reduce(
+      (s, info) => s + Number(info.reserva.quantidade),
+      0,
+    );
+    const reservadoRestanteLoc = Math.max(0, reservadoWms - liberadoNaLoc);
+    const deltaAjuste = loc_zerou
+      ? Math.max(0, saldoWms - quantidade_pega - reservadoRestanteLoc)
+      : 0;
     if (loc_zerou) {
-      const delta = saldoWms - quantidade_pega;
+      const delta = deltaAjuste;
       if (delta > 0) {
         const movAj = await inserirMovimentacao({
           tripla: {
@@ -371,28 +432,9 @@ async function processarParcialItem(
       // mais snapshot estale pra ressincronizar (matava o loop OC→Própria).
     }
 
-    // 8. Distribui qty_pega entre items em ordem (first-come-first-served) e
-    //    coleta items residuais pra cascade.
+    // 8. (itemUpdates já computado antes da liberação 7a — distribuição FCFS.)
+    //    nowIso ainda usado no Pass A/B abaixo.
     const nowIso = new Date().toISOString();
-    let qtyRestante = quantidade_pega;
-    const itemUpdates: Array<{
-      item: typeof itemsRaw[number];
-      qty_para_este: number;
-      qty_residual: number;
-      pedido_id: string;
-    }> = [];
-
-    for (const it of itemsRaw) {
-      const pedidaItem = Number(it.quantidade_pedida);
-      const qtyParaEste = Math.min(pedidaItem, qtyRestante);
-      qtyRestante -= qtyParaEste;
-      itemUpdates.push({
-        item: it,
-        qty_para_este: qtyParaEste,
-        qty_residual: pedidaItem - qtyParaEste,
-        pedido_id: it.pedido_id,
-      });
-    }
 
     // 9. Update de cada item conforme distribuição
     //    Movs ficam vinculadas SÓ ao primeiro item que recebeu qty (ou ao primeiro
@@ -446,7 +488,7 @@ async function processarParcialItem(
     }
 
     if (movAjusteId && loc_zerou) {
-      const delta = saldoWms - quantidade_pega;
+      const delta = deltaAjuste;
       if (delta > 0) {
         // ajuste é da loc, não rateado entre itens — vai no primeiro beneficiado
         const { error: linkAjErr } = await supabase
@@ -655,7 +697,7 @@ async function processarParcialItem(
               quantidade_pedida: Number(it.quantidade_pedida),
               loc_codigo: locCodigo,
               loc_zerou,
-              delta_ajuste: ehBeneficiario && movAjusteId ? saldoWms - quantidade_pega : 0,
+              delta_ajuste: ehBeneficiario && movAjusteId ? deltaAjuste : 0,
               wave_consolidado: itemsRaw.length > 1,
             },
             usuarioId: session.id,
@@ -773,54 +815,51 @@ async function processarParcialItem(
     }
 
     if (!loc_zerou) {
-      // Fase 3 #3: operador pegou menos que o pedido mas NÃO zerou a loc
-      // (prateleira ainda tem saldo). Reenfileira o pedido INTEIRO pro FIM da
-      // fila (volta pra aguardando_separacao preservando quantidade_pega).
+      // Operador pegou menos que o pedido mas a prateleira AINDA tem saldo
+      // (não zerou). O item fica ABERTO no MESMO checklist e o pedido continua
+      // em_separacao com o mesmo operador — sem reenfileirar nem soltar a onda.
       //
-      // Os itens residuais ficam ABERTOS — separacao_parcial=false,
-      // separacao_marcado=false, quantidade_pega acumulada (igual baseline).
-      // NÃO setamos separacao_parcial=true de propósito: marcar-item,
-      // /parcial e /bipar-checklist TODOS rejeitam (409 / skip) itens com
-      // separacao_parcial=true, então setar o flag deixaria o residual
-      // impossível de completar (pedido travado). Com o flag em false o
-      // operador completa normalmente depois (marcar-item desconta só
-      // quantidade_pedida-quantidade_pega). O badge "Parcial X/Y" no checklist
-      // deriva de quantidade_pega (0 < pega < pedida && !marcado), não do flag.
+      // Estado dos itens residuais: separacao_parcial=false,
+      // separacao_marcado=false, quantidade_pega acumulada. NÃO setamos
+      // separacao_parcial=true de propósito: marcar-item, /parcial e
+      // /bipar-checklist TODOS rejeitam (409 / skip) itens com
+      // separacao_parcial=true, então o flag travaria o re-pick. Com o flag em
+      // false o operador completa o restante depois na mesma onda (marcar-item,
+      // bipar ou Parcial de novo descontam quantidade_pedida-quantidade_pega).
+      // O concluir só fecha o pedido quando todos os itens estiverem marcados —
+      // item aberto deixa o pedido pendente, sem avançar errado.
+      // O badge "Parcial X/Y" no checklist deriva de quantidade_pega
+      // (0 < pega < pedida && !marcado), não do flag.
+
+      // RE-RESERVA do residual na MESMA loc: a R original foi liberada 100% no
+      // passo 7a (só pra quem pegou unidade). Recriamos uma R do que falta na
+      // própria prateleira pra (a) a linha "PEGAR" continuar protegida (ninguém
+      // rouba o saldo) e (b) o próximo parcial/marcar-item achar a R viva.
+      // Pedido com picked=0 manteve a R original intacta (Edição B) → nada a fazer.
+      for (const u of itemUpdates) {
+        if (u.qty_residual <= 0 || u.qty_para_este <= 0) continue;
+        const pedidoDoItem = pedidoById.get(u.pedido_id);
+        try {
+          await criarReservaCascade({
+            tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: locOriginalId },
+            qty: u.qty_residual,
+            pedido_id: String(u.pedido_id),
+            usuario_id: session.id,
+            motivo: `Re-reserva residual mesma loc — parcial pedido #${pedidoDoItem?.numero ?? "?"}`,
+            origem_detalhes: { contexto: "residual_mesma_loc", sku: u.item.sku, loc_id: locOriginalId },
+          });
+        } catch (e) {
+          logger.warn("separacao-parcial", "Falhou re-reservar residual mesma loc (continua)", {
+            pedido_id: u.pedido_id,
+            qty_residual: u.qty_residual,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+
       const beneficiariosResiduais = itemsResiduais.filter((u) => u.qty_para_este > 0);
-      // Reenfileira pro fim da fila os pedidos que ficaram com residual.
-      const pedidosReenfileirar = [...new Set(itemsResiduais.map((u) => u.item.pedido_id))];
-      const { error: reenfErr } = await supabase
-        .from("siso_pedidos")
-        .update({
-          status_separacao: "aguardando_separacao",
-          separacao_reenfileirado_em: nowIso,
-          separacao_iniciada_em: null,
-          separacao_operador_id: null,
-        })
-        .in("id", pedidosReenfileirar);
-      if (reenfErr) {
-        logger.logError({
-          error: reenfErr,
-          source: "separacao-parcial",
-          message: "Falhou reenfileirar pedido parcial pro fim da fila",
-          category: "database",
-          requestPath: "/api/wms/separacao/parcial",
-          requestMethod: "POST",
-          metadata: { pedidosReenfileirar },
-        });
-        return NextResponse.json({ error: "erro reenfileirando parcial" }, { status: 500 });
-      }
-      for (const pid of pedidosReenfileirar) {
-        await registrarEvento({
-          pedidoId: pid,
-          evento: "parcial_reenfileirado",
-          detalhes: { motivo: "prateleira_com_saldo", reenfileirado_em: nowIso },
-          usuarioId: session.id,
-        });
-      }
       return NextResponse.json({
-        status: "parcial_reenfileirado",
-        pedidos_reenfileirados: pedidosReenfileirar,
+        status: "parcial_em_progresso",
         items_parciais: beneficiariosResiduais.length,
         items_residuais_a_fazer: itemsResiduais.length,
       });
@@ -1121,7 +1160,7 @@ async function processarParcialItem(
       pedidos_mandados_pra_compras: resumoCompras?.pedidos_atualizados ?? 0,
     });
   } catch (err) {
-    logger.logError({
+    const { id: erro_id, timestamp: erro_em } = logger.logError({
       error: err,
       source: "separacao-parcial",
       message: "Erro inesperado em parcial",
@@ -1130,7 +1169,7 @@ async function processarParcialItem(
       requestMethod: "POST",
       metadata: { pedido_item_ids, quantidade_pega, loc_zerou },
     });
-    return NextResponse.json({ error: "erro interno" }, { status: 500 });
+    return NextResponse.json({ error: "erro interno", erro_id, erro_em }, { status: 500 });
   }
 }
 
@@ -1251,16 +1290,30 @@ async function processarParcialRealocacao(
     const reservadoWms = Number(estoqueWms?.reservado ?? 0);
     const disponivelWms = Number(estoqueWms?.disponivel ?? saldoWms - reservadoWms);
 
-    if (quantidade_pega > 0 && disponivelWms < quantidade_pega) {
+    // Reserva do próprio lote (R cascade nesta loc, liberada no passo 7a abaixo)
+    // não conta como indisponível — só a reserva de outros pedidos restringe.
+    // Espelha o gate do caminho item acima.
+    let minhaReservaNestaLoc = 0;
+    for (const pid of pedidoIds) {
+      const r = await buscarReservaPendente({
+        pedido_id: String(pid),
+        tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: localizacaoId },
+      });
+      if (r) minhaReservaNestaLoc += Number(r.quantidade);
+    }
+    const reservadoDeOutros = Math.max(0, reservadoWms - minhaReservaNestaLoc);
+    const disponivelParaMim = saldoWms - reservadoDeOutros;
+
+    if (quantidade_pega > 0 && disponivelParaMim < quantidade_pega) {
       return NextResponse.json(
         {
           error: "posicao_reservada",
           message:
-            `Posição reservada por outro pedido (saldo ${saldoWms}, reservado ${reservadoWms}, disponível ${disponivelWms}). ` +
+            `Posição reservada por outro pedido (saldo ${saldoWms}, reservado por outros ${reservadoDeOutros}, disponível pra você ${disponivelParaMim}). ` +
             `Não é possível dar saída de ${quantidade_pega}. Avise o supervisor pra liberar a reserva.`,
           saldo: saldoWms,
-          reservado: reservadoWms,
-          disponivel: disponivelWms,
+          reservado: reservadoDeOutros,
+          disponivel: disponivelParaMim,
           quantidade_pega,
         },
         { status: 409 },
@@ -1364,8 +1417,20 @@ async function processarParcialRealocacao(
     }
 
     let movAjusteId: string | null = null;
+    // loc_zerou: idem modo-item — o ajuste não pode derrubar o saldo abaixo do
+    // reservado que SOBRA na loc (reservas de OUTROS pedidos não liberadas aqui),
+    // senão viola o CHECK reservado<=saldo e estoura 500. liberadoNaLoc = R cascade
+    // DESTE batch já liberadas no passo 7a.
+    const liberadoNaLoc = Array.from(liberacoesRealocPorPedido.values()).reduce(
+      (s, info) => s + Number(info.reserva.quantidade),
+      0,
+    );
+    const reservadoRestanteLoc = Math.max(0, reservadoWms - liberadoNaLoc);
+    const deltaAjuste = loc_zerou
+      ? Math.max(0, saldoWms - quantidade_pega - reservadoRestanteLoc)
+      : 0;
     if (loc_zerou) {
-      const delta = saldoWms - quantidade_pega;
+      const delta = deltaAjuste;
       if (delta > 0) {
         const movAj = await inserirMovimentacao({
           tripla: {
@@ -1464,7 +1529,7 @@ async function processarParcialRealocacao(
     }
 
     if (movAjusteId && loc_zerou) {
-      const delta = saldoWms - quantidade_pega;
+      const delta = deltaAjuste;
       if (delta > 0) {
         const primeiraComQty = updates.find((u) => u.qty_para_esta > 0) ?? updates[0];
         const { error: linkAjErr } = await supabase
@@ -2063,7 +2128,7 @@ async function processarParcialRealocacao(
           : undefined,
     });
   } catch (err) {
-    logger.logError({
+    const { id: erro_id, timestamp: erro_em } = logger.logError({
       error: err,
       source: "separacao-parcial-realoc",
       message: "Erro inesperado em parcial realocação",
@@ -2072,6 +2137,6 @@ async function processarParcialRealocacao(
       requestMethod: "POST",
       metadata: { realocacao_ids, quantidade_pega, loc_zerou },
     });
-    return NextResponse.json({ error: "erro interno" }, { status: 500 });
+    return NextResponse.json({ error: "erro interno", erro_id, erro_em }, { status: 500 });
   }
 }

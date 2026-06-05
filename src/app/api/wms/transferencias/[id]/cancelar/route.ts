@@ -14,6 +14,11 @@ export async function POST(
     const result = await cancelarTransferencia(id, auth.user.id);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === "TRANSFERENCIA_RECEBIMENTO_EM_ANDAMENTO") {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ error: msg, code }, { status: 409 });
+    }
     return wmsErrorResponse({
       source: "wms.transferencias.cancelar",
       error: e,

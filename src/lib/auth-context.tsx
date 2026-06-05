@@ -210,13 +210,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await res.json();
       const cargos: Cargo[] = data.usuario.cargos ?? [data.usuario.cargo];
       const galpoes: UserGalpao[] = data.usuario.galpoes ?? [];
+      const permissoes: string[] = data.usuario.permissoes ?? [];
+      const roles = data.usuario.roles ?? [];
+
+      // Este auto-refresh roda 1× por aba ao montar. No caso comum, /me
+      // devolve exatamente o que já está no localStorage — então invalidar
+      // todas as queries aqui só re-paga a taxa de auth logo após a tela já
+      // ter buscado os dados. Só atualiza estado + invalida se algo mudou de
+      // fato (galpões/cargos/permissões/roles).
+      const changed =
+        JSON.stringify(stored.galpoes ?? []) !== JSON.stringify(galpoes) ||
+        JSON.stringify(stored.cargos ?? []) !== JSON.stringify(cargos) ||
+        JSON.stringify(stored.permissoes ?? []) !== JSON.stringify(permissoes) ||
+        JSON.stringify(stored.roles ?? []) !== JSON.stringify(roles);
+      if (!changed) return;
+
       const updated: AuthUser = {
         id: data.usuario.id,
         nome: data.usuario.nome,
         cargo: cargos[0],
         cargos,
-        roles: data.usuario.roles ?? [],
-        permissoes: data.usuario.permissoes ?? [],
+        roles,
+        permissoes,
         galpoes,
         sessionId: stored.sessionId,
       };

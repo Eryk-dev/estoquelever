@@ -3303,3 +3303,24 @@ erros:
       - supabase/migrations/20260605_devolucao_classificacao_em_andamento.sql
       - src/lib/wms/devolucoes.ts
     tags: [devolucao, classificar, toctou, claim, race, P052]
+  - id: ajuste-lote-sem-guard-perm-backend
+    date: "2026-06-05"
+    source: wms/ajuste, wms/localizacoes/lote
+    category: auth
+    message: "Ajuste de estoque (/api/wms/ajuste) e import de prateleiras em lote (/api/wms/localizacoes/lote) eram protegidos só na tela — via curl qualquer user de armazém (ou qualquer logado) burlava."
+    cause: >
+      /ajuste usava requireWarehouseAccess (userCanAny sobre 11 perms amplas), aceitando
+      users sem operacoes.ajuste_manual mas com outra perm (ex.: inventario.executar).
+      /localizacoes/lote usava só requireAuth (qualquer logado). O frontend era o único
+      gate da permissão correta.
+    fix: >
+      Adicionado userCan(auth.user,'operacoes.ajuste_manual') em /ajuste e /ajuste/[id]/estornar
+      (403 quando falso); userCan(auth.user,'localizacoes.editar') em /localizacoes/lote.
+      NÃO mexido em /localizacoes/route.ts (criação única) — requireAuth ali é intencional.
+    files:
+      - src/app/api/wms/ajuste/route.ts
+      - src/app/api/wms/ajuste/[id]/estornar/route.ts
+      - src/app/api/wms/localizacoes/lote/route.ts
+      - scripts/wms/cenarios/auth/18-ajuste-permissao.ts
+      - scripts/wms/cenarios/auth/19-localizacoes-lote-permissao.ts
+    tags: [auth, permissao, ajuste, localizacoes, backend-guard, P069, P116]

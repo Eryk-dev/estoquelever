@@ -181,6 +181,34 @@ export async function PUT(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
+
+  // Anti-lockout (P136): não desativar o último admin ativo. Só dispara quando
+  // ativo===false explicitamente (o PUT genérico também serve printnode/galpoes/cargos).
+  if (rest.ativo === false) {
+    const { data: alvoEhAdmin } = await supabase
+      .from("siso_usuario_roles")
+      .select("usuario_id, siso_roles!inner(codigo)")
+      .eq("usuario_id", id)
+      .eq("siso_roles.codigo", "admin")
+      .maybeSingle();
+
+    if (alvoEhAdmin) {
+      const { data: outrosAdmins } = await supabase
+        .from("siso_usuario_roles")
+        .select("usuario_id, siso_usuarios!inner(ativo), siso_roles!inner(codigo)")
+        .eq("siso_roles.codigo", "admin")
+        .eq("siso_usuarios.ativo", true)
+        .neq("usuario_id", id);
+
+      if (!outrosAdmins || outrosAdmins.length === 0) {
+        return NextResponse.json(
+          { erro: "Sistema precisa de pelo menos 1 admin ativo" },
+          { status: 409 },
+        );
+      }
+    }
+  }
+
   const { data, error } = await supabase
     .from("siso_usuarios")
     .update(updates)

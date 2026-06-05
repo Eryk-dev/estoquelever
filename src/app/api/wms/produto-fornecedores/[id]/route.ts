@@ -83,6 +83,14 @@ export async function PATCH(
     .select()
     .single();
   if (error) {
+    // P125: violação do UNIQUE parcial idx_pf_preferencial (2 cliques marcando
+    // preferenciais diferentes em corrida) → 409 amigável em vez de 500 genérico.
+    if ((error as { code?: string }).code === "23505") {
+      return NextResponse.json(
+        { error: "Já existe outro fornecedor preferencial ativo para este produto. Recarregue e tente de novo." },
+        { status: 409 },
+      );
+    }
     return wmsErrorResponse({
       source: "wms.produto-fornecedores.patch",
       error,

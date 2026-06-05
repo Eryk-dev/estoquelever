@@ -3,6 +3,11 @@
 -- em ledger.ts (estornarMovimentacao) é TOCTOU sob concorrência; este é o backstop.
 --
 -- Pré-condição: nenhum estorno_de duplicado já existente (verificado: staging limpo).
+--
+-- ⚠️ PROD: siso_movimentacoes é a tabela de maior escrita (ledger). Em staging (sem
+-- tráfego) o build inline é instantâneo. Num prod populado, rodar o CREATE UNIQUE INDEX
+-- como CONCURRENTLY (fora de transação, sem o BEGIN/COMMIT) pra não travar escrita
+-- durante o build — mesma convenção de 20260531_perf_p0_indexes.sql.
 
 BEGIN;
 

@@ -13,9 +13,10 @@ interface Ctx { params: Promise<{ id: string }> }
  * - Role 'admin' sempre tem TODAS as permissões — payload é ignorado e o
  *   sistema força o set completo (idempotente, mantém a invariante).
  * - Códigos não-existentes no registry são rejeitados (400) com lista.
- * - Replace atômico best-effort: delete tudo + insert novo. Se o insert
- *   falha após o delete, devolve 500 — operador deve retry (catalogue
- *   permissões podem ficar vazias temporariamente nesse caso edge).
+ * - Replace atômico via RPC wms_set_role_permissoes: delete+insert numa só
+ *   transação, sob SELECT ... FOR UPDATE do role (serializa edições
+ *   concorrentes). Tudo-ou-nada — falha em qualquer ponto → rollback total,
+ *   o conjunto de permissões anterior permanece intacto (P138/P139).
  *
  * Auth: sistema.roles
  */
@@ -62,18 +63,15 @@ export async function PUT(request: Request, ctx: Ctx) {
     ? [...PERMISSAO_CODIGOS]
     : Array.from(new Set(body.permissoes));
 
-  // Replace: delete tudo + insert novo
-  const { error: delErr } = await sb
-    .from("siso_role_permissoes")
-    .delete()
-    .eq("role_id", id);
-  if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
-
-  if (finalSet.length > 0) {
-    const rows = finalSet.map((p) => ({ role_id: id, permissao_codigo: p }));
-    const { error: insErr } = await sb.from("siso_role_permissoes").insert(rows);
-    if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+  // P138/P139: replace atômico + serializado na RPC (delete+insert numa só
+  // transação, sob FOR UPDATE do role). Substitui o delete+insert client-side.
+  const { data: total, error: rpcErr } = await sb.rpc("wms_set_role_permissoes", {
+    p_role_id: id,
+    p_codigos: finalSet,
+  });
+  if (rpcErr) {
+    return NextResponse.json({ error: rpcErr.message }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, total: finalSet.length });
+  return NextResponse.json({ ok: true, total: total ?? finalSet.length });
 }

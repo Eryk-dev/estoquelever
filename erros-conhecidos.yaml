@@ -3194,3 +3194,24 @@ erros:
       - src/lib/wms/transferencias.ts
       - src/app/api/wms/transferencias/[id]/cancelar/route.ts
     tags: [transferencia, lock, recebimento, cancelamento, race, P062, P066, P068]
+
+  - id: wms-guarda-item-preso-sem-force-unlock
+    date: "2026-06-05"
+    source: wms.guarda.iniciar
+    category: business_logic
+    message: "item de guarda preso ao operador original (PENDENCIA_OUTRA_GUARDA sempre 409)"
+    cause: >
+      iniciarGuarda sempre lançava 409 quando iniciada_por != usuario, sem
+      caminho de takeover. Se o operador sumia (tablet travou), o item ficava
+      preso. O paliativo de presença era só cosmético (nula iniciada_por no
+      render, mas o backend seguia dando 409).
+    fix: >
+      Param forcar:true em iniciarGuarda faz takeover preservando
+      qty_guardada/qty_pendente. A tela de detalhe da guarda mostra botão
+      'Assumir guarda' (forcar) e badge '>30min'. Sem reset automático
+      (rejeitado).
+    files:
+      - src/lib/wms/guarda.ts
+      - src/app/api/wms/guarda/[id]/iniciar/route.ts
+      - src/app/wms/guarda/[id]/page.tsx
+    tags: [guarda, lock, force-unlock, takeover, P127]

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { sisoFetch, usePermissoes } from "@/lib/auth-context";
+import { sisoFetch, usePermissoes, useAuth } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   Icon,
@@ -35,6 +35,7 @@ export default function GuardaTabletPage() {
   const router = useRouter();
   const qc = useQueryClient();
   const { can } = usePermissoes();
+  const { user } = useAuth();
   const podeGuardar = can("operacoes.guarda");
   const id = String(params?.id ?? "");
 
@@ -104,6 +105,19 @@ export default function GuardaTabletPage() {
     !pend?.destino_sugerido_id &&
     data?.sugestao?.localizacao_id === destinoEscolhido.id;
 
+  // Pendência parada há >30min com o dono atual (aviso visível pra takeover).
+  // `now` é semeado lazy e atualizado só no callback async do intervalo —
+  // assim não chamamos Date.now() durante o render nem setState síncrono
+  // dentro do efeito (regras de pureza do React).
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const paradoHa30min =
+    !!pend?.iniciada_em &&
+    now - new Date(pend.iniciada_em).getTime() > 30 * 60_000;
+
   // Quando carregar a pendência, popula o input de qty com qty_pendente
   useEffect(() => {
     if (pend && qtyInput === "") {
@@ -112,9 +126,11 @@ export default function GuardaTabletPage() {
   }, [pend, qtyInput]);
 
   const iniciarMut = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (forcar?: boolean) => {
       const r = await sisoFetch(`/api/wms/guarda/${id}/iniciar`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ forcar: forcar === true }),
       });
       if (!r.ok) {
         const b = (await r.json().catch(() => ({}))) as { error?: string };
@@ -326,12 +342,33 @@ export default function GuardaTabletPage() {
           {pend?.status === "pendente" ? (
             <button
               className="wms-btn wms-btn-primary"
-              onClick={() => iniciarMut.mutate()}
+              onClick={() => iniciarMut.mutate(undefined)}
               disabled={iniciarMut.isPending}
             >
               <Icon name="arrow-right" size={12} />
               {iniciarMut.isPending ? "Iniciando…" : "Começar guarda"}
             </button>
+          ) : null}
+          {pend?.status === "em_guarda" &&
+          pend.iniciada_por &&
+          user?.id &&
+          pend.iniciada_por !== user.id ? (
+            <>
+              {paradoHa30min && pend.iniciada_em ? (
+                <span className="wms-card-badge wms-card-badge-pendente">
+                  parado há {fmtRelative(pend.iniciada_em)}
+                </span>
+              ) : null}
+              <button
+                className="wms-btn wms-btn-ghost"
+                onClick={() => iniciarMut.mutate(true)}
+                disabled={iniciarMut.isPending}
+                title="Assumir esta guarda de outro operador (continua do ponto)"
+              >
+                <Icon name="arrow-right" size={12} />
+                {iniciarMut.isPending ? "Assumindo…" : "Assumir guarda"}
+              </button>
+            </>
           ) : null}
           <StatusBadge status={pend.status} size="lg" />
         </div>

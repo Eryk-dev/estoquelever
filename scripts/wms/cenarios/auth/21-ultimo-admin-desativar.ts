@@ -60,6 +60,14 @@ async function isAtivo(sb: ReturnType<typeof createServiceClient>, id: string): 
   return (data as { ativo: boolean }).ativo;
 }
 
+async function delUser(sid: string, id: string) {
+  const r = await fetch(`${baseUrl}/api/wms/admin/usuarios?id=${id}`, {
+    method: "DELETE",
+    headers: { "X-Session-Id": sid },
+  });
+  return { status: r.status, body: (await r.text()).slice(0, 200) };
+}
+
 async function main() {
   const sb = createServiceClient();
   await seedTestUsers(sb);
@@ -94,10 +102,29 @@ async function main() {
   console.log(`[${ok2 ? "PASS" : "FAIL"}] desativar 1 de 2 admins: ${r2.status} (expected 200), ativo=${ainda2} (expected false) body=${r2.body}`);
   if (!ok2) failures++;
 
-  // cleanup: reativa solo + remove 2º
+  // cleanup case 2: reativa solo + remove 2º
   await sb.from("siso_usuarios").update({ ativo: true }).eq("id", soloAdmin);
   await sb.from("siso_usuario_roles").delete().eq("usuario_id", segundo);
   await sb.from("siso_usuarios").update({ ativo: false }).eq("id", segundo);
+
+  // Caso 3: DELETE no último admin ativo → 4xx + permanece ativo.
+  // Re-estabelece estado solo: desativa todos os outros admins (o segundo já foi removido acima).
+  const { data: adminsAgora } = await sb
+    .from("siso_usuario_roles")
+    .select("usuario_id, siso_roles!inner(codigo)")
+    .eq("siso_roles.codigo", "admin");
+  for (const a of (adminsAgora ?? []) as Array<{ usuario_id: string }>) {
+    if (a.usuario_id !== soloAdmin) await sb.from("siso_usuarios").update({ ativo: false }).eq("id", a.usuario_id);
+  }
+  await sb.from("siso_usuarios").update({ ativo: true }).eq("id", soloAdmin);
+  const r3 = await delUser(sid, soloAdmin);
+  const ainda3 = await isAtivo(sb, soloAdmin);
+  const ok3 = r3.status >= 400 && r3.status < 500 && ainda3 === true;
+  console.log(`[${ok3 ? "PASS" : "FAIL"}] DELETE último admin: ${r3.status} (expected 4xx), ativo=${ainda3} (expected true) body=${r3.body}`);
+  if (!ok3) failures++;
+
+  // cleanup final: garante soloAdmin ativo (baseline)
+  await sb.from("siso_usuarios").update({ ativo: true }).eq("id", soloAdmin);
 
   if (failures) process.exit(1);
 }

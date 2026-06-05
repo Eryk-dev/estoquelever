@@ -184,21 +184,25 @@ export async function PUT(request: NextRequest) {
 
   // Anti-lockout (P136): não desativar o último admin ativo. Só dispara quando
   // ativo===false explicitamente (o PUT genérico também serve printnode/galpoes/cargos).
+  // Nota: TOCTOU — duas desativações concorrentes de 2 admins distintos podem passar
+  // ambas (sem lock de banco). Aceito no volume atual (decisão D: app-layer, sem advisory lock).
   if (rest.ativo === false) {
-    const { data: alvoEhAdmin } = await supabase
+    const { data: alvoEhAdmin, error: errAlvo } = await supabase
       .from("siso_usuario_roles")
       .select("usuario_id, siso_roles!inner(codigo)")
       .eq("usuario_id", id)
       .eq("siso_roles.codigo", "admin")
       .maybeSingle();
+    if (errAlvo) return NextResponse.json({ erro: errAlvo.message }, { status: 500 });
 
     if (alvoEhAdmin) {
-      const { data: outrosAdmins } = await supabase
+      const { data: outrosAdmins, error: errOutros } = await supabase
         .from("siso_usuario_roles")
         .select("usuario_id, siso_usuarios!inner(ativo), siso_roles!inner(codigo)")
         .eq("siso_roles.codigo", "admin")
         .eq("siso_usuarios.ativo", true)
         .neq("usuario_id", id);
+      if (errOutros) return NextResponse.json({ erro: errOutros.message }, { status: 500 });
 
       if (!outrosAdmins || outrosAdmins.length === 0) {
         return NextResponse.json(
@@ -268,6 +272,36 @@ export async function DELETE(request: NextRequest) {
 
   if (!atual) {
     return NextResponse.json({ erro: "usuário não encontrado" }, { status: 404 });
+  }
+
+  // Anti-lockout (P136): o soft-delete seta ativo=false — mesmo vetor de lockout do PUT.
+  // Só protege quando o alvo está ATIVO e é o último admin ativo.
+  // Nota: TOCTOU — ver comentário equivalente no PUT handler.
+  if (atual.ativo === true) {
+    const { data: alvoEhAdmin, error: errAlvo } = await supabase
+      .from("siso_usuario_roles")
+      .select("usuario_id, siso_roles!inner(codigo)")
+      .eq("usuario_id", id)
+      .eq("siso_roles.codigo", "admin")
+      .maybeSingle();
+    if (errAlvo) return NextResponse.json({ erro: errAlvo.message }, { status: 500 });
+
+    if (alvoEhAdmin) {
+      const { data: outrosAdmins, error: errOutros } = await supabase
+        .from("siso_usuario_roles")
+        .select("usuario_id, siso_usuarios!inner(ativo), siso_roles!inner(codigo)")
+        .eq("siso_roles.codigo", "admin")
+        .eq("siso_usuarios.ativo", true)
+        .neq("usuario_id", id);
+      if (errOutros) return NextResponse.json({ erro: errOutros.message }, { status: 500 });
+
+      if (!outrosAdmins || outrosAdmins.length === 0) {
+        return NextResponse.json(
+          { erro: "Sistema precisa de pelo menos 1 admin ativo" },
+          { status: 409 },
+        );
+      }
+    }
   }
 
   // Idempotente: se já foi excluído (nome já tem o sufixo), não renomeia de novo.

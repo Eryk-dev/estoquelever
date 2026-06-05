@@ -943,13 +943,30 @@ export async function aprovarSessao(
       "ainda há divergências pendentes; resolva antes de aprovar",
     );
   }
-  await sb
+  const { data: aprovadas } = await sb
     .from("siso_inventario_sessoes")
     .update({ status: "aprovada", aprovada_por: aprovadaPor })
-    .eq("id", sessaoId);
+    .eq("id", sessaoId)
+    .eq("status", "revisao")
+    .select("id");
 
-  // Libera locks externos. Aplicação (gerar movs) é só ato contábil —
-  // não precisa segurar lock contra outras sessões.
+  // Compare-and-set: 0 linhas → a sessão não estava em 'revisao' (já aprovada
+  // por outra chamada concorrente, ou nunca finalizada). No-op idempotente:
+  // não reaplica nem dispara efeitos colaterais (liberação de locks).
+  if (!aprovadas || aprovadas.length === 0) {
+    const { data: atual } = await sb
+      .from("siso_inventario_sessoes")
+      .select("status")
+      .eq("id", sessaoId)
+      .single();
+    throw new Error(
+      `sessão não está em revisão (status atual: ${(atual as { status: string } | null)?.status ?? "?"}) — não pode ser aprovada`,
+    );
+  }
+
+  // Libera locks externos SÓ quando a aprovação efetivamente transicionou.
+  // Aplicação (gerar movs) é só ato contábil — não precisa segurar lock
+  // contra outras sessões.
   const { data: locs } = await sb
     .from("siso_inventario_localizacoes")
     .select("localizacao_id")

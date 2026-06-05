@@ -3284,3 +3284,22 @@ erros:
       - supabase/migrations/20260605_wms_set_role_permissoes.sql
       - src/app/api/wms/admin/roles/[id]/permissoes/route.ts
     tags: [roles, permissoes, rpc, atomic, for-update, P138, P139]
+  - id: wms-devolucao-classificar-toctou-movs-duplicadas
+    date: "2026-06-05"
+    source: wms.devolucoes.classificar
+    category: business_logic
+    message: "classify concorrente de devolução duplica movimentações (TOCTOU)"
+    cause: >
+      classificarDevolucao lia o status (aguardando_classificacao), emitia N
+      movs e só no fim setava classificada. Duas chamadas concorrentes ambas
+      passavam o read-check e geravam movs duplicadas. A CHECK de status proíbe
+      um estado intermediário 'classificando'.
+    fix: >
+      Claim atômico via lease classificacao_em_andamento_por (UPDATE condicional
+      WHERE status=aguardando_classificacao AND col IS NULL): a 2ª chamada leva
+      0 rows e rejeita. Lease limpo no flip pra classificada e no sad-path.
+      Base reusável pela RPC wms_classificar_devolucao (fase 4).
+    files:
+      - supabase/migrations/20260605_devolucao_classificacao_em_andamento.sql
+      - src/lib/wms/devolucoes.ts
+    tags: [devolucao, classificar, toctou, claim, race, P052]

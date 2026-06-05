@@ -3173,3 +3173,24 @@ erros:
     files:
       - src/lib/execution-worker.ts
     tags: [fila, worker, reclaim, timeout, idempotencia, P145]
+
+  - id: wms-transferencia-cancel-ignora-lock-recebimento
+    date: "2026-06-05"
+    source: wms.transferencias.cancelar
+    category: business_logic
+    message: "caixa órfã / dupla-contagem ao cancelar transferência durante recebimento"
+    cause: >
+      receberTransferencia tinha claim via recebimento_em_andamento_por mas
+      cancelarTransferencia não lia nem respeitava o lock. Cancel e receive
+      rodavam concorrentes na mesma tripla (estorno leg S vs insert leg E),
+      deixando estoque inconsistente. Faltava timestamp do lock pro timeout.
+    fix: >
+      Adicionada coluna recebimento_em_andamento_em. cancelarTransferencia
+      seleciona o lock, bloqueia (409 TRANSFERENCIA_RECEBIMENTO_EM_ANDAMENTO)
+      se outro operador recebe dentro de 30min, e faz claim atômico de
+      cancelamento (mutex compartilhado) pro próprio recebedor ou lock stale.
+    files:
+      - supabase/migrations/20260605_transferencia_recebimento_em_andamento_em.sql
+      - src/lib/wms/transferencias.ts
+      - src/app/api/wms/transferencias/[id]/cancelar/route.ts
+    tags: [transferencia, lock, recebimento, cancelamento, race, P062, P066, P068]

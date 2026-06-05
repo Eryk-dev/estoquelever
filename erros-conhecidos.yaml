@@ -3267,3 +3267,20 @@ erros:
       - src/app/api/wms/separacao/desfazer-bip/route.ts
       - scripts/wms/cenarios/catalogo/82-desfazer-bip-concorrente.ts
     tags: [separacao, desfazer-bip, decremento, atomic, rpc, P021]
+  - id: wms-set-role-permissoes-delete-insert-nao-atomico
+    date: "2026-06-05"
+    source: wms.admin.roles.permissoes
+    category: business_logic
+    message: "role fica sem permissões / perda silenciosa ao editar permissões"
+    cause: >
+      A rota fazia delete+insert em duas chamadas client-side (sem transação).
+      Falha no insert após o delete deixava o role vazio (P138); edições
+      concorrentes intercalavam delete/insert → last-write-wins (P139).
+    fix: >
+      RPC wms_set_role_permissoes(p_role_id, p_codigos): SELECT FOR UPDATE do
+      role (serializa concorrência) + delete+insert na mesma transação
+      (tudo-ou-nada). Rollback total em qualquer erro mantém o conjunto antigo.
+    files:
+      - supabase/migrations/20260605_wms_set_role_permissoes.sql
+      - src/app/api/wms/admin/roles/[id]/permissoes/route.ts
+    tags: [roles, permissoes, rpc, atomic, for-update, P138, P139]

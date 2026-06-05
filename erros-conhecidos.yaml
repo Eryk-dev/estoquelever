@@ -3155,3 +3155,21 @@ erros:
       - src/app/wms/separacao/checklist/page.tsx
       - scripts/wms/cenarios/catalogo/70-parcial-wave-reserva.ts
     tags: [separacao, parcial, reserva, wave, checklist]
+
+  - id: wms-fila-job-estagnado-nunca-reclamado
+    date: "2026-06-05"
+    source: wms.execution-worker
+    category: infrastructure
+    message: "job preso em status='executando' para sempre após crash do worker"
+    cause: >
+      processQueue só selecionava jobs 'pendente' e fazia claim atômico
+      executando. Se o worker morria entre o claim e o update final, o job
+      ficava 'executando' indefinidamente — nenhuma rotina o devolvia.
+    fix: >
+      Antes do SELECT de pendentes, processQueue reclama jobs 'executando'
+      cujo atualizado_em (marca de início escrita no claim) é mais antigo que
+      5min, devolvendo-os a 'pendente'. Reprocessar é seguro (idempotência por
+      reserva e estoque_lancado).
+    files:
+      - src/lib/execution-worker.ts
+    tags: [fila, worker, reclaim, timeout, idempotencia, P145]

@@ -455,7 +455,9 @@ export async function cancelarTransferencia(
   const sb = createServiceClient();
   const { data: transf, error } = await sb
     .from("siso_transferencias_galpao")
-    .select("id, status, galpao_origem_id")
+    .select(
+      "id, status, galpao_origem_id, recebimento_em_andamento_por, recebimento_em_andamento_em",
+    )
     .eq("id", transferenciaId)
     .single();
   if (error || !transf) throw new Error("transferência não encontrada");
@@ -463,6 +465,8 @@ export async function cancelarTransferencia(
     id: string;
     status: StatusTransferencia;
     galpao_origem_id: string;
+    recebimento_em_andamento_por: string | null;
+    recebimento_em_andamento_em: string | null;
   };
   if (t.status === "recebida") {
     throw new Error(
@@ -473,6 +477,49 @@ export async function cancelarTransferencia(
     throw new Error(
       `só transferências em trânsito podem ser canceladas (status: ${t.status})`,
     );
+  }
+
+  // P062/P066/P068: respeita o lock de recebimento. Outro operador recebendo
+  // dentro da janela de 30min bloqueia o cancel (409). O próprio recebedor ou
+  // um lock stale (>30min, tela do recebedor caiu) liberam o cancel.
+  const LOCK_TTL_MS = 30 * 60_000;
+  const lockAtivo =
+    t.recebimento_em_andamento_por != null &&
+    t.recebimento_em_andamento_por !== usuarioId &&
+    t.recebimento_em_andamento_em != null &&
+    Date.now() - new Date(t.recebimento_em_andamento_em).getTime() < LOCK_TTL_MS;
+  if (lockAtivo) {
+    const err = new Error(
+      `recebimento em andamento por outro operador (${t.recebimento_em_andamento_por}) — não é possível cancelar agora`,
+    ) as Error & { code?: string };
+    err.code = "TRANSFERENCIA_RECEBIMENTO_EM_ANDAMENTO";
+    throw err;
+  }
+
+  // Claim atômico de cancelamento: fecha a janela TOCTOU entre o SELECT acima e
+  // os estornos abaixo. Só passa se ainda em_transito E (sem lock OU lock do
+  // próprio usuário OU lock stale). O claim seta o lock pra nós (mutex
+  // compartilhado com o receber), serializando os dois fluxos.
+  const staleCutoff = new Date(Date.now() - LOCK_TTL_MS).toISOString();
+  const claimQuery = sb
+    .from("siso_transferencias_galpao")
+    .update({
+      recebimento_em_andamento_por: usuarioId,
+      recebimento_em_andamento_em: new Date().toISOString(),
+    })
+    .eq("id", t.id)
+    .eq("status", "em_transito")
+    .or(
+      `recebimento_em_andamento_por.is.null,recebimento_em_andamento_por.eq.${usuarioId},recebimento_em_andamento_em.lt.${staleCutoff}`,
+    )
+    .select("id");
+  const { data: claimed } = await claimQuery;
+  if (!claimed || claimed.length === 0) {
+    const err = new Error(
+      `transferência sendo recebida/cancelada por outro operador, tente em alguns segundos`,
+    ) as Error & { code?: string };
+    err.code = "TRANSFERENCIA_RECEBIMENTO_EM_ANDAMENTO";
+    throw err;
   }
 
   const { data: itens } = await sb
@@ -551,13 +598,15 @@ export async function cancelarTransferencia(
       .not("mov_entrada_id", "is", null);
   }
 
-  // 4) Marca header cancelada.
+  // 4) Marca header cancelada e limpa o lock de cancelamento.
   await sb
     .from("siso_transferencias_galpao")
     .update({
       status: "cancelada",
       cancelada_por: usuarioId,
       cancelada_em: new Date().toISOString(),
+      recebimento_em_andamento_por: null,
+      recebimento_em_andamento_em: null,
     })
     .eq("id", transferenciaId);
 

@@ -3303,3 +3303,19 @@ erros:
       - supabase/migrations/20260605_devolucao_classificacao_em_andamento.sql
       - src/lib/wms/devolucoes.ts
     tags: [devolucao, classificar, toctou, claim, race, P052]
+  - id: wms-estorno-duplo-corrida
+    date: "2026-06-05"
+    source: wms.ledger.estornar
+    category: database
+    message: "2 estornos concorrentes da mesma mov criavam 2 movs S — saldo anulava 2x"
+    cause: >
+      Guard contra estorno duplo vivia só em estornarMovimentacao (SELECT estorno_de
+      antes do INSERT) — TOCTOU sob concorrência. idx_mov_estorno era índice comum.
+    fix: >
+      Promovido a UNIQUE parcial (uq_mov_estorno_unico em estorno_de WHERE NOT NULL).
+      estornarMovimentacao trata 23505 como idempotente: recarrega e devolve o estorno
+      existente em vez de propagar erro.
+    files:
+      - supabase/migrations/20260607_mov_estorno_unique.sql
+      - src/lib/wms/ledger.ts
+    tags: [estorno, unique, idempotencia, ledger, concorrencia]

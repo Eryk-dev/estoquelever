@@ -396,22 +396,45 @@ export async function estornarMovimentacao(input: {
   if (!tipoInverso)
     throw new Error(`tipo desconhecido na mov original: ${original.tipo}`);
 
-  return inserirMovimentacao({
-    tripla: {
-      produto_id: original.produto_id,
-      galpao_id: original.galpao_id,
-      localizacao_id: original.localizacao_id,
-    },
-    tipo: tipoInverso,
-    qty: Number(original.quantidade),
-    origem_tipo: "estorno",
-    origem_id: input.mov_id,
-    origem_detalhes: {
+  try {
+    return await inserirMovimentacao({
+      tripla: {
+        produto_id: original.produto_id,
+        galpao_id: original.galpao_id,
+        localizacao_id: original.localizacao_id,
+      },
+      tipo: tipoInverso,
+      qty: Number(original.quantidade),
+      origem_tipo: "estorno",
+      origem_id: input.mov_id,
+      origem_detalhes: {
+        estorno_de: input.mov_id,
+        mov_original_origem: original.origem_tipo,
+      },
+      motivo: input.motivo ?? `Estorno de mov ${input.mov_id}`,
+      usuario_id: input.usuario_id,
       estorno_de: input.mov_id,
-      mov_original_origem: original.origem_tipo,
-    },
-    motivo: input.motivo ?? `Estorno de mov ${input.mov_id}`,
-    usuario_id: input.usuario_id,
-    estorno_de: input.mov_id,
-  });
+    });
+  } catch (err) {
+    // Backstop de concorrência: o pré-guard acima é TOCTOU. Sob 2 estornos
+    // simultâneos da mesma mov, o UNIQUE parcial uq_mov_estorno_unico (P106)
+    // mata o 2º INSERT com 23505. Tratamos como idempotente: recarregamos e
+    // devolvemos o estorno já gravado em vez de propagar erro.
+    const code = (err as { code?: string } | null)?.code;
+    if (code === "23505") {
+      const { data: jaEstornada } = await sb
+        .from("siso_movimentacoes")
+        .select("*")
+        .eq("estorno_de", input.mov_id)
+        .maybeSingle();
+      if (jaEstornada) {
+        logger.warn("wms.ledger", "estorno duplicado absorvido pelo UNIQUE (idempotente)", {
+          mov_id: input.mov_id,
+          estorno_id: (jaEstornada as { id: string }).id,
+        });
+        return jaEstornada as unknown as Movimentacao;
+      }
+    }
+    throw err;
+  }
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
@@ -36,6 +37,10 @@ export async function POST(request: NextRequest) {
 
   const pedido_item_id: string = body.pedido_item_id;
   const quantidade: number = body.quantidade;
+  // client_request_id por clique (P129/P131). Ausente (cliente legado) →
+  // gera um aqui (sem dedup útil, mas mantém o caminho funcional).
+  const clientRequestId: string =
+    typeof body.client_request_id === "string" ? body.client_request_id : randomUUID();
 
   const supabase = createServiceClient();
 
@@ -80,29 +85,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Calculate new quantidade_bipada (minimum 0)
-    const currentBipada = item.quantidade_bipada ?? 0;
-    const newBipada = Math.max(0, currentBipada + quantidade);
-    const bipado_completo = newBipada >= item.quantidade_pedida;
-
-    // Update the item
-    const { error: updateError } = await supabase
-      .from("siso_pedido_itens")
-      .update({
-        quantidade_bipada: newBipada,
-        bipado_completo,
-      })
-      .eq("id", pedido_item_id);
-
-    if (updateError) {
-      logger.error("confirmar-item-embalagem", "Failed to update item", {
-        error: updateError.message,
+    // P130/P129/P131: soma atômica + dedup por client_request_id na RPC.
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc(
+      "wms_confirmar_item_embalagem_atomico",
+      {
+        p_item_id: Number(pedido_item_id),
+        p_delta: quantidade,
+        p_client_request_id: clientRequestId,
+      },
+    );
+    if (rpcErr) {
+      // 40001 (serialization_failure / chave duplicada concorrente) → trata como
+      // duplo-clique já contabilizado: relê o estado e segue.
+      logger.warn("confirmar-item-embalagem", "RPC atomica falhou/dedup", {
+        error: rpcErr.message,
       });
-      return NextResponse.json(
-        { error: updateError.message },
-        { status: 500 },
-      );
     }
+    const resObj = (rpcRes ?? {}) as {
+      quantidade_bipada?: number;
+      bipado_completo?: boolean;
+    };
+    const newBipada = Number(resObj.quantidade_bipada ?? item.quantidade_bipada ?? 0);
+    const bipado_completo = Boolean(
+      resObj.bipado_completo ?? newBipada >= item.quantidade_pedida,
+    );
 
     // Check if ALL packable items of this pedido have bipado_completo = true.
     // Exclude indisponivel/cancelado items — they're hidden from the UI and

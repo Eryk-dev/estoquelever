@@ -3249,3 +3249,21 @@ erros:
       - src/app/api/wms/separacao/confirmar-item-embalagem/route.ts
       - src/app/wms/separacao/embalagem/page.tsx
     tags: [embalagem, idempotencia, lost-update, rpc, atomic, P129, P130, P131]
+  - id: wms-desfazer-bip-decremento-nao-atomico
+    date: "2026-06-05"
+    source: wms.separacao.desfazer-bip
+    category: business_logic
+    message: "dois cliques no desfazer-bip decrementam só 1 (read-modify-write)"
+    cause: >
+      A rota lia quantidade_bipada, calculava N-1 em JS e gravava. Dois cliques
+      rápidos liam o mesmo N e ambos gravavam N-1, perdendo um decremento.
+    fix: >
+      RPC wms_desfazer_bip_atomico(p_pedido_id, p_produto_id) faz
+      GREATEST(quantidade_bipada-1, 0) atômico sob FOR UPDATE, identificando o
+      item por (pedido_id, tiny_produto_id). A rota usa o valor retornado pra
+      decidir bipado_completo e reversão de status.
+    files:
+      - supabase/migrations/20260605_wms_desfazer_bip_atomico.sql
+      - src/app/api/wms/separacao/desfazer-bip/route.ts
+      - scripts/wms/cenarios/catalogo/82-desfazer-bip-concorrente.ts
+    tags: [separacao, desfazer-bip, decremento, atomic, rpc, P021]

@@ -3324,3 +3324,20 @@ erros:
       - scripts/wms/cenarios/auth/18-ajuste-permissao.ts
       - scripts/wms/cenarios/auth/19-localizacoes-lote-permissao.ts
     tags: [auth, permissao, ajuste, localizacoes, backend-guard, P069, P116]
+
+  - id: desativar-ultimo-admin-lockout
+    date: "2026-06-05"
+    source: wms/admin/usuarios
+    category: auth
+    message: "Desativar (ativo=false) o último admin ativo travava o sistema — ninguém mais acessava Configurações/usuários (lockout)."
+    cause: >
+      PUT /api/wms/admin/usuarios aplicava ativo direto sem guard. A proteção anti-lockout
+      existente só cobria REMOVER a role admin ([id]/roles), não DESATIVAR o usuário.
+    fix: >
+      Guard no PUT: quando rest.ativo===false e o alvo é admin (role codigo='admin'), checa
+      se existe OUTRO usuário ativo com role admin; se não, 409 "Sistema precisa de pelo
+      menos 1 admin ativo". Dispara só em ativo===false (não afeta updates de printnode/galpoes/cargos).
+    files:
+      - src/app/api/wms/admin/usuarios/route.ts
+      - scripts/wms/cenarios/auth/21-ultimo-admin-desativar.ts
+    tags: [auth, anti-lockout, admin, usuarios, P136]

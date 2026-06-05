@@ -17,9 +17,11 @@ export async function POST(
   const { id } = await ctx.params;
 
   try {
+    const body = await req.json().catch(() => ({}));
     const pend = await iniciarGuarda({
       pendencia_id: id,
       usuario_id: auth.user.id,
+      forcar: body?.forcar === true,
     });
     return NextResponse.json({ ok: true, pendencia: pend });
   } catch (e) {

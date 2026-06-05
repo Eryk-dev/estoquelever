@@ -3231,3 +3231,21 @@ erros:
     files:
       - src/lib/wms/inventario.ts
     tags: [inventario, aprovacao, idempotencia, compare-and-set, P160]
+  - id: wms-embalagem-confirmar-item-lost-update-e-duplo-clique
+    date: "2026-06-05"
+    source: wms.separacao.confirmar-item-embalagem
+    category: business_logic
+    message: "quantidade_bipada errada: lost update concorrente e duplo-clique soma 2x"
+    cause: >
+      A rota fazia read-modify-write (lê quantidade_bipada, soma em JS,
+      sobrescreve). Concorrência perdia incrementos; duplo-clique/retry sem
+      chave de idempotência somava o delta 2x e disparava conclusão/etiqueta 2x.
+    fix: >
+      RPC wms_confirmar_item_embalagem_atomico: FOR UPDATE da linha + soma
+      clampada (GREATEST(0, ...)) + dedup por client_request_id (janela 60s,
+      tabela siso_idempotencia_embalagem). Front envia uuid por clique.
+    files:
+      - supabase/migrations/20260605_wms_confirmar_item_embalagem_atomico.sql
+      - src/app/api/wms/separacao/confirmar-item-embalagem/route.ts
+      - src/app/wms/separacao/embalagem/page.tsx
+    tags: [embalagem, idempotencia, lost-update, rpc, atomic, P129, P130, P131]

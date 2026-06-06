@@ -104,11 +104,32 @@ export async function criarLocalizacao(input: {
   return data as Localizacao;
 }
 
+/** [P113] bloqueia troca de tipo / desativação enquanto há lock de contagem ativo
+ *  (siso_localizacao_locks com finalizado_em IS NULL). Module-private. */
+async function assertSemContagemAtiva(
+  sb: ReturnType<typeof createServiceClient>,
+  id: string,
+): Promise<void> {
+  const { data: lock } = await sb
+    .from("siso_localizacao_locks")
+    .select("id")
+    .eq("localizacao_id", id)
+    .is("finalizado_em", null)
+    .limit(1);
+  if (lock && lock.length > 0) {
+    throw new Error("localização em contagem — não pode alterar tipo/desativar");
+  }
+}
+
 export async function atualizarLocalizacao(
   id: string,
   patch: Partial<Localizacao>,
 ): Promise<Localizacao> {
   const sb = createServiceClient();
+  // [P113] bloqueia troca de tipo / desativação enquanto há contagem ativa.
+  if (patch.tipo !== undefined || patch.ativo === false) {
+    await assertSemContagemAtiva(sb, id);
+  }
   const { data, error } = await sb
     .from("siso_localizacoes")
     .update(patch)
@@ -121,6 +142,10 @@ export async function atualizarLocalizacao(
 
 export async function desativarLocalizacao(id: string): Promise<void> {
   const sb = createServiceClient();
+
+  // [P113] bloqueia desativação se há contagem ativa na loc (antes de qualquer
+  // efeito colateral, p/ rejeitar sem limpar reservas).
+  await assertSemContagemAtiva(sb, id);
 
   // [P115] auto-limpa reservas VENCIDAS dessa loc ANTES de checar (libera estoque órfão).
   await cleanupReservasExpiradasDaLoc(id);

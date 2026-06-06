@@ -3806,3 +3806,22 @@ erros:
       alimentar custo médio de compra), mesmo lote.
     files: [src/lib/wms/receber-oc.ts]
     tags: [recebimento, over-receive, ganho-inventario, achado, P033]
+
+  - id: wms-localizacao-altera-com-saldo-ref-contagem
+    date: "2026-06-05"
+    source: wms.localizacoes
+    category: business_logic
+    message: "loc desativada/alterada com reserva vencida, perna de transferência, guarda aberta ou contagem ativa"
+    cause: >
+      desativarLocalizacao só checava saldo>0; atualizarLocalizacao não checava
+      nada. Reserva vencida bloqueava sem cleanup; transferência em_transito,
+      pendência de guarda e lock de contagem ativa eram ignorados.
+    fix: >
+      desativar auto-limpa reservas vencidas da loc (P115), bloqueia perna de
+      transferência em_transito e guarda aberta (P063); atualizar/desativar
+      bloqueiam se há lock de contagem ativa (P113). Erros mapeados pra 409.
+    files:
+      - src/lib/wms/reservas.ts
+      - src/lib/wms/localizacoes.ts
+      - src/app/api/wms/localizacoes/[id]/route.ts
+    tags: [localizacoes, soft-delete, guard, reserva, transferencia, contagem, P115, P063, P113]

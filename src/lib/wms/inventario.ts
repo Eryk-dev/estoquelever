@@ -496,6 +496,26 @@ export async function registrarContagem(
 ): Promise<void> {
   const sb = createServiceClient();
 
+  // [P058] Guard de status da SESSÃO (complementa o guard por-loc abaixo).
+  // Se a sessão saiu de 'em_andamento' (foi pra revisao/aprovada/aplicada),
+  // qualquer bipe novo cairia no vazio — bloqueia explicitamente. A sessão
+  // contínua de contagem-inline fica permanentemente 'em_andamento', então
+  // não é afetada.
+  const { data: sessaoRow } = await sb
+    .from("siso_inventario_sessoes")
+    .select("status")
+    .eq("id", input.sessao_id)
+    .maybeSingle();
+  if (!sessaoRow) {
+    throw new Error("sessão não encontrada");
+  }
+  const sessaoStatus = (sessaoRow as { status: string }).status;
+  if (sessaoStatus !== "em_andamento") {
+    throw new Error(
+      `sessão já saiu da fase em andamento (status ${sessaoStatus}) — supervisor cria nova para corrigir`,
+    );
+  }
+
   // P3 #4.3: bipe só é aceito se a loc está bloqueada por este operador.
   // Sem esse guard, qualquer usuário com sessão válida injetaria contagens
   // em sessões que nunca entrou (silent write vazamento).

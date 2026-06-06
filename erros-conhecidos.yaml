@@ -3603,3 +3603,17 @@ erros:
       - test/integration/webhook-reserva-all-or-nothing.integration.test.ts
       - test/integration/reservas-idempotente.integration.test.ts
     tags: [webhook, reserva, all-or-nothing, idempotencia, dedup, P085, P003]
+  - id: wms-inventario-bipe-sessao-fora-andamento
+    date: "2026-06-05"
+    source: wms.inventario.contagens
+    category: business_logic
+    message: "bipe aceito em sessão de inventário que já saiu de em_andamento (números somem no vazio)"
+    cause: >
+      registrarContagem só validava o status da LOC (contada/aprovada) e o lock
+      do operador, nunca o status da SESSÃO. Sessão em revisao/aprovada/aplicada
+      com loc de lock órfão (em_contagem) ainda aceitava bipe.
+    fix: >
+      Guard explícito no início de registrarContagem: lê siso_inventario_sessoes.status
+      e lança erro se != 'em_andamento'. Rota mapeia o erro pra 409.
+    files: [src/lib/wms/inventario.ts, src/app/api/wms/inventario/[id]/contagens/route.ts]
+    tags: [inventario, guard, sessao, P058]

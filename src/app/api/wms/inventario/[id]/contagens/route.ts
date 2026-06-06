@@ -27,7 +27,9 @@ export async function POST(
       msg.includes("não faz parte") ||
       msg.includes("não está reivindicada") ||
       msg.includes("reivindicada por outro") ||
-      msg.includes("já está em status");
+      msg.includes("já está em status") ||
+      msg.includes("saiu da fase em andamento") ||
+      msg.includes("sessão não encontrada");
     return wmsErrorResponse({
       source: "wms.inventario.contagens",
       error: e,

@@ -23,7 +23,7 @@ export async function reservarAtomico(input: ReservarInput): Promise<string> {
   // P003: dedup idempotente — se já existe R viva por (pedido,produto,tripla),
   // retorna o id existente sem inserir nova R. Evita reservado dobrado em
   // reprocessamento/duplo-clique. SEM advisory lock (infra nova descartada).
-  const { data: rsExistentes } = await sb
+  const { data: rsExistentes, error: errR } = await sb
     .from("siso_movimentacoes")
     .select("id")
     .eq("tipo", "R")
@@ -32,6 +32,11 @@ export async function reservarAtomico(input: ReservarInput): Promise<string> {
     .eq("produto_id", input.tripla.produto_id)
     .eq("galpao_id", input.tripla.galpao_id)
     .eq("localizacao_id", input.tripla.localizacao_id);
+  if (errR) {
+    // fail-closed: sem poder confirmar ausência de R viva, não inserimos (evita R dupla).
+    logger.error("wms.reservas", "falha no dedup de R (P003) — abortando", { error: errR, pedido_id: input.pedido_id });
+    throw errR;
+  }
   const ids = (rsExistentes ?? []).map((r) => r.id as string);
   if (ids.length > 0) {
     // R é "viva" se não tem L (estorno_de) apontando pra ela.

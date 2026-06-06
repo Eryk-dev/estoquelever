@@ -70,12 +70,17 @@ export async function POST(request: NextRequest) {
 
     // P034: libera as R vivas do pedido no ato do Recusar (não espera TTL 30d).
     // estornarReservaIndividual é idempotente por estorno_de.
-    const { data: reservasAbertas } = await supabase
+    const { data: reservasAbertas, error: rQueryErr } = await supabase
       .from("siso_movimentacoes")
       .select("id")
       .eq("tipo", "R")
       .eq("origem_tipo", "reserva_pedido")
       .eq("origem_id", String(pedidoId));
+    if (rQueryErr) {
+      logger.warn("aprovar", "falha buscando Rs para estorno no recusar (prosseguindo)", {
+        pedidoId, error: rQueryErr.message,
+      });
+    }
     for (const r of (reservasAbertas ?? []) as Array<{ id: string }>) {
       try {
         await estornarReservaIndividual({ reserva_id: r.id, motivo: "outro", usuario_id: operadorId });

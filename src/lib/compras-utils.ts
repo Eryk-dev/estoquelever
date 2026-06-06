@@ -164,12 +164,17 @@ export async function checkAndCancelPedidoIfAllTerminal(
 
   // P038: libera as R vivas do pedido cancelado no ato (não espera cron de expiração).
   // estornarReservaIndividual é idempotente por estorno_de → seguro chamar pra todas.
-  const { data: reservasAbertas } = await supabase
+  const { data: reservasAbertas, error: rQueryErr } = await supabase
     .from("siso_movimentacoes")
     .select("id")
     .eq("tipo", "R")
     .eq("origem_tipo", "reserva_pedido")
     .eq("origem_id", String(pedidoId));
+  if (rQueryErr) {
+    logger.warn(logSource, "falha buscando Rs para estorno no cancelamento (prosseguindo)", {
+      pedidoId, error: rQueryErr.message,
+    });
+  }
   let reservasLiberadas = 0;
   for (const r of (reservasAbertas ?? []) as Array<{ id: string }>) {
     try {

@@ -3370,3 +3370,24 @@ erros:
       - src/lib/wms/kits.ts
       - src/lib/wms/sync-tiny.ts
     tags: [kit, trigger, invariante, sync-tiny]
+
+  - id: wms-recebimento-nf-dobra-saldo
+    date: "2026-06-05"
+    source: wms.ledger / wms.movimentacoes.receber
+    category: database
+    message: "Reenvio do integrador / duplo-clique no recebimento dobrava saldo e custo médio"
+    cause: >
+      receberEstoque/compras-receber não deduplicavam por assinatura da NF; não havia
+      índice anti-duplicata pra nf_compra. compras/receber propaga só nota_fiscal_id e
+      /api/wms/receber propaga chave_acesso_nf — um índice só-chave seria inerte pro
+      caminho do integrador (compras/receber).
+    fix: >
+      DOIS índices parciais: uq_mov_recebimento_nf_chave (chave_acesso_nf, produto, galpão)
+      e uq_mov_recebimento_nf_id (nota_fiscal_id, produto, galpão), ambos WHERE origem
+      nf_compra e estorno_de IS NULL. inserirMovimentacao absorve 23505 de qualquer um
+      (branch por chave OU nota_fiscal_id) como idempotente. LIMITAÇÃO: receber-oc não
+      propaga NF (sem assinatura estável) — não é dedupado por NF nesta fase.
+    files:
+      - supabase/migrations/20260607_recebimento_nf_dedup.sql
+      - src/lib/wms/ledger.ts
+    tags: [recebimento, nf, dedup, unique, custo-medio, idempotencia]

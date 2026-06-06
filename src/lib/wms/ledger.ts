@@ -201,6 +201,39 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
     p_motivo_categoria: input.motivo_categoria ?? null,
   });
   if (error) {
+    // P099/P109: UNIQUE parcial uq_mov_recebimento_nf_chave / _id rejeitou a 2ª
+    // entrada da mesma NF de compra (reenvio do integrador / duplo-clique).
+    // Idempotente: recarrega e devolve a mov E que já lançou o saldo/custo desta NF.
+    // Branch por assinatura disponível: chave_acesso_nf (/api/wms/receber) OU
+    // nota_fiscal_id (compras/receber).
+    if (
+      (error as { code?: string }).code === "23505" &&
+      input.origem_tipo === "nf_compra" &&
+      (input.chave_acesso_nf || input.nota_fiscal_id)
+    ) {
+      let q = sb
+        .from("siso_movimentacoes")
+        .select("*")
+        .eq("origem_tipo", "nf_compra")
+        .eq("produto_id", tripla.produto_id)
+        .eq("galpao_id", tripla.galpao_id)
+        .is("estorno_de", null);
+      if (input.chave_acesso_nf) {
+        q = q.eq("chave_acesso_nf", input.chave_acesso_nf);
+      } else if (input.nota_fiscal_id) {
+        q = q.eq("nota_fiscal_id", input.nota_fiscal_id);
+      }
+      const { data: jaLancada } = await q.maybeSingle();
+      if (jaLancada) {
+        logger.warn("wms.ledger", "recebimento NF duplicado absorvido pelo UNIQUE (idempotente)", {
+          chave_acesso_nf: input.chave_acesso_nf ?? null,
+          nota_fiscal_id: input.nota_fiscal_id ?? null,
+          produto_id: tripla.produto_id,
+          mov_id: (jaLancada as { id: string }).id,
+        });
+        return jaLancada as unknown as Movimentacao;
+      }
+    }
     logger.error("wms.ledger", "falha ao inserir mov", { error, input });
     throw error;
   }

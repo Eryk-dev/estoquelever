@@ -3360,3 +3360,26 @@ erros:
       - src/app/api/wms/pedidos/[id]/estornar/route.ts
       - scripts/wms/cenarios/catalogo/85-cancelar-job-fila-estorno.ts
     tags: [estorno, fila, worker, double-release, status, P008]
+
+  - id: cancelamento-nao-libera-reserva-operador
+    date: "2026-06-05"
+    source: wms/pedidos/aprovar, wms/compras-utils, wms/compras/itens/cancelamento, wms/compras/pedidos/cancelar
+    category: business_logic
+    message: "Caminhos de cancelamento acionados pelo operador (Recusar pedido, cancelar item/pedido de compra) cancelavam o pedido sem liberar a reserva R viva — estoque ficava preso até TTL 30d ou cron 1h."
+    cause: >
+      Só os caminhos admin (/pedidos/[id]/estornar) e webhook (webhook/tiny) liberavam R.
+      O bloco 'rejeitado' de /pedidos/aprovar, checkAndCancelPedidoIfAllTerminal e
+      cancelamento/confirmar não chamavam estornarReservaIndividual/liberarReserva.
+    fix: >
+      'rejeitado' de aprovar e checkAndCancelPedidoIfAllTerminal e compras/pedidos/cancelar
+      passam a estornar cada R viva via estornarReservaIndividual (idempotente por estorno_de).
+      cancelamento/confirmar libera via liberarReserva (pedido-scoped) quando o pedido não foi
+      cancelado pela função (caso multi-item) — mesma limitação aceita em equivalente/confirmar.
+    files:
+      - src/app/api/wms/pedidos/aprovar/route.ts
+      - src/lib/compras-utils.ts
+      - src/app/api/wms/compras/itens/[itemId]/cancelamento/confirmar/route.ts
+      - src/app/api/wms/compras/pedidos/[pedidoId]/cancelar/route.ts
+      - scripts/wms/cenarios/catalogo/34-recusar-pedido-libera-r.ts
+      - scripts/wms/cenarios/catalogo/84-cancelar-item-libera-reserva.ts
+    tags: [cancelamento, reserva, liberar, compras, recusar, P034, P038, P039]

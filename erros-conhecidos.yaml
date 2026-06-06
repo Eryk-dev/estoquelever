@@ -3383,3 +3383,25 @@ erros:
       - scripts/wms/cenarios/catalogo/34-recusar-pedido-libera-r.ts
       - scripts/wms/cenarios/catalogo/84-cancelar-item-libera-reserva.ts
     tags: [cancelamento, reserva, liberar, compras, recusar, P034, P038, P039]
+
+  - id: cancelar-em-separacao-parcial-bloqueava-tudo
+    date: "2026-06-05"
+    source: wms/vendas-cancelamento, wms/separacao/cancelar
+    category: business_logic
+    message: "Cancelar pedido em separação parcial bloqueava 100% (venda manual: throw 'separação ativa') OU estornava tudo (marketplace: /separacao/cancelar) — não tratava pego×não-pego."
+    cause: >
+      cancelarVendaManual adotava a OPÇÃO 1 (bloquear) — contra a decisão D1 (OPÇÃO 2).
+      /separacao/cancelar sempre fazia voltar-etapa (estornava todas as S).
+    fix: >
+      classificarItensParaCancelamento (pura) separa pego (mov_saida_id || quantidade_pega>0)
+      de não-pego. cancelarVendaManual e /separacao/cancelar (modo cancelar_pedido:true) liberam
+      só a R dos não-pegos, preservam a S dos pegos (auditoria), marcam pedido cancelado e
+      retornam itens_para_devolver_manual. Estendido ao marketplace via /separacao/cancelar (D1).
+    files:
+      - src/lib/wms/cancelamento-parcial.ts
+      - src/lib/wms/vendas-cancelamento.ts
+      - src/app/api/wms/vendas/[id]/cancelar/route.ts
+      - src/app/api/wms/separacao/cancelar/route.ts
+      - scripts/wms/cenarios/catalogo/83-cancelar-pedido-em-separacao-parcial.ts
+      - scripts/wms/cenarios/catalogo/83b-cancelar-marketplace-parcial.ts
+    tags: [cancelamento, separacao, parcial, devolucao-manual, D1, P007]

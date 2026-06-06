@@ -739,6 +739,9 @@ export async function desfazerRecebimentoTransferencia(input: {
         .update({ mov_entrada_id: null, localizacao_destino_id: null })
         .eq("id", it.id);
     }
+    // Header fica em status='recebida' de propósito: não existe 'recebida_parcial',
+    // e este undo é parcial-por-design (reverte só os itens que cobrem). Um undo
+    // subsequente (sem force) completa via a RPC, que então flipa o header p/ 'em_transito'.
     return { movsEstornadas };
   }
 

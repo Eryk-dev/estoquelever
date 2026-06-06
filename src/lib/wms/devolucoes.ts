@@ -327,9 +327,11 @@ interface DevolucaoPendenteRow {
  * todas as movs geradas e volta status='aguardando_classificacao'.
  *
  * Lookup determinístico via FK `siso_movimentacoes.devolucao_id`:
- * `classificarDevolucao` popula essa coluna em cada `inserirMovimentacao`
- * desde fix-final-B T11. Busca direta por `devolucao_id = input.devolucao_id`
- * substitui o match por janela temporal (±1min) anterior.
+ * `classificarDevolucao` (pós-T4.2) chama a RPC `wms_classificar_devolucao`, que
+ * back-fila essa coluna nas movs criadas via `UPDATE ... SET devolucao_id = p_devolucao_id
+ * WHERE id = ANY(v_mov_ids)`. Resultado idêntico ao antigo populado por-mov: as movs
+ * carregam `devolucao_id`, então a busca direta por `devolucao_id = input.devolucao_id`
+ * funciona — substitui o match por janela temporal (±1min) anterior.
  *
  * Nota: devoluções classificadas antes deste commit não terão `devolucao_id`
  * nas movs (coluna era NULL), portanto `desclassificar` retornará 0 movs

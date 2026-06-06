@@ -6,6 +6,7 @@ import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { userCan } from "@/lib/permissions";
 import { registrarEventos } from "@/lib/historico-service";
 import { inserirMovimentacao } from "@/lib/wms/ledger";
+import { resolverCustoEntrada } from "@/lib/wms/custo-fallback";
 
 /**
  * POST /api/compras/receber
@@ -374,6 +375,11 @@ async function gravarMovEntradaCompra(args: {
     throw new Error(`produto ${sku} não encontrado em siso_produtos`);
   }
 
+  const custoResolvido = await resolverCustoEntrada({
+    produto_id: produtoId,
+    custo_informado: custo_unitario,
+  });
+
   // 2) Resolve galpão: separacao_galpao_id (preferido) ou preferencial
   //    de empresa_origem_id (geo-priority 0).
   let galpaoId: string | null = separacao_galpao_id ?? null;
@@ -445,7 +451,7 @@ async function gravarMovEntradaCompra(args: {
     empresa_compradora_id: empresa_origem_id ?? null,
     fornecedor_id: fornecedorId,
     nota_fiscal_id: nota_fiscal_id ?? null,
-    custo_unitario: custo_unitario > 0 ? custo_unitario : undefined,
+    custo_unitario: custoResolvido,
     motivo: `Recebimento OC — pedido ${pedido_id}`,
     usuario_id,
   });

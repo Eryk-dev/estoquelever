@@ -3408,3 +3408,22 @@ erros:
     files:
       - supabase/migrations/20260607_inserir_mov_custo_guards.sql
     tags: [custo-medio, estorno, guard, ledger, rpc]
+
+  - id: wms-recebimento-custo-zero-relatorio
+    date: "2026-06-05"
+    source: wms.compras.receber / wms.receber-oc
+    category: business_logic
+    message: "Entradas de compra sem custo gravavam custo 0 — valor R$0,00 no relatório"
+    cause: >
+      compras/receber defaultava custo pra 0 e receber-oc passava custo possivelmente
+      ausente; com o guard P108 ativo isso vira RAISE. Sem fallback, recebimento legítimo
+      sem custo informado quebrava.
+    fix: >
+      Helper resolverCustoEntrada: usa custo informado >0, senão custo médio histórico
+      (siso_custo_medio), senão rejeita pedindo custo (produto novo). Aplicado em
+      compras/receber e receber-oc.
+    files:
+      - src/lib/wms/custo-fallback.ts
+      - src/app/api/wms/compras/receber/route.ts
+      - src/lib/wms/receber-oc.ts
+    tags: [custo-medio, recebimento, compras, fallback, relatorio]

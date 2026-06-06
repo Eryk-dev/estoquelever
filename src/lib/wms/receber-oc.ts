@@ -5,6 +5,7 @@ import { registrarEvento } from "@/lib/historico-service";
 import { resolverLocRecebimento, criarPendencia } from "@/lib/wms/guarda";
 import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
 import { detectarCrossDock } from "@/lib/wms/crossdock-detector";
+import { resolverCustoEntrada } from "./custo-fallback";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
 
 export interface ReceberOCItemInput {
@@ -132,6 +133,10 @@ export async function receberItensViaOC(
     // Mov E em RECEBIMENTO + pendência (modelo idêntico ao /api/wms/receber)
     let movEntradaId: string;
     try {
+      const custoResolvido = await resolverCustoEntrada({
+        produto_id: produtoWmsId,
+        custo_informado: itemReq.custo_unitario,
+      });
       const movE = await inserirMovimentacao({
         tripla: {
           produto_id: produtoWmsId,
@@ -149,7 +154,7 @@ export async function receberItensViaOC(
           sku: item.sku,
           motivo_divergencia: itemReq.motivo_divergencia ?? null,
         },
-        custo_unitario: itemReq.custo_unitario,
+        custo_unitario: custoResolvido,
         fornecedor_id: fornecedorId,
         empresa_compradora_id: oc.empresa_id ?? null,
         motivo: itemReq.motivo_divergencia

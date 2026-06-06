@@ -3791,3 +3791,18 @@ erros:
       confirmar_manual=true pula (escape-hatch p/ loc sem etiqueta).
     files: [src/lib/wms/guarda.ts, src/app/api/wms/guarda/[id]/confirmar/route.ts]
     tags: [guarda, putaway, cross-check, gtin, P029]
+
+  - id: wms-over-receive-tudo-como-compra
+    date: "2026-06-05"
+    source: wms.receber-oc
+    category: business_logic
+    message: "recebimento com brinde grava o excedente como compra, sem rastreio de ganho de inventário"
+    cause: >
+      receberItensViaOC inseria a qty_real inteira como nf_compra; o excedente
+      sobre o solicitado não era distinguido contabilmente.
+    fix: >
+      Over-receive splita: mov nf_compra (até o solicitado restante, custo da
+      compra) + mov ajuste_manual motivo_categoria='achado' (excedente, sem
+      alimentar custo médio de compra), mesmo lote.
+    files: [src/lib/wms/receber-oc.ts]
+    tags: [recebimento, over-receive, ganho-inventario, achado, P033]

@@ -138,12 +138,24 @@ export async function receberItensViaOC(
     }
 
     // Mov E em RECEBIMENTO + pendência (modelo idêntico ao /api/wms/receber)
+    // [P033] Over-receive: splita em nf_compra (até o solicitado restante,
+    // custo da compra) + ajuste_manual 'achado' (excedente — NÃO alimenta o
+    // custo médio de compra). Ambas no mesmo lote (cobertas pelo rollback).
     let movEntradaId: string;
     try {
       const custoResolvido = await resolverCustoEntrada({
         produto_id: produtoWmsId,
         custo_informado: itemReq.custo_unitario,
       });
+      const qtySolicitada = Number(item.compra_quantidade_solicitada ?? 0);
+      const jaRecebidoItem = Number(item.compra_quantidade_recebida ?? 0);
+      const solicitadoRestante = Math.max(0, qtySolicitada - jaRecebidoItem);
+      const qtyCompra =
+        qtySolicitada > 0
+          ? Math.min(itemReq.qty_real, solicitadoRestante)
+          : itemReq.qty_real;
+      const qtyExcedente = itemReq.qty_real - qtyCompra;
+
       const movE = await inserirMovimentacao({
         tripla: {
           produto_id: produtoWmsId,
@@ -151,7 +163,8 @@ export async function receberItensViaOC(
           localizacao_id: locRecebId,
         },
         tipo: "E",
-        qty: itemReq.qty_real,
+        // qtyCompra=0 (solicitado já 100% recebido e chega mais) → lança tudo como nf_compra, sem achado.
+        qty: qtyCompra > 0 ? qtyCompra : itemReq.qty_real,
         origem_tipo: "nf_compra",
         origem_id: args.ocId,
         origem_detalhes: {
@@ -170,12 +183,38 @@ export async function receberItensViaOC(
         usuario_id: args.operadorId,
       });
       movEntradaId = movE.id;
+      movsCriadasLote.push(movEntradaId);
+
+      if (qtyCompra > 0 && qtyExcedente > 0) {
+        // excedente como ganho de inventário (achado) — SEM custo_unitario,
+        // pra não contaminar o custo médio de compra.
+        const movGanho = await inserirMovimentacao({
+          tripla: {
+            produto_id: produtoWmsId,
+            galpao_id: oc.galpao_id,
+            localizacao_id: locRecebId,
+          },
+          tipo: "E",
+          qty: qtyExcedente,
+          origem_tipo: "ajuste_manual",
+          origem_id: args.ocId,
+          origem_detalhes: {
+            ordem_compra_id: args.ocId,
+            item_id: item.id,
+            sku: item.sku,
+            contexto: "over_receive",
+          },
+          motivo_categoria: "achado",
+          motivo: `over-receive: ${qtyExcedente} acima do solicitado (brinde/conferência)`,
+          usuario_id: args.operadorId,
+        });
+        movsCriadasLote.push(movGanho.id);
+      }
     } catch (movErr) {
       throw new Error(
         `falha na mov E em recebimento OC do item ${item.id}: ${movErr instanceof Error ? movErr.message : String(movErr)}`,
       );
     }
-    movsCriadasLote.push(movEntradaId);
 
     // Decisão 7 (28/05): detecta demanda viva pra esse SKU+OC e splita
     // pendência em 2 quando há cross-docking. Pendência cross-dock vai

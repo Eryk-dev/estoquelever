@@ -1,5 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import type { Localizacao, TipoLocalizacao } from "./types";
+import { cleanupReservasExpiradasDaLoc } from "@/lib/wms/reservas";
 
 export const LOTE_MAX_TOTAL = 5000;
 const PREFIXO_REGEX = /^[A-Z0-9]{1,8}$/;
@@ -120,6 +121,11 @@ export async function atualizarLocalizacao(
 
 export async function desativarLocalizacao(id: string): Promise<void> {
   const sb = createServiceClient();
+
+  // [P115] auto-limpa reservas VENCIDAS dessa loc ANTES de checar (libera estoque órfão).
+  await cleanupReservasExpiradasDaLoc(id);
+
+  // saldo livre ainda presente (reserva válida ou saldo real) → bloqueia.
   const { data: estoque } = await sb
     .from("siso_estoque")
     .select("saldo")
@@ -127,7 +133,30 @@ export async function desativarLocalizacao(id: string): Promise<void> {
     .gt("saldo", 0)
     .limit(1);
   if (estoque && estoque.length > 0) {
-    throw new Error("não é possível desativar: localização tem saldo");
+    throw new Error("não é possível desativar: localização tem saldo — mova via substituir-e-excluir");
   }
+
+  // [P063] referências em-voo: destino/origem de transferência em_transito.
+  const { data: transfItens } = await sb
+    .from("siso_transferencia_galpao_itens")
+    .select("id, transferencia_id, siso_transferencias_galpao!inner(status)")
+    .or(`localizacao_destino_id.eq.${id},localizacao_origem_id.eq.${id}`)
+    .eq("siso_transferencias_galpao.status", "em_transito")
+    .limit(1);
+  if (transfItens && transfItens.length > 0) {
+    throw new Error("não é possível desativar: localização é perna de transferência em trânsito — conclua/cancele antes ou use substituir-e-excluir");
+  }
+
+  // [P063] pendência de guarda aberta apontando a loc.
+  const { data: pendGuarda } = await sb
+    .from("siso_wms_pendencias_guarda")
+    .select("id")
+    .or(`localizacao_destino_id.eq.${id},localizacao_origem_id.eq.${id}`)
+    .in("status", ["pendente", "em_guarda"])
+    .limit(1);
+  if (pendGuarda && pendGuarda.length > 0) {
+    throw new Error("não é possível desativar: localização tem pendência de guarda aberta — conclua antes ou use substituir-e-excluir");
+  }
+
   await sb.from("siso_localizacoes").update({ ativo: false }).eq("id", id);
 }

@@ -3391,3 +3391,20 @@ erros:
       - supabase/migrations/20260607_recebimento_nf_dedup.sql
       - src/lib/wms/ledger.ts
     tags: [recebimento, nf, dedup, unique, custo-medio, idempotencia]
+
+  - id: wms-custo-zero-e-estorno-inflado
+    date: "2026-06-05"
+    source: wms_inserir_movimentacao
+    category: business_logic
+    message: "Entrada custo 0 zerava custo médio; estorno de entrada deixava custo inflado"
+    cause: >
+      RPC só checava custo_unitario IS NOT NULL (0 passava e diluía o custo médio);
+      estorno vira mov S origem 'estorno' fora da whitelist, então o efeito da entrada
+      sobre o custo médio nunca era desfeito.
+    fix: >
+      RPC recriada com 2 guards: (P108) RAISE em E com qty>0 e custo 0 nas origens de
+      custo; (P110) estorno de entrada de custo restaura custo_medio ao custo_medio_anterior
+      da mov original.
+    files:
+      - supabase/migrations/20260607_inserir_mov_custo_guards.sql
+    tags: [custo-medio, estorno, guard, ledger, rpc]

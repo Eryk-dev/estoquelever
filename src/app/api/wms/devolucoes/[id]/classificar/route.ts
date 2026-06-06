@@ -64,10 +64,18 @@ export async function POST(
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
+    // [P054] concorrência/lock → 409 (não 400). "não encontrada" segue 4xx.
+    const msg = e instanceof Error ? e.message : String(e);
+    const isConflict =
+      !msg.includes("não encontrada") &&
+      (msg.includes("já classificada") ||
+        msg.includes("em classificação") ||
+        msg.includes("could not obtain lock") ||
+        msg.includes("deadlock"));
     return wmsErrorResponse({
       source: "wms.devolucoes.classificar",
       error: e,
-      status: 400,
+      status: isConflict ? 409 : 400,
       requestPath: `/api/wms/devolucoes/${id}/classificar`,
       requestMethod: "POST",
       metadata: { devolucao_id: id, classificacao: body.classificacao },

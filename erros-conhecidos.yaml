@@ -3681,3 +3681,23 @@ erros:
       wrapper fino.
     files: [supabase/migrations/20260605_rpc_contagem_inline_atomica.sql, src/lib/wms/contagem-inline.ts]
     tags: [inventario, contagem-inline, atomico, acerto, P057]
+
+  - id: wms-devolucao-classificar-nao-atomica
+    date: "2026-06-05"
+    source: wms.devolucoes.classificarDevolucao
+    category: business_logic
+    message: "classificação de devolução deixa movs órfãs / dupla-contagem em falha parcial e concorrência"
+    cause: >
+      classificarDevolucao emitia até 3 movs em txs separadas e só depois fazia
+      o UPDATE de status (TOCTOU). Falha no meio deixava saldo subido com status
+      pendente (re-run duplicava). Avariado sem quarentena fazia ajuste_manual
+      silencioso (item sumia).
+    fix: >
+      RPC wms_classificar_devolucao: FOR UPDATE na devolução (serializa) + N movs
+      + UPDATE status na mesma tx. Idempotente (status != aguardando → no-op).
+      Avariado sem quarentena: RAISE (bloqueia antes de mover). Back-fill de
+      devolucao_id nas movs via origem_id compartilhado (preserva o lookup
+      determinístico de desclassificarDevolucao, já que a assinatura nomeada de
+      wms_inserir_movimentacao não tem p_devolucao_id).
+    files: [supabase/migrations/20260605_rpc_classificar_devolucao.sql, src/lib/wms/devolucoes.ts, src/app/api/wms/devolucoes/[id]/classificar/route.ts]
+    tags: [devolucao, classificar, atomico, quarentena, concorrencia, P049, P050, P051, P054]

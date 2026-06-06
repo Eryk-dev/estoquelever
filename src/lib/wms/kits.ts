@@ -231,12 +231,6 @@ export async function upsertComponente(input: {
     throw new Error("Não é possível usar um kit como componente de outro kit");
   }
 
-  const { error: errKit } = await sb
-    .from("siso_produtos")
-    .update({ eh_kit: true })
-    .eq("id", input.kit_produto_id);
-  if (errKit) throw errKit;
-
   const { error } = await sb.from("siso_produto_kits").upsert(
     {
       kit_produto_id: input.kit_produto_id,
@@ -247,6 +241,14 @@ export async function upsertComponente(input: {
     { onConflict: "kit_produto_id,componente_produto_id" },
   );
   if (error) throw error;
+
+  // Marca como kit DEPOIS de existir ≥1 componente — o trigger
+  // wms_kit_exige_componente (P120) só permite eh_kit=true com composição.
+  const { error: errKit } = await sb
+    .from("siso_produtos")
+    .update({ eh_kit: true })
+    .eq("id", input.kit_produto_id);
+  if (errKit) throw errKit;
 }
 
 /** Remove um componente do kit. Se for o último, desmarca eh_kit. */

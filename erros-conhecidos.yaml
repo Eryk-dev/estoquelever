@@ -3405,6 +3405,15 @@ erros:
       RPC recriada com 2 guards: (P108) RAISE em E com qty>0 e custo 0 nas origens de
       custo; (P110) estorno de entrada de custo restaura custo_medio ao custo_medio_anterior
       da mov original.
+    limitacao: >
+      P110 é exato SÓ quando o estorno é o ÚLTIMO evento de custo do produto (caso comum:
+      receber e logo estornar). Se houver entradas de custo POSTERIORES à mov estornada,
+      reverter ao custo_medio_anterior dela descarta o efeito dessas entradas → custo_medio
+      derivado fica errado (ex.: base 10@5, E1 +10@15→cm 10, E2 +20@10→cm 10; estornar E1
+      seta cm=5, mas o correto seria ~8.33). Afeta APENAS siso_custo_medio (valor de
+      relatório), NUNCA saldo/reservado (ledger físico). Caminhos que disparam: estorno de
+      mov de custo antiga via /api/wms/ajuste/[id]/estornar e /api/wms/inventario/[id]/estornar.
+      Fix completo (futuro): recalcular custo_medio a partir do histórico sobrevivente.
     files:
       - supabase/migrations/20260607_inserir_mov_custo_guards.sql
     tags: [custo-medio, estorno, guard, ledger, rpc]

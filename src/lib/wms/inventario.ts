@@ -63,7 +63,13 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
     })
     .select("id")
     .single();
-  if (error) throw error;
+  if (error) {
+    // P055: UNIQUE parcial uq_inv_sessao_galpao_dia — 2ª sessão no mesmo dia.
+    if ((error as { code?: string }).code === "23505") {
+      throw new Error("Já existe sessão de inventário para este galpão hoje");
+    }
+    throw error;
+  }
   const sessaoId = (sessao as { id: string }).id;
 
   const rows = input.localizacoes.map((l) => ({

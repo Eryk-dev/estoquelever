@@ -79,10 +79,12 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ id }, { status: 201 });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const isDuplicada = /já existe sessão de inventário para este galpão hoje/i.test(msg);
     return wmsErrorResponse({
       source: "wms.inventario.criar",
       error: e,
-      status: 400,
+      status: isDuplicada ? 409 : 400,
       requestPath: "/api/wms/inventario",
       requestMethod: "POST",
       metadata: { tipo: body.tipo, galpao_id: body.galpao_id },

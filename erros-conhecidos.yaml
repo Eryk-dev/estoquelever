@@ -3757,3 +3757,21 @@ erros:
       pelo acumulador qty_estornada sob FOR UPDATE; full estorno segue single.
     files: [src/lib/wms/movimentacoes.ts, supabase/migrations/20260608_uq_mov_estorno_unico_exclui_parcial.sql]
     tags: [replenishment, reverter, estorno-parcial, residual, uq_mov_estorno_unico, P078, P106]
+
+  - id: wms-receber-oc-engole-falha
+    date: "2026-06-05"
+    source: wms.receber-oc
+    category: business_logic
+    message: "recebimento via OC retorna 200 mesmo com itens faltando (engole falha com continue)"
+    cause: >
+      receberItensViaOC usava logger+continue em falhas (mapeamento, mov E,
+      update). Item 2 falhava → item 1 ficava comitado sem tudo-ou-nada; a
+      operação parecia OK (HTTP 200) com itens faltando.
+    fix: >
+      Loop coleta movsCriadasLote; falhas viram throw; try externo faz rollback
+      all-items (estorna todas as movs do lote) e re-throw. continue só para
+      qty<=0 e concorrência (não-falhas). Como estornar a mov não desfaz o
+      UPDATE de compra_quantidade_recebida, o rollback também acumula
+      updatesRecebimentoLote e reverte qty/compra_status dos itens já tocados.
+    files: [src/lib/wms/receber-oc.ts]
+    tags: [recebimento, oc, all-or-nothing, rollback, P028]

@@ -80,17 +80,27 @@ export async function receberItensViaOC(
   }
 
   let itensRecebidos = 0;
+  // P028: tudo-ou-nada. Acumula as movs E criadas no lote; se QUALQUER item
+  // falhar, o catch externo estorna TODAS e re-lança (nada fica comitado).
+  const movsCriadasLote: string[] = [];
+  // P028: também acumula os incrementos de compra_quantidade_recebida pra
+  // reverter no rollback all-items (estornar a mov não desfaz esse UPDATE).
+  const updatesRecebimentoLote: Array<{
+    itemId: string;
+    qtyAnterior: number;
+    statusAnterior: string | null;
+  }> = [];
+  try {
   for (const itemReq of args.itens) {
     const { data: item } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, sku, produto_id, compra_quantidade_solicitada, compra_quantidade_recebida, ordem_compra_id",
+        "id, pedido_id, sku, produto_id, compra_quantidade_solicitada, compra_quantidade_recebida, compra_status, ordem_compra_id",
       )
       .eq("id", itemReq.item_id)
       .single();
     if (!item) {
-      logger.warn("receber-oc", "item não encontrado", { item_id: itemReq.item_id });
-      continue;
+      throw new Error(`item de OC não encontrado: ${itemReq.item_id}`);
     }
 
     if (itemReq.qty_real <= 0) {
@@ -122,12 +132,9 @@ export async function receberItensViaOC(
         String(item.produto_id),
       );
     } catch (mapErr) {
-      logger.warn("receber-oc", "falhou resolver produto WMS", {
-        item_id: item.id,
-        sku: item.sku,
-        err: mapErr instanceof Error ? mapErr.message : String(mapErr),
-      });
-      continue;
+      throw new Error(
+        `falha ao resolver produto WMS do item ${item.id} (sku ${item.sku}): ${mapErr instanceof Error ? mapErr.message : String(mapErr)}`,
+      );
     }
 
     // Mov E em RECEBIMENTO + pendência (modelo idêntico ao /api/wms/receber)
@@ -164,15 +171,11 @@ export async function receberItensViaOC(
       });
       movEntradaId = movE.id;
     } catch (movErr) {
-      logger.logError({
-        error: movErr,
-        source: "receber-oc",
-        message: "Falhou mov E em recebimento OC",
-        category: "business_logic",
-        metadata: { oc_id: args.ocId, item_id: item.id },
-      });
-      continue;
+      throw new Error(
+        `falha na mov E em recebimento OC do item ${item.id}: ${movErr instanceof Error ? movErr.message : String(movErr)}`,
+      );
     }
+    movsCriadasLote.push(movEntradaId);
 
     // Decisão 7 (28/05): detecta demanda viva pra esse SKU+OC e splita
     // pendência em 2 quando há cross-docking. Pendência cross-dock vai
@@ -233,21 +236,9 @@ export async function receberItensViaOC(
         pendsCriadasItem++;
       }
     } catch (pendErr) {
-      // Defense-in-depth: estorna mov se falhou pendência (mesmo padrão de receberEstoque)
-      try {
-        await estornarMovimentacao({
-          mov_id: movEntradaId,
-          usuario_id: args.operadorId,
-          motivo: `Estorno automático: criação de pendência falhou (${pendErr instanceof Error ? pendErr.message : String(pendErr)})`,
-        });
-      } catch {
-        logger.error(
-          "receber-oc",
-          "FALHA AO ESTORNAR mov após erro na pendência — mov órfã",
-          { movId: movEntradaId, ocId: args.ocId },
-        );
-      }
-      continue;
+      throw new Error(
+        `falha ao criar pendência de guarda do item ${item.id} (sku ${item.sku}): ${pendErr instanceof Error ? pendErr.message : String(pendErr)}`,
+      );
     }
 
     // Atualiza compra_quantidade_recebida (optimistic lock + flip compra_status)
@@ -267,20 +258,38 @@ export async function receberItensViaOC(
       .eq("compra_quantidade_recebida", jaRecebido) // optimistic lock
       .select("id");
     if (updRecebErr) {
-      logger.warn("receber-oc", "update de recebimento falhou; pulando item", {
-        item_id: item.id,
-        error: updRecebErr.message,
-      });
-      continue;
+      throw new Error(
+        `falha ao atualizar recebimento do item ${item.id}: ${updRecebErr.message}`,
+      );
     }
     // 0 linhas = outro recebimento concorrente já incrementou (a guarda .eq
-    // não casou). Pula pra não dobrar a contagem — o vencedor já contou.
+    // não casou). Estorna SÓ esta mov, tira do lote e segue — o vencedor já
+    // contou (concorrência não é falha do lote → não dispara rollback all-items).
     if (!updRows || updRows.length === 0) {
+      try {
+        await estornarMovimentacao({
+          mov_id: movEntradaId,
+          usuario_id: args.operadorId,
+          motivo: `Recebimento concorrente do item ${item.id}: estorno da mov duplicada`,
+        });
+      } catch (estErr) {
+        logger.error(
+          "receber-oc",
+          "FALHA ao estornar mov de item concorrente — mov órfã",
+          { movId: movEntradaId, itemId: item.id, ocId: args.ocId, err: String(estErr) },
+        );
+      }
+      movsCriadasLote.splice(movsCriadasLote.indexOf(movEntradaId), 1);
       logger.warn("receber-oc", "recebimento concorrente detectado; pulando item", {
         item_id: item.id,
       });
       continue;
     }
+    updatesRecebimentoLote.push({
+      itemId: String(item.id),
+      qtyAnterior: jaRecebido,
+      statusAnterior: (item.compra_status as string | null) ?? null,
+    });
     itensRecebidosIds.push(String(item.id));
 
     if (itemReq.motivo_divergencia) {
@@ -306,6 +315,44 @@ export async function receberItensViaOC(
     }).catch(() => {});
 
     itensRecebidos++;
+  }
+  } catch (loteErr) {
+    // P028: rollback all-items — estorna TODAS as movs E criadas no lote e
+    // re-lança. Item 1 não pode ficar comitado se item 2 falhou.
+    for (const movId of movsCriadasLote) {
+      try {
+        await estornarMovimentacao({
+          mov_id: movId,
+          usuario_id: args.operadorId,
+          motivo: `Rollback all-items recebimento OC ${args.ocId}: ${loteErr instanceof Error ? loteErr.message : String(loteErr)}`,
+        });
+      } catch (estErr) {
+        logger.error(
+          "receber-oc",
+          "FALHA ao estornar mov no rollback all-items — mov órfã",
+          { movId, ocId: args.ocId, err: String(estErr) },
+        );
+      }
+    }
+    // Reverte os incrementos de compra_quantidade_recebida/compra_status já
+    // aplicados (estornar a mov não desfaz esse UPDATE).
+    for (const upd of updatesRecebimentoLote) {
+      const { error: revErr } = await supabase
+        .from("siso_pedido_itens")
+        .update({
+          compra_quantidade_recebida: upd.qtyAnterior,
+          compra_status: upd.statusAnterior,
+        })
+        .eq("id", upd.itemId);
+      if (revErr) {
+        logger.error(
+          "receber-oc",
+          "FALHA ao reverter compra_quantidade_recebida no rollback all-items",
+          { itemId: upd.itemId, ocId: args.ocId, err: revErr.message },
+        );
+      }
+    }
+    throw loteErr;
   }
 
   // Verifica se OC fechou (todos itens com qty_recebida >= qty_solicitada)

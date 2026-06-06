@@ -54,10 +54,11 @@ export async function POST(request: NextRequest) {
   // pedido vira 'cancelado'. Não passa pelo fluxo de voltar-etapa abaixo.
   if (cancelarPedido) {
     try {
-      const { data: itensRaw } = await supabase
+      const { data: itensRaw, error: itensErr } = await supabase
         .from("siso_pedido_itens")
         .select("id, sku, mov_saida_id, quantidade_pega")
         .in("pedido_id", pedido_ids);
+      if (itensErr) throw new Error(`falha ao ler itens para cancelamento (D1): ${itensErr.message}`);
       const { pegos } = classificarItensParaCancelamento(
         (itensRaw ?? []).map((i) => ({
           id: String(i.id),
@@ -68,12 +69,17 @@ export async function POST(request: NextRequest) {
       );
       const itensParaDevolverManual = pegos.map((i) => ({ id: i.id, sku: i.sku }));
 
-      const { data: reservasAbertas } = await supabase
+      const { data: reservasAbertas, error: resQErr } = await supabase
         .from("siso_movimentacoes")
         .select("id")
         .eq("tipo", "R")
         .eq("origem_tipo", "reserva_pedido")
         .in("origem_id", pedido_ids);
+      if (resQErr) {
+        logger.warn("separacao-cancelar", "falha buscando Rs para liberação D1 (segue)", {
+          pedido_ids, error: resQErr.message,
+        });
+      }
       let reservasLiberadas = 0;
       for (const r of (reservasAbertas ?? []) as Array<{ id: string }>) {
         try {
@@ -86,10 +92,11 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      await supabase
+      const { error: pedUpdErr } = await supabase
         .from("siso_pedidos")
         .update({ status: "cancelado", status_separacao: null })
         .in("id", pedido_ids);
+      if (pedUpdErr) throw new Error(`falha ao cancelar pedidos (D1): ${pedUpdErr.message}`);
 
       await supabase
         .from("siso_fila_execucao")

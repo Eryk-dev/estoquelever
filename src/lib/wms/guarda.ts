@@ -414,6 +414,11 @@ export interface ConfirmarGuardaInput {
   qty: number;
   localizacao_destino_id: string;
   usuario_id: string;
+  /** [P029] GTIN/SKU bipado do produto pra cross-check com a pendência. */
+  gtin_bipado?: string | null;
+  sku_bipado?: string | null;
+  /** [P029] escape-hatch: pula o cross-check (loc/produto sem etiqueta). */
+  confirmar_manual?: boolean;
 }
 
 export interface ConfirmarGuardaResult {
@@ -446,11 +451,40 @@ export async function confirmarGuarda(
     throw new Error("qty deve ser > 0");
   }
 
+  const sb = createServiceClient();
+
+  // [P029] Cross-check produto↔pendência. Se o operador bipou GTIN/SKU e NÃO
+  // marcou confirmar_manual, valida contra o produto da pendência; rejeita se
+  // não bater. confirmar_manual=true = escape-hatch (loc sem etiqueta).
+  if (!input.confirmar_manual && (input.gtin_bipado || input.sku_bipado)) {
+    const { data: pend } = await sb
+      .from("siso_wms_pendencias_guarda")
+      .select("produto_id")
+      .eq("id", input.pendencia_id)
+      .maybeSingle();
+    if (!pend) throw new Error("pendência não encontrada");
+    const produtoPendencia = (pend as { produto_id: string }).produto_id;
+    const { data: prod } = await sb
+      .from("siso_produtos")
+      .select("sku, gtin")
+      .eq("id", produtoPendencia)
+      .maybeSingle();
+    const p = prod as { sku: string | null; gtin: string | null } | null;
+    const bateGtin =
+      input.gtin_bipado != null && p?.gtin != null && p.gtin === input.gtin_bipado;
+    const bateSku =
+      input.sku_bipado != null && p?.sku != null && p.sku === input.sku_bipado;
+    if (!bateGtin && !bateSku) {
+      throw new Error(
+        "produto bipado não bate com o produto da pendência (gtin/sku) — confira a etiqueta ou use confirmação manual",
+      );
+    }
+  }
+
   // P3 #5.3 + #5.8: tudo dentro de RPC plpgsql com FOR UPDATE no row da
   // pendência + replenishment atômico + update de status — na mesma
   // transação. Concorrentes esperam no lock; race entre leitura e UPDATE
   // não causa mais over-decremento.
-  const sb = createServiceClient();
   const { data, error } = await sb.rpc("wms_confirmar_guarda_atomico", {
     p_pendencia_id: input.pendencia_id,
     p_qty: input.qty,

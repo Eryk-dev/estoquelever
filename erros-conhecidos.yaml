@@ -3775,3 +3775,19 @@ erros:
       updatesRecebimentoLote e reverte qty/compra_status dos itens já tocados.
     files: [src/lib/wms/receber-oc.ts]
     tags: [recebimento, oc, all-or-nothing, rollback, P028]
+
+  - id: wms-guarda-sem-cross-check-produto
+    date: "2026-06-05"
+    source: wms.guarda.confirmarGuarda
+    category: business_logic
+    message: "guarda confirma loc sem validar que o produto físico corresponde à pendência"
+    cause: >
+      confirmarGuarda recebia só localizacao_destino_id; nenhum cross-check
+      produto↔loc. Loc errada → saldo registrado em lugar diferente do físico →
+      picking futuro busca na loc errada.
+    fix: >
+      ConfirmarGuardaInput aceita gtin_bipado/sku_bipado/confirmar_manual.
+      Backend valida o bipado contra o produto da pendência (400 se não bate);
+      confirmar_manual=true pula (escape-hatch p/ loc sem etiqueta).
+    files: [src/lib/wms/guarda.ts, src/app/api/wms/guarda/[id]/confirmar/route.ts]
+    tags: [guarda, putaway, cross-check, gtin, P029]

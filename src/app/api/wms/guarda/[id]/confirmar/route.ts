@@ -8,7 +8,7 @@ import { logger } from "@/lib/logger";
 /**
  * POST /api/wms/guarda/[id]/confirmar
  *
- * Body: { qty: number, localizacao_destino_id: string }
+ * Body: { qty, localizacao_destino_id, gtin_bipado?, sku_bipado?, confirmar_manual? }
  *
  * Faz a movimentação par S+E (replenishment_intra) RECEBIMENTO→loc destino.
  * Suporta guarda parcial: qty < qty_pendente deixa a pendência aberta.
@@ -34,12 +34,19 @@ export async function POST(
     );
   }
 
+  const gtinBipado = typeof body.gtin_bipado === "string" ? body.gtin_bipado : null;
+  const skuBipado = typeof body.sku_bipado === "string" ? body.sku_bipado : null;
+  const confirmarManual = body.confirmar_manual === true;
+
   try {
     const r = await confirmarGuarda({
       pendencia_id: id,
       qty,
       localizacao_destino_id: localizacaoDestinoId,
       usuario_id: auth.user.id,
+      gtin_bipado: gtinBipado,
+      sku_bipado: skuBipado,
+      confirmar_manual: confirmarManual,
     });
 
     // Decisão (28/05): se pendência era cross-dock + destino é PACKING,
@@ -103,7 +110,8 @@ export async function POST(
       msg.includes("localização destino") ||
       msg.includes("outro galpão") ||
       msg.includes("inativa") ||
-      msg.includes("qty deve ser");
+      msg.includes("qty deve ser") ||
+      msg.includes("produto bipado não bate");
     return wmsErrorResponse({
       source: "wms.guarda.confirmar",
       error: e,

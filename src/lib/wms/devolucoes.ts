@@ -224,6 +224,25 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
       break;
     }
     case "avariado": {
+      // [P051] Preflight: SEM quarentena no galpão, BLOQUEIA antes de tirar da
+      // prateleira. Remove o ajuste_manual silencioso que fazia o item sumir.
+      const { data: quarentena } = await sb
+        .from("siso_localizacoes")
+        .select("id")
+        .match({
+          galpao_id: input.galpao_id,
+          tipo: "quarentena",
+          ativo: true,
+        })
+        .order("codigo", { ascending: true }) // determinístico
+        .limit(1)
+        .maybeSingle();
+      const locDestinoQuarentena = (quarentena as { id: string } | null)?.id;
+      if (!locDestinoQuarentena) {
+        throw new Error(
+          `quarentena inexistente no galpão ${input.galpao_id} — crie uma localização tipo 'quarentena' antes de classificar avariado`,
+        );
+      }
       // Classe B — avariada do cliente. Entra na loc indicada, transfere
       // imediatamente pra quarentena (par S+E no físico).
       await inserirMovimentacao({
@@ -239,52 +258,25 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
         motivo: input.observacoes,
         devolucao_id: input.devolucao_id,
       });
-      const { data: quarentena } = await sb
-        .from("siso_localizacoes")
-        .select("id")
-        .match({
-          galpao_id: input.galpao_id,
-          tipo: "quarentena",
-          ativo: true,
-        })
-        .order("codigo", { ascending: true }) // determinístico
-        .limit(1)
-        .maybeSingle();
-      const locDestinoQuarentena = (quarentena as { id: string } | null)?.id;
-      if (locDestinoQuarentena) {
-        await inserirMovimentacao({
-          tripla,
-          tipo: "S",
-          qty: input.qty,
-          origem_tipo: "transferencia_localizacao",
-          origem_id: origemCompartilhado,
-          usuario_id: input.usuario_id,
-          motivo: `avaria → quarentena: ${input.observacoes ?? ""}`,
-          devolucao_id: input.devolucao_id,
-        });
-        await inserirMovimentacao({
-          tripla: { ...tripla, localizacao_id: locDestinoQuarentena },
-          tipo: "E",
-          qty: input.qty,
-          origem_tipo: "transferencia_localizacao",
-          origem_id: origemCompartilhado,
-          usuario_id: input.usuario_id,
-          devolucao_id: input.devolucao_id,
-        });
-      } else {
-        // Sem quarentena no galpão — ajuste manual pra remover saldo
-        // (entra avariado e some no mesmo evento — preserva trilha).
-        await inserirMovimentacao({
-          tripla,
-          tipo: "S",
-          qty: input.qty,
-          origem_tipo: "ajuste_manual",
-          origem_id: origemCompartilhado,
-          origem_detalhes: { motivo: "avaria_devolucao_sem_quarentena" },
-          usuario_id: input.usuario_id,
-          devolucao_id: input.devolucao_id,
-        });
-      }
+      await inserirMovimentacao({
+        tripla,
+        tipo: "S",
+        qty: input.qty,
+        origem_tipo: "transferencia_localizacao",
+        origem_id: origemCompartilhado,
+        usuario_id: input.usuario_id,
+        motivo: `avaria → quarentena: ${input.observacoes ?? ""}`,
+        devolucao_id: input.devolucao_id,
+      });
+      await inserirMovimentacao({
+        tripla: { ...tripla, localizacao_id: locDestinoQuarentena },
+        tipo: "E",
+        qty: input.qty,
+        origem_tipo: "transferencia_localizacao",
+        origem_id: origemCompartilhado,
+        usuario_id: input.usuario_id,
+        devolucao_id: input.devolucao_id,
+      });
       break;
     }
     case "garantia": {

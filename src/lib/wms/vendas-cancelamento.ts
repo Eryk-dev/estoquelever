@@ -14,9 +14,10 @@ import { classificarItensParaCancelamento } from "./cancelamento-parcial";
  *     marca pedido como 'cancelado'.
  *   - Venda em status='concluido' com movs de baixa_direta (modo baixa
  *     direta): estorna cada mov S, marca pedido como 'cancelado'.
- *   - Venda em separação ativa ('em_separacao', 'separado', 'embalado'):
- *     400 — operador precisa primeiro usar /separacao/voltar-etapa pra
- *     reverter os picks (preserva auditoria).
+ *   - Venda em separação parcial ('em_separacao', 'separado', 'embalado'):
+ *     libera as reservas R ainda abertas, preserva as movs S dos itens já
+ *     pegos (auditoria), marca pedido como 'cancelado' e retorna
+ *     itensParaDevolverManual (itens pegos → pendência de devolução manual).
  *   - Pedido já 'cancelado': retorna { movsEstornadas: 0, reservasLiberadas: 0 }
  *     (idempotente).
  *
@@ -62,14 +63,16 @@ export async function cancelarVendaManual(input: {
     return { movsEstornadas: 0, reservasLiberadas: 0, itensParaDevolverManual: [] };
   }
 
-  // D1 (P007): em separação parcial, libera SÓ o não-pego; o pego (mov_saida_id)
-  // NÃO é estornado (auditoria preservada) e vira pendência de devolução manual.
+  // D1 (P007): libera TODAS as R vivas do pedido. As R dos itens já pegos foram
+  // consumidas no pick (R→L+S), então estornarReservaIndividual é idempotente-no-op
+  // nelas; efetivamente só as R dos não-pegos são liberadas. A S dos pegos NÃO é
+  // estornada (auditoria preservada); pegos viram pendência de devolução manual.
   if (["em_separacao", "separado", "embalado"].includes(p.status_separacao ?? "")) {
     const { data: itensRaw } = await sb
       .from("siso_pedido_itens")
       .select("id, sku, mov_saida_id, quantidade_pega")
       .eq("pedido_id", input.pedido_id);
-    const { pegos, naoPegos } = classificarItensParaCancelamento(
+    const { pegos } = classificarItensParaCancelamento(
       (itensRaw ?? []).map((i) => ({
         id: String(i.id),
         sku: (i.sku as string) ?? null,
@@ -77,7 +80,6 @@ export async function cancelarVendaManual(input: {
         quantidade_pega: (i.quantidade_pega as number) ?? null,
       })),
     );
-    void naoPegos;
     itensParaDevolverManual = pegos.map((i) => ({ id: i.id, sku: i.sku }));
 
     const { data: reservasAbertas, error: rQErr } = await sb
@@ -102,7 +104,7 @@ export async function cancelarVendaManual(input: {
 
     const { error: updErr } = await sb
       .from("siso_pedidos")
-      .update({ status: "cancelado" })
+      .update({ status: "cancelado", status_separacao: null })
       .eq("id", input.pedido_id);
     if (updErr) throw new Error(`falha ao atualizar status: ${updErr.message}`);
 

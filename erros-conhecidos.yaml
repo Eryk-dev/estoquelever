@@ -3665,3 +3665,19 @@ erros:
       aceita divergencia_id no body.
     files: [src/lib/wms/inventario.ts, src/app/api/wms/inventario/[id]/estornar/route.ts]
     tags: [inventario, estorno, granular, P159]
+
+  - id: wms-contagem-inline-nao-atomica
+    date: "2026-06-05"
+    source: wms.contagem-inline
+    category: business_logic
+    message: "acerto de prateleira no pick desacopla saldo e contagem em caso de falha"
+    cause: >
+      registrarContagemInline fazia a mov de reconciliação e os inserts de
+      contagem/divergência em chamadas separadas (não-atômico v1 documentado).
+      Falha após a mov deixava ganho/perda sem registro de contagem.
+    fix: >
+      RPC plpgsql wms_contagem_inline_atomica envolve saldo + contagem +
+      divergência numa única transação BEGIN. registrarContagemInline vira
+      wrapper fino.
+    files: [supabase/migrations/20260605_rpc_contagem_inline_atomica.sql, src/lib/wms/contagem-inline.ts]
+    tags: [inventario, contagem-inline, atomico, acerto, P057]

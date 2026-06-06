@@ -1,6 +1,4 @@
-import { randomUUID } from "crypto";
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao } from "@/lib/wms/ledger";
 import { logger } from "@/lib/logger";
 
 const NOME_SESSAO_OPERACIONAL = "Contagens operacionais";
@@ -77,8 +75,10 @@ async function getOrCreateSessaoOperacional(
  * ultima_contagem_em. NÃO faz o pick (responsabilidade do caller).
  *
  * Schema é 3D: tabelas de inventário NÃO têm empresa_dona_id.
- * O divergencia_id da mov é um randomUUID por evento (satisfaz o índice
- * uniq_movs_inventario_divergencia sem colidir entre contagens repetidas).
+ *
+ * [P057] Tudo-ou-nada: a mov de reconciliação + os inserts de contagem/
+ * divergência rodam numa única transação via RPC wms_contagem_inline_atomica.
+ * Esta função vira um wrapper fino (resolve a sessão contínua + delega à RPC).
  */
 export async function registrarContagemInline(
   input: ContagemInlineInput,
@@ -86,113 +86,42 @@ export async function registrarContagemInline(
   const sb = createServiceClient();
   const sessaoId = await getOrCreateSessaoOperacional(sb, input.galpao_id, input.contada_por);
 
-  const { data: estoqueRow } = await sb
-    .from("siso_estoque")
-    .select("saldo")
-    .eq("produto_id", input.produto_id)
-    .eq("galpao_id", input.galpao_id)
-    .eq("localizacao_id", input.localizacao_id)
-    .maybeSingle();
-  const saldo = Number((estoqueRow as { saldo?: number } | null)?.saldo ?? 0);
-  const delta = input.qty_contada - saldo;
+  const { data, error } = await sb.rpc("wms_contagem_inline_atomica", {
+    p_produto_id: input.produto_id,
+    p_galpao_id: input.galpao_id,
+    p_localizacao_id: input.localizacao_id,
+    p_qty_contada: input.qty_contada,
+    p_contada_por: input.contada_por,
+    p_sessao_id: sessaoId,
+    p_sku: input.sku ?? null,
+    p_pedido_id: input.pedido_id ?? null,
+  });
+  if (error) throw new Error(`registrarContagemInline: ${error.message}`);
 
-  // ⚠ NÃO-ATÔMICO (limitação aceita v1): a mov de reconciliação e os inserts de
-  // contagem/divergência não estão numa transação única. Se um insert falhar
-  // após a mov, fica um ganho/perda sem registro de contagem; o caller retorna
-  // 500 e o operador re-tenta. No retry, como reconciliamos *para* qty_contada,
-  // o delta vira 0 (nenhum ganho duplicado — saldo não dobra); a linha de
-  // contagem (INSERT por evento, sem unique) pode duplicar, inflando levemente
-  // a contagem do operador na acuracidade. Aceitável pro volume atual; revisitar
-  // com uma RPC transacional se virar problema.
-  let movId: string | null = null;
-  if (delta !== 0) {
-    const mov = await inserirMovimentacao({
-      tripla: {
-        produto_id: input.produto_id,
-        galpao_id: input.galpao_id,
-        localizacao_id: input.localizacao_id,
-      },
-      tipo: delta > 0 ? "E" : "S",
-      qty: Math.abs(delta),
-      origem_tipo: delta > 0 ? "inventario_ganho" : "inventario_perda",
-      origem_id: sessaoId,
-      origem_detalhes: {
-        divergencia_id: randomUUID(),
-        contexto: "acerto_pick",
-        sku: input.sku,
-        pedido_id: input.pedido_id,
-      },
-      motivo: "Acerto de prateleira no pick",
-      usuario_id: input.contada_por,
-    });
-    movId = mov.id;
-  }
-
-  // loc como membro da sessão (metrica_localizacao lê daqui). UNIQUE(sessao,loc) existe.
-  await sb
-    .from("siso_inventario_localizacoes")
-    .upsert(
-      { sessao_id: sessaoId, localizacao_id: input.localizacao_id, status: "contada", motivo: "manual" },
-      { onConflict: "sessao_id,localizacao_id" },
-    );
-
-  // contagem oficial — sem unique disponível → INSERT por evento
-  const { data: contagem, error: cErr } = await sb
-    .from("siso_inventario_contagens")
-    .insert({
-      sessao_id: sessaoId,
-      localizacao_id: input.localizacao_id,
-      produto_id: input.produto_id,
-      qty_contada: input.qty_contada,
-      contada_por: input.contada_por,
-    })
-    .select("id")
-    .single();
-  if (cErr) throw new Error(`registrarContagemInline contagem: ${cErr.message}`);
-
-  // divergência aplicada — UNIQUE 3D (sessao, loc, produto)
-  const { data: div, error: dErr } = await sb
-    .from("siso_inventario_divergencias")
-    .upsert(
-      {
-        sessao_id: sessaoId,
-        localizacao_id: input.localizacao_id,
-        produto_id: input.produto_id,
-        saldo_sistema: saldo,
-        qty_contada_final: input.qty_contada,
-        status: "aplicada",
-        mov_aplicada_id: movId,
-        resolucao_por: input.contada_por,
-        resolucao_em: new Date().toISOString(),
-      },
-      { onConflict: "sessao_id,localizacao_id,produto_id" },
-    )
-    .select("id")
-    .single();
-  if (dErr) throw new Error(`registrarContagemInline divergencia: ${dErr.message}`);
-
-  // última contagem (explícito — não depende do trigger AFTER INSERT)
-  await sb
-    .from("siso_localizacoes")
-    .update({ ultima_contagem_em: new Date().toISOString() })
-    .eq("id", input.localizacao_id);
+  const r = data as {
+    contagem_id: string;
+    divergencia_id: string;
+    mov_reconciliacao_id: string | null;
+    saldo_anterior: number;
+    delta: number;
+  };
 
   logger.info("contagem-inline", "acerto de prateleira registrado", {
     sessao_id: sessaoId,
     produto_id: input.produto_id,
     loc_id: input.localizacao_id,
-    saldo_anterior: saldo,
+    saldo_anterior: r.saldo_anterior,
     contado: input.qty_contada,
-    delta,
-    mov_id: movId,
+    delta: r.delta,
+    mov_id: r.mov_reconciliacao_id,
   });
 
   return {
     sessao_id: sessaoId,
-    contagem_id: (contagem as { id: string }).id,
-    divergencia_id: (div as { id: string }).id,
-    mov_reconciliacao_id: movId,
-    saldo_anterior: saldo,
-    delta,
+    contagem_id: r.contagem_id,
+    divergencia_id: r.divergencia_id,
+    mov_reconciliacao_id: r.mov_reconciliacao_id,
+    saldo_anterior: Number(r.saldo_anterior),
+    delta: Number(r.delta),
   };
 }

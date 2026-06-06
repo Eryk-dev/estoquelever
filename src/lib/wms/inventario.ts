@@ -1,7 +1,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
 import type { TipoMov } from "./types";
-import { reconciliarTemporal } from "./inventario-reconciliacao";
+import { reconciliarTemporal, janelaInferiorReconciliacao } from "./inventario-reconciliacao";
 import { logger } from "@/lib/logger";
 
 export type TipoSessao = "cycle_count" | "completo";
@@ -829,7 +829,7 @@ export async function computarDivergencias(
   const minContado = contagens.length > 0
     ? contagens.map((c) => c.contado_em).sort()[0]
     : null;
-  const dataLimiteInferior = minContado ?? cutoff_em; // se sem contagens, query vazia
+  const dataLimiteInferior = janelaInferiorReconciliacao(minContado, cutoff_em); // [P059] início do dia; sem contagens → cutoff (query vazia)
   let movs: Array<{
     id: string;
     localizacao_id: string;

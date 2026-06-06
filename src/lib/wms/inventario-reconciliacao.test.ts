@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { reconciliarTemporal } from "./inventario-reconciliacao";
+import { reconciliarTemporal, janelaInferiorReconciliacao } from "./inventario-reconciliacao";
 
 const T0 = "2026-05-18T13:00:00.000Z";
 const T1 = "2026-05-18T13:05:00.000Z";
@@ -346,6 +346,53 @@ describe("reconciliarTemporal — múltiplas contagens da mesma quádrupla", () 
     });
     // qty agregada = 2+1+1 = 4. T_ref = T1 (max). Primeira mov após T1 é m1, saldo_anterior=4.
     // delta = 4 - 4 = 0 → []
+    expect(out).toEqual([]);
+  });
+});
+
+describe("janelaInferiorReconciliacao — [P059] lower-bound da janela = início do dia", () => {
+  it("min(contado_em) 13:05 → lower-bound 00:00:00 do MESMO dia (UTC), não 13:05", () => {
+    // RED: hoje a lógica inline usa min(contado_em) cru (13:05). Uma compra com
+    // criado_em 09:00 (mesmo dia, antes da contagem mas dentro do cutoff) escapa.
+    // A correção amplia o lower-bound pro date_trunc('day') do minContado.
+    const lb = janelaInferiorReconciliacao("2026-05-18T13:05:00.000Z", "2026-05-18T13:20:00.000Z");
+    expect(lb).toBe("2026-05-18T00:00:00.000Z");
+  });
+
+  it("sem contagens (minContado null) → cai pro cutoff (query vazia, comportamento atual)", () => {
+    const lb = janelaInferiorReconciliacao(null, "2026-05-18T13:20:00.000Z");
+    expect(lb).toBe("2026-05-18T13:20:00.000Z");
+  });
+});
+
+describe("reconciliarTemporal — [P059] compra DENTRO da janela ampliada não gera divergência (regressão)", () => {
+  it("compra (E) cujo saldo_anterior = qty contada → delta 0", () => {
+    // 13:05 conta 3; chega compra +5 (saldo 3→8) já capturada na janela; cutoff 13:20.
+    // saldo_esperado = saldo_anterior da compra = 3 = qty contada → delta 0.
+    const out = reconciliarTemporal({
+      sessao_id: "s",
+      cutoff_em: "2026-05-18T13:20:00.000Z",
+      contagens: [
+        { localizacao_id: LOC, produto_id: PROD, qty_contada: 3, contado_em: T1 },
+      ],
+      locs_visitadas: [{ localizacao_id: LOC, contagem_finalizada_em: T1 }],
+      saldos_atuais: [
+        { localizacao_id: LOC, produto_id: PROD, saldo: 8, custo_medio: 10 },
+      ],
+      movs: [
+        {
+          id: "compra1",
+          localizacao_id: LOC,
+          produto_id: PROD,
+          criado_em: T2, // 13:10 > T1 (contagem)
+          saldo_anterior: 3,
+          saldo_posterior: 8,
+          origem_tipo: "nf_compra",
+          origem_id: "oc:1",
+          estorno_de: null,
+        },
+      ],
+    });
     expect(out).toEqual([]);
   });
 });

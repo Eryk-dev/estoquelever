@@ -178,3 +178,22 @@ export function reconciliarTemporal(input: ReconciliarInput): DivergenciaCalcula
 
   return result;
 }
+
+/**
+ * [P059] Lower-bound da janela de movs da reconciliação de inventário.
+ *
+ * Amplia de min(contado_em) pro INÍCIO DO DIA (UTC date_trunc('day')) da contagem
+ * mais antiga, pra capturar compras que chegam após a contagem mas antes do
+ * cutoff — sem isso elas escapam da janela e geram divergência fantasma. A função
+ * pura reconciliarTemporal já filtra por t_ref POR TRIPLA, então a janela maior
+ * só alimenta candidatos; saldo_esperado segue no instante do bipe.
+ *
+ * Sem contagens (minContado=null) → cai pro cutoff (query vazia, comportamento atual).
+ */
+export function janelaInferiorReconciliacao(
+  minContado: string | null,
+  cutoff_em: string,
+): string {
+  if (!minContado) return cutoff_em;
+  return new Date(minContado.slice(0, 10) + "T00:00:00.000Z").toISOString();
+}

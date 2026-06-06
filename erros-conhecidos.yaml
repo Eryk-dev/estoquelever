@@ -3617,3 +3617,20 @@ erros:
       e lança erro se != 'em_andamento'. Rota mapeia o erro pra 409.
     files: [src/lib/wms/inventario.ts, src/app/api/wms/inventario/[id]/contagens/route.ts]
     tags: [inventario, guard, sessao, P058]
+  - id: wms-inventario-janela-divergencia-fantasma
+    date: "2026-06-05"
+    source: wms.inventario.computarDivergencias
+    category: business_logic
+    message: "divergência de inventário falsa quando compra chega entre contagem e cutoff"
+    cause: >
+      computarDivergencias buscava movs a partir de min(contado_em). Uma mov E
+      (compra) criada após a contagem mas com criado_em anterior a min(contado_em)
+      de outra tripla escapava da janela, e a reconciliação temporal não enxergava
+      o saldo_anterior real → divergência fantasma.
+    fix: >
+      dataLimiteInferior ampliado pro início do dia (UTC date_trunc('day')) de
+      min(contado_em) via helper puro janelaInferiorReconciliacao. A função pura
+      reconciliarTemporal já filtra por t_ref por tripla, então a janela maior só
+      alimenta candidatos.
+    files: [src/lib/wms/inventario.ts, src/lib/wms/inventario-reconciliacao.ts]
+    tags: [inventario, reconciliacao, divergencia, P059]

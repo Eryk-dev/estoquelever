@@ -3634,3 +3634,19 @@ erros:
       alimenta candidatos.
     files: [src/lib/wms/inventario.ts, src/lib/wms/inventario-reconciliacao.ts]
     tags: [inventario, reconciliacao, divergencia, P059]
+
+  - id: wms-inventario-estorno-sessao-parcial
+    date: "2026-06-05"
+    source: wms.inventario.estornarSessaoInventario
+    category: business_logic
+    message: "estorno de sessão de inventário deixa estado parcial se um item falha (saldo negativo)"
+    cause: >
+      estornarSessaoInventario estornava cada divergência numa tx RPC independente.
+      Se o N-ésimo estorno negativaria o saldo (alguém consumiu), os anteriores já
+      tinham commitado e o supervisor recebia 500 sem saber qual item caiu.
+    fix: >
+      RPC plpgsql wms_estornar_sessao_inventario: preflight de saldo de TODAS as
+      contra-movs antes de inserir qualquer uma; RAISE nomeando o produto que
+      negativaria → rollback total. Rota mapeia pra 409.
+    files: [supabase/migrations/20260605_rpc_estornar_sessao_inventario.sql, src/lib/wms/inventario.ts, src/app/api/wms/inventario/[id]/estornar/route.ts]
+    tags: [inventario, estorno, atomico, P056, P061]

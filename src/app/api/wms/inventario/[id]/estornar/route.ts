@@ -11,9 +11,9 @@ import { estornarSessaoInventario } from "@/lib/wms/inventario";
  * Admin-only. Reverte movs de uma sessão aplicada e recoloca divergências
  * em status='pendente'. Sessão volta pra 'revisao'.
  *
- * Idempotente: re-execução em sessão já estornada retorna 400
- * (status != 'aplicada'); re-execução durante estorno ignora movs
- * já estornadas via guard em estornarMovimentacao.
+ * Idempotente: re-execução em sessão já estornada (status != 'aplicada')
+ * é no-op — retorna 200 { ok:true, movsEstornadas:0 }; re-execução durante
+ * estorno ignora movs já estornadas via guard estorno_de na RPC.
  */
 export async function POST(
   req: NextRequest,
@@ -41,14 +41,15 @@ export async function POST(
     return NextResponse.json({ ok: true, ...r });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    const isConflict = msg.includes("deixaria saldo negativo");
     const isClient =
       msg.includes("não encontrada") ||
-      msg.includes("apenas 'aplicada'") ||
+      msg.includes("deixaria saldo negativo") ||
       msg.includes("motivo");
     return wmsErrorResponse({
       source: "wms.inventario.estornar",
       error: e,
-      status: isClient ? 400 : 500,
+      status: isConflict ? 409 : isClient ? 400 : 500,
       requestPath: `/api/wms/inventario/${id}/estornar`,
       requestMethod: "POST",
       metadata: { sessao_id: id },

@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
+import { inserirMovimentacao } from "./ledger";
 import type { TipoMov } from "./types";
 import { reconciliarTemporal, janelaInferiorReconciliacao } from "./inventario-reconciliacao";
 import { logger } from "@/lib/logger";
@@ -1187,19 +1187,16 @@ export async function ultimasContagensDoProduto(
 // ─────────────────────────────────────────────────────────────────────
 
 /**
- * Estorna uma sessão de inventário aplicada.
+ * Estorna uma sessão de inventário aplicada — tudo-ou-nada via RPC
+ * wms_estornar_sessao_inventario (P056/P061).
  *
- * Para cada divergência aplicada (status='aplicada' + mov_aplicada_id):
- *   1. Estorna a mov no ledger via estornarMovimentacao (cria contra-mov)
- *   2. Reseta divergencia.status='pendente' (volta pra fila do supervisor)
+ * A RPC faz preflight de saldo de TODAS as contra-movs antes de inserir
+ * qualquer uma: se um estorno deixaria saldo negativo (alguém consumiu),
+ * RAISE nomeando o produto → rollback total (nenhum estorno parcial). Só
+ * se todas passam: insere contra-movs (origem 'estorno'), reseta cada
+ * divergência pra 'pendente' e a sessão pra 'revisao' (aplicada_em=NULL).
  *
- * Não toca em contagens — preserva trilha histórica do que foi contado.
- * Sessão volta pra status='revisao' (supervisor decide se re-aplica ou
- * cancela). Idempotente: re-execução não duplica estornos (estornarMov
- * recusa double-estorno via "já foi estornada" / "já é um estorno").
- *
- * Falha gracefully se algum estorno bater em saldo negativo (ledger
- * coerência sobrepõe undo).
+ * Idempotente: sessão != 'aplicada' → no-op (movs_estornadas=0).
  */
 export async function estornarSessaoInventario(input: {
   sessao_id: string;
@@ -1210,60 +1207,13 @@ export async function estornarSessaoInventario(input: {
     throw new Error("motivo do estorno é obrigatório (≥3 caracteres)");
   }
   const sb = createServiceClient();
-  const { data: sessao } = await sb
-    .from("siso_inventario_sessoes")
-    .select("id, status")
-    .eq("id", input.sessao_id)
-    .maybeSingle();
-  if (!sessao) throw new Error("sessão não encontrada");
-  const status = (sessao as { status: string }).status;
-  if (status !== "aplicada") {
-    throw new Error(
-      `sessão em status ${status} — apenas 'aplicada' pode ser estornada`,
-    );
+  const { data, error } = await sb.rpc("wms_estornar_sessao_inventario", {
+    p_sessao: input.sessao_id,
+    p_usuario: input.usuario_id,
+    p_motivo: input.motivo,
+  });
+  if (error) {
+    throw new Error(error.message);
   }
-
-  const { data: divs } = await sb
-    .from("siso_inventario_divergencias")
-    .select("id, mov_aplicada_id, status")
-    .eq("sessao_id", input.sessao_id)
-    .eq("status", "aplicada");
-
-  let estornadas = 0;
-  for (const d of (divs ?? []) as Array<{
-    id: string;
-    mov_aplicada_id: string | null;
-    status: string;
-  }>) {
-    if (!d.mov_aplicada_id) continue;
-    try {
-      await estornarMovimentacao({
-        mov_id: d.mov_aplicada_id,
-        usuario_id: input.usuario_id,
-        motivo: `Estorno sessão inventário ${input.sessao_id}: ${input.motivo}`,
-      });
-      estornadas++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/já foi estornada/.test(msg) || /já é um estorno/.test(msg)) {
-        // Idempotência: outra request já estornou. Segue.
-        continue;
-      }
-      throw err;
-    }
-    await sb
-      .from("siso_inventario_divergencias")
-      .update({ status: "pendente", mov_aplicada_id: null })
-      .eq("id", d.id);
-  }
-
-  // UPDATE condicional — só transiciona se ainda está 'aplicada' (proteção
-  // contra re-execução paralela; idempotente).
-  await sb
-    .from("siso_inventario_sessoes")
-    .update({ status: "revisao", aplicada_em: null })
-    .eq("id", input.sessao_id)
-    .eq("status", "aplicada");
-
-  return { movsEstornadas: estornadas };
+  return { movsEstornadas: (data as { movs_estornadas: number }).movs_estornadas };
 }

@@ -3352,3 +3352,21 @@ erros:
       - src/lib/wms/inventario.ts
       - src/app/api/wms/inventario/route.ts
     tags: [inventario, sessao, unique, idempotencia, 409]
+
+  - id: wms-kit-sem-componente
+    date: "2026-06-05"
+    source: wms.kits
+    category: business_logic
+    message: "Kit com eh_kit=true e 0 componentes era roteado pra OC / não funcionava"
+    cause: >
+      Invariante "kit exige ≥1 componente" existia só no editor manual; sync-tiny
+      setava eh_kit=true por tipo=K sem composição; escrita direta também escapava.
+    fix: >
+      Trigger BEFORE wms_kit_exige_componente em siso_produtos rejeita flip eh_kit→true
+      sem composição. upsertComponente reordenado (componente antes de eh_kit).
+      sync-tiny só marca eh_kit com composição existente.
+    files:
+      - supabase/migrations/20260607_kit_exige_componente.sql
+      - src/lib/wms/kits.ts
+      - src/lib/wms/sync-tiny.ts
+    tags: [kit, trigger, invariante, sync-tiny]

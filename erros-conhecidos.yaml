@@ -3452,3 +3452,17 @@ erros:
     files:
       - src/app/api/wms/receber/route.ts
     tags: [recebimento, custo, validacao, 400, p104, p108]
+  - id: wms-fornecedores-prefixo-contagem
+    date: "2026-06-05"
+    source: wms.fornecedores.autoCriar
+    category: business_logic
+    message: "Duplo clique no auto-cadastro de fornecedores reportava contagem errada"
+    cause: >
+      autoCriarFornecedoresDosPrefixosSku usava check-then-insert (TOCTOU); a contagem
+      só incrementava no insert sem erro, então corridas produziam totais inconsistentes.
+    fix: >
+      Descobre o conjunto pré-existente por nome (.in) antes, upserta os novos com
+      ignoreDuplicates; criados/existentes derivados deterministicamente.
+    files:
+      - src/lib/wms/fornecedores.ts
+    tags: [fornecedores, upsert, contagem, idempotencia, toctou]

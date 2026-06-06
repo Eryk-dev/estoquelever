@@ -323,31 +323,34 @@ export async function autoCriarFornecedoresDosPrefixosSku(): Promise<{
       ],
     },
   ];
-  let criados = 0;
-  let existentes = 0;
-  for (const f of PADRAO) {
-    const { data: jaExiste } = await sb
-      .from("siso_fornecedores")
-      .select("id")
-      .eq("nome", f.nome)
-      .maybeSingle();
-    if (jaExiste) {
-      existentes++;
-      continue;
-    }
-    const prefixoPrincipal = f.prefixos[0] ?? null;
-    const observacoes =
-      f.prefixos.length > 1
-        ? `prefixos adicionais: ${f.prefixos.slice(1).join(", ")}`
-        : f.prefixos.length === 0
-          ? "ACA: SKU 6-dígitos numérico (sem prefixo simples)"
-          : null;
-    const { error } = await sb.from("siso_fornecedores").insert({
-      nome: f.nome,
-      prefixo_sku: prefixoPrincipal,
-      observacoes,
+  // P123: descobre o conjunto pré-existente por nome ANTES (determinístico),
+  // depois upserta tudo com ignoreDuplicates. Contagem não depende de corrida.
+  const nomes = PADRAO.map((f) => f.nome);
+  const { data: existentesRows } = await sb
+    .from("siso_fornecedores")
+    .select("nome")
+    .in("nome", nomes);
+  const jaExistem = new Set(
+    ((existentesRows ?? []) as Array<{ nome: string }>).map((r) => r.nome),
+  );
+
+  const novos = PADRAO.filter((f) => !jaExistem.has(f.nome));
+  if (novos.length > 0) {
+    const rows = novos.map((f) => {
+      const prefixoPrincipal = f.prefixos[0] ?? null;
+      const observacoes =
+        f.prefixos.length > 1
+          ? `prefixos adicionais: ${f.prefixos.slice(1).join(", ")}`
+          : f.prefixos.length === 0
+            ? "ACA: SKU 6-dígitos numérico (sem prefixo simples)"
+            : null;
+      return { nome: f.nome, prefixo_sku: prefixoPrincipal, observacoes };
     });
-    if (!error) criados++;
+    const { error } = await sb
+      .from("siso_fornecedores")
+      .upsert(rows, { onConflict: "nome", ignoreDuplicates: true });
+    if (error) throw error;
   }
-  return { criados, existentes };
+
+  return { criados: novos.length, existentes: jaExistem.size };
 }

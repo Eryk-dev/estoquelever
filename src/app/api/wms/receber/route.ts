@@ -55,9 +55,9 @@ export async function POST(req: NextRequest) {
     body.custo_unitario !== undefined && body.custo_unitario !== null
       ? Number(body.custo_unitario)
       : null;
-  if (custoBody !== null && (!Number.isFinite(custoBody) || custoBody < 0)) {
+  if (custoBody !== null && (!Number.isFinite(custoBody) || custoBody <= 0)) {
     return NextResponse.json(
-      { error: "custo_unitario inválido (deve ser numérico ≥ 0)" },
+      { error: "custo_unitario inválido (deve ser numérico > 0)" },
       { status: 400 },
     );
   }
@@ -79,9 +79,9 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (!Number.isFinite(custoItem) || custoItem < 0) {
+    if (!Number.isFinite(custoItem) || custoItem <= 0) {
       return NextResponse.json(
-        { error: `item ${i + 1}: custo_unitario inválido` },
+        { error: `item ${i + 1}: custo_unitario deve ser > 0` },
         { status: 400 },
       );
     }

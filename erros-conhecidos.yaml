@@ -3427,3 +3427,19 @@ erros:
       - src/app/api/wms/compras/receber/route.ts
       - src/lib/wms/receber-oc.ts
     tags: [custo-medio, recebimento, compras, fallback, relatorio]
+
+  - id: wms-receber-custo-zero-5xx
+    date: "2026-06-05"
+    source: wms.receber
+    category: validation
+    message: "/api/wms/receber aceitava custo 0; com guard P108 virava 500 mascarado"
+    cause: >
+      A validação de /api/wms/receber rejeitava custo < 0 mas aceitava 0. Com o guard
+      P108 (RPC RAISE em custo 0 com qty>0), o item chegava na RPC e o erro era mascarado
+      como internal_error (5xx) em vez de 400 acionável pro operador.
+    fix: >
+      Endurecer a validação do route pra rejeitar custo <= 0 com qty>0 (400 amigável
+      antes da RPC). Não aplica fallback — operador manual sempre informa custo.
+    files:
+      - src/app/api/wms/receber/route.ts
+    tags: [recebimento, custo, validacao, 400, p104, p108]

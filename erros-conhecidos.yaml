@@ -3718,3 +3718,21 @@ erros:
       reset header numa tx tudo-ou-nada).
     files: [supabase/migrations/20260605_rpc_desfazer_recebimento_transferencia.sql, src/lib/wms/transferencias.ts, src/app/api/wms/transferencias/[id]/desfazer-recebimento/route.ts]
     tags: [transferencia, desfazer, atomico, preflight, P065, P067]
+
+  - id: wms-estornar-parcial-mov-empresa-dona-morta
+    date: "2026-06-05"
+    source: wms_estornar_parcial_movimentacao
+    category: database
+    message: "wms_estornar_parcial_movimentacao lança 42703 (empresa_dona_id) em toda chamada desde o 3D"
+    cause: >
+      A RPC (20260518) chamava wms_inserir_movimentacao posicionalmente passando
+      v_original.empresa_dona_id (coluna dropada no 3D) e na ordem antiga; a
+      redefinição da assinatura em 20260520b (sem empresa_dona, retorna uuid)
+      deixou a RPC quebrada — 42703 em toda chamada. Quebrava estorno parcial e
+      separacao/desfazer-parcial em runtime.
+    fix: >
+      CREATE OR REPLACE: chamada por named params na assinatura atual (sem
+      empresa_dona_id), captura o uuid retornado e dá SELECT da linha pra manter
+      RETURNS siso_movimentacoes.
+    files: [supabase/migrations/20260605_fix_rpc_estornar_parcial_movimentacao.sql]
+    tags: [estorno-parcial, rpc, 3d, empresa_dona_id, P078]

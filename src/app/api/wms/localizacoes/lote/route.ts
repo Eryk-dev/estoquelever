@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { requireAuth } from "@/lib/wms/auth";
+import { userCan } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { gerarCodigosLote } from "@/lib/wms/localizacoes";
 import type { TipoLocalizacao } from "@/lib/wms/types";
@@ -40,6 +41,12 @@ function amostraDe(codigos: string[]): {
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
+  if (!userCan(auth.user, "localizacoes.editar")) {
+    return NextResponse.json(
+      { error: "requer permissão localizacoes.editar" },
+      { status: 403 },
+    );
+  }
 
   let body: LoteBody;
   try {

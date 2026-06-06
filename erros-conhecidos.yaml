@@ -3481,3 +3481,125 @@ erros:
     files:
       - supabase/migrations/20260607_fix_cobertura_3d.sql
     tags: [cobertura, materialized-view, 3d, regressao, dashboard]
+  - id: ajuste-lote-sem-guard-perm-backend
+    date: "2026-06-05"
+    source: wms/ajuste, wms/localizacoes/lote
+    category: auth
+    message: "Ajuste de estoque (/api/wms/ajuste) e import de prateleiras em lote (/api/wms/localizacoes/lote) eram protegidos só na tela — via curl qualquer user de armazém (ou qualquer logado) burlava."
+    cause: >
+      /ajuste usava requireWarehouseAccess (userCanAny sobre 11 perms amplas), aceitando
+      users sem operacoes.ajuste_manual mas com outra perm (ex.: inventario.executar).
+      /localizacoes/lote usava só requireAuth (qualquer logado). O frontend era o único
+      gate da permissão correta.
+    fix: >
+      Adicionado userCan(auth.user,'operacoes.ajuste_manual') em /ajuste e /ajuste/[id]/estornar
+      (403 quando falso); userCan(auth.user,'localizacoes.editar') em /localizacoes/lote.
+      NÃO mexido em /localizacoes/route.ts (criação única) — requireAuth ali é intencional.
+    files:
+      - src/app/api/wms/ajuste/route.ts
+      - src/app/api/wms/ajuste/[id]/estornar/route.ts
+      - src/app/api/wms/localizacoes/lote/route.ts
+      - scripts/wms/cenarios/auth/18-ajuste-permissao.ts
+      - scripts/wms/cenarios/auth/19-localizacoes-lote-permissao.ts
+    tags: [auth, permissao, ajuste, localizacoes, backend-guard, P069, P116]
+
+  - id: desativar-ultimo-admin-lockout
+    date: "2026-06-05"
+    source: wms/admin/usuarios
+    category: auth
+    message: "Desativar (ativo=false) o último admin ativo travava o sistema — ninguém mais acessava Configurações/usuários (lockout)."
+    cause: >
+      PUT /api/wms/admin/usuarios aplicava ativo direto sem guard. A proteção anti-lockout
+      existente só cobria REMOVER a role admin ([id]/roles), não DESATIVAR o usuário.
+    fix: >
+      Guard no PUT: quando rest.ativo===false e o alvo é admin (role codigo='admin'), checa
+      se existe OUTRO usuário ativo com role admin; se não, 409 "Sistema precisa de pelo
+      menos 1 admin ativo". Dispara só em ativo===false (não afeta updates de printnode/galpoes/cargos).
+    files:
+      - src/app/api/wms/admin/usuarios/route.ts
+      - scripts/wms/cenarios/auth/21-ultimo-admin-desativar.ts
+    tags: [auth, anti-lockout, admin, usuarios, P136]
+
+  - id: estornar-pedido-deixa-job-vivo
+    date: "2026-06-05"
+    source: wms/pedidos/estornar
+    category: business_logic
+    message: "Estornar pedido deixava o job lancar_estoque vivo na fila; worker re-processava (potencial double-release de estoque)."
+    cause: >
+      /pedidos/[id]/estornar setava status_separacao='cancelado' (não status) e nunca
+      tocava siso_fila_execucao. O guard do worker lê siso_pedidos.status — coluna
+      diferente — então o job não era pulado. Adicionalmente, status_separacao='cancelado'
+      violava o CHECK da coluna (não é valor permitido), então o update falhava silenciosamente.
+    fix: >
+      Estornar agora seta status='cancelado' (além de status_separacao=NULL — CHECK não
+      admite 'cancelado' nessa coluna) e UPDATE siso_fila_execucao SET status='cancelado'
+      WHERE pedido_id=... AND status IN ('pendente','executando','erro').
+    files:
+      - src/app/api/wms/pedidos/[id]/estornar/route.ts
+      - scripts/wms/cenarios/catalogo/85-cancelar-job-fila-estorno.ts
+    tags: [estorno, fila, worker, double-release, status, P008]
+
+  - id: cancelamento-nao-libera-reserva-operador
+    date: "2026-06-05"
+    source: wms/pedidos/aprovar, wms/compras-utils, wms/compras/itens/cancelamento, wms/compras/pedidos/cancelar
+    category: business_logic
+    message: "Caminhos de cancelamento acionados pelo operador (Recusar pedido, cancelar item/pedido de compra) cancelavam o pedido sem liberar a reserva R viva — estoque ficava preso até TTL 30d ou cron 1h."
+    cause: >
+      Só os caminhos admin (/pedidos/[id]/estornar) e webhook (webhook/tiny) liberavam R.
+      O bloco 'rejeitado' de /pedidos/aprovar, checkAndCancelPedidoIfAllTerminal e
+      cancelamento/confirmar não chamavam estornarReservaIndividual/liberarReserva.
+    fix: >
+      'rejeitado' de aprovar e checkAndCancelPedidoIfAllTerminal e compras/pedidos/cancelar
+      passam a estornar cada R viva via estornarReservaIndividual (idempotente por estorno_de).
+      cancelamento/confirmar libera via liberarReserva (pedido-scoped) quando o pedido não foi
+      cancelado pela função (caso multi-item) — mesma limitação aceita em equivalente/confirmar.
+    files:
+      - src/app/api/wms/pedidos/aprovar/route.ts
+      - src/lib/compras-utils.ts
+      - src/app/api/wms/compras/itens/[itemId]/cancelamento/confirmar/route.ts
+      - src/app/api/wms/compras/pedidos/[pedidoId]/cancelar/route.ts
+      - scripts/wms/cenarios/catalogo/34-recusar-pedido-libera-r.ts
+      - scripts/wms/cenarios/catalogo/84-cancelar-item-libera-reserva.ts
+    tags: [cancelamento, reserva, liberar, compras, recusar, P034, P038, P039]
+
+  - id: cancelar-em-separacao-parcial-bloqueava-tudo
+    date: "2026-06-05"
+    source: wms/vendas-cancelamento, wms/separacao/cancelar
+    category: business_logic
+    message: "Cancelar pedido em separação parcial bloqueava 100% (venda manual: throw 'separação ativa') OU estornava tudo (marketplace: /separacao/cancelar) — não tratava pego×não-pego."
+    cause: >
+      cancelarVendaManual adotava a OPÇÃO 1 (bloquear) — contra a decisão D1 (OPÇÃO 2).
+      /separacao/cancelar sempre fazia voltar-etapa (estornava todas as S).
+    fix: >
+      classificarItensParaCancelamento (pura) separa pego (mov_saida_id || quantidade_pega>0)
+      de não-pego. cancelarVendaManual e /separacao/cancelar (modo cancelar_pedido:true) liberam
+      só a R dos não-pegos, preservam a S dos pegos (auditoria), marcam pedido cancelado e
+      retornam itens_para_devolver_manual. Estendido ao marketplace via /separacao/cancelar (D1).
+    files:
+      - src/lib/wms/cancelamento-parcial.ts
+      - src/lib/wms/vendas-cancelamento.ts
+      - src/app/api/wms/vendas/[id]/cancelar/route.ts
+      - src/app/api/wms/separacao/cancelar/route.ts
+      - scripts/wms/cenarios/catalogo/83-cancelar-pedido-em-separacao-parcial.ts
+      - scripts/wms/cenarios/catalogo/83b-cancelar-marketplace-parcial.ts
+    tags: [cancelamento, separacao, parcial, devolucao-manual, D1, P007]
+  - id: webhook-reserva-parcial-e-dedup
+    date: "2026-06-05"
+    source: wms/webhook-processor, wms/reservas
+    category: business_logic
+    message: "Auto-aprovação no webhook engolia falha de reserva parcial (pedido seguia meio-aprovado) e reservarAtomico duplicava R em reprocessamento (reservado dobrado)."
+    cause: >
+      O loop de reserva em webhook-processor-wms.ts:597-604 só logava warn+continue e
+      enfileirava lancar_estoque mesmo com item não-reservado. reservarAtomico só chamava a
+      RPC (não idempotente) — 2 reprocessos rápidos criavam 2 R por (pedido,produto).
+    fix: >
+      criarReservasRotaAtomico: all-or-nothing — se qualquer item falha, estorna as criadas
+      (rollback) e RE-LANÇA (webhook vira 'erro', Tiny retenta); só enfileira se 100% reservado.
+      reservarAtomico passa a checar R viva por (pedido,produto,tripla) e retornar o id existente
+      (dedup idempotente, sem advisory lock) — torna o retry seguro.
+    files:
+      - src/lib/webhook-processor-wms.ts
+      - src/lib/wms/reservas.ts
+      - test/integration/webhook-reserva-all-or-nothing.integration.test.ts
+      - test/integration/reservas-idempotente.integration.test.ts
+    tags: [webhook, reserva, all-or-nothing, idempotencia, dedup, P085, P003]

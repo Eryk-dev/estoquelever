@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { userCan } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { estornarAjuste } from "@/lib/wms/movimentacoes";
 
@@ -21,6 +22,12 @@ export async function POST(
 ) {
   const auth = await requireWarehouseAccess(req);
   if (!auth.ok) return auth.response;
+  if (!userCan(auth.user, "operacoes.ajuste_manual")) {
+    return NextResponse.json(
+      { error: "requer permissão operacoes.ajuste_manual" },
+      { status: 403 },
+    );
+  }
   const { id } = await params;
   const body = await req.json().catch(() => null);
   const motivo = typeof body?.motivo === "string" ? body.motivo.trim() : "";

@@ -24,7 +24,7 @@ import { logger } from "./logger";
 import { registrarEvento } from "./historico-service";
 import { kickWorker } from "./execution-worker";
 import { getFornecedorBySku } from "./sku-fornecedor";
-import { reservarAtomico } from "./wms/reservas";
+import { reservarAtomico, estornarReservaIndividual } from "./wms/reservas";
 import { rotearPedidoDoBanco } from "./wms/roteamento";
 import type { RotaResult } from "./wms/roteamento";
 import type { TinyPedidoDetalhe } from "./tiny-api";
@@ -370,6 +370,46 @@ function formatDate(dateStr: string): string {
   return dateStr;
 }
 
+/**
+ * P085: cria as reservas R da rota de forma all-or-nothing. Se qualquer item
+ * falhar, estorna as já criadas (rollback) e RE-LANÇA o erro pra o caller
+ * sinalizar 'erro' no webhook (Tiny retenta). reservarAtomico é idempotente
+ * por (pedido,produto,tripla) (P003), então o retry não duplica a R do item
+ * que já tinha dado certo.
+ */
+export async function criarReservasRotaAtomico(args: {
+  pedidoId: string;
+  rotas: Array<{ produto_id: string; galpao_id: string; localizacao_id: string; qty: number }>;
+}): Promise<{ reservasCriadas: number }> {
+  const { pedidoId, rotas } = args;
+  const criadas: string[] = [];
+  for (const r of rotas) {
+    try {
+      const id = await reservarAtomico({
+        tripla: { produto_id: r.produto_id, galpao_id: r.galpao_id, localizacao_id: r.localizacao_id },
+        qty: r.qty,
+        pedido_id: pedidoId,
+        ttl_horas: 24 * 30,
+      });
+      criadas.push(id);
+    } catch (err) {
+      for (const rid of criadas) {
+        try {
+          await estornarReservaIndividual({ reserva_id: rid, motivo: "rollback_aprovacao" });
+        } catch (e) {
+          logger.warn("processor.wms", "falha no rollback de R (segue)", {
+            pedidoId, reserva_id: rid, error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+      throw new Error(
+        `reserva_falhou: item produto=${r.produto_id} qty=${r.qty} — ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return { reservasCriadas: criadas.length };
+}
+
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<{
@@ -579,30 +619,19 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   //    siso_pedido_item_estoques. A tabela foi dropada — todo consumidor lê
   //    estoque VIVO de siso_estoque / da R viva do ledger. Reservas abaixo.
 
-  // 8. Criar reservas (apenas pra propria/transferencia — OC não reserva)
+  // 8. Criar reservas all-or-nothing (apenas propria/transferencia — OC não reserva).
+  //    P085: se qualquer item falhar, throw → webhook vira 'erro' (Tiny retenta);
+  //    NÃO enfileira lancar_estoque com pedido meio-aprovado.
   if (rota.decisao === "propria" || rota.decisao === "transferencia") {
-    for (const r of rota.rotas) {
-      try {
-        // rotearPedidoDoBanco já retorna localizacao_id no RotaItem.
-        await reservarAtomico({
-          tripla: {
-            produto_id: r.produto_id,
-            galpao_id: r.galpao_id,
-            localizacao_id: r.localizacao_id,
-          },
-          qty: r.qty,
-          pedido_id: pedido.id,
-          ttl_horas: 24 * 30, // 30 dias (vs default 48h da reserva de inventário)
-        });
-      } catch (err) {
-        logger.warn("processor.wms", "falha ao reservar item — pedido salvo mesmo assim", {
-          pedidoId: pedido.id,
-          produtoId: r.produto_id,
-          qty: r.qty,
-          err: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    await criarReservasRotaAtomico({
+      pedidoId: pedido.id,
+      rotas: rota.rotas.map((r) => ({
+        produto_id: r.produto_id,
+        galpao_id: r.galpao_id,
+        localizacao_id: r.localizacao_id,
+        qty: r.qty,
+      })),
+    });
   }
 
   // 9. Eventos de histórico + fila

@@ -15,8 +15,9 @@ import { cancelarVendaManual } from "@/lib/wms/vendas-cancelamento";
  *     reservas R via liberarReserva (idempotente — se já houver L, skip).
  *   - status='concluido' com movs origem_tipo='venda_manual': estorna cada
  *     mov S (idempotência por estorno_de — re-cancelamento retorna 0/0).
- *   - status_separacao ∈ {em_separacao, separado, embalado}: 400 — operador
- *     precisa primeiro voltar etapa pra preservar auditoria dos picks.
+ *   - status_separacao ∈ {em_separacao, separado, embalado}: libera R abertas,
+ *     preserva movs S dos pegos (auditoria), marca cancelado, retorna
+ *     itens_para_devolver_manual (pegos → devolução manual).
  *   - status='cancelado': retorna 200 com 0/0 (idempotente).
  */
 export async function POST(
@@ -42,12 +43,16 @@ export async function POST(
       usuario_id: auth.user.id,
       motivo,
     });
-    return NextResponse.json({ ok: true, ...r });
+    return NextResponse.json({
+      ok: true,
+      movs_estornadas: r.movsEstornadas,
+      reservas_liberadas: r.reservasLiberadas,
+      itens_para_devolver_manual: r.itensParaDevolverManual,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const isClient =
       msg.includes("não encontrado") ||
-      msg.includes("separação ativa") ||
       msg.includes("motivo");
     return wmsErrorResponse({
       source: "wms.vendas.cancelar",

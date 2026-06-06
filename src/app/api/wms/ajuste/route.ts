@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
+import { userCan } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { ajustarEstoque, type MotivoCategoria } from "@/lib/wms/movimentacoes";
 
@@ -26,6 +27,12 @@ const CATEGORIAS_VALIDAS = [
 export async function POST(req: NextRequest) {
   const auth = await requireWarehouseAccess(req);
   if (!auth.ok) return auth.response;
+  if (!userCan(auth.user, "operacoes.ajuste_manual")) {
+    return NextResponse.json(
+      { error: "requer permissão operacoes.ajuste_manual" },
+      { status: 403 },
+    );
+  }
 
   const body = await req.json();
   const tripla = body.tripla;

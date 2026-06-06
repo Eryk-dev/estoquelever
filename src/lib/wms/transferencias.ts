@@ -651,7 +651,7 @@ export async function desfazerRecebimentoTransferencia(input: {
   // 1) Fetch header
   const { data: transf, error: errHeader } = await sb
     .from("siso_transferencias_galpao")
-    .select("id, status, galpao_destino_id")
+    .select("id, status")
     .eq("id", input.transferencia_id)
     .maybeSingle();
   if (errHeader) throw errHeader;
@@ -659,7 +659,6 @@ export async function desfazerRecebimentoTransferencia(input: {
   const t = transf as {
     id: string;
     status: StatusTransferencia;
-    galpao_destino_id: string;
   };
 
   // 2) Status check — só recebida (ou recebida_parcial se vier no futuro)
@@ -712,44 +711,43 @@ export async function desfazerRecebimentoTransferencia(input: {
     throw err;
   }
 
+  // [P067] Estorno + reset itens + reset header numa única tx atômica.
   const bloqueadosIds = new Set(bloqueados.map((b) => b.item_id));
-  let movsEstornadas = 0;
-  for (const it of itensTip) {
-    if (!it.mov_entrada_id) continue;
-    if (input.force && bloqueadosIds.has(it.id)) continue; // pula os que não cobrem
-    try {
-      await estornarMovimentacao({
-        mov_id: it.mov_entrada_id,
-        usuario_id: input.usuario_id,
-        motivo: `Desfaz recebimento de transferência ${input.transferencia_id}: ${input.motivo}`,
-      });
-      movsEstornadas++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Idempotência: ignora se já foi estornada
-      if (/já foi estornada|já é um estorno/.test(msg)) continue;
-      throw err;
+  if (input.force && bloqueadosIds.size > 0) {
+    // force com bloqueados: parcial intencional — desfaz só o que cobre. Mantém
+    // loop TS por-item (skip bloqueados) + reset SÓ dos não-bloqueados.
+    let movsEstornadas = 0;
+    for (const it of itensTip) {
+      if (!it.mov_entrada_id || bloqueadosIds.has(it.id)) continue;
+      try {
+        await estornarMovimentacao({
+          mov_id: it.mov_entrada_id,
+          usuario_id: input.usuario_id,
+          motivo: `Desfaz recebimento de transferência ${input.transferencia_id}: ${input.motivo}`,
+        });
+        movsEstornadas++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/já foi estornada|já é um estorno/.test(msg)) continue;
+        throw err;
+      }
     }
+    for (const it of itensTip) {
+      if (bloqueadosIds.has(it.id)) continue;
+      await sb
+        .from("siso_transferencia_galpao_itens")
+        .update({ mov_entrada_id: null, localizacao_destino_id: null })
+        .eq("id", it.id);
+    }
+    return { movsEstornadas };
   }
 
-  // 4) Reseta itens: mov_entrada_id=null, localizacao_destino_id=null
-  await sb
-    .from("siso_transferencia_galpao_itens")
-    .update({
-      mov_entrada_id: null,
-      localizacao_destino_id: null,
-    })
-    .eq("transferencia_id", input.transferencia_id);
-
-  // 5) Volta header pra em_transito
-  await sb
-    .from("siso_transferencias_galpao")
-    .update({
-      status: "em_transito",
-      recebida_em: null,
-      recebida_por: null,
-    })
-    .eq("id", input.transferencia_id);
-
-  return { movsEstornadas };
+  // Caminho normal (sem bloqueados ou sem force): RPC atômica faz tudo numa tx.
+  const { data, error } = await sb.rpc("wms_desfazer_recebimento_transferencia", {
+    p_transferencia_id: input.transferencia_id,
+    p_usuario_id: input.usuario_id,
+    p_motivo: input.motivo,
+  });
+  if (error) throw new Error(error.message);
+  return { movsEstornadas: (data as { movs_estornadas: number }).movs_estornadas };
 }

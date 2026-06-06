@@ -3701,3 +3701,20 @@ erros:
       wms_inserir_movimentacao não tem p_devolucao_id).
     files: [supabase/migrations/20260605_rpc_classificar_devolucao.sql, src/lib/wms/devolucoes.ts, src/app/api/wms/devolucoes/[id]/classificar/route.ts]
     tags: [devolucao, classificar, atomico, quarentena, concorrencia, P049, P050, P051, P054]
+
+  - id: wms-desfazer-recebimento-transf-nao-atomico
+    date: "2026-06-05"
+    source: wms.transferencias.desfazerRecebimentoTransferencia
+    category: business_logic
+    message: "undo de recebimento de transferência deixa header 'recebida' com estoque já devolvido"
+    cause: >
+      desfazerRecebimentoTransferencia estornava as legs E, depois fazia UPDATE
+      separado de itens e header (3 statements sem tx). Falha no reset deixava
+      estoque devolvido com header/itens ainda 'recebida'. E o undo falhava com
+      erro cru sem dizer quanto dá pra devolver.
+    fix: >
+      Preflight 'desfazível X de Y' (409, sem mutar; force opcional) + RPC
+      wms_desfazer_recebimento_transferencia (estorno legs E + reset itens +
+      reset header numa tx tudo-ou-nada).
+    files: [supabase/migrations/20260605_rpc_desfazer_recebimento_transferencia.sql, src/lib/wms/transferencias.ts, src/app/api/wms/transferencias/[id]/desfazer-recebimento/route.ts]
+    tags: [transferencia, desfazer, atomico, preflight, P065, P067]

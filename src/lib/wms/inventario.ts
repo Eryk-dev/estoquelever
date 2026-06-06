@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao } from "./ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
 import type { TipoMov } from "./types";
 import { reconciliarTemporal, janelaInferiorReconciliacao } from "./inventario-reconciliacao";
 import { logger } from "@/lib/logger";
@@ -1216,4 +1216,53 @@ export async function estornarSessaoInventario(input: {
     throw new Error(error.message);
   }
   return { movsEstornadas: (data as { movs_estornadas: number }).movs_estornadas };
+}
+
+/**
+ * [P159] Estorna UMA divergência aplicada (não a sessão inteira). Reseta a
+ * divergência alvo pra 'pendente' e não toca nas demais. Reusa o guard de
+ * double-estorno de estornarMovimentacao. Não força a sessão a recontagem das
+ * que continuam corretas; se ainda restarem 'aplicada', a sessão segue 'aplicada'.
+ */
+export async function estornarDivergenciaInventario(input: {
+  divergencia_id: string;
+  usuario_id: string;
+  motivo: string;
+}): Promise<{ movEstornada: boolean }> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo do estorno é obrigatório (≥3 caracteres)");
+  }
+  const sb = createServiceClient();
+  const { data: div } = await sb
+    .from("siso_inventario_divergencias")
+    .select("id, sessao_id, mov_aplicada_id, status")
+    .eq("id", input.divergencia_id)
+    .maybeSingle();
+  if (!div) throw new Error("divergência não encontrada");
+  const d = div as { id: string; sessao_id: string; mov_aplicada_id: string | null; status: string };
+  if (d.status !== "aplicada") {
+    throw new Error(`divergência em status ${d.status} — apenas 'aplicada' pode ser estornada`);
+  }
+  let estornada = false;
+  if (d.mov_aplicada_id) {
+    try {
+      await estornarMovimentacao({
+        mov_id: d.mov_aplicada_id,
+        usuario_id: input.usuario_id,
+        motivo: `Estorno divergência ${d.id}: ${input.motivo}`,
+      });
+      estornada = true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/já foi estornada|já é um estorno/.test(msg)) throw err;
+    }
+  }
+  const { error: updErr } = await sb
+    .from("siso_inventario_divergencias")
+    .update({ status: "pendente", mov_aplicada_id: null })
+    .eq("id", d.id);
+  if (updErr) {
+    throw new Error(`falha ao resetar divergência ${d.id}: ${updErr.message}`);
+  }
+  return { movEstornada: estornada };
 }

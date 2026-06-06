@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
-import { estornarSessaoInventario } from "@/lib/wms/inventario";
+import { estornarSessaoInventario, estornarDivergenciaInventario } from "@/lib/wms/inventario";
 
 /**
  * POST /api/wms/inventario/[id]/estornar
@@ -32,7 +32,18 @@ export async function POST(
     );
   }
 
+  const divergenciaId =
+    typeof body?.divergencia_id === "string" ? body.divergencia_id : null;
+
   try {
+    if (divergenciaId) {
+      const r = await estornarDivergenciaInventario({
+        divergencia_id: divergenciaId,
+        usuario_id: auth.user.id,
+        motivo,
+      });
+      return NextResponse.json({ ok: true, individual: true, ...r });
+    }
     const r = await estornarSessaoInventario({
       sessao_id: id,
       usuario_id: auth.user.id,
@@ -44,6 +55,7 @@ export async function POST(
     const isConflict = msg.includes("deixaria saldo negativo");
     const isClient =
       msg.includes("não encontrada") ||
+      msg.includes("apenas 'aplicada'") ||
       msg.includes("deixaria saldo negativo") ||
       msg.includes("motivo");
     return wmsErrorResponse({

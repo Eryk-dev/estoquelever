@@ -3650,3 +3650,18 @@ erros:
       negativaria → rollback total. Rota mapeia pra 409.
     files: [supabase/migrations/20260605_rpc_estornar_sessao_inventario.sql, src/lib/wms/inventario.ts, src/app/api/wms/inventario/[id]/estornar/route.ts]
     tags: [inventario, estorno, atomico, P056, P061]
+
+  - id: wms-inventario-estorno-so-sessao-inteira
+    date: "2026-06-05"
+    source: wms.inventario.estornar
+    category: business_logic
+    message: "estorno de inventário só desfaz a sessão inteira, forçando recontagem das corretas"
+    cause: >
+      Só existia estornarSessaoInventario (lote por sessão). Para corrigir 1
+      prateleira errada o supervisor jogava fora as N contagens certas.
+    fix: >
+      Nova estornarDivergenciaInventario({divergencia_id}) estorna 1 mov,
+      reseta só aquela divergência pra 'pendente', não mexe nas demais. Rota
+      aceita divergencia_id no body.
+    files: [src/lib/wms/inventario.ts, src/app/api/wms/inventario/[id]/estornar/route.ts]
+    tags: [inventario, estorno, granular, P159]

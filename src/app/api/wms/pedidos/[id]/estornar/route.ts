@@ -88,10 +88,22 @@ export async function POST(
       estornadas.push(m.id);
     }
 
+    // P008: seta status='cancelado' (coluna que o worker-guard lê) e limpa
+    // status_separacao (CHECK não admite 'cancelado'; NULL é o estado correto
+    // pra um pedido cuja separação nunca chegou a acontecer).
     await sb
       .from("siso_pedidos")
-      .update({ status_separacao: "cancelado" })
+      .update({ status: "cancelado", status_separacao: null })
       .eq("id", pedidoId);
+
+    // P008: cancela o job lancar_estoque enfileirado pra que o worker não
+    // re-processe (double-release). O worker-wms já é idempotente por estorno_de,
+    // mas a nota é vinculante: desativar o job explicitamente.
+    await sb
+      .from("siso_fila_execucao")
+      .update({ status: "cancelado", atualizado_em: new Date().toISOString() })
+      .eq("pedido_id", pedidoId)
+      .in("status", ["pendente", "executando", "erro"]);
 
     await registrarEvento({
       pedidoId,

@@ -4810,11 +4810,19 @@ Se `total ≤ 10`: `amostra.primeiras` = lista completa, `amostra.ultimas` = `[]
 
 ### PATCH /api/wms/localizacoes/[id]
 
-Atualiza campos da localização.
+Atualiza campos da localização (`codigo`, `descricao`, `tipo`, `ativo`). **Auth:** `requireAdmin`.
+
+**Raio-X Fase 4 (P113):** trocar o `tipo` ou desativar (`ativo=false`) uma loc com **contagem
+de inventário ativa** é bloqueado — mensagem `"em contagem"` → **409**. Demais validações → 400.
 
 ### DELETE /api/wms/localizacoes/[id]
 
-Desativa logicamente. Falha com 400 se houver saldo>0.
+Desativa logicamente. Falha com 400 se houver saldo>0. **Auth:** `requireAdmin`.
+
+**Raio-X Fase 4 (P113/P063/P115):** o desativar agora roda guards extras —
+- loc com **contagem de inventário ativa** → **409** (`"em contagem"`);
+- loc que é **perna de transferência `em_transito`** (origem/destino) ou tem **pendência de guarda aberta** → bloqueia (400/erro);
+- ao desativar com sucesso, **auto-limpa reservas R vencidas** apontando pra essa loc.
 
 ### GET /api/wms/localizacoes/[id]/saldos
 
@@ -5036,11 +5044,16 @@ RPC + UPDATE da pendência depois) — crash entre os steps deixava saldo movido
 não atualizada (estado fantasma). Se `qty == qty_pendente` zera, vira `guardada` e fixa
 `guardada_em`. Senão fica `pendente` com saldo, próxima iteração zera.
 
-**Body:** `{ qty: number>0, localizacao_destino_id: "uuid" }`.
+**Body:** `{ qty: number>0, localizacao_destino_id: "uuid", gtin_bipado?: string, sku_bipado?: string, confirmar_manual?: boolean }`.
 
 **Validação:** `qty <= qty_pendente`; loc destino existe + ativa + mesmo galpão + ≠ loc origem (validação dentro da RPC).
 
-**Response 200:** `{ ok: true, pendencia, origem_id, totalmente_guardada: boolean }`. **400** em validação falha; **500** em erro de DB.
+**Raio-X Fase 4 (P029) — cross-check do produto bipado.** Quando `gtin_bipado` ou `sku_bipado`
+é informado, o produto bipado é confrontado com o produto da pendência; mismatch → **400**
+(`produto bipado não bate`). `confirmar_manual: true` é o escape-hatch (pula o cross-check
+quando o operador confirma manualmente, ex.: GTIN ausente no cadastro).
+
+**Response 200:** `{ ok: true, pendencia, origem_id, totalmente_guardada: boolean, pedidos_separados: string[] }`. **400** em validação falha (inclui produto bipado divergente); **500** em erro de DB.
 
 #### POST /api/wms/guarda/[id]/desfazer
 
@@ -5133,10 +5146,22 @@ Dois operadores conferindo o mesmo header em paralelo: o 1º ganha, o 2º recebe
 `localizacao_destino_id=NULL`), volta header pra `status='em_transito'`. A leg S (saída origem)
 permanece — estoque continua em trânsito. Permite re-receber depois (mesmo header, talvez na loc certa).
 
-**Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars) }`.
+**Raio-X Fase 4 (P067):** o caminho normal agora vai pela RPC atômica
+`wms_desfazer_recebimento_transferencia` (estorno das legs E + reset de itens + reset do header
+numa única tx — antes eram statements PostgREST separados sem tx). Idempotente: pula movs já
+estornadas via guard `estorno_de`.
 
-**Response 200:** `{ ok: true, mov_estorno_ids: [...], itens_resetados: number }`.
-**400** se transferência não está em status compatível (`recebida` ou `recebida_parcial`).
+**Raio-X Fase 4 (P065) — preflight "quanto dá pra desfazer".** Antes de mexer em nada, valida
+por item se o saldo da loc destino ainda cobre a qty recebida. Se algum item não cobre (parte do
+estoque já saiu da loc destino) e `force` não foi passado → **409 `DESFAZER_PARCIAL_BLOQUEADO`**
+com payload estruturado `{ error, bloqueados: [{ item_id, desfazivel, total }] }`. Passar
+`force: true` no body desfaz só os itens que cobrem (caminho TS por-item, pula os bloqueados).
+
+**Auth:** `requireWarehouseAccess`. **Body:** `{ motivo: string (≥3 chars), force?: boolean }`.
+
+**Response 200:** `{ ok: true, movsEstornadas: number }`.
+**400** motivo curto / transferência não está em `recebida`.
+**409 `DESFAZER_PARCIAL_BLOQUEADO`** (com `bloqueados[]`) quando há itens cujo saldo não cobre e `force` é falso.
 
 ### POST /api/wms/transferencias/[id]/cancelar
 
@@ -5392,12 +5417,23 @@ Resposta: pula a div já aplicada e segue com as outras. No fim, retorna `movsGe
 `aplicada` (com `mov_aplicada_id` não-null), insere mov de estorno via `estornarMovimentacao`
 e volta divergência pra `status='pendente'` (`mov_aplicada_id=NULL`). Sessão volta pra `status='revisao'`.
 
-**Auth:** `requireAdmin`. **Body:** `{ motivo: string (≥3 chars) }`.
+**Raio-X Fase 4 (P056/P061):** o estorno de sessão agora vai pela RPC tudo-ou-nada
+`wms_estornar_sessao_inventario` (preflight de saldo de todas as contra-movs antes de inserir
+qualquer uma — se alguma negativaria, RAISE nomeando o SKU + loc → rollback total). A
+mensagem `"deixaria saldo negativo"` é mapeada pra **409**.
 
-**Idempotente:** re-chamada em sessão já estornada (status='revisao') retorna 400. Re-execução durante
-estorno parcial pula movs já estornadas via guard `estorno_de IS NOT NULL`.
+**Raio-X Fase 4 (P159) — estorno de divergência individual.** Body aceita `divergencia_id`
+opcional: quando presente, estorna **uma única** divergência (via `estornarDivergenciaInventario`)
+em vez da sessão inteira. Resposta inclui `individual: true`.
 
-**Response 200:** `{ ok: true, movsEstornadas, divergenciasRevertidas }`. **400** se sessão não está em `aplicada`.
+**Auth:** `requireAdmin`. **Body:** `{ motivo: string (≥3 chars), divergencia_id?: uuid }`.
+
+**Idempotente:** re-chamada em sessão já estornada (status='revisao') é no-op. Re-execução durante
+estorno pula movs já estornadas via guard `estorno_de IS NOT NULL`.
+
+**Response 200:** `{ ok: true, movsEstornadas, divergenciasRevertidas }` (sessão) ou
+`{ ok: true, individual: true, ... }` (divergência individual). **400** motivo curto / sessão não
+está em `aplicada`. **409** se o estorno deixaria saldo negativo.
 
 ### POST /api/wms/inventario/[id]/contagens
 Registra contagem. **Body (3D — refactor 2026-05-20):** `{ localizacao_id, produto_id, qty_contada, modo? }`. *Campo `empresa_dona_id` removido — bipe é por tripla (produto, galpão da sessão, loc).*
@@ -5514,6 +5550,15 @@ quando a fila filtrada não tem mais a linha (status≠`aguardando_classificacao
 - `B` (avariado): E `devolucao_cliente_avariada` + transferência interna pra QUARENTENA. Custo médio NÃO recalcula.
 - `C` (garantia): E `devolucao_cliente_integra` + S `devolucao_fornecedor_enviada` (RMA) com `fornecedor_id` populado em ambas.
 - `D` (troca SKU): E `devolucao_cliente_integra` (a troca real é feita no SISO por enquanto).
+
+**Auth:** sessão válida + `userCan('operacoes.devolucoes_classificar')` (403 caso contrário).
+
+**Raio-X Fase 4 (P049/P050/P051/P054):** o caminho agora vai pela RPC atômica e serializada
+`wms_classificar_devolucao` — `FOR UPDATE` na devolução + N movs + UPDATE de status numa única tx
+(tudo-ou-nada), com back-fill de `devolucao_id` nas movs criadas. **Idempotente:** devolução já
+classificada (status `<> aguardando_classificacao`) → no-op. **Erros:**
+- **409** em concorrência/lock (`já classificada` / `em classificação` / `could not obtain lock` / `deadlock`).
+- **400** preflight de quarentena (avariado num galpão sem localização tipo `quarentena` → bloqueia antes de mover), `garantia` sem `fornecedor_id`, `qty <= 0`, devolução não encontrada e demais validações.
 
 ### GET /api/wms/cobertura
 Lista linhas da matview de cobertura. **Query:** `status` (critico|atencao|ok|sem_giro|lead_time_risco), `galpao_id`. Limit 500, ordenado por dias_cobertura asc.

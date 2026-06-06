@@ -878,20 +878,23 @@ wms_estornar_parcial_movimentacao(
    - Mov **não é** um estorno (`estorno_de IS NULL` — `'mov_e_estorno'` caso contrário)
    - `p_qty > 0` (`'qty_invalida'`)
    - `qty_estornada + p_qty <= quantidade` (`'qty_excede_saldo_estornavel'`)
-3. Determina tipo contrário: `S` → `E`, `E` → `S` (recusa `R` e `L` — `'tipo_nao_estornavel'`)
-4. Insere mov contrária via `wms_inserir_movimentacao` com:
-   - Mesmo `produto_id`, `dona_empresa_id`, `galpao_id`, `localizacao_id`, `custo_unitario`
+3. Determina tipo contrário via `CASE`: `S` → `E`, `E` → `S`, `R` → `L`, `L` → `R`
+4. Insere mov contrária via `wms_inserir_movimentacao` (named params, captura o uuid retornado) com:
+   - Mesmo `produto_id`, `galpao_id`, `localizacao_id`
    - `quantidade = p_qty`
    - `tipo` invertido
-   - `origem_tipo = 'estorno_parcial'`
+   - `origem_tipo = 'estorno'`, `origem_id = p_mov_id`
+   - `origem_detalhes = { estorno_de, parcial: true, mov_original_origem }`
    - `estorno_de = p_mov_id`
-   - `observacoes = p_observacoes` ou template default
+   - `motivo = p_observacoes`
 5. `UPDATE siso_movimentacoes SET qty_estornada = qty_estornada + p_qty WHERE id = p_mov_id`
-6. Retorna a row da mov contrária
+6. `SELECT` da linha contrária e retorna (mantém o contrato `RETURNS siso_movimentacoes`)
 
 **Atomicity:** Toda a operação numa única transação. Falha em qualquer passo reverte tudo (incluindo o UPDATE em `qty_estornada`).
 
 **Idempotência:** **Não** é idempotente — chamar duas vezes com mesmo `p_qty` gera dois estornos parciais (ou raise no segundo se exceder saldo). Caller deve dedupar (ex.: `cancelar` usa `Set<mov_id>`).
+
+**⚠️ Reparada na Raio-X Fase 4 (P078):** a versão de `20260518` chamava `wms_inserir_movimentacao` **posicionalmente** passando `v_original.empresa_dona_id` (coluna dropada no 3D) na ordem antiga da assinatura → `42703` em **toda** chamada (estorno parcial e `separacao/desfazer-parcial` quebrados em runtime). `20260605_fix_rpc_estornar_parcial_movimentacao.sql` troca só a chamada (named params na assinatura atual + captura do uuid); o resto (FOR UPDATE, guards, `qty_estornada`) é idêntico. **O índice `uq_mov_estorno_unico` passou a EXCLUIR estornos parciais** (`20260608`, ver seção de índices) — antes ele matava o 2º chunk parcial com `23505`.
 
 ---
 
@@ -955,7 +958,7 @@ Fase 2 da remediação do Raio-X: backstops de banco (índices únicos parciais,
 
 | Index | Tabela | Definição | Backstop | Migration |
 |-------|--------|-----------|----------|-----------|
-| `uq_mov_estorno_unico` | `siso_movimentacoes` | `(estorno_de) WHERE estorno_de IS NOT NULL` | Garante estorno único por mov de origem — bloqueia 2 estornos paralelos da mesma movimentação (`SQLSTATE 23505`). | `20260607_mov_estorno_unique.sql` (P106) |
+| `uq_mov_estorno_unico` | `siso_movimentacoes` | `(estorno_de) WHERE estorno_de IS NOT NULL AND COALESCE(origem_detalhes->>'parcial','false') <> 'true'` | Garante **full estorno** único por mov de origem — bloqueia 2 estornos totais paralelos (`SQLSTATE 23505`). **Raio-X Fase 4 (P078):** passou a EXCLUIR estornos parciais (`origem_detalhes->>'parcial'='true'`) — eles criam N linhas com o mesmo `estorno_de` (1 por chunk) e são governados pelo acumulador `qty_estornada` sob `FOR UPDATE` na RPC, não por este índice. | `20260607_mov_estorno_unique.sql` (P106) + `20260608_uq_mov_estorno_unico_exclui_parcial.sql` (P078) |
 | `idx_pf_preferencial` | `siso_produto_fornecedores` | `(produto_id) WHERE preferencial AND ativo` — **agora UNIQUE** | No máximo 1 fornecedor preferencial ativo por produto (era índice não-único). Toggle de preferencial deve ser atômico/exclusivo. | `20260607_pf_preferencial_unique.sql` (P124) |
 | `uq_inv_sessao_galpao_dia` | `siso_inventario_sessoes` | `(galpao_id, (criado_em AT TIME ZONE 'UTC')::date) WHERE status <> 'cancelada' AND continua = false` | No máximo 1 sessão de inventário não-cancelada e não-contínua por galpão por dia. | `20260607_inv_sessao_unique_galpao_dia.sql` (P055) |
 | `uq_mov_recebimento_nf_chave` | `siso_movimentacoes` | `(chave_acesso_nf, produto_id, galpao_id) WHERE origem_tipo = 'nf_compra' AND chave_acesso_nf IS NOT NULL AND estorno_de IS NULL` | Dedup de recebimento por assinatura de NF (chave de acesso). | `20260607_recebimento_nf_dedup.sql` (P099/P109) |
@@ -976,6 +979,50 @@ Migration: `20260607_inserir_mov_custo_guards.sql`.
 ### MV `siso_cobertura_estoque` recriada no shape 3D (P128)
 
 DROP+recria a materialized view no shape 3D `(produto_id, galpao_id)` — sem `empresa_dona_id` —, revertendo a regressão de `20260605_wms_excecoes_dashboards.sql` (que reintroduziu `empresa_dona_id`, dropado do ledger em `20260520_ledger_simplificado.sql`). Em rebuild from-migrations a MV regredida quebrava (coluna inexistente) → `REFRESH` falhava → dashboard de cobertura lia vazio. Réplica fiel do bloco 3D de `20260520f_mviews.sql`: giro de 30d filtrado por `origem_tipo IN ('nf_venda','venda_manual')` e `estorno_de IS NULL`, recria os índices `uq_cobertura (produto_id, galpao_id)` e `idx_cobertura_status (status_cobertura, dias_cobertura)` + a função `wms_refresh_cobertura()`. Migration: `20260607_fix_cobertura_3d.sql`.
+
+---
+
+## WMS — RPCs atômicas Raio-X Fase 4 (2026-06-05/08)
+
+Fase 4 da remediação do Raio-X: wrappers TS multi-step (cada `inserirMovimentacao` = 1 tx PostgREST + UPDATE de status depois) viram **RPCs plpgsql tudo-ou-nada** — preflight de saldo, `FOR UPDATE` pra serializar concorrentes, e N movs + reset de status numa única transação. Encerra os estados fantasmas (saldo mexido com status defasado) e os TOCTOU. Migrations `20260605_rpc_*.sql` + `20260608_*.sql`.
+
+### RPC `wms_estornar_sessao_inventario` (P056/P061)
+
+```sql
+wms_estornar_sessao_inventario(p_sessao uuid, p_usuario uuid, p_motivo text) RETURNS jsonb
+```
+
+Estorno de sessão de inventário **tudo-ou-nada**. Substitui o loop TS (uma tx RPC por divergência → estado parcial se a N-ésima negativaria o saldo). `FOR UPDATE` na sessão (serializa estornos concorrentes). **Idempotente:** se `status <> 'aplicada'` → no-op `{ movs_estornadas: 0, status }`. **Preflight:** trava cada `mov_aplicada_id` e, pras movs tipo `E` (único undo que reduz saldo, `E`→`S`), valida `siso_estoque.saldo >= quantidade` antes de inserir qualquer contra-mov — se alguma negativaria, `RAISE` nomeando o **SKU do produto** + loc + saldo × estorno (rollback total). Execução: insere contra-movs (`origem_tipo='estorno'`, `estorno_de`), reseta divergências pra `pendente`/`mov_aplicada_id=NULL`, e a sessão pra `status='revisao'`/`aplicada_em=NULL`. Guard `estorno_de` pula movs já estornadas (cobre full + parcial). Migration: `20260605_rpc_estornar_sessao_inventario.sql`.
+
+### RPC `wms_contagem_inline_atomica` (P057)
+
+```sql
+wms_contagem_inline_atomica(p_produto_id uuid, p_galpao_id uuid, p_localizacao_id uuid,
+  p_qty_contada numeric, p_contada_por uuid, p_sessao_id uuid,
+  p_sku text DEFAULT NULL, p_pedido_id text DEFAULT NULL) RETURNS jsonb
+```
+
+Acerto de prateleira no pick **atômico**: reconciliação de saldo + contagem + divergência numa tx. A v1 (`registrarContagemInline`) fazia a mov e depois 3 writes separados — falha após a mov deixava ganho/perda sem registro de contagem. Lock pessimista (`FOR UPDATE`) na linha de `siso_estoque` (COALESCE saldo 0 se a posição não existe). `v_delta = qty_contada - saldo`; se `<> 0`, insere mov `inventario_ganho` (E) / `inventario_perda` (S) com `origem_detalhes = { divergencia_id: gen_random_uuid(), contexto: 'acerto_pick', sku, pedido_id }`. Sempre: upsert da loc como membro da sessão, INSERT da contagem, upsert da divergência `aplicada` (UNIQUE 3D `sessao, loc, produto`), e `siso_localizacoes.ultima_contagem_em = now()`. Retorna `{ contagem_id, divergencia_id, mov_reconciliacao_id, saldo_anterior, delta }`. `RAISE` se `qty_contada < 0`. Migration: `20260605_rpc_contagem_inline_atomica.sql`.
+
+### RPC `wms_classificar_devolucao` (P049/P050/P051/P054)
+
+```sql
+wms_classificar_devolucao(p_devolucao_id uuid, p_classificacao text, p_produto_id uuid,
+  p_galpao_id uuid, p_localizacao_id uuid, p_qty numeric, p_loc_quarentena_id uuid,
+  p_usuario_id uuid, p_origem_compartilhado uuid, p_nota_fiscal_id uuid DEFAULT NULL,
+  p_empresa_referencia_id uuid DEFAULT NULL, p_fornecedor_id uuid DEFAULT NULL,
+  p_custo_unitario numeric DEFAULT NULL, p_observacoes text DEFAULT NULL) RETURNS jsonb
+```
+
+Classificação de devolução **atômica e serializada**. Substitui o caminho que emitia até 3 movs em txs separadas e SÓ DEPOIS dava UPDATE de status (TOCTOU: falha no meio deixava saldo subido com status pendente → re-run duplicava). `FOR UPDATE` na devolução (serializa por linha, P054). **Idempotente:** `status <> 'aguardando_classificacao'` → no-op `{ status, ja_classificada: true }`. Movs por `p_classificacao`: `integro` = E `devolucao_cliente_integra`; `avariado` = E `devolucao_cliente_avariada` + S/E `transferencia_localizacao` pra quarentena (**preflight P051: `p_loc_quarentena_id NULL` → RAISE** antes de tirar da prateleira); `garantia` = E `devolucao_cliente_integra` + S `devolucao_fornecedor_enviada` (`fornecedor_id` obrigatório, senão RAISE); `troca_sku` = E `devolucao_cliente_troca_sku`. **Back-fill `devolucao_id`** nas movs criadas (UPDATE por `id = ANY(v_mov_ids)`) — a assinatura nomeada de `wms_inserir_movimentacao` não tem `p_devolucao_id`, e `desclassificarDevolucao` estorna **estritamente por `devolucao_id`** (sem o back-fill, reverter não estornaria nada). Fecha a devolução (`status='classificada'`, `classificacao_em_andamento_por=NULL`). Migration: `20260605_rpc_classificar_devolucao.sql`.
+
+### RPC `wms_desfazer_recebimento_transferencia` (P067)
+
+```sql
+wms_desfazer_recebimento_transferencia(p_transferencia_id uuid, p_usuario_id uuid, p_motivo text) RETURNS jsonb
+```
+
+Undo de recebimento de transferência **atômico**: estorno das legs E + reset de itens + reset do header numa tx. O wrapper TS estornava cada leg E num loop e DEPOIS fazia UPDATEs de itens/header sem tx — falha após os estornos deixava estoque revertido mas header/itens em `recebida` (P067). `FOR UPDATE` no header (serializa undo concorrente); RAISE se `status <> 'recebida'`. Pra cada item com `mov_entrada_id`: trava a mov original e, se ela ainda não tem estorno (`EXISTS estorno_de` → pula = idempotente), insere a counter-mov S (`origem_tipo='estorno'`, `estorno_de`). Reseta os itens (`mov_entrada_id=NULL`, `localizacao_destino_id=NULL`) e o header (`status='em_transito'`, `recebida_em/por=NULL`). Retorna `{ movs_estornadas, status: 'em_transito' }`. **A leg S (saída origem) permanece** — estoque continua em trânsito. RAISE se motivo `< 3` chars. Migration: `20260605_rpc_desfazer_recebimento_transferencia.sql`.
 
 ---
 
@@ -1785,6 +1832,12 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-05 | `20260607_recebimento_nf_dedup.sql` | **Raio-X Fase 2 (P099/P109)** — dois UNIQUE partial indexes em `siso_movimentacoes` (origem `nf_compra`, não-estorno): `uq_mov_recebimento_nf_chave (chave_acesso_nf, produto_id, galpao_id)` e `uq_mov_recebimento_nf_id (nota_fiscal_id, produto_id, galpao_id)`. Dedup de recebimento por assinatura de NF. |
 | 2026-06-05 | `20260607_inserir_mov_custo_guards.sql` | **Raio-X Fase 2 (P108/P110)** — recria `wms_inserir_movimentacao` com guard custo-zero (E com qty>0 e custo 0 nas origens que compõem custo médio → RAISE) + reversão de custo no estorno (reverte `siso_custo_medio` ao `custo_medio_anterior` da mov original). Resto da lógica inalterado. |
 | 2026-06-05 | `20260607_fix_cobertura_3d.sql` | **Raio-X Fase 2 (P128)** — DROP+recria MV `siso_cobertura_estoque` no shape 3D `(produto_id, galpao_id)` (sem `empresa_dona_id`), revertendo a regressão de `20260605_wms_excecoes_dashboards.sql`. Réplica de `20260520f_mviews.sql` (giro `origem_tipo IN ('nf_venda','venda_manual')`) + índices `uq_cobertura`/`idx_cobertura_status` + `wms_refresh_cobertura()`. |
+| 2026-06-05 | `20260605_rpc_estornar_sessao_inventario.sql` | **Raio-X Fase 4 (P056/P061)** — RPC `wms_estornar_sessao_inventario` tudo-ou-nada: preflight de saldo de todas as contra-movs (RAISE nomeando o SKU que negativaria → rollback total) + contra-movs + reset de divergências/sessão numa tx. Idempotente (sessão `<> 'aplicada'` → no-op). |
+| 2026-06-05 | `20260605_rpc_contagem_inline_atomica.sql` | **Raio-X Fase 4 (P057)** — RPC `wms_contagem_inline_atomica`: acerto de prateleira no pick atômico (lock de `siso_estoque` + mov de reconciliação `inventario_ganho`/`perda` + contagem + divergência numa tx). |
+| 2026-06-05 | `20260605_rpc_classificar_devolucao.sql` | **Raio-X Fase 4 (P049/P050/P051/P054)** — RPC `wms_classificar_devolucao`: `FOR UPDATE` (serializa) + N movs + status numa tx (tudo-ou-nada); preflight quarentena (avariado sem quarentena → RAISE); back-fill `devolucao_id` nas movs criadas. Idempotente. |
+| 2026-06-05 | `20260605_rpc_desfazer_recebimento_transferencia.sql` | **Raio-X Fase 4 (P067)** — RPC `wms_desfazer_recebimento_transferencia`: estorno das legs E + reset de itens + reset do header (`em_transito`) numa tx. Idempotente (pula movs já estornadas via `estorno_de`). A leg S permanece. |
+| 2026-06-05 | `20260605_fix_rpc_estornar_parcial_movimentacao.sql` | **Raio-X Fase 4 (P078)** — repara `wms_estornar_parcial_movimentacao` (quebrada desde o 3D: chamava `wms_inserir_movimentacao` posicionalmente com `empresa_dona_id` dropado → `42703` em toda chamada). Troca pra named params na assinatura atual + captura o uuid retornado; resto idêntico. |
+| 2026-06-08 | `20260608_uq_mov_estorno_unico_exclui_parcial.sql` | **Raio-X Fase 4 (P078)** — recria `uq_mov_estorno_unico` EXCLUINDO estornos parciais (`COALESCE(origem_detalhes->>'parcial','false') <> 'true'`). O índice blanket matava o 2º chunk parcial com `23505`; parciais são governados pelo acumulador `qty_estornada` sob `FOR UPDATE`. Full estorno continua single. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

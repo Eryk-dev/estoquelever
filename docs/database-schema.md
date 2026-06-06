@@ -947,6 +947,38 @@ Razão: os valores `cascade_*` foram introduzidos na implementação inicial mas
 
 ---
 
+## WMS — Backstops Raio-X Fase 2 (2026-06-05)
+
+Fase 2 da remediação do Raio-X: backstops de banco (índices únicos parciais, trigger, RPC e MV) que blindam invariantes que antes dependiam só do código de aplicação. Migrations `20260607_*` + `20260607_fix_cobertura_3d.sql`.
+
+### Índices únicos parciais (Fase 2)
+
+| Index | Tabela | Definição | Backstop | Migration |
+|-------|--------|-----------|----------|-----------|
+| `uq_mov_estorno_unico` | `siso_movimentacoes` | `(estorno_de) WHERE estorno_de IS NOT NULL` | Garante estorno único por mov de origem — bloqueia 2 estornos paralelos da mesma movimentação (`SQLSTATE 23505`). | `20260607_mov_estorno_unique.sql` (P106) |
+| `idx_pf_preferencial` | `siso_produto_fornecedores` | `(produto_id) WHERE preferencial AND ativo` — **agora UNIQUE** | No máximo 1 fornecedor preferencial ativo por produto (era índice não-único). Toggle de preferencial deve ser atômico/exclusivo. | `20260607_pf_preferencial_unique.sql` (P124) |
+| `uq_inv_sessao_galpao_dia` | `siso_inventario_sessoes` | `(galpao_id, (criado_em AT TIME ZONE 'UTC')::date) WHERE status <> 'cancelada' AND continua = false` | No máximo 1 sessão de inventário não-cancelada e não-contínua por galpão por dia. | `20260607_inv_sessao_unique_galpao_dia.sql` (P055) |
+| `uq_mov_recebimento_nf_chave` | `siso_movimentacoes` | `(chave_acesso_nf, produto_id, galpao_id) WHERE origem_tipo = 'nf_compra' AND chave_acesso_nf IS NOT NULL AND estorno_de IS NULL` | Dedup de recebimento por assinatura de NF (chave de acesso). | `20260607_recebimento_nf_dedup.sql` (P099/P109) |
+| `uq_mov_recebimento_nf_id` | `siso_movimentacoes` | `(nota_fiscal_id, produto_id, galpao_id) WHERE origem_tipo = 'nf_compra' AND nota_fiscal_id IS NOT NULL AND estorno_de IS NULL` | Dedup de recebimento por `nota_fiscal_id` (par do anterior — cobre o caso sem chave de acesso). | `20260607_recebimento_nf_dedup.sql` (P099/P109) |
+
+### Trigger `trg_kit_exige_componente` + função `wms_kit_exige_componente()` (P120)
+
+`BEFORE INSERT OR UPDATE ON siso_produtos FOR EACH ROW`. Quando `eh_kit` passa a `true` (INSERT com `eh_kit=true`, ou UPDATE de `false→true`), exige ≥1 linha em `siso_produto_kits` (`kit_produto_id = NEW.id`); caso contrário `RAISE EXCEPTION` com `ERRCODE = 'check_violation'`. Invariante hard que cobre `sync-tiny` e escrita direta (o editor manual já insere o componente antes de marcar `eh_kit`). Migration: `20260607_kit_exige_componente.sql`.
+
+### RPC `wms_inserir_movimentacao` recriada com guards de custo (P108 + P110)
+
+DROP+recria a `wms_inserir_movimentacao` (corpo de `20260527_wms_inserir_mov_motivo_categoria.sql`) acrescentando dois guards de custo — nenhuma outra lógica (saldo, reservado, recálculo ponderado) muda:
+- **P108 — guard custo-zero:** entrada (`E`) com `qty > 0` e `custo_unitario` 0 nas origens que compõem custo médio (`nf_compra` / `devolucao_cliente_integra` / `lancamento_retroativo`) → `RAISE` (impede poluir o custo médio global com zero).
+- **P110 — reversão de custo no estorno:** estorno (`p_estorno_de`) de uma entrada que compôs custo reverte o `siso_custo_medio` ao `custo_medio_anterior` da mov original (como se a entrada nunca tivesse existido).
+
+Migration: `20260607_inserir_mov_custo_guards.sql`.
+
+### MV `siso_cobertura_estoque` recriada no shape 3D (P128)
+
+DROP+recria a materialized view no shape 3D `(produto_id, galpao_id)` — sem `empresa_dona_id` —, revertendo a regressão de `20260605_wms_excecoes_dashboards.sql` (que reintroduziu `empresa_dona_id`, dropado do ledger em `20260520_ledger_simplificado.sql`). Em rebuild from-migrations a MV regredida quebrava (coluna inexistente) → `REFRESH` falhava → dashboard de cobertura lia vazio. Réplica fiel do bloco 3D de `20260520f_mviews.sql`: giro de 30d filtrado por `origem_tipo IN ('nf_venda','venda_manual')` e `estorno_de IS NULL`, recria os índices `uq_cobertura (produto_id, galpao_id)` e `idx_cobertura_status (status_cobertura, dias_cobertura)` + a função `wms_refresh_cobertura()`. Migration: `20260607_fix_cobertura_3d.sql`.
+
+---
+
 ## Infrastructure Tables
 
 ### siso_logs
@@ -1746,6 +1778,13 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-05-30 | `20260530_drop_legacy_2galpao_cols.sql` | **Fase 2.3 — DROP 14 colunas legadas 2-galpão** de `siso_pedido_itens` (`estoque_cwb_*`, `estoque_sp_*`, `cwb_atende`, `sp_atende`, `localizacao_cwb/sp`). Zero leitura no código. |
 | 2026-05-30 | `20260530_wms_detectar_pedidos_inconsistentes.sql` | **Fase 2.1 — RPC safety net** que sinaliza os 3 padrões (marcado-sem-S / S-sem-estoque_lancado / forward-com-R-viva). Consumido por `GET /api/wms/reconciliacao-pedidos`. |
 | 2026-05-30 | `20260530_separacao_reenfileirado_em.sql` | **Fase 3 #3 — `siso_pedidos.separacao_reenfileirado_em`** + index parcial. Parcial com saldo na prateleira manda o pedido pro FIM da fila de separação. |
+| 2026-06-05 | `20260607_mov_estorno_unique.sql` | **Raio-X Fase 2 (P106)** — UNIQUE partial index `uq_mov_estorno_unico` em `siso_movimentacoes(estorno_de) WHERE estorno_de IS NOT NULL`. Estorno único por mov de origem (bloqueia 2 estornos paralelos). |
+| 2026-06-05 | `20260607_pf_preferencial_unique.sql` | **Raio-X Fase 2 (P124)** — promove `idx_pf_preferencial` a UNIQUE partial em `siso_produto_fornecedores(produto_id) WHERE preferencial AND ativo`. No máx. 1 fornecedor preferencial ativo por produto. |
+| 2026-06-05 | `20260607_inv_sessao_unique_galpao_dia.sql` | **Raio-X Fase 2 (P055)** — UNIQUE partial index `uq_inv_sessao_galpao_dia` em `siso_inventario_sessoes(galpao_id, (criado_em AT TIME ZONE 'UTC')::date) WHERE status<>'cancelada' AND continua=false`. No máx. 1 sessão não-cancelada/não-contínua por galpão por dia. |
+| 2026-06-05 | `20260607_kit_exige_componente.sql` | **Raio-X Fase 2 (P120)** — trigger `trg_kit_exige_componente` + função `wms_kit_exige_componente()` (BEFORE INSERT/UPDATE em `siso_produtos`). Bloqueia `eh_kit=true` sem ≥1 linha em `siso_produto_kits` (`ERRCODE=check_violation`). |
+| 2026-06-05 | `20260607_recebimento_nf_dedup.sql` | **Raio-X Fase 2 (P099/P109)** — dois UNIQUE partial indexes em `siso_movimentacoes` (origem `nf_compra`, não-estorno): `uq_mov_recebimento_nf_chave (chave_acesso_nf, produto_id, galpao_id)` e `uq_mov_recebimento_nf_id (nota_fiscal_id, produto_id, galpao_id)`. Dedup de recebimento por assinatura de NF. |
+| 2026-06-05 | `20260607_inserir_mov_custo_guards.sql` | **Raio-X Fase 2 (P108/P110)** — recria `wms_inserir_movimentacao` com guard custo-zero (E com qty>0 e custo 0 nas origens que compõem custo médio → RAISE) + reversão de custo no estorno (reverte `siso_custo_medio` ao `custo_medio_anterior` da mov original). Resto da lógica inalterado. |
+| 2026-06-05 | `20260607_fix_cobertura_3d.sql` | **Raio-X Fase 2 (P128)** — DROP+recria MV `siso_cobertura_estoque` no shape 3D `(produto_id, galpao_id)` (sem `empresa_dona_id`), revertendo a regressão de `20260605_wms_excecoes_dashboards.sql`. Réplica de `20260520f_mviews.sql` (giro `origem_tipo IN ('nf_venda','venda_manual')`) + índices `uq_cobertura`/`idx_cobertura_status` + `wms_refresh_cobertura()`. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging
@@ -1763,6 +1802,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 13. **Phase 13 (May 20 — Ledger Simplificado 3D):** schema 4D (produto × dona × galpão × loc) → 3D (produto × galpão × loc). `siso_estoque` perde `empresa_dona_id` + `custo_medio` e ganha UNIQUE (produto, galpão, loc). `siso_movimentacoes` perde `empresa_dona_id` + `emprestimo_devedora_id` e ganha 9 colunas de metadata (empresa_compradora/vendedora/referencia/fornecedor/motivo/cliente_nome/custo_unitario/custo_medio_anterior/posterior). Nova tabela `siso_custo_medio` (PK produto_id, cache global). CHECK `origem_tipo` enumera 18 valores. DROP `siso_emprestimo_regras`, `siso_wms_mini_swap_config`, RPCs `wms_executar_mini_swap/swap`, `wms_saldos_devedores`. RPCs `wms_inserir_movimentacao`, `wms_reservar_atomico`, `wms_inventario_*` reescritas. MVs `siso_curva_abc` + `siso_cobertura_estoque` recriadas em 3D. `siso_pedido_item_realocacoes.empresa_dona_id/empresa_devedora_id/is_emprestimo` viram legacy (nunca populadas). Migrações 9-fold: `20260520[a-i]`.
 14. **Phase 14 (May 27 — P3 Reverse Paritária + Idempotência):** 22 findings da auditoria WMS endereçados. Schema adds: (a) UNIQUE partial index `uniq_movs_inventario_divergencia` em `siso_movimentacoes` pra idempotência de `aplicarSessao`; (b) coluna `siso_transferencias_galpao.recebimento_em_andamento_por uuid` pra claim lock anti-race no recebimento. New RPCs: `wms_replenishment_intra_galpao` (S+E atômico) e `wms_confirmar_guarda_atomico` (S+E + UPDATE pendência atômico). 7 endpoints reverse novos: `POST /inventario/[id]/estornar` (admin), `POST /guarda/[id]/desfazer`, `POST /devolucoes/[id]/desclassificar`, `POST /replenishment/[id]/reverter` (id = origem_id), `POST /ajuste/[id]/estornar` (id = mov_id), `POST /vendas/[id]/cancelar`, `POST /transferencias/[id]/desfazer-recebimento`. Race fixes: iniciarGuarda condicional, contagens lock-required, receberTransferencia claim, marcar-item desmarcar ordem (S antes de L). Reiniciar embalagem agora reverte cutover (estado fantasma fix). Plano: `docs/superpowers/plans/2026-05-26-wms-fix-p3-reverse-idempotencia.md`.
 15. **Phase 15 (May 27-28 — Fix-Final B — Out-of-scope + P6 órfãs):** 11 itens P2 fechados. Schema: `siso_movimentacoes.devolucao_id` (FK pra `siso_devolucoes_pendentes`, lookup determinístico na desclassificação); `siso_wms_pendencias_guarda.tracking_origem_ids` (scaffolding). RPC `wms_inventario_sugerir` patched com filtro `tipo<>'quarentena'`. Behavior changes: `cancelar` separação escreve `movs_estornadas` truncado a 50 + counter + flag; `computarDivergencias` é idempotente (guard re-execução); `desfazer-guarda` aceita `qty` partial (era all-or-nothing); `desclassificar` usa `devolucao_id` FK em vez de janela ±60s. 3 novos cenários (50/51/52). Plano: `docs/superpowers/plans/2026-05-27-wms-fix-final-B.md`.
+16. **Phase 16 (Jun 5 — Raio-X Fase 2: backstops de banco):** invariantes antes só-de-código viram backstops no Postgres. Índices únicos parciais: `uq_mov_estorno_unico` (estorno único, P106), `idx_pf_preferencial` promovido a UNIQUE (1 preferencial ativo/produto, P124), `uq_inv_sessao_galpao_dia` (1 sessão/galpão/dia, P055), `uq_mov_recebimento_nf_chave` + `uq_mov_recebimento_nf_id` (dedup recebimento por NF, P099/P109). Trigger `trg_kit_exige_componente` (`eh_kit=true` exige componente, P120). RPC `wms_inserir_movimentacao` recriada com guard custo-zero + reversão de custo no estorno (P108/P110). MV `siso_cobertura_estoque` recriada no shape 3D, revertendo regressão `empresa_dona_id` (P128). Migrations `20260607_*`. Plano: `docs/superpowers/plans/2026-06-05-raio-x-fase-2-backstops-banco.md`.
 
 ---
 

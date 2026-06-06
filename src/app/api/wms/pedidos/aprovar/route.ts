@@ -67,6 +67,27 @@ export async function POST(request: NextRequest) {
   // retorna. Nada de fila, nada de reserva, nada de worker.
   if (decisao === "rejeitado") {
     const supabase = createServiceClient();
+
+    // P034: libera as R vivas do pedido no ato do Recusar (não espera TTL 30d).
+    // estornarReservaIndividual é idempotente por estorno_de.
+    const { data: reservasAbertas } = await supabase
+      .from("siso_movimentacoes")
+      .select("id")
+      .eq("tipo", "R")
+      .eq("origem_tipo", "reserva_pedido")
+      .eq("origem_id", String(pedidoId));
+    for (const r of (reservasAbertas ?? []) as Array<{ id: string }>) {
+      try {
+        await estornarReservaIndividual({ reserva_id: r.id, motivo: "outro", usuario_id: operadorId });
+      } catch (e) {
+        logger.warn("aprovar", "falha estornando R no recusar (segue)", {
+          pedidoId,
+          reserva_id: r.id,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
     const { error: updErr } = await supabase
       .from("siso_pedidos")
       .update({

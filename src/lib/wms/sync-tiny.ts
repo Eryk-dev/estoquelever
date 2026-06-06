@@ -18,6 +18,24 @@ interface SincronizarOptions {
 }
 
 /**
+ * P120: decide eh_kit pro sync. Tiny tipo=K só vira eh_kit=true se já houver
+ * composição cadastrada em siso_produto_kits — o trigger wms_kit_exige_componente
+ * rejeita kit sem componente. Sem composição, fica false até alguém cadastrar.
+ */
+export async function resolverEhKitSync(
+  sb: ReturnType<typeof createServiceClient>,
+  produtoId: string,
+  tinyTipo: string | null | undefined,
+): Promise<boolean> {
+  if (tinyTipo !== "K") return false;
+  const { count } = await sb
+    .from("siso_produto_kits")
+    .select("id", { count: "exact", head: true })
+    .eq("kit_produto_id", produtoId);
+  return (count ?? 0) > 0;
+}
+
+/**
  * Sincroniza um produto do siso_produtos com a versão atual no Tiny.
  * - Busca produto via Tiny API usando 1 mapeamento ativo (ou o de `preferEmpresaId`)
  * - Atualiza descricao, ncm, origem_fiscal, imagem_url, imagens[], gtin, unidade
@@ -81,8 +99,9 @@ export async function sincronizarProduto(
   // anexo no Tiny). imagem_url = primeira pra manter capa consistente.
   patch.imagens = full.imagens;
   patch.imagem_url = full.imagemUrl;
-  // tipo=K vira eh_kit=true (auto-marca; UI/usuário pode desfazer manualmente)
-  patch.eh_kit = full.tipo === "K";
+  // tipo=K vira eh_kit=true só com composição existente (P120) — o trigger
+  // wms_kit_exige_componente rejeita kit sem componente.
+  patch.eh_kit = await resolverEhKitSync(sb, produtoId, full.tipo);
 
   const { error: errUpdate } = await sb
     .from("siso_produtos")

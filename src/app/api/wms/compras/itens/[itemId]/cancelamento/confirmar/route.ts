@@ -6,6 +6,7 @@ import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { checkAndCancelPedidoIfAllTerminal } from "@/lib/compras-utils";
 import { userCan } from "@/lib/permissions";
 import { registrarEvento } from "@/lib/historico-service";
+import { liberarReserva } from "@/lib/wms/reservas";
 
 /**
  * POST /api/compras/itens/[itemId]/cancelamento/confirmar
@@ -79,6 +80,24 @@ export async function POST(
     let pedidosLiberados: string[] = [];
     if (!pedidoCancelado) {
       pedidosLiberados = await checkAndReleasePedidos([itemId]);
+      // P039: o pedido segue vivo (multi-item) mas a R criada pra ESTE item
+      // (via reconciliador-oc) fica órfã. liberarReserva é pedido-scoped.
+      try {
+        const liberadas = await liberarReserva({
+          pedido_id: String(item.pedido_id),
+          motivo: "cancelamento",
+          usuario_id: session.id,
+        });
+        logger.info("compras-cancelamento-confirmar", "Rs liberadas no cancelamento de item", {
+          pedido_id: item.pedido_id,
+          item_id: itemId,
+          liberadas,
+        });
+      } catch (e) {
+        logger.warn("compras-cancelamento-confirmar", "falha liberando R (segue)", {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
 
     await registrarEvento({

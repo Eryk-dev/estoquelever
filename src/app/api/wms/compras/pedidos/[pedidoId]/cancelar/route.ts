@@ -9,6 +9,7 @@ import { cancelOcIfEmpty } from "@/lib/compras-utils";
 import { userCan } from "@/lib/permissions";
 import { registrarEvento } from "@/lib/historico-service";
 import { estornarMovimentacao } from "@/lib/wms/ledger";
+import { estornarReservaIndividual } from "@/lib/wms/reservas";
 
 /**
  * POST /api/compras/pedidos/[pedidoId]/cancelar
@@ -158,6 +159,28 @@ export async function POST(
       })
       .eq("pedido_id", pedidoId)
       .eq("status", "pendente");
+
+    // P039 correlato: libera as R vivas do pedido no ato do cancelamento.
+    // estornarReservaIndividual é idempotente por estorno_de.
+    {
+      const { data: reservasAbertas } = await supabase
+        .from("siso_movimentacoes")
+        .select("id")
+        .eq("tipo", "R")
+        .eq("origem_tipo", "reserva_pedido")
+        .eq("origem_id", String(pedidoId));
+      for (const r of (reservasAbertas ?? []) as Array<{ id: string }>) {
+        try {
+          await estornarReservaIndividual({ reserva_id: r.id, motivo: "outro", usuario_id: session.id });
+        } catch (e) {
+          logger.warn("compras-cancelar-pedido", "falha estornando R no cancelamento (segue)", {
+            pedidoId,
+            reserva_id: r.id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    }
 
     await registrarEvento({
       pedidoId,

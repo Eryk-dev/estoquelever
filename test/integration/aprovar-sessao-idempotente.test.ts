@@ -18,6 +18,14 @@ async function novaSessaoEmRevisao(): Promise<string> {
 beforeAll(async () => {
   const { data: g } = await sb.from("siso_galpoes").select("id").eq("nome", "CWB").single();
   galpaoId = g!.id;
+  // P055: o harness trunca 1x por run, mas vários arquivos de teste criam sessão de
+  // inventário no mesmo galpão+dia → colidem no uq_inv_sessao_galpao_dia. Limpa as
+  // sessões não-contínuas do galpão usado pra este arquivo ser ordem-independente
+  // (FK ON DELETE CASCADE cuida dos filhos).
+  await sb.from("siso_inventario_sessoes")
+    .delete()
+    .eq("galpao_id", galpaoId)
+    .eq("continua", false);
   const { data: us } = await sb.from("siso_usuarios").select("id").limit(2);
   op1 = us![0].id;
   op2 = us![1]?.id ?? us![0].id;

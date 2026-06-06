@@ -9,6 +9,15 @@ let userId: string;
 beforeAll(async () => {
   const { data: g } = await sb.from("siso_galpoes").select("id").eq("nome", "CWB").single();
   galpaoId = g!.id;
+  const { data: gSp } = await sb.from("siso_galpoes").select("id").eq("nome", "SP").single();
+  // P055: o harness trunca 1x por run, mas vários arquivos de teste criam sessão de
+  // inventário no mesmo galpão+dia → colidem no uq_inv_sessao_galpao_dia. Limpa as
+  // sessões não-contínuas do(s) galpão(ões) usado(s) pra este arquivo ser ordem-independente
+  // (FK ON DELETE CASCADE cuida dos filhos).
+  await sb.from("siso_inventario_sessoes")
+    .delete()
+    .in("galpao_id", [galpaoId, gSp!.id])
+    .eq("continua", false);
   const { data: u } = await sb.from("siso_usuarios").select("id").limit(1).single();
   userId = u!.id;
 });

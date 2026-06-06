@@ -22,6 +22,14 @@ describe("wms_inventario_proxima_loc", () => {
   it("retorna pool_vazio quando não há loc na sessão", async () => {
     const { data: g } = await sb.from("siso_galpoes").select("id").eq("nome", "CWB").single();
     const { data: u } = await sb.from("siso_usuarios").select("id").eq("nome", "test-runner").single();
+    // P055: o harness trunca 1x por run, mas vários arquivos de teste criam sessão de
+    // inventário no mesmo galpão+dia → colidem no uq_inv_sessao_galpao_dia. Limpa as
+    // sessões não-contínuas do galpão usado pra este arquivo ser ordem-independente
+    // (FK ON DELETE CASCADE cuida dos filhos).
+    await sb.from("siso_inventario_sessoes")
+      .delete()
+      .eq("galpao_id", g!.id)
+      .eq("continua", false);
     // cria sessão sem locs (caso degenerado pra forçar pool_vazio).
     // Schema real: campos são `modo_contagem` (não `modo`) e `criada_por` é NOT NULL.
     const { data: sess } = await sb

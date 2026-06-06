@@ -3405,3 +3405,23 @@ erros:
       - scripts/wms/cenarios/catalogo/83-cancelar-pedido-em-separacao-parcial.ts
       - scripts/wms/cenarios/catalogo/83b-cancelar-marketplace-parcial.ts
     tags: [cancelamento, separacao, parcial, devolucao-manual, D1, P007]
+  - id: webhook-reserva-parcial-e-dedup
+    date: "2026-06-05"
+    source: wms/webhook-processor, wms/reservas
+    category: business_logic
+    message: "Auto-aprovação no webhook engolia falha de reserva parcial (pedido seguia meio-aprovado) e reservarAtomico duplicava R em reprocessamento (reservado dobrado)."
+    cause: >
+      O loop de reserva em webhook-processor-wms.ts:597-604 só logava warn+continue e
+      enfileirava lancar_estoque mesmo com item não-reservado. reservarAtomico só chamava a
+      RPC (não idempotente) — 2 reprocessos rápidos criavam 2 R por (pedido,produto).
+    fix: >
+      criarReservasRotaAtomico: all-or-nothing — se qualquer item falha, estorna as criadas
+      (rollback) e RE-LANÇA (webhook vira 'erro', Tiny retenta); só enfileira se 100% reservado.
+      reservarAtomico passa a checar R viva por (pedido,produto,tripla) e retornar o id existente
+      (dedup idempotente, sem advisory lock) — torna o retry seguro.
+    files:
+      - src/lib/webhook-processor-wms.ts
+      - src/lib/wms/reservas.ts
+      - test/integration/webhook-reserva-all-or-nothing.integration.test.ts
+      - test/integration/reservas-idempotente.integration.test.ts
+    tags: [webhook, reserva, all-or-nothing, idempotencia, dedup, P085, P003]

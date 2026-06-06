@@ -3466,3 +3466,18 @@ erros:
     files:
       - src/lib/wms/fornecedores.ts
     tags: [fornecedores, upsert, contagem, idempotencia, toctou]
+  - id: wms-cobertura-mv-regressao-4d
+    date: "2026-06-05"
+    source: wms.cobertura
+    category: database
+    message: "Dashboard de cobertura zerado/quebrado — MV referenciava empresa_dona_id inexistente"
+    cause: >
+      20260605_wms_excecoes_dashboards.sql (commitado após 20260520f_mviews.sql) recriou
+      siso_cobertura_estoque com empresa_dona_id, dropado do ledger em 20260520_ledger_simplificado.
+      Em rebuild from-migrations a MV quebra (coluna inexistente) → REFRESH falha.
+    fix: >
+      Nova migration 20260607_fix_cobertura_3d.sql DROP+recria a MV no shape 3D
+      (produto+galpão, origem nf_venda/venda_manual), espelhando 20260520f.
+    files:
+      - supabase/migrations/20260607_fix_cobertura_3d.sql
+    tags: [cobertura, materialized-view, 3d, regressao, dashboard]

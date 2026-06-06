@@ -3345,7 +3345,7 @@ erros:
       criarSessao fazia INSERT simples sem constraint de unicidade por (galpao, dia);
       o frontend só tinha o guard isPending (perdível em corrida).
     fix: >
-      UNIQUE parcial uq_inv_sessao_galpao_dia (galpao_id, criado_em::date) excluindo
+      UNIQUE parcial uq_inv_sessao_galpao_dia (galpao_id, (criado_em AT TIME ZONE 'UTC')::date) excluindo
       cancelada e continua. criarSessao traduz 23505 em erro de domínio; rota responde 409.
     files:
       - supabase/migrations/20260607_inv_sessao_unique_galpao_dia.sql

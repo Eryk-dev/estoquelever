@@ -42,12 +42,15 @@ export async function POST(
       usuario_id: auth.user.id,
       motivo,
     });
-    return NextResponse.json({ ok: true, ...r });
+    return NextResponse.json({
+      ok: true,
+      ...r,
+      itens_para_devolver_manual: r.itensParaDevolverManual,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const isClient =
       msg.includes("não encontrado") ||
-      msg.includes("separação ativa") ||
       msg.includes("motivo");
     return wmsErrorResponse({
       source: "wms.vendas.cancelar",

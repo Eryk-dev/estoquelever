@@ -1,8 +1,9 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { estornarMovimentacao } from "./ledger";
-import { liberarReserva } from "./reservas";
+import { liberarReserva, estornarReservaIndividual } from "./reservas";
 import { registrarEvento } from "@/lib/historico-service";
+import { classificarItensParaCancelamento } from "./cancelamento-parcial";
 
 /**
  * P3 #7.13 — cancela uma venda manual.
@@ -28,7 +29,7 @@ export async function cancelarVendaManual(input: {
   pedido_id: string;
   usuario_id: string;
   motivo: string;
-}): Promise<{ movsEstornadas: number; reservasLiberadas: number }> {
+}): Promise<{ movsEstornadas: number; reservasLiberadas: number; itensParaDevolverManual: Array<{ id: string; sku: string | null }> }> {
   if (!input.motivo || input.motivo.trim().length < 3) {
     throw new Error("motivo do cancelamento é obrigatório (≥3 caracteres)");
   }
@@ -52,20 +53,74 @@ export async function cancelarVendaManual(input: {
     status_separacao: string | null;
   };
 
-  // Idempotente: já cancelado
-  if (p.status === "cancelado") {
-    return { movsEstornadas: 0, reservasLiberadas: 0 };
-  }
-
-  // Bloqueia separação ativa — operador precisa voltar etapa antes
-  if (["em_separacao", "separado", "embalado"].includes(p.status_separacao ?? "")) {
-    throw new Error(
-      "pedido em separação ativa — use voltar-etapa antes de cancelar (preserva auditoria de picks)",
-    );
-  }
-
   let movsEstornadas = 0;
   let reservasLiberadas = 0;
+  let itensParaDevolverManual: Array<{ id: string; sku: string | null }> = [];
+
+  // Idempotente: já cancelado
+  if (p.status === "cancelado") {
+    return { movsEstornadas: 0, reservasLiberadas: 0, itensParaDevolverManual: [] };
+  }
+
+  // D1 (P007): em separação parcial, libera SÓ o não-pego; o pego (mov_saida_id)
+  // NÃO é estornado (auditoria preservada) e vira pendência de devolução manual.
+  if (["em_separacao", "separado", "embalado"].includes(p.status_separacao ?? "")) {
+    const { data: itensRaw } = await sb
+      .from("siso_pedido_itens")
+      .select("id, sku, mov_saida_id, quantidade_pega")
+      .eq("pedido_id", input.pedido_id);
+    const { pegos, naoPegos } = classificarItensParaCancelamento(
+      (itensRaw ?? []).map((i) => ({
+        id: String(i.id),
+        sku: (i.sku as string) ?? null,
+        mov_saida_id: (i.mov_saida_id as string) ?? null,
+        quantidade_pega: (i.quantidade_pega as number) ?? null,
+      })),
+    );
+    void naoPegos;
+    itensParaDevolverManual = pegos.map((i) => ({ id: i.id, sku: i.sku }));
+
+    const { data: reservasAbertas, error: rQErr } = await sb
+      .from("siso_movimentacoes")
+      .select("id")
+      .eq("tipo", "R")
+      .eq("origem_tipo", "reserva_pedido")
+      .eq("origem_id", input.pedido_id);
+    if (rQErr) {
+      logger.warn("wms.vendas.cancelar", "falha buscando Rs (segue)", { pedido_id: input.pedido_id, error: rQErr.message });
+    }
+    for (const r of (reservasAbertas ?? []) as Array<{ id: string }>) {
+      try {
+        await estornarReservaIndividual({ reserva_id: r.id, motivo: "outro", usuario_id: input.usuario_id });
+        reservasLiberadas++;
+      } catch (e) {
+        logger.warn("wms.vendas.cancelar", "falha estornando R não-pego (segue)", {
+          pedido_id: input.pedido_id, reserva_id: r.id, error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    const { error: updErr } = await sb
+      .from("siso_pedidos")
+      .update({ status: "cancelado" })
+      .eq("id", input.pedido_id);
+    if (updErr) throw new Error(`falha ao atualizar status: ${updErr.message}`);
+
+    registrarEvento({
+      pedidoId: input.pedido_id,
+      evento: "cancelado",
+      usuarioId: input.usuario_id,
+      detalhes: {
+        motivo: input.motivo,
+        modo: "separacao_parcial",
+        reservas_liberadas: reservasLiberadas,
+        itens_devolucao_manual: itensParaDevolverManual,
+        origem: "cancelarVendaManual",
+      },
+    }).catch(() => {});
+
+    return { movsEstornadas: 0, reservasLiberadas, itensParaDevolverManual };
+  }
 
   // Caminho 1: separação ainda não iniciada — libera R se existirem.
   if (
@@ -144,5 +199,5 @@ export async function cancelarVendaManual(input: {
     /* fire-and-forget */
   });
 
-  return { movsEstornadas, reservasLiberadas };
+  return { movsEstornadas, reservasLiberadas, itensParaDevolverManual };
 }

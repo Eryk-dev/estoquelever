@@ -633,15 +633,19 @@ export async function reconciliarRetroativo(
 }
 
 /**
- * P3 #8.8 reverse: desfaz um replenishment estornando o par S+E completo.
+ * P3 #8.8 reverse: desfaz um replenishment revertendo o par S+E.
  *
  * Replenishment intra-galpão grava par S+E no ledger com o MESMO `origem_id`
  * e `origem_tipo='transferencia_localizacao'`. Esse helper localiza todas as
- * movs com esse origem_id e dispara `estornarMovimentacao` em cada uma.
- *
- * Idempotente: se uma mov já foi estornada (ou é um estorno), pula a
- * tentativa e continua com as próximas. `estornarMovimentacao` rejeita
- * double-estorno via guard `estorno_de IS NOT NULL`.
+ * movs com esse origem_id e, por mov, escolhe entre três caminhos conforme
+ * `qty_estornada`:
+ *  - `qty_estornada=0` → full `estornarMovimentacao` (estorno único da mov);
+ *  - `0 < qty_estornada < total` → cai pro `wms_estornar_parcial_movimentacao`
+ *    revertendo só o residual (`total - qty_estornada`), sem reintroduzir o já
+ *    estornado [P078];
+ *  - `qty_estornada === total` → no-op (já totalmente revertida).
+ * Idempotente: engole `já foi estornada` / `já é um estorno` / `excede saldo`
+ * e segue com as próximas movs.
  */
 export async function reverterReplenishment(input: {
   origem_id: string;
@@ -654,7 +658,7 @@ export async function reverterReplenishment(input: {
   const sb = createServiceClient();
   const { data: movs, error } = await sb
     .from("siso_movimentacoes")
-    .select("id")
+    .select("id, quantidade, qty_estornada")
     .eq("origem_id", input.origem_id)
     .eq("origem_tipo", "transferencia_localizacao");
   if (error) throw error;
@@ -662,17 +666,40 @@ export async function reverterReplenishment(input: {
     throw new Error("nenhuma mov encontrada com esse origem_id");
   }
   let estornadas = 0;
-  for (const m of movs as Array<{ id: string }>) {
+  for (const m of movs as Array<{
+    id: string;
+    quantidade: number;
+    qty_estornada: number | null;
+  }>) {
+    const total = Number(m.quantidade);
+    const jaEstornada = Number(m.qty_estornada ?? 0);
     try {
-      await estornarMovimentacao({
-        mov_id: m.id,
-        usuario_id: input.usuario_id,
-        motivo: `Reverter replenishment ${input.origem_id}: ${input.motivo}`,
-      });
-      estornadas++;
+      if (jaEstornada > 0 && jaEstornada < total) {
+        // [P078] full estorno bloqueia com qty_estornada>0 — reverte só o
+        // residual via estorno parcial (não reintroduz o que já foi estornado).
+        const { error: pErr } = await sb.rpc(
+          "wms_estornar_parcial_movimentacao",
+          {
+            p_mov_id: m.id,
+            p_qty: total - jaEstornada,
+            p_usuario_id: input.usuario_id,
+            p_observacoes: `Reverter replenishment ${input.origem_id} (residual): ${input.motivo}`,
+          },
+        );
+        if (pErr) throw new Error(pErr.message);
+        estornadas++;
+      } else if (jaEstornada === 0) {
+        await estornarMovimentacao({
+          mov_id: m.id,
+          usuario_id: input.usuario_id,
+          motivo: `Reverter replenishment ${input.origem_id}: ${input.motivo}`,
+        });
+        estornadas++;
+      }
+      // jaEstornada === total → já totalmente revertida, no-op (idempotente)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/já foi estornada|já é um estorno/.test(msg)) continue;
+      if (/já foi estornada|já é um estorno|excede saldo/.test(msg)) continue;
       throw err;
     }
   }

@@ -3736,3 +3736,24 @@ erros:
       RETURNS siso_movimentacoes.
     files: [supabase/migrations/20260605_fix_rpc_estornar_parcial_movimentacao.sql]
     tags: [estorno-parcial, rpc, 3d, empresa_dona_id, P078]
+
+  - id: wms-reverter-replenishment-qty-estornada
+    date: "2026-06-05"
+    source: wms.movimentacoes.reverterReplenishment
+    category: business_logic
+    message: "reverter realocação trava com 'qty_estornada>0' quando já houve estorno parcial"
+    cause: >
+      reverterReplenishment só chamava estornarMovimentacao (full estorno), que
+      bloqueia quando a mov tem qty_estornada>0. As unidades residuais ficavam
+      penduradas — operador preso. Além disso, o UNIQUE uq_mov_estorno_unico
+      (P106) era blanket em estorno_de e matava o 2º chunk de estorno parcial
+      com 23505 (cada chunk parcial cria uma linha de estorno com o mesmo
+      estorno_de).
+    fix: >
+      Loop lê qty_estornada/quantidade; se 0<qty_estornada<total, reverte o
+      residual via wms_estornar_parcial_movimentacao; full estorno só com
+      qty_estornada=0; total revertido → no-op. E uq_mov_estorno_unico passa a
+      EXCLUIR estornos parciais (origem_detalhes->>parcial=true) — governados
+      pelo acumulador qty_estornada sob FOR UPDATE; full estorno segue single.
+    files: [src/lib/wms/movimentacoes.ts, supabase/migrations/20260608_uq_mov_estorno_unico_exclui_parcial.sql]
+    tags: [replenishment, reverter, estorno-parcial, residual, uq_mov_estorno_unico, P078, P106]

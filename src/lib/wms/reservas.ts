@@ -19,6 +19,41 @@ export interface ReservarInput {
 
 export async function reservarAtomico(input: ReservarInput): Promise<string> {
   const sb = createServiceClient();
+
+  // P003: dedup idempotente — se já existe R viva por (pedido,produto,tripla),
+  // retorna o id existente sem inserir nova R. Evita reservado dobrado em
+  // reprocessamento/duplo-clique. SEM advisory lock (infra nova descartada).
+  const { data: rsExistentes } = await sb
+    .from("siso_movimentacoes")
+    .select("id")
+    .eq("tipo", "R")
+    .eq("origem_tipo", "reserva_pedido")
+    .eq("origem_id", input.pedido_id)
+    .eq("produto_id", input.tripla.produto_id)
+    .eq("galpao_id", input.tripla.galpao_id)
+    .eq("localizacao_id", input.tripla.localizacao_id);
+  const ids = (rsExistentes ?? []).map((r) => r.id as string);
+  if (ids.length > 0) {
+    // R é "viva" se não tem L (estorno_de) apontando pra ela.
+    const { data: ls } = await sb
+      .from("siso_movimentacoes")
+      .select("estorno_de")
+      .in("estorno_de", ids)
+      .eq("tipo", "L");
+    const liberadas = new Set(
+      (ls ?? []).map((l) => l.estorno_de as string | null).filter((x): x is string => !!x),
+    );
+    const viva = ids.find((id) => !liberadas.has(id));
+    if (viva) {
+      logger.info("wms.reservas", "R viva já existe — skip idempotente", {
+        pedido_id: input.pedido_id,
+        produto_id: input.tripla.produto_id,
+        reserva_id: viva,
+      });
+      return viva;
+    }
+  }
+
   const { data, error } = await sb.rpc("wms_reservar_atomico", {
     p_produto_id: input.tripla.produto_id,
     p_galpao_id: input.tripla.galpao_id,

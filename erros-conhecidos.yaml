@@ -3341,3 +3341,22 @@ erros:
       - src/app/api/wms/admin/usuarios/route.ts
       - scripts/wms/cenarios/auth/21-ultimo-admin-desativar.ts
     tags: [auth, anti-lockout, admin, usuarios, P136]
+
+  - id: estornar-pedido-deixa-job-vivo
+    date: "2026-06-05"
+    source: wms/pedidos/estornar
+    category: business_logic
+    message: "Estornar pedido deixava o job lancar_estoque vivo na fila; worker re-processava (potencial double-release de estoque)."
+    cause: >
+      /pedidos/[id]/estornar setava status_separacao='cancelado' (não status) e nunca
+      tocava siso_fila_execucao. O guard do worker lê siso_pedidos.status — coluna
+      diferente — então o job não era pulado. Adicionalmente, status_separacao='cancelado'
+      violava o CHECK da coluna (não é valor permitido), então o update falhava silenciosamente.
+    fix: >
+      Estornar agora seta status='cancelado' (além de status_separacao=NULL — CHECK não
+      admite 'cancelado' nessa coluna) e UPDATE siso_fila_execucao SET status='cancelado'
+      WHERE pedido_id=... AND status IN ('pendente','executando','erro').
+    files:
+      - src/app/api/wms/pedidos/[id]/estornar/route.ts
+      - scripts/wms/cenarios/catalogo/85-cancelar-job-fila-estorno.ts
+    tags: [estorno, fila, worker, double-release, status, P008]

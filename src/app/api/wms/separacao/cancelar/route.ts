@@ -4,6 +4,8 @@ import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
 import { estornarMovimentacao } from "@/lib/wms/ledger";
 import { registrarEventos } from "@/lib/historico-service";
+import { classificarItensParaCancelamento } from "@/lib/wms/cancelamento-parcial";
+import { estornarReservaIndividual } from "@/lib/wms/reservas";
 
 const MAX_MOVS_LOG = 50;
 
@@ -44,6 +46,75 @@ export async function POST(request: NextRequest) {
 
   const { pedido_ids } = body as { pedido_ids: string[] };
   const supabase = createServiceClient();
+
+  const cancelarPedido = body.cancelar_pedido === true;
+
+  // D1 (P007): modo cancelar-pedido em separação parcial. Libera só o não-pego;
+  // o pego (mov_saida_id) NÃO é estornado (auditoria), vira devolução manual;
+  // pedido vira 'cancelado'. Não passa pelo fluxo de voltar-etapa abaixo.
+  if (cancelarPedido) {
+    try {
+      const { data: itensRaw } = await supabase
+        .from("siso_pedido_itens")
+        .select("id, sku, mov_saida_id, quantidade_pega")
+        .in("pedido_id", pedido_ids);
+      const { pegos } = classificarItensParaCancelamento(
+        (itensRaw ?? []).map((i) => ({
+          id: String(i.id),
+          sku: (i.sku as string) ?? null,
+          mov_saida_id: (i.mov_saida_id as string) ?? null,
+          quantidade_pega: (i.quantidade_pega as number) ?? null,
+        })),
+      );
+      const itensParaDevolverManual = pegos.map((i) => ({ id: i.id, sku: i.sku }));
+
+      const { data: reservasAbertas } = await supabase
+        .from("siso_movimentacoes")
+        .select("id")
+        .eq("tipo", "R")
+        .eq("origem_tipo", "reserva_pedido")
+        .in("origem_id", pedido_ids);
+      let reservasLiberadas = 0;
+      for (const r of (reservasAbertas ?? []) as Array<{ id: string }>) {
+        try {
+          await estornarReservaIndividual({ reserva_id: r.id, motivo: "outro", usuario_id: session.id });
+          reservasLiberadas++;
+        } catch (e) {
+          logger.warn("separacao-cancelar", "falha estornando R não-pego (segue)", {
+            reserva_id: r.id, error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+
+      await supabase
+        .from("siso_pedidos")
+        .update({ status: "cancelado", status_separacao: null })
+        .in("id", pedido_ids);
+
+      await supabase
+        .from("siso_fila_execucao")
+        .update({ status: "cancelado", atualizado_em: new Date().toISOString() })
+        .in("pedido_id", pedido_ids)
+        .in("status", ["pendente", "executando", "erro"]);
+
+      logger.warn("separacao-cancelar", "Pedido(s) cancelado(s) em separação parcial (D1)", {
+        pedido_ids, reservas_liberadas: reservasLiberadas, itens_devolucao_manual: itensParaDevolverManual.length,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        pedido_ids,
+        cancelado: true,
+        reservas_liberadas: reservasLiberadas,
+        itens_para_devolver_manual: itensParaDevolverManual,
+      });
+    } catch (err) {
+      logger.error("separacao-cancelar", "Erro no cancelar-pedido D1", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return NextResponse.json({ error: "Erro interno" }, { status: 500 });
+    }
+  }
 
   try {
     // 1. Carrega itens com movs para estornar

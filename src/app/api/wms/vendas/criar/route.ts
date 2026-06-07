@@ -25,15 +25,15 @@
  * fila como pedido de marketplace sem estoque. Resposta inclui
  * `degradado: true, motivo_degradacao: 'falta_saldo', skus_sem_saldo: [...]`.
  *
- * Rollback de baixa direta: se mov N falhar mid-flight, estorna as
- * anteriores via estornarMovimentacao + deleta o pedido recém-criado.
+ * Baixa direta: as N movs 'S' saem numa única transação via RPC
+ * wms_vender_baixa_direta_atomico (tudo-ou-nada no banco). Se a RPC lançar,
+ * a rota só limpa o cabeçalho de pedido recém-criado (sem movs órfãs).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
-import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import { reservarAtomico, estornarReservaIndividual } from "@/lib/wms/reservas";
 import { registrarEvento } from "@/lib/historico-service";
 import { userCan } from "@/lib/permissions";
@@ -504,44 +504,20 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // 3) Se modoEfetivo === 'baixa_direta', gera movs 'S' no ledger com rollback manual.
-  //    Cada item pode ser dividido em N movs se a qty pedida não cabe numa única
-  //    loc — iteramos sobre item.sugestoes[] (já ordenadas por preferência:
-  //    picking > overstock > recebimento, depois maior disponivel) até completar
-  //    a qty pedida ou esgotar sugestoes.
-  const movsCriadas: string[] = [];
-
-  // Helper de rollback: estorna movs criadas + deleta itens e pedido.
-  const rollbackBaixaDireta = async (motivo: string) => {
-    for (const movId of movsCriadas) {
-      try {
-        await estornarMovimentacao({
-          mov_id: movId,
-          usuario_id: user.id,
-          motivo: `Rollback de venda manual ${pedidoId} (${motivo})`,
-        });
-      } catch (estornoErr) {
-        logger.error(
-          "vendas.criar",
-          "Falha no rollback de mov — DADOS POSSIVELMENTE INCONSISTENTES",
-          {
-            pedidoId,
-            mov_id: movId,
-            erro:
-              estornoErr instanceof Error ? estornoErr.message : String(estornoErr),
-          },
-        );
-      }
-    }
-    await supabase.from("siso_pedido_itens").delete().eq("pedido_id", pedidoId);
-    await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
-  };
-
+  // 3) Se modoEfetivo === 'baixa_direta', monta o payload das N movs 'S' e baixa
+  //    tudo numa ÚNICA transação via RPC wms_vender_baixa_direta_atomico (advisory
+  //    lock por tripla + tudo-ou-nada). Cada item pode ser dividido em N movs se a
+  //    qty pedida não cabe numa única loc — iteramos sobre item.sugestoes[] (já
+  //    ordenadas por preferência: picking > overstock > recebimento, depois maior
+  //    disponivel) até completar a qty pedida ou esgotar sugestoes. A RPC faz o
+  //    rollback no banco; a rota só limpa o cabeçalho de pedido se a RPC lançou.
+  let movsBaixadas = 0;
   if (modoEfetivo === "baixa_direta") {
     // origem_id é uuid no schema (siso_movimentacoes.origem_id) — geramos um uuid
     // compartilhado entre todos os itens da mesma venda pra agrupá-los no ledger.
     // O pedidoId 'MAN-...' (text) vai como tag em origem_detalhes.pedido_id_manual.
     const origemVendaId = crypto.randomUUID();
+    const movsPayload: Array<Record<string, unknown>> = [];
     for (const item of itensResolvidos) {
       // Sanity: se chegou aqui é porque modoEfetivo === 'baixa_direta', logo
       // não-degradação garante quantidade <= disponivel. Se sugestoes vazio,
@@ -552,7 +528,8 @@ export async function POST(request: NextRequest) {
           "Item sem sugestoes em baixa_direta — inconsistência",
           { pedidoId, sku: item.sku, disponivel: item.disponivel },
         );
-        await rollbackBaixaDireta("sugestoes vazia");
+        await supabase.from("siso_pedido_itens").delete().eq("pedido_id", pedidoId);
+        await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
         return NextResponse.json(
           { erro: `Falha interna: nenhuma loc resolvida pra ${item.sku}` },
           { status: 500 },
@@ -565,77 +542,32 @@ export async function POST(request: NextRequest) {
         if (restante <= 0) break;
         const qtyDestaLoc = Math.min(restante, sug.disponivel);
         if (qtyDestaLoc <= 0) continue;
-
-        try {
-          const mov = await inserirMovimentacao({
-            tripla: {
-              produto_id: item.produto_id,
-              galpao_id: galpao_id,
-              localizacao_id: sug.localizacao_id,
-            },
-            tipo: "S",
-            qty: qtyDestaLoc,
-            origem_tipo: "venda_manual",
-            origem_id: origemVendaId,
-            origem_detalhes: {
-              sku: item.sku,
-              vendedor_id: vendedorIdEfetivo,
-              vendedor_nome: vendedorNomeEfetivo,
-              canal_venda: canal_venda ?? null,
-              loc_codigo: sug.localizacao_codigo,
-              pedido_id_manual: pedidoId,
-              // Split-info: qty pedida e split atual (debug ledger)
-              qty_item_total: item.quantidade,
-              qty_desta_loc: qtyDestaLoc,
-              ...(emNomeDe
-                ? {
-                    criado_por_id: user.id,
-                    criado_por_nome: user.nome,
-                  }
-                : {}),
-            },
-            empresa_vendedora_id: empresa_origem_id,
-            cliente_nome,
-            // pedido_id é TEXT por design (migration 20260526) — aceita
-            // `MAN-...` igual aceita Tiny ID. Popular aqui restaura o link
-            // formal mov ↔ pedido (que ficava só em origem_detalhes antes do
-            // P6); facilita reports tipo "movs do pedido X" sem ter que
-            // varrer JSON.
-            pedido_id: pedidoId,
-            usuario_id: user.id,
-            motivo: `Venda manual ${pedidoId} — ${cliente_nome}`,
-          });
-          movsCriadas.push(mov.id);
-          restante -= qtyDestaLoc;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.error(
-            "vendas.criar",
-            "Falha em mov de baixa direta — fazendo rollback",
-            {
-              pedidoId,
-              sku: item.sku,
-              loc: sug.localizacao_codigo,
-              qty_desta_loc: qtyDestaLoc,
-              erro: msg,
-              movs_pra_estornar: movsCriadas,
-            },
-          );
-          await rollbackBaixaDireta("falha em outro item");
-          return NextResponse.json(
-            {
-              erro: `Falha ao baixar ${item.sku}: ${msg}`,
-              sku: item.sku,
-              movs_estornadas: movsCriadas.length,
-            },
-            { status: 409 },
-          );
-        }
+        movsPayload.push({
+          produto_id: item.produto_id,
+          galpao_id: galpao_id,
+          localizacao_id: sug.localizacao_id,
+          qty: qtyDestaLoc,
+          sku: item.sku,
+          vendedor_id: vendedorIdEfetivo,
+          vendedor_nome: vendedorNomeEfetivo,
+          canal_venda: canal_venda ?? null,
+          loc_codigo: sug.localizacao_codigo,
+          // Split-info: qty pedida e split atual (debug ledger)
+          qty_item_total: item.quantidade,
+          qty_desta_loc: qtyDestaLoc,
+          ...(emNomeDe
+            ? {
+                criado_por_id: user.id,
+                criado_por_nome: user.nome,
+              }
+            : {}),
+        });
+        restante -= qtyDestaLoc;
       }
 
       if (restante > 0) {
         // Cobertura insuficiente entre as sugestoes — não deveria ocorrer
-        // porque a degradação acima trata isso. Defensive: rollback + erro.
+        // porque a degradação acima trata isso. Defensive: limpa cabeçalho + erro.
         logger.error(
           "vendas.criar",
           "Sugestoes insuficientes em baixa_direta — degradação falhou",
@@ -647,7 +579,8 @@ export async function POST(request: NextRequest) {
             disponivel_total: item.disponivel,
           },
         );
-        await rollbackBaixaDireta("sugestoes insuficientes");
+        await supabase.from("siso_pedido_itens").delete().eq("pedido_id", pedidoId);
+        await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
         return NextResponse.json(
           {
             erro: `Falha interna: cobertura insuficiente pra ${item.sku} (pedida=${item.quantidade}, atendida=${item.quantidade - restante})`,
@@ -657,6 +590,30 @@ export async function POST(request: NextRequest) {
         );
       }
     }
+
+    const { data: bdData, error: bdErr } = await supabase.rpc("wms_vender_baixa_direta_atomico", {
+      p_origem_venda_id: origemVendaId,
+      p_pedido_id_manual: pedidoId,
+      p_empresa_vendedora_id: empresa_origem_id,
+      p_cliente_nome: cliente_nome,
+      p_movs: movsPayload,
+      p_usuario_id: user.id,
+    });
+    if (bdErr) {
+      // Tudo-ou-nada: a RPC rolou back as movs. Limpa o cabeçalho de pedido
+      // criado antes (sem movs órfãs no ledger).
+      logger.error("vendas.criar", "Falha ao baixar venda baixa_direta — RPC", {
+        pedidoId,
+        erro: bdErr.message,
+      });
+      await supabase.from("siso_pedido_itens").delete().eq("pedido_id", pedidoId);
+      await supabase.from("siso_pedidos").delete().eq("id", pedidoId);
+      return NextResponse.json(
+        { erro: `Falha ao baixar venda: ${bdErr.message}` },
+        { status: 409 },
+      );
+    }
+    movsBaixadas = ((bdData as { mov_ids?: string[] } | null)?.mov_ids ?? []).length;
   }
 
   // 4) Audit
@@ -690,7 +647,7 @@ export async function POST(request: NextRequest) {
       evento: "venda_baixa_direta_executada",
       usuarioId: user.id,
       usuarioNome: user.nome,
-      detalhes: { movs_count: movsCriadas.length },
+      detalhes: { movs_count: movsBaixadas },
     }).catch(() => {});
   }
 
@@ -699,7 +656,7 @@ export async function POST(request: NextRequest) {
     numero,
     status: modoEfetivo === "separacao" ? "executando" : "concluido",
     status_separacao: modoEfetivo === "separacao" ? "aguardando_separacao" : null,
-    movs_criadas: movsCriadas.length > 0 ? movsCriadas.length : undefined,
+    movs_criadas: movsBaixadas > 0 ? movsBaixadas : undefined,
     ...(degradado
       ? {
           degradado: true,

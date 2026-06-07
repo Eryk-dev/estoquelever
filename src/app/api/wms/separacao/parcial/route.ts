@@ -359,35 +359,6 @@ async function processarParcialItem(
       }
     }
 
-    let movSaidaId: string | null = null;
-    if (quantidade_pega > 0) {
-      const mov = await inserirMovimentacao({
-        tripla: {
-          produto_id: produtoWmsId,
-          galpao_id: galpaoId,
-          localizacao_id: locOriginalId,
-        },
-        tipo: "S",
-        qty: quantidade_pega,
-        origem_tipo: "nf_venda",
-        origem_detalhes: {
-          pedido_id_tiny: primeiroPedido.id,
-          pedido_numero: primeiroPedido.numero,
-          pedido_item_ids: itemIdsList,
-          sku: primeiroItem.sku,
-          contexto: itemsRaw.length > 1 ? "parcial_consolidado" : "parcial",
-        },
-        empresa_vendedora_id: empresaOrigemId,
-        motivo:
-          itemsRaw.length > 1
-            ? `Picking parcial wave — ${itemsRaw.length} items (pedido #${primeiroPedido.numero}…)`
-            : `Picking parcial pedido #${primeiroPedido.numero}`,
-        usuario_id: session.id,
-      });
-      movSaidaId = mov.id;
-    }
-
-    let movAjusteId: string | null = null;
     // loc_zerou: o ajuste "phantom" zera o que o operador não achou na loc, mas
     // NÃO pode derrubar o saldo abaixo do reservado que SOBRA na loc (reservas de
     // OUTROS pedidos que este fluxo não liberou). Senão o ajuste viola o CHECK
@@ -398,39 +369,51 @@ async function processarParcialItem(
       0,
     );
     const reservadoRestanteLoc = Math.max(0, reservadoWms - liberadoNaLoc);
+
+    // 7b. S(qty_pega) + ajuste(loc_zerou) atômicos via RPC (P019).
     const deltaAjuste = loc_zerou
       ? Math.max(0, saldoWms - quantidade_pega - reservadoRestanteLoc)
       : 0;
-    if (loc_zerou) {
-      const delta = deltaAjuste;
-      if (delta > 0) {
-        const movAj = await inserirMovimentacao({
-          tripla: {
-            produto_id: produtoWmsId,
-            galpao_id: galpaoId,
-            localizacao_id: locOriginalId,
-          },
-          tipo: "S",
-          qty: delta,
-          origem_tipo: "ajuste_pick_zerou",
-          origem_detalhes: {
-            pedido_id_tiny: primeiroPedido.id,
-            pedido_numero: primeiroPedido.numero,
-            pedido_item_ids: itemIdsList,
-            saldo_anterior: saldoWms,
-            qty_pega: quantidade_pega,
-          },
-          motivo: "loc zerou no bipe",
-          usuario_id: session.id,
-        });
-        movAjusteId = movAj.id;
+    let movSaidaId: string | null = null;
+    let movAjusteId: string | null = null;
+    if (quantidade_pega > 0 || deltaAjuste > 0) {
+      const { data: pk, error: pkErr } = await supabase.rpc("wms_pick_parcial_atomico", {
+        p_produto_id: produtoWmsId,
+        p_galpao_id: galpaoId,
+        p_localizacao_id: locOriginalId,
+        p_qty_pega: quantidade_pega,
+        p_delta_ajuste: deltaAjuste,
+        p_pedido_id: String(primeiroPedido.id),
+        p_empresa_vendedora_id: empresaOrigemId,
+        p_usuario_id: session.id,
+        p_origem_detalhes: {
+          pedido_id_tiny: primeiroPedido.id,
+          pedido_numero: primeiroPedido.numero,
+          pedido_item_ids: itemIdsList,
+          sku: primeiroItem.sku,
+          saldo_anterior: saldoWms,
+          qty_pega: quantidade_pega,
+          contexto: itemsRaw.length > 1 ? "parcial_consolidado" : "parcial",
+        },
+        p_motivo:
+          itemsRaw.length > 1
+            ? `Picking parcial wave — ${itemsRaw.length} items (pedido #${primeiroPedido.numero}…)`
+            : `Picking parcial pedido #${primeiroPedido.numero}`,
+      });
+      if (pkErr) {
+        return NextResponse.json(
+          { error: "falha_pick_parcial", message: pkErr.message },
+          { status: 409 },
+        );
       }
-
-      // (Fase 1.4 — 2026-05-28) REMOVIDO: sync do snapshot
-      // siso_pedido_item_estoques pós-loc_zerou. A tabela foi dropada — o
-      // worker/aprovação leem disponível VIVO de siso_estoque, então não há
-      // mais snapshot estale pra ressincronizar (matava o loop OC→Própria).
+      movSaidaId = (pk as { mov_s_id: string | null }).mov_s_id;
+      movAjusteId = (pk as { mov_ajuste_id: string | null }).mov_ajuste_id;
     }
+
+    // (Fase 1.4 — 2026-05-28) REMOVIDO: sync do snapshot
+    // siso_pedido_item_estoques pós-loc_zerou. A tabela foi dropada — o
+    // worker/aprovação leem disponível VIVO de siso_estoque, então não há
+    // mais snapshot estale pra ressincronizar (matava o loop OC→Própria).
 
     // 8. (itemUpdates já computado antes da liberação 7a — distribuição FCFS.)
     //    nowIso ainda usado no Pass A/B abaixo.

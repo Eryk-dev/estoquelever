@@ -36,6 +36,20 @@ export async function POST(
     );
   }
 
+  // qty_estorno: ausente/null → undefined (clamp default). Presente mas não
+  // finito > 0 → 400 (evita NaN→null→estorno TOTAL silencioso).
+  let qtyEstorno: number | undefined = undefined;
+  if (body.qty_estorno != null) {
+    const n = Number(body.qty_estorno);
+    if (!Number.isFinite(n) || n <= 0) {
+      return NextResponse.json(
+        { error: "qty_estorno inválido (deve ser número > 0)" },
+        { status: 400 },
+      );
+    }
+    qtyEstorno = n;
+  }
+
   // Existência: a mov precisa estar no ledger pra preservar a trilha de auditoria.
   const sb = createServiceClient();
   const { data: compraRow, error: compraErr } = await sb
@@ -65,7 +79,7 @@ export async function POST(
       retroativo_mov_id: id,
       compra_mov_id: compraMovId,
       usuario_id: auth.user.id,
-      qty_estorno: body.qty_estorno != null ? Number(body.qty_estorno) : undefined,
+      qty_estorno: qtyEstorno,
     });
     if (r.idempotente) {
       return NextResponse.json({ ok: true, idempotente: true, mensagem: "lançamento já reconciliado" });

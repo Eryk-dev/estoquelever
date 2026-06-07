@@ -44,6 +44,24 @@ describe("wms_reconciliar_retroativo", () => {
     });
     expect(r2.error).toBeNull();
     expect((r2.data as { idempotente: boolean }).idempotente).toBe(true);
+    // Idempotência por linha (não só pelo self-report): só pode existir 1 estorno S.
+    const { data: estornos } = await sb.from("siso_movimentacoes")
+      .select("id").eq("estorno_de", retroId).eq("tipo", "S");
+    expect(estornos!.length).toBe(1);
+  });
+
+  it("sem saldo disponível (tudo vendido) → ERRA (P147)", async () => {
+    const retroId = await lancamentoRetroativo(40);
+    // vende TUDO → disponível 0
+    await sb.rpc("wms_inserir_movimentacao", {
+      p_produto_id: prodId, p_galpao_id: galpaoId, p_localizacao_id: locId,
+      p_tipo: "S", p_quantidade: 40, p_origem_tipo: "venda_manual", p_motivo: "vendeu tudo antes da reconciliação",
+    });
+    const r = await sb.rpc("wms_reconciliar_retroativo", {
+      p_retroativo_mov_id: retroId, p_compra_mov_id: retroId, p_usuario_id: null, p_qty_estorno: null,
+    });
+    expect(r.error).not.toBeNull();
+    expect(r.error!.message).toMatch(/sem saldo disponível/i);
   });
 
   it("estorno PARCIAL: parte já vendida → estorna só o disponível (P147)", async () => {

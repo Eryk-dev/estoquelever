@@ -3976,3 +3976,23 @@ erros:
       - src/lib/wms/movimentacoes.ts
       - src/app/api/wms/lancamento-retroativo/[id]/reconciliar/route.ts
     tags: [retroativo, reconciliacao, idempotencia, lock, estorno-parcial, rpc]
+  - id: reconciliador-varredura-sem-durabilidade
+    date: "2026-06-11"
+    source: wms/reconciliador-oc + wms/ledger
+    category: infrastructure
+    message: "Transição do reconciliador OC e varredura pós-entrada rodavam fire-and-forget no write do ledger; falha transitória só logava e desistia — pedido OC preso e banner 'saldo apareceu' nunca surgia, sem ninguém avisado."
+    cause: >
+      ledger.ts:230-263 e reconciliador-oc.ts:278-336 chamavam a varredura/transição
+      inline com try/catch+warn; nenhum retry, nenhuma fila, nenhum alerta.
+    fix: >
+      Jobs duráveis na siso_fila_execucao (varredura_pos_entrada,
+      reconciliar_oc_retry) com backoff custom 30s/5min/10min + handler no worker
+      que NÃO flipa status de pedido; em falha inline, enfileira o job + alerta
+      visível via registrarEvento('erro').
+    files:
+      - supabase/migrations/20260611_fila_jobs_manutencao.sql
+      - src/lib/wms/jobs-manutencao.ts
+      - src/lib/execution-worker.ts
+      - src/lib/wms/ledger.ts
+      - src/lib/wms/reconciliador-oc.ts
+    tags: [reconciliador, varredura, durabilidade, fila, retry, alerta]

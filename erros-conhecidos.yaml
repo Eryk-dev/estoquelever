@@ -3825,3 +3825,22 @@ erros:
       - src/lib/wms/localizacoes.ts
       - src/app/api/wms/localizacoes/[id]/route.ts
     tags: [localizacoes, soft-delete, guard, reserva, transferencia, contagem, P115, P063, P113]
+
+  - id: inventario-aplicar-nao-atomico
+    date: "2026-06-07"
+    source: wms/inventario/aplicar
+    category: business_logic
+    message: "Aplicar sessão de inventário era N RPCs independentes em loop JS — falha no meio deixava parte aplicada e sessão num estado parcial."
+    cause: >
+      aplicarSessao (inventario.ts:973-1103) iterava divergências chamando
+      inserirMovimentacao uma a uma; uma perda inviável (saldo insuficiente) no
+      meio aplicava os ganhos anteriores e travava o resto, sem rollback.
+    fix: >
+      RPC plpgsql wms_aplicar_sessao_inventario com FOR UPDATE da sessão + loop
+      de movs + transição de status na MESMA transação; RAISE em qualquer mov
+      inviável rola back tudo. Wrapper TS vira .rpc() fino; rota mapeia saldo→409.
+    files:
+      - supabase/migrations/20260607_rpc_aplicar_sessao_inventario.sql
+      - src/lib/wms/inventario.ts
+      - src/app/api/wms/inventario/[id]/aplicar/route.ts
+    tags: [inventario, atomicidade, ledger, rpc]

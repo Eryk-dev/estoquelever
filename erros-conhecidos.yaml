@@ -3958,3 +3958,21 @@ erros:
       - supabase/migrations/20260610_rpc_aprovar_e_enfileirar.sql
       - src/app/api/wms/pedidos/aprovar/route.ts
     tags: [aprovacao, fila, durabilidade, atomicidade, rpc]
+  - id: reconciliar-retroativo-nao-idempotente-sem-lock
+    date: "2026-06-10"
+    source: wms/movimentacoes/reconciliarRetroativo
+    category: business_logic
+    message: "Reconciliar lançamento retroativo sempre estornava a qty total sem checar estorno prévio (duplo-clique/reclique dobrava a baixa), sem saldo disponível (estorno parcial impossível) e sem lock (2 operadores em corrida)."
+    cause: >
+      movimentacoes.ts:599-633 lia a mov e inseria a S de estorno direto; nenhum
+      guard de estorno existente, nenhum FOR UPDATE, nenhum clamp ao disponível.
+    fix: >
+      RPC wms_reconciliar_retroativo: FOR UPDATE da mov (P152) + checagem de
+      estorno existente → no-op idempotente (P150/P148/P151) + estorno parcial
+      clampado ao disponível com p_qty_estorno (P147). Rota mapeia no-op→200 e
+      sem-saldo→409.
+    files:
+      - supabase/migrations/20260610b_rpc_reconciliar_retroativo.sql
+      - src/lib/wms/movimentacoes.ts
+      - src/app/api/wms/lancamento-retroativo/[id]/reconciliar/route.ts
+    tags: [retroativo, reconciliacao, idempotencia, lock, estorno-parcial, rpc]

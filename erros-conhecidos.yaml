@@ -3878,3 +3878,20 @@ erros:
       - src/app/api/wms/separacao/marcar-item/route.ts
       - src/lib/wms/reservas-picking.ts
     tags: [separacao, pick, idempotencia, concorrencia, ledger]
+  - id: desmarcar-item-nao-atomico
+    date: "2026-06-08"
+    source: wms/separacao/marcar-item
+    category: business_logic
+    message: "Desmarcar item engolia falhas de estorno (warn+continue) e sempre deletava links + atualizava o item — desfazimento parcial deixava ledger incoerente; recriar R podia violar reservado<=saldo e travar o operador."
+    cause: >
+      O ramo else de marcar-item/route.ts:236-332 percorria os links estornando
+      S e L em chamadas JS independentes; falha era logada e ignorada, e o
+      delete+update rodava incondicionalmente.
+    fix: >
+      RPC wms_desmarcar_item_atomico estorna S+L na MESMA tx (S antes de L) com
+      D4: clampa a R ressuscitada ao saldo livre + status_alerta quando terceiros
+      consumiram saldo. Rota só deleta links/atualiza item se a RPC não lançou.
+    files:
+      - supabase/migrations/20260608_rpc_desmarcar_item_atomico.sql
+      - src/app/api/wms/separacao/marcar-item/route.ts
+    tags: [separacao, desmarcar, atomicidade, ledger, rpc, estorno-tolerante]

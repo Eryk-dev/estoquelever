@@ -3895,3 +3895,19 @@ erros:
       - supabase/migrations/20260608_rpc_desmarcar_item_atomico.sql
       - src/app/api/wms/separacao/marcar-item/route.ts
     tags: [separacao, desmarcar, atomicidade, ledger, rpc, estorno-tolerante]
+  - id: reverter-cutover-nao-atomico
+    date: "2026-06-08"
+    source: wms/cutover
+    category: business_logic
+    message: "Reversão do cutover (estorno de N S + recriação de N R + flip da flag) eram 2N+1 operações independentes — queda deixava saldo parcialmente revertido com estoque_lancado=true."
+    cause: >
+      cutover.ts:290-346 iterava as S chamando inserirMovimentacao(E) +
+      reservarAtomico(R) e só no fim atualizava estoque_lancado=false; sem tx.
+    fix: >
+      RPC wms_reverter_cutover_atomico faz FOR UPDATE do pedido + loop de
+      estorno+recriação + flip da flag na MESMA tx; RAISE rola back tudo.
+      Idempotente (pula S com E counter). Wrapper TS vira .rpc() fino.
+    files:
+      - supabase/migrations/20260608b_rpc_reverter_cutover_atomico.sql
+      - src/lib/wms/cutover.ts
+    tags: [cutover, reversao, atomicidade, ledger, rpc]

@@ -20,8 +20,6 @@
 
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { reservarAtomico } from "./reservas";
-import { inserirMovimentacao } from "./ledger";
 
 // Dynamic import pra evitar dep circular (execution-worker importa cutover)
 async function kickWorkerSafe(): Promise<void> {
@@ -192,184 +190,27 @@ export async function reverterCutoverSeRetrocedeu(
     return { reverted: false, motivo: "estoque_nao_lancado" };
   }
 
-  // Busca todas as S do pedido. Há 2 caminhos que produzem S no fluxo de
-  // separação WMS:
-  //   1. executarEstoquePosNfWms (cutover worker): grava S com origem_id=pedidoId
-  //   2. /separacao/marcar-item: grava S sem origem_id, link via
-  //      siso_pedido_itens.mov_saida_id ou siso_pedido_item_mov_links
-  // Pra cobrir os 2 caminhos, unimos as duas queries.
-  const { data: saidasPorOrigem, error: saidasErr } = await sb
-    .from("siso_movimentacoes")
-    .select("id, produto_id, galpao_id, localizacao_id, quantidade")
-    .eq("origem_id", pedidoId)
-    .eq("origem_tipo", "nf_venda")
-    .eq("tipo", "S");
-
-  if (saidasErr) {
-    logger.error("wms.cutover", "Falha ao buscar saídas pra reverter", {
-      pedidoId,
-      error: saidasErr.message,
-    });
-    return { reverted: false, motivo: "query_error" };
-  }
-
-  // Lookup via mov_saida_id em siso_pedido_itens (path marcar-item)
-  const { data: itensComMov } = await sb
-    .from("siso_pedido_itens")
-    .select("mov_saida_id")
-    .eq("pedido_id", pedidoId)
-    .not("mov_saida_id", "is", null);
-  const movSaidaIds = (
-    (itensComMov ?? []) as Array<{ mov_saida_id: string | null }>
-  )
-    .map((i) => i.mov_saida_id)
-    .filter((id): id is string => Boolean(id));
-
-  let saidasViaItens: Array<{
-    id: string;
-    produto_id: string;
-    galpao_id: string;
-    localizacao_id: string;
-    quantidade: number;
-  }> = [];
-  if (movSaidaIds.length > 0) {
-    const { data } = await sb
-      .from("siso_movimentacoes")
-      .select("id, produto_id, galpao_id, localizacao_id, quantidade")
-      .in("id", movSaidaIds)
-      .eq("tipo", "S");
-    saidasViaItens = (data ?? []) as typeof saidasViaItens;
-  }
-
-  // Union dedupe por id
-  const seen = new Set<string>();
-  const saidasArr: Array<{
-    id: string;
-    produto_id: string;
-    galpao_id: string;
-    localizacao_id: string;
-    quantidade: number;
-  }> = [];
-  for (const s of [
-    ...((saidasPorOrigem ?? []) as typeof saidasArr),
-    ...saidasViaItens,
-  ]) {
-    if (!seen.has(s.id)) {
-      seen.add(s.id);
-      saidasArr.push(s);
-    }
-  }
-
-  if (saidasArr.length === 0) {
-    // estoque_lancado=true mas sem S? Estado inconsistente. Limpa flag.
-    await sb
-      .from("siso_pedidos")
-      .update({ estoque_lancado: false, nf_estoque_lancado: false })
-      .eq("id", pedidoId);
-    logger.warn("wms.cutover", "Pedido com estoque_lancado=true mas sem saídas — flag limpada", {
-      pedidoId,
-    });
-    return { reverted: false, motivo: "sem_saidas_para_estornar" };
-  }
-
-  // Idempotência: pula S que já têm E counter
-  const saidaIds = saidasArr.map((s) => s.id);
-  const { data: jaEstornadas } = await sb
-    .from("siso_movimentacoes")
-    .select("estorno_de")
-    .eq("tipo", "E")
-    .in("estorno_de", saidaIds);
-  const estornadasSet = new Set(
-    ((jaEstornadas ?? []) as Array<{ estorno_de: string }>).map((m) => String(m.estorno_de)),
-  );
-
-  let saidasEstornadas = 0;
-  let reservasRecriadas = 0;
-  let reservasFalhadas = 0;
-
-  for (const s of saidasArr) {
-    if (estornadasSet.has(s.id)) continue;
-
-    const tripla = {
-      produto_id: s.produto_id,
-      galpao_id: s.galpao_id,
-      localizacao_id: s.localizacao_id,
-    };
-
-    try {
-      await inserirMovimentacao({
-        tripla,
-        tipo: "E",
-        qty: Number(s.quantidade),
-        // 3D: origem_tipo 'cancelamento_nf' não existe mais (lista enxuta).
-        // Estorno explícito via estorno_de + origem_tipo 'estorno'.
-        origem_tipo: "estorno",
-        origem_id: pedidoId,
-        origem_detalhes: { motivo, reversal: true },
-        estorno_de: s.id,
-        usuario_id: usuarioId,
-        motivo: `Reversal por ${motivo}`,
-      });
-      saidasEstornadas++;
-    } catch (err) {
-      logger.error("wms.cutover", "Falha ao estornar saída", {
-        pedidoId,
-        saidaId: s.id,
-        err: err instanceof Error ? err.message : String(err),
-      });
-      continue;
-    }
-
-    try {
-      await reservarAtomico({
-        tripla,
-        qty: Number(s.quantidade),
-        pedido_id: pedidoId,
-        ttl_horas: 24 * 30,
-        usuario_id: usuarioId,
-      });
-      reservasRecriadas++;
-    } catch (err) {
-      logger.warn("wms.cutover", "Falha ao recriar reserva no reversal", {
-        pedidoId,
-        tripla,
-        qty: s.quantidade,
-        err: err instanceof Error ? err.message : String(err),
-      });
-      reservasFalhadas++;
-    }
-  }
-
-  await sb
-    .from("siso_pedidos")
-    .update({ estoque_lancado: false, nf_estoque_lancado: false })
-    .eq("id", pedidoId);
-
-  if (reservasFalhadas > 0) {
-    try {
-      await sb
-        .from("siso_pedidos")
-        .update({ status_alerta: "reserva_recriacao_falhou" })
-        .eq("id", pedidoId);
-    } catch {
-      // schema legado pode não ter status_alerta — ignora
-    }
-  }
-
-  logger.info("wms.cutover", "Cutover revertido", {
-    pedidoId,
-    motivo,
-    novoStatus,
-    saidasEstornadas,
-    reservasRecriadas,
-    reservasFalhadas,
+  const { data: rpcRes, error: rpcErr } = await sb.rpc("wms_reverter_cutover_atomico", {
+    p_pedido_id: pedidoId,
+    p_motivo: motivo,
+    p_usuario_id: usuarioId ?? null,
   });
-
+  if (rpcErr) {
+    logger.error("wms.cutover", "RPC reverter cutover falhou", {
+      pedidoId, motivo, err: rpcErr.message,
+    });
+    return { reverted: false, motivo: "rpc_error" };
+  }
+  const res = rpcRes as { reverted: boolean; saidas_estornadas: number; reservas_recriadas: number };
+  logger.info("wms.cutover", "Cutover revertido (RPC)", {
+    pedidoId, motivo, novoStatus,
+    saidasEstornadas: res.saidas_estornadas, reservasRecriadas: res.reservas_recriadas,
+  });
   return {
-    reverted: true,
+    reverted: res.reverted,
     motivo: "ok",
-    saidasEstornadas,
-    reservasRecriadas,
-    reservasFalhadas,
+    saidasEstornadas: res.saidas_estornadas,
+    reservasRecriadas: res.reservas_recriadas,
+    reservasFalhadas: 0,
   };
 }

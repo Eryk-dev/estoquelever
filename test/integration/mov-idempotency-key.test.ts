@@ -56,3 +56,61 @@ describe("siso_movimentacoes.idempotency_key UNIQUE parcial", () => {
     expect(b.error).toBeNull();
   });
 });
+
+describe("wms_inserir_movimentacao p_idempotency_key", () => {
+  it("2ª chamada com mesma key é no-op (retorna a mesma mov, saldo não dobra)", async () => {
+    const key = crypto.randomUUID();
+    const { data: estA } = await sb.from("siso_estoque").select("saldo")
+      .eq("produto_id", prodId).eq("galpao_id", galpaoId).eq("localizacao_id", locId).single();
+    const mov1 = await sb.rpc("wms_inserir_movimentacao", {
+      p_produto_id: prodId, p_galpao_id: galpaoId, p_localizacao_id: locId,
+      p_tipo: "S", p_quantidade: 2, p_origem_tipo: "nf_venda", p_idempotency_key: key, p_motivo: "idemp",
+    });
+    expect(mov1.error).toBeNull();
+    const mov2 = await sb.rpc("wms_inserir_movimentacao", {
+      p_produto_id: prodId, p_galpao_id: galpaoId, p_localizacao_id: locId,
+      p_tipo: "S", p_quantidade: 2, p_origem_tipo: "nf_venda", p_idempotency_key: key, p_motivo: "idemp",
+    });
+    expect(mov2.error).toBeNull();
+    expect(mov2.data).toBe(mov1.data); // mesma mov id
+    const { data: estB } = await sb.from("siso_estoque").select("saldo")
+      .eq("produto_id", prodId).eq("galpao_id", galpaoId).eq("localizacao_id", locId).single();
+    expect(Number(estB?.saldo)).toBe(Number(estA?.saldo) - 2); // baixou só 1 vez
+  });
+
+  // REGRESSÃO DE FIDELIDADE: a recriação da RPC NÃO pode alterar o custo médio.
+  // Produto novo, custo médio começa do zero; duas entradas nf_compra com custos
+  // distintos devem dar a média ponderada EXATA da fórmula original
+  // (v_saldo_global * atual + qty * custo) / (v_saldo_global + qty).
+  it("preserva o cálculo de custo médio ponderado (fidelidade coluna-a-coluna)", async () => {
+    const { data: prodCusto } = await sb.from("siso_produtos")
+      .insert({ sku: `TEST-CUSTO-${Date.now()}`, descricao: "custo", ativo: true }).select("id").single();
+    const pc = prodCusto!.id as string;
+    // NF de compra exige nota_fiscal_id — cria DUAS NFs distintas (uq_mov_recebimento_nf_id
+    // bloqueia 2 nf_compra com a mesma NF p/ o mesmo produto+galpão — dedup de recebimento).
+    const chave1 = String(Date.now()).padEnd(44, "0").slice(0, 44);
+    const chave2 = String(Date.now() + 1).padEnd(44, "0").slice(0, 44);
+    const { data: nf1 } = await sb.from("siso_notas_fiscais")
+      .insert({ chave_acesso: chave1, numero: "1", serie: "1", tipo: "entrada" }).select("id").single();
+    const { data: nf2 } = await sb.from("siso_notas_fiscais")
+      .insert({ chave_acesso: chave2, numero: "2", serie: "1", tipo: "entrada" }).select("id").single();
+    const nf1Id = nf1!.id as string;
+    const nf2Id = nf2!.id as string;
+    // 1ª entrada: 10 un @ R$ 5,00 → custo médio = 5,00
+    const e1 = await sb.rpc("wms_inserir_movimentacao", {
+      p_produto_id: pc, p_galpao_id: galpaoId, p_localizacao_id: locId,
+      p_tipo: "E", p_quantidade: 10, p_origem_tipo: "nf_compra",
+      p_custo_unitario: 5, p_nota_fiscal_id: nf1Id, p_motivo: "c1",
+    });
+    expect(e1.error).toBeNull();
+    // 2ª entrada: 10 un @ R$ 7,00 → custo médio ponderado = (10*5 + 10*7)/20 = 6,00
+    const e2 = await sb.rpc("wms_inserir_movimentacao", {
+      p_produto_id: pc, p_galpao_id: galpaoId, p_localizacao_id: locId,
+      p_tipo: "E", p_quantidade: 10, p_origem_tipo: "nf_compra",
+      p_custo_unitario: 7, p_nota_fiscal_id: nf2Id, p_motivo: "c2",
+    });
+    expect(e2.error).toBeNull();
+    const { data: cm } = await sb.from("siso_custo_medio").select("custo_medio").eq("produto_id", pc).single();
+    expect(Number(cm?.custo_medio)).toBeCloseTo(6, 4);
+  });
+});

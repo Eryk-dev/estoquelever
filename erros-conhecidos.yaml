@@ -3996,3 +3996,18 @@ erros:
       - src/lib/wms/ledger.ts
       - src/lib/wms/reconciliador-oc.ts
     tags: [reconciliador, varredura, durabilidade, fila, retry, alerta]
+  - id: pedido-fantasma-sem-resolucao
+    date: "2026-06-11"
+    source: wms/reconciliacao-pedidos
+    category: business_logic
+    message: "Safety-net detectava pedido forward com reserva R viva sem saída (padrão C) mas não tinha ação — as unidades ficavam congeladas (nem em saída, nem livres) até intervenção manual fora do sistema."
+    cause: >
+      reconciliacao-pedidos/route.ts só expunha o GET de detecção (RPC
+      wms_detectar_pedidos_inconsistentes); faltava o caminho de resolução.
+    fix: >
+      RPC wms_resolver_pedido_fantasma (R→L+S se 'saiu', R→L + cancelado se
+      'cancelado', atômica) + rota POST /[pedidoId]/resolver gate admin.
+    files:
+      - supabase/migrations/20260611b_rpc_resolver_pedido_fantasma.sql
+      - src/app/api/wms/reconciliacao-pedidos/[pedidoId]/resolver/route.ts
+    tags: [reconciliacao, pedido-fantasma, reserva, ledger, rpc]

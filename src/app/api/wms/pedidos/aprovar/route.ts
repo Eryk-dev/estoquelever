@@ -331,57 +331,55 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Update order to "executando"
-  const { error: updateError } = await supabase
-    .from("siso_pedidos")
-    .update({
-      status: "executando",
-      decisao_final: decisao,
-      operador_id: operadorId ?? null,
-      operador_nome: operadorNome ?? null,
-      tipo_resolucao: "manual",
-      marcadores,
-      separacao_galpao_id: separacaoGalpaoId,
-      status_separacao:
-        decisao === "oc"
-          ? null
-          : pedido.nota_fiscal_id && pedido.chave_acesso_nf
-            ? "aguardando_separacao"
-            : "aguardando_nf",
-    })
-    .eq("id", pedidoId);
-
-  if (updateError) {
-    logger.error("aprovar", "Failed to update order", {
-      pedidoId,
-      supabaseError: updateError.message,
-    });
-    return NextResponse.json(
-      { error: updateError.message },
-      { status: 500 },
-    );
-  }
-
-  // Enqueue execution job (with empresa_id for worker)
-  const { error: queueError } = await supabase
-    .from("siso_fila_execucao")
-    .insert({
-      pedido_id: pedidoId,
-      tipo: "lancar_estoque",
-      filial_execucao: filialExecucao,
-      empresa_id: empresaExecucaoId,
-      decisao,
-      operador_id: operadorId ?? null,
-      operador_nome: operadorNome ?? null,
-    });
-
-  if (queueError) {
-    logger.error("aprovar", "Failed to enqueue job", {
-      pedidoId,
-      decisao,
-      supabaseError: queueError.message,
-    });
-    // Don't fail — the order status is already updated
+  // Enqueue durável + atômico (P005): status do pedido + job lancar_estoque na
+  // MESMA tx via RPC, com retry curto. Mata o estado-fantasma "aprovado sem job"
+  // (antes UPDATE + INSERT eram independentes e o queueError era engolido).
+  if (decisao !== "oc") {
+    let enfErr: { message: string } | null = null;
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      const { error } = await supabase.rpc("wms_aprovar_e_enfileirar", {
+        p_pedido_id: pedidoId,
+        p_decisao: decisao,
+        p_status_separacao:
+          pedido.nota_fiscal_id && pedido.chave_acesso_nf ? "aguardando_separacao" : "aguardando_nf",
+        p_empresa_id: empresaExecucaoId,
+        p_filial_execucao: filialExecucao,
+        p_operador_id: operadorId ?? null,
+        p_operador_nome: operadorNome ?? null,
+        p_marcadores: marcadores ?? null,
+        p_separacao_galpao_id: separacaoGalpaoId,
+      });
+      if (!error) { enfErr = null; break; }
+      enfErr = error;
+      logger.warn("aprovar", `Falha enfileirar (tentativa ${tentativa}/3)`, { pedidoId, error: error.message });
+      await new Promise((r) => setTimeout(r, 200 * tentativa));
+    }
+    if (enfErr) {
+      // Durabilidade: não respondemos ok cego. O pedido NÃO ficou aprovado-sem-job
+      // (a RPC é tudo-ou-nada — se falhou, o status não mudou).
+      logger.logError({
+        error: new Error(enfErr.message), source: "aprovar",
+        message: "Falha durável ao aprovar+enfileirar após 3 tentativas",
+        category: "database", requestPath: "/api/wms/pedidos/aprovar", requestMethod: "POST",
+        metadata: { pedidoId, decisao },
+      });
+      return NextResponse.json({ error: "falha_enfileirar", message: enfErr.message }, { status: 500 });
+    }
+  } else {
+    // OC: não enfileira lancar_estoque. UPDATE direto (status_separacao=null).
+    const { error: updErr } = await supabase
+      .from("siso_pedidos")
+      .update({
+        status: "executando", decisao_final: decisao,
+        operador_id: operadorId ?? null, operador_nome: operadorNome ?? null,
+        tipo_resolucao: "manual", marcadores,
+        separacao_galpao_id: separacaoGalpaoId, status_separacao: null,
+      })
+      .eq("id", pedidoId);
+    if (updErr) {
+      logger.error("aprovar", "Failed to update order (oc)", { pedidoId, supabaseError: updErr.message });
+      return NextResponse.json({ error: updErr.message }, { status: 500 });
+    }
   }
 
   registrarEvento({

@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { createServiceClient } from "../../src/lib/supabase-server";
+import { reconciliarRetroativo } from "../../src/lib/wms/movimentacoes";
 
 const sb = createServiceClient();
-let galpaoId: string, locId: string, prodId: string;
+let galpaoId: string, locId: string, prodId: string, usuarioId: string;
 
 beforeAll(async () => {
   const { data: g } = await sb.from("siso_galpoes").select("id").eq("nome", "CWB").single();
@@ -13,6 +14,10 @@ beforeAll(async () => {
   const { data: p } = await sb.from("siso_produtos")
     .insert({ sku: `TEST-RETRO-${Date.now()}`, descricao: "x", ativo: true }).select("id").single();
   prodId = p!.id;
+  // usuario_id viaja como FK em siso_movimentacoes.usuario_id → precisa de um
+  // usuário real (siso_usuarios não é truncado). Pega um seedado p/ o wrapper.
+  const { data: u } = await sb.from("siso_usuarios").select("id").limit(1).single();
+  usuarioId = u!.id;
 });
 
 async function lancamentoRetroativo(qty: number) {
@@ -73,5 +78,15 @@ describe("wms_reconciliar_retroativo", () => {
     expect(d.qty_estornada).toBe(20);   // o disponível (20) decidiu, não o arg (null→70)
     expect(d.qty_original).toBe(70);
     expect(d.parcial).toBe(true);
+  });
+});
+
+describe("reconciliarRetroativo (wrapper → RPC)", () => {
+  it("retorna { idempotente, qtyEstornada } e é no-op na 2ª chamada", async () => {
+    const retroId = await lancamentoRetroativo(30);
+    const r1 = await reconciliarRetroativo({ retroativo_mov_id: retroId, compra_mov_id: retroId, usuario_id: usuarioId });
+    expect(r1.qtyEstornada).toBe(30);
+    const r2 = await reconciliarRetroativo({ retroativo_mov_id: retroId, compra_mov_id: retroId, usuario_id: usuarioId });
+    expect(r2.idempotente).toBe(true);
   });
 });

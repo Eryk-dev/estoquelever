@@ -61,17 +61,23 @@ export async function POST(
   }
 
   try {
-    await reconciliarRetroativo({
+    const r = await reconciliarRetroativo({
       retroativo_mov_id: id,
       compra_mov_id: compraMovId,
       usuario_id: auth.user.id,
+      qty_estorno: body.qty_estorno != null ? Number(body.qty_estorno) : undefined,
     });
-    return NextResponse.json({ ok: true });
+    if (r.idempotente) {
+      return NextResponse.json({ ok: true, idempotente: true, mensagem: "lançamento já reconciliado" });
+    }
+    return NextResponse.json({ ok: true, qty_estornada: r.qtyEstornada, parcial: r.parcial });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const isSemSaldo = /sem saldo disponível/i.test(msg);
     return wmsErrorResponse({
       source: "wms.lancamento-retroativo.reconciliar",
       error: e,
-      status: 400,
+      status: isSemSaldo ? 409 : 400,
       requestPath: `/api/wms/lancamento-retroativo/${id}/reconciliar`,
       requestMethod: "POST",
       metadata: { retroativo_mov_id: id, compra_mov_id: compraMovId },

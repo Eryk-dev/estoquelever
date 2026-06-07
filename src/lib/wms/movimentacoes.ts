@@ -1,6 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
-import type { Tripla, Movimentacao, OrigemTipo } from "./types";
+import type { Tripla, OrigemTipo } from "./types";
 import { criarPendencia, resolverLocRecebimento } from "./guarda";
 import { logger } from "@/lib/logger";
 
@@ -594,42 +594,26 @@ export interface ReconciliarRetroativoInput {
   retroativo_mov_id: string;
   compra_mov_id: string;
   usuario_id: string;
+  qty_estorno?: number;
 }
 
 export async function reconciliarRetroativo(
   input: ReconciliarRetroativoInput,
-): Promise<void> {
+): Promise<{ idempotente: boolean; qtyEstornada: number; parcial?: boolean }> {
   const sb = createServiceClient();
-  const { data: retro, error } = await sb
-    .from("siso_movimentacoes")
-    .select("*")
-    .eq("id", input.retroativo_mov_id)
-    .single();
-  if (error || !retro) throw new Error("lançamento retroativo não encontrado");
-  const m = retro as Movimentacao;
-  if (m.origem_tipo !== "lancamento_retroativo") {
-    throw new Error("mov não é um lançamento retroativo");
-  }
-  await inserirMovimentacao({
-    tripla: {
-      produto_id: m.produto_id,
-      galpao_id: m.galpao_id,
-      localizacao_id: m.localizacao_id,
-    },
-    tipo: "S",
-    qty: Number(m.quantidade),
-    origem_tipo: "estorno",
-    estorno_de: m.id,
-    usuario_id: input.usuario_id,
-    motivo: `reconciliado com mov ${input.compra_mov_id}`,
-    // Trilha de auditoria: a mov de "compra" que cobriu o lançamento retroativo
-    // viaja em origem_detalhes pra reconstruir a cadeia retroativo→estorno→compra.
-    origem_detalhes: { compra_mov_id: input.compra_mov_id },
+  const { data, error } = await sb.rpc("wms_reconciliar_retroativo", {
+    p_retroativo_mov_id: input.retroativo_mov_id,
+    p_compra_mov_id: input.compra_mov_id,
+    p_usuario_id: input.usuario_id,
+    p_qty_estorno: input.qty_estorno ?? null,
   });
+  if (error) throw error;
+  const r = data as { idempotente: boolean; qty_estornada: number; parcial?: boolean };
   logger.info("wms.movs", "lançamento retroativo reconciliado", {
-    retro: m.id,
-    compra: input.compra_mov_id,
+    retro: input.retroativo_mov_id, compra: input.compra_mov_id,
+    idempotente: r.idempotente, qty: r.qty_estornada,
   });
+  return { idempotente: r.idempotente, qtyEstornada: r.qty_estornada, parcial: r.parcial };
 }
 
 /**

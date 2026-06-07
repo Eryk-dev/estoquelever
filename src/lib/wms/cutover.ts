@@ -156,9 +156,12 @@ export type ReverterMotivo =
  *   - Se novoStatus ainda for forward, no-op
  *   - S que já tem E counter (estorno_de) é pulada
  *
- * Edge case: se outro pedido consumiu o saldo entre cutover e reversal,
- * a recriação da R pode falhar. Sistema mantém a reversão da S e marca
- * status_alerta='reserva_recriacao_falhou' pro operador investigar.
+ * Tudo-ou-nada (P023): toda a reversão roda numa única transação na RPC
+ * wms_reverter_cutover_atomico. Se outro pedido consumiu o saldo entre cutover
+ * e reversal e a recriação da R estourar saldo, a RPC dá RAISE e rola back a
+ * reversão INTEIRA (nenhuma S estornada, flag permanece coerente) — nada de
+ * estado parcial. Na prática esse RAISE por saldo é inalcançável na mesma loc,
+ * pois o estorno-S devolve +qty ao saldo antes de recriar a R(qty).
  */
 export async function reverterCutoverSeRetrocedeu(
   pedidoId: string,

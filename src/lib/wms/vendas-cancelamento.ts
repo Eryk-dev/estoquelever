@@ -1,6 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { estornarMovimentacao } from "./ledger";
 import { liberarReserva, estornarReservaIndividual } from "./reservas";
 import { registrarEvento } from "@/lib/historico-service";
 import { classificarItensParaCancelamento } from "./cancelamento-parcial";
@@ -145,46 +144,18 @@ export async function cancelarVendaManual(input: {
     }
   }
 
-  // Caminho 2: baixa direta — estorna movs S origem_tipo='venda_manual'.
-  // Match pelo tag origem_detalhes.pedido_id_manual (siso_pedidos.id é
-  // text 'MAN-...', não cabe em siso_movimentacoes.pedido_id na escrita
-  // atual do endpoint vendas/criar).
-  const { data: movsVenda, error: movsErr } = await sb
-    .from("siso_movimentacoes")
-    .select("id")
-    .eq("origem_tipo", "venda_manual")
-    .eq("tipo", "S")
-    .filter("origem_detalhes->>pedido_id_manual", "eq", input.pedido_id);
-  if (movsErr) {
-    throw new Error(`falha lendo movs de venda: ${movsErr.message}`);
-  }
-
-  for (const m of (movsVenda ?? []) as Array<{ id: string }>) {
-    try {
-      await estornarMovimentacao({
-        mov_id: m.id,
-        usuario_id: input.usuario_id,
-        motivo: `Cancelamento venda manual: ${input.motivo}`,
-      });
-      movsEstornadas++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Idempotência: re-cancelamento encontra mov já estornada
-      if (/já foi estornada|já é um estorno/i.test(msg)) {
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  // Marca pedido cancelado. siso_pedidos não tem cancelado_em — só seta status.
-  const { error: updErr } = await sb
-    .from("siso_pedidos")
-    .update({ status: "cancelado" })
-    .eq("id", input.pedido_id);
-  if (updErr) {
-    throw new Error(`falha ao atualizar status: ${updErr.message}`);
-  }
+  // Caminho 2: baixa direta — estorno das N S + status na MESMA tx via RPC.
+  // A RPC casa as S por origem_detalhes->>'pedido_id_manual' (siso_pedidos.id é
+  // text 'MAN-...'), estorna como bloco indivisível e marca o pedido cancelado.
+  // Quando não há S (veio só do caminho 1 de reservas), estorna 0 e mesmo assim
+  // marca cancelado — unifica o UPDATE de status dos dois caminhos.
+  const { data: rpcRes, error: rpcErr } = await sb.rpc("wms_cancelar_venda_atomico", {
+    p_pedido_id: input.pedido_id,
+    p_usuario_id: input.usuario_id,
+    p_motivo: input.motivo,
+  });
+  if (rpcErr) throw new Error(`falha ao cancelar venda: ${rpcErr.message}`);
+  movsEstornadas = Number((rpcRes as { movs_estornadas: number }).movs_estornadas);
 
   // Audit fire-and-forget
   registrarEvento({

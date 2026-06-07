@@ -1,7 +1,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
 import type { TipoMov } from "./types";
-import { reconciliarTemporal } from "./inventario-reconciliacao";
+import { reconciliarTemporal, janelaInferiorReconciliacao } from "./inventario-reconciliacao";
 import { logger } from "@/lib/logger";
 
 export type TipoSessao = "cycle_count" | "completo";
@@ -496,6 +496,26 @@ export async function registrarContagem(
 ): Promise<void> {
   const sb = createServiceClient();
 
+  // [P058] Guard de status da SESSÃO (complementa o guard por-loc abaixo).
+  // Se a sessão saiu de 'em_andamento' (foi pra revisao/aprovada/aplicada),
+  // qualquer bipe novo cairia no vazio — bloqueia explicitamente. A sessão
+  // contínua de contagem-inline fica permanentemente 'em_andamento', então
+  // não é afetada.
+  const { data: sessaoRow } = await sb
+    .from("siso_inventario_sessoes")
+    .select("status")
+    .eq("id", input.sessao_id)
+    .maybeSingle();
+  if (!sessaoRow) {
+    throw new Error("sessão não encontrada");
+  }
+  const sessaoStatus = (sessaoRow as { status: string }).status;
+  if (sessaoStatus !== "em_andamento") {
+    throw new Error(
+      `sessão já saiu da fase em andamento (status ${sessaoStatus}) — supervisor cria nova para corrigir`,
+    );
+  }
+
   // P3 #4.3: bipe só é aceito se a loc está bloqueada por este operador.
   // Sem esse guard, qualquer usuário com sessão válida injetaria contagens
   // em sessões que nunca entrou (silent write vazamento).
@@ -809,7 +829,7 @@ export async function computarDivergencias(
   const minContado = contagens.length > 0
     ? contagens.map((c) => c.contado_em).sort()[0]
     : null;
-  const dataLimiteInferior = minContado ?? cutoff_em; // se sem contagens, query vazia
+  const dataLimiteInferior = janelaInferiorReconciliacao(minContado, cutoff_em); // [P059] início do dia; sem contagens → cutoff (query vazia)
   let movs: Array<{
     id: string;
     localizacao_id: string;
@@ -1167,19 +1187,16 @@ export async function ultimasContagensDoProduto(
 // ─────────────────────────────────────────────────────────────────────
 
 /**
- * Estorna uma sessão de inventário aplicada.
+ * Estorna uma sessão de inventário aplicada — tudo-ou-nada via RPC
+ * wms_estornar_sessao_inventario (P056/P061).
  *
- * Para cada divergência aplicada (status='aplicada' + mov_aplicada_id):
- *   1. Estorna a mov no ledger via estornarMovimentacao (cria contra-mov)
- *   2. Reseta divergencia.status='pendente' (volta pra fila do supervisor)
+ * A RPC faz preflight de saldo de TODAS as contra-movs antes de inserir
+ * qualquer uma: se um estorno deixaria saldo negativo (alguém consumiu),
+ * RAISE nomeando o produto → rollback total (nenhum estorno parcial). Só
+ * se todas passam: insere contra-movs (origem 'estorno'), reseta cada
+ * divergência pra 'pendente' e a sessão pra 'revisao' (aplicada_em=NULL).
  *
- * Não toca em contagens — preserva trilha histórica do que foi contado.
- * Sessão volta pra status='revisao' (supervisor decide se re-aplica ou
- * cancela). Idempotente: re-execução não duplica estornos (estornarMov
- * recusa double-estorno via "já foi estornada" / "já é um estorno").
- *
- * Falha gracefully se algum estorno bater em saldo negativo (ledger
- * coerência sobrepõe undo).
+ * Idempotente: sessão != 'aplicada' → no-op (movs_estornadas=0).
  */
 export async function estornarSessaoInventario(input: {
   sessao_id: string;
@@ -1190,60 +1207,62 @@ export async function estornarSessaoInventario(input: {
     throw new Error("motivo do estorno é obrigatório (≥3 caracteres)");
   }
   const sb = createServiceClient();
-  const { data: sessao } = await sb
-    .from("siso_inventario_sessoes")
-    .select("id, status")
-    .eq("id", input.sessao_id)
-    .maybeSingle();
-  if (!sessao) throw new Error("sessão não encontrada");
-  const status = (sessao as { status: string }).status;
-  if (status !== "aplicada") {
-    throw new Error(
-      `sessão em status ${status} — apenas 'aplicada' pode ser estornada`,
-    );
+  const { data, error } = await sb.rpc("wms_estornar_sessao_inventario", {
+    p_sessao: input.sessao_id,
+    p_usuario: input.usuario_id,
+    p_motivo: input.motivo,
+  });
+  if (error) {
+    throw new Error(error.message);
   }
+  return { movsEstornadas: (data as { movs_estornadas: number }).movs_estornadas };
+}
 
-  const { data: divs } = await sb
+/**
+ * [P159] Estorna UMA divergência aplicada (não a sessão inteira). Reseta a
+ * divergência alvo pra 'pendente' e não toca nas demais. Reusa o guard de
+ * double-estorno de estornarMovimentacao. Não força a sessão a recontagem das
+ * que continuam corretas; se ainda restarem 'aplicada', a sessão segue 'aplicada'.
+ */
+export async function estornarDivergenciaInventario(input: {
+  divergencia_id: string;
+  usuario_id: string;
+  motivo: string;
+}): Promise<{ movEstornada: boolean }> {
+  if (!input.motivo || input.motivo.trim().length < 3) {
+    throw new Error("motivo do estorno é obrigatório (≥3 caracteres)");
+  }
+  const sb = createServiceClient();
+  const { data: div } = await sb
     .from("siso_inventario_divergencias")
-    .select("id, mov_aplicada_id, status")
-    .eq("sessao_id", input.sessao_id)
-    .eq("status", "aplicada");
-
-  let estornadas = 0;
-  for (const d of (divs ?? []) as Array<{
-    id: string;
-    mov_aplicada_id: string | null;
-    status: string;
-  }>) {
-    if (!d.mov_aplicada_id) continue;
+    .select("id, sessao_id, mov_aplicada_id, status")
+    .eq("id", input.divergencia_id)
+    .maybeSingle();
+  if (!div) throw new Error("divergência não encontrada");
+  const d = div as { id: string; sessao_id: string; mov_aplicada_id: string | null; status: string };
+  if (d.status !== "aplicada") {
+    throw new Error(`divergência em status ${d.status} — apenas 'aplicada' pode ser estornada`);
+  }
+  let estornada = false;
+  if (d.mov_aplicada_id) {
     try {
       await estornarMovimentacao({
         mov_id: d.mov_aplicada_id,
         usuario_id: input.usuario_id,
-        motivo: `Estorno sessão inventário ${input.sessao_id}: ${input.motivo}`,
+        motivo: `Estorno divergência ${d.id}: ${input.motivo}`,
       });
-      estornadas++;
+      estornada = true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/já foi estornada/.test(msg) || /já é um estorno/.test(msg)) {
-        // Idempotência: outra request já estornou. Segue.
-        continue;
-      }
-      throw err;
+      if (!/já foi estornada|já é um estorno/.test(msg)) throw err;
     }
-    await sb
-      .from("siso_inventario_divergencias")
-      .update({ status: "pendente", mov_aplicada_id: null })
-      .eq("id", d.id);
   }
-
-  // UPDATE condicional — só transiciona se ainda está 'aplicada' (proteção
-  // contra re-execução paralela; idempotente).
-  await sb
-    .from("siso_inventario_sessoes")
-    .update({ status: "revisao", aplicada_em: null })
-    .eq("id", input.sessao_id)
-    .eq("status", "aplicada");
-
-  return { movsEstornadas: estornadas };
+  const { error: updErr } = await sb
+    .from("siso_inventario_divergencias")
+    .update({ status: "pendente", mov_aplicada_id: null })
+    .eq("id", d.id);
+  if (updErr) {
+    throw new Error(`falha ao resetar divergência ${d.id}: ${updErr.message}`);
+  }
+  return { movEstornada: estornada };
 }

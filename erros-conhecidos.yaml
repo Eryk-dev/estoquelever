@@ -3603,3 +3603,225 @@ erros:
       - test/integration/webhook-reserva-all-or-nothing.integration.test.ts
       - test/integration/reservas-idempotente.integration.test.ts
     tags: [webhook, reserva, all-or-nothing, idempotencia, dedup, P085, P003]
+  - id: wms-inventario-bipe-sessao-fora-andamento
+    date: "2026-06-05"
+    source: wms.inventario.contagens
+    category: business_logic
+    message: "bipe aceito em sessão de inventário que já saiu de em_andamento (números somem no vazio)"
+    cause: >
+      registrarContagem só validava o status da LOC (contada/aprovada) e o lock
+      do operador, nunca o status da SESSÃO. Sessão em revisao/aprovada/aplicada
+      com loc de lock órfão (em_contagem) ainda aceitava bipe.
+    fix: >
+      Guard explícito no início de registrarContagem: lê siso_inventario_sessoes.status
+      e lança erro se != 'em_andamento'. Rota mapeia o erro pra 409.
+    files: [src/lib/wms/inventario.ts, src/app/api/wms/inventario/[id]/contagens/route.ts]
+    tags: [inventario, guard, sessao, P058]
+  - id: wms-inventario-janela-divergencia-fantasma
+    date: "2026-06-05"
+    source: wms.inventario.computarDivergencias
+    category: business_logic
+    message: "divergência de inventário falsa quando compra chega entre contagem e cutoff"
+    cause: >
+      computarDivergencias buscava movs a partir de min(contado_em). Uma mov E
+      (compra) criada após a contagem mas com criado_em anterior a min(contado_em)
+      de outra tripla escapava da janela, e a reconciliação temporal não enxergava
+      o saldo_anterior real → divergência fantasma.
+    fix: >
+      dataLimiteInferior ampliado pro início do dia (UTC date_trunc('day')) de
+      min(contado_em) via helper puro janelaInferiorReconciliacao. A função pura
+      reconciliarTemporal já filtra por t_ref por tripla, então a janela maior só
+      alimenta candidatos.
+    files: [src/lib/wms/inventario.ts, src/lib/wms/inventario-reconciliacao.ts]
+    tags: [inventario, reconciliacao, divergencia, P059]
+
+  - id: wms-inventario-estorno-sessao-parcial
+    date: "2026-06-05"
+    source: wms.inventario.estornarSessaoInventario
+    category: business_logic
+    message: "estorno de sessão de inventário deixa estado parcial se um item falha (saldo negativo)"
+    cause: >
+      estornarSessaoInventario estornava cada divergência numa tx RPC independente.
+      Se o N-ésimo estorno negativaria o saldo (alguém consumiu), os anteriores já
+      tinham commitado e o supervisor recebia 500 sem saber qual item caiu.
+    fix: >
+      RPC plpgsql wms_estornar_sessao_inventario: preflight de saldo de TODAS as
+      contra-movs antes de inserir qualquer uma; RAISE nomeando o produto que
+      negativaria → rollback total. Rota mapeia pra 409.
+    files: [supabase/migrations/20260605_rpc_estornar_sessao_inventario.sql, src/lib/wms/inventario.ts, src/app/api/wms/inventario/[id]/estornar/route.ts]
+    tags: [inventario, estorno, atomico, P056, P061]
+
+  - id: wms-inventario-estorno-so-sessao-inteira
+    date: "2026-06-05"
+    source: wms.inventario.estornar
+    category: business_logic
+    message: "estorno de inventário só desfaz a sessão inteira, forçando recontagem das corretas"
+    cause: >
+      Só existia estornarSessaoInventario (lote por sessão). Para corrigir 1
+      prateleira errada o supervisor jogava fora as N contagens certas.
+    fix: >
+      Nova estornarDivergenciaInventario({divergencia_id}) estorna 1 mov,
+      reseta só aquela divergência pra 'pendente', não mexe nas demais. Rota
+      aceita divergencia_id no body.
+    files: [src/lib/wms/inventario.ts, src/app/api/wms/inventario/[id]/estornar/route.ts]
+    tags: [inventario, estorno, granular, P159]
+
+  - id: wms-contagem-inline-nao-atomica
+    date: "2026-06-05"
+    source: wms.contagem-inline
+    category: business_logic
+    message: "acerto de prateleira no pick desacopla saldo e contagem em caso de falha"
+    cause: >
+      registrarContagemInline fazia a mov de reconciliação e os inserts de
+      contagem/divergência em chamadas separadas (não-atômico v1 documentado).
+      Falha após a mov deixava ganho/perda sem registro de contagem.
+    fix: >
+      RPC plpgsql wms_contagem_inline_atomica envolve saldo + contagem +
+      divergência numa única transação BEGIN. registrarContagemInline vira
+      wrapper fino.
+    files: [supabase/migrations/20260605_rpc_contagem_inline_atomica.sql, src/lib/wms/contagem-inline.ts]
+    tags: [inventario, contagem-inline, atomico, acerto, P057]
+
+  - id: wms-devolucao-classificar-nao-atomica
+    date: "2026-06-05"
+    source: wms.devolucoes.classificarDevolucao
+    category: business_logic
+    message: "classificação de devolução deixa movs órfãs / dupla-contagem em falha parcial e concorrência"
+    cause: >
+      classificarDevolucao emitia até 3 movs em txs separadas e só depois fazia
+      o UPDATE de status (TOCTOU). Falha no meio deixava saldo subido com status
+      pendente (re-run duplicava). Avariado sem quarentena fazia ajuste_manual
+      silencioso (item sumia).
+    fix: >
+      RPC wms_classificar_devolucao: FOR UPDATE na devolução (serializa) + N movs
+      + UPDATE status na mesma tx. Idempotente (status != aguardando → no-op).
+      Avariado sem quarentena: RAISE (bloqueia antes de mover). Back-fill de
+      devolucao_id nas movs via origem_id compartilhado (preserva o lookup
+      determinístico de desclassificarDevolucao, já que a assinatura nomeada de
+      wms_inserir_movimentacao não tem p_devolucao_id).
+    files: [supabase/migrations/20260605_rpc_classificar_devolucao.sql, src/lib/wms/devolucoes.ts, src/app/api/wms/devolucoes/[id]/classificar/route.ts]
+    tags: [devolucao, classificar, atomico, quarentena, concorrencia, P049, P050, P051, P054]
+
+  - id: wms-desfazer-recebimento-transf-nao-atomico
+    date: "2026-06-05"
+    source: wms.transferencias.desfazerRecebimentoTransferencia
+    category: business_logic
+    message: "undo de recebimento de transferência deixa header 'recebida' com estoque já devolvido"
+    cause: >
+      desfazerRecebimentoTransferencia estornava as legs E, depois fazia UPDATE
+      separado de itens e header (3 statements sem tx). Falha no reset deixava
+      estoque devolvido com header/itens ainda 'recebida'. E o undo falhava com
+      erro cru sem dizer quanto dá pra devolver.
+    fix: >
+      Preflight 'desfazível X de Y' (409, sem mutar; force opcional) + RPC
+      wms_desfazer_recebimento_transferencia (estorno legs E + reset itens +
+      reset header numa tx tudo-ou-nada).
+    files: [supabase/migrations/20260605_rpc_desfazer_recebimento_transferencia.sql, src/lib/wms/transferencias.ts, src/app/api/wms/transferencias/[id]/desfazer-recebimento/route.ts]
+    tags: [transferencia, desfazer, atomico, preflight, P065, P067]
+
+  - id: wms-estornar-parcial-mov-empresa-dona-morta
+    date: "2026-06-05"
+    source: wms_estornar_parcial_movimentacao
+    category: database
+    message: "wms_estornar_parcial_movimentacao lança 42703 (empresa_dona_id) em toda chamada desde o 3D"
+    cause: >
+      A RPC (20260518) chamava wms_inserir_movimentacao posicionalmente passando
+      v_original.empresa_dona_id (coluna dropada no 3D) e na ordem antiga; a
+      redefinição da assinatura em 20260520b (sem empresa_dona, retorna uuid)
+      deixou a RPC quebrada — 42703 em toda chamada. Quebrava estorno parcial e
+      separacao/desfazer-parcial em runtime.
+    fix: >
+      CREATE OR REPLACE: chamada por named params na assinatura atual (sem
+      empresa_dona_id), captura o uuid retornado e dá SELECT da linha pra manter
+      RETURNS siso_movimentacoes.
+    files: [supabase/migrations/20260605_fix_rpc_estornar_parcial_movimentacao.sql]
+    tags: [estorno-parcial, rpc, 3d, empresa_dona_id, P078]
+
+  - id: wms-reverter-replenishment-qty-estornada
+    date: "2026-06-05"
+    source: wms.movimentacoes.reverterReplenishment
+    category: business_logic
+    message: "reverter realocação trava com 'qty_estornada>0' quando já houve estorno parcial"
+    cause: >
+      reverterReplenishment só chamava estornarMovimentacao (full estorno), que
+      bloqueia quando a mov tem qty_estornada>0. As unidades residuais ficavam
+      penduradas — operador preso. Além disso, o UNIQUE uq_mov_estorno_unico
+      (P106) era blanket em estorno_de e matava o 2º chunk de estorno parcial
+      com 23505 (cada chunk parcial cria uma linha de estorno com o mesmo
+      estorno_de).
+    fix: >
+      Loop lê qty_estornada/quantidade; se 0<qty_estornada<total, reverte o
+      residual via wms_estornar_parcial_movimentacao; full estorno só com
+      qty_estornada=0; total revertido → no-op. E uq_mov_estorno_unico passa a
+      EXCLUIR estornos parciais (origem_detalhes->>parcial=true) — governados
+      pelo acumulador qty_estornada sob FOR UPDATE; full estorno segue single.
+    files: [src/lib/wms/movimentacoes.ts, supabase/migrations/20260608_uq_mov_estorno_unico_exclui_parcial.sql]
+    tags: [replenishment, reverter, estorno-parcial, residual, uq_mov_estorno_unico, P078, P106]
+
+  - id: wms-receber-oc-engole-falha
+    date: "2026-06-05"
+    source: wms.receber-oc
+    category: business_logic
+    message: "recebimento via OC retorna 200 mesmo com itens faltando (engole falha com continue)"
+    cause: >
+      receberItensViaOC usava logger+continue em falhas (mapeamento, mov E,
+      update). Item 2 falhava → item 1 ficava comitado sem tudo-ou-nada; a
+      operação parecia OK (HTTP 200) com itens faltando.
+    fix: >
+      Loop coleta movsCriadasLote; falhas viram throw; try externo faz rollback
+      all-items (estorna todas as movs do lote) e re-throw. continue só para
+      qty<=0 e concorrência (não-falhas). Como estornar a mov não desfaz o
+      UPDATE de compra_quantidade_recebida, o rollback também acumula
+      updatesRecebimentoLote e reverte qty/compra_status dos itens já tocados.
+    files: [src/lib/wms/receber-oc.ts]
+    tags: [recebimento, oc, all-or-nothing, rollback, P028]
+
+  - id: wms-guarda-sem-cross-check-produto
+    date: "2026-06-05"
+    source: wms.guarda.confirmarGuarda
+    category: business_logic
+    message: "guarda confirma loc sem validar que o produto físico corresponde à pendência"
+    cause: >
+      confirmarGuarda recebia só localizacao_destino_id; nenhum cross-check
+      produto↔loc. Loc errada → saldo registrado em lugar diferente do físico →
+      picking futuro busca na loc errada.
+    fix: >
+      ConfirmarGuardaInput aceita gtin_bipado/sku_bipado/confirmar_manual.
+      Backend valida o bipado contra o produto da pendência (400 se não bate);
+      confirmar_manual=true pula (escape-hatch p/ loc sem etiqueta).
+    files: [src/lib/wms/guarda.ts, src/app/api/wms/guarda/[id]/confirmar/route.ts]
+    tags: [guarda, putaway, cross-check, gtin, P029]
+
+  - id: wms-over-receive-tudo-como-compra
+    date: "2026-06-05"
+    source: wms.receber-oc
+    category: business_logic
+    message: "recebimento com brinde grava o excedente como compra, sem rastreio de ganho de inventário"
+    cause: >
+      receberItensViaOC inseria a qty_real inteira como nf_compra; o excedente
+      sobre o solicitado não era distinguido contabilmente.
+    fix: >
+      Over-receive splita: mov nf_compra (até o solicitado restante, custo da
+      compra) + mov ajuste_manual motivo_categoria='achado' (excedente, sem
+      alimentar custo médio de compra), mesmo lote.
+    files: [src/lib/wms/receber-oc.ts]
+    tags: [recebimento, over-receive, ganho-inventario, achado, P033]
+
+  - id: wms-localizacao-altera-com-saldo-ref-contagem
+    date: "2026-06-05"
+    source: wms.localizacoes
+    category: business_logic
+    message: "loc desativada/alterada com reserva vencida, perna de transferência, guarda aberta ou contagem ativa"
+    cause: >
+      desativarLocalizacao só checava saldo>0; atualizarLocalizacao não checava
+      nada. Reserva vencida bloqueava sem cleanup; transferência em_transito,
+      pendência de guarda e lock de contagem ativa eram ignorados.
+    fix: >
+      desativar auto-limpa reservas vencidas da loc (P115), bloqueia perna de
+      transferência em_transito e guarda aberta (P063); atualizar/desativar
+      bloqueiam se há lock de contagem ativa (P113). Erros mapeados pra 409.
+    files:
+      - src/lib/wms/reservas.ts
+      - src/lib/wms/localizacoes.ts
+      - src/app/api/wms/localizacoes/[id]/route.ts
+    tags: [localizacoes, soft-delete, guard, reserva, transferencia, contagem, P115, P063, P113]

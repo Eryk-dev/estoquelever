@@ -641,6 +641,7 @@ export async function desfazerRecebimentoTransferencia(input: {
   transferencia_id: string;
   usuario_id: string;
   motivo: string;
+  force?: boolean;
 }): Promise<{ movsEstornadas: number }> {
   if (!input.motivo || input.motivo.trim().length < 3) {
     throw new Error("motivo do undo é obrigatório (≥3 caracteres)");
@@ -650,7 +651,7 @@ export async function desfazerRecebimentoTransferencia(input: {
   // 1) Fetch header
   const { data: transf, error: errHeader } = await sb
     .from("siso_transferencias_galpao")
-    .select("id, status, galpao_destino_id")
+    .select("id, status")
     .eq("id", input.transferencia_id)
     .maybeSingle();
   if (errHeader) throw errHeader;
@@ -658,7 +659,6 @@ export async function desfazerRecebimentoTransferencia(input: {
   const t = transf as {
     id: string;
     status: StatusTransferencia;
-    galpao_destino_id: string;
   };
 
   // 2) Status check — só recebida (ou recebida_parcial se vier no futuro)
@@ -675,43 +675,82 @@ export async function desfazerRecebimentoTransferencia(input: {
     .eq("transferencia_id", input.transferencia_id);
   if (errItens) throw errItens;
 
+  // [P065] Preflight: pra cada leg E, comparar qty com saldo atual na loc destino.
+  // Se algum item não cobre, retornar 409 estruturado 'só dá pra devolver X de Y'
+  // SEM mutar nada — exceto se force=true (transparência, não bloqueio absoluto).
   type ItemRow = { id: string; mov_entrada_id: string | null };
-  let movsEstornadas = 0;
-  for (const it of ((itens ?? []) as ItemRow[])) {
+  const itensTip = (itens ?? []) as ItemRow[];
+  const bloqueados: Array<{ item_id: string; desfazivel: number; total: number }> = [];
+  for (const it of itensTip) {
     if (!it.mov_entrada_id) continue;
-    try {
-      await estornarMovimentacao({
-        mov_id: it.mov_entrada_id,
-        usuario_id: input.usuario_id,
-        motivo: `Desfaz recebimento de transferência ${input.transferencia_id}: ${input.motivo}`,
-      });
-      movsEstornadas++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Idempotência: ignora se já foi estornada
-      if (/já foi estornada|já é um estorno/.test(msg)) continue;
-      throw err;
+    const { data: movE } = await sb
+      .from("siso_movimentacoes")
+      .select("produto_id, galpao_id, localizacao_id, quantidade")
+      .eq("id", it.mov_entrada_id)
+      .single();
+    if (!movE) continue;
+    const m = movE as { produto_id: string; galpao_id: string; localizacao_id: string; quantidade: number };
+    const { data: est } = await sb
+      .from("siso_estoque")
+      .select("saldo")
+      .match({ produto_id: m.produto_id, galpao_id: m.galpao_id, localizacao_id: m.localizacao_id })
+      .maybeSingle();
+    const saldo = Number((est as { saldo?: number } | null)?.saldo ?? 0);
+    const total = Number(m.quantidade);
+    if (saldo < total) {
+      bloqueados.push({ item_id: it.id, desfazivel: saldo, total });
     }
   }
+  if (bloqueados.length > 0 && !input.force) {
+    const linha = bloqueados[0];
+    const err = new Error(
+      `só pode devolver ${linha.desfazivel} de ${linha.total} (desfazível ${linha.desfazivel} de ${linha.total}) — o resto já saiu da loc destino. Use force=true pra prosseguir só nos itens que cobrem.`,
+    ) as Error & { code?: string; bloqueados?: typeof bloqueados };
+    err.code = "DESFAZER_PARCIAL_BLOQUEADO";
+    err.bloqueados = bloqueados;
+    throw err;
+  }
 
-  // 4) Reseta itens: mov_entrada_id=null, localizacao_destino_id=null
-  await sb
-    .from("siso_transferencia_galpao_itens")
-    .update({
-      mov_entrada_id: null,
-      localizacao_destino_id: null,
-    })
-    .eq("transferencia_id", input.transferencia_id);
+  // [P067] Estorno + reset itens + reset header numa única tx atômica.
+  const bloqueadosIds = new Set(bloqueados.map((b) => b.item_id));
+  if (input.force && bloqueadosIds.size > 0) {
+    // force com bloqueados: parcial intencional — desfaz só o que cobre. Mantém
+    // loop TS por-item (skip bloqueados) + reset SÓ dos não-bloqueados.
+    let movsEstornadas = 0;
+    for (const it of itensTip) {
+      if (!it.mov_entrada_id || bloqueadosIds.has(it.id)) continue;
+      try {
+        await estornarMovimentacao({
+          mov_id: it.mov_entrada_id,
+          usuario_id: input.usuario_id,
+          motivo: `Desfaz recebimento de transferência ${input.transferencia_id}: ${input.motivo}`,
+        });
+        movsEstornadas++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/já foi estornada|já é um estorno/.test(msg)) continue;
+        throw err;
+      }
+    }
+    for (const it of itensTip) {
+      if (bloqueadosIds.has(it.id)) continue;
+      await sb
+        .from("siso_transferencia_galpao_itens")
+        .update({ mov_entrada_id: null, localizacao_destino_id: null })
+        .eq("id", it.id);
+    }
+    // Header fica em status='recebida' de propósito: não existe 'recebida_parcial',
+    // e este undo é parcial-por-design (reverte só os itens que cobrem). Um undo
+    // subsequente (sem force) completa via a RPC, que então flipa o header p/ 'em_transito'.
+    return { movsEstornadas };
+  }
 
-  // 5) Volta header pra em_transito
-  await sb
-    .from("siso_transferencias_galpao")
-    .update({
-      status: "em_transito",
-      recebida_em: null,
-      recebida_por: null,
-    })
-    .eq("id", input.transferencia_id);
-
-  return { movsEstornadas };
+  // Caminho normal (sem bloqueados ou sem force): RPC atômica faz tudo numa tx.
+  const { data, error } = await sb.rpc("wms_desfazer_recebimento_transferencia", {
+    p_transferencia_id: input.transferencia_id,
+    p_usuario_id: input.usuario_id,
+    p_motivo: input.motivo,
+  });
+  if (error) throw new Error(error.message);
+  return { movsEstornadas: (data as { movs_estornadas: number }).movs_estornadas };
 }

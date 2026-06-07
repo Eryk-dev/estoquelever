@@ -181,18 +181,11 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
       (ped as { empresa_origem_id: string } | null)?.empresa_origem_id ?? null;
   }
 
-  const tripla = {
-    produto_id: input.produto_id,
-    galpao_id: input.galpao_id,
-    localizacao_id: input.localizacao_id,
-  };
-
   // Custo unitário da venda original (alimenta recálculo do custo médio em
-  // toda Classe — A, B, C, D). Hoist do bloco integro pra raiz do classificar:
-  // sem custo herdado, devoluções B/C/D entrariam com cu=undefined e o ledger
-  // calcularia custo médio sobre uma base errada (ignorando o valor real do
-  // item que está voltando).
-  let custoUnitarioOriginal: number | undefined;
+  // toda Classe — A, B, C, D). Sem custo herdado, devoluções B/C/D entrariam
+  // com cu=null e o ledger calcularia custo médio sobre uma base errada
+  // (ignorando o valor real do item que está voltando).
+  let custoUnitarioOriginal: number | null = null;
   if (d.pedido_origem_mov_id) {
     const { data: movOriginal } = await sb
       .from("siso_movimentacoes")
@@ -204,156 +197,60 @@ export async function classificarDevolucao(input: ClassificarInput): Promise<voi
     if (cu) custoUnitarioOriginal = Number(cu);
   }
 
-  switch (input.classificacao) {
-    case "integro": {
-      // Classe A — íntegra do cliente. Custo unitário herdado da venda
-      // original ativa o recálculo de custo médio global.
-      await inserirMovimentacao({
-        tripla,
-        tipo: "E",
-        qty: input.qty,
-        origem_tipo: "devolucao_cliente_integra",
-        origem_id: origemCompartilhado,
-        nota_fiscal_id: notaFiscalUuid ?? undefined,
-        empresa_referencia_id: empresaReferenciaId,
-        custo_unitario: custoUnitarioOriginal,
-        usuario_id: input.usuario_id,
-        motivo: input.observacoes,
-        devolucao_id: input.devolucao_id,
-      });
-      break;
+  // [P051] resolve+valida quarentena ANTES (guard TS); a RPC re-valida
+  // (backstop sob lock). Remove o ajuste_manual silencioso que fazia o item
+  // sumir quando o galpão não tinha quarentena.
+  let locQuarentenaId: string | null = null;
+  if (input.classificacao === "avariado") {
+    const { data: quarentena } = await sb
+      .from("siso_localizacoes")
+      .select("id")
+      .match({ galpao_id: input.galpao_id, tipo: "quarentena", ativo: true })
+      .order("codigo", { ascending: true }) // determinístico
+      .limit(1)
+      .maybeSingle();
+    locQuarentenaId = (quarentena as { id: string } | null)?.id ?? null;
+    if (!locQuarentenaId) {
+      throw new Error(
+        `quarentena inexistente no galpão ${input.galpao_id} — crie uma localização tipo 'quarentena' antes de classificar avariado`,
+      );
     }
-    case "avariado": {
-      // Classe B — avariada do cliente. Entra na loc indicada, transfere
-      // imediatamente pra quarentena (par S+E no físico).
-      await inserirMovimentacao({
-        tripla,
-        tipo: "E",
-        qty: input.qty,
-        origem_tipo: "devolucao_cliente_avariada",
-        origem_id: origemCompartilhado,
-        nota_fiscal_id: notaFiscalUuid ?? undefined,
-        empresa_referencia_id: empresaReferenciaId,
-        custo_unitario: custoUnitarioOriginal,
-        usuario_id: input.usuario_id,
-        motivo: input.observacoes,
-        devolucao_id: input.devolucao_id,
-      });
-      const { data: quarentena } = await sb
-        .from("siso_localizacoes")
-        .select("id")
-        .match({
-          galpao_id: input.galpao_id,
-          tipo: "quarentena",
-          ativo: true,
-        })
-        .order("codigo", { ascending: true }) // determinístico
-        .limit(1)
-        .maybeSingle();
-      const locDestinoQuarentena = (quarentena as { id: string } | null)?.id;
-      if (locDestinoQuarentena) {
-        await inserirMovimentacao({
-          tripla,
-          tipo: "S",
-          qty: input.qty,
-          origem_tipo: "transferencia_localizacao",
-          origem_id: origemCompartilhado,
-          usuario_id: input.usuario_id,
-          motivo: `avaria → quarentena: ${input.observacoes ?? ""}`,
-          devolucao_id: input.devolucao_id,
-        });
-        await inserirMovimentacao({
-          tripla: { ...tripla, localizacao_id: locDestinoQuarentena },
-          tipo: "E",
-          qty: input.qty,
-          origem_tipo: "transferencia_localizacao",
-          origem_id: origemCompartilhado,
-          usuario_id: input.usuario_id,
-          devolucao_id: input.devolucao_id,
-        });
-      } else {
-        // Sem quarentena no galpão — ajuste manual pra remover saldo
-        // (entra avariado e some no mesmo evento — preserva trilha).
-        await inserirMovimentacao({
-          tripla,
-          tipo: "S",
-          qty: input.qty,
-          origem_tipo: "ajuste_manual",
-          origem_id: origemCompartilhado,
-          origem_detalhes: { motivo: "avaria_devolucao_sem_quarentena" },
-          usuario_id: input.usuario_id,
-          devolucao_id: input.devolucao_id,
-        });
-      }
-      break;
-    }
-    case "garantia": {
-      // Classes A+C combo: entra do cliente, sai pro fornecedor (garantia).
-      if (!input.fornecedor_id) {
-        throw new Error(
-          "classificacao='garantia' exige fornecedor_id (Classe C — devolução pro fornecedor)",
-        );
-      }
-      await inserirMovimentacao({
-        tripla,
-        tipo: "E",
-        qty: input.qty,
-        origem_tipo: "devolucao_cliente_integra",
-        origem_id: origemCompartilhado,
-        nota_fiscal_id: notaFiscalUuid ?? undefined,
-        empresa_referencia_id: empresaReferenciaId,
-        custo_unitario: custoUnitarioOriginal,
-        usuario_id: input.usuario_id,
-        devolucao_id: input.devolucao_id,
-      });
-      await inserirMovimentacao({
-        tripla,
-        tipo: "S",
-        qty: input.qty,
-        origem_tipo: "devolucao_fornecedor_enviada",
-        origem_id: origemCompartilhado,
-        fornecedor_id: input.fornecedor_id,
-        usuario_id: input.usuario_id,
-        motivo: `garantia: ${input.observacoes ?? ""}`,
-        devolucao_id: input.devolucao_id,
-      });
-      break;
-    }
-    case "troca_sku":
-      // Classe D — apenas entra. Troca de SKU vira fluxo separado em
-      // separacao (já existe `compras-equivalencia`). Aqui só reintegra.
-      // origem_tipo dedicado pra apurar troca separada de devolução íntegra.
-      await inserirMovimentacao({
-        tripla,
-        tipo: "E",
-        qty: input.qty,
-        origem_tipo: "devolucao_cliente_troca_sku",
-        origem_id: origemCompartilhado,
-        nota_fiscal_id: notaFiscalUuid ?? undefined,
-        empresa_referencia_id: empresaReferenciaId,
-        custo_unitario: custoUnitarioOriginal,
-        usuario_id: input.usuario_id,
-        motivo: `troca SKU: ${input.observacoes ?? ""}`,
-        devolucao_id: input.devolucao_id,
-      });
-      break;
+  }
+  if (input.classificacao === "garantia" && !input.fornecedor_id) {
+    throw new Error(
+      "classificacao='garantia' exige fornecedor_id (Classe C — devolução pro fornecedor)",
+    );
   }
 
-  await sb
-    .from("siso_devolucoes_pendentes")
-    .update({
-      status: "classificada",
-      classificacao: input.classificacao,
-      classificada_por: input.usuario_id,
-      classificada_em: new Date().toISOString(),
-      observacoes: input.observacoes,
-      classificacao_em_andamento_por: null,
-    })
-    .eq("id", input.devolucao_id);
+  // [P049/P050/P054] Movs + UPDATE de status numa única tx, serializado por
+  // FOR UPDATE na devolução. A RPC resolve a atomicidade que o caminho
+  // sequencial (N inserirMovimentacao + UPDATE depois) não tinha.
+  const { data: rpcRes, error: rpcErr } = await sb.rpc(
+    "wms_classificar_devolucao",
+    {
+      p_devolucao_id: input.devolucao_id,
+      p_classificacao: input.classificacao,
+      p_produto_id: input.produto_id,
+      p_galpao_id: input.galpao_id,
+      p_localizacao_id: input.localizacao_id,
+      p_qty: input.qty,
+      p_loc_quarentena_id: locQuarentenaId,
+      p_usuario_id: input.usuario_id,
+      p_origem_compartilhado: origemCompartilhado,
+      p_nota_fiscal_id: notaFiscalUuid,
+      p_empresa_referencia_id: empresaReferenciaId,
+      p_fornecedor_id: input.fornecedor_id ?? null,
+      p_custo_unitario: custoUnitarioOriginal,
+      p_observacoes: input.observacoes ?? null,
+    },
+  );
+  if (rpcErr) throw new Error(rpcErr.message);
 
   logger.info("wms.devolucoes", "classificada", {
     devolucao_id: input.devolucao_id,
     classificacao: input.classificacao,
+    ja_classificada:
+      (rpcRes as { ja_classificada?: boolean } | null)?.ja_classificada ?? false,
   });
 
   } catch (e) {
@@ -430,9 +327,11 @@ interface DevolucaoPendenteRow {
  * todas as movs geradas e volta status='aguardando_classificacao'.
  *
  * Lookup determinístico via FK `siso_movimentacoes.devolucao_id`:
- * `classificarDevolucao` popula essa coluna em cada `inserirMovimentacao`
- * desde fix-final-B T11. Busca direta por `devolucao_id = input.devolucao_id`
- * substitui o match por janela temporal (±1min) anterior.
+ * `classificarDevolucao` (pós-T4.2) chama a RPC `wms_classificar_devolucao`, que
+ * back-fila essa coluna nas movs criadas via `UPDATE ... SET devolucao_id = p_devolucao_id
+ * WHERE id = ANY(v_mov_ids)`. Resultado idêntico ao antigo populado por-mov: as movs
+ * carregam `devolucao_id`, então a busca direta por `devolucao_id = input.devolucao_id`
+ * funciona — substitui o match por janela temporal (±1min) anterior.
  *
  * Nota: devoluções classificadas antes deste commit não terão `devolucao_id`
  * nas movs (coluna era NULL), portanto `desclassificar` retornará 0 movs

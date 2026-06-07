@@ -49,9 +49,12 @@ export async function PATCH(
   try {
     return NextResponse.json(await atualizarLocalizacao(id, allowed));
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const isConflict = msg.includes("em contagem");
     return wmsErrorResponse({
       source: "wms.localizacoes.patch",
       error: e,
+      status: isConflict ? 409 : 400,
       requestPath: `/api/wms/localizacoes/${id}`,
       requestMethod: "PATCH",
       metadata: { localizacao_id: id },
@@ -71,10 +74,12 @@ export async function DELETE(
     await desativarLocalizacao(id);
     return NextResponse.json({ ok: true });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const isConflict = msg.includes("em contagem");
     return wmsErrorResponse({
       source: "wms.localizacoes.delete",
       error: e,
-      status: 400,
+      status: isConflict ? 409 : 400,
       requestPath: `/api/wms/localizacoes/${id}`,
       requestMethod: "DELETE",
       metadata: { localizacao_id: id },

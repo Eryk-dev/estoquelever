@@ -327,3 +327,43 @@ export async function cleanupReservasExpiradas(): Promise<{
   }
   return { total: lista.length, liberadas, erros };
 }
+
+/**
+ * [P115] Libera reservas VENCIDAS de UMA localização (usado antes de desativar a
+ * loc). Mesma lógica idempotente de cleanupReservasExpiradas, filtrada por loc.
+ */
+export async function cleanupReservasExpiradasDaLoc(localizacao_id: string): Promise<{ liberadas: number }> {
+  const sb = createServiceClient();
+  const { data: expiradas, error } = await sb
+    .from("siso_movimentacoes")
+    .select("id, origem_id, produto_id, galpao_id, localizacao_id, quantidade")
+    .eq("tipo", "R")
+    .eq("origem_tipo", "reserva_pedido")
+    .eq("localizacao_id", localizacao_id)
+    .lt("expira_em", new Date().toISOString());
+  if (error) throw error;
+  const lista = (expiradas ?? []) as ReservaExpirada[];
+  let liberadas = 0;
+  for (const r of lista) {
+    if (r.origem_id) {
+      const { data: jaL } = await sb
+        .from("siso_movimentacoes")
+        .select("id")
+        .eq("origem_id", r.origem_id)
+        .eq("tipo", "L")
+        .limit(1);
+      if (jaL && jaL.length > 0) continue;
+    }
+    await inserirMovimentacao({
+      tripla: { produto_id: r.produto_id, galpao_id: r.galpao_id, localizacao_id: r.localizacao_id },
+      tipo: "L",
+      qty: Number(r.quantidade),
+      origem_tipo: "liberacao_reserva",
+      origem_id: r.origem_id ?? undefined,
+      origem_detalhes: { motivo: "expirado_pre_desativacao" },
+      motivo: `expirado (pré-desativação da loc): pedido ${r.origem_id ?? "?"}`,
+    });
+    liberadas++;
+  }
+  return { liberadas };
+}

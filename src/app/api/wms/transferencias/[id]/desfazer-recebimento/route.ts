@@ -31,14 +31,27 @@ export async function POST(
     );
   }
 
+  const force = body?.force === true;
+
   try {
     const r = await desfazerRecebimentoTransferencia({
       transferencia_id: id,
       usuario_id: auth.user.id,
       motivo,
+      force,
     });
     return NextResponse.json({ ok: true, ...r });
   } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === "DESFAZER_PARCIAL_BLOQUEADO") {
+      return NextResponse.json(
+        {
+          error: e instanceof Error ? e.message : String(e),
+          bloqueados: (e as { bloqueados?: unknown }).bloqueados,
+        },
+        { status: 409 },
+      );
+    }
     const msg = e instanceof Error ? e.message : String(e);
     const isClient =
       msg.includes("não encontrada") ||

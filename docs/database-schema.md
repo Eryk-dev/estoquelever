@@ -465,10 +465,10 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 |--------|------|----------|---------|-------------|
 | `id` | uuid | NO | (PK) | Job ID |
 | `pedido_id` | text | NO | | Order ID |
-| `tipo` | text | NO | 'lancar_estoque' | Job type (currently only 'lancar_estoque') |
-| `filial_execucao` | text | YES | | Legacy: branch code |
+| `tipo` | text | NO | 'lancar_estoque' | Job type: `lancar_estoque`, `lancar_estoque_pos_nf`, `varredura_pos_entrada`, `reconciliar_oc_retry` (últimos 2 = jobs de manutenção, Fase 5) |
+| `filial_execucao` | text | YES | | Legacy: branch code (`CWB`/`SP`; jobs de manutenção usam sentinela `MAINT`) |
 | `empresa_id` | uuid | YES | FK | Empresa for this job |
-| `decisao` | text | NO | | Decision: `propria`, `transferencia`, `oc` |
+| `decisao` | text | NO | | Decision: `propria`, `transferencia`, `oc` (jobs de manutenção usam sentinela `manutencao`) |
 | `status` | text | NO | 'pendente' | Queue status: `pendente`, `executando`, `concluido`, `erro`, `cancelado` |
 | `tentativas` | integer | NO | 0 | Retry count |
 | `max_tentativas` | integer | NO | 3 | Max retries allowed |
@@ -494,8 +494,9 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `idx_fila_prioridade` (prioridade DESC, criado_em ASC) WHERE status = 'pendente'
 
 **Constraints:**
-- `CHECK (tipo IN ('lancar_estoque', 'lancar_estoque_pos_nf'))`
-- `CHECK (decisao IN ('propria', 'transferencia', 'oc'))`
+- `chk_fila_tipo`: `CHECK (tipo IN ('lancar_estoque', 'lancar_estoque_pos_nf', 'varredura_pos_entrada', 'reconciliar_oc_retry'))` — Fase 5 (`20260611_fila_jobs_manutencao.sql`) adicionou os 2 tipos de manutenção.
+- `chk_fila_decisao`: `CHECK (decisao IN ('propria', 'transferencia', 'oc', 'manutencao'))` — Fase 5 adicionou o sentinela `manutencao`.
+- `chk_fila_filial`: `CHECK (filial_execucao IN ('CWB', 'SP', 'MAINT'))` — **Fase 5 CRIOU este CHECK** (não existia em staging antes); o `MAINT` é o sentinela dos jobs de manutenção.
 - `CHECK (status IN ('pendente', 'executando', 'concluido', 'erro', 'cancelado'))`
 
 **Notes:**
@@ -504,6 +505,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - Max 3 retries, then transitions to `erro` status
 - `filial_execucao` is legacy; prefer `empresa_id`
 - `payload.itens_ja_lancados` (fix-pack 2026-05-18): array de IDs dos itens cuja saída já foi gerada no ledger via parcial/realocação — o worker pula esses itens pra não duplicar deduções. Default `[]` (sem itens pré-lançados).
+- **Jobs de manutenção (Fase 5):** os tipos `varredura_pos_entrada`/`reconciliar_oc_retry` dão durabilidade ao reconciliador OC + varredura pós-entrada (antes fire-and-forget na app, perdiam-se em queda). Eles **não** usam as colunas legadas `filial_execucao`/`decisao` — gravam os sentinelas `MAINT`/`manutencao` e carregam a info real em `payload`.
 
 ---
 
@@ -778,6 +780,23 @@ Objetos introduzidos pelo fix-pack da realocação cascateável (24 achados de a
 
 **Consumido por:**
 - `desclassificarDevolucao` (`POST /api/wms/devolucoes/[id]/desclassificar`) — busca `SELECT id FROM siso_movimentacoes WHERE devolucao_id = $id` e estorna cada mov determinística, sem janela temporal.
+
+---
+
+### siso_movimentacoes.idempotency_key (new column — Raio-X Fase 5 P072)
+
+**Coluna adicionada por `20260607b_movimentacoes_idempotency_key.sql`.**
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `idempotency_key` | uuid | YES | NULL | Token client-gerado pra deduplicar **picks sem reserva**. Nullable — não afeta movs legadas. |
+
+**Index:** `uq_mov_idempotency_key` — UNIQUE **parcial** em `(idempotency_key) WHERE idempotency_key IS NOT NULL`. O 2º INSERT com a mesma key estoura `SQLSTATE 23505`; mas o caminho normal nem chega lá — `wms_inserir_movimentacao` checa a key ANTES de mutar e retorna a mov existente (no-op idempotente).
+
+**Consumido por:**
+- `wms_inserir_movimentacao` (param `p_idempotency_key`, `20260607c`): antes de qualquer mutação, se já existe mov com essa key, retorna a mov existente — fecha o duplo-pick sem-reserva sob concorrência.
+- `wms_pick_item_atomico` (param `p_idempotency_key`, `20260607d`): propaga o token pra S **apenas** no ramo sem-reserva (`p_reserva_id IS NULL`); com reserva, a R `FOR UPDATE` já serializa.
+- `POST /api/wms/separacao/marcar-item` (body `idempotency_key`): passa o token só quando não há reserva viva.
 
 ---
 

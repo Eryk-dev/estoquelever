@@ -1416,9 +1416,12 @@ Caminhos suportados:
 ```json
 {
   "pedido_item_id": "string",
-  "marcado": "boolean"
+  "marcado": "boolean",
+  "idempotency_key": "uuid (opcional)"
 }
 ```
+
+**`idempotency_key` (Raio-X Fase 5 P072):** token uuid client-gerado, propagado à `wms_pick_item_atomico` **somente** quando o pick não tem reserva viva (ramo sem-reserva). Com reserva, a R `FOR UPDATE` já serializa e o token é ignorado. Re-envio com a mesma key devolve a mesma saída em vez de gerar baixa duplicada (fecha o duplo-pick sem-reserva sob concorrência).
 
 **Response (200):**
 ```json
@@ -4928,6 +4931,32 @@ Sinaliza os 3 padrões de inconsistência do fluxo Pedido→Separação→Estoqu
 
 ---
 
+### POST /api/wms/reconciliacao-pedidos/[pedidoId]/resolver
+
+**File:** `src/app/api/wms/reconciliacao-pedidos/[pedidoId]/resolver/route.ts` (Raio-X Fase 5 — P084)
+
+Resolve o **pedido-fantasma** (padrão `C` do safety-net acima): pedido FORWARD com reserva R viva sem saída. Via RPC `wms_resolver_pedido_fantasma`, para cada R viva (sem L estornando), numa única transação:
+- `saiu` → `L` (estorno_de=R) + `S` (`nf_venda`): converte a R em saída final.
+- `cancelado` → `L` (estorno_de=R) que devolve à prateleira (reservado zera, saldo intacto) + marca o pedido `cancelado`.
+
+Idempotente (pula R já liberada). A `empresa_vendedora_id` da S (caso `saiu`) vem do `empresa_origem_id` do pedido.
+
+**Auth:** `requireAdmin` (mexe no ledger + status).
+
+**Request body:**
+```json
+{ "acao": "saiu" | "cancelado" }
+```
+
+**Response 200:**
+```json
+{ "ok": true, "reservas_resolvidas": 0, "acao": "saiu" }
+```
+
+**Erros:** `400` (`acao` ausente/inválida, ou falha da RPC), `404` (pedido não encontrado).
+
+---
+
 ## WMS — Movimentações operacionais (Plano 2)
 
 Todas as operações orquestram chamadas a `wms_inserir_movimentacao` (RPC com lock pessimista do Plano 1). `usuario_id` é injetado pelo route handler a partir da sessão.
@@ -5271,16 +5300,28 @@ Lista retroativos pendentes (sem mov de estorno apontando pra eles via `estorno_
 
 Reconcilia retroativo com mov real (NF formal que chegou depois). Insere mov de estorno (S) apontando pro retroativo via `estorno_de`.
 
-**Request body:** `{ "compra_mov_id": "uuid" }` (anotada em `observacoes`).
+**Auth:** Session + `userCan(session, "operacoes.retroativo")` (403 caso contrário).
+
+**Request body:** `{ "compra_mov_id": "uuid", "qty_estorno"?: number }` (`compra_mov_id` anotada em `observacoes`).
+
+**`qty_estorno` (Raio-X Fase 5 P147):** opcional. Ausente/`null` → estorno default (clamp = `min(qty_original, disponível atual)`). Presente porém não-finito ou `<= 0` → **400**. Permite estorno **parcial** clampado ao disponível; a RPC grava `qty_original` vs `qty_estornada` + flag `parcial` em `origem_detalhes`.
+
+**Idempotência + lock (Fase 5 P150/P152):** a RPC `wms_reconciliar_retroativo` trava a mov retroativo com `FOR UPDATE` (serializa 2 operadores) e, se já existe estorno apontando pro retroativo, é **no-op idempotente** (responde sucesso). Duplo-clique e reclique tardio respondem 200.
 
 **P3 #8.6** — agora valida `[id]` e `compra_mov_id` como UUIDs antes de chamar a RPC (regex
 `/^[0-9a-f-]{36}$/i`), e valida que ambas as movs existem antes de inserir o estorno. Bug:
 sem essas validações um caller podia passar `null`/string vazia/uuid inexistente e a RPC
 levantava 23502/23503 com mensagens crípticas.
 
-**Side effects:** 1 mov `origem_tipo='estorno'`, `tipo='S'`, `qty=retro.quantidade`, `estorno_de=retro.id`.
+**Side effects:** 1 mov `origem_tipo='estorno'`, `tipo='S'`, `qty=clamp(qty_estorno, disponível)`, `estorno_de=retro.id`.
 
-**Response 200:** `{ ok: true }`. **Erros:** 400 se mov não é retroativo, se uuid inválido, ou se mov referenciada não existe.
+**Response 200:** `{ ok: true, qty_estornada, parcial }` (ou `{ ok: true, idempotente: true, mensagem }` no no-op).
+
+**Status-code mapping:**
+- `200` — sucesso ou já-reconciliado (idempotente).
+- `400` — uuid inválido, `qty_estorno` inválido, ou mov não é retroativo.
+- `404` — `compra_mov_id` não existe em `siso_movimentacoes`.
+- `409` — sem saldo disponível pra estornar (mensagem "sem saldo disponível").
 
 ---
 

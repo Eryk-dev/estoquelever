@@ -3911,3 +3911,34 @@ erros:
       - supabase/migrations/20260608b_rpc_reverter_cutover_atomico.sql
       - src/lib/wms/cutover.ts
     tags: [cutover, reversao, atomicidade, ledger, rpc]
+  - id: venda-baixa-direta-rollback-best-effort
+    date: "2026-06-09"
+    source: wms/vendas/criar
+    category: business_logic
+    message: "Venda baixa_direta inseria N movs S em loop JS e, na falha, fazia rollback best-effort que SEGUIA deletando pedido/itens mesmo com estorno incompleto — estoque meio-revertido."
+    cause: >
+      vendas/criar/route.ts:514-634 estornava movsCriadas uma a uma e deletava o
+      pedido incondicionalmente (536-537); sem advisory lock nem tx.
+    fix: >
+      RPC wms_vender_baixa_direta_atomico: advisory lock por tripla + N S na
+      mesma tx; falha rola back tudo no banco. Rota monta o payload e só limpa o
+      cabeçalho de pedido se a RPC lançou.
+    files:
+      - supabase/migrations/20260609_rpc_vender_baixa_direta_atomico.sql
+      - src/app/api/wms/vendas/criar/route.ts
+    tags: [vendas, baixa-direta, atomicidade, advisory-lock, ledger, rpc]
+  - id: cancelar-venda-nao-atomico
+    date: "2026-06-09"
+    source: wms/vendas-cancelamento
+    category: business_logic
+    message: "Cancelamento de venda baixa_direta estornava as N S uma a uma e marcava cancelado mesmo com estorno parcial — devolução incompleta + pedido cancelado incoerente."
+    cause: >
+      vendas-cancelamento.ts:95-130 iterava as movs estornando em loop JS; o
+      update status='cancelado' rodava no fim independente do resultado.
+    fix: >
+      RPC wms_cancelar_venda_atomico estorna todas as S + marca cancelado na
+      MESMA tx (bloco indivisível); idempotente (pula S com E counter).
+    files:
+      - supabase/migrations/20260609b_rpc_cancelar_venda_atomico.sql
+      - src/lib/wms/vendas-cancelamento.ts
+    tags: [vendas, cancelamento, atomicidade, ledger, rpc]

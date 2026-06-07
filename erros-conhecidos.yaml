@@ -3942,3 +3942,19 @@ erros:
       - supabase/migrations/20260609b_rpc_cancelar_venda_atomico.sql
       - src/lib/wms/vendas-cancelamento.ts
     tags: [vendas, cancelamento, atomicidade, ledger, rpc]
+  - id: aprovar-enqueue-best-effort
+    date: "2026-06-10"
+    source: wms/pedidos/aprovar
+    category: business_logic
+    message: "Aprovar atualizava status do pedido e inseria o job de lancar_estoque separadamente; falha no INSERT só logava ('Don't fail') → pedido aprovado sem tarefa (estado fantasma)."
+    cause: >
+      aprovar/route.ts:308-359 fazia UPDATE status + INSERT fila como duas
+      operações; queueError era engolido.
+    fix: >
+      RPC wms_aprovar_e_enfileirar faz status + job na MESMA tx (idempotente por
+      dedup pedido+tipo). Rota chama com retry 3x e retorna 500 se persistir —
+      nunca responde ok cego. Worker já tolera duplicatas por reserva.
+    files:
+      - supabase/migrations/20260610_rpc_aprovar_e_enfileirar.sql
+      - src/app/api/wms/pedidos/aprovar/route.ts
+    tags: [aprovacao, fila, durabilidade, atomicidade, rpc]

@@ -3844,3 +3844,37 @@ erros:
       - src/lib/wms/inventario.ts
       - src/app/api/wms/inventario/[id]/aplicar/route.ts
     tags: [inventario, atomicidade, ledger, rpc]
+  - id: pick-parcial-saida-ajuste-nao-atomico
+    date: "2026-06-07"
+    source: wms/separacao/parcial
+    category: business_logic
+    message: "Pick parcial montava S(qty) e ajuste(loc_zerou) como inserirMovimentacao independentes — queda entre eles deixava saída sem ajuste."
+    cause: >
+      parcial/route.ts gravava a S do wave (364-387) e o ajuste loc_zerou
+      (407-426) em chamadas JS separadas; supabase-js não tem tx multi-statement.
+    fix: >
+      RPC wms_pick_parcial_atomico consolida S+ajuste numa transação; RAISE em
+      qualquer uma rola back tudo. As L por pedido continuam via pick atômico.
+    files:
+      - supabase/migrations/20260607e_rpc_pick_parcial_atomico.sql
+      - src/app/api/wms/separacao/parcial/route.ts
+    tags: [separacao, parcial, atomicidade, ledger, rpc]
+  - id: pick-sem-reserva-sem-idempotencia
+    date: "2026-06-07"
+    source: wms/separacao/marcar-item
+    category: business_logic
+    message: "Pick sem reserva (completar parcial / item OC) não tinha token de idempotência — dois requests concorrentes inseriam 2 S e o saldo dobrava."
+    cause: >
+      No ramo p_reserva_id IS NULL de wms_pick_item_atomico não havia FOR UPDATE
+      de R serializando; quantidade_pega lida antes do commit não bloqueava o 2º.
+    fix: >
+      Coluna idempotency_key (UNIQUE parcial) + p_idempotency_key em
+      wms_inserir_movimentacao (no-op se key consumida) propagado pelo pick
+      sem-reserva; marcar-item gera/passa a key do client.
+    files:
+      - supabase/migrations/20260607b_movimentacoes_idempotency_key.sql
+      - supabase/migrations/20260607c_inserir_mov_idempotency_param.sql
+      - supabase/migrations/20260607d_pick_item_atomico_idempotency.sql
+      - src/app/api/wms/separacao/marcar-item/route.ts
+      - src/lib/wms/reservas-picking.ts
+    tags: [separacao, pick, idempotencia, concorrencia, ledger]

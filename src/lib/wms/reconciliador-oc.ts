@@ -210,13 +210,16 @@ export async function reconciliarEntradaEstoque(args: {
 
   // 7. recomputa status dos pedidos afetados
   for (const pedidoId of pedidosAfetados) {
-    await transicionarPedidoSeReconciliado(supabase, pedidoId);
+    await transicionarPedidoSeReconciliado(supabase, pedidoId, { produtoId, galpaoId });
   }
 }
 
 async function transicionarPedidoSeReconciliado(
   supabase: ReturnType<typeof createServiceClient>,
   pedidoId: string,
+  // P082/P149: produto/galpão da entrada que disparou a reconciliação — usados
+  // pra enfileirar um retry durável se a transição falhar (transitório de banco).
+  ctx: { produtoId: string; galpaoId: string },
 ): Promise<void> {
   const { data: allItems } = await supabase
     .from("siso_pedido_itens")
@@ -276,11 +279,25 @@ async function transicionarPedidoSeReconciliado(
     .in("status_separacao", ["validacao_oc", "aguardando_compra"])
     .select("id");
   if (pedidoUpdErr) {
+    // P082/P149: antes só logava e desistia — pedido OC ficava preso pra sempre.
+    // Agora enfileira um retry durável (backoff 30s/5min/10min no worker) e
+    // registra um evento 'erro' visível (alerta) pra ninguém ficar no escuro.
     logger.logError({
       error: pedidoUpdErr,
       source: "reconciliador-oc",
-      message: `Falha ao transicionar pedido ${pedidoId} para própria/aguardando_nf`,
+      message: `Falha ao transicionar pedido ${pedidoId} — enfileirando retry durável`,
       category: "database",
+    });
+    const { enfileirarJobManutencao } = await import("./jobs-manutencao");
+    await enfileirarJobManutencao({
+      tipo: "reconciliar_oc_retry",
+      pedido_id: pedidoId,
+      payload: { produto_id: ctx.produtoId, galpao_id: ctx.galpaoId },
+    });
+    void registrarEvento({
+      pedidoId,
+      evento: "erro",
+      detalhes: { motivo: "reconciliacao_oc_falhou", retry_enfileirado: true },
     });
     return;
   }

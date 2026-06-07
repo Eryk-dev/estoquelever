@@ -288,8 +288,21 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
           galpaoId: tripla.galpao_id,
         });
       } catch (err) {
-        logger.warn("ledger", "varredura pós-entrada falhou (não-fatal)", {
+        // P082/P149: a varredura/reconciliação inline falhou (transitório de
+        // banco). Antes só logava e desistia — pedido OC ficava preso e o banner
+        // "saldo apareceu" nunca surgia. Agora enfileira um job durável (retry
+        // 30s/5min/10min no worker) pra reexecutar a varredura.
+        logger.warn("ledger", "varredura pós-entrada falhou inline — enfileirando job durável", {
           error: err instanceof Error ? err.message : String(err),
+        });
+        const { enfileirarJobManutencao } = await import("./jobs-manutencao");
+        await enfileirarJobManutencao({
+          tipo: "varredura_pos_entrada",
+          payload: {
+            produto_id: tripla.produto_id,
+            galpao_id: tripla.galpao_id,
+            localizacao_id: tripla.localizacao_id,
+          },
         });
       }
     })();

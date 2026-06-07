@@ -43,6 +43,7 @@ import { getFornecedorBySku } from "./sku-fornecedor";
 import { executarEstoquePosNfWms } from "./execution-worker-wms";
 import { dispararCutoverSePronto } from "./wms/cutover";
 import { resolverProdutoWms } from "./separacao/wms-mapping";
+import { backoffManutencao } from "./wms/jobs-manutencao";
 
 // ─── Shared: enrich NF data + transition if already authorized ──────────────
 // After NF generation, checks Tiny API for authorization status.
@@ -93,9 +94,9 @@ interface FilaJob {
   decisao: string;
   tentativas: number;
   max_tentativas: number;
-  payload?: {
+  payload?: ({
     itens_ja_lancados?: number[];
-  } | null;
+  } & Record<string, unknown>) | null;
 }
 
 export interface ProcessResult {
@@ -196,14 +197,22 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
         })
         .eq("id", job.id);
 
-      await supabase
-        .from("siso_pedidos")
-        .update({
-          status: "concluido",
-          processado_em: new Date().toISOString(),
-        })
-        .eq("id", job.pedido_id)
-        .eq("status", "executando");
+      // Jobs de manutenção (varredura/reconciliar) não têm pedido real próprio —
+      // o pedido_id é sentinela ('MAINT') ou aponta pro pedido afetado. NÃO flipar
+      // status='concluido' (concluiria o pedido errado / no estado errado).
+      if (
+        job.tipo === "lancar_estoque" ||
+        job.tipo === "lancar_estoque_pos_nf"
+      ) {
+        await supabase
+          .from("siso_pedidos")
+          .update({
+            status: "concluido",
+            processado_em: new Date().toISOString(),
+          })
+          .eq("id", job.pedido_id)
+          .eq("status", "executando");
+      }
 
       result.processed++;
       result.jobs.push({
@@ -225,10 +234,15 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
       const tentativas = job.tentativas + 1;
       const maxed = tentativas >= job.max_tentativas;
 
-      const retryDelay = Math.min(
-        30_000 * Math.pow(2, tentativas - 1),
-        120_000,
-      );
+      // Jobs de manutenção usam backoff custom 30s/5min/10min (nota P082) —
+      // varredura/reconciliação não são tão urgentes quanto o lançamento fiscal,
+      // e não devem martelar o banco. Os jobs fiscais mantêm o exponencial.
+      const ehManutencao =
+        job.tipo === "varredura_pos_entrada" ||
+        job.tipo === "reconciliar_oc_retry";
+      const retryDelay = ehManutencao
+        ? backoffManutencao(tentativas)
+        : Math.min(30_000 * Math.pow(2, tentativas - 1), 120_000);
 
       await supabase
         .from("siso_fila_execucao")
@@ -323,6 +337,23 @@ async function executeJob(job: FilaJob): Promise<void> {
       pedidoId: job.pedido_id,
       decisao: job.decisao,
     });
+    return;
+  }
+
+  if (job.tipo === "varredura_pos_entrada") {
+    const { varrerPedidosAfetadosPorEntrada } = await import("./wms/varredura-validacao-oc");
+    const { reconciliarEntradaEstoque } = await import("./wms/reconciliador-oc");
+    const p = (job.payload ?? {}) as { produto_id: string; galpao_id: string; localizacao_id?: string };
+    await varrerPedidosAfetadosPorEntrada({
+      produto_id: p.produto_id, galpao_id: p.galpao_id, localizacao_id: p.localizacao_id ?? "",
+    });
+    await reconciliarEntradaEstoque({ produtoId: p.produto_id, galpaoId: p.galpao_id });
+    return;
+  }
+  if (job.tipo === "reconciliar_oc_retry") {
+    const { reconciliarEntradaEstoque } = await import("./wms/reconciliador-oc");
+    const p = (job.payload ?? {}) as { produto_id: string; galpao_id: string };
+    await reconciliarEntradaEstoque({ produtoId: p.produto_id, galpaoId: p.galpao_id });
     return;
   }
 

@@ -31,9 +31,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { pedido_item_id, marcado } = body as {
+  const { pedido_item_id, marcado, idempotency_key } = body as {
     pedido_item_id: number | string;
     marcado: boolean;
+    idempotency_key?: string;
   };
 
   const supabase = createServiceClient();
@@ -149,6 +150,8 @@ export async function POST(request: NextRequest) {
             pedido_id: String(pedido.id),
             empresa_vendedora_id: empresaOrigemId,
             usuario_id: session.id,
+            // ÚNICA linha nova (P072): token só no ramo sem-reserva.
+            idempotency_key: reservaId ? undefined : idempotency_key,
             origem_detalhes: {
               pedido_id_tiny: pedido.id,
               pedido_numero: pedido.numero,

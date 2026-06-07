@@ -184,6 +184,7 @@ export async function pickItemAtomico(opts: {
   nota_fiscal_id?: string | null;
   motivo?: string;
   origem_detalhes?: Record<string, unknown>;
+  idempotency_key?: string;
 }): Promise<PickAtomicoResult> {
   const sb = createServiceClient();
   const { data, error } = await sb.rpc("wms_pick_item_atomico", {
@@ -198,6 +199,7 @@ export async function pickItemAtomico(opts: {
     p_nota_fiscal_id: opts.nota_fiscal_id ?? null,
     p_motivo: opts.motivo ?? null,
     p_origem_detalhes: opts.origem_detalhes ?? null,
+    p_idempotency_key: opts.idempotency_key ?? null,
   });
   if (error) {
     throw new Error(`pick atômico falhou: ${error.message}`);

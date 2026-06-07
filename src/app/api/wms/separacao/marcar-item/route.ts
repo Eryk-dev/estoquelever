@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
-import { estornarMovimentacao } from "@/lib/wms/ledger";
 import {
-  estornarLiberacaoReserva,
   buscarReservaPendentePorProduto,
   pickItemAtomico,
 } from "@/lib/wms/reservas-picking";
@@ -237,100 +235,54 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json(updated);
     } else {
-      // Desmarcar: estorna S e L pareados via tabela ponte.
-      // - Estornar S cria E counter → saldo volta
-      // - Estornar L cria R nova → reservado volta
       const { data: links } = await supabase
         .from("siso_pedido_item_mov_links")
         .select("id, mov_id, tipo_link")
         .eq("pedido_item_id", item.id)
         .in("tipo_link", ["saida", "liberacao_reserva"]);
 
-      // P3 #2.7 — estorna S (saida) ANTES de L (liberacao_reserva).
-      // Estornar S cria E → saldo += qty; estornar L cria R → reservado += qty.
-      // Estado pós-picking: saldo=N-q, reservado=N-q.
-      // Se L é estornado primeiro: reservado sobe pra N antes do saldo, mid-state
-      // viola invariante I2 (reservado > saldo). Estornar S primeiro recupera o
-      // saldo, depois L recupera o reservado — invariante preservado a cada passo.
-      const sortedLinks = [...(links ?? [])].sort((a, b) => {
-        if (a.tipo_link === "saida" && b.tipo_link !== "saida") return -1;
-        if (a.tipo_link !== "saida" && b.tipo_link === "saida") return 1;
-        return 0;
-      });
+      const movS = (links ?? []).find((l) => l.tipo_link === "saida");
+      const movL = (links ?? []).find((l) => l.tipo_link === "liberacao_reserva");
 
-      for (const link of sortedLinks) {
-        try {
-          if (link.tipo_link === "liberacao_reserva") {
-            // L de liberação não pode ir pelo estornarMovimentacao genérico —
-            // a guarda confunde com estorno contábil. Helper específico cria
-            // uma R nova com origem_tipo='reserva_pedido' pra re-marcação
-            // subsequente conseguir encontrar via buscarReservaPendente.
-            await estornarLiberacaoReserva({
-              liberacao_mov_id: link.mov_id as string,
-              pedido_id: String(pedido.id),
-              usuario_id: session.id,
-              motivo: `Desmarcar checkbox — ressuscita reserva pedido #${pedido.numero}`,
-            });
-          } else {
-            await estornarMovimentacao({
-              mov_id: link.mov_id as string,
-              usuario_id: session.id,
-              motivo: `Desmarcar checkbox (${link.tipo_link})`,
-            });
-          }
-        } catch (estornoErr) {
-          // PostgrestError não estende Error — vira "[object Object]" em String().
-          // Extraímos .message do objeto pra ter erro real no log.
-          const errMsg =
-            estornoErr instanceof Error
-              ? estornoErr.message
-              : typeof estornoErr === "object" && estornoErr !== null && "message" in estornoErr
-                ? String((estornoErr as { message: unknown }).message)
-                : String(estornoErr);
-          logger.warn("separacao-marcar-item", "Estorno WMS falhou", {
-            error: errMsg,
-            mov_id: link.mov_id,
-            tipo_link: link.tipo_link,
+      if (movS) {
+        const { error: rpcErr } = await supabase.rpc("wms_desmarcar_item_atomico", {
+          p_mov_s_id: movS.mov_id,
+          p_mov_l_id: movL?.mov_id ?? null,
+          p_pedido_id: String(pedido.id),
+          p_usuario_id: session.id,
+          p_motivo: `Desmarcar checkbox pedido #${pedido.numero}`,
+        });
+        if (rpcErr) {
+          // Tudo-ou-nada: a RPC rolou back. Item permanece marcado intacto.
+          logger.warn("separacao-marcar-item", "Desmarcar atômico falhou — item NÃO desmarcado", {
+            error: rpcErr.message, pedido_item_id, pedido_id: pedido.id,
           });
+          return NextResponse.json(
+            { error: "falha_desmarcar", message: rpcErr.message },
+            { status: 409 },
+          );
         }
-      }
-      if ((links?.length ?? 0) > 0) {
         await supabase
           .from("siso_pedido_item_mov_links")
           .delete()
-          .in(
-            "id",
-            (links ?? []).map((l) => l.id as string),
-          );
+          .in("id", (links ?? []).map((l) => l.id as string));
       } else if (item.mov_saida_id) {
-        // Legacy fallback: items pré-fix sem entrada na tabela ponte
-        try {
-          await estornarMovimentacao({
-            mov_id: item.mov_saida_id,
-            usuario_id: session.id,
-            motivo: "Desmarcar checkbox (legacy path)",
-          });
-        } catch (estornoErr) {
-          logger.warn("separacao-marcar-item", "Estorno legacy falhou", {
-            error: estornoErr instanceof Error ? estornoErr.message : String(estornoErr),
-            mov_id: item.mov_saida_id,
-          });
+        // Legacy fallback (item sem entrada na tabela ponte)
+        const { error: rpcErr } = await supabase.rpc("wms_desmarcar_item_atomico", {
+          p_mov_s_id: item.mov_saida_id, p_mov_l_id: null,
+          p_pedido_id: String(pedido.id), p_usuario_id: session.id,
+          p_motivo: "Desmarcar checkbox (legacy path)",
+        });
+        if (rpcErr) {
+          return NextResponse.json({ error: "falha_desmarcar", message: rpcErr.message }, { status: 409 });
         }
       }
+
       const { data: updated, error: updErr } = await supabase
         .from("siso_pedido_itens")
-        .update({
-          separacao_marcado: false,
-          separacao_marcado_em: null,
-          quantidade_pega: null,
-          mov_saida_id: null,
-        })
-        .eq("id", item.id)
-        .select()
-        .single();
-      if (updErr) {
-        return NextResponse.json({ error: updErr.message }, { status: 500 });
-      }
+        .update({ separacao_marcado: false, separacao_marcado_em: null, quantidade_pega: null, mov_saida_id: null })
+        .eq("id", item.id).select().single();
+      if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
       return NextResponse.json(updated);
     }
   } catch (err) {

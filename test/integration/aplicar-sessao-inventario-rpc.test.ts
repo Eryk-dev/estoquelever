@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { createServiceClient } from "../../src/lib/supabase-server";
+import { aplicarSessao } from "../../src/lib/wms/inventario";
 
 const sb = createServiceClient();
 
@@ -97,5 +98,31 @@ describe("wms_aplicar_sessao_inventario", () => {
     const r2 = await sb.rpc("wms_aplicar_sessao_inventario", { p_sessao: sessaoId, p_usuario: userId });
     expect(r2.error).toBeNull();
     expect((r2.data as { movs_geradas: number }).movs_geradas).toBe((r1.data as { movs_geradas: number }).movs_geradas);
+  });
+});
+
+describe("aplicarSessao (wrapper TS → RPC)", () => {
+  it("delega à RPC e retorna { movsGeradas }", async () => {
+    const sessaoId = await criarSessaoComDivergencias([{ produto_id: prodOk, delta: 4 }]);
+    const r = await aplicarSessao(sessaoId, userId);
+    expect(r.movsGeradas).toBe(1);
+    const { data: s2 } = await sb.from("siso_inventario_sessoes").select("status").eq("id", sessaoId).single();
+    expect((s2 as { status: string }).status).toBe("aplicada");
+  });
+
+  // RED DETERMINÍSTICO: rollback total quando uma divergência é inviável.
+  it("wrapper: rollback total quando uma divergência é inviável", async () => {
+    const sessaoId = await criarSessaoComDivergencias([
+      { produto_id: prodOk, delta: 6 },     // ganho viável (aplicado 1º pelo loop antigo)
+      { produto_id: prodFail, delta: -9 },  // perda inviável (prodFail saldo 0)
+    ]);
+    // RPC nova: RAISE → wrapper rejeita E nenhuma mov do prodOk persiste.
+    await expect(aplicarSessao(sessaoId, userId)).rejects.toThrow(/saldo|insuficiente|inviável/i);
+    const { data: s2 } = await sb.from("siso_inventario_sessoes").select("status").eq("id", sessaoId).single();
+    expect((s2 as { status: string }).status).toBe("aprovada"); // NÃO transicionou
+    // E nenhuma mov de ganho do prodOk ficou para trás (rollback total).
+    const { data: movs } = await sb.from("siso_movimentacoes").select("id")
+      .eq("origem_id", sessaoId).eq("origem_tipo", "inventario_ganho");
+    expect((movs ?? []).length).toBe(0);
   });
 });

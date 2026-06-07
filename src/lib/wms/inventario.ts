@@ -1,6 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao, estornarMovimentacao } from "./ledger";
-import type { TipoMov } from "./types";
+import { estornarMovimentacao } from "./ledger";
 import { reconciliarTemporal, janelaInferiorReconciliacao } from "./inventario-reconciliacao";
 import { logger } from "@/lib/logger";
 
@@ -1018,131 +1017,12 @@ export async function aplicarSessao(
   usuarioId: string,
 ): Promise<{ movsGeradas: number }> {
   const sb = createServiceClient();
-  const { data: sessao } = await sb
-    .from("siso_inventario_sessoes")
-    .select("status, galpao_id, aplicada_em")
-    .eq("id", sessaoId)
-    .single();
-  if (!sessao) throw new Error("sessão não encontrada");
-  const s = sessao as { status: string; galpao_id: string; aplicada_em: string | null };
-
-  // P3 #4.1: idempotência. Sessão já aplicada → no-op com retorno coerente.
-  if (s.status === "aplicada") {
-    const { count } = await sb
-      .from("siso_movimentacoes")
-      .select("id", { count: "exact", head: true })
-      .eq("origem_id", sessaoId)
-      .in("origem_tipo", ["inventario_ganho", "inventario_perda"]);
-    return { movsGeradas: count ?? 0 };
-  }
-  if (s.status !== "aprovada") throw new Error("sessão não está aprovada");
-
-  const { data: divergencias } = await sb
-    .from("siso_inventario_divergencias")
-    .select("*")
-    .eq("sessao_id", sessaoId)
-    .eq("status", "aprovada");
-
-  type DivRow = {
-    id: string;
-    produto_id: string;
-    localizacao_id: string;
-    delta: number;
-    delta_pct: number | null;
-  };
-
-  let movsGeradas = 0;
-  for (const d of (divergencias ?? []) as DivRow[]) {
-    if (Number(d.delta) === 0) continue;
-    const tipo: TipoMov = Number(d.delta) > 0 ? "E" : "S";
-    const qty = Math.abs(Number(d.delta));
-
-    // PR-6 (#4.11): ganho de inventário precisa carregar custo médio atual
-    // como custo_unitario pra preservar a rastreabilidade do valor do ganho
-    // no ledger. Sem isso a mov fica com custo_unitario=null e perdemos o
-    // histórico de custo do entrante. Perda (tipo S) não move custo médio,
-    // então não precisa carregar custo_unitario.
-    let custoUnitario: number | undefined;
-    if (tipo === "E") {
-      const { data: cm } = await sb
-        .from("siso_custo_medio")
-        .select("custo_medio")
-        .eq("produto_id", d.produto_id)
-        .maybeSingle();
-      const cmRow = cm as { custo_medio: number | string | null } | null;
-      if (cmRow?.custo_medio !== undefined && cmRow?.custo_medio !== null) {
-        custoUnitario = Number(cmRow.custo_medio);
-      }
-    }
-
-    try {
-      const mov = await inserirMovimentacao({
-        tripla: {
-          produto_id: d.produto_id,
-          galpao_id: s.galpao_id,
-          localizacao_id: d.localizacao_id,
-        },
-        tipo,
-        qty,
-        // 3D: separa ganho de perda (origem_tipo discrimina sinal do ajuste de inventário)
-        origem_tipo: tipo === "E" ? "inventario_ganho" : "inventario_perda",
-        origem_id: sessaoId,
-        origem_detalhes: { divergencia_id: d.id, delta_pct: d.delta_pct },
-        custo_unitario: custoUnitario,
-        usuario_id: usuarioId,
-        motivo: `inventário sessão ${sessaoId}`,
-      });
-      await sb
-        .from("siso_inventario_divergencias")
-        .update({ status: "aplicada", mov_aplicada_id: mov.id })
-        .eq("id", d.id);
-      movsGeradas++;
-    } catch (err) {
-      // P3 #4.1: UNIQUE violation = outra chamada já aplicou essa divergência.
-      // No-op pra essa linha; assegurar status='aplicada' via lookup da mov existente.
-      const code = (err as { code?: string })?.code;
-      const msg = err instanceof Error ? err.message : String(err);
-      const isUniq = code === "23505" || /uniq_movs_inventario_divergencia/.test(msg);
-      if (!isUniq) throw err;
-      const { data: movExistente } = await sb
-        .from("siso_movimentacoes")
-        .select("id")
-        .eq("origem_detalhes->>divergencia_id", d.id)
-        .in("origem_tipo", ["inventario_ganho", "inventario_perda"])
-        .maybeSingle();
-      if (movExistente) {
-        await sb
-          .from("siso_inventario_divergencias")
-          .update({ status: "aplicada", mov_aplicada_id: movExistente.id })
-          .eq("id", d.id);
-      }
-    }
-  }
-
-  // Libera locks da sessão (idempotente)
-  const { data: locs } = await sb
-    .from("siso_inventario_localizacoes")
-    .select("localizacao_id")
-    .eq("sessao_id", sessaoId);
-  const locIds = ((locs ?? []) as Array<{ localizacao_id: string }>).map(
-    (l) => l.localizacao_id,
-  );
-  if (locIds.length > 0) {
-    await sb
-      .from("siso_localizacao_locks")
-      .update({ finalizado_em: new Date().toISOString() })
-      .in("localizacao_id", locIds)
-      .is("finalizado_em", null);
-  }
-
-  // UPDATE condicional — só transiciona se ainda não foi aplicada (outra request)
-  await sb
-    .from("siso_inventario_sessoes")
-    .update({ status: "aplicada", aplicada_em: new Date().toISOString() })
-    .eq("id", sessaoId)
-    .neq("status", "aplicada");
-
-  return { movsGeradas };
+  const { data, error } = await sb.rpc("wms_aplicar_sessao_inventario", {
+    p_sessao: sessaoId,
+    p_usuario: usuarioId,
+  });
+  if (error) throw error;
+  return { movsGeradas: Number((data as { movs_geradas: number }).movs_geradas) };
 }
 
 // Alias retrocompat — alguns callers ainda importam o nome antigo.

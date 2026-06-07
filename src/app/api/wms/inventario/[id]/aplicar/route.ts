@@ -17,10 +17,12 @@ export async function POST(
     const r = await aplicarSessao(id, auth.user.id);
     return NextResponse.json(r);
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const isSaldo = /saldo|insuficiente|reservado|inviável/i.test(msg);
     return wmsErrorResponse({
       source: "wms.inventario.aplicar",
       error: e,
-      status: 400,
+      status: isSaldo ? 409 : 400,
       requestPath: `/api/wms/inventario/${id}/aplicar`,
       requestMethod: "POST",
       metadata: { sessao_id: id },

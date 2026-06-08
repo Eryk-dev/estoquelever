@@ -8,52 +8,58 @@ interface PedidoLista {
 }
 
 /**
- * Regressão do bug reportado no pedido #50117 (EasyPeasy/ML/CWB): o pedido caiu
- * como OC porque no momento do webhook não havia saldo, mas depois o estoque
- * chegou e a LISTAGEM continuava sugerindo "Comprar" (OC) — servindo o snapshot
- * congelado de siso_pedidos.sugestao. O operador não pode pedir OC quando há
- * estoque; a sugestão tem de ser Própria.
+ * Regressão do bug reportado no pedido #50117 (EasyPeasy/ML/CWB): a listagem
+ * de pedidos pendentes continuava servindo a sugestão congelada do webhook —
+ * o operador via "Transferência" mesmo depois do estoque chegar no galpão home.
  *
- * O detalhe (/pedidos/[id]/detalhe) já recomputava ao vivo; a listagem não.
- * Este cenário trava a divergência: GET /api/wms/pedidos deve recomputar a
- * sugestão contra o estoque VIVO pra pedidos ainda em decisão.
+ * Nota: o caso original era OC→Própria, mas após FASE 1 (auto-OC) pedidos OC
+ * nunca ficam em `pendente` — são auto-aprovados imediatamente pelo webhook.
+ * O invariante da regressão ainda se aplica a pedidos `transferencia`, que
+ * continuam parando em `pendente` aguardando aprovação humana.
+ *
+ * Estratégia: seeda saldo SOMENTE em SP (galpão não-home da NetAir). O
+ * roteamento escolhe SP como cobre-100% mas com geoPriority > 0 → `transferencia`,
+ * que fica `pendente`. Depois adiciona saldo em CWB (home, geoPriority 0) e
+ * verifica que a listagem recomputa para `propria`.
  */
 export default {
-  nome: "72 — Listagem recalcula sugestão contra estoque vivo (OC→Própria)",
+  nome: "72 — Listagem recalcula sugestão contra estoque vivo (Transferência→Própria)",
   descricao:
-    "Pedido cai OC sem saldo; estoque chega depois; GET /api/wms/pedidos passa a " +
-    "sugerir Própria (não mais OC) porque a sugestão da listagem é recomputada " +
-    "viva, não o snapshot congelado no webhook.",
-  tags: ["pedido", "sugestao", "oc", "estoque-vivo", "listagem", "regressao"],
+    "Pedido cai Transferência (saldo só em SP); saldo chega em CWB depois; " +
+    "GET /api/wms/pedidos passa a sugerir Própria porque recomputa contra " +
+    "o estoque vivo, não o snapshot congelado no webhook.",
+  tags: ["pedido", "sugestao", "transferencia", "estoque-vivo", "listagem", "regressao"],
 
   setup: async (ctx: Ctx) => {
     const sku = ctx.skuUnico("72");
     await ctx.criarProduto({ sku, descricao: "Sugestão viva 72" });
-    // Sem semearSaldo no setup — saldo zero em todo lugar → pedido cai OC.
+    // Saldo somente em SP (não-home da NetAir → geoPriority > 0 → transferencia).
+    // CWB fica sem saldo para forçar roteamento transferencia.
+    await ctx.semearSaldo({ produto: sku, galpao: "SP", loc: "A-01-01", qty: 5 });
     return { sku };
   },
 
   run: async (ctx: Ctx, { sku }: { sku: string }) => {
-    // 1. Webhook sem saldo → pendente com sugestão OC (snapshot congelado).
+    // 1. Webhook: SP cobre 100% mas não é home da NetAir → transferencia → pendente.
     const pedido = await ctx.webhook({
       empresa: ctx.staging.empresas.netair.cnpj,
       items: [{ sku, qty: 1 }],
     });
-    await ctx.aguardarStatus(pedido.id, "pendente", { decisao: "oc" });
+    await ctx.aguardarStatus(pedido.id, "pendente", { decisao: "transferencia" });
 
-    // Sanidade: enquanto não há saldo, a listagem também sugere OC.
+    // Sanidade: enquanto CWB não tem saldo, a listagem sugere transferencia.
     const antes = await ctx.http.get<PedidoLista[]>("/api/wms/pedidos?status=pendente");
     const pedidoAntes = antes.find((p) => p.id === pedido.id);
     if (!pedidoAntes) {
-      throw new Error(`pedido ${pedido.id} não apareceu na listagem antes do saldo`);
+      throw new Error(`pedido ${pedido.id} não apareceu na listagem antes do saldo em CWB`);
     }
-    if (pedidoAntes.sugestao !== "oc") {
+    if (pedidoAntes.sugestao !== "transferencia") {
       throw new Error(
-        `sem saldo a sugestão deveria ser 'oc', veio '${pedidoAntes.sugestao}'`,
+        `sem saldo em CWB a sugestão deveria ser 'transferencia', veio '${pedidoAntes.sugestao}'`,
       );
     }
 
-    // 2. Estoque chega no galpão casa (CWB, preferred da NetAir).
+    // 2. Estoque chega no galpão home (CWB, preferred da NetAir).
     await ctx.semearSaldo({ produto: sku, galpao: "CWB", loc: "A-01-01", qty: 5 });
   },
 
@@ -66,15 +72,15 @@ export default {
     const pedidoId = itemRow?.pedido_id ? String(itemRow.pedido_id) : null;
     if (!pedidoId) throw new Error("pedido do cenário 72 não encontrado");
 
-    // 3. Com saldo vivo cobrindo, a LISTAGEM recomputa e sugere Própria — não OC.
+    // 3. Com saldo vivo em CWB (home), a LISTAGEM recomputa e sugere Própria.
     const depois = await ctx.http.get<PedidoLista[]>("/api/wms/pedidos?status=pendente");
     const pedidoDepois = depois.find((p) => p.id === pedidoId);
     if (!pedidoDepois) {
-      throw new Error(`pedido ${pedidoId} sumiu da listagem após o saldo chegar`);
+      throw new Error(`pedido ${pedidoId} sumiu da listagem após o saldo em CWB chegar`);
     }
     if (pedidoDepois.sugestao !== "propria") {
       throw new Error(
-        `com estoque vivo a sugestão da listagem deveria ser 'propria', ` +
+        `com estoque vivo em CWB a sugestão da listagem deveria ser 'propria', ` +
           `veio '${pedidoDepois.sugestao}' (motivo: ${pedidoDepois.sugestaoMotivo})`,
       );
     }

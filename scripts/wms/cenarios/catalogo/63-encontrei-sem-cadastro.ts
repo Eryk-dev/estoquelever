@@ -13,48 +13,40 @@ export default {
   setup: async (ctx: Ctx) => {
     const sku = ctx.skuUnico("63");
     await ctx.criarProduto({ sku, descricao: "Encontrei sem cadastro 63" });
-    // Cria loc destino "A-05-03" mas SEM seedar saldo — produto fica órfão
-    await ctx.criarLocalizacao({ galpao: "CWB", codigo: "A-05-03" });
-    return { sku };
+    // Cria loc destino "A-05-03" mas SEM seedar saldo — produto fica órfão.
+    // Captura o UUID da loc para passá-lo diretamente em validar-oc-item
+    // (siso_pedido_item_estoques foi dropada; snapshot não existe mais).
+    const locId = await ctx.criarLocalizacao({ galpao: "CWB", codigo: "A-05-03" });
+    return { sku, locId };
   },
 
-  run: async (ctx: Ctx, { sku }: { sku: string }) => {
+  run: async (ctx: Ctx, { sku, locId }: { sku: string; locId: string }) => {
     const pedido = await ctx.webhook({
       empresa: ctx.staging.empresas.netair.cnpj,
       items: [{ sku, qty: 2 }],
     });
-    // Sem saldo → vira validacao_oc no fluxo normal (ou cai em pendente).
-    // Força pendente + aprova OC pra entrar em validacao_oc.
-    await ctx.sb
-      .from("siso_pedidos")
-      .update({ status: "pendente" })
-      .eq("id", pedido.id);
-    await ctx.aprovar(pedido.id, "oc");
+    // Pós F1 (auto-OC): OC é auto-aprovada pelo webhook, aguarda validacao_oc.
+    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc", { timeout_ms: 15_000 });
 
     // Simula bipe da loc: chama /separacao/localizacao salvando "A-05-03" no snapshot
     const { data: itemRow } = await ctx.sb
       .from("siso_pedido_itens")
-      .select("id, produto_id")
+      .select("id")
       .eq("pedido_id", pedido.id)
       .eq("sku", sku)
       .single();
 
-    await ctx.http.post("/api/wms/separacao/localizacao", {
-      produto_id: Number(itemRow!.produto_id),
-      localizacao: "A-05-03",
-      empresa_id: ctx.staging.empresas.netair.id,
-      galpao_id: ctx.staging.galpoes.cwb.id,
-    });
-
-    // Operador confirma encontrei → /validar-oc-item detecta semSaldo,
-    // resolve loc do snapshot, gera mov E (entrada qty=2) e mov S (saída qty=2)
+    // Operador confirma encontrei passando localizacao_id (UUID) diretamente
+    // (siso_pedido_item_estoques foi dropada; loc vem do body, não de snapshot).
+    // /validar-oc-item detecta semSaldo → gera mov E (entrada qty=2) + mov S (saída qty=2).
     await ctx.http.post("/api/wms/separacao/validar-oc-item", {
       item_ids: [String(itemRow!.id)],
       acao: "encontrei",
+      localizacao_id: locId,
     });
   },
 
-  assertEsperado: async (ctx: Ctx, { sku }: { sku: string }) => {
+  assertEsperado: async (ctx: Ctx, { sku }: { sku: string; locId: string }) => {
     // Saldo final na A-05-03 deve ser 0 (E+S cancelaram)
     await ctx.assertSaldo(sku, "CWB", "A-05-03", 0);
 
@@ -68,7 +60,7 @@ export default {
       .from("siso_movimentacoes")
       .select("tipo, quantidade, origem_tipo, motivo_categoria")
       .eq("produto_id", produto!.id)
-      .order("created_at", { ascending: true });
+      .order("criado_em", { ascending: true });
     const ent = (movs ?? []).find(
       (m) =>
         m.tipo === "E" &&
@@ -87,7 +79,7 @@ export default {
       throw new Error(`mov S qty esperava 2, recebi ${sai.quantidade}`);
     }
   },
-} satisfies Cenario<{ sku: string }>;
+} satisfies Cenario<{ sku: string; locId: string }>;
 
 import { runStandalone } from "../_harness/standalone";
 

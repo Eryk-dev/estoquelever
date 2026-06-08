@@ -21,8 +21,11 @@ export default {
       empresa: ctx.staging.empresas.netair.cnpj,
       items: [{ sku, qty: 2 }],
     });
-    // Webhook com saldo suficiente auto-aprova como propria — força pendente
-    // marcando pedido como pendente manualmente (cenário precisa testar a aprovação OC explícita).
+    // Webhook com saldo suficiente auto-aprova como propria. Aguarda estado
+    // estável (executando) antes de forçar pendente para evitar race com o worker.
+    await ctx.aguardarStatus(pedido.id, "executando", {}, { timeout_ms: 15_000 });
+    // Força pendente para testar o guard de aprovação OC explícita (código dormante
+    // mas ainda presente — esta suite o protege de regressão silenciosa).
     await ctx.sb
       .from("siso_pedidos")
       .update({ status: "pendente", decisao_final: null, status_separacao: null })

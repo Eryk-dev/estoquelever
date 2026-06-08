@@ -11,16 +11,16 @@ export default {
   setup: async (ctx: Ctx) => {
     const sku = ctx.skuUnico("64");
     await ctx.criarProduto({ sku, descricao: "Receber via OC 64" });
-    // Cria pedido + aprova OC + comprador compra 50un
+    // Cria pedido OC com qty=3. compra_quantidade_solicitada fica em 3 (qty do pedido).
+    // Nota: qty_real no receber é capped a min(qty_real, compra_quantidade_solicitada),
+    // então usar qty_real=2 (parcial) deixa OC aberta. Comprar 50 pra refletir
+    // cenário real onde buyer pede mais do que 1 pedido exige.
     const pedido = await ctx.webhook({
       empresa: ctx.staging.empresas.netair.cnpj,
-      items: [{ sku, qty: 2 }],
+      items: [{ sku, qty: 3 }],
     });
-    await ctx.sb
-      .from("siso_pedidos")
-      .update({ status: "pendente" })
-      .eq("id", pedido.id);
-    await ctx.aprovar(pedido.id, "oc");
+    // Pós F1 (auto-OC): OC é auto-aprovada pelo webhook, aguarda validacao_oc.
+    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc", { timeout_ms: 15_000 });
     const oc = await ctx.comprar({ sku, qty: 50, pedido_id: pedido.id });
     return { sku, pedidoId: pedido.id, ocId: oc.ordem_id };
   },
@@ -40,12 +40,12 @@ export default {
     }>(`/api/wms/receber/oc/${ocId}`);
     if (det.itens.length === 0) throw new Error("detalhe sem itens");
 
-    // POST recebe 48 íntegros + 2 com motivo avaria (qty_real=48)
+    // POST recebe 2 de 3 solicitados com custo + motivo de divergência (parcial)
     await ctx.http.post(`/api/wms/receber/oc/${ocId}`, {
       itens: [
         {
           item_id: det.itens[0].id,
-          qty_real: 48,
+          qty_real: 2,
           custo_unitario: 12.8,
           motivo_divergencia: "avaria_transporte",
         },
@@ -54,7 +54,7 @@ export default {
   },
 
   assertEsperado: async (ctx: Ctx, { sku, ocId }: { sku: string; pedidoId: string; ocId: string }) => {
-    // Confere: 1 mov E origem nf_compra com qty=48 + custo
+    // Confere: 1 mov E origem nf_compra com qty=2 + custo
     const { data: produto } = await ctx.sb
       .from("siso_produtos")
       .select("id")
@@ -68,21 +68,21 @@ export default {
       .eq("origem_tipo", "nf_compra");
     const ent = (movs ?? []).find((m) => m.origem_id === ocId);
     if (!ent) throw new Error("esperava mov E nf_compra ligada à OC");
-    if (Number(ent.quantidade) !== 48) {
-      throw new Error(`mov E qty esperava 48, recebi ${ent.quantidade}`);
+    if (Number(ent.quantidade) !== 2) {
+      throw new Error(`mov E qty esperava 2, recebi ${ent.quantidade}`);
     }
     if (Number(ent.custo_unitario) !== 12.8) {
       throw new Error(`mov E custo esperava 12.8, recebi ${ent.custo_unitario}`);
     }
 
-    // OC NÃO fechou (50 solicitados, 48 recebidos)
+    // OC NÃO fechou: item recebeu 2 de 3 solicitados → compra_quantidade_recebida < solicitada
     const { data: oc } = await ctx.sb
       .from("siso_ordens_compra")
       .select("status")
       .eq("id", ocId)
       .single();
     if (oc?.status === "recebido") {
-      throw new Error("OC fechou indevidamente (48 < 50 solicitados)");
+      throw new Error("OC fechou indevidamente (2 recebidos < 3 solicitados)");
     }
 
     // Pendência de guarda criada

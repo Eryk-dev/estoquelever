@@ -16,11 +16,8 @@ export default {
       empresa: ctx.staging.empresas.netair.cnpj,
       items: [{ sku, qty: 5 }],
     });
-    await ctx.sb
-      .from("siso_pedidos")
-      .update({ status: "pendente" })
-      .eq("id", pedido.id);
-    await ctx.aprovar(pedido.id, "oc");
+    // Pós F1 (auto-OC): OC é auto-aprovada pelo webhook, aguarda validacao_oc.
+    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc", { timeout_ms: 15_000 });
     const oc = await ctx.comprar({ sku, qty: 5, pedido_id: pedido.id });
     return { sku, pedidoId: pedido.id, ocId: oc.ordem_id };
   },

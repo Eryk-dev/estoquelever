@@ -15,6 +15,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 3. [Pedidos API](#pedidos-api)
 4. [Separação API](#separação-api)
 5. [Compras API](#compras-api)
+5b. [Compras Manuais API](#compras-manuais-api)
 6. [Admin API](#admin-api)
 7. [Tiny ERP API](#tiny-erp-api)
 8. [Worker & Background Jobs](#worker--background-jobs)
@@ -3864,6 +3865,204 @@ OR
 - Updates `siso_pedidos.status`, `status_separacao`, `compra_estoque_lancado_alerta`
 - Updates `siso_fila_execucao.status` to "cancelado"
 - Logs to `siso_logs` with warning level
+
+---
+
+## Compras Manuais API
+
+> Compra avulsa de fornecedor (**sem pedido de cliente**). Aggregate próprio (`siso_compras_manuais` + `siso_compras_manuais_itens`), separado da OC ligada a pedido. O recebimento gera mov `E` reusando `origem_tipo='nf_compra'` (whitelist do custo médio), distinguido por `origem_detalhes.origem='compra_manual'`, **sem NF**. Lib de domínio: `src/lib/wms/compras-manuais.ts`. Frontend: aba "Manuais" em `src/app/wms/compras/page.tsx`.
+
+### POST /api/wms/compras-manuais
+
+**File:** `src/app/api/wms/compras-manuais/route.ts`
+
+**Purpose:** Cria uma compra manual (cabeçalho + itens), status inicial `comprado`.
+
+**Auth:** X-Session-Id (required), `compras.executar`
+
+**Request Body:**
+```json
+{
+  "fornecedor_id": "uuid",
+  "empresa_compradora_id": "uuid",
+  "galpao_id": "uuid",
+  "observacao": "string | null",
+  "itens": [
+    { "produto_id": "uuid", "qty_comprada": "number", "custo_unitario": "number | null" }
+  ]
+}
+```
+
+**Response (201):**
+```json
+{ "ok": true, "compra_id": "uuid", "itens_criados": "number" }
+```
+
+**Response (400):** `fornecedor_id, empresa_compradora_id e galpao_id são obrigatórios` · `envie { itens: [{ produto_id, qty_comprada }] }` · FK/produto inexistente · `qty_comprada deve ser > 0`
+
+**Business Logic:**
+- Valida FKs (fornecedor / empresa / galpão) e produtos com mensagens claras antes de inserir
+- Insere cabeçalho (`status='comprado'`) + itens (`qty_recebida=0`)
+- Rollback best-effort do cabeçalho órfão se o insert dos itens falhar
+
+---
+
+### GET /api/wms/compras-manuais
+
+**File:** `src/app/api/wms/compras-manuais/route.ts`
+
+**Purpose:** Lista compras manuais com fornecedor, empresa e itens (sku/descrição) embutidos.
+
+**Auth:** X-Session-Id (required), `compras.ver`
+
+**Query Params:**
+- `status` — `pendentes` (default; agrupa `comprado`+`parcial`) · `recebido` · `cancelado`
+
+**Response (200):**
+```json
+{
+  "rows": [
+    {
+      "id": "uuid",
+      "status": "comprado | parcial | recebido | cancelado",
+      "observacao": "string | null",
+      "criado_em": "ISO datetime",
+      "recebido_em": "ISO datetime | null",
+      "galpao_id": "uuid",
+      "fornecedor": { "id": "uuid", "nome": "string" } | null,
+      "empresa": { "id": "uuid", "nome": "string" } | null,
+      "itens": [
+        {
+          "id": "uuid",
+          "produto_id": "uuid",
+          "sku": "string",
+          "descricao": "string",
+          "qty_comprada": "number",
+          "qty_recebida": "number",
+          "custo_unitario": "number | null"
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/wms/compras-manuais/contexto
+
+**File:** `src/app/api/wms/compras-manuais/contexto/route.ts`
+
+**Purpose:** Dropdowns do modal de nova compra manual — TODOS os galpões ativos + TODAS as empresas ativas (independente de galpão preferencial). Gate em `compras.ver` (compradores não têm `sistema.galpoes_empresas`, então não podem usar `/api/wms/admin/galpoes`). Empresas vêm direto de `siso_empresas`, não do espelho deprecado `siso_empresas.galpao_id`.
+
+**Auth:** X-Session-Id (required), `compras.ver`
+
+**Response (200):**
+```json
+{
+  "galpoes": [{ "id": "uuid", "nome": "string" }],
+  "empresas": [{ "id": "uuid", "nome": "string" }]
+}
+```
+
+---
+
+### POST /api/wms/compras-manuais/[id]/receber
+
+**File:** `src/app/api/wms/compras-manuais/[id]/receber/route.ts`
+
+**Purpose:** Recebe itens de uma compra manual (parcial permitido). Cada item recebido gera uma mov `E` no ledger + uma pendência de put-away (`siso_wms_pendencias_guarda`).
+
+**Auth:** X-Session-Id (required), `compras.executar`
+
+**Request Body:**
+```json
+{
+  "itens": [
+    { "item_id": "uuid", "qty_recebida": "number", "custo_unitario": "number | null" }
+  ]
+}
+```
+
+**Response (200):**
+```json
+{ "ok": true, "movs_geradas": "number", "status": "comprado | parcial | recebido" }
+```
+
+**Response (400):** `envie { itens: [{ item_id, qty_recebida }] }` · `compra cancelada não pode receber` · `qty excede faltante` · `recebimento concorrente detectado` · loc `recebimento` ausente no galpão
+
+**Business Logic:**
+- Itens processados **sequencialmente**. Por item: lock otimista no `qty_recebida` (detecta dupla-recepção concorrente) → grava mov `E` + cria pendência de put-away (se qualquer um falhar, reverte o bump e relança) → recomputa status do cabeçalho.
+- Mov `E` na loc `tipo='recebimento'` do galpão, `origem_tipo='nf_compra'` + `origem_detalhes.origem='compra_manual'`, tags `fornecedor_id` + `empresa_compradora_id`, custo via `resolverCustoEntrada` (lança se sem custo nem histórico — guard P108). Custo médio recalcula.
+- Cria 1 `siso_wms_pendencias_guarda` por item (igual ao caminho canônico de recebimento) — sem isso o saldo ficaria preso na loc RECEBIMENTO. Se a pendência falhar, a mov `E` é estornada (compensação net-zero).
+- **Não atômico entre itens:** se um item posterior lança, os anteriores já recebidos PERMANECEM commitados — caller deve re-buscar e retentar só o que falhou.
+- **Não** chama `checkAndReleasePedidos` (não há pedido); o `reconciliador-oc` puxa o saldo pra pedidos OC parados via o mov `E` (após put-away).
+
+**Side Effects:**
+- Insere mov(s) `E` em `siso_movimentacoes` (via `wms_inserir_movimentacao`), atualiza `siso_estoque` e `siso_custo_medio`
+- Insere pendência(s) em `siso_wms_pendencias_guarda` (1 por item) pra a fila de put-away `/wms/guarda`
+- Atualiza `siso_compras_manuais_itens.qty_recebida`/`custo_unitario` e `siso_compras_manuais.status`/`recebido_em`
+
+---
+
+### DELETE /api/wms/compras-manuais/[id]
+
+**File:** `src/app/api/wms/compras-manuais/[id]/route.ts`
+
+**Purpose:** Cancela uma compra manual.
+
+**Auth:** X-Session-Id (required), `compras.executar`
+
+**Request Body:** Empty
+
+**Response (200):** `{ "ok": true }`
+
+**Response (404 — `nao_encontrada`) / (409 — `tem_recebimento` ou `ja_cancelada`):**
+```json
+{ "error": "nao_encontrada | tem_recebimento | ja_cancelada" }
+```
+
+**Business Logic:**
+- 409 se qualquer item já tem `qty_recebida > 0` (`tem_recebimento`) ou se já está cancelada (`ja_cancelada`)
+- Senão seta `status='cancelado'`
+
+---
+
+### POST /api/wms/compras-manuais/fornecedor
+
+**File:** `src/app/api/wms/compras-manuais/fornecedor/route.ts`
+
+**Purpose:** Criação inline de fornecedor a partir do modal de compra manual.
+
+**Auth:** X-Session-Id (required), `compras.executar` (**não** `requireAdmin`, ao contrário de `/api/wms/fornecedores`)
+
+**Request Body:**
+```json
+{ "nome": "string", "cnpj": "string | null" }
+```
+
+**Response (201):** o fornecedor criado.
+
+**Response (400 — `nome obrigatório`) / (409 — `Fornecedor com esse nome já existe`).**
+
+---
+
+### POST /api/wms/compras-manuais/produto
+
+**File:** `src/app/api/wms/compras-manuais/produto/route.ts`
+
+**Purpose:** Criação inline de produto mínimo (sku + descrição) a partir do modal de compra manual. Sem dados fiscais — Tiny é a camada fiscal.
+
+**Auth:** X-Session-Id (required), `compras.executar`
+
+**Request Body:**
+```json
+{ "sku": "string", "descricao": "string" }
+```
+
+**Response (201):** o produto criado.
+
+**Response (400 — `sku e descricao obrigatórios`) / (409 — `SKU já existe`).**
 
 ---
 

@@ -9,7 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { sisoFetch, usePermissoes } from "@/lib/auth-context";
+import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   ExcecoesBannerWms,
@@ -22,10 +22,12 @@ import {
   fmtNum,
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
+import { NovaCompraManualModal } from "@/components/wms/compras/nova-compra-manual-modal";
+import { AbaManuais } from "@/components/wms/compras/aba-manuais";
 
 // ── Tipos ────────────────────────────────────────────────────────────
 
-type Tab = "comprar" | "receber" | "historico";
+type Tab = "comprar" | "receber" | "historico" | "manuais";
 
 interface Counts {
   comprar: number;
@@ -159,7 +161,10 @@ export default function WmsComprasPage() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { can } = usePermissoes();
+  const { activeGalpaoId } = useAuth();
   const podeExecutar = can("compras.executar");
+
+  const [modalManualAberto, setModalManualAberto] = useState(false);
 
   const tab = ((searchParams?.get("tab") as Tab) ?? "comprar") as Tab;
 
@@ -232,6 +237,15 @@ export default function WmsComprasPage() {
           <Icon name="rotate" size={12} />
           Atualizar
         </button>
+        {podeExecutar && (
+          <button
+            className="wms-btn wms-btn-primary"
+            onClick={() => setModalManualAberto(true)}
+          >
+            <Icon name="plus" size={12} />
+            Nova compra manual
+          </button>
+        )}
       </PageHeader>
 
       <div className="wms-vtab" style={{ marginBottom: 16 }}>
@@ -265,6 +279,12 @@ export default function WmsComprasPage() {
           Histórico{" "}
           <span className="wms-vtab-n">{counts?.historico ?? 0}</span>
         </button>
+        <button
+          className={`wms-vtab-btn ${tab === "manuais" ? "is-active" : ""}`}
+          onClick={() => setTab("manuais")}
+        >
+          Manuais
+        </button>
       </div>
 
       {tab === "comprar" && (
@@ -282,6 +302,14 @@ export default function WmsComprasPage() {
         />
       )}
       {tab === "historico" && <TabHistorico query={historicoQuery} />}
+      {tab === "manuais" && <AbaManuais />}
+
+      {modalManualAberto && (
+        <NovaCompraManualModal
+          galpaoAtivo={activeGalpaoId}
+          onClose={() => setModalManualAberto(false)}
+        />
+      )}
     </>
   );
 }

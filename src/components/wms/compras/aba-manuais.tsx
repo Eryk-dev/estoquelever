@@ -162,6 +162,8 @@ export function AbaManuais() {
                             className="wms-input wms-mono wms-tar"
                             style={{ width: 64 }}
                             inputMode="numeric"
+                            min={0}
+                            max={faltante}
                             placeholder={`máx ${faltante}`}
                             value={recebendo[it.id] ?? ""}
                             onChange={(e) =>

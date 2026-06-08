@@ -220,6 +220,7 @@ export function NovaCompraManualModal({
       </Field>
 
       <Field label="Itens" required>
+        {/* key={i} é seguro: todos os valores da linha vêm controlados via o array `linhas`; só o search state transitório do ProdutoCombo poderia deslocar visualmente numa remoção em meio-busca, sem impacto nos dados. */}
         {linhas.map((l, i) => (
           <div
             key={i}
@@ -245,6 +246,7 @@ export function NovaCompraManualModal({
               style={{ width: 64 }}
               placeholder="qty"
               inputMode="numeric"
+              min={1}
               value={l.qty}
               onChange={(e) =>
                 setLinhas((prev) =>

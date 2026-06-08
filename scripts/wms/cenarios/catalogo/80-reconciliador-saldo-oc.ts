@@ -50,10 +50,6 @@ export default {
     setup.p1Id = r1.id;
     setup.p2Id = r2.id;
 
-    // Sem estoque → OC: ficam em status='pendente' (aguardando aprovação humana).
-    await ctx.aguardarStatus(r1.id, "pendente", undefined, { timeout_ms: 20000 });
-    await ctx.aguardarStatus(r2.id, "pendente", undefined, { timeout_ms: 20000 });
-
     // ── 2. FIFO determinístico: p1 mais antigo que p2 ──
     // O reconciliador ordena por criado_em; forçamos aqui para evitar empate
     // (pedidos chegam no mesmo segundo em staging).
@@ -66,12 +62,9 @@ export default {
       .update({ criado_em: "2026-01-02T00:00:00.000Z" })
       .eq("id", r2.id);
 
-    // ── 3. Aprovar ambos como OC (sem estoque no momento da aprovação) ──
-    await ctx.aprovar(r1.id, "oc");
-    await ctx.aprovar(r2.id, "oc");
-
-    await ctx.aguardarStatusSeparacao(r1.id, "validacao_oc");
-    await ctx.aguardarStatusSeparacao(r2.id, "validacao_oc");
+    // ── 3. Pós F1 (auto-OC): webhook auto-aprova OC. Aguarda validacao_oc direto. ──
+    await ctx.aguardarStatusSeparacao(r1.id, "validacao_oc", { timeout_ms: 15_000 });
+    await ctx.aguardarStatusSeparacao(r2.id, "validacao_oc", { timeout_ms: 15_000 });
 
     // ── 4. Entrada de 15 numa loc de PICKING via /api/wms/ajuste ──
     // IMPORTANTE: usar o endpoint (passa pelo TS inserirMovimentacao → dispara

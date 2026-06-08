@@ -19,11 +19,8 @@ export default {
       empresa: ctx.staging.empresas.netair.cnpj,
       items: [{ sku, qty: 1 }],
     });
-    await ctx.aguardarStatus(pedido.id, "pendente");
-    await ctx.aprovar(pedido.id, "oc");
-    // Worker manda OC pra compras setando status_separacao='validacao_oc'.
-    // O passo aguardando_compra só existe depois de /validar-oc-item.
-    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc");
+    // Pós F1 (auto-OC): webhook auto-aprova OC, aguarda diretamente validacao_oc.
+    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc", { timeout_ms: 15_000 });
 
     // Agora "encontra" — pre-condição: precisa ter saldo agora (ajuste pra setup do estoque)
     await ctx.ajusteManual({

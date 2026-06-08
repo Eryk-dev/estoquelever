@@ -40,19 +40,19 @@ export default {
   run: async (ctx: Ctx, setup: Setup): Promise<void> => {
     const { sku } = setup;
 
-    // 1. Pedido OC sem saldo → fica pendente (aguardando aprovação humana).
+    // 1. Pedido OC sem saldo → pós F1 (auto-OC): webhook auto-aprova e seta validacao_oc.
     const r = await ctx.webhook({
       empresa: ctx.staging.empresas.netair.cnpj,
       items: [{ sku, qty: 5 }],
     });
     setup.pedidoId = r.id;
-    await ctx.aguardarStatus(r.id, "pendente", undefined, { timeout_ms: 20000 });
+    // Aguarda validacao_oc setada pelo worker (sem passar por pendente).
+    await ctx.aguardarStatusSeparacao(r.id, "validacao_oc", { timeout_ms: 15_000 });
 
-    // 2. Aprovar como OC e levar o pedido ao estado real "preso em validacao_oc":
+    // 2. Levar o pedido ao estado real "preso em validacao_oc":
     //    item em compra (oc_pendente) + status_separacao=validacao_oc. Montamos via
     //    DB direto (o caminho de compras que normalmente transiciona pra validacao_oc
     //    é ortogonal a este cenário e fica fora do escopo da durabilidade).
-    await ctx.aprovar(r.id, "oc");
     const galpaoId = ctx.staging.galpoes.cwb.id;
     await ctx.sb
       .from("siso_pedidos")

@@ -35,7 +35,8 @@ export default {
       empresa: ctx.staging.empresas.netair.cnpj,
       items: [{ sku, qty: 2 }],
     });
-    await ctx.aguardarStatus(pedido.id, "pendente", { decisao: "oc" });
+    // Pós F1 (auto-OC): webhook auto-aprova OC, aguarda diretamente validacao_oc.
+    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc", { timeout_ms: 15_000 });
 
     // 2. Força separacao_galpao_id=SP (simula roteamento cross-galpão).
     //    NetAir é preferencial CWB, mas roteamento decidiu SP.

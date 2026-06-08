@@ -35,9 +35,8 @@ export default {
       empresa: ctx.staging.empresas.netair.cnpj,
       items: [{ sku, qty: 3 }],
     });
-    await ctx.aguardarStatus(pedido.id, "pendente");
-    await ctx.aprovar(pedido.id, "oc");
-    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc");
+    // Pós F1 (auto-OC): webhook auto-aprova OC, aguarda diretamente validacao_oc.
+    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc", { timeout_ms: 15_000 });
 
     // Transição validacao_oc → aguardando_compra via validar-oc-item
     // (acao=esgotado). Caminho de produção.

@@ -44,12 +44,10 @@ export default {
     });
     setup.pedidoId = id;
 
-    // Sem estoque → OC: fica em status='pendente' (aguardando aprovação humana).
-    await ctx.aguardarStatus(id, "pendente", undefined, { timeout_ms: 20000 });
-
-    // ── 2. Aprovar como OC → validacao_oc ──
-    await ctx.aprovar(id, "oc");
-    await ctx.aguardarStatusSeparacao(id, "validacao_oc");
+    // Pós F1 (auto-OC): webhook auto-aprova OC sem passar por status='pendente'.
+    // Aguarda diretamente validacao_oc setada pelo worker.
+    // ── 2. Aguarda auto-aprovação OC → validacao_oc ──
+    await ctx.aguardarStatusSeparacao(id, "validacao_oc", { timeout_ms: 15_000 });
 
     // ── 3. Buscar item do pedido para validar-oc-item ──
     const { data: itemRow } = await ctx.sb

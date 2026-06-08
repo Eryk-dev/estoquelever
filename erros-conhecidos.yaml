@@ -4094,3 +4094,31 @@ erros:
   files:
     - src/lib/webhook-processor-wms.ts
   tags: [webhook, oc, idempotencia, fila, dedup]
+
+- id: wms-misto-oc-nao-auto-transitava-para-compras
+  date: "2026-06-08"
+  source: separacao.validar-oc-item
+  category: business_logic
+  message: "Pedido misto OC (parte normal + parte compra) ficava em em_separacao mesmo após todos os normais pegos e OC esgotados"
+  cause: >
+    Em /api/wms/separacao/validar-oc-item, após marcar items 'esgotado', a lógica
+    de auto-transição só cobria dois casos: (FR-9) todos os itens encontrados →
+    decisao propria; (FR-8) 100% OC → aguardando_compra. O caso misto (parte
+    compra, parte normal) não tinha branch — o comentário dizia "concluir/route.ts
+    handles this". Porém o operador precisava clicar /concluir manualmente depois
+    de já ter pego todos os itens normais, o que tornava o fluxo redundante e
+    propenso a pedidos esquecidos na fila.
+  fix: >
+    Adicionada branch else-if após FR-8 que verifica se TODOS os itens normais
+    (compra_status=null) têm separacao_marcado=true. Se sim, transiciona o pedido
+    pra aguardando_compra imediatamente via validar-oc-item, sem necessitar /concluir.
+    O select do loop de auto-transição passou a incluir separacao_marcado. A condição
+    usa .every() com guard contra [].every() = true (unreachable pois FR-8 já cobre
+    o caso normalItems.length===0). O UPDATE usa .in("status_separacao", ["validacao_oc",
+    "em_separacao"]) para ser idempotente. O fallback em /concluir/route.ts permanece
+    intacto para a ordem inversa (esgotado antes de bipar os normais).
+  files:
+    - src/app/api/wms/separacao/validar-oc-item/route.ts
+    - scripts/wms/cenarios/catalogo/89-misto-oc-auto-compras.ts
+    - scripts/wms/cenarios/catalogo/89b-misto-oc-ordem-inversa.ts
+  tags: [oc, separacao, misto, compras, auto-transicao, validar-oc-item, aguardando_compra]

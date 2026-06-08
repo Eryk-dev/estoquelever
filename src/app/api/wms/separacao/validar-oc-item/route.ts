@@ -573,7 +573,7 @@ export async function POST(request: NextRequest) {
       // Fetch ALL items for this pedido to evaluate transitions
       const { data: allItems } = await supabase
         .from("siso_pedido_itens")
-        .select("id, compra_status")
+        .select("id, compra_status, separacao_marcado")
         .eq("pedido_id", pedidoId);
 
       if (!allItems) continue;
@@ -643,9 +643,26 @@ export async function POST(request: NextRequest) {
           pedido_id: pedidoId,
           novo_status: "aguardando_compra",
         });
+      } else if (
+        // Misto: parte virou compra, parte é normal. Só transiciona pra
+        // Compras quando TODOS os normais já foram pegos (separacao_marcado).
+        // Senão o operador perderia a wave dos normais ainda não bipados.
+        normalItems.every((i) => i.separacao_marcado === true)
+      ) {
+        const { error: updErr } = await supabase
+          .from("siso_pedidos")
+          .update({ status_separacao: "aguardando_compra" })
+          .eq("id", pedidoId)
+          .in("status_separacao", ["validacao_oc", "em_separacao"]); // idempotente
+        if (updErr) {
+          logger.warn("validar-oc-item", "misto: falha ao transicionar aguardando_compra", {
+            pedidoId,
+            error: updErr.message,
+          });
+        } else {
+          transicoes.push({ pedido_id: pedidoId, novo_status: "aguardando_compra" });
+        }
       }
-      // Mixed (some compra, some normal) — no auto-transition here,
-      // concluir/route.ts handles this when operator finishes picking normal items
     }
 
     logger.info("validar-oc-item", `${acao}: ${itensAtualizados} itens atualizados`, {

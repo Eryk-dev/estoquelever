@@ -65,9 +65,10 @@ Tiny webhook (pedido)
        · rotearPedidoDoBanco       lê siso_estoque → propria | transferencia | oc (geo-priority)
        · upsert siso_pedidos/itens · cria reservas R (TTL 30d) p/ propria+transferencia (OC não reserva)
        · propria → AUTO-APROVA (executando, aguardando_nf, enfileira lancar_estoque)
-       · transferencia/oc → pendente (painel humano)
+       · oc → AUTO-APROVA (executando, decisao_final='oc'; worker seta status_separacao='validacao_oc')
+       · transferencia → pendente (painel humano)
   ──────────────────────────────────────────────────────────────
-Aprovação humana (api/wms/pedidos/aprovar)   [transferencia/oc; "rejeitado" cancela]
+Aprovação humana (api/wms/pedidos/aprovar)   [transferencia; "rejeitado" cancela]
   · cria reservas R se faltarem; 409 se estoque live não cobre → enfileira lancar_estoque
   ──────────────────────────────────────────────────────────────
 execution-worker (siso_fila_execucao, backoff exponencial, claim atômico)
@@ -105,7 +106,7 @@ Conjunto: `propria | transferencia | oc` (sem empréstimo/swap no 3D).
 2. Mantém os que cobrem 100%, ordena por `geoPriority` (0=casa/sem-preferência · 1=mesma cidade+UF · 2=mesma UF · 3=outro).
 3. `geoPriority===0` → **propria** · cobre 100% mas não-casa → **transferencia** · ninguém cobre 100% mas há parcial → **oc** (`split_galpoes`) · ninguém tem nada → **oc** (`sem_cobertura`).
 
-**Auto-aprovação:** SÓ `propria`. Resto vai pro painel.
+**Auto-aprovação:** `propria` e `oc`. Só `transferencia` vai pro painel.
 
 ### Status
 

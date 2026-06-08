@@ -1065,7 +1065,7 @@ Caminhos suportados:
 **Auth:** X-Session-Id (required, filters by separacao_galpao_id if user has galpaoId)
 
 **Query Params:**
-- `status_separacao`: comma-separated list of statuses — "aguardando_compra" | "aguardando_nf" | "validacao_oc" | "aguardando_separacao" | "em_separacao" | "separado" | "embalado". Multiple values supported (e.g., "aguardando_compra,validacao_oc")
+- `status_separacao`: comma-separated list of statuses — "aguardando_compra" | "aguardando_nf" | "validacao_oc" | "aguardando_separacao" | "em_separacao" | "separado" | "embalado" | "pendente_realocacao". Multiple values supported (e.g., "aguardando_compra,validacao_oc")
 - `empresa_origem_id`: filter by origin empresa
 - `marketplace`: filter by e-commerce name (ilike)
 - `busca`: search numero, id_pedido_ecommerce, cliente_nome (ilike)
@@ -1081,7 +1081,8 @@ Caminhos suportados:
     "aguardando_separacao": "number",
     "em_separacao": "number",
     "separado": "number",
-    "embalado": "number"
+    "embalado": "number",
+    "pendente_realocacao": "number"
   },
   "pedidos": [
     {
@@ -2730,12 +2731,14 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
   "item_ids": ["uuid", "uuid"],
   "acao": "encontrei | esgotado | desfazer_encontrei",
   "qty_contada": "number (optional, only acao=encontrei)",
-  "localizacao_codigo": "string (optional, only acao=encontrei)"
+  "localizacao_codigo": "string (optional, only acao=encontrei)",
+  "solicitar_contagem": "boolean (optional, only acao=encontrei)"
 }
 ```
 
-- `qty_contada` (number, optional — only meaningful when `acao='encontrei'`): total de unidades contadas fisicamente na prateleira (acerto de prateleira / contagem inline). Quando presente, o backend reconcilia o saldo da loc registrando uma contagem oficial (gera mov `inventario_ganho`/`inventario_perda` conforme o delta vs. saldo de sistema) antes de separar o pedido. Exige `qty_contada >= quantidade_pedida` do item — caso contrário responde **422** `contagem_menor_que_pedido`. `qty_contada <= 0` responde **422** `contagem_invalida`. Ausente = comportamento legado (pick sem contagem).
-- `localizacao_codigo` (string, optional — only meaningful when `acao='encontrei'`): código da prateleira bipada. Alternativa a `localizacao_id` (uuid) pra resolver a loc-alvo da contagem dentro do galpão do pedido (`siso_localizacoes` filtrado por `galpao_id` do pedido + `codigo`). Usado em conjunto com `qty_contada`.
+- `qty_contada` (number, optional — only meaningful when `acao='encontrei'`): total de unidades contadas fisicamente na prateleira (acerto de prateleira / contagem inline). Quando presente, o backend reconcilia o saldo da loc registrando uma contagem oficial (gera mov `inventario_ganho`/`inventario_perda` conforme o delta vs. saldo de sistema) antes de separar o pedido. Exige `qty_contada >= quantidade_pedida` do item — caso contrário responde **422** `contagem_menor_que_pedido`. `qty_contada <= 0` responde **422** `contagem_invalida`. Ausente = comportamento legado (pick sem contagem). **Mutuamente exclusivo com `solicitar_contagem`** — enviar ambos retorna **400**.
+- `localizacao_codigo` (string, optional — only meaningful when `acao='encontrei'`): código da prateleira bipada. Alternativa a `localizacao_id` (uuid) pra resolver a loc-alvo da contagem dentro do galpão do pedido (`siso_localizacoes` filtrado por `galpao_id` do pedido + `codigo`). Usado em conjunto com `qty_contada` ou `solicitar_contagem`.
+- `solicitar_contagem` (boolean, optional — only meaningful when `acao='encontrei'`): quando `true`, pega exatamente a `quantidade_pedida` do item (gera mov E de ajuste_manual + mov S de pick) e enfileira a localização para contagem futura via inventário. O saldo da loc fica temporariamente subcontado de propósito — o operador achou fisicamente o item mas não contou a prateleira inteira; a reconciliação completa acontece depois. **Mutuamente exclusivo com `qty_contada`** — enviar ambos retorna **400** `solicitar_contagem e qty_contada são mutuamente exclusivos`.
 
 **Response (200):**
 ```json
@@ -2747,6 +2750,13 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
       "novo_status": "string"
     }
   ]
+}
+```
+
+**Response (400 - Params mutuamente exclusivos):**
+```json
+{
+  "error": "solicitar_contagem e qty_contada são mutuamente exclusivos"
 }
 ```
 
@@ -2762,7 +2772,10 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 ```
 
 **Business Logic:**
-- **encontrei:** Clears all compra fields (compra_status, fornecedor_oc, compra_quantidade_solicitada, compra_solicitada_em, ordem_compra_id) and marks item as picked (separacao_marcado = true, bipado_completo = true, quantidade_bipada = quantidade_pedida). Quando o body traz `qty_contada` (acerto de prateleira / Fase 1), reconcilia o saldo da loc-alvo (resolvida por `localizacao_id` ou `localizacao_codigo`) via `registrarContagemInline` registrando uma contagem oficial antes do pick. Exige `qty_contada >= quantidade_pedida`.
+- **encontrei:** Clears all compra fields (compra_status, fornecedor_oc, compra_quantidade_solicitada, compra_solicitada_em, ordem_compra_id) and marks item as picked (separacao_marcado = true, bipado_completo = true, quantidade_bipada = quantidade_pedida). Três sub-caminhos mutuamente exclusivos:
+  - **com `qty_contada`** (Fase 1 — contagem inline): reconcilia o saldo da loc-alvo (resolvida por `localizacao_id` ou `localizacao_codigo`) via `registrarContagemInline` antes do pick. Exige `qty_contada >= quantidade_pedida`.
+  - **com `solicitar_contagem=true`** (Fase 4 — contagem diferida): gera mov E (`ajuste_manual`, origem_id `solicitar-contagem-{item_id}`) + mov S (pick) com `quantidade_pedida`, e enfileira a loc para contagem futura (`enfileirarLocParaContagem`, fire-and-forget). Saldo da loc fica temporariamente subcontado. Loc obrigatória (`localizacao_id` ou `localizacao_codigo`).
+  - **legado (sem ambos):** pick via `pickMovPicking`, que resolve a loc com maior saldo disponível no galpão. Se produto não tem saldo em nenhuma loc, exige `localizacao_id` (body) e gera mov E de `ajuste_manual` antes do pick.
 - **esgotado:** Sets compra_status = aguardando_compra, fills fornecedor_oc via getFornecedorBySku, sets compra_quantidade_solicitada and compra_solicitada_em. Auto-creates or finds existing OC (siso_ordens_compra) by fornecedor + galpao and links item.
 - **desfazer_encontrei:** Restores compra_status = oc_pendente, fills fornecedor_oc via getFornecedorBySku, clears separacao_marcado/bipado_completo/quantidade_bipada. Reverts decisao_final to "oc" if it was flipped to "propria".
 - **Auto-transition FR-9:** When all OC items resolved and none have compra_status (all found), sets decisao_final = propria. If pedido in validacao_oc, transitions to aguardando_separacao.
@@ -5046,7 +5059,7 @@ Fila consumida no tablet. Operador imprime etiquetas → cola nas peças → lev
 
 Lista pendências. **Query:** `galpao_id?`, `status=pendente,em_guarda` (CSV, default ativas), `q?`, `limit=200`. *(Filtro `empresa_dona_id` removido em 2026-05-20 — coluna não existe mais na tabela.)*
 
-**Response 200:** `{ rows: PendenciaJoined[] }` com produto/galpao/localizacao_origem populados.
+**Response 200:** `{ rows: PendenciaJoined[] }` com produto/galpao/localizacao_origem populados. Cada item inclui o campo derivado `a_guardar` (number) = `min(qty_pendente, saldo_livre_na_loc_origem)`, onde `saldo_livre = max(0, saldo - reservado_alheio)` e `reservado_alheio` exclui reservas `reserva_guarda` da própria pendência. Pode ser menor que `qty_pendente` quando um pedido separou diretamente da loc de recebimento antes do put-away.
 
 #### GET /api/wms/guarda/[id]
 
@@ -5056,13 +5069,9 @@ Detalhe de uma pendência + sugestão de loc destino (filtrada — não sugere v
 
 #### POST /api/wms/guarda/[id]/iniciar
 
-Marca `status='em_guarda'`, registra `iniciada_em/por`. **Anti-race (P3 #5.2)** — agora usa
-UPDATE condicional `WHERE status='pendente'` em vez de SELECT+UPDATE. Se dois operadores chegam
-juntos na mesma pendência, só o 1º consegue: o 2º recebe **409 PENDENCIA_OUTRA_GUARDA**
-(antes ambos passavam, gerando dupla guarda). Idempotente quando o caller já é o dono
-(`iniciada_por=usuario_id`).
+Marca `status='em_guarda'`, registra `iniciada_em/por`, e **cria uma reserva forte `R` (`origem_tipo='reserva_guarda'`) na loc de recebimento** travando o saldo físico disponível — tudo dentro do RPC atômico `wms_iniciar_guarda_atomico` (FOR UPDATE na pendência + claim + inserção da R em uma única transação). Se dois operadores chegam juntos na mesma pendência, só o 1º consegue: o 2º recebe **409 PENDENCIA_OUTRA_GUARDA**. Idempotente quando o caller já é o dono (`iniciada_por=usuario_id`, sem nova R duplicada).
 
-**Auth:** acesso de armazém. **Response 200:** `{ ok: true, pendencia }`. **400** se status terminal. **409** se outro operador já iniciou.
+**Auth:** acesso de armazém. **Response 200:** `{ ok: true, pendencia }`. **400** se status terminal. **409** se outro operador já iniciou (`p_forcar=true` faz takeover).
 
 #### POST /api/wms/guarda/[id]/confirmar
 
@@ -5105,7 +5114,7 @@ decrementa `qty_guardada`, e recupera status anterior (`pendente` se `qty_guarda
 
 #### POST /api/wms/guarda/[id]/cancelar
 
-Tira a pendência da fila sem mover estoque (peça continua em RECEBIMENTO; saída física é fluxo separado — ajuste manual ou devolução fornecedor).
+Tira a pendência da fila via RPC atômico `wms_cancelar_pendencia_guarda_atomico`: **libera (`L`) a reserva forte `reserva_guarda` remanescente antes de marcar `cancelada`**, devolvendo o disponível da loc de recebimento. Não mexe no saldo físico — a peça continua em RECEBIMENTO. Saída física é fluxo separado (ajuste manual ou devolução fornecedor). (O status terminal `encerrada_sem_saldo` é atribuído pelo RPC `wms_confirmar_guarda_atomico` quando detecta saldo=0 na loc de origem — não pelo cancelar.)
 
 **Body:** `{ motivo: string (≥3 chars) }`.
 

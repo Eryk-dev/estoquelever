@@ -22,6 +22,30 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: wms-realocacao-migrou-de-pedidos-para-separacao
+    date: "2026-06-08"
+    source: wms.pedidos.ui
+    category: business_logic
+    message: "pedidos com status_separacao='pendente_realocacao' não aparecem mais em /wms/pedidos"
+    cause: >
+      Após FASE 1 (auto-aprovação de própria e OC no webhook), /wms/pedidos passou
+      a mostrar APENAS pedidos pendente+sugestao='transferencia'. Pedidos com
+      status_separacao='pendente_realocacao' anteriormente surfavam nessa tela via
+      filtro `status='pendente' OR status_separacao='pendente_realocacao'`. Com o
+      filtro novo esse critério foi removido.
+    fix: >
+      Realocação ganhou aba dedicada "Realocação" em /wms/separacao (aba pendente_realocacao).
+      Backend: adicionado 'pendente_realocacao' em VALID_STATUSES e COUNT_STATUSES da rota
+      GET /api/wms/separacao; count agora real (era hardcoded 0).
+      Frontend: TabIdStatusSeparacao, TAB_TO_STATUS, TAB_EMPTY, parseTab e counts useMemo
+      todos atualizados para incluir a nova aba.
+    files:
+      - src/app/wms/pedidos/page.tsx
+      - src/app/wms/separacao/page.tsx
+      - src/app/api/wms/separacao/route.ts
+      - src/components/wms/vendas/tabs-status-separacao.tsx
+    tags: [pedidos, realocacao, ui, oc, separacao, pendente_realocacao]
+
   - id: wms-inventario-aprovar-nao-libera-locks
     date: "2026-05-11"
     source: wms.inventario.aprovar

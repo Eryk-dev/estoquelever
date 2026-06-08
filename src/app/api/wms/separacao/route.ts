@@ -14,6 +14,7 @@ const VALID_STATUSES: StatusSeparacao[] = [
   "em_separacao",
   "separado",
   "embalado",
+  "pendente_realocacao",
 ];
 
 const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
@@ -24,6 +25,7 @@ const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
   "em_separacao",
   "separado",
   "embalado",
+  "pendente_realocacao",
 ];
 
 /**
@@ -262,7 +264,7 @@ export async function GET(request: NextRequest) {
       em_separacao: countResults[4].count ?? 0,
       separado: countResults[5].count ?? 0,
       embalado: countResults[6].count ?? 0,
-      pendente_realocacao: 0,
+      pendente_realocacao: countResults[7].count ?? 0,
     };
 
     // 3. Fetch item stats for progress display (separation + packing counts)

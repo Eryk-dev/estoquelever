@@ -102,7 +102,7 @@ export function QuadroTarefas() {
           variante="simples"
           titulo="Aprovação"
           contador={data?.aprovacao.count ?? 0}
-          legenda="aguardando"
+          legenda="transferências"
           legendaExtra={
             data?.aprovacao
               ? `${data.aprovacao.marketplace} marketplace · ${data.aprovacao.manual} manual`

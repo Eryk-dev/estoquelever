@@ -203,9 +203,9 @@ export default function WmsPedidosPage() {
   const pendentes = useMemo(() => {
     return filteredByGalpao
       .filter(
-        (p) =>
-          p.status === "pendente" ||
-          p.status_separacao === "pendente_realocacao",
+        // Só transferência precisa de decisão humana aqui. Própria/OC
+        // auto-aprovam (webhook). Realocação migrou pra aba na separação.
+        (p) => p.status === "pendente" && p.sugestao === "transferencia",
       )
       .filter(buscaMatch)
       .sort(

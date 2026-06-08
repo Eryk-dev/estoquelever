@@ -50,7 +50,8 @@ type StatusServer =
   | "aguardando_separacao"
   | "em_separacao"
   | "separado"
-  | "embalado";
+  | "embalado"
+  | "pendente_realocacao";
 
 interface CompraStatsItem {
   sku: string;
@@ -119,6 +120,7 @@ const TAB_TO_STATUS: Record<Tab, StatusServer[]> = {
   em_separacao: ["em_separacao"],
   separado: ["separado"],
   embalado: ["embalado"],
+  pendente_realocacao: ["pendente_realocacao"],
 };
 
 const TAB_EMPTY: Record<Tab, { title: string; body: string }> = {
@@ -145,6 +147,10 @@ const TAB_EMPTY: Record<Tab, { title: string; body: string }> = {
   embalado: {
     title: "Nenhum pedido embalado",
     body: "Pedidos embalados e prontos pra expedição aparecem aqui.",
+  },
+  pendente_realocacao: {
+    title: "Nenhum pedido aguardando realocação",
+    body: "Pedidos com itens a realocar para outro galpão aparecem aqui.",
   },
 };
 
@@ -231,6 +237,7 @@ function parseTab(value: string | null | undefined): Tab {
     "em_separacao",
     "separado",
     "embalado",
+    "pendente_realocacao",
   ];
   return valid.includes(value as Tab)
     ? (value as Tab)
@@ -389,6 +396,7 @@ export default function WmsSeparacaoPage() {
       em_separacao: data?.counts.em_separacao ?? 0,
       separado: data?.counts.separado ?? 0,
       embalado: data?.counts.embalado ?? 0,
+      pendente_realocacao: data?.counts.pendente_realocacao ?? 0,
     }),
     [data?.counts],
   );

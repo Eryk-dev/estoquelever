@@ -757,13 +757,14 @@ export async function montarDashboardTarefas(
     comprasComprarItensQ,
     comprasOrdensQ,
   ] = await Promise.all([
-    // Aprovação pendente — agora retorna rows (não head:true) pra split
-    // marketplace vs manual via `origem_pedido`.
+    // Aprovação pendente — só transferência (propria/oc auto-aprovam no webhook
+    // desde FASE 1). Retorna rows pra split marketplace vs manual via `origem_pedido`.
     (() => {
       let q = sb
         .from("siso_pedidos")
         .select("id, origem_pedido")
-        .eq("status", "pendente");
+        .eq("status", "pendente")
+        .eq("sugestao", "transferencia");
       if (galpao_id) {
         // Pedidos `pendente` podem ter separacao_galpao_id NULL (ainda não
         // aprovados). Incluir esses no filtro do galpão atual — operador

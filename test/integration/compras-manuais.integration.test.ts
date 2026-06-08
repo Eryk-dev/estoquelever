@@ -91,6 +91,33 @@ describe("compra manual — lifecycle", () => {
       }),
     ).rejects.toThrow();
   });
+
+  it("cancela sem recebimento; bloqueia cancelar com recebimento", async () => {
+    const { cancelarCompraManual } = await import("../../src/lib/wms/compras-manuais");
+    // sem recebimento → ok
+    const { compra_id: a } = await criarCompraManual({
+      fornecedor_id: fornecedorId,
+      empresa_compradora_id: empresaId,
+      galpao_id: galpaoId,
+      criado_por: usuarioId,
+      itens: [{ produto_id: produtoId, qty_comprada: 1 }],
+    });
+    expect(await cancelarCompraManual(a)).toEqual({ ok: true });
+    // com recebimento → bloqueia
+    const { compra_id: b } = await criarCompraManual({
+      fornecedor_id: fornecedorId,
+      empresa_compradora_id: empresaId,
+      galpao_id: galpaoId,
+      criado_por: usuarioId,
+      itens: [{ produto_id: produtoId, qty_comprada: 2 }],
+    });
+    await receberCompraManual({
+      compra_id: b,
+      usuario_id: usuarioId,
+      itens: [{ item_id: await primeiroItemId(b), qty_recebida: 1, custo_unitario: 12 }],
+    });
+    expect(await cancelarCompraManual(b)).toEqual({ ok: false, reason: "tem_recebimento" });
+  });
 });
 
 async function primeiroItemId(compraId: string): Promise<string> {

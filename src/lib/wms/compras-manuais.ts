@@ -409,3 +409,39 @@ export async function receberCompraManual(
 
   return { movs_geradas: movsGeradas, status: novoStatus };
 }
+
+export type CancelarResult =
+  | { ok: true }
+  | { ok: false; reason: "nao_encontrada" | "tem_recebimento" | "ja_cancelada" };
+
+/** Cancela uma compra manual. Bloqueado se qualquer item já tem qty_recebida > 0. */
+export async function cancelarCompraManual(
+  compraId: string,
+): Promise<CancelarResult> {
+  const sb = createServiceClient();
+
+  const { data: compra } = await sb
+    .from("siso_compras_manuais")
+    .select("id, status")
+    .eq("id", compraId)
+    .maybeSingle();
+  if (!compra) return { ok: false, reason: "nao_encontrada" };
+  if ((compra as { status: string }).status === "cancelado") {
+    return { ok: false, reason: "ja_cancelada" };
+  }
+
+  const { data: itens } = await sb
+    .from("siso_compras_manuais_itens")
+    .select("qty_recebida")
+    .eq("compra_id", compraId);
+  const temRecebimento = ((itens ?? []) as { qty_recebida: number }[]).some(
+    (i) => Number(i.qty_recebida) > 0,
+  );
+  if (temRecebimento) return { ok: false, reason: "tem_recebimento" };
+
+  await sb
+    .from("siso_compras_manuais")
+    .update({ status: "cancelado" })
+    .eq("id", compraId);
+  return { ok: true };
+}

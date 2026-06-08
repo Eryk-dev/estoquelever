@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { criarFornecedor } from "@/lib/wms/fornecedores";
+import { createServiceClient } from "@/lib/supabase-server";
 
 // Criação inline de fornecedor a partir do modal de compra manual.
 // Guard compras.executar (operador), não requireAdmin como /api/wms/fornecedores.
@@ -16,6 +17,15 @@ export async function POST(req: NextRequest) {
   if (!body.nome || typeof body.nome !== "string") {
     return NextResponse.json({ error: "nome obrigatório" }, { status: 400 });
   }
+  const sb = createServiceClient();
+  const { data: existente } = await sb
+    .from("siso_fornecedores")
+    .select("id")
+    .ilike("nome", body.nome)
+    .maybeSingle();
+  if (existente) {
+    return NextResponse.json({ error: "Fornecedor com esse nome já existe" }, { status: 409 });
+  }
   try {
     const f = await criarFornecedor({
       nome: body.nome,
@@ -26,7 +36,6 @@ export async function POST(req: NextRequest) {
     return wmsErrorResponse({
       source: "wms.compras-manuais.fornecedor",
       error: e,
-      status: 400,
       requestPath: "/api/wms/compras-manuais/fornecedor",
       requestMethod: "POST",
     });

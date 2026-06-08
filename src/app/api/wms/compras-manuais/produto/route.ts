@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { criarProduto } from "@/lib/wms/produtos";
+import { createServiceClient } from "@/lib/supabase-server";
 
 // Criação inline de produto mínimo (sku+descrição) a partir do modal de compra
 // manual. Sem dados fiscais — Tiny é a camada fiscal. Guard compras.executar.
@@ -16,6 +17,15 @@ export async function POST(req: NextRequest) {
   if (!body.sku || !body.descricao) {
     return NextResponse.json({ error: "sku e descricao obrigatórios" }, { status: 400 });
   }
+  const sb = createServiceClient();
+  const { data: existente } = await sb
+    .from("siso_produtos")
+    .select("id")
+    .eq("sku", body.sku)
+    .maybeSingle();
+  if (existente) {
+    return NextResponse.json({ error: "SKU já existe" }, { status: 409 });
+  }
   try {
     const p = await criarProduto({ sku: body.sku, descricao: body.descricao });
     return NextResponse.json(p, { status: 201 });
@@ -23,7 +33,6 @@ export async function POST(req: NextRequest) {
     return wmsErrorResponse({
       source: "wms.compras-manuais.produto",
       error: e,
-      status: 400,
       requestPath: "/api/wms/compras-manuais/produto",
       requestMethod: "POST",
     });

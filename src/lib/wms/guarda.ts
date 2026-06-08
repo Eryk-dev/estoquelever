@@ -69,6 +69,29 @@ export interface PendenciaJoined extends PendenciaGuarda {
   localizacao_origem: { codigo: string } | null;
   localizacao_destino: { codigo: string; tipo: string } | null;
   destino_sugerido?: { codigo: string; tipo: string } | null;
+  /** Quantidade fisicamente ainda presente na loc de recebimento para ser guardada.
+   * Derivado = min(qty_pendente, saldo_livre_na_loc_origem). Pode ser < qty_pendente
+   * se um pedido separou diretamente da loc de recebimento antes do put-away.
+   * A coluna GENERATED qty_pendente (contabilidade) permanece intacta. */
+  a_guardar?: number;
+}
+
+/**
+ * Calcula quanto do estoque está fisicamente disponível para ser guardado.
+ *
+ * a_guardar = min(qty_pendente, saldo_livre) onde
+ * saldo_livre = max(0, saldo - reservado_alheio)
+ *
+ * `reservado_alheio` = reservas de OUTROS pedidos na loc de origem
+ * (exclui reservas que pertencem à própria guarda, quando existirem).
+ */
+export function calcularAGuardar(p: {
+  qty_pendente: number;
+  saldo: number;
+  reservado_alheio: number; // reservas que NÃO são desta guarda (pedidos, etc)
+}): number {
+  const livre = Math.max(0, p.saldo - p.reservado_alheio);
+  return Math.max(0, Math.min(p.qty_pendente, livre));
 }
 
 /**
@@ -220,6 +243,9 @@ export async function listarPendencias(
   if (error) throw error;
 
   let rows = ((data ?? []) as unknown as PendenciaJoined[]).map(normalizarNumeros);
+
+  await enriquecerComAGuardar(sb, rows);
+
   if (filtros.q) {
     const q = filtros.q.trim().toLowerCase();
     rows = rows.filter(
@@ -279,6 +305,8 @@ export async function listarRotaPendencias(input: {
     normalizarNumeros,
   );
 
+  await enriquecerComAGuardar(sb, rows);
+
   // Ordena: por codigo da loc destino asc, NULL no fim, depois criada_em asc
   // pra estabilidade entre pendências sem loc decidida.
   rows.sort((a, b) => {
@@ -314,6 +342,66 @@ export async function obterPendencia(id: string): Promise<PendenciaJoined | null
   if (error) throw error;
   if (!data) return null;
   return normalizarNumeros(data as unknown as PendenciaJoined);
+}
+
+/**
+ * Enriquece cada row com `a_guardar` = min(qty_pendente, saldo_livre_na_loc_origem).
+ *
+ * 1 query batch (evita N+1). Filtra por produto_id E galpao_id para reduzir
+ * o over-fetch entre galpões. Reservas da própria guarda (origem_tipo=
+ * 'reserva_guarda') são excluídas do reservado_alheio — forward-compatible com
+ * Fase 6 (onde esse tipo de mov passa a existir).
+ *
+ * Muta `rows` in-place (mesmo padrão de normalizarNumeros).
+ */
+async function enriquecerComAGuardar(
+  sb: ReturnType<typeof createServiceClient>,
+  rows: PendenciaJoined[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  // a_guardar dinâmico: saldo real - reservas de TERCEIROS na loc de origem.
+  // 1 query batch (evita N+1). Reservas DESTA própria guarda (origem_tipo
+  // 'reserva_guarda', origem_id = pendencia.id) são excluídas do "alheio".
+  // (origem_tipo 'reserva_guarda' só passa a existir na Fase 6; até lá o
+  //  query simplesmente não acha nada e reservadoProprio=0 — forward-compatible.)
+  const { data: estoques } = await sb
+    .from("siso_estoque")
+    .select("produto_id, galpao_id, localizacao_id, saldo, reservado")
+    .in("produto_id", [...new Set(rows.map((r) => r.produto_id))])
+    .in("galpao_id", [...new Set(rows.map((r) => r.galpao_id))]);
+  const byTripla = new Map(
+    (estoques ?? []).map((e) => [
+      `${e.produto_id}|${e.galpao_id}|${e.localizacao_id}`,
+      { saldo: Number(e.saldo), reservado: Number(e.reservado) },
+    ]),
+  );
+  const pendIds = rows.filter((r) => r.status === "em_guarda").map((r) => r.id);
+  const ownReserva = new Map<string, number>();
+  if (pendIds.length > 0) {
+    const { data: rg } = await sb
+      .from("siso_movimentacoes")
+      .select("origem_id, quantidade")
+      .eq("tipo", "R")
+      .eq("origem_tipo", "reserva_guarda")
+      .in("origem_id", pendIds);
+    for (const m of rg ?? []) {
+      ownReserva.set(
+        m.origem_id as string,
+        (ownReserva.get(m.origem_id as string) ?? 0) + Number(m.quantidade),
+      );
+    }
+  }
+  for (const r of rows) {
+    const e = byTripla.get(`${r.produto_id}|${r.galpao_id}|${r.localizacao_origem_id}`);
+    const saldo = e?.saldo ?? 0;
+    const reservadoTotal = e?.reservado ?? 0;
+    const reservadoProprio = ownReserva.get(r.id) ?? 0;
+    r.a_guardar = calcularAGuardar({
+      qty_pendente: r.qty_pendente,
+      saldo,
+      reservado_alheio: reservadoTotal - reservadoProprio,
+    });
+  }
 }
 
 function normalizarNumeros(p: PendenciaJoined): PendenciaJoined {

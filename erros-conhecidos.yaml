@@ -22,6 +22,34 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: guarda-a-guardar-derivado-min-saldo-livre
+    date: "2026-06-08"
+    source: wms.guarda
+    category: business_logic
+    message: >
+      guarda exibia qty_pendente (40) como "a guardar" mesmo quando o pick já consumiu
+      o saldo da loc de recebimento (saldo real 10) — operador ia procurar 40 peças
+      que não existem mais
+    cause: >
+      A loc de RECEBIMENTO é pickable — um pedido pode separar diretamente dela antes
+      do put-away ser concluído. Nesse caso o operador veria qty_pendente=40 mas
+      fisicamente só restam 10 unidades. O campo GENERATED qty_pendente não pode ser
+      alterado (invariante I5 + CHECK dependem dele). Sem a_guardar, o operador tenta
+      guardar quantidade inexistente e leva erro de saldo insuficiente no RPC.
+    fix: >
+      Campo a_guardar computado na camada de serviço em listarPendencias e
+      listarRotaPendencias via 1 query batch (sem N+1): a_guardar = calcularAGuardar(
+      qty_pendente, saldo_loc_origem, reservado_alheio). Reservas da própria guarda
+      (origem_tipo='reserva_guarda') são excluídas do reservado_alheio —
+      forward-compatible com Fase 6.
+    files:
+      - src/lib/wms/guarda.ts
+      - src/lib/wms/guarda-a-guardar.test.ts
+    tags: [guarda, recebimento, a_guardar, putaway]
+    notes: >
+      qty_pendente (GENERATED) e o schema do banco ficam INALTERADOS. Nenhuma migration
+      necessária. Validado por cenário 91-guarda-dinamica-reflete-pick.
+
   - id: solicitar-contagem-saldo-subcontado
     date: "2026-06-08"
     source: validar-oc-item

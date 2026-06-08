@@ -168,7 +168,7 @@ src/
       crossdock-{detector,trigger}.ts · contagem-inline.ts
       inventario.ts · inventario-reconciliacao.ts (pura) · inventario-recovery.ts
       vendas-{disponibilidade,cancelamento}.ts · mandar-compras.ts · varredura-validacao-oc.ts
-      fornecedores.ts · sync-tiny.ts · snapshot-inicial.ts · galpoes-com-saldo.ts
+      fornecedores.ts · compras-manuais.ts · sync-tiny.ts · snapshot-inicial.ts · galpoes-com-saldo.ts
       reconciliacao.ts · reconciliacao-tiny.ts · cobertura.ts
       devolucoes.ts · devolucao-detector.ts (puro) · dashboard-{geral,tarefas}.ts
       insights/{motor,queries,types}.ts
@@ -180,9 +180,9 @@ docs/                                   # ground-truth gerada (ver abaixo)
 erros-conhecidos.yaml                   # base de erros (grep antes, adicionar depois)
 ```
 
-### API — grupos por domínio (203 rotas em `/api/wms`)
+### API — grupos por domínio (209 rotas em `/api/wms`)
 
-`separacao` (31) · `admin` (21) · `inventario` (16) · `cross` (14) · `compras` (14) · `insights` (12) · `guarda` (10) · `pedidos` (8) · `ml` (7) · `tiny` (6) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `relatorios` (3) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
+`separacao` (31) · `admin` (21) · `inventario` (16) · `cross` (14) · `compras` (14) · `insights` (12) · `guarda` (10) · `pedidos` (8) · `ml` (7) · `tiny` (6) · `produtos` (6) · `vendas` (6) · `compras-manuais` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `relatorios` (3) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
 
 ### Database — tabelas principais
 
@@ -202,6 +202,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 | `siso_wms_pendencias_guarda` | Fila put-away. `qty_pendente` GENERATED. status `pendente→em_guarda→guardada\|cancelada`. |
 | `siso_transferencias_galpao` (+itens) | Transferência inter-galpão (2 pernas S→E). |
 | `siso_devolucoes_pendentes` · `siso_fornecedores` (+`produto_fornecedores`) · `siso_impressoes_log` · `siso_localizacao_locks` | Devoluções / fornecedores / log de impressão / locks. |
+| `siso_compras_manuais` (+itens) | Compra avulsa de fornecedor (sem pedido). Recebimento gera mov `E` reusando `origem_tipo='nf_compra'` + `origem_detalhes.origem='compra_manual'` (sem NF). Sem RLS. |
 
 > **Dropadas (não referenciar):** `siso_pedido_item_estoques`, `siso_emprestimo_regras`, `siso_wms_mini_swap_config`, `siso_transferencias`(+itens), `siso_inventarios`(+itens).
 

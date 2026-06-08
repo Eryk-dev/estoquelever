@@ -601,6 +601,72 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 ---
 
+### siso_compras_manuais — Compra manual de fornecedor (2026-06-11)
+
+**Purpose:** Aggregate de compra avulsa de fornecedor (sem pedido de cliente). Cabeçalho. Migration `20260611c_compra_manual.sql`.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | gen_random_uuid() (PK) | Compra ID |
+| `fornecedor_id` | uuid | NO | FK | Fornecedor |
+| `empresa_compradora_id` | uuid | NO | FK | Empresa que compra (vira tag na mov E) |
+| `galpao_id` | uuid | NO | FK | Galpão que recebe |
+| `status` | text | NO | 'comprado' | CHECK `comprado \| parcial \| recebido \| cancelado` |
+| `observacao` | text | YES | | Notes |
+| `criado_por` | uuid | YES | FK | User que criou |
+| `criado_em` | timestamptz | NO | now() | Criação |
+| `recebido_em` | timestamptz | YES | | Setado quando status vira `recebido` |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `fornecedor_id` → `siso_fornecedores(id)`
+- `empresa_compradora_id` → `siso_empresas(id)`
+- `galpao_id` → `siso_galpoes(id)`
+- `criado_por` → `siso_usuarios(id)`
+
+**Indexes:**
+- `idx_compras_manuais_status` (status)
+
+**Notes:**
+- Sem RLS — acesso só via service role (consistente com as demais tabelas operacionais `siso_*`).
+- `status` é derivado das quantidades dos itens no recebimento (`comprado`→`parcial`→`recebido`); `cancelado` é setado explicitamente.
+- Listagem agrupa `comprado`+`parcial` sob o filtro `pendentes`.
+
+---
+
+### siso_compras_manuais_itens — Itens da compra manual (2026-06-11)
+
+**Purpose:** Itens de uma compra manual. Cada item recebido gera uma mov `E` no ledger. Migration `20260611c_compra_manual.sql`.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | gen_random_uuid() (PK) | Item ID |
+| `compra_id` | uuid | NO | FK ON DELETE CASCADE | Compra dona |
+| `produto_id` | uuid | NO | FK | Produto WMS (uuid, NÃO tiny_produto_id) |
+| `qty_comprada` | numeric | NO | CHECK > 0 | Quantidade comprada |
+| `qty_recebida` | numeric | NO | 0 (CHECK >= 0) | Quantidade já recebida (lock otimista no recebimento) |
+| `custo_unitario` | numeric | YES | | Custo informado (opcional) |
+
+**Primary Key:** `id`
+
+**Foreign Keys:**
+- `compra_id` → `siso_compras_manuais(id)` ON DELETE CASCADE
+- `produto_id` → `siso_produtos(id)`
+
+**Constraints:**
+- CHECK `qty_recebida <= qty_comprada`
+
+**Indexes:**
+- `idx_compras_manuais_itens_compra` (compra_id)
+- `idx_compras_manuais_itens_produto` (produto_id)
+
+**Notes:**
+- O recebimento gera mov `E` na loc `tipo='recebimento'` do galpão, **reusando `origem_tipo='nf_compra'`** (whitelist do custo médio) e distinguido por **`origem_detalhes.origem='compra_manual'`** — **sem `nota_fiscal_id`** (Tiny é a camada fiscal; aqui não há NF). Custo médio recalcula via `resolverCustoEntrada` (lança se não houver custo informado nem histórico — guard P108).
+- NÃO chama `checkAndReleasePedidos` (não há pedido). O `reconciliador-oc` puxa o saldo pra pedidos OC parados via o próprio mov `E` (após put-away).
+
+---
+
 ## Inventory & Transfer Modules
 
 > **Dropadas na Fase 0 (2026-05-28).** As tabelas legadas `siso_inventarios`,

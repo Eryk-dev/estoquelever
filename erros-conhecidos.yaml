@@ -22,6 +22,27 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: solicitar-contagem-saldo-subcontado
+    date: "2026-06-08"
+    source: validar-oc-item
+    category: business_logic
+    message: "solicitar_contagem=true: pega qty do pedido + enfileira loc pra contagem futura — saldo da loc fica temporariamente subcontado de propósito"
+    cause: >
+      Quando o operador usa "Solicitar contagem depois" no modal OcEncontrei, o sistema
+      gera par E+S de qty=pedido (sem reconciliar a loc toda). A loc não é contada inline
+      — apenas enfileirada em siso_inventario_localizacoes (status=pendente, motivo=solicitada_pick)
+      na sessão operacional contínua do galpão. O saldo real da loc é desconhecido até a
+      contagem futura ser realizada.
+    fix: >
+      Comportamento intencional (tradeoff): o pedido não fica bloqueado pela contagem.
+      O operador deve realizar a contagem da loc futuramente via inventário. A loc
+      estará na fila da sessão operacional contínua para ser contada.
+    files:
+      - src/lib/wms/contagem-inline.ts
+      - src/app/api/wms/separacao/validar-oc-item/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+    tags: [oc, separacao, contagem, inventario]
+
   - id: wms-realocacao-migrou-de-pedidos-para-separacao
     date: "2026-06-08"
     source: wms.pedidos.ui
@@ -4122,3 +4143,41 @@ erros:
     - scripts/wms/cenarios/catalogo/89-misto-oc-auto-compras.ts
     - scripts/wms/cenarios/catalogo/89b-misto-oc-ordem-inversa.ts
   tags: [oc, separacao, misto, compras, auto-transicao, validar-oc-item, aguardando_compra]
+
+- id: validar-oc-item-compra-qtd-solicitada-null-23502
+  date: "2026-06-08"
+  source: separacao.validar-oc-item
+  category: database
+  message: >
+    compra_quantidade_solicitada: null em updates de encontrei/desfazer_encontrei
+    violava NOT NULL DEFAULT 0 (23502), atualização do item falhava silenciosamente
+    (logado + continue), bloqueando transições FR-8/FR-9.
+  cause: >
+    Coluna é integer NOT NULL DEFAULT 0; código setava null em dois ramos:
+    (a) encontrei ~L510 e (b) desfazer_encontrei ~L582.
+  fix: >
+    Trocado para 0 em ambos os ramos (encontrei L~510 e desfazer_encontrei L~582).
+  files:
+    - src/app/api/wms/separacao/validar-oc-item/route.ts
+  tags: [oc, separacao, ledger, constraint, encontrei]
+
+- id: validar-oc-item-mov-E-sem-idempotencia-retry
+  date: "2026-06-08"
+  source: separacao.validar-oc-item
+  category: business_logic
+  message: >
+    Nos ramos encontrei-sem-cadastro e solicitar-contagem, a mov E (ajuste_manual)
+    é inserida ANTES do pickMovPicking (S); se a S falhar após a E commitar, um retry
+    re-insere a E (sem idempotency efetiva — origem_id não é UNIQUE e p_idempotency_key
+    de wms_inserir_movimentacao é no-op), super-creditando a loc.
+  cause: >
+    Padrão E-antes-de-S sem dedup no nível da E; janela estreita (S falha após E
+    commitar). Afeta os ramos encontrei-sem-cadastro e solicitar-contagem igualmente.
+  fix: >
+    NÃO corrigido nesta fase (padrão pré-existente e sistêmico, afeta ambos os ramos
+    igualmente). Tratamento adequado seria um caminho atômico E+S (RPC) — fora do
+    escopo da FASE 4. Mitigação parcial atual: short-circuit jaPicado (mov_saida_id)
+    cobre o caso de retry após sucesso total.
+  files:
+    - src/app/api/wms/separacao/validar-oc-item/route.ts
+  tags: [oc, separacao, ledger, idempotencia, risco-conhecido]

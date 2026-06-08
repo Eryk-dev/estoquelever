@@ -702,6 +702,51 @@ export default function WmsChecklistPage() {
     }
   }
 
+  // "Solicitar contagem depois": pega só a qty do pedido + enfileira a loc pra contagem futura.
+  // Não reconcilia a loc (saldo fica temporariamente subcontado — intencional).
+  async function handleOcSolicitarContagem(codigoLoc: string) {
+    if (!ocLocModal) return;
+    const { produto } = ocLocModal;
+    setOcLocModal((p) => (p ? { ...p, bipando: true } : null));
+    try {
+      const rVal = await sisoFetch("/api/wms/separacao/validar-oc-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          item_ids: produto.item_ids,
+          acao: "encontrei",
+          solicitar_contagem: true,
+          localizacao_codigo: codigoLoc.trim(),
+        }),
+      });
+      if (!rVal.ok) {
+        const body = await rVal.json().catch(() => ({}));
+        toastErroApi(erroApiTexto(body, "Erro ao registrar contagem futura"));
+        setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
+        return;
+      }
+      const result = await rVal.json().catch(() => ({}));
+      toast.success(`Contagem agendada: ${produto.sku} — loc ${codigoLoc.trim()} na fila`);
+      setOcLocModal(null);
+      queryClient.invalidateQueries({ queryKey });
+
+      if (Array.isArray(result.transicoes) && result.transicoes.length > 0) {
+        queryClient.invalidateQueries({ queryKey: ["wms-separacao"] });
+        const transitioned = new Set<string>(
+          result.transicoes.map((t: { pedido_id: string }) => t.pedido_id),
+        );
+        const todos = pedidoIds.every((id) => transitioned.has(id));
+        if (todos) {
+          toast.success("Todos os itens OC resolvidos");
+          router.push("/wms/separacao");
+        }
+      }
+    } catch {
+      toastErroApi("Erro de conexão");
+      setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
+    }
+  }
+
   async function handleOcEsgotado(produto: ConsolidatedProduct) {
     try {
       const r = await sisoFetch("/api/wms/separacao/validar-oc-item", {
@@ -1328,6 +1373,7 @@ export default function WmsChecklistPage() {
           bipando={ocLocModal.bipando}
           onClose={() => !ocLocModal.bipando && setOcLocModal(null)}
           onConfirmar={handleOcEncontreiFinalizar}
+          onSolicitarContagem={handleOcSolicitarContagem}
         />
       )}
     </>
@@ -1900,11 +1946,13 @@ function OcEncontreiModal({
   bipando,
   onClose,
   onConfirmar,
+  onSolicitarContagem,
 }: {
   produto: ConsolidatedProduct;
   bipando: boolean;
   onClose: () => void;
   onConfirmar: (codigoLoc: string, qtyContada: number) => void;
+  onSolicitarContagem: (codigoLoc: string) => void;
 }) {
   const [feedback, setFeedback] = useState<ScanFeedback>({
     text: `Conte as unidades e bipe a localização onde encontrou ${produto.sku}`,
@@ -1935,6 +1983,15 @@ function OcEncontreiModal({
     }
     setFeedback({ text: `Salvando ${codigo.trim()}…`, tone: "neutral" });
     onConfirmar(codigo.trim(), n);
+  }
+
+  function handleSolicitarContagem() {
+    if (!locInput.trim()) {
+      setFeedback({ text: "Bipe a localização antes de solicitar contagem.", tone: "warn" });
+      return;
+    }
+    setFeedback({ text: `Solicitando contagem em ${locInput.trim()}…`, tone: "neutral" });
+    onSolicitarContagem(locInput.trim());
   }
 
   return (
@@ -2026,6 +2083,15 @@ function OcEncontreiModal({
             disabled={bipando}
           >
             Cancelar
+          </button>
+          <button
+            type="button"
+            className="wms-btn wms-btn-ghost"
+            onClick={handleSolicitarContagem}
+            disabled={bipando || !locInput.trim()}
+            title="Pega a qty do pedido agora e agenda a contagem da localização para depois"
+          >
+            Solicitar contagem depois
           </button>
           <button
             type="button"

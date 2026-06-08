@@ -1,6 +1,27 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 
+/**
+ * Enfileira uma localização para contagem futura na sessão operacional contínua
+ * do galpão. Idempotente via UNIQUE(sessao_id, localizacao_id).
+ * Falha silenciosa — o caller deve fazer .catch() pra não bloquear o pick.
+ */
+export async function enfileirarLocParaContagem(
+  sb: ReturnType<typeof createServiceClient>,
+  galpao_id: string,
+  localizacao_id: string,
+  solicitada_por: string,
+): Promise<void> {
+  const sessao_id = await getOrCreateSessaoOperacional(sb, galpao_id, solicitada_por);
+  // Idempotência clique-duplo via UNIQUE(sessao_id, localizacao_id)
+  await sb
+    .from("siso_inventario_localizacoes")
+    .upsert(
+      { sessao_id, localizacao_id, status: "pendente", motivo: "solicitada_pick" },
+      { onConflict: "sessao_id,localizacao_id", ignoreDuplicates: true },
+    );
+}
+
 const NOME_SESSAO_OPERACIONAL = "Contagens operacionais";
 
 export interface ContagemInlineInput {

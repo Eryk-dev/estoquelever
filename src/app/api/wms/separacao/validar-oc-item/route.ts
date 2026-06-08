@@ -7,7 +7,7 @@ import { registrarEvento } from "@/lib/historico-service";
 import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
 import { estornarMovimentacao, inserirMovimentacao } from "@/lib/wms/ledger";
 import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
-import { registrarContagemInline } from "@/lib/wms/contagem-inline";
+import { registrarContagemInline, enfileirarLocParaContagem } from "@/lib/wms/contagem-inline";
 
 /**
  * POST /api/separacao/validar-oc-item
@@ -37,6 +37,15 @@ export async function POST(request: NextRequest) {
       : null;
   const locCodigoBody =
     typeof body?.localizacao_codigo === "string" ? body.localizacao_codigo.trim() : null;
+  // solicitar_contagem=true: pega só a qty do pedido + enfileira a loc pra contagem futura.
+  // Mutuamente exclusivo com qty_contada (qty_contada = contagem inline imediata).
+  const solicitarContagem = body?.solicitar_contagem === true;
+  if (solicitarContagem && qtyContadaBody !== null) {
+    return NextResponse.json(
+      { error: "solicitar_contagem e qty_contada são mutuamente exclusivos" },
+      { status: 400 },
+    );
+  }
 
   if (
     !Array.isArray(itemIds) ||
@@ -254,6 +263,127 @@ export async function POST(request: NextRequest) {
               // sem novo ganho; o pick é refeito).
               continue;
             }
+          } else if (solicitarContagem) {
+            // ─── Solicitar contagem depois (Fase 4): pega qty do pedido agora,
+            // enfileira a loc pra contagem futura. Saldo da loc fica temporariamente
+            // subcontado de propósito — o operador contará depois via inventário.
+            // Fluxo: mov E (ajuste_manual achado, qty=pedida) + mov S (nf_venda, qty=pedida).
+            // origem_id distinto de "encontrei-sem-cadastro-*" pra evitar colisão de
+            // idempotência quando ambos os caminhos chegam pro mesmo item.
+
+            // Resolve loc-alvo: localizacao_id (uuid) OU localizacao_codigo (string).
+            let locAlvoId: string | null = locManualBody;
+            if (!locAlvoId && locCodigoBody) {
+              const { data: locByCod } = await supabase
+                .from("siso_localizacoes")
+                .select("id")
+                .eq("galpao_id", ctx.galpao)
+                .eq("codigo", locCodigoBody)
+                .maybeSingle();
+              locAlvoId = (locByCod as { id?: string } | null)?.id ?? null;
+            }
+            if (!locAlvoId) {
+              return NextResponse.json(
+                {
+                  error: "loc_obrigatoria",
+                  message: "Bipe/escolha a localização onde achou o item.",
+                  item_id: item.id,
+                },
+                { status: 422 },
+              );
+            }
+            // Se veio por uuid, confirma que pertence ao galpão.
+            if (locManualBody) {
+              const { data: locChk } = await supabase
+                .from("siso_localizacoes")
+                .select("id, galpao_id")
+                .eq("id", locManualBody)
+                .maybeSingle();
+              if (!locChk || (locChk as { galpao_id?: string }).galpao_id !== ctx.galpao) {
+                return NextResponse.json(
+                  { error: "loc_invalida", message: "Localização não pertence ao galpão do pedido" },
+                  { status: 422 },
+                );
+              }
+            }
+            try {
+              // Mov E: registra o que o operador achou (qty do pedido — não a loc toda)
+              await inserirMovimentacao({
+                tripla: {
+                  produto_id: produtoWmsId,
+                  galpao_id: ctx.galpao,
+                  localizacao_id: locAlvoId,
+                },
+                tipo: "E",
+                qty,
+                origem_tipo: "ajuste_manual",
+                origem_id: `solicitar-contagem-${item.id}`,
+                origem_detalhes: {
+                  motivo: "solicitar contagem depois — pega só qty pedido",
+                  item_id: item.id,
+                  pedido_id: item.pedido_id,
+                  sku: item.sku,
+                },
+                motivo: "Achado em pick — contagem da loc adiada",
+                motivo_categoria: "achado",
+                usuario_id: user.id,
+                fornecedor_id: null,
+              });
+              logger.info(
+                "validar-oc-item",
+                "solicitar_contagem: mov E gerada (qty=pedida, loc não reconciliada)",
+                {
+                  item_id: item.id,
+                  sku: item.sku,
+                  loc_id: locAlvoId,
+                  qty,
+                },
+              );
+            } catch (entErr) {
+              logger.logError({
+                error: entErr,
+                source: "validar-oc-item",
+                message: "Falhou gerar mov E em solicitar_contagem",
+                category: "business_logic",
+                metadata: { item_id: item.id, sku: item.sku, loc_id: locAlvoId },
+              });
+              return NextResponse.json(
+                {
+                  error: "falhou_gerar_entrada",
+                  message: "Não foi possível registrar a entrada do produto",
+                },
+                { status: 500 },
+              );
+            }
+            // Mov S: pick da qty do pedido
+            try {
+              const result = await pickMovPicking({
+                empresa_origem_id: ctx.empresa,
+                galpao_id: ctx.galpao,
+                pedido_id: String(item.pedido_id),
+                pedido_numero: ctx.numero,
+                item_id: Number(item.id),
+                produto_id_tiny: String(item.produto_id),
+                sku: String(item.sku),
+                qty,
+                usuario_id: user.id,
+                contexto: "encontrei_oc",
+              });
+              movSaidaId = result?.movSaidaId ?? null;
+            } catch (movErr) {
+              logger.logError({
+                error: movErr instanceof Error ? movErr : new Error(String(movErr)),
+                source: "validar-oc-item",
+                message: "pickMovPicking falhou em solicitar_contagem — item segue pendente p/ retry",
+                category: "business_logic",
+                metadata: { item_id: item.id, sku: item.sku },
+              });
+              continue;
+            }
+            // Enfileira a loc pra contagem futura (fire-and-forget; falha não bloqueia)
+            enfileirarLocParaContagem(supabase, ctx.galpao, locAlvoId, user.id).catch((e) =>
+              logger.warn("validar-oc-item", "enfileirar contagem falhou", { error: String(e) }),
+            );
           } else {
             // ─── caminho legado (sem qty_contada) ───
             // Verifica se produto tem alguma loc com saldo no galpão
@@ -377,7 +507,7 @@ export async function POST(request: NextRequest) {
         const updates: Record<string, unknown> = {
           compra_status: null,
           fornecedor_oc: null,
-          compra_quantidade_solicitada: null,
+          compra_quantidade_solicitada: 0, // NOT NULL DEFAULT 0 — null viola a constraint
           compra_solicitada_em: null,
           ordem_compra_id: null,
           separacao_marcado: true,
@@ -449,7 +579,7 @@ export async function POST(request: NextRequest) {
           .update({
             compra_status: "oc_pendente",
             fornecedor_oc: fornecedorInfo.fornecedor,
-            compra_quantidade_solicitada: null,
+            compra_quantidade_solicitada: 0, // NOT NULL DEFAULT 0 — null viola a constraint
             compra_solicitada_em: null,
             ordem_compra_id: null,
             separacao_marcado: false,

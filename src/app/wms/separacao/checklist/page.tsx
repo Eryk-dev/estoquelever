@@ -515,10 +515,23 @@ export default function WmsChecklistPage() {
   async function handleToggle(produto: ConsolidatedProduct) {
     const novo = !produto.all_marcado;
 
-    // Optimistic
-    queryClient.setQueryData<{ items: ChecklistItem[] }>(queryKey, (old) => {
+    // Optimistic: espelha o que /marcar-item grava no servidor — flipa
+    // separacao_marcado E seta quantidade_pega (= pedida ao marcar, null ao
+    // desmarcar). Sem mexer no quantidade_pega, a linha PEGAR continuava
+    // aparentando desmarcada (done fixo em false; o split PEGO/PEGAR deriva de
+    // quantidade_pega/quantidade_restante), abrindo a janela do "2º clique
+    // reverte". Preserva `...old` pra não dropar `pedidos` (banner saldo-apareceu).
+    queryClient.setQueryData<{
+      items: ChecklistItem[];
+      pedidos?: Array<{
+        id: string;
+        status_separacao: string | null;
+        flag_saldo_apareceu: boolean;
+      }>;
+    }>(queryKey, (old) => {
       if (!old) return old;
       return {
+        ...old,
         items: old.items.map((it) =>
           produto.item_ids.includes(String(it.id))
             ? {
@@ -527,6 +540,7 @@ export default function WmsChecklistPage() {
                 separacao_marcado_em: novo
                   ? new Date().toISOString()
                   : null,
+                quantidade_pega: novo ? it.quantidade : null,
               }
             : it,
         ),
@@ -537,6 +551,13 @@ export default function WmsChecklistPage() {
       await toggleMutation.mutateAsync({ produto, marcado: novo });
     } catch (e) {
       toastErroApi((e as Error).message || "Erro ao salvar marcação");
+    } finally {
+      // Settle sempre (sucesso E erro): re-busca o estado real do servidor pra
+      // reconciliar com o que o backend efetivamente gravou (a baixa do residual,
+      // ajustes de cascade/compra, ações de outros operadores). O optimistic
+      // acima já colapsa a linha na hora; o settle garante convergência mesmo se
+      // o realtime de siso_pedido_itens não chegar. refetchOnWindowFocus=false,
+      // então sem este invalidate a linha podia ficar travada (bug do PEGAR).
       queryClient.invalidateQueries({ queryKey });
     }
   }
@@ -1339,13 +1360,14 @@ function ItemRow({
   const isPego = modo === "pego";
   const isPegar = modo === "pegar";
   const done = isPego ? true : isPegar ? false : produto.all_marcado;
-  // Qtd exibida por modo. No "normal" usa restante quando já houve pick
-  // (restante < total), senão o total — sem depender da heurística frágil.
+  // Qtd exibida por modo. No "normal" a linha nunca está em split (restante é 0
+  // OU o total): exibe o restante só quando > 0 (item ainda aberto), senão o
+  // total — assim a linha CONCLUÍDA mostra a quantidade cheia, não "0".
   const qtyExibida = isPego
     ? produto.quantidade_pega
     : isPegar
       ? produto.quantidade_restante
-      : produto.quantidade_restante < produto.quantidade_total
+      : produto.quantidade_restante > 0
         ? produto.quantidade_restante
         : produto.quantidade_total;
   const multi = qtyExibida > 1;

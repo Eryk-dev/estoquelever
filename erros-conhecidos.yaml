@@ -4018,3 +4018,36 @@ erros:
       - supabase/migrations/20260611b_rpc_resolver_pedido_fantasma.sql
       - src/app/api/wms/reconciliacao-pedidos/[pedidoId]/resolver/route.ts
     tags: [reconciliacao, pedido-fantasma, reserva, ledger, rpc]
+  - id: parcial-pegar-checkbox-nao-conclui-sem-settle
+    date: "2026-06-08"
+    source: wms/separacao-checklist
+    category: business_logic
+    message: "No checklist de wave picking, completar a linha PEGAR de um parcial-em-progresso não refletia na UI — o checkbox parecia travado/não-clicável e o operador não conseguia concluir a separação, embora o backend desse a baixa correta."
+    cause: >
+      handleToggle (src/app/wms/separacao/checklist/page.tsx) só fazia
+      queryClient.invalidateQueries no catch (erro), nunca no sucesso. O optimistic
+      update apenas flipava separacao_marcado — invisível na linha PEGAR (done fixo
+      em false) e sem colapsar o split PEGO/PEGAR, que deriva de
+      quantidade_pega/quantidade_restante. useRealtimeSeparacao não escuta
+      siso_pedido_itens e a query tem refetchOnWindowFocus=false / staleTime 30s /
+      sem refetchInterval, então a baixa real (quantidade_pega->pedida,
+      separacao_marcado->true) nunca era re-buscada. Pior: o 1o clique deixava
+      all_marcado=true no cache, então um 2o clique na linha ainda-aparentemente-
+      desmarcada mandava marcado:false -> wms_desmarcar_item_atomico revertia a baixa.
+    fix: >
+      (1) Settle sempre no handleToggle (finally com invalidateQueries no sucesso E
+      no erro), espelhando handleParcialConfirm/handleMarcarRealocacao. (2) Optimistic
+      robusto: além de separacao_marcado, seta quantidade_pega (= pedida ao marcar,
+      null ao desmarcar) pra colapsar/expandir o split PEGO/PEGAR NA HORA, e preserva
+      `...old` (não dropa `pedidos`, que alimenta o banner saldo-apareceu) — fecha a
+      janela do "2o clique reverte". (3) useRealtimeSeparacao passou a assinar
+      siso_pedido_itens (escopado ao checklist, escopa direto no payload.pedido_id,
+      reusa o debounce de 500ms) pra reagir a mudanças de item de outros operadores /
+      fluxos async. (4) Cosmético: linha concluída exibe a quantidade cheia, nunca "0"
+      (qtyExibida: restante>0 ? restante : total). Coberto por toggle-settle.test.tsx
+      (4 casos; todos falham sem os fixes).
+    files:
+      - src/app/wms/separacao/checklist/page.tsx
+      - src/hooks/use-realtime-separacao.ts
+      - src/app/wms/separacao/checklist/__tests__/toggle-settle.test.tsx
+    tags: [separacao, parcial, checklist, react-query, optimistic, settle, realtime, ui]

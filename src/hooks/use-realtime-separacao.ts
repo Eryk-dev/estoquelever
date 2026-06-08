@@ -49,6 +49,7 @@ export function useRealtimeSeparacao(config?: RealtimeSeparacaoConfig) {
   const fallbackQueryClient = useQueryClient();
   const channelRef = useRef<RealtimeChannel | null>(null);
   const realocChannelRef = useRef<RealtimeChannel | null>(null);
+  const itensChannelRef = useRef<RealtimeChannel | null>(null);
 
   const queryClient = config?.queryClient ?? fallbackQueryClient;
   const scopedPedidoIds = config?.pedidoIds;
@@ -182,6 +183,54 @@ export function useRealtimeSeparacao(config?: RealtimeSeparacaoConfig) {
       if (realocChannelRef.current) {
         supabase.removeChannel(realocChannelRef.current);
         realocChannelRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryClient, pedidoIdsKey, queryKeyHash, debouncedInvalidate]);
+
+  // ─── siso_pedido_itens: só no modo escopado (checklist de wave picking) ───
+  // Sem esta assinatura, mudanças nas linhas de item (marcar/parcial/baixa —
+  // próprias OU de outros operadores, ou fluxos async como reconciliação OC) não
+  // re-buscavam o checklist: o estado real (quantidade_pega, separacao_marcado)
+  // só chegava via invalidate manual, e a query tem refetchOnWindowFocus=false.
+  // A linha de siso_pedido_itens carrega `pedido_id`, então escopa direto no
+  // payload — sem a query extra que o handler de realocações precisa fazer.
+  useEffect(() => {
+    if (!scopedQueryKey || !scopedPedidoIds || scopedPedidoIds.length === 0) {
+      return;
+    }
+
+    const channelName = `itens-${pedidoIdsKey}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "siso_pedido_itens",
+        },
+        (payload) => {
+          const pedidoId =
+            ((payload.new as Record<string, unknown> | null)?.pedido_id as
+              | string
+              | undefined) ??
+            ((payload.old as Record<string, unknown> | null)?.pedido_id as
+              | string
+              | undefined);
+          if (pedidoId && scopedPedidoIds.includes(pedidoId)) {
+            debouncedInvalidate(scopedQueryKey);
+          }
+        },
+      )
+      .subscribe();
+
+    itensChannelRef.current = channel;
+
+    return () => {
+      if (itensChannelRef.current) {
+        supabase.removeChannel(itensChannelRef.current);
+        itensChannelRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

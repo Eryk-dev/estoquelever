@@ -610,28 +610,6 @@ function TabPendente({
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {pedidos.map((p) => (
         <div key={p.id}>
-          {p.status_separacao === "pendente_realocacao" && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 4,
-              }}
-            >
-              <StatusBadge status="pendente_realocacao" />
-              <span
-                style={{
-                  fontSize: 11,
-                  color: "var(--wms-c-warn)",
-                  fontWeight: 500,
-                }}
-              >
-                Aguardando realocação manual — separação interrompida por short
-                pick sem cobertura
-              </span>
-            </div>
-          )}
           <PedidoCardWms
             pedido={toCardPedido(p)}
             onClick={() => onClickPedido(p.id)}

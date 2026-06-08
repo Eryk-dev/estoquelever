@@ -469,8 +469,10 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   }
 
   const isAuto = sugestao === "propria";
-  const status = isAuto ? "executando" : "pendente";
-  const tipoResolucao = isAuto ? "auto" : null;
+  const autoEnfileiraOc = sugestao === "oc";
+  const autoAprova = isAuto || autoEnfileiraOc;
+  const status = autoAprova ? "executando" : "pendente";
+  const tipoResolucao = autoAprova ? "auto" : null;
 
   // 4b. Idempotência: se pedido já existe e foi processado, log e sai.
   //     (Cobre re-entregas de webhook em prod sem causar double-saída.)
@@ -560,12 +562,17 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       sugestao_motivo: motivo,
       status,
       tipo_resolucao: tipoResolucao,
-      decisao_final: isAuto ? "propria" : null,
+      decisao_final: isAuto ? "propria" : (autoEnfileiraOc ? "oc" : null),
       separacao_galpao_id: separacaoGalpaoId,
+      // OC: status_separacao fica NULL aqui — o worker (executarMarcadoresOnly)
+      // seta validacao_oc/aguardando_nf. NÃO setar aguardando_nf p/ OC
+      // (dispararia enriquecerDadosNf cedo).
       status_separacao: isAuto ? "aguardando_nf" : null,
       prazo_envio: pedido.dataEnvio ? parseTinyDateTime(pedido.dataEnvio) : null,
       processado_em: null,
-      marcadores: isAuto ? [galpaoOrigemNome, "LVR"] : ["LVR"],
+      marcadores: isAuto
+        ? [galpaoOrigemNome, "LVR"]
+        : (autoEnfileiraOc ? ["OC", galpaoOrigemNome, "LVR"] : ["LVR"]),
       payload_original: pedido,
       vendedor_id: vendedorIdFinal,
       vendedor_nome: vendedorNomeFinal,
@@ -641,20 +648,35 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     detalhes: { sugestao, empresa: galpaoOrigemNome, ecommerce: pedido.nomeEcommerce, via: "wms" },
   }).catch(() => {});
 
-  if (isAuto) {
+  if (autoAprova) {
     registrarEvento({
       pedidoId: pedido.id,
       evento: "auto_aprovado",
-      detalhes: { decisao: "propria", motivo, via: "wms" },
+      detalhes: { decisao: isAuto ? "propria" : "oc", motivo, via: "wms" },
     }).catch(() => {});
 
-    await sb.from("siso_fila_execucao").insert({
-      pedido_id: pedido.id,
-      tipo: "lancar_estoque",
-      filial_execucao: galpaoOrigemNome,
-      empresa_id: empresaOrigemId,
-      decisao: "propria",
-    });
+    // Idempotência de re-entrega: OC não seta estoque_lancado=true, então o
+    // early-return acima (que checa estoque_lancado) não cobre. Esta guarda
+    // protege a janela pendente/executando; re-entregas pós-concluido já são
+    // bloqueadas antes pelo dedup_key UNIQUE de siso_webhook_logs.
+    // (espelha worker:683-689)
+    const { data: jobExistente } = await sb
+      .from("siso_fila_execucao")
+      .select("id")
+      .eq("pedido_id", pedido.id)
+      .eq("tipo", "lancar_estoque")
+      .in("status", ["pendente", "executando"])
+      .maybeSingle();
+
+    if (!jobExistente) {
+      await sb.from("siso_fila_execucao").insert({
+        pedido_id: pedido.id,
+        tipo: "lancar_estoque",
+        filial_execucao: galpaoOrigemNome,
+        empresa_id: empresaOrigemId,
+        decisao: isAuto ? "propria" : "oc",
+      });
+    }
 
     kickWorker().catch((err) => {
       logger.error("processor.wms", "kickWorker falhou", {

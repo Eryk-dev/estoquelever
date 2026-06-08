@@ -14,11 +14,9 @@ export default {
 
   run: async (ctx, { sku }) => {
     const pedido = await ctx.webhook({ empresa: ctx.staging.empresas.netair.cnpj, items: [{ sku, qty: 3 }] });
-    await ctx.aguardarStatus(pedido.id, "pendente", { decisao: "oc" });
-    await ctx.aprovar(pedido.id, "oc");
-    // Worker manda OC pra compras setando status_separacao='validacao_oc'.
-    // O passo aguardando_compra só existe depois de /validar-oc-item.
-    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc");
+    // Pós F1 (auto-OC): OC é auto-aprovada pelo webhook, não precisa mais
+    // de aprovação manual. Aguarda diretamente validacao_oc setada pelo worker.
+    await ctx.aguardarStatusSeparacao(pedido.id, "validacao_oc", { timeout_ms: 15_000 });
 
     // ctx.comprar com pedido_id chama validar-oc-item (acao=esgotado) primeiro,
     // transicionando o pedido pra aguardando_compra, e depois /compras/comprar

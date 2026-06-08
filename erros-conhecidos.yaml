@@ -4051,3 +4051,22 @@ erros:
       - src/hooks/use-realtime-separacao.ts
       - src/app/wms/separacao/checklist/__tests__/toggle-settle.test.tsx
     tags: [separacao, parcial, checklist, react-query, optimistic, settle, realtime, ui]
+
+- id: webhook-auto-oc-reentrega-23505
+  date: 2026-06-08
+  source: webhook-processor-wms
+  category: business_logic
+  message: "Re-entrega de webhook OC causaria 23505 (duplicate key) no índice uq_fila_release_pedido"
+  cause: >
+    OC não seta estoque_lancado=true (ao contrário de própria), então o early-return
+    de duplicado em processWebhookWms (verifica estoque_lancado) não cobria re-entregas
+    de pedidos OC. Sem guarda de dedup, o segundo webhook tentava inserir um segundo
+    job lancar_estoque com decisao:oc para o mesmo pedido, violando o índice único.
+  fix: >
+    Adicionada guarda de dedup pré-insert na fila: antes de inserir o job, verifica se
+    já existe um job lancar_estoque com status pendente/executando para o mesmo pedido.
+    Se existir, o insert é pulado (idempotência). Espelha o padrão já usado no worker
+    (execução-worker.ts linha 683-689).
+  files:
+    - src/lib/webhook-processor-wms.ts
+  tags: [webhook, oc, idempotencia, fila, dedup]

@@ -66,7 +66,8 @@ describe("compra manual — lifecycle", () => {
     const total = (est ?? []).reduce((s, e) => s + Number((e as { saldo: number }).saldo), 0);
     expect(total).toBe(10);
 
-    // custo médio = 12
+    // custo médio = 12: vale 12 só porque TODO recebimento neste arquivo usa
+    // custo 12, sobre um produto fresco (sku per-run via RND) sem histórico.
     const { data: cm } = await sb
       .from("siso_custo_medio")
       .select("custo_medio")

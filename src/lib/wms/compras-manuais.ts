@@ -83,6 +83,21 @@ export async function criarCompraManual(
     .maybeSingle();
   if (!galp) throw new Error(`galpão ${input.galpao_id} não encontrado`);
 
+  // Pre-check de produtos (simétrico aos FKs do cabeçalho): um round-trip,
+  // compara o set de ids existentes contra os pedidos.
+  const produtoIds = [...new Set(input.itens.map((it) => it.produto_id))];
+  const { data: prods } = await sb
+    .from("siso_produtos")
+    .select("id")
+    .in("id", produtoIds);
+  const existentes = new Set(
+    ((prods ?? []) as { id: string }[]).map((p) => p.id),
+  );
+  const faltantes = produtoIds.filter((id) => !existentes.has(id));
+  if (faltantes.length > 0) {
+    throw new Error(`produto(s) não encontrado(s): ${faltantes.join(", ")}`);
+  }
+
   const { data: header, error: headerErr } = await sb
     .from("siso_compras_manuais")
     .insert({
@@ -285,10 +300,19 @@ async function gravarMovEntradaCompraManual(args: {
 }
 
 /**
- * Recebe itens de uma compra manual. Por item:
+ * Recebe itens de uma compra manual. Os itens são processados SEQUENCIALMENTE.
+ * Por item:
  *  1. lock otimista no qty_recebida (detecta dupla-recepção concorrente),
  *  2. grava mov E; se falhar, REVERTE o qty bump e relança (consistência),
  *  3. recomputa status do cabeçalho.
+ *
+ * Garantia por item: cada item é internamente consistente — o bump do
+ * qty_recebida vem primeiro e a mov depois; se a mov lançar, o bump é
+ * revertido. PORÉM, se um item POSTERIOR na mesma chamada lançar, os itens
+ * ANTERIORES já processados PERMANECEM commitados (estoque + bump persistem):
+ * a função relança o erro do item que falhou, mas NÃO desfaz os anteriores.
+ * Callers NÃO devem assumir "lançou ⇒ nada aconteceu" — devem re-buscar o
+ * estado atual e retentar SOMENTE o item que falhou.
  */
 export async function receberCompraManual(
   input: ReceberCompraManualInput,
@@ -346,7 +370,9 @@ export async function receberCompraManual(
     const novoRecebido = jaRecebido + qty;
     const custoItem = reqItem.custo_unitario ?? it.custo_unitario ?? null;
 
-    // 1) lock otimista
+    // 1) lock otimista — bump do qty_recebida antes da mov commitar; há uma
+    // breve janela em que qty está bumpado sem a mov (aceitável neste fluxo
+    // manual de baixo volume; revertido logo abaixo se a mov lançar).
     const { data: updated, error: updErr } = await sb
       .from("siso_compras_manuais_itens")
       .update({ qty_recebida: novoRecebido, custo_unitario: custoItem })
@@ -375,7 +401,7 @@ export async function receberCompraManual(
       });
       movsGeradas++;
     } catch (movErr) {
-      await sb
+      const { error: revertErr } = await sb
         .from("siso_compras_manuais_itens")
         .update({ qty_recebida: jaRecebido })
         .eq("id", it.id);
@@ -384,6 +410,13 @@ export async function receberCompraManual(
         item_id: it.id,
         error: movErr instanceof Error ? movErr.message : String(movErr),
       });
+      if (revertErr) {
+        logger.error(
+          "compras-manuais",
+          "DRIFT: revert do qty_recebida falhou — estoque pode ter entrado sem bump",
+          { compra_id: c.id, item_id: it.id, error: revertErr.message },
+        );
+      }
       throw movErr;
     }
   }

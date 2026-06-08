@@ -3936,11 +3936,29 @@ OR
 
 ---
 
+### GET /api/wms/compras-manuais/contexto
+
+**File:** `src/app/api/wms/compras-manuais/contexto/route.ts`
+
+**Purpose:** Dropdowns do modal de nova compra manual — TODOS os galpões ativos + TODAS as empresas ativas (independente de galpão preferencial). Gate em `compras.ver` (compradores não têm `sistema.galpoes_empresas`, então não podem usar `/api/wms/admin/galpoes`). Empresas vêm direto de `siso_empresas`, não do espelho deprecado `siso_empresas.galpao_id`.
+
+**Auth:** X-Session-Id (required), `compras.ver`
+
+**Response (200):**
+```json
+{
+  "galpoes": [{ "id": "uuid", "nome": "string" }],
+  "empresas": [{ "id": "uuid", "nome": "string" }]
+}
+```
+
+---
+
 ### POST /api/wms/compras-manuais/[id]/receber
 
 **File:** `src/app/api/wms/compras-manuais/[id]/receber/route.ts`
 
-**Purpose:** Recebe itens de uma compra manual (parcial permitido). Cada item recebido gera uma mov `E` no ledger.
+**Purpose:** Recebe itens de uma compra manual (parcial permitido). Cada item recebido gera uma mov `E` no ledger + uma pendência de put-away (`siso_wms_pendencias_guarda`).
 
 **Auth:** X-Session-Id (required), `compras.executar`
 
@@ -3961,13 +3979,15 @@ OR
 **Response (400):** `envie { itens: [{ item_id, qty_recebida }] }` · `compra cancelada não pode receber` · `qty excede faltante` · `recebimento concorrente detectado` · loc `recebimento` ausente no galpão
 
 **Business Logic:**
-- Itens processados **sequencialmente**. Por item: lock otimista no `qty_recebida` (detecta dupla-recepção concorrente) → grava mov `E` (se falhar, reverte o bump e relança) → recomputa status do cabeçalho.
+- Itens processados **sequencialmente**. Por item: lock otimista no `qty_recebida` (detecta dupla-recepção concorrente) → grava mov `E` + cria pendência de put-away (se qualquer um falhar, reverte o bump e relança) → recomputa status do cabeçalho.
 - Mov `E` na loc `tipo='recebimento'` do galpão, `origem_tipo='nf_compra'` + `origem_detalhes.origem='compra_manual'`, tags `fornecedor_id` + `empresa_compradora_id`, custo via `resolverCustoEntrada` (lança se sem custo nem histórico — guard P108). Custo médio recalcula.
+- Cria 1 `siso_wms_pendencias_guarda` por item (igual ao caminho canônico de recebimento) — sem isso o saldo ficaria preso na loc RECEBIMENTO. Se a pendência falhar, a mov `E` é estornada (compensação net-zero).
 - **Não atômico entre itens:** se um item posterior lança, os anteriores já recebidos PERMANECEM commitados — caller deve re-buscar e retentar só o que falhou.
 - **Não** chama `checkAndReleasePedidos` (não há pedido); o `reconciliador-oc` puxa o saldo pra pedidos OC parados via o mov `E` (após put-away).
 
 **Side Effects:**
 - Insere mov(s) `E` em `siso_movimentacoes` (via `wms_inserir_movimentacao`), atualiza `siso_estoque` e `siso_custo_medio`
+- Insere pendência(s) em `siso_wms_pendencias_guarda` (1 por item) pra a fila de put-away `/wms/guarda`
 - Atualiza `siso_compras_manuais_itens.qty_recebida`/`custo_unitario` e `siso_compras_manuais.status`/`recebido_em`
 
 ---

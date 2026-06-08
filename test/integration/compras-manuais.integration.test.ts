@@ -74,6 +74,18 @@ describe("compra manual — lifecycle", () => {
       .eq("produto_id", produtoId)
       .maybeSingle();
     expect(Number((cm as { custo_medio: number } | null)?.custo_medio ?? 0)).toBe(12);
+
+    // recebimento deve gerar pendência(s) de put-away (caminho canônico), senão
+    // o saldo fica preso na loc RECEBIMENTO (reconciliador-oc só conta picking).
+    const { data: pend } = await sb
+      .from("siso_wms_pendencias_guarda")
+      .select("qty_inicial")
+      .eq("produto_id", produtoId)
+      .eq("galpao_id", galpaoId);
+    const pendRows = (pend ?? []) as { qty_inicial: number }[];
+    expect(pendRows.length).toBeGreaterThan(0);
+    const totalPend = pendRows.reduce((s, p) => s + Number(p.qty_inicial), 0);
+    expect(totalPend).toBe(10);
   });
 
   it("receber além do faltante lança", async () => {

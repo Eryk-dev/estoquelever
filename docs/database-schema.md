@@ -662,7 +662,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `idx_compras_manuais_itens_produto` (produto_id)
 
 **Notes:**
-- O recebimento gera mov `E` na loc `tipo='recebimento'` do galpão, **reusando `origem_tipo='nf_compra'`** (whitelist do custo médio) e distinguido por **`origem_detalhes.origem='compra_manual'`** — **sem `nota_fiscal_id`** (Tiny é a camada fiscal; aqui não há NF). Custo médio recalcula via `resolverCustoEntrada` (lança se não houver custo informado nem histórico — guard P108).
+- O recebimento gera mov `E` na loc `tipo='recebimento'` do galpão **+ uma pendência de put-away** (`siso_wms_pendencias_guarda`, igual ao caminho canônico de recebimento — senão o saldo fica preso em RECEBIMENTO; se a pendência falhar, a mov `E` é estornada). A mov `E` **reusa `origem_tipo='nf_compra'`** (whitelist do custo médio) e é distinguida por **`origem_detalhes.origem='compra_manual'`** — **sem `nota_fiscal_id`** (Tiny é a camada fiscal; aqui não há NF). Custo médio recalcula via `resolverCustoEntrada` (lança se não houver custo informado nem histórico — guard P108).
 - NÃO chama `checkAndReleasePedidos` (não há pedido). O `reconciliador-oc` puxa o saldo pra pedidos OC parados via o próprio mov `E` (após put-away).
 
 ---

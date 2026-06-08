@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { sisoFetch } from "@/lib/auth-context";
-import { ProdutoCombo, useGalpoes } from "@/components/wms/ui/modals";
+import { wmsApi } from "@/lib/wms/api-client";
+import { ProdutoCombo } from "@/components/wms/ui/modals";
 import { Modal, Field, Icon } from "@/components/wms/ui/wms-ui";
 import type { Produto } from "@/lib/wms/types";
 
@@ -26,15 +27,16 @@ export function NovaCompraManualModal({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
-  const { data: galpoes } = useGalpoes();
-
-  const empresas = useMemo(() => {
-    const map = new Map<string, { id: string; nome: string }>();
-    (galpoes ?? []).forEach((g) =>
-      g.empresas.forEach((e) => map.set(e.id, { id: e.id, nome: e.nome })),
-    );
-    return Array.from(map.values()).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [galpoes]);
+  const { data: contexto } = useQuery({
+    queryKey: ["compras-manuais-contexto"],
+    queryFn: () =>
+      wmsApi<{
+        galpoes: { id: string; nome: string }[];
+        empresas: { id: string; nome: string }[];
+      }>("/api/wms/compras-manuais/contexto"),
+  });
+  const galpoes = contexto?.galpoes ?? [];
+  const empresas = contexto?.empresas ?? [];
 
   const { data: fornData } = useQuery({
     queryKey: ["compras-manuais-fornecedores"],
@@ -166,7 +168,7 @@ export function NovaCompraManualModal({
           onChange={(e) => setGalpaoId(e.target.value)}
         >
           <option value="">selecione…</option>
-          {(galpoes ?? []).map((g) => (
+          {galpoes.map((g) => (
             <option key={g.id} value={g.id}>
               {g.nome}
             </option>

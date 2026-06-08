@@ -1,5 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { inserirMovimentacao } from "@/lib/wms/ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
+import { criarPendencia } from "@/lib/wms/guarda";
 import { resolverCustoEntrada } from "@/lib/wms/custo-fallback";
 import { logger } from "@/lib/logger";
 
@@ -238,10 +239,16 @@ export interface ReceberCompraManualResult {
 }
 
 /**
- * Grava mov E (origem_tipo='nf_compra', sem NF) pra um item de compra manual.
- * Distingue manual via origem_detalhes.origem='compra_manual'. A loc é a
- * RECEBIMENTO do galpão. resolverCustoEntrada lança se não houver custo
- * informado nem histórico (produto novo sem custo) — guard P108.
+ * Grava mov E (origem_tipo='nf_compra', sem NF) pra um item de compra manual E
+ * cria a pendência de put-away (igual ao caminho canônico de recebimento em
+ * movimentacoes.ts). Distingue manual via origem_detalhes.origem='compra_manual'.
+ * A loc é a RECEBIMENTO do galpão. resolverCustoEntrada lança se não houver
+ * custo informado nem histórico (produto novo sem custo) — guard P108.
+ *
+ * Sem a pendência, o saldo ficaria preso na loc RECEBIMENTO (o reconciliador-oc
+ * só conta tipo='picking'). Se a criação da pendência falhar, a mov de entrada
+ * é ESTORNADA (mesma compensação do caminho canônico) — assim o revert do bump
+ * do qty_recebida no caller deixa o ledger net-zero, sem estoque órfão.
  */
 async function gravarMovEntradaCompraManual(args: {
   produto_id: string;
@@ -276,7 +283,7 @@ async function gravarMovEntradaCompraManual(args: {
     custo_informado: args.custo_unitario ?? 0,
   });
 
-  await inserirMovimentacao({
+  const mov = await inserirMovimentacao({
     tripla: {
       produto_id: args.produto_id,
       galpao_id: args.galpao_id,
@@ -297,18 +304,61 @@ async function gravarMovEntradaCompraManual(args: {
     motivo: `Compra manual ${args.compra_id}`,
     usuario_id: args.usuario_id,
   });
+
+  // Defense-in-depth (igual movimentacoes.receberEstoque): se a criação da
+  // pendência falhar, estorna a mov de entrada pra não deixar saldo órfão na
+  // loc RECEBIMENTO sem pendência. Relança pra o caller reverter o qty bump —
+  // resultado líquido: nada aconteceu pra esse item.
+  try {
+    await criarPendencia({
+      produto_id: args.produto_id,
+      galpao_id: args.galpao_id,
+      localizacao_origem_id: locId,
+      mov_entrada_id: mov.id,
+      qty_inicial: args.qty,
+      origem_tipo: "nf_compra",
+      custo_unitario: custoResolvido,
+      criada_por: args.usuario_id,
+    });
+  } catch (err) {
+    try {
+      await estornarMovimentacao({
+        mov_id: mov.id,
+        usuario_id: args.usuario_id,
+        motivo: `Estorno automático: criação de pendência de guarda falhou (${err instanceof Error ? err.message : String(err)})`,
+      });
+      logger.warn(
+        "compras-manuais",
+        "mov de entrada estornada após falha na pendência",
+        { movId: mov.id, error: String(err) },
+      );
+    } catch (estornoErr) {
+      logger.error(
+        "compras-manuais",
+        "FALHA AO ESTORNAR mov após erro na pendência — mov órfã",
+        {
+          movId: mov.id,
+          errOriginal: String(err),
+          errEstorno: String(estornoErr),
+        },
+      );
+    }
+    throw err;
+  }
 }
 
 /**
  * Recebe itens de uma compra manual. Os itens são processados SEQUENCIALMENTE.
  * Por item:
  *  1. lock otimista no qty_recebida (detecta dupla-recepção concorrente),
- *  2. grava mov E; se falhar, REVERTE o qty bump e relança (consistência),
+ *  2. grava mov E + cria pendência de put-away; se qualquer um falhar, REVERTE
+ *     o qty bump e relança (consistência),
  *  3. recomputa status do cabeçalho.
  *
  * Garantia por item: cada item é internamente consistente — o bump do
- * qty_recebida vem primeiro e a mov depois; se a mov lançar, o bump é
- * revertido. PORÉM, se um item POSTERIOR na mesma chamada lançar, os itens
+ * qty_recebida vem primeiro, depois a mov E e a pendência de guarda
+ * (`gravarMovEntradaCompraManual` estorna a mov se a pendência falhar); se algo
+ * lançar, o bump é revertido. PORÉM, se um item POSTERIOR na mesma chamada lançar, os itens
  * ANTERIORES já processados PERMANECEM commitados (estoque + bump persistem):
  * a função relança o erro do item que falhou, mas NÃO desfaz os anteriores.
  * Callers NÃO devem assumir "lançou ⇒ nada aconteceu" — devem re-buscar o

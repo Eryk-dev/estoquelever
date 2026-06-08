@@ -30,21 +30,27 @@ type Filtro = "pendentes" | "recebido" | "cancelado";
 export function AbaManuais() {
   const qc = useQueryClient();
   const [filtro, setFiltro] = useState<Filtro>("pendentes");
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["compras-manuais", filtro],
     queryFn: () =>
       wmsApi<{ rows: Compra[] }>(`/api/wms/compras-manuais?status=${filtro}`),
   });
 
   const [recebendo, setRecebendo] = useState<Record<string, string>>({}); // item_id → qty
+  const [custos, setCustos] = useState<Record<string, string>>({}); // item_id → custo
 
   const receberMut = useMutation({
     mutationFn: async (compra: Compra) => {
       const itens = compra.itens
-        .map((it) => ({
-          item_id: it.id,
-          qty_recebida: Number(recebendo[it.id] ?? 0),
-        }))
+        .map((it) => {
+          const qty = Number(recebendo[it.id] ?? 0);
+          const custoRaw = custos[it.id];
+          return {
+            item_id: it.id,
+            qty_recebida: qty,
+            ...(custoRaw ? { custo_unitario: Number(custoRaw) } : {}),
+          };
+        })
         .filter((x) => x.qty_recebida > 0);
       if (itens.length === 0)
         throw new Error("informe a qty recebida em ao menos 1 item");
@@ -61,6 +67,7 @@ export function AbaManuais() {
     onSuccess: () => {
       toast.success("Recebimento registrado");
       setRecebendo({});
+      setCustos({});
       qc.invalidateQueries({ queryKey: ["compras-manuais"] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
@@ -101,7 +108,13 @@ export function AbaManuais() {
       </div>
 
       {isLoading && <div className="wms-loading-pane">carregando…</div>}
-      {!isLoading && compras.length === 0 && (
+      {!isLoading && isError && (
+        <div className="wms-empty-block">
+          <h3>Falha ao carregar compras manuais</h3>
+          <p>{error instanceof Error ? error.message : String(error)}</p>
+        </div>
+      )}
+      {!isLoading && !isError && compras.length === 0 && (
         <div className="wms-empty-block">
           <h3>Nenhuma compra manual</h3>
           <p>Compras avulsas de fornecedor aparecem aqui.</p>
@@ -140,6 +153,7 @@ export function AbaManuais() {
                   <th className="wms-tar">Comprado</th>
                   <th className="wms-tar">Recebido</th>
                   <th className="wms-tar">Receber</th>
+                  <th className="wms-tar">Custo</th>
                 </tr>
               </thead>
               <tbody>
@@ -168,6 +182,31 @@ export function AbaManuais() {
                             value={recebendo[it.id] ?? ""}
                             onChange={(e) =>
                               setRecebendo((prev) => ({
+                                ...prev,
+                                [it.id]: e.target.value,
+                              }))
+                            }
+                          />
+                        ) : (
+                          <span className="wms-td-mute">—</span>
+                        )}
+                      </td>
+                      <td className="wms-tar">
+                        {c.status !== "recebido" &&
+                        c.status !== "cancelado" &&
+                        faltante > 0 ? (
+                          <input
+                            className="wms-input wms-mono wms-tar"
+                            style={{ width: 72 }}
+                            inputMode="decimal"
+                            placeholder={
+                              it.custo_unitario != null
+                                ? String(it.custo_unitario)
+                                : "custo"
+                            }
+                            value={custos[it.id] ?? ""}
+                            onChange={(e) =>
+                              setCustos((prev) => ({
                                 ...prev,
                                 [it.id]: e.target.value,
                               }))

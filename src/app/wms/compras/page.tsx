@@ -22,10 +22,12 @@ import {
   fmtNum,
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
+import { NovaCompraManualModal } from "@/components/wms/compras/nova-compra-manual-modal";
+import { AbaManuais } from "@/components/wms/compras/aba-manuais";
 
 // ── Tipos ────────────────────────────────────────────────────────────
 
-type Tab = "comprar" | "receber" | "historico";
+type Tab = "comprar" | "receber" | "historico" | "manuais";
 
 interface Counts {
   comprar: number;
@@ -161,6 +163,12 @@ export default function WmsComprasPage() {
   const { can } = usePermissoes();
   const podeExecutar = can("compras.executar");
 
+  const [modalManualAberto, setModalManualAberto] = useState(false);
+  const galpaoAtivo =
+    typeof window !== "undefined"
+      ? localStorage.getItem("siso_active_galpao")
+      : null;
+
   const tab = ((searchParams?.get("tab") as Tab) ?? "comprar") as Tab;
 
   const setTab = useCallback(
@@ -232,6 +240,15 @@ export default function WmsComprasPage() {
           <Icon name="rotate" size={12} />
           Atualizar
         </button>
+        {podeExecutar && (
+          <button
+            className="wms-btn wms-btn-primary"
+            onClick={() => setModalManualAberto(true)}
+          >
+            <Icon name="plus" size={12} />
+            Nova compra manual
+          </button>
+        )}
       </PageHeader>
 
       <div className="wms-vtab" style={{ marginBottom: 16 }}>
@@ -265,6 +282,12 @@ export default function WmsComprasPage() {
           Histórico{" "}
           <span className="wms-vtab-n">{counts?.historico ?? 0}</span>
         </button>
+        <button
+          className={`wms-vtab-btn ${tab === "manuais" ? "is-active" : ""}`}
+          onClick={() => setTab("manuais")}
+        >
+          Manuais
+        </button>
       </div>
 
       {tab === "comprar" && (
@@ -282,6 +305,14 @@ export default function WmsComprasPage() {
         />
       )}
       {tab === "historico" && <TabHistorico query={historicoQuery} />}
+      {tab === "manuais" && <AbaManuais />}
+
+      {modalManualAberto && (
+        <NovaCompraManualModal
+          galpaoAtivo={galpaoAtivo}
+          onClose={() => setModalManualAberto(false)}
+        />
+      )}
     </>
   );
 }

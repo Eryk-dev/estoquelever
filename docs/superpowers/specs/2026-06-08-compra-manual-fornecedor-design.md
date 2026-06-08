@@ -89,16 +89,21 @@ Operador cria uma **compra manual** de **qualquer fornecedor**, com ciclo comple
 
 ### Ledger
 
-- Nova `OrigemTipo`: **`'nf_compra_manual'`**.
-  - Adicionar ao CHECK de `siso_movimentacoes.origem_tipo`.
-  - Adicionar à whitelist de recálculo de custo médio (hoje: `nf_compra`,
-    `devolucao_cliente_integra`, `lancamento_retroativo`). **Sem isso o custo médio não
-    atualiza na compra manual** — localizar a whitelist (RPC `wms_inserir_movimentacao`
-    e/ou `src/lib/wms/custo-medio.ts`) e incluir o novo valor.
-- Idempotência de recebimento: **sem** NF, logo não usa a unique constraint
-  `uq_mov_recebimento_nf_chave`. Usa lock otimista em `siso_compras_manuais_itens.qty_recebida`
-  (mesmo padrão do `/api/wms/compras/receber` atual: `.eq("qty_recebida", jaRecebido)` detecta
-  corrida e evita dupla baixa).
+> **Decisão revisada na fase de planejamento (2026-06-08):** em vez de criar `nf_compra_manual`,
+> **reusar `origem_tipo='nf_compra'`**. Motivo: adicionar um novo `origem_tipo` exigiria alterar
+> o CHECK da tabela **e replicar a RPC `wms_inserir_movimentacao` inteira** via CREATE OR REPLACE
+> (~180 linhas: whitelist custo P108/P110, idempotency P072) — exatamente o tipo de migration que o
+> gotcha #2 do CLAUDE.md diz já ter quebrado todos os callers. Reusar `nf_compra` é zero-risco.
+
+- Movimento `E` sai com `origem_tipo='nf_compra'` +
+  `origem_detalhes = { origem: 'compra_manual', compra_id, compra_item_id }`.
+  - `nf_compra` já está na whitelist de custo médio → **custo médio recalcula automático**, sem
+    tocar a RPC nem o CHECK.
+  - Compras manuais se distinguem nos relatórios por `origem_detalhes->>'origem' = 'compra_manual'`.
+- Idempotência de recebimento: **sem** NF (`chave_acesso_nf=null`), logo não colide com a unique
+  constraint `uq_mov_recebimento_nf_chave` (NULLs distintos no índice). Usa lock otimista em
+  `siso_compras_manuais_itens.qty_recebida` (`.eq("qty_recebida", jaRecebido)` detecta corrida);
+  se a mov falhar após o bump, o bump é revertido (consistência item-a-item).
 
 ## Lifecycle (status do cabeçalho)
 
@@ -162,10 +167,12 @@ Todas as respostas de erro via `wmsErrorResponse({...})`. Auth via `getSessionUs
 - Se algum item tem `qty_recebida > 0` → 409 (`conflict`, não cancelável).
 - Senão: `status='cancelado'`. Retorna `{ ok: true }`.
 
-### Inline-create (reuso, sem rota nova)
-- Fornecedor: o modal chama `POST /api/wms/fornecedores` existente antes do POST da compra.
-- Produto mínimo: o modal chama o endpoint de criação de produto existente
-  (`/api/wms/produtos`) com sku + descrição; campos fiscais ficam default/null.
+### Inline-create (2 rotas novas — decisão revisada 2026-06-08)
+As rotas existentes `POST /api/wms/fornecedores` e `POST /api/wms/produtos` exigem **`requireAdmin`**.
+Operador de compras pode não ser admin → criar 2 rotas finas guardadas por `compras.executar`,
+que chamam as libs `criarFornecedor` / `criarProduto`:
+- `POST /api/wms/compras-manuais/fornecedor` — body `{ nome, cnpj? }`.
+- `POST /api/wms/compras-manuais/produto` — body `{ sku, descricao }` (produto mínimo, sem fiscal).
 
 ## UI/UX — `src/app/wms/compras/page.tsx`
 

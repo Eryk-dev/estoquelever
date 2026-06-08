@@ -38,6 +38,14 @@ export interface CriarSessaoInput {
   exige_aprovacao_acima_valor?: number;
   observacoes?: string;
   criada_por: string;
+  /**
+   * Token gerado pelo cliente uma vez por intenção de criação. Os dois requests
+   * de um duplo-clique acidental carregam a MESMA key → o 2º colide no índice
+   * único parcial `uq_inv_sessao_idempotency` e devolve a sessão já criada (no-op
+   * idempotente). Uma 2ª sessão intencional usa key nova e passa normal. Ausente
+   * (cliente antigo) ⇒ sem dedup, sem limite por dia. Substitui o limite P055.
+   */
+  idempotencyKey?: string;
   localizacoes: LocSessaoInput[];
 }
 
@@ -59,13 +67,20 @@ export async function criarSessao(input: CriarSessaoInput): Promise<string> {
       observacoes: input.observacoes ?? null,
       criada_por: input.criada_por,
       tamanho_pool: input.localizacoes.length,
+      idempotency_key: input.idempotencyKey ?? null,
     })
     .select("id")
     .single();
   if (error) {
-    // P055: UNIQUE parcial uq_inv_sessao_galpao_dia — 2ª sessão no mesmo dia.
-    if ((error as { code?: string }).code === "23505") {
-      throw new Error("Já existe sessão de inventário para este galpão hoje");
+    // 23505 com idempotencyKey = duplo-clique: a 1ª request já criou a sessão.
+    // Devolve o id dela (idempotente) em vez de duplicar ou estourar erro.
+    if ((error as { code?: string }).code === "23505" && input.idempotencyKey) {
+      const { data: existente, error: errFind } = await sb
+        .from("siso_inventario_sessoes")
+        .select("id")
+        .eq("idempotency_key", input.idempotencyKey)
+        .single();
+      if (!errFind && existente) return (existente as { id: string }).id;
     }
     throw error;
   }

@@ -42,6 +42,7 @@ interface PostBody {
   tolerancia_qty_min?: number;
   exige_aprovacao_acima_valor?: number;
   observacoes?: string;
+  idempotency_key?: string;
   localizacoes?: LocSessaoInput[];
 }
 
@@ -75,16 +76,15 @@ export async function POST(req: NextRequest) {
       exige_aprovacao_acima_valor: body.exige_aprovacao_acima_valor,
       observacoes: body.observacoes,
       criada_por: auth.user.id,
+      idempotencyKey: body.idempotency_key,
       localizacoes: body.localizacoes,
     });
     return NextResponse.json({ id }, { status: 201 });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    const isDuplicada = /já existe sessão de inventário para este galpão hoje/i.test(msg);
     return wmsErrorResponse({
       source: "wms.inventario.criar",
       error: e,
-      status: isDuplicada ? 409 : 400,
+      status: 400,
       requestPath: "/api/wms/inventario",
       requestMethod: "POST",
       metadata: { tipo: body.tipo, galpao_id: body.galpao_id },

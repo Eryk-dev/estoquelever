@@ -6,11 +6,11 @@ vi.mock("@/lib/wms/auth", () => ({
   requireWarehouseAccess: async () => ({ ok: true, user: { id: "u1" } }),
 }));
 
-// criarSessao lança a MESMA Error de domínio que o Step 3 fará (P055).
+const criarSessaoMock = vi.fn<(...args: unknown[]) => Promise<string>>(() =>
+  Promise.resolve("sessao-1"),
+);
 vi.mock("@/lib/wms/inventario", () => ({
-  criarSessao: vi.fn(async () => {
-    throw new Error("Já existe sessão de inventário para este galpão hoje");
-  }),
+  criarSessao: (...args: unknown[]) => criarSessaoMock(...args),
 }));
 
 import { POST } from "./route";
@@ -23,19 +23,21 @@ function makeReq(body: unknown): Request {
   });
 }
 
-describe("POST /api/wms/inventario — sessão duplicada vira 409", () => {
-  it("responde 409 (não 400/500) e REVELA a mensagem de domínio quando criarSessao lança o erro de duplicada", async () => {
+describe("POST /api/wms/inventario — idempotency_key", () => {
+  it("repassa idempotency_key do body pra criarSessao e responde 201 com o id", async () => {
     const res = await POST(
       makeReq({
         tipo: "cycle_count",
         galpao_id: "g1",
+        idempotency_key: "key-abc",
         localizacoes: [{ localizacao_id: "loc1" }],
       }) as never,
     );
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(201);
     const json = await res.json();
-    // wmsErrorResponse revela message em 4xx → não pode vir "internal_error".
-    expect(String(json.error)).not.toBe("internal_error");
-    expect(String(json.error)).toMatch(/já existe sessão de inventário para este galpão hoje/i);
+    expect(json.id).toBe("sessao-1");
+    expect(criarSessaoMock).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: "key-abc" }),
+    );
   });
 });

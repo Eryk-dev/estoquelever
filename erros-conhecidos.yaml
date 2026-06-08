@@ -3342,16 +3342,23 @@ erros:
     category: business_logic
     message: "Duplo clique / 2 requests criavam 2 sessões de inventário no mesmo galpão+dia"
     cause: >
-      criarSessao fazia INSERT simples sem constraint de unicidade por (galpao, dia);
-      o frontend só tinha o guard isPending (perdível em corrida).
+      criarSessao fazia INSERT simples sem dedup; o frontend só tinha o guard isPending (perdível em corrida).
     fix: >
-      UNIQUE parcial uq_inv_sessao_galpao_dia (galpao_id, (criado_em AT TIME ZONE 'UTC')::date) excluindo
-      cancelada e continua. criarSessao traduz 23505 em erro de domínio; rota responde 409.
+      [v1 2026-06-05, REVERTIDO] UNIQUE parcial uq_inv_sessao_galpao_dia por (galpao, dia) +
+      tradução 23505→409. PROBLEMA: o limite por dia bloqueava criação legítima de N sessões
+      ("Já existe sessão de inventário para este galpão hoje").
+      [v2 2026-06-08, ATUAL] Dropado o limite por dia. Dedup fina via idempotency_key: cliente
+      gera 1 token por intenção de criação (1 por abertura do modal); os 2 requests do duplo-clique
+      reusam a key e colidem no UNIQUE parcial uq_inv_sessao_idempotency — criarSessao traduz o 23505
+      devolvendo a sessão já criada (no-op idempotente, não erro). Sessões intencionais usam keys
+      distintas e passam. Cliente sem key ⇒ sem dedup, sem limite.
     files:
+      - supabase/migrations/20260608_inv_sessao_idempotency.sql
       - supabase/migrations/20260607_inv_sessao_unique_galpao_dia.sql
       - src/lib/wms/inventario.ts
       - src/app/api/wms/inventario/route.ts
-    tags: [inventario, sessao, unique, idempotencia, 409]
+      - src/app/wms/inventario/page.tsx
+    tags: [inventario, sessao, unique, idempotencia, duplo-clique, p055-revert]
 
   - id: wms-kit-sem-componente
     date: "2026-06-05"

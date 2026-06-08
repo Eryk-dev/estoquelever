@@ -194,6 +194,9 @@ function NovaSessaoModal({
   const [locsManual, setLocsManual] = useState<Set<string>>(new Set());
   const [anchorManualId, setAnchorManualId] = useState<string | null>(null);
   const [buscaLoc, setBuscaLoc] = useState("");
+  // 1 token por abertura do modal (= 1 intenção de criação). Duplo-clique reusa
+  // a mesma key e o backend devolve a sessão já criada em vez de duplicar.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   const galpoesQuery = useGalpoes();
   const locsQuery = useLocalizacoes(galpaoId || null);
@@ -307,6 +310,7 @@ function NovaSessaoModal({
       modo_contagem: modo,
       tolerancia_pct: toleranciaPct,
       exige_aprovacao_acima_valor: exigeAprovacaoValor,
+      idempotency_key: idempotencyKey,
       localizacoes,
     });
   }

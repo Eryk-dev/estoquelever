@@ -22,11 +22,12 @@ export default {
     const pid = pendencias[0];
 
     // 2. Confirmar guarda de 30 em A-01-01
-    //    Pendência resultante: qty_guardada=30, qty_pendente=20, status='pendente'
+    //    Pendência resultante: qty_guardada=30, qty_pendente=20, status='em_guarda'
+    //    (parcial preserva 'em_guarda' desde Fix-D #5.8 — não regride pra 'pendente').
     await ctx.guardar({ pendencia_id: pid, loc_destino: "A-01-01", qty: 30 });
 
-    // Garante que a pendência voltou pra 'pendente' (ainda tem 20 pendentes)
-    await ctx.aguardarPendenciaGuarda(pid, "pendente");
+    // Garante que a pendência ficou 'em_guarda' (ainda tem 20 pendentes)
+    await ctx.aguardarPendenciaGuarda(pid, "em_guarda");
     await ctx.assertSaldo(sku, "CWB", "A-01-01", 30);
     await ctx.assertSaldo(sku, "CWB", "RECEBIMENTO", 20);
 

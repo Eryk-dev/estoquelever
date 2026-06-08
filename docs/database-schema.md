@@ -643,12 +643,12 @@ Tabela introduzida em 2026-05-14 pelo split do recebimento em 2 etapas (dock + g
 | `localizacao_origem_id` | uuid | NO | FK | → `siso_localizacoes(id)` — loc tipo='recebimento' (dock) |
 | `mov_entrada_id` | uuid | NO | FK | → `siso_movimentacoes(id)` da entrada que gerou a pendência |
 | `nf_referencia` | text | YES | | NF de origem (rastreio) |
-| `origem_tipo` | text | NO | | Herdado da mov (CHECK: enum de 18 valores em `siso_movimentacoes_origem_tipo_check`). |
+| `origem_tipo` | text | NO | | Herdado da mov (CHECK em `siso_movimentacoes_origem_tipo_check`; +`reserva_guarda`/`liberacao_guarda` na FASE 6). |
 | `custo_unitario` | numeric(14,4) | YES | | Custo unitário declarado no recebimento |
 | `qty_inicial` | numeric(14,4) | NO | | Quantidade original a guardar (CHECK > 0) |
 | `qty_guardada` | numeric(14,4) | NO | 0 | Quantidade já guardada (CHECK ≥ 0, ≤ qty_inicial) |
 | `qty_pendente` | numeric(14,4) | NO | GENERATED | `qty_inicial - qty_guardada` (STORED — não editável) |
-| `status` | text | NO | 'pendente' | `pendente \| em_guarda \| guardada \| cancelada` |
+| `status` | text | NO | 'pendente' | `pendente \| em_guarda \| guardada \| cancelada \| encerrada_sem_saldo` (`encerrada_sem_saldo` adicionado FASE 6 — pick consumiu o saldo da loc de recebimento antes do put-away) |
 | `iniciada_em` | timestamptz | YES | | Quando operador clicou no card |
 | `iniciada_por` | uuid | YES | FK → siso_usuarios | |
 | `guardada_em` | timestamptz | YES | | Setado quando qty_pendente=0 |
@@ -681,15 +681,18 @@ Tabela introduzida em 2026-05-14 pelo split do recebimento em 2 etapas (dock + g
 
 **State Machine:**
 ```
-pendente ──iniciar──> em_guarda ──confirmar (parcial)──> pendente (qty_pendente > 0)
+pendente ──iniciar──> em_guarda ──confirmar (parcial)──> em_guarda (qty_pendente > 0)
                               ──confirmar (total)─────> guardada (terminal)
+                              ──confirmar (saldo=0)───> encerrada_sem_saldo (terminal, FASE 6)
                               ──cancelar──────────────> cancelada (terminal)
 ```
 
 **Notes:**
-- Cancelamento NÃO move estoque — a peça continua em `siso_estoque` na loc origem. Saída física é fluxo separado (ajuste manual ou devolução fornecedor).
+- **FASE 6 — Reserva forte (`wms_iniciar_guarda_atomico`):** iniciar a guarda RESERVA (mov `R` `origem_tipo='reserva_guarda'`, TTL 7 dias) o saldo livre presente na loc de recebimento, zerando o `disponivel` e impedindo que um pick concorrente consuma a peça antes do put-away. Confirmar libera (mov `L` `origem_tipo='liberacao_guarda'`) a fração guardada **ANTES** da perna S do replenishment (senão o S violaria `CHECK reservado<=saldo`). Cancelar libera a R remanescente (`wms_cancelar_pendencia_guarda_atomico`).
+- **FASE 6 — Auto-encerrar (`encerrada_sem_saldo`):** se o saldo FÍSICO da loc de recebimento já é 0 ao confirmar (um pick consumiu a peça antes do put-away) e `qty_pendente > 0`, a confirmação não move estoque — encerra a pendência como `encerrada_sem_saldo` (terminal), saldo intacto, sem par S+E. O trigger é `saldo=0` (NÃO `disponivel=0`: a R da própria pendência ainda está viva nesse ponto, liberada só depois na mesma função). `qty_pendente` permanece > 0 por design (a peça sumiu legitimamente).
+- Cancelamento NÃO move o saldo físico — a peça continua em `siso_estoque` na loc origem (só libera a reserva). Saída física é fluxo separado (ajuste manual ou devolução fornecedor).
 - Confirmação dispara `replenishmentIntraGalpao` (2 movs `transferencia_localizacao` com mesmo `origem_id`) saindo da loc RECEBIMENTO. Custo médio é propagado da loc origem pra loc destino antes da mov.
-- Guarda parcial é o caso comum quando a loc destino lota: pendência fica aberta com `qty_pendente` decrescido.
+- Guarda parcial é o caso comum quando a loc destino lota: pendência fica aberta (`em_guarda`) com `qty_pendente` decrescido.
 
 ---
 
@@ -1858,6 +1861,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-05 | `20260605_fix_rpc_estornar_parcial_movimentacao.sql` | **Raio-X Fase 4 (P078)** — repara `wms_estornar_parcial_movimentacao` (quebrada desde o 3D: chamava `wms_inserir_movimentacao` posicionalmente com `empresa_dona_id` dropado → `42703` em toda chamada). Troca pra named params na assinatura atual + captura o uuid retornado; resto idêntico. |
 | 2026-06-08 | `20260608_uq_mov_estorno_unico_exclui_parcial.sql` | **Raio-X Fase 4 (P078)** — recria `uq_mov_estorno_unico` EXCLUINDO estornos parciais (`COALESCE(origem_detalhes->>'parcial','false') <> 'true'`). O índice blanket matava o 2º chunk parcial com `23505`; parciais são governados pelo acumulador `qty_estornada` sob `FOR UPDATE`. Full estorno continua single. |
 | 2026-06-08 | `20260608_inv_sessao_idempotency.sql` | **Reverte P055** — DROP `uq_inv_sessao_galpao_dia` (limite de 1 sessão/galpão/dia bloqueava criação legítima de múltiplas sessões). Adiciona coluna `siso_inventario_sessoes.idempotency_key text` + UNIQUE partial `uq_inv_sessao_idempotency (idempotency_key) WHERE idempotency_key IS NOT NULL`. Guarda anti-duplo-clique fina: os 2 requests de um duplo-clique reusam a key e o 2º devolve a sessão já criada; sessões intencionais usam keys distintas e passam. |
+| 2026-06-09 | `20260609_guarda_reserva_forte_auto_encerrar.sql` | **FASE 6 — Guarda dinâmica (reserva forte + auto-encerrar).** (1) CHECK `siso_movimentacoes_origem_tipo_check` +`reserva_guarda`/`liberacao_guarda`. (2) CHECK `siso_wms_pendencias_guarda_status_check` +`encerrada_sem_saldo`. (3) NEW RPC `wms_iniciar_guarda_atomico(p_pendencia_id, p_usuario_id, p_forcar)`: `FOR UPDATE` na pendência + claim (status→`em_guarda`, idempotente/takeover) + cria R `reserva_guarda` (TTL 7d) sobre o saldo livre da loc de recebimento (idempotente — não duplica). (4) `wms_confirmar_guarda_atomico`: **(a) auto-encerrar** quando `saldo=0 AND qty_pendente>0` (NÃO `disponivel=0`) → status `encerrada_sem_saldo`, RETURN early, sem par S+E; **(b)** libera L `liberacao_guarda` da fração `p_qty` ANTES da perna S do replenishment (senão violaria `CHECK reservado<=saldo`). (5) `wms_desfazer_guarda_atomico`: re-reserva (R `reserva_guarda`) o saldo que volta pra loc de recebimento quando a pendência regride pra `em_guarda` (só se já existia R). (6) NEW RPC `wms_cancelar_pendencia_guarda_atomico`: libera a R remanescente antes de marcar `cancelada`. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

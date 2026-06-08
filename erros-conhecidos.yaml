@@ -4209,3 +4209,54 @@ erros:
   files:
     - src/app/api/wms/separacao/validar-oc-item/route.ts
   tags: [oc, separacao, ledger, idempotencia, risco-conhecido]
+
+- id: guarda-auto-encerrar-trigger-saldo-nao-disponivel
+  date: "2026-06-09"
+  source: wms.guarda.confirmar
+  category: business_logic
+  message: >
+    FASE 6 — o plano original disparava o auto-encerrar de uma pendência de
+    guarda quando disponivel=0. Isso estava ERRADO: com reserva forte, iniciar
+    a guarda reserva todo o saldo da loc de recebimento, então disponivel=0 é o
+    caso NORMAL de uma pendência iniciada. Usar disponivel=0 auto-encerraria
+    TODA confirmação normal (quebra cenários 08/53).
+  cause: >
+    No ponto do check (logo após o FOR UPDATE em confirmar), a R reserva_guarda
+    da própria pendência ainda está viva — só é liberada depois, na mesma
+    função, antes do replenishment. Logo disponivel = saldo - reservado = 0
+    mesmo com a peça fisicamente presente.
+  fix: >
+    Trigger correto = saldo=0 AND qty_pendente>0 (o saldo FÍSICO da loc de
+    recebimento sumiu — consumido por um pick antes da guarda). Lê a coluna raw
+    saldo de siso_estoque pra (produto, galpao, localizacao_origem), NÃO
+    disponivel. Sem linha de estoque → saldo tratado como 0. Status terminal
+    'encerrada_sem_saldo', sem par S+E, saldo intacto.
+  files:
+    - supabase/migrations/20260609_guarda_reserva_forte_auto_encerrar.sql
+    - test/integration/guarda-auto-encerra.test.ts
+  tags: [guarda, put-away, auto-encerrar, reserva-forte, saldo, disponivel, fase6]
+
+- id: guarda-libera-R-antes-da-perna-S-replenishment
+  date: "2026-06-09"
+  source: wms.guarda.confirmar
+  category: database
+  message: >
+    FASE 6 — com reserva forte, confirmar a guarda precisa LIBERAR (L
+    liberacao_guarda) a fração p_qty ANTES de chamar wms_replenishment_intra_galpao.
+    Se a R reserva_guarda continuar cravada, a perna S do replenishment (que
+    reduz o saldo da loc de recebimento) deixa reservado > saldo → viola
+    CHECK(reservado<=saldo) em siso_estoque (e a S em wms_inserir_movimentacao).
+  cause: >
+    iniciar reserva todo o saldo livre (reservado=saldo). A perna S do
+    replenishment baixa saldo; sem liberar a R primeiro, saldo cai abaixo de
+    reservado.
+  fix: >
+    Em wms_confirmar_guarda_atomico, emitir L (origem_tipo='liberacao_guarda',
+    estorno_de = id da R) de LEAST(p_qty, reservado_vivo) ANTES das pernas S+E.
+    Guarda parcial libera só p_qty; o resto da R fica pra próxima confirmação.
+    Ordem das pernas do replenishment (S origem → E destino) NUNCA invertida.
+    Mesma ordem L-antes-de-S aplicada em cancelar (RPC dedicado).
+  files:
+    - supabase/migrations/20260609_guarda_reserva_forte_auto_encerrar.sql
+    - src/lib/wms/guarda.ts
+  tags: [guarda, put-away, reserva-forte, ledger, constraint, reservado-saldo, ordem-pernas, fase6]

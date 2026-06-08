@@ -136,6 +136,9 @@ async function i5PendenciasGuarda(sb: SupabaseClient): Promise<InvariantResult> 
     const expected = p.qty_inicial - p.qty_guardada;
     if (p.qty_pendente !== expected) return true;
     if (p.status === "guardada" && p.qty_pendente !== 0) return true;
+    // 'encerrada_sem_saldo' (FASE 6) é terminal mas NÃO exige qty_pendente=0:
+    // o estoque sumiu legitimamente via pick antes do put-away, então a peça
+    // nunca foi guardada — qty_pendente fica > 0 por design.
     return false;
   });
   return {

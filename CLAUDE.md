@@ -199,7 +199,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 | `siso_fila_execucao` | Fila pós-aprovação. ⚠ CHECKs legados `filial_execucao IN ('CWB','SP')`. |
 | `siso_notas_fiscais` | NF canônica. `chave_acesso UNIQUE`. Alvo do FK `siso_movimentacoes.nota_fiscal_id`. |
 | `siso_inventario_{sessoes,operadores,localizacoes,contagens,divergencias}` | Inventário v2 (pull queue + claim hierárquico). |
-| `siso_wms_pendencias_guarda` | Fila put-away. `qty_pendente` GENERATED. status `pendente→em_guarda→guardada\|cancelada`. |
+| `siso_wms_pendencias_guarda` | Fila put-away. `qty_pendente` GENERATED. status `pendente→em_guarda→guardada\|cancelada\|encerrada_sem_saldo`. FASE 6: iniciar reserva o saldo (R `reserva_guarda`); `encerrada_sem_saldo` = pick consumiu antes da guarda. |
 | `siso_transferencias_galpao` (+itens) | Transferência inter-galpão (2 pernas S→E). |
 | `siso_devolucoes_pendentes` · `siso_fornecedores` (+`produto_fornecedores`) · `siso_impressoes_log` · `siso_localizacao_locks` | Devoluções / fornecedores / log de impressão / locks. |
 
@@ -207,9 +207,16 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 
 ### RPCs-chave
 
-`wms_inserir_movimentacao` (único write do ledger; aceita `p_idempotency_key` no-op desde fase-5) · `wms_reservar_atomico` (wrapper `tipo='R'`) · `wms_pick_item_atomico` (L+S no pick; aceita `p_idempotency_key`, propagado só no ramo sem-reserva) · `wms_confirmar_guarda_atomico` / `wms_desfazer_guarda_atomico` · `wms_replenishment_intra_galpao` (par S+E) · `wms_inventario_proxima_loc` (pull queue + claim) / `wms_inventario_sugerir` · `wms_detectar_divergencias_estoque` / `wms_rebuild_linha_estoque` · `wms_refresh_curva_abc` / `wms_refresh_cobertura` (MVs `siso_curva_abc`, `siso_cobertura_estoque`) · `wms_truncate_operacional` (test harness).
+`wms_inserir_movimentacao` (único write do ledger; aceita `p_idempotency_key` no-op desde fase-5) · `wms_reservar_atomico` (wrapper `tipo='R'`) · `wms_pick_item_atomico` (L+S no pick; aceita `p_idempotency_key`, propagado só no ramo sem-reserva) · `wms_iniciar_guarda_atomico` / `wms_confirmar_guarda_atomico` / `wms_desfazer_guarda_atomico` / `wms_cancelar_pendencia_guarda_atomico` (ver FASE 6 abaixo) · `wms_replenishment_intra_galpao` (par S+E) · `wms_inventario_proxima_loc` (pull queue + claim) / `wms_inventario_sugerir` · `wms_detectar_divergencias_estoque` / `wms_rebuild_linha_estoque` · `wms_refresh_curva_abc` / `wms_refresh_cobertura` (MVs `siso_curva_abc`, `siso_cobertura_estoque`) · `wms_truncate_operacional` (test harness).
 
 **Raio-X Fase 5 (atomicidade tudo-ou-nada, tudo idempotente):** `wms_aplicar_sessao_inventario` (aplica divergências aprovadas de uma sessão de inventário em bloco) · `wms_pick_parcial_atomico` (S + ajuste loc_zerou na mesma tx) · `wms_desmarcar_item_atomico` (estorna par S+L do pick; recria R clampada ao saldo livre, retorna `status_alerta`) · `wms_reverter_cutover_atomico` (estorna S do pedido + recria R + flipa `estoque_lancado=false`) · `wms_vender_baixa_direta_atomico` (baixa N S de venda manual; advisory lock por tripla) · `wms_cancelar_venda_atomico` (estorna S `venda_manual` + marca pedido cancelado) · `wms_aprovar_e_enfileirar` (transição de status + INSERT do job `lancar_estoque` na mesma tx; `p_marcadores` é `text[]`) · `wms_reconciliar_retroativo` (lock + idempotência + estorno parcial clampado ao disponível) · `wms_resolver_pedido_fantasma` (R viva de pedido forward → `saiu`: R→L+S · `cancelado`: R→L + pedido cancelado).
+
+**FASE 6 — Guarda dinâmica (reserva forte + auto-encerrar):** o put-away agora reserva o saldo na loc de recebimento ao INICIAR, evitando que um pick consuma a peça antes da guarda.
+- `wms_iniciar_guarda_atomico(p_pendencia_id, p_usuario_id, p_forcar)`: `FOR UPDATE` + claim (status→`em_guarda`, idempotente p/ mesmo operador; `p_forcar`=takeover preservando `qty_guardada`) + cria **reserva forte** = mov `R` `origem_tipo='reserva_guarda'` (TTL 7d) sobre o saldo LIVRE da loc de recebimento (`LEAST(qty_pendente, saldo-reservado)`; não cria R de 0; idempotente). Zera o `disponivel` → roteamento de um pedido novo do mesmo SKU decide OC em vez de separar do recebimento. Conflito de claim → `55006`, mapeado p/ `PENDENCIA_OUTRA_GUARDA` (409) no serviço.
+- `wms_confirmar_guarda_atomico`: **(a) auto-encerrar** — quando o saldo FÍSICO da loc de recebimento é `0 AND qty_pendente>0` (um pick consumiu antes do put-away) → status terminal `encerrada_sem_saldo`, RETURN early, sem par S+E, saldo intacto. ⚠ O trigger é `saldo=0`, **NÃO `disponivel=0`** (a R da própria pendência ainda está viva nesse ponto — `disponivel=0` é o caso NORMAL). **(b)** libera `L` `origem_tipo='liberacao_guarda'` da fração `p_qty` **ANTES** da perna S do replenishment (senão o S violaria `CHECK reservado<=saldo`); parcial mantém o resto da R.
+- `wms_desfazer_guarda_atomico`: quando a pendência regride pra `em_guarda`, re-reserva (R `reserva_guarda`) o saldo que volta pra loc de recebimento (só se já existia R; clampado ao livre).
+- `wms_cancelar_pendencia_guarda_atomico`: libera a R remanescente antes de marcar `cancelada` (devolve o `disponivel`; saldo físico intacto).
+- Novo status terminal de pendência: `encerrada_sem_saldo`. Invariante I5 trata como terminal SEM exigir `qty_pendente=0`.
 
 ---
 

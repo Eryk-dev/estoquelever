@@ -65,7 +65,7 @@ export type Ctx = {
   receber: (p: { items: { sku: string; qty: number; loc_destino?: string }[]; galpao: "CWB" | "SP"; entrada_direta?: boolean }) => Promise<{ pendencias: string[] }>;
   guardar: (p: { pendencia_id: string; loc_destino: string; qty?: number }) => Promise<void>;
   desfazerGuarda: (p: { pendencia_id: string; motivo?: string; qty?: number }) => Promise<{ movsEstornadas: number }>;
-  aguardarPendenciaGuarda: (pendenciaId: string, status: "pendente" | "em_guarda" | "guardada", opts?: { timeout_ms?: number }) => Promise<void>;
+  aguardarPendenciaGuarda: (pendenciaId: string, status: "pendente" | "em_guarda" | "guardada" | "cancelada" | "encerrada_sem_saldo", opts?: { timeout_ms?: number }) => Promise<void>;
 
   // ── movs operacionais ──
   transferirGalpao: (p: { origem: "CWB" | "SP"; destino: "CWB" | "SP"; items: { sku: string; qty: number }[] }) => Promise<{ id: string }>;

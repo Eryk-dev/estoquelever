@@ -19,7 +19,12 @@ import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "wms.guarda";
 
-export type StatusPendencia = "pendente" | "em_guarda" | "guardada" | "cancelada";
+export type StatusPendencia =
+  | "pendente"
+  | "em_guarda"
+  | "guardada"
+  | "cancelada"
+  | "encerrada_sem_saldo";
 
 export interface PendenciaGuarda {
   id: string;
@@ -436,60 +441,32 @@ export async function iniciarGuarda(input: {
   forcar?: boolean;
 }): Promise<PendenciaJoined> {
   const sb = createServiceClient();
-  const pend = await obterPendencia(input.pendencia_id);
-  if (!pend) throw new Error("pendência não encontrada");
-  if (pend.status === "guardada" || pend.status === "cancelada") {
-    throw new Error(`pendência em status terminal (${pend.status})`);
-  }
-  // Re-entrada do mesmo operador: idempotente.
-  if (pend.status === "em_guarda" && pend.iniciada_por === input.usuario_id) {
-    return pend;
-  }
-  // Já reivindicada por outro operador — não tenta sobrescrever, EXCETO
-  // quando forcar=true (takeover explícito "Tomar de Fulano"). O takeover
-  // preserva qty_guardada/qty_pendente — continua do ponto onde o dono parou.
-  if (
-    !input.forcar &&
-    pend.status === "em_guarda" &&
-    pend.iniciada_por &&
-    pend.iniciada_por !== input.usuario_id
-  ) {
-    const err = new Error(
-      `pendência já está em_guarda com outro operador (${pend.iniciada_por})`,
-    ) as Error & { code?: string; iniciada_por?: string };
-    err.code = "PENDENCIA_OUTRA_GUARDA";
-    err.iniciada_por = pend.iniciada_por;
-    throw err;
-  }
-  // UPDATE condicional: no caminho normal só ganha se `iniciada_por` ainda
-  // for NULL ou já for o usuário atual, E o status não tiver virado terminal
-  // entre o SELECT e este UPDATE. Race-perdedor recebe 0 rows updated.
-  // No takeover (forcar) reivindica de qualquer dono, mantendo apenas o
-  // guard de status terminal (não tomar pendência já guardada/cancelada).
-  let upd = sb
-    .from("siso_wms_pendencias_guarda")
-    .update({
-      status: "em_guarda",
-      iniciada_em: new Date().toISOString(),
-      iniciada_por: input.usuario_id,
-    })
-    .eq("id", input.pendencia_id)
-    .neq("status", "guardada")
-    .neq("status", "cancelada");
-  if (!input.forcar) {
-    upd = upd.or(`iniciada_por.is.null,iniciada_por.eq.${input.usuario_id}`);
-  }
-  const { data: updated, error } = await upd.select("id, iniciada_por");
-  if (error) throw error;
-  if (!updated || updated.length === 0) {
-    // Race perdida: outro operador ganhou. Re-lê pra anexar o dono atual.
-    const refreshed = await obterPendencia(input.pendencia_id);
-    const err = new Error(
-      `pendência foi reivindicada por outro operador (${refreshed?.iniciada_por ?? "?"})`,
-    ) as Error & { code?: string; iniciada_por?: string };
-    err.code = "PENDENCIA_OUTRA_GUARDA";
-    err.iniciada_por = refreshed?.iniciada_por ?? undefined;
-    throw err;
+
+  // FASE 6: reserva forte ao iniciar. Tudo dentro do RPC atômico
+  // wms_iniciar_guarda_atomico: FOR UPDATE na pendência + claim (status→
+  // em_guarda) + cria a R reserva_guarda travando o saldo físico livre na loc
+  // de recebimento — numa única transação. Idempotente (re-call do mesmo
+  // operador não duplica a R); takeover via p_forcar preserva qty_guardada.
+  const { error } = await sb.rpc("wms_iniciar_guarda_atomico", {
+    p_pendencia_id: input.pendencia_id,
+    p_usuario_id: input.usuario_id,
+    p_forcar: input.forcar ?? false,
+  });
+
+  if (error) {
+    // Conflito de claim (outro operador já reivindicou, sem forcar) chega como
+    // lock_not_available (55006). Re-lê pra anexar o dono atual e re-lança no
+    // contrato esperado pela rota (409 + code + iniciada_por).
+    if (error.code === "55006" || /outro operador/.test(error.message)) {
+      const refreshed = await obterPendencia(input.pendencia_id);
+      const err = new Error(
+        `pendência já está em_guarda com outro operador (${refreshed?.iniciada_por ?? "?"})`,
+      ) as Error & { code?: string; iniciada_por?: string };
+      err.code = "PENDENCIA_OUTRA_GUARDA";
+      err.iniciada_por = refreshed?.iniciada_por ?? undefined;
+      throw err;
+    }
+    throw new Error(error.message);
   }
 
   const refresh = await obterPendencia(input.pendencia_id);
@@ -511,7 +488,8 @@ export interface ConfirmarGuardaInput {
 
 export interface ConfirmarGuardaResult {
   pendencia: PendenciaJoined;
-  origem_id: string;
+  /** UUID do par S+E do replenishment. NULL na auto-encerra (saldo=0): não há mov. */
+  origem_id: string | null;
   totalmente_guardada: boolean;
 }
 
@@ -588,20 +566,25 @@ export async function confirmarGuarda(
     // (ex.: cenário 8 e 42 esperam strings específicas).
     throw new Error(error.message);
   }
+  // origem_id/mov_ids ausentes no caminho de auto-encerra (saldo=0): não há
+  // par S+E. Tipados como opcionais e normalizados pra null abaixo.
   const r = data as {
     pendencia_id: string;
-    origem_id: string;
-    mov_ids: string[];
+    origem_id?: string | null;
+    mov_ids?: string[];
+    auto_encerrada?: boolean;
     totalmente_guardada: boolean;
     qty_guardada: number;
     status: string;
   };
+  const origemId = r.origem_id ?? null;
 
   logger.info(LOG_SOURCE, "guarda confirmada", {
     pendenciaId: input.pendencia_id,
     qty: String(input.qty),
     totalmenteGuardada: String(r.totalmente_guardada),
-    origemId: r.origem_id,
+    autoEncerrada: String(r.auto_encerrada ?? false),
+    origemId: origemId ?? "(sem mov)",
   });
 
   const refresh = await obterPendencia(input.pendencia_id);
@@ -630,7 +613,7 @@ export async function confirmarGuarda(
 
   return {
     pendencia: refresh,
-    origem_id: r.origem_id,
+    origem_id: origemId,
     totalmente_guardada: r.totalmente_guardada,
   };
 }
@@ -653,23 +636,17 @@ export async function cancelarPendencia(
   if (!input.motivo || input.motivo.trim().length < 3) {
     throw new Error("motivo do cancelamento é obrigatório (≥3 caracteres)");
   }
-  const pend = await obterPendencia(input.pendencia_id);
-  if (!pend) throw new Error("pendência não encontrada");
-  if (pend.status === "guardada" || pend.status === "cancelada") {
-    throw new Error(`pendência em status terminal (${pend.status})`);
-  }
 
   const sb = createServiceClient();
-  const { error } = await sb
-    .from("siso_wms_pendencias_guarda")
-    .update({
-      status: "cancelada",
-      cancelada_em: new Date().toISOString(),
-      cancelada_por: input.usuario_id,
-      motivo_cancelamento: input.motivo.trim(),
-    })
-    .eq("id", input.pendencia_id);
-  if (error) throw error;
+  // FASE 6: cancela via RPC atômico que libera (L) a reserva forte
+  // remanescente ANTES de marcar 'cancelada' — devolvendo o disponível da loc
+  // de recebimento. NÃO mexe no saldo físico (a peça continua na loc).
+  const { error } = await sb.rpc("wms_cancelar_pendencia_guarda_atomico", {
+    p_pendencia_id: input.pendencia_id,
+    p_motivo: input.motivo,
+    p_usuario_id: input.usuario_id,
+  });
+  if (error) throw new Error(error.message);
 
   logger.info(LOG_SOURCE, "pendência cancelada", {
     pendenciaId: input.pendencia_id,

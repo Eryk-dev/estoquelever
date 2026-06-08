@@ -111,7 +111,8 @@ export async function POST(
       msg.includes("outro galpão") ||
       msg.includes("inativa") ||
       msg.includes("qty deve ser") ||
-      msg.includes("produto bipado não bate");
+      msg.includes("produto bipado não bate") ||
+      msg.includes("excede saldo livre");
     return wmsErrorResponse({
       source: "wms.guarda.confirmar",
       error: e,

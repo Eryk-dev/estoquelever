@@ -112,8 +112,11 @@ const MOVE_TARGETS: Partial<Record<VisibleSeparacaoTab, {
   aguardando_compra: {
     back: [],
     forward: [
+      { value: "aguardando_nf", label: "Aguardando NF" },
       { value: "aguardando_separacao", label: "Aguardando Separacao" },
       { value: "em_separacao", label: "Em Separacao" },
+      { value: "separado", label: "Separado" },
+      { value: "embalado", label: "Embalado" },
     ],
   },
   aguardando_nf: {

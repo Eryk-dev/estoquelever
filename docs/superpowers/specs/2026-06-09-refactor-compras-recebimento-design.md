@@ -76,9 +76,11 @@ SKU `MAN123` casa com prefixo `MAN` → auto-atribui *Multiqualita*. Mas é da *
 ### Mudança
 
 - **Remove a aba "Manuais"** e o componente `aba-manuais.tsx`. A listagem manual passa a viver nas mesmas abas.
-- `/api/wms/compras?tab=...` estende **Receber** e **Histórico** pra unir `siso_compras_manuais`. Cada entrada da resposta carrega `origem: 'pedido' | 'manual'`.
+- **A aba "Receber" reestrutura de SKU-agregado → por documento.** Hoje agrupa fornecedor→SKU com qty inline; passa a listar **documentos** (cada OC + cada compra manual) como cards agrupados por fornecedor, com badge `origem`. Cada card **linka** pra page rica (Fase C). **Sem qty inline.**
+- **Superfície única de listagem de compra:** a aba Receber do `/wms/compras` é a lista única de recebimento de OC + manual. A lista `/wms/receber/oc` (página + endpoint `/api/wms/receber/oc/lista`) vira redundante → **removida** (ou redireciona pra `/wms/compras?tab=receber`). **Transferência continua** em `/wms/receber/transferencia` (não é compra — fluxo inter-galpão à parte).
+- `/api/wms/compras?tab=...` muda **Receber** e **Histórico** pra unir `siso_compras_manuais`. Cada entrada carrega `origem: 'oc' | 'manual'` + o id do documento (`ordem_compra_id` ou `compra_manual_id`) pro link.
   - **Comprar:** só OC (`aguardando_compra`). Manual nunca aparece aqui (já foi comprada).
-  - **Receber:** OC `comprado` (pendente de recebimento) + manual `comprado`/`parcial`. Agrupados por fornecedor. Badge `origem`.
+  - **Receber:** OCs (status comprado / pendente de recebimento — reusa a lógica de `/api/wms/receber/oc/lista`) + manuais `comprado`/`parcial`. Cards **por documento**, agrupados por fornecedor. Badge `origem`.
   - **Histórico:** OC `recebido` + manual `recebido`/`cancelado`.
 - **Reconciliação das diferenças:**
   - Agrupamento: manual agrupa por fornecedor também (FK `siso_fornecedores` → nome), pra caber no mesmo card de fornecedor das OC.
@@ -99,10 +101,11 @@ SKU `MAN123` casa com prefixo `MAN` → auto-atribui *Multiqualita*. Mas é da *
 
 ### Arquivos
 
-- `src/app/api/wms/compras/route.ts` (estende `fetchReceber`/`fetchHistorico` com união de manuais + flag `origem`)
-- `src/app/wms/compras/page.tsx` (remove aba Manuais, adiciona badge `origem`, linka entrada → recebimento, tira qty inline)
+- `src/app/api/wms/compras/route.ts` (reescreve `fetchReceber` pra cards por documento OC+manual com flag `origem` + id do documento; `fetchHistorico` une manuais; `fetchCounts` inclui manuais)
+- `src/app/wms/compras/page.tsx` (remove aba Manuais; Receber vira cards por documento com badge `origem` que linkam pra page rica; tira qty inline)
 - **retira** `src/components/wms/compras/aba-manuais.tsx` (e usos)
-- (mantém `src/app/api/wms/compras-manuais/route.ts` pra criação/detalhe se ainda usado pelo recebimento)
+- **retira/redireciona** `src/app/wms/receber/oc/page.tsx` (lista) + `src/app/api/wms/receber/oc/lista/route.ts` (redundantes com a aba Receber)
+- (mantém `src/app/api/wms/compras-manuais/route.ts` + `/[id]/receber` pra criação/recebimento)
 
 ---
 

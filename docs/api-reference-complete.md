@@ -4038,7 +4038,7 @@ OR
 
 **File:** `src/app/api/wms/compras-manuais/[id]/receber/route.ts`
 
-**Purpose:** Recebe itens de uma compra manual (parcial permitido). Cada item recebido gera uma mov `E` no ledger + uma pendência de put-away (`siso_wms_pendencias_guarda`).
+**Purpose:** Recebe itens de uma compra manual (parcial permitido). Suporta dois modos: dock padrão (mov E em RECEBIMENTO + pendência put-away) ou entrada direta (mov E direto na loc destino, sem pendência).
 
 **Auth:** X-Session-Id (required), `compras.executar`
 
@@ -4046,28 +4046,46 @@ OR
 ```json
 {
   "itens": [
-    { "item_id": "uuid", "qty_recebida": "number", "custo_unitario": "number | null" }
-  ]
+    {
+      "item_id": "uuid",
+      "qty_recebida": "number",
+      "custo_unitario": "number | null",
+      "localizacao_destino_id": "uuid | null"
+    }
+  ],
+  "entrada_direta": "boolean? (default false)"
 }
 ```
 
+- `localizacao_destino_id` por item: no modo dock é o destino **planejado** da pendência de guarda (tablet pré-preenchido); no modo entrada direta é obrigatório (loc onde a E entra diretamente).
+- `entrada_direta=true`: E vai direto na `localizacao_destino_id`, sem pendência. Exige `localizacao_destino_id` em todos os itens.
+
 **Response (200):**
 ```json
-{ "ok": true, "movs_geradas": "number", "status": "comprado | parcial | recebido" }
+{
+  "ok": true,
+  "movs_geradas": "number",
+  "status": "comprado | parcial | recebido",
+  "pendencia_ids": ["uuid", "..."],
+  "mov_ids": ["uuid", "..."]
+}
 ```
+
+- `pendencia_ids`: UUIDs das pendências criadas (modo dock). Vazio em modo entrada direta.
+- `mov_ids`: UUIDs das movs `E` inseridas.
 
 **Response (400):** `envie { itens: [{ item_id, qty_recebida }] }` · `compra cancelada não pode receber` · `qty excede faltante` · `recebimento concorrente detectado` · loc `recebimento` ausente no galpão
 
 **Business Logic:**
 - Itens processados **sequencialmente**. Por item: lock otimista no `qty_recebida` (detecta dupla-recepção concorrente) → grava mov `E` + cria pendência de put-away (se qualquer um falhar, reverte o bump e relança) → recomputa status do cabeçalho.
-- Mov `E` na loc `tipo='recebimento'` do galpão, `origem_tipo='nf_compra'` + `origem_detalhes.origem='compra_manual'`, tags `fornecedor_id` + `empresa_compradora_id`, custo via `resolverCustoEntrada` (lança se sem custo nem histórico — guard P108). Custo médio recalcula.
-- Cria 1 `siso_wms_pendencias_guarda` por item (igual ao caminho canônico de recebimento) — sem isso o saldo ficaria preso na loc RECEBIMENTO. Se a pendência falhar, a mov `E` é estornada (compensação net-zero).
+- Modo dock: mov `E` na loc `tipo='recebimento'` do galpão, `origem_tipo='nf_compra'` + `origem_detalhes.origem='compra_manual'`, tags `fornecedor_id` + `empresa_compradora_id`, custo via `resolverCustoEntrada`. Cria 1 pendência `siso_wms_pendencias_guarda` por item com `localizacao_destino_id` planejado (se informado). Se a pendência falhar, a mov `E` é estornada (compensação net-zero).
+- Modo entrada direta: mov `E` direto na `localizacao_destino_id`, `origem_detalhes.entrada_direta=true`. Sem pendência.
 - **Não atômico entre itens:** se um item posterior lança, os anteriores já recebidos PERMANECEM commitados — caller deve re-buscar e retentar só o que falhou.
-- **Não** chama `checkAndReleasePedidos` (não há pedido); o `reconciliador-oc` puxa o saldo pra pedidos OC parados via o mov `E` (após put-away).
+- O `reconciliador-oc` puxa o saldo pra pedidos OC parados via o mov `E` (após put-away no modo dock, imediatamente no modo entrada direta).
 
 **Side Effects:**
 - Insere mov(s) `E` em `siso_movimentacoes` (via `wms_inserir_movimentacao`), atualiza `siso_estoque` e `siso_custo_medio`
-- Insere pendência(s) em `siso_wms_pendencias_guarda` (1 por item) pra a fila de put-away `/wms/guarda`
+- Modo dock: insere pendência(s) em `siso_wms_pendencias_guarda` (1 por item) pra a fila de put-away `/wms/guarda`
 - Atualiza `siso_compras_manuais_itens.qty_recebida`/`custo_unitario` e `siso_compras_manuais.status`/`recebido_em`
 
 ---
@@ -4151,11 +4169,43 @@ OR
 
 **File:** `src/app/wms/receber/manual/[id]/page.tsx`
 
-**Purpose:** Página rica de recebimento de compra manual. Exibe cabeçalho (fornecedor, galpão, data) + tabela de itens com controle de quantidade recebida e custo unitário; chama `POST /api/wms/compras-manuais/[id]/receber`. Renderiza o componente compartilhado `<ReceberLote>` com o adapter `buildManualPayload`.
+**Purpose:** Página única rica de recebimento de compra manual — a mesma página completa do avulso, pré-preenchida com os dados do documento. Exibe cabeçalho (fornecedor, galpão, data), linhas pré-definidas com qty esperada ("era pra vir N"), sugestão de localização, plano de guarda, entrada direta, etiquetas, anúncio. Itens extras recebidos acima do esperado entram como `ajuste_manual`. Renderiza `<ReceberLote>` com o adapter `buildManualPayload`.
 
 **Auth:** `compras.executar` (redirecionada pra `/wms/compras` se sem permissão)
 
 **Query:** Busca compra via `GET /api/wms/compras-manuais/[id]`; exibe 404 se não encontrada ou já recebida.
+
+---
+
+### UI — /wms/receber/oc/[id]
+
+**File:** `src/app/wms/receber/oc/[id]/page.tsx`
+
+**Purpose:** Página única rica de recebimento de OC — a mesma página completa do avulso, pré-preenchida com os dados da OC. Exibe cabeçalho (fornecedor, galpão, status), linhas pré-definidas por item da OC com qty esperada ("era pra vir N") e `backendItemId` (lock por linha). Suporta sugestão de localização, plano de guarda, entrada direta, etiquetas, anúncio. Itens extras acima do esperado entram como `ajuste_manual` via `POST /api/wms/receber`. Chama `POST /api/wms/receber/oc/[id]` para os itens do documento via adapter `buildOcPayload`.
+
+**Auth:** `operacoes.receber` OU `compras.executar`
+
+**Query:** Busca OC via `GET /api/wms/receber/oc/[id]`.
+
+---
+
+### UI — /wms/receber/transferencia/[id]
+
+**File:** `src/app/wms/receber/transferencia/[id]/page.tsx`
+
+**Purpose:** Página única rica de recebimento de transferência inter-galpão — a mesma página completa do avulso, pré-preenchida com os itens da transferência. Sem campos de custo (transferências não têm NF de compra) e sem itens extras (qty é fixa por item de transferência). Renderiza `<ReceberLote>` com o adapter `buildTransferenciaPayload`. Chama `POST /api/wms/transferencias/[id]/receber`.
+
+**Auth:** `operacoes.receber` OU `compras.executar`
+
+---
+
+### UI — /wms/compras/nova
+
+**File:** `src/app/wms/compras/nova/page.tsx`
+
+**Purpose:** Página de criação de compra manual (substitui o modal `NovaCompraManualModal`, removido). Permite cadastrar fornecedor inline (via `POST /api/wms/compras-manuais/fornecedor`) e produto inline (via `POST /api/wms/compras-manuais/produto`) sem sair da página. Ao salvar, cria a compra e redireciona para `/wms/receber/manual/[id]` (recebimento imediato) ou `/wms/compras` (receber depois).
+
+**Auth:** `compras.executar`
 
 ---
 
@@ -5259,6 +5309,101 @@ Idempotente (pula R já liberada). A `empresa_vendedora_id` da S (caso `saiu`) v
 ```
 
 **Erros:** `400` (`acao` ausente/inválida, ou falha da RPC), `404` (pedido não encontrado).
+
+---
+
+### GET /api/wms/receber/oc/[id]
+
+**File:** `src/app/api/wms/receber/oc/[id]/route.ts`
+
+**Purpose:** Retorna detalhe da OC + itens com qty esperada/recebida/pendente para pré-preencher o form de recebimento. Resolve `produto_wms_id` (SKU → `siso_produtos.id`) e `fornecedor_id` (nome ilike → `siso_fornecedores.id`) inline.
+
+**Auth:** `operacoes.receber` OU `compras.executar`
+
+**Response (200):**
+```json
+{
+  "oc": {
+    "id": "uuid",
+    "fornecedor": "string | null",
+    "galpao_id": "uuid",
+    "galpao_nome": "string | null",
+    "status": "string",
+    "observacao": "string | null",
+    "fornecedor_id": "uuid | null"
+  },
+  "itens": [
+    {
+      "id": "string",
+      "sku": "string | null",
+      "descricao": "string | null",
+      "imagem_url": "string | null",
+      "esperado": "number",
+      "ja_recebido": "number",
+      "pendente": "number",
+      "produto_id": "string (tiny_produto_id)",
+      "produto_wms_id": "uuid | null"
+    }
+  ]
+}
+```
+
+- `produto_wms_id`: UUID de `siso_produtos` resolvido via SKU; `null` se produto não cadastrado no WMS.
+- `fornecedor_id`: UUID de `siso_fornecedores` resolvido por nome (ilike, ativo); `null` se não mapeado. Usado pela UI para pré-preencher o fornecedor no ReceberLote (sugestão de custo médio).
+
+**Response (404):** `{ error: "OC não encontrada" }`
+
+---
+
+### POST /api/wms/receber/oc/[id]
+
+**File:** `src/app/api/wms/receber/oc/[id]/route.ts`
+
+**Purpose:** Registra recebimento físico de itens de uma OC (parcial permitido). Suporta modo dock (mov E em RECEBIMENTO + pendência put-away) e modo entrada direta (E direto na loc destino, sem pendência). NF opcional — quando informada, `nota_fiscal_id` é carimbado nas movs E.
+
+**Auth:** `operacoes.receber` OU `compras.executar`
+
+**Request Body:**
+```json
+{
+  "itens": [
+    {
+      "item_id": "string (siso_pedido_itens.id)",
+      "qty_real": "number",
+      "custo_unitario": "number?",
+      "motivo_divergencia": "string?",
+      "localizacao_destino_id": "uuid | null"
+    }
+  ],
+  "entrada_direta": "boolean? (default false)",
+  "nf_referencia": "string? (número da NF, ex: '001234')",
+  "chave_acesso_nf": "string? (44 dígitos)"
+}
+```
+
+- `localizacao_destino_id` por item: no modo dock é o destino planejado da pendência; no modo entrada direta é obrigatório.
+- `entrada_direta=true`: E vai direto na `localizacao_destino_id`, sem pendência de put-away.
+- `nf_referencia` / `chave_acesso_nf`: quando informados, chama `upsertNotaFiscal()` e carimba `nota_fiscal_id` nas movs E via `origem_tipo='nf_compra'`.
+- Itens com `qty_real=0` são silenciosamente ignorados (não recebidos nessa leva).
+- Itens além do esperado (extras): qty extra entra como `ajuste_manual` (`origem_tipo='ajuste_manual'`) em vez de `nf_compra`.
+
+**Response (200):**
+```json
+{
+  "oc_id": "uuid",
+  "itens_recebidos": "number",
+  "pendencias_criadas": "number",
+  "oc_fechada": "boolean",
+  "divergencias": [{ "item_id": "string", "esperado": "number", "recebido": "number", "motivo": "string?" }]
+}
+```
+
+**Business Logic:**
+- Por item: se `qty_real > pendente` e o excesso NÃO é de um item do documento → mov extra como `ajuste_manual`.
+- Modo dock: mov `E` em loc `tipo='recebimento'` + pendência `siso_wms_pendencias_guarda` com destino planejado. Pendência falha → estorna a mov `E`.
+- Modo entrada direta: mov `E` diretamente na `localizacao_destino_id`, `origem_detalhes.entrada_direta=true`. Sem pendência.
+- Atualiza `siso_pedido_itens.compra_quantidade_recebida`. Quando todos itens da OC atingem qty esperada → OC fechada (`oc_fechada=true`, status → `recebido`).
+- `reconciliador-oc` dispara automaticamente após cada mov `E` (fire-and-forget via `ledger.ts`).
 
 ---
 

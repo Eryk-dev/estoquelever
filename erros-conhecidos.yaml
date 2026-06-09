@@ -4368,3 +4368,16 @@ erros:
       - src/app/wms/receber/manual/[id]/page.tsx
       - src/app/wms/receber/transferencia/[id]/page.tsx
     tags: [recebimento, oc, transferencia, manual, ui]
+
+- id: RECEBIMENTO-CONFIG-DESPIDO
+  date: 2026-06-09
+  source: recebimento-pagina-unica
+  category: business_logic
+  message: "Fase C v1 escondeu features por fluxo (OC/transf sem loc/etiqueta/plano) — usuário esperava a página inteira do avulso pré-preenchida"
+  cause: "matriz de flags do plano anterior despiu a página em vez de pré-preencher"
+  fix: "backends aceitam loc/entrada_direta; configs full-ON; extras via ajuste_manual; criação de compra em página /wms/compras/nova (modal removido)"
+  files:
+    - src/lib/wms/receber-oc.ts
+    - src/lib/wms/compras-manuais.ts
+    - src/components/wms/recebimento/receber-lote.tsx
+  tags: [recebimento, ux, pagina-unica]

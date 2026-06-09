@@ -144,7 +144,7 @@ src/
       wms-shell.tsx                     # sidebar (8 grupos perm-gated) + CommandK (⌘K) + modal context
       home/quadro-tarefas.tsx           # home /wms: pipeline + kanban + exceções
       {separacao,cross,insights,inventario,vendas,configuracoes,home}/  # por feature
-      recebimento/{receber-lote.tsx,receber-lote-types.ts,receber-lote-adapters.ts}  # UI rica compartilhada de recebimento (config-driven; OC/manual/transferência/avulso renderizam o mesmo componente com adapters por fluxo)
+      recebimento/{receber-lote.tsx,receber-lote-types.ts,receber-lote-adapters.ts}  # UI rica compartilhada de recebimento (config-driven; TODOS os fluxos — OC/manual/transferência/avulso — renderizam a mesma página completa pré-preenchida; extras OC/manual viram ajuste_manual; transferência sem custo/extras; criação de compra em /wms/compras/nova)
       ui/{wms-ui.tsx,modals.tsx,avatar.tsx}   # PageHeader, StatusBadge, Modal, formatters...
   hooks/                                # 5 realtime hooks (postgres_changes + Presence → invalidate React Query)
   lib/
@@ -256,7 +256,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 2. **`siso_pedidos.id` é `text`** (id Tiny numérico). Por isso `siso_movimentacoes.origem_id`/`pedido_id` são **text** (uma migration anterior que os fez uuid quebrou todos os callers de `wms_reservar_atomico`).
 3. **Não existe `WMS_AS_SOURCE`/`flags.ts`** — o caminho WMS é permanente; `webhook-processor`/`execution-worker` sempre delegam pros `-wms`. `WMS_AS_SOURCE` no `.env.example` está **stale**.
 4. **`cutover.ts` NÃO é feature-flag** — é o backstop que flipa `estoque_lancado` quando o pedido atinge `separado/embalado/expedido` e reverte (estorno + recria R) no retrocesso. **NF não é mais pré-condição** (2026-05-28) — o S sai no pick, atômico.
-5. **`inserirMovimentacao` lança erro se faltar `nota_fiscal_id`** em movs de origem NF — chamar `upsertNotaFiscal()` antes.
+5. **`inserirMovimentacao` emite apenas `logger.warn` (não lança erro) se faltar `nota_fiscal_id`** em movs de origem NF (relaxado em 2026-05-27 — `ledger.ts ~154`). Enforcement real fica nos webhook handlers (`nf-webhook-handler`, `webhook-processor`) onde a NF realmente existe. Ainda assim, chamar `upsertNotaFiscal()` antes garante observabilidade correta.
 6. **`pickMovPicking` não é idempotente nem atômico** — guardar via `mov_saida_id` antes, ou usar a RPC `wms_pick_item_atomico` (caminho de `marcar-item`).
 7. **`live-stock.ts` / `galpoes-com-saldo.ts` lêem `siso_estoque` (live).** `siso_pedido_item_estoques` foi **dropada** — não conflate com snapshot.
 8. **Todas as chamadas Tiny devem rodar dentro de `runWithEmpresa(empresaId, …)`** (AsyncLocalStorage carrega o contexto pro rate-limit e pro stub).

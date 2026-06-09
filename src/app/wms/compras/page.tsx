@@ -546,11 +546,7 @@ function TabComprar({
   // Trocar fornecedor do item
   const fornecedoresQuery = useQuery<{ rows: { id: string; nome: string }[] }>({
     queryKey: ["compras-manuais-fornecedores"],
-    queryFn: async () => {
-      const r = await sisoFetch("/api/wms/fornecedores");
-      if (!r.ok) throw new Error("falha ao listar fornecedores");
-      return (await r.json()) as { rows: { id: string; nome: string }[] };
-    },
+    queryFn: () => wmsApi<{ rows: { id: string; nome: string }[] }>("/api/wms/fornecedores"),
     staleTime: 5 * 60_000,
   });
 

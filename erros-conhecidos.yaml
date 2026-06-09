@@ -4260,3 +4260,32 @@ erros:
     - supabase/migrations/20260609_guarda_reserva_forte_auto_encerrar.sql
     - src/lib/wms/guarda.ts
   tags: [guarda, put-away, reserva-forte, ledger, constraint, reservado-saldo, ordem-pernas, fase6]
+
+- id: encontrei-modal-trava-token-tiny-morto
+  date: "2026-06-09"
+  source: separacao.localizacao
+  category: external_api
+  message: >
+    Modal "Encontrei" (validação OC, fase validacao_oc) não permite confirmar a
+    quantidade — toast: Token refresh failed (400):
+    {"error":"invalid_grant","error_description":"Token is not active"}.
+    Operador fica bloqueado de separar o pedido.
+  cause: >
+    handleOcEncontreiFinalizar faz 2 passos: (1) POST /separacao/localizacao
+    [sync cosmético da loc pro Tiny], (2) POST /separacao/validar-oc-item [o pick
+    WMS real]. A rota localizacao chamava getValidTokenByEmpresa e deixava o erro
+    propagar pro catch genérico → 500 com a msg crua. Frontend mostra o toast e
+    NÃO chega no passo 2. O refresh_token do Tiny da empresa estava morto
+    (invalid_grant — revogado/expirado), mas o sync pro Tiny é cosmético: Tiny é
+    só camada fiscal, WMS é a fonte da verdade do estoque. Acoplar o pick físico
+    do operador a um write não-crítico no Tiny é o bug.
+  fix: >
+    Em localizacao/route.ts, envolver SÓ o passo 1 (getValidTokenByEmpresa +
+    atualizarLocalizacaoProduto) em try/catch best-effort: loga warn, segue pros
+    movs WMS (passos 2-3, a fonte da verdade) e retorna tiny_sync=false. Rota não
+    500 mais por token Tiny morto. NÃO desliga o Tiny em nenhum outro fluxo —
+    desacople pontual só dessa rota. Reconectar o OAuth do Tiny restaura o sync.
+  files:
+    - src/app/api/wms/separacao/localizacao/route.ts
+    - src/app/api/wms/separacao/localizacao/localizacao-tiny-desacoplado.test.ts
+  tags: [separacao, localizacao, tiny-api, oauth, invalid_grant, encontrei, validacao-oc, best-effort, wms-source-of-truth]

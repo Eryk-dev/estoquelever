@@ -60,11 +60,24 @@ export async function POST(request: NextRequest) {
   const trimmed = localizacao.trim();
 
   try {
-    // 1. Update in Tiny ERP
-    const { token } = await getValidTokenByEmpresa(empresaId);
-    await runWithEmpresa(empresaId, () =>
-      atualizarLocalizacaoProduto(token, produtoId, trimmed),
-    );
+    // 1. Update in Tiny ERP — best-effort. O WMS é a fonte da verdade do
+    // estoque; o sync da loc pro Tiny é cosmético (Tiny só camada fiscal).
+    // Token Tiny morto / API fora NÃO pode travar o pick do operador — só
+    // loga e segue pros movs WMS abaixo. UI recebe tiny_sync=false p/ avisar.
+    let tinySync = true;
+    try {
+      const { token } = await getValidTokenByEmpresa(empresaId);
+      await runWithEmpresa(empresaId, () =>
+        atualizarLocalizacaoProduto(token, produtoId, trimmed),
+      );
+    } catch (tinyErr) {
+      tinySync = false;
+      logger.warn("localizacao", "sync da loc pro Tiny falhou (não-bloqueante)", {
+        produtoId,
+        empresaId,
+        error: tinyErr instanceof Error ? tinyErr.message : String(tinyErr),
+      });
+    }
 
     // 2. (Fase 1.4) REMOVIDO: update de siso_pedido_item_estoques.localizacao.
     // Tabela dropada — a loc vive em siso_localizacoes / siso_estoque (3D).
@@ -214,9 +227,10 @@ export async function POST(request: NextRequest) {
       empresaId,
       localizacao: trimmed,
       transferencias,
+      tiny_sync: tinySync,
     });
 
-    return NextResponse.json({ ok: true, transferencias });
+    return NextResponse.json({ ok: true, transferencias, tiny_sync: tinySync });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error("localizacao", "Erro ao atualizar localizacao", {

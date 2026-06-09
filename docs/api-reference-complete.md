@@ -2962,9 +2962,13 @@ OR
 **Response (200):**
 ```json
 {
-  "ok": true
+  "ok": true,
+  "transferencias": "number",
+  "tiny_sync": "boolean"
 }
 ```
+
+> O sync da localização pro Tiny é **best-effort** (Tiny só camada fiscal; WMS é a fonte da verdade do estoque). Se o token Tiny estiver morto / a API fora, a rota **não** falha — segue com os movs WMS e retorna `tiny_sync: false`. Operador não fica bloqueado por saúde de token Tiny.
 
 **Response (400 - Missing fields):**
 ```json

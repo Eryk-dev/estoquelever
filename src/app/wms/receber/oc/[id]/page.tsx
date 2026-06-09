@@ -85,7 +85,7 @@ export default function ReceberOCDetalhePage() {
         toast.success(
           `${result.itens_recebidos} item(s) recebido(s)${result.oc_fechada ? " · OC fechada" : ""}`,
         );
-        router.push("/wms/receber/oc");
+        router.push("/wms/compras?tab=receber");
       } else {
         const body = await r.json().catch(() => ({}));
         toast.error(body.error ?? "Falha ao receber");
@@ -109,7 +109,7 @@ export default function ReceberOCDetalhePage() {
       />
       <div className="px-4 pb-12 max-w-4xl mx-auto pt-4">
         <Link
-          href="/wms/receber/oc"
+          href="/wms/compras?tab=receber"
           className="mb-4 inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
         >
           <ChevronLeft size={14} /> Voltar pra lista

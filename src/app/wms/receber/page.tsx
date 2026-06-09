@@ -20,7 +20,7 @@ export default function ReceberHubPage() {
       />
       <div className="grid grid-cols-1 gap-4 px-4 pb-12 sm:grid-cols-2 lg:grid-cols-3 max-w-5xl mx-auto pt-4">
         <Link
-          href="/wms/receber/oc"
+          href="/wms/compras?tab=receber"
           className="group flex flex-col items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-6 transition hover:border-emerald-300 hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50"
         >
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">

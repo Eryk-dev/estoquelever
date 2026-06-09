@@ -20,16 +20,16 @@ import {
   Icon,
   Modal,
   PageHeader,
+  fmtBRL,
   fmtDateTime,
   fmtNum,
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
 import { NovaCompraManualModal } from "@/components/wms/compras/nova-compra-manual-modal";
-import { AbaManuais } from "@/components/wms/compras/aba-manuais";
 
 // ── Tipos ────────────────────────────────────────────────────────────
 
-type Tab = "comprar" | "receber" | "historico" | "manuais";
+type Tab = "comprar" | "receber" | "historico";
 
 interface Counts {
   comprar: number;
@@ -82,36 +82,26 @@ interface ComprarResponse {
   excecoes: ExcecaoItem[];
 }
 
-interface ReceberItem {
-  sku: string;
-  descricao: string;
-  imagem_url: string | null;
-  quantidade_comprada: number;
-  quantidade_recebida: number;
-  quantidade_pendente: number;
-  quantidade_excedente: number;
-  aging_dias: number;
-  comprado_em: string | null;
-  pedidos: Array<{
-    pedido_id: string;
-    numero: string;
-    quantidade: number;
-    cliente_nome: string;
-  }>;
+type OrigemDoc = "oc" | "manual";
+
+interface ReceberDoc {
+  origem: OrigemDoc;
+  id: string;
+  qty_pendente: number;
+  criado_em: string | null;
+  custo_total: number | null;
+  href: string;
 }
 
-interface ReceberFornecedor {
+interface ReceberFornecedorGrupo {
   fornecedor: string;
-  galpao_sugerido_nome: string | null;
-  skus_count: number;
-  pendente_count: number;
-  aging_dias: number;
-  itens: ReceberItem[];
+  galpao_nome: string | null;
+  documentos: ReceberDoc[];
 }
 
 interface ReceberResponse {
   counts: Counts;
-  fornecedores: ReceberFornecedor[];
+  fornecedores: ReceberFornecedorGrupo[];
 }
 
 interface HistoricoItem {
@@ -281,12 +271,6 @@ export default function WmsComprasPage() {
           Histórico{" "}
           <span className="wms-vtab-n">{counts?.historico ?? 0}</span>
         </button>
-        <button
-          className={`wms-vtab-btn ${tab === "manuais" ? "is-active" : ""}`}
-          onClick={() => setTab("manuais")}
-        >
-          Manuais
-        </button>
       </div>
 
       {tab === "comprar" && (
@@ -299,12 +283,9 @@ export default function WmsComprasPage() {
       {tab === "receber" && (
         <TabReceber
           query={receberQuery}
-          onMutated={invalidateAll}
-          podeExecutar={podeExecutar}
         />
       )}
       {tab === "historico" && <TabHistorico query={historicoQuery} />}
-      {tab === "manuais" && <AbaManuais />}
 
       {modalManualAberto && (
         <NovaCompraManualModal
@@ -1080,96 +1061,11 @@ function ItemKebab({
 
 function TabReceber({
   query,
-  onMutated,
-  podeExecutar,
 }: {
   query: ReturnType<typeof useQuery<ReceberResponse>>;
-  onMutated: () => void;
-  podeExecutar: boolean;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [receberOverrides, setReceberOverrides] = useState<
-    Map<string, Map<string, number>>
-  >(new Map());
-
-  const data = query.data;
-
-  const toggleExpand = useCallback((fornecedor: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(fornecedor)) next.delete(fornecedor);
-      else next.add(fornecedor);
-      return next;
-    });
-  }, []);
-
-  const setOverride = useCallback(
-    (fornecedor: string, sku: string, value: number) => {
-      setReceberOverrides((prev) => {
-        const next = new Map(prev);
-        const inner = new Map(next.get(fornecedor) ?? new Map());
-        if (Number.isFinite(value)) inner.set(sku, value);
-        else inner.delete(sku);
-        next.set(fornecedor, inner);
-        return next;
-      });
-    },
-    [],
-  );
-
-  const receberMut = useMutation({
-    mutationFn: async (itens: { sku: string; quantidade_recebida: number }[]) => {
-      const r = await sisoFetch("/api/wms/compras/receber", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itens }),
-      });
-      if (!r.ok) {
-        const b = (await r.json().catch(() => ({}))) as { error?: string };
-        throw new Error(b.error || `HTTP ${r.status}`);
-      }
-    },
-    onSuccess: (_d, vars) => {
-      toast.success(
-        `${vars.length} ite${vars.length === 1 ? "m" : "ns"} recebido${
-          vars.length === 1 ? "" : "s"
-        } — reservado${vars.length === 1 ? "" : "s"} ao pedido vinculado`,
-      );
-      setReceberOverrides(new Map());
-      onMutated();
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const receberTodos = useCallback(
-    (f: ReceberFornecedor) => {
-      setReceberOverrides((prev) => {
-        const next = new Map(prev);
-        const inner = new Map<string, number>();
-        for (const it of f.itens) inner.set(it.sku, it.quantidade_pendente);
-        next.set(f.fornecedor, inner);
-        return next;
-      });
-    },
-    [],
-  );
-
-  const confirmarRecebimento = useCallback(
-    (f: ReceberFornecedor) => {
-      const overrides = receberOverrides.get(f.fornecedor);
-      const itens: { sku: string; quantidade_recebida: number }[] = [];
-      for (const it of f.itens) {
-        const qty = overrides?.get(it.sku) ?? it.quantidade_pendente;
-        if (qty > 0) itens.push({ sku: it.sku, quantidade_recebida: qty });
-      }
-      if (itens.length === 0) {
-        toast.error("Nenhuma quantidade pra receber");
-        return;
-      }
-      receberMut.mutate(itens);
-    },
-    [receberOverrides, receberMut],
-  );
+  const router = useRouter();
+  const fornecedores = query.data?.fornecedores ?? [];
 
   if (query.isLoading) {
     return <div className="wms-loading-pane">Carregando…</div>;
@@ -1182,179 +1078,47 @@ function TabReceber({
       </div>
     );
   }
-  if (!data) return null;
-
-  const fornecedores = data.fornecedores ?? [];
 
   if (fornecedores.length === 0) {
-    return (
-      <div className="wms-empty-block">
-        <h3>Nada para receber</h3>
-        <p>Quando itens forem marcados como comprados, eles aparecem aqui aguardando recebimento.</p>
-      </div>
-    );
+    return <div className="wms-empty">Nada pra receber.</div>;
   }
 
   return (
-    <>
-      {fornecedores.map((f) => {
-        const isExpanded = expanded.has(f.fornecedor);
-        const agCls = agingClass(f.aging_dias);
-        const overrides = receberOverrides.get(f.fornecedor);
-        return (
-          <article key={f.fornecedor} className={`wms-frc ${agCls}`}>
-            <div
-              className="wms-frc-h"
-              onClick={() => toggleExpand(f.fornecedor)}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div className="wms-frc-name">{f.fornecedor}</div>
-                <div
-                  className="wms-frc-meta"
-                  style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}
-                >
-                  {f.galpao_sugerido_nome ? (
-                    <span className="wms-pcard-chip is-galpao">
-                      {f.galpao_sugerido_nome}
-                    </span>
-                  ) : null}
-                  <span>·</span>
-                  <span>{f.skus_count} SKUs</span>
-                  <span>·</span>
-                  <span>
-                    {f.pendente_count} pendente
-                    {f.pendente_count === 1 ? "" : "s"}
-                  </span>
-                  <span>·</span>
-                  <span className={`wms-aging-chip ${agCls}`}>
-                    {f.aging_dias}d
-                  </span>
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <Icon name={isExpanded ? "chevron-d" : "chevron-r"} />
-              </div>
-            </div>
-            {isExpanded && (
-              <>
-                <div className="wms-frc-body">
-                  {f.itens.map((item) => {
-                    const qty =
-                      overrides?.get(item.sku) ?? item.quantidade_pendente;
-                    return (
-                      <div
-                        key={item.sku}
-                        className="wms-frc-row"
-                        style={{ cursor: "default" }}
-                      >
-                        <div />
-                        {item.imagem_url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={item.imagem_url}
-                            alt=""
-                            loading="lazy"
-                            className="wms-thumb wms-thumb-sm"
-                          />
-                        ) : (
-                          <div />
-                        )}
-                        <div style={{ minWidth: 0 }}>
-                          <div className="wms-mono" style={{ fontWeight: 600 }}>
-                            {item.sku}
-                          </div>
-                          <div className="wms-pcard-item-desc">
-                            {item.descricao}
-                          </div>
-                          <div
-                            className="wms-td-mute"
-                            style={{ fontSize: 10.5, marginTop: 2 }}
-                          >
-                            {item.comprado_em
-                              ? `Comprado ${fmtRelative(item.comprado_em)}`
-                              : "Comprado recentemente"}
-                          </div>
-                        </div>
-                        <div
-                          className="wms-tar wms-mono"
-                          style={{ fontWeight: 600 }}
-                        >
-                          {fmtNum(item.quantidade_recebida)}/
-                          {fmtNum(item.quantidade_comprada)}
-                          {item.quantidade_excedente > 0 && (
-                            <span
-                              title="Recebimento maior que solicitado. Verifique fornecedor/contagem."
-                              style={{
-                                display: "inline-block",
-                                marginLeft: 6,
-                                padding: "1px 6px",
-                                fontSize: 10,
-                                fontWeight: 600,
-                                borderRadius: 8,
-                                background: "rgba(245, 158, 11, 0.15)",
-                                color: "#b45309",
-                              }}
-                            >
-                              ⚠ +{fmtNum(item.quantidade_excedente)}
-                            </span>
-                          )}
-                        </div>
-                        <input
-                          className="wms-input wms-mono wms-tar"
-                          type="number"
-                          min={0}
-                          max={item.quantidade_pendente}
-                          value={qty}
-                          onChange={(e) =>
-                            setOverride(
-                              f.fornecedor,
-                              item.sku,
-                              Number(e.target.value),
-                            )
-                          }
-                          style={{ width: 80 }}
-                        />
-                        <div />
-                      </div>
-                    );
-                  })}
-                </div>
-                <div
-                  style={{
-                    padding: "10px 14px",
-                    borderTop: "1px solid var(--wms-c-border)",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <button
-                    className="wms-btn wms-btn-sm wms-btn-ghost"
-                    onClick={() => receberTodos(f)}
-                    type="button"
-                  >
-                    Receber todos
-                  </button>
-                  <button
-                    className="wms-btn wms-btn-sm wms-btn-primary"
-                    disabled={receberMut.isPending || !podeExecutar}
-                    title={!podeExecutar ? "Sem permissão pra receber compras" : ""}
-                    onClick={() => confirmarRecebimento(f)}
-                    type="button"
-                  >
-                    <Icon name="check" size={11} />
-                    {receberMut.isPending
-                      ? "Recebendo…"
-                      : "Confirmar recebimento"}
-                  </button>
-                </div>
-              </>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {fornecedores.map((f) => (
+        <article key={f.fornecedor} className="wms-frc">
+          <div className="wms-frc-h">
+            <div className="wms-frc-name">{f.fornecedor}</div>
+            {f.galpao_nome && (
+              <span className="wms-pcard-chip is-galpao">{f.galpao_nome}</span>
             )}
-          </article>
-        );
-      })}
-    </>
+          </div>
+          <div className="wms-frc-body">
+            {f.documentos.map((d) => (
+              <button
+                key={`${d.origem}-${d.id}`}
+                className="wms-frc-row"
+                style={{ cursor: "pointer", width: "100%", textAlign: "left" }}
+                onClick={() => router.push(d.href)}
+                type="button"
+              >
+                <span
+                  className={`wms-badge ${
+                    d.origem === "manual" ? "wms-badge-warn" : "wms-badge-info"
+                  }`}
+                >
+                  {d.origem === "manual" ? "Manual" : "OC"}
+                </span>
+                <span>{d.id.slice(0, 8)}</span>
+                <span>{fmtNum(d.qty_pendente)} un pendente</span>
+                {d.custo_total != null && <span>{fmtBRL(d.custo_total)}</span>}
+                <Icon name="chevron-r" />
+              </button>
+            ))}
+          </div>
+        </article>
+      ))}
+    </div>
   );
 }
 

@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { sisoFetch, usePermissoes } from "@/lib/auth-context";
+import { sisoFetch } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, PageHeader, Field } from "@/components/wms/ui/wms-ui";
 import {
@@ -89,8 +89,6 @@ function ReceberBody() {
   const qc = useQueryClient();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { can } = usePermissoes();
-  const podeReceber = can("operacoes.receber");
   const produtoIdSeed = searchParams.get("produto_id");
   const { data: galpoes } = useGalpoes();
   const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
@@ -462,7 +460,6 @@ function ReceberBody() {
     <ReceberLote
       config={CONFIG_AVULSO}
       galpaoId={galpaoId}
-      galpaoEditavel
       itensIniciais={itensIniciais}
       submit={submit}
       onSuccess={onSuccess}
@@ -470,7 +467,6 @@ function ReceberBody() {
       renderLeftFormExtra={renderLeftFormExtra}
       renderSidebarFooter={renderSidebarFooter}
       validarExtra={validarExtra}
-      podeReceber={podeReceber}
     />
   );
 }

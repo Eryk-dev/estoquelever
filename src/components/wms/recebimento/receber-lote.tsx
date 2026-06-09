@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueries } from "@tanstack/react-query";
+import { usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, Field, fmtNum } from "@/components/wms/ui/wms-ui";
 import {
@@ -70,7 +71,6 @@ export interface ReceberLoteSubmitCtx {
 export interface ReceberLoteProps {
   config: ReceberLoteConfig;
   galpaoId: string;
-  galpaoEditavel: boolean;
   itensIniciais: ReceberLoteItem[];
   /** monta o body e faz o POST; resolve com o resultado pra onSuccess */
   submit: (itens: ReceberLoteItem[], ctx: ReceberLoteSubmitCtx) => Promise<unknown>;
@@ -84,8 +84,6 @@ export interface ReceberLoteProps {
   renderSidebarFooter?: () => React.ReactNode;
   /** validação extra do fluxo (avulso: fornecedor/compradora). true = ok */
   validarExtra?: (itens: ReceberLoteItem[]) => boolean;
-  /** usado pra checar permissão de receber */
-  podeReceber: boolean;
 }
 
 export function ReceberLote({
@@ -98,8 +96,12 @@ export function ReceberLote({
   renderLeftFormExtra,
   renderSidebarFooter,
   validarExtra,
-  podeReceber,
 }: ReceberLoteProps) {
+  // Permissão de receber derivada do config (fonte única). Para avulso,
+  // config.permissaoReceber === 'operacoes.receber'.
+  const { can } = usePermissoes();
+  const podeReceber = can(config.permissaoReceber);
+
   const [lightbox, setLightbox] = useState<{
     imagens: string[];
     sku: string;
@@ -110,13 +112,23 @@ export function ReceberLote({
   const [iniciarRota, setIniciarRota] = useState(false);
   const [entradaDireta, setEntradaDireta] = useState(false);
 
+  // Seed-once dos fluxos pré-definidos: a lista vem async e, depois de seedada,
+  // o operador edita qty/custo/loc. Re-sincronizar a cada nova referência de
+  // itensIniciais atropelaria essas edições — então adota a lista UMA vez, na
+  // primeira vez que ela ficar não-vazia.
+  const predefSeededRef = useRef(false);
+
   // Re-sincroniza com itensIniciais quando o wrapper o atualiza (avulso: seed
   // via ?produto_id= chega async). Só preenche a primeira linha se estiver
   // vazia — não atropela o operador. Para fluxos pré-definidos (OC/manual/
-  // transferência) a lista inteira vem pronta e é adotada quando muda.
+  // transferência) a lista inteira vem pronta e é adotada uma única vez.
   useEffect(() => {
     if (!config.canAddItems) {
-      // Fluxos pré-definidos: adota a lista inteira do wrapper.
+      // Fluxos pré-definidos: seed uma vez, na 1ª vez que itensIniciais chega
+      // não-vazio (no mount ainda está [] enquanto carrega). Depois não
+      // re-sincroniza, pra não atropelar edições do operador.
+      if (predefSeededRef.current || itensIniciais.length === 0) return;
+      predefSeededRef.current = true;
       setItens(itensIniciais);
       return;
     }

@@ -1,4 +1,5 @@
 import type { Produto } from "@/lib/wms/types";
+import type { PermissaoCodigo } from "@/lib/permissions";
 
 /** Item que o componente rico gerencia (superset dos 4 fluxos). */
 export interface ReceberLoteItem {
@@ -40,7 +41,7 @@ export interface ReceberLoteConfig {
   /** roda a query de sugestão de loc (/api/wms/receber?produto_id=). Só avulso. */
   putawaySuggest?: boolean;
   /** código de permissão pra liberar o Confirmar (ex: 'operacoes.receber') */
-  permissaoReceber: string;
+  permissaoReceber: PermissaoCodigo;
   /** chip read-only do header (fornecedor/galpão) nos fluxos pré-definidos */
   headerChips?: { label: string; value: string }[];
 }

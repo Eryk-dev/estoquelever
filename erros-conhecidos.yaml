@@ -434,3 +434,21 @@ erros:
   files:
     - src/lib/agrupamento-service.ts
   tags: [etiqueta, agrupamento, chave-acesso, nota-fiscal, webhook-perdido, nf-completa, retry-etiqueta, mercado-envios]
+
+- id: bipar-embalagem-oc-coluna-data-pedido-inexistente
+  date: 2026-06-09
+  source: bipar-embalagem-oc
+  category: database
+  message: "column siso_pedidos.data_pedido does not exist"
+  cause: >
+    A rota /api/separacao/bipar-embalagem-oc fazia select/order por
+    "data_pedido", coluna que nao existe em siso_pedidos (a coluna real e
+    "data", tipo date; "data_pedido" so existe como alias de resposta em
+    /api/separacao). Todo bip na tela Embalagem Direta OC retornava 500
+    antes de qualquer match de SKU — operador bipava a etiqueta correta
+    e nada acontecia.
+  fix: >
+    Renomeado data_pedido -> data no select e no order by da rota.
+  files:
+    - src/app/api/separacao/bipar-embalagem-oc/route.ts
+  tags: [bipar, embalagem-oc, embalagem-direta, data-pedido, coluna-inexistente, 500, sku]

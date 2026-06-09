@@ -9,7 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
+import { sisoFetch, usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import {
   ExcecoesBannerWms,
@@ -25,7 +25,6 @@ import {
   fmtNum,
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
-import { NovaCompraManualModal } from "@/components/wms/compras/nova-compra-manual-modal";
 
 // ── Tipos ────────────────────────────────────────────────────────────
 
@@ -153,10 +152,7 @@ export default function WmsComprasPage() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { can } = usePermissoes();
-  const { activeGalpaoId } = useAuth();
   const podeExecutar = can("compras.executar");
-
-  const [modalManualAberto, setModalManualAberto] = useState(false);
 
   const tab = ((searchParams?.get("tab") as Tab) ?? "comprar") as Tab;
 
@@ -232,7 +228,7 @@ export default function WmsComprasPage() {
         {podeExecutar && (
           <button
             className="wms-btn wms-btn-primary"
-            onClick={() => setModalManualAberto(true)}
+            onClick={() => router.push("/wms/compras/nova")}
           >
             <Icon name="plus" size={12} />
             Nova compra manual
@@ -287,12 +283,6 @@ export default function WmsComprasPage() {
       )}
       {tab === "historico" && <TabHistorico query={historicoQuery} />}
 
-      {modalManualAberto && (
-        <NovaCompraManualModal
-          galpaoAtivo={activeGalpaoId}
-          onClose={() => setModalManualAberto(false)}
-        />
-      )}
     </>
   );
 }

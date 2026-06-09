@@ -7,6 +7,7 @@ import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
 import { detectarCrossDock } from "@/lib/wms/crossdock-detector";
 import { resolverCustoEntrada } from "./custo-fallback";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
+import { upsertNotaFiscal } from "@/lib/nf-webhook-handler";
 
 export interface ReceberOCItemInput {
   /** ID do siso_pedido_itens vinculado a essa OC */
@@ -17,6 +18,11 @@ export interface ReceberOCItemInput {
   custo_unitario?: number;
   /** Motivo de divergência se qty_real != qty_solicitada */
   motivo_divergencia?: string;
+  /**
+   * NOVO: loc final (entrada direta) ou destino planejado da pendência (dock).
+   * Espelha `ItemRecebimento.localizacao_destino_id` de movimentacoes.ts.
+   */
+  localizacao_destino_id?: string | null;
 }
 
 export interface ReceberOCArgs {
@@ -24,6 +30,17 @@ export interface ReceberOCArgs {
   itens: ReceberOCItemInput[];
   operadorId: string;
   operadorNome: string;
+  /**
+   * NOVO: true = E direto na loc do item (exige loc em todos os itens com
+   * qty>0), sem pendência, sem cross-dock. Espelha `receberEstoque`.
+   */
+  entrada_direta?: boolean;
+  /**
+   * NOVO: NF que chegou com a caixa (opcional). Com valor → upsertNotaFiscal →
+   * nota_fiscal_id nas movs E de compra (NÃO na mov "achado" de excedente).
+   */
+  nf_referencia?: string | null;
+  chave_acesso_nf?: string | null;
 }
 
 export interface ReceberOCResult {
@@ -77,6 +94,32 @@ export async function receberItensViaOC(
       .eq("nome", oc.fornecedor)
       .maybeSingle();
     fornecedorId = (forn?.id as string | null) ?? null;
+  }
+
+  // Entrada direta: valida loc destino presente em TODO item com qty>0 ANTES de
+  // escrever no ledger (espelha receberEstoque em movimentacoes.ts:113-117).
+  if (args.entrada_direta) {
+    const semLoc = args.itens.some(
+      (it) => it.qty_real > 0 && !it.localizacao_destino_id,
+    );
+    if (semLoc) {
+      throw new Error(
+        "entrada direta exige localizacao_destino_id em todos os itens",
+      );
+    }
+  }
+
+  // NF opcional: se chegou referência/chave, garante a linha canônica em
+  // siso_notas_fiscais ANTES do loop e carimba o uuid nas movs E de compra
+  // (mesmo padrão de devolucoes.ts:146-154). Sem NF → warn do ledger continua.
+  let notaFiscalId: string | null = null;
+  if (args.nf_referencia || args.chave_acesso_nf) {
+    notaFiscalId = await upsertNotaFiscal({
+      chave_acesso: args.chave_acesso_nf ?? null,
+      numero: args.nf_referencia ?? null,
+      empresa_id: oc.empresa_id ?? null,
+      tipo: "entrada",
+    });
   }
 
   let itensRecebidos = 0;
@@ -156,11 +199,16 @@ export async function receberItensViaOC(
           : itemReq.qty_real;
       const qtyExcedente = itemReq.qty_real - qtyCompra;
 
+      // Entrada direta: E vai pra loc do item; senão, dock RECEBIMENTO (atual).
+      const locEntradaId = args.entrada_direta
+        ? itemReq.localizacao_destino_id!
+        : locRecebId;
+
       const movE = await inserirMovimentacao({
         tripla: {
           produto_id: produtoWmsId,
           galpao_id: oc.galpao_id,
-          localizacao_id: locRecebId,
+          localizacao_id: locEntradaId,
         },
         tipo: "E",
         // qtyCompra=0 (solicitado já 100% recebido e chega mais) → lança tudo como nf_compra, sem achado.
@@ -177,6 +225,7 @@ export async function receberItensViaOC(
         custo_unitario: custoResolvido,
         fornecedor_id: fornecedorId,
         empresa_compradora_id: oc.empresa_id ?? null,
+        nota_fiscal_id: notaFiscalId,
         motivo: itemReq.motivo_divergencia
           ? `Divergência: ${itemReq.motivo_divergencia}`
           : null,
@@ -192,7 +241,7 @@ export async function receberItensViaOC(
           tripla: {
             produto_id: produtoWmsId,
             galpao_id: oc.galpao_id,
-            localizacao_id: locRecebId,
+            localizacao_id: locEntradaId,
           },
           tipo: "E",
           qty: qtyExcedente,
@@ -216,10 +265,13 @@ export async function receberItensViaOC(
       );
     }
 
+    // Entrada direta: a peça já está acessível na loc final — sem dock, sem
+    // cross-dock, sem pendência de guarda. Pula esse bloco inteiro.
     // Decisão 7 (28/05): detecta demanda viva pra esse SKU+OC e splita
     // pendência em 2 quando há cross-docking. Pendência cross-dock vai
     // pra PACKING; resto vira pendência normal (livre escolha de loc).
     let pendsCriadasItem = 0;
+    if (!args.entrada_direta) {
     try {
       const split = await detectarCrossDock({
         produto_id: produtoWmsId,
@@ -263,6 +315,10 @@ export async function receberItensViaOC(
           produto_id: produtoWmsId,
           galpao_id: oc.galpao_id,
           localizacao_origem_id: locRecebId,
+          // Destino planejado (escolha do operador no dock) — espelha
+          // movimentacoes.ts:201. Cross-dock (pendCross) mantém seu próprio
+          // destino_sugerido_id; aqui aplica só à fração de guarda normal.
+          localizacao_destino_id: itemReq.localizacao_destino_id ?? null,
           mov_entrada_id: movEntradaId,
           qty_inicial: split.qty_guarda_normal,
           origem_tipo: "nf_compra",
@@ -278,6 +334,7 @@ export async function receberItensViaOC(
       throw new Error(
         `falha ao criar pendência de guarda do item ${item.id} (sku ${item.sku}): ${pendErr instanceof Error ? pendErr.message : String(pendErr)}`,
       );
+    }
     }
 
     // Atualiza compra_quantidade_recebida (optimistic lock + flip compra_status)

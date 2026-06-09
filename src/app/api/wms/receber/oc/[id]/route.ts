@@ -11,7 +11,11 @@ interface PostBody {
     qty_real: number;
     custo_unitario?: number;
     motivo_divergencia?: string;
+    localizacao_destino_id?: string | null;
   }>;
+  entrada_direta?: boolean;
+  nf_referencia?: string | null;
+  chave_acesso_nf?: string | null;
 }
 
 /**
@@ -82,10 +86,13 @@ export async function GET(
 /**
  * POST /api/wms/receber/oc/[id]
  *
- * Body: { itens: [{ item_id, qty_real, custo_unitario?, motivo_divergencia? }] }
+ * Body: { itens: [{ item_id, qty_real, custo_unitario?, motivo_divergencia?,
+ *   localizacao_destino_id? }], entrada_direta?, nf_referencia?, chave_acesso_nf? }
  *
  * Gera mov E em RECEBIMENTO + cria pendência de guarda + atualiza
- * compra_quantidade_recebida + fecha OC se completa.
+ * compra_quantidade_recebida + fecha OC se completa. Com `entrada_direta=true`,
+ * a E vai direto na loc do item (sem dock/pendência/cross-dock). NF opcional
+ * carimba nota_fiscal_id nas movs E de compra.
  */
 export async function POST(
   request: NextRequest,
@@ -118,6 +125,9 @@ export async function POST(
       itens: body.itens,
       operadorId: session.id,
       operadorNome: session.nome ?? "—",
+      entrada_direta: body.entrada_direta,
+      nf_referencia: body.nf_referencia,
+      chave_acesso_nf: body.chave_acesso_nf,
     });
     return NextResponse.json(result);
   } catch (err) {

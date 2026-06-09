@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useMutation, useQueries } from "@tanstack/react-query";
 import { usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
@@ -278,6 +279,7 @@ export function ReceberLote({
     },
     onError: (e: Error) => {
       if (onError) onError(e);
+      else toast.error(e.message);
     },
   });
 

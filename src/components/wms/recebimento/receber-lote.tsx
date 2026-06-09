@@ -946,6 +946,7 @@ function ItemLoteRow({
           <LocalizacaoCombo
             galpaoId={galpaoId || null}
             value={locIdAtual}
+            allowCreate={config.locAllowCreate ?? true}
             onChange={(id) => {
               if (!id) return;
               onChange({

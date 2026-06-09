@@ -65,6 +65,7 @@ const CONFIG_AVULSO: ReceberLoteConfig = {
   leftFormVisible: true,
   permissaoReceber: "operacoes.receber",
   putawaySuggest: true,
+  locAllowCreate: true,
 };
 
 interface ReceberResponse {

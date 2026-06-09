@@ -40,6 +40,9 @@ export interface ReceberLoteConfig {
   leftFormVisible: boolean;
   /** roda a query de sugestão de loc (/api/wms/receber?produto_id=). Só avulso. */
   putawaySuggest?: boolean;
+  /** permite criar loc inline no LocalizacaoCombo. Default true (preserva avulso).
+   *  false em transferência (operador escolhe loc EXISTENTE, nunca cria). */
+  locAllowCreate?: boolean;
   /** código de permissão pra liberar o Confirmar (ex: 'operacoes.receber') */
   permissaoReceber: PermissaoCodigo;
   /** chip read-only do header (fornecedor/galpão) nos fluxos pré-definidos */

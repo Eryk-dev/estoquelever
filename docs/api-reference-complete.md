@@ -3872,6 +3872,74 @@ OR
 
 ---
 
+### PATCH /api/wms/compras/itens/fornecedor
+
+**File:** `src/app/api/wms/compras/itens/fornecedor/route.ts`
+
+**Purpose:** Bulk rewrites `fornecedor_oc` (free-text supplier name) for N items. Validates supplier case-insensitively against `siso_fornecedores`, or clears if null/empty. Emits one `compra_fornecedor_alterado` history event per distinct affected pedido.
+
+**Auth:** X-Session-Id (required), must have `compras.executar` permission
+
+**Request Body:**
+```json
+{
+  "item_ids": ["uuid"],
+  "fornecedor_oc": "string | null"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "atualizados": "number"
+}
+```
+
+**Response (400 - Empty item list):**
+```json
+{
+  "error": "item_ids não pode estar vazio"
+}
+```
+
+**Response (400 - Supplier not found):**
+```json
+{
+  "error": "Fornecedor '...' não encontrado em siso_fornecedores"
+}
+```
+
+**Response (401/403 - Auth):**
+```json
+{
+  "error": "Unauthorized" | "Forbidden"
+}
+```
+
+**Business Logic:**
+- Validates item_ids is a non-empty array
+- If fornecedor_oc is provided and non-empty:
+  - Looks up supplier in `siso_fornecedores` (case-insensitive match on `nome`)
+  - Raises 400 if not found
+- Fetches items and groups affected pedidos
+- Updates all items with new `fornecedor_oc` value (or NULL if null/empty)
+- For each distinct affected pedido, inserts one `compra_fornecedor_alterado` history event
+- Returns count of updated items
+
+**Side Effects:**
+- Updates `siso_pedido_itens.fornecedor_oc`
+- Inserts to `siso_historico` with `tipo='compra_fornecedor_alterado'` (one per distinct pedido_id)
+- Logs to `siso_logs`
+
+**Rate Limiting:** None
+
+**Notes:**
+- Idempotent: setting the same fornecedor_oc twice produces the same result
+- History event is emitted per-pedido, not per-item (deduplication by distinct pedido_id)
+
+---
+
 ## Compras Manuais API
 
 > Compra avulsa de fornecedor (**sem pedido de cliente**). Aggregate próprio (`siso_compras_manuais` + `siso_compras_manuais_itens`), separado da OC ligada a pedido. O recebimento gera mov `E` reusando `origem_tipo='nf_compra'` (whitelist do custo médio), distinguido por `origem_detalhes.origem='compra_manual'`, **sem NF**. Lib de domínio: `src/lib/wms/compras-manuais.ts`. Frontend: aba "Manuais" em `src/app/wms/compras/page.tsx`.

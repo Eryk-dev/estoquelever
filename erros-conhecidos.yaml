@@ -4319,3 +4319,21 @@ erros:
     - src/app/api/wms/separacao/iniciar/route.ts
     - src/lib/wms/reconciliador-oc.test.ts
   tags: [oc, reconciliador, separacao, em_separacao, saldo-tardio, wms-source-of-truth]
+
+  - id: COMPRAS-FORNECEDOR-IMUTAVEL
+    date: "2026-06-09"
+    source: refactor-compras-recebimento
+    category: business_logic
+    message: >
+      Comprador não conseguia trocar o fornecedor de um item quando o prefixo do SKU
+      casava com fornecedor errado
+    cause: >
+      fornecedor_oc setado 1x no intake do webhook (getFornecedorBySku, PREFIX_MAP
+      hardcoded) sem endpoint de override
+    fix: >
+      PATCH /api/wms/compras/itens/fornecedor (bulk por item_ids) + ação 'Trocar
+      fornecedor' no kebab
+    files:
+      - src/app/api/wms/compras/itens/fornecedor/route.ts
+      - src/app/wms/compras/page.tsx
+    tags: [compras, fornecedor, prefixo]

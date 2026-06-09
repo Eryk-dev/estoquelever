@@ -25,11 +25,13 @@ export async function POST(
     const r = await receberCompraManual({
       compra_id: id,
       usuario_id: session.id,
-      itens: body.itens.map((it: { item_id: string; qty_recebida: number; custo_unitario?: number }) => ({
+      itens: body.itens.map((it: { item_id: string; qty_recebida: number; custo_unitario?: number; localizacao_destino_id?: string | null }) => ({
         item_id: it.item_id,
         qty_recebida: Number(it.qty_recebida),
         custo_unitario: it.custo_unitario != null ? Number(it.custo_unitario) : null,
+        localizacao_destino_id: it.localizacao_destino_id ?? null,
       })),
+      entrada_direta: body.entrada_direta === true,
     });
     return NextResponse.json({ ok: true, ...r });
   } catch (e) {

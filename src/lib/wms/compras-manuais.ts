@@ -230,12 +230,23 @@ export interface ReceberCompraManualInput {
     item_id: string;
     qty_recebida: number;
     custo_unitario?: number | null;
+    /** NOVO: loc final (entrada direta) ou destino planejado da pendência (dock). */
+    localizacao_destino_id?: string | null;
   }>;
+  /**
+   * NOVO: true = E direto na loc do item (exige loc em todos os itens com
+   * qty>0), sem pendência. Espelha `receberEstoque` em movimentacoes.ts.
+   */
+  entrada_direta?: boolean;
 }
 
 export interface ReceberCompraManualResult {
   movs_geradas: number;
   status: StatusCompraManual;
+  /** IDs das pendências de put-away criadas (dock path). [] em entrada direta. */
+  pendencia_ids: string[];
+  /** IDs das movimentações de entrada criadas. */
+  mov_ids: string[];
 }
 
 /**
@@ -260,22 +271,32 @@ async function gravarMovEntradaCompraManual(args: {
   compra_id: string;
   compra_item_id: string;
   usuario_id: string;
-}): Promise<void> {
+  /** NOVO: quando true, E vai direto pra localizacao_destino_id (sem pendência). */
+  entrada_direta?: boolean;
+  /** NOVO: loc final (entrada direta) ou destino planejado da pendência (dock). */
+  localizacao_destino_id?: string | null;
+}): Promise<{ mov_id: string; pendencia_id: string | null }> {
   const sb = createServiceClient();
 
-  const { data: loc } = await sb
-    .from("siso_localizacoes")
-    .select("id")
-    .eq("galpao_id", args.galpao_id)
-    .eq("tipo", "recebimento")
-    .eq("ativo", true)
-    .limit(1)
-    .maybeSingle();
-  const locId = (loc as { id?: string } | null)?.id;
-  if (!locId) {
-    throw new Error(
-      `galpão ${args.galpao_id} sem loc tipo='recebimento' ativa — semear DEFAULT-RECEBIMENTO`,
-    );
+  // Entrada direta: E vai pra loc escolhida pelo operador — sem dock, sem
+  // pendência de guarda. Loc de recebimento é buscada apenas no caminho dock
+  // (necessária pra criar a pendência).
+  let locRecebId: string | undefined;
+  if (!args.entrada_direta) {
+    const { data: loc } = await sb
+      .from("siso_localizacoes")
+      .select("id")
+      .eq("galpao_id", args.galpao_id)
+      .eq("tipo", "recebimento")
+      .eq("ativo", true)
+      .limit(1)
+      .maybeSingle();
+    locRecebId = (loc as { id?: string } | null)?.id;
+    if (!locRecebId) {
+      throw new Error(
+        `galpão ${args.galpao_id} sem loc tipo='recebimento' ativa — semear DEFAULT-RECEBIMENTO`,
+      );
+    }
   }
 
   const custoResolvido = await resolverCustoEntrada({
@@ -283,11 +304,16 @@ async function gravarMovEntradaCompraManual(args: {
     custo_informado: args.custo_unitario ?? 0,
   });
 
+  // Entrada direta → E na loc do item; dock → E em RECEBIMENTO (atual).
+  const locEntradaId = args.entrada_direta
+    ? args.localizacao_destino_id!
+    : locRecebId!;
+
   const mov = await inserirMovimentacao({
     tripla: {
       produto_id: args.produto_id,
       galpao_id: args.galpao_id,
-      localizacao_id: locId,
+      localizacao_id: locEntradaId,
     },
     tipo: "E",
     qty: args.qty,
@@ -305,21 +331,30 @@ async function gravarMovEntradaCompraManual(args: {
     usuario_id: args.usuario_id,
   });
 
+  // Entrada direta: a peça já está na loc final — sem pendência de guarda.
+  if (args.entrada_direta) {
+    return { mov_id: mov.id, pendencia_id: null };
+  }
+
   // Defense-in-depth (igual movimentacoes.receberEstoque): se a criação da
   // pendência falhar, estorna a mov de entrada pra não deixar saldo órfão na
   // loc RECEBIMENTO sem pendência. Relança pra o caller reverter o qty bump —
   // resultado líquido: nada aconteceu pra esse item.
   try {
-    await criarPendencia({
+    const pendenciaId = await criarPendencia({
       produto_id: args.produto_id,
       galpao_id: args.galpao_id,
-      localizacao_origem_id: locId,
+      localizacao_origem_id: locRecebId!,
+      // Destino planejado (escolha do operador na tela) — espelha
+      // movimentacoes.ts:201.
+      localizacao_destino_id: args.localizacao_destino_id ?? null,
       mov_entrada_id: mov.id,
       qty_inicial: args.qty,
       origem_tipo: "nf_compra",
       custo_unitario: custoResolvido,
       criada_por: args.usuario_id,
     });
+    return { mov_id: mov.id, pendencia_id: pendenciaId };
   } catch (err) {
     try {
       await estornarMovimentacao({
@@ -386,7 +421,22 @@ export async function receberCompraManual(
     throw new Error("compra cancelada não pode receber");
   }
 
+  // Entrada direta: valida loc destino presente em TODO item com qty>0 ANTES de
+  // escrever no ledger (espelha receberEstoque em movimentacoes.ts:113-117).
+  if (input.entrada_direta) {
+    const semLoc = input.itens.some(
+      (it) => Number(it.qty_recebida) > 0 && !it.localizacao_destino_id,
+    );
+    if (semLoc) {
+      throw new Error(
+        "entrada direta exige localizacao_destino_id em todos os itens",
+      );
+    }
+  }
+
   let movsGeradas = 0;
+  const pendenciaIds: string[] = [];
+  const movIds: string[] = [];
 
   for (const reqItem of input.itens) {
     const qty = Number(reqItem.qty_recebida);
@@ -438,7 +488,7 @@ export async function receberCompraManual(
 
     // 2) mov E; se falhar, reverte o bump
     try {
-      await gravarMovEntradaCompraManual({
+      const result = await gravarMovEntradaCompraManual({
         produto_id: it.produto_id,
         galpao_id: c.galpao_id,
         fornecedor_id: c.fornecedor_id,
@@ -448,8 +498,12 @@ export async function receberCompraManual(
         compra_id: c.id,
         compra_item_id: it.id,
         usuario_id: input.usuario_id,
+        entrada_direta: input.entrada_direta,
+        localizacao_destino_id: reqItem.localizacao_destino_id ?? null,
       });
       movsGeradas++;
+      movIds.push(result.mov_id);
+      if (result.pendencia_id) pendenciaIds.push(result.pendencia_id);
     } catch (movErr) {
       const { error: revertErr } = await sb
         .from("siso_compras_manuais_itens")
@@ -490,7 +544,7 @@ export async function receberCompraManual(
     })
     .eq("id", input.compra_id);
 
-  return { movs_geradas: movsGeradas, status: novoStatus };
+  return { movs_geradas: movsGeradas, status: novoStatus, pendencia_ids: pendenciaIds, mov_ids: movIds };
 }
 
 export type CancelarResult =

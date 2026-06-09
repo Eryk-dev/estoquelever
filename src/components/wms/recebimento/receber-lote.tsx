@@ -171,15 +171,18 @@ export function ReceberLote({
   // 3D: só produto_id + galpao_id (sem empresa).
   const putawaySuggest = !!config.putawaySuggest;
   const putawayQueries = useQueries({
-    queries: itens.map((it) => ({
-      queryKey: ["wms-receber-lote-putaway", it.produto?.id, galpaoId],
-      queryFn: () =>
-        wmsApi<PutawayResp>(
-          `/api/wms/receber?produto_id=${it.produto!.id}&galpao_id=${galpaoId}`,
-        ),
-      enabled: putawaySuggest && !!(it.produto?.id && galpaoId),
-      staleTime: 30 * 1000,
-    })),
+    queries: itens.map((it) => {
+      const prodId = it.produto?.id ?? it.produtoWmsId;
+      return {
+        queryKey: ["wms-receber-lote-putaway", prodId, galpaoId],
+        queryFn: () =>
+          wmsApi<PutawayResp>(
+            `/api/wms/receber?produto_id=${prodId}&galpao_id=${galpaoId}`,
+          ),
+        enabled: putawaySuggest && !!(prodId && galpaoId),
+        staleTime: 30 * 1000,
+      };
+    }),
   });
 
   // Plano de guarda: agrupa por loc destino (resolvida ou pendente)
@@ -293,6 +296,10 @@ export function ReceberLote({
   const temProduto = (it: ReceberLoteItem) => !!it.produto || !!it.sku;
   const itensValidos = itens.filter((it) => {
     if (!temProduto(it)) return false;
+    // Linha pré-definida com qty 0 = "não veio" (recebimento parcial). É válida
+    // — os adapters filtram qty<=0 do payload — e não exige custo/loc.
+    const naoVeio = it.backendItemId != null && Number(it.qty) === 0;
+    if (naoVeio) return true;
     // qty > 0 sempre exigida (editável ou fixa)
     if (!it.qty || Number(it.qty) <= 0) return false;
     if (config.custoObrigatorio) {
@@ -313,6 +320,10 @@ export function ReceberLote({
     extraOk &&
     itensValidos.length > 0 &&
     itensValidos.length === itens.filter(temProduto).length &&
+    // o lote não pode ser todo qty 0 (todas as linhas "não veio")
+    itens.some((it) => Number(it.qty) > 0) &&
+    // entrada direta exige loc só nas linhas que de fato vêm (qty>0); totaisPlano
+    // já só conta linhas qty>0.
     (!entradaDireta || totaisPlano.semLoc === 0);
 
   // ── helpers de manipulação de itens (avulso) ─────────────────────────
@@ -583,38 +594,42 @@ export function ReceberLote({
                 </span>
               </label>
             )}
-            <label
-              style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
-            >
-              <input
-                type="checkbox"
-                checked={entradaDireta}
-                onChange={(e) => {
-                  setEntradaDireta(e.target.checked);
-                  if (e.target.checked) setIniciarRota(false);
-                }}
-              />
-              <span>
-                Entrada direta <span className="wms-td-mute">(pula a guarda)</span>
-              </span>
-            </label>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                cursor: entradaDireta ? "not-allowed" : "pointer",
-                opacity: entradaDireta ? 0.5 : 1,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={iniciarRota}
-                disabled={entradaDireta}
-                onChange={(e) => setIniciarRota(e.target.checked)}
-              />
-              Já abrir a rota de guarda do lote
-            </label>
+            {config.guardaTogglesVisible !== false && (
+              <>
+                <label
+                  style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={entradaDireta}
+                    onChange={(e) => {
+                      setEntradaDireta(e.target.checked);
+                      if (e.target.checked) setIniciarRota(false);
+                    }}
+                  />
+                  <span>
+                    Entrada direta <span className="wms-td-mute">(pula a guarda)</span>
+                  </span>
+                </label>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    cursor: entradaDireta ? "not-allowed" : "pointer",
+                    opacity: entradaDireta ? 0.5 : 1,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={iniciarRota}
+                    disabled={entradaDireta}
+                    onChange={(e) => setIniciarRota(e.target.checked)}
+                  />
+                  Já abrir a rota de guarda do lote
+                </label>
+              </>
+            )}
           </div>
 
           <button
@@ -628,7 +643,7 @@ export function ReceberLote({
             <Icon name="check" size={11} />
             {submitMut.isPending
               ? "Enviando…"
-              : `Confirmar lote (${itensValidos.length})`}
+              : `${config.confirmLabel ?? "Confirmar lote"} (${itensValidos.length})`}
           </button>
 
           {renderSidebarFooter?.()}
@@ -646,7 +661,7 @@ export function ReceberLote({
             <Icon name="check" size={11} />
             {submitMut.isPending
               ? "Enviando…"
-              : `Confirmar (${itensValidos.length})`}
+              : `${config.confirmLabel ?? "Confirmar lote"} (${itensValidos.length})`}
           </button>
         </div>
       )}
@@ -701,6 +716,9 @@ function ItemLoteRow({
   const descDisplay = item.produto?.descricao ?? item.descricao;
   const imgDisplay = item.produto?.imagem_url ?? item.imagem_url;
   const temProduto = !!item.produto || !!item.sku;
+  // Trava o produto por linha: ou o config não permite editar, ou a linha veio
+  // do backend (OC/manual/transferência) — nesse caso o SKU é fixo.
+  const productLocked = !config.productEditable || item.backendItemId != null;
   const divergiu =
     config.divergenciaVisible &&
     item.qtyEsperada != null &&
@@ -743,7 +761,7 @@ function ItemLoteRow({
           </label>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          {config.productEditable ? (
+          {!productLocked ? (
             <ProdutoCombo
               value={item.produto}
               onChange={(p) =>
@@ -788,15 +806,42 @@ function ItemLoteRow({
           )}
         </div>
         {config.qtyEditable ? (
-          <input
-            className="wms-input wms-mono wms-tar"
-            type="number"
-            min={1}
-            value={item.qty}
-            style={{ width: 80 }}
-            onChange={(e) => onChange({ ...item, qty: e.target.value })}
-            placeholder="qty"
-          />
+          item.qtyEsperada != null ? (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-end",
+                gap: 2,
+              }}
+            >
+              <input
+                className="wms-input wms-mono wms-tar"
+                type="number"
+                min={1}
+                value={item.qty}
+                style={{ width: 80 }}
+                onChange={(e) => onChange({ ...item, qty: e.target.value })}
+                placeholder="qty"
+              />
+              <span
+                className="wms-td-mute"
+                style={{ fontSize: 11, whiteSpace: "nowrap" }}
+              >
+                era pra vir {fmtNum(item.qtyEsperada)}
+              </span>
+            </div>
+          ) : (
+            <input
+              className="wms-input wms-mono wms-tar"
+              type="number"
+              min={1}
+              value={item.qty}
+              style={{ width: 80 }}
+              onChange={(e) => onChange({ ...item, qty: e.target.value })}
+              placeholder="qty"
+            />
+          )
         ) : (
           <span className="wms-mono wms-tar" style={{ width: 80, fontSize: 13 }}>
             {fmtNum(Number(item.qty))} un
@@ -813,7 +858,7 @@ function ItemLoteRow({
             onChange={(e) => onChange({ ...item, custo: e.target.value })}
           />
         )}
-        {config.canAddItems && (
+        {config.canAddItems && item.backendItemId == null && (
           <button
             type="button"
             className="wms-btn-icon"

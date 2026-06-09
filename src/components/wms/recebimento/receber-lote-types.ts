@@ -50,4 +50,11 @@ export interface ReceberLoteConfig {
   permissaoReceber: PermissaoCodigo | PermissaoCodigo[];
   /** chip read-only do header (fornecedor/galpão) nos fluxos pré-definidos */
   headerChips?: { label: string; value: string }[];
+  /** rótulo do botão Confirmar (idle). Default "Confirmar lote".
+   *  Ex.: OC usa "Confirmar recebimento". */
+  confirmLabel?: string;
+  /** mostra os toggles entrada-direta/iniciar-rota na sidebar. Default true.
+   *  false em transferência: entrada é sempre direta no backend e não há rota
+   *  de guarda, então os toggles não fazem sentido. */
+  guardaTogglesVisible?: boolean;
 }

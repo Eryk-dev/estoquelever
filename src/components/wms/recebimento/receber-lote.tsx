@@ -60,6 +60,7 @@ export function emptyReceberLoteItem(): ReceberLoteItem {
     locCodigoOverride: null,
     imprimir: true,
     motivoDivergencia: null,
+    produtoWmsId: null,
   };
 }
 

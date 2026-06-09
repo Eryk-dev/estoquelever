@@ -76,6 +76,7 @@ export default function ReceberManualDetalhePage() {
         locCodigoOverride: null,
         imprimir: false,
         motivoDivergencia: null,
+        produtoWmsId: null,
       }));
   }, [compra]);
 
@@ -107,7 +108,7 @@ export default function ReceberManualDetalhePage() {
     const r = await sisoFetch(`/api/wms/compras-manuais/${id}/receber`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildManualPayload(itens)),
+      body: JSON.stringify(buildManualPayload(itens, { entradaDireta: false })),
     });
     if (!r.ok) {
       const b = await r.json().catch(() => ({}));

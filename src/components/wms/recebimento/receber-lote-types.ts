@@ -20,6 +20,8 @@ export interface ReceberLoteItem {
   locCodigoOverride: string | null;
   imprimir: boolean;
   motivoDivergencia: string | null;
+  /** uuid WMS do produto pra sugestão de putaway em linhas pré-definidas (OC/manual/transf) */
+  produtoWmsId: string | null;
 }
 
 export type FluxoReceber = "avulso" | "oc" | "manual" | "transferencia";

@@ -77,6 +77,7 @@ export default function ReceberTransferenciaDetalhePage() {
       locCodigoOverride: null,
       imprimir: false,
       motivoDivergencia: null,
+      produtoWmsId: null,
     }));
   }, [transferencia]);
 

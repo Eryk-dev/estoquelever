@@ -74,6 +74,7 @@ export default function ReceberOCDetalhePage() {
         locCodigoOverride: null,
         imprimir: false,
         motivoDivergencia: null,
+        produtoWmsId: null,
       }));
   }, [data]);
 
@@ -105,7 +106,7 @@ export default function ReceberOCDetalhePage() {
     const r = await sisoFetch(`/api/wms/receber/oc/${id}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildOcPayload(itens)),
+      body: JSON.stringify(buildOcPayload(itens, { entradaDireta: false })),
     });
     if (!r.ok) {
       const b = await r.json().catch(() => ({}));

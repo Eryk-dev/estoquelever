@@ -664,11 +664,7 @@ async function fetchHistorico(
   // o volume atual (poucos manuais), adicioná-las na 1ª página é suficiente.
   if (cursor == null) {
     const manuais = await listarComprasManuais("recebido");
-    if (manuais.length > 0) {
-      logger.info("compras.tab-historico", "compras manuais recebidas incluídas na 1ª página", {
-        count: manuais.length,
-      });
-    }
+    // Limitação: manuais recebidos só entram na 1ª página (cursor pagina só OC).
     for (const m of manuais) {
       const fornecedor = m.fornecedor?.nome ?? "Sem fornecedor";
       for (const it of m.itens) {

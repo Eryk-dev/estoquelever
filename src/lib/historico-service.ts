@@ -89,6 +89,7 @@ export type EventoPedido =
   | "compra_item_cancelado"
   | "compra_item_equivalente_aplicado"
   | "compra_sku_trocado"
+  | "compra_fornecedor_alterado"
   | "compra_pedido_cancelado"
   | "guarda_pendencia_criada"
   | "guarda_pendencia_confirmada"

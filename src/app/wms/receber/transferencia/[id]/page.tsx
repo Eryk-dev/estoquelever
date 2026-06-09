@@ -5,8 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { sisoFetch } from "@/lib/auth-context";
-import { PageHeader } from "@/components/wms/ui/wms-ui";
-import { ReceberLote } from "@/components/wms/recebimento/receber-lote";
+import { PageHeader, Field } from "@/components/wms/ui/wms-ui";
+import {
+  ReceberLote,
+  type ReceberLoteSubmitCtx,
+} from "@/components/wms/recebimento/receber-lote";
 import { buildTransferenciaPayload } from "@/components/wms/recebimento/receber-lote-adapters";
 import type {
   ReceberLoteConfig,
@@ -39,6 +42,8 @@ interface TransferenciaDetailResponse {
   transferencia: TransferenciaInfo;
 }
 
+const JSONH = { "Content-Type": "application/json" };
+
 export default function ReceberTransferenciaDetalhePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -61,6 +66,8 @@ export default function ReceberTransferenciaDetalhePage() {
   const transferencia = data?.transferencia;
 
   // Itens já vêm filtrados pra pendentes (mov_entrada_id IS NULL) no backend.
+  // qty é FIXA (qtyEditable:false) — o número mostrado É o que vem; sem display "era pra vir".
+  // produtoWmsId habilita a sugestão de putaway por item.
   const itensIniciais = useMemo<ReceberLoteItem[]>(() => {
     if (!transferencia?.itens) return [];
     return transferencia.itens.map((it) => ({
@@ -70,14 +77,14 @@ export default function ReceberTransferenciaDetalhePage() {
       descricao: it.descricao ?? "",
       imagem_url: null,
       backendItemId: it.id,
+      produtoWmsId: it.produto_id, // uuid WMS direto do ledger 3D
       qty: String(it.qty),
-      qtyEsperada: it.qty,
+      qtyEsperada: null, // qty fixa; sem "era pra vir"
       custo: "",
       locIdOverride: null,
       locCodigoOverride: null,
       imprimir: false,
       motivoDivergencia: null,
-      produtoWmsId: null,
     }));
   }, [transferencia]);
 
@@ -92,24 +99,75 @@ export default function ReceberTransferenciaDetalhePage() {
       custoObrigatorio: false,
       locPickVisible: true,
       locObrigatoria: true,
-      divergenciaVisible: false,
-      imprimirVisible: false,
-      mlBlockVisible: true,
-      planoSidebarVisible: false,
-      leftFormVisible: false,
-      permissaoReceber: "operacoes.receber",
       locAllowCreate: false,
-      headerChips: [
-        { label: "Origem", value: transferencia.origem_nome ?? "—" },
-        { label: "Destino", value: transferencia.destino_nome ?? "—" },
-      ],
+      putawaySuggest: true,
+      divergenciaVisible: false,
+      imprimirVisible: true,
+      mlBlockVisible: true,
+      planoSidebarVisible: true,
+      leftFormVisible: true,
+      guardaTogglesVisible: false,
+      permissaoReceber: "operacoes.receber",
+      confirmLabel: "Confirmar recebimento",
     };
   }, [transferencia]);
 
+  // ── Left form travado: Origem, Destino, datas e observações ─────────────
+  function renderLeftFormExtra() {
+    if (!transferencia) return null;
+    const criadaEm = transferencia.criada_em
+      ? new Date(transferencia.criada_em).toLocaleString("pt-BR", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : null;
+    return (
+      <>
+        <div className="wms-row-2">
+          <Field label="Origem">
+            <input
+              className="wms-input"
+              value={transferencia.origem_nome ?? "—"}
+              disabled
+            />
+          </Field>
+          <Field label="Destino">
+            <input
+              className="wms-input"
+              value={transferencia.destino_nome ?? "—"}
+              disabled
+            />
+          </Field>
+        </div>
+
+        {criadaEm && (
+          <Field label="Criada em">
+            <input className="wms-input" value={criadaEm} disabled />
+          </Field>
+        )}
+
+        {transferencia.observacoes && (
+          <Field label="Observações">
+            <input
+              className="wms-input"
+              value={transferencia.observacoes}
+              disabled
+            />
+          </Field>
+        )}
+      </>
+    );
+  }
+
+  // ── Submit: buildTransferenciaPayload (contrato UNCHANGED) ──────────────
+  // 409 TRANSFERENCIA_OUTRO_RECEBIMENTO é surfaced via throw.
   async function submit(itens: ReceberLoteItem[]) {
     const r = await sisoFetch(`/api/wms/transferencias/${id}/receber`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: JSONH,
       body: JSON.stringify(buildTransferenciaPayload(itens)),
     });
     if (!r.ok) {
@@ -119,7 +177,57 @@ export default function ReceberTransferenciaDetalhePage() {
     return r.json();
   }
 
-  function onSuccess() {
+  // ── onSuccess: print por linhas (transferência é E direto; sem pendência) ─
+  // Monta `linhas` no front com sku/qty/loc dos próprios itens — zero backend.
+  function onSuccess(
+    _resp: unknown,
+    itens: ReceberLoteItem[],
+    ctx: ReceberLoteSubmitCtx,
+  ) {
+    const linhas = itens
+      .filter((it) => {
+        if (!it.imprimir) return false;
+        if (Number(it.qty) <= 0) return false;
+        const prodId = it.produto?.id ?? it.produtoWmsId;
+        return !!prodId;
+      })
+      .map((it) => ({
+        produto_id: (it.produto?.id ?? it.produtoWmsId)!,
+        galpao_id: ctx.galpaoId,
+        qty: Number(it.qty),
+        localizacao_id: it.locIdOverride ?? undefined,
+      }));
+
+    if (linhas.length > 0) {
+      sisoFetch("/api/wms/guarda/imprimir-lote", {
+        method: "POST",
+        headers: JSONH,
+        body: JSON.stringify({ linhas }),
+      })
+        .then(async (r) => {
+          if (!r.ok) {
+            const body = (await r.json().catch(() => ({}))) as {
+              error?: string;
+            };
+            toast.warning(
+              `Recebimento ok, falha impressão: ${body.error ?? r.status}`,
+            );
+            return;
+          }
+          const res = (await r.json()) as {
+            totalEtiquetas?: number;
+            totalFolhas?: number;
+            fallbackEnvelope?: boolean;
+          };
+          toast.success(
+            `${res.totalEtiquetas ?? 0} etiquetas em ${res.totalFolhas ?? 0} folhas${res.fallbackEnvelope ? " (impressora de envio — configure uma de produto)" : ""}`,
+          );
+        })
+        .catch((err: Error) => {
+          toast.warning(`Recebimento ok, falha impressão: ${err.message}`);
+        });
+    }
+
     toast.success("Recebimento registrado");
     router.push("/wms/receber/transferencia");
   }
@@ -152,7 +260,7 @@ export default function ReceberTransferenciaDetalhePage() {
         title={`Transferência ${transferencia.id.slice(0, 8)}`}
         subtitle={`${transferencia.origem_nome ?? "—"} → ${transferencia.destino_nome ?? "—"} · ${transferencia.status}`}
       />
-      <div className="px-4 pb-12 max-w-4xl mx-auto pt-4">
+      <div className="px-4 pb-12 max-w-5xl mx-auto pt-4">
         <ReceberLote
           config={config}
           galpaoId={transferencia.galpao_destino_id}
@@ -160,6 +268,7 @@ export default function ReceberTransferenciaDetalhePage() {
           submit={submit}
           onSuccess={onSuccess}
           onError={(e) => toast.error(e.message)}
+          renderLeftFormExtra={renderLeftFormExtra}
         />
       </div>
     </>

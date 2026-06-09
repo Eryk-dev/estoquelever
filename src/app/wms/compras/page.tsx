@@ -1080,7 +1080,12 @@ function TabReceber({
   }
 
   if (fornecedores.length === 0) {
-    return <div className="wms-empty">Nada pra receber.</div>;
+    return (
+      <div className="wms-empty-block">
+        <h3>Nada pra receber.</h3>
+        <p>Documentos pendentes de recebimento aparecem aqui.</p>
+      </div>
+    );
   }
 
   return (
@@ -1112,6 +1117,7 @@ function TabReceber({
                 <span>{d.id.slice(0, 8)}</span>
                 <span>{fmtNum(d.qty_pendente)} un pendente</span>
                 {d.custo_total != null && <span>{fmtBRL(d.custo_total)}</span>}
+                {d.criado_em && <span>{fmtRelative(d.criado_em)}</span>}
                 <Icon name="chevron-r" />
               </button>
             ))}

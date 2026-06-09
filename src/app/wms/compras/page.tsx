@@ -16,7 +16,9 @@ import {
   type ExcecaoItem,
 } from "@/components/wms/vendas/excecoes-banner-wms";
 import {
+  Field,
   Icon,
+  Modal,
   PageHeader,
   fmtDateTime,
   fmtNum,
@@ -541,6 +543,46 @@ function TabComprar({
     },
   });
 
+  // Trocar fornecedor do item
+  const fornecedoresQuery = useQuery<{ rows: { id: string; nome: string }[] }>({
+    queryKey: ["compras-manuais-fornecedores"],
+    queryFn: async () => {
+      const r = await sisoFetch("/api/wms/fornecedores");
+      if (!r.ok) throw new Error("falha ao listar fornecedores");
+      return (await r.json()) as { rows: { id: string; nome: string }[] };
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const [trocaFornAlvo, setTrocaFornAlvo] = useState<ComprarItem | null>(null);
+  const [trocaFornNome, setTrocaFornNome] = useState("");
+
+  const trocarFornecedorMut = useMutation({
+    mutationFn: async (args: { itemIds: string[]; fornecedor_oc: string }) => {
+      const r = await sisoFetch("/api/wms/compras/itens/fornecedor", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_ids: args.itemIds, fornecedor_oc: args.fornecedor_oc }),
+      });
+      if (!r.ok) {
+        const b = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error || `HTTP ${r.status}`);
+      }
+    },
+    onSuccess: () => {
+      toast.success("Fornecedor atualizado");
+      setTrocaFornAlvo(null);
+      setTrocaFornNome("");
+      onMutated();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const onTrocarFornecedor = useCallback((item: ComprarItem) => {
+    setTrocaFornAlvo(item);
+    setTrocaFornNome("");
+  }, []);
+
   // Bulk action: marcar como comprados
   const allItensBySku = useMemo(() => {
     const map = new Map<string, ComprarItem>();
@@ -839,6 +881,7 @@ function TabComprar({
                           onPropostaCancelamento={() =>
                             onPropostaCancelamento(item)
                           }
+                          onTrocarFornecedor={() => onTrocarFornecedor(item)}
                         />
                       </div>
                     );
@@ -897,6 +940,48 @@ function TabComprar({
           </div>
         </div>
       )}
+
+      {trocaFornAlvo && (
+        <Modal
+          title={`Trocar fornecedor — ${trocaFornAlvo.sku}`}
+          onClose={() => setTrocaFornAlvo(null)}
+        >
+          <Field label="Novo fornecedor">
+            <select
+              className="wms-select"
+              value={trocaFornNome}
+              onChange={(e) => setTrocaFornNome(e.target.value)}
+              autoFocus
+            >
+              <option value="">Escolha um fornecedor…</option>
+              {(fornecedoresQuery.data?.rows ?? []).map((f) => (
+                <option key={f.id} value={f.nome}>{f.nome}</option>
+              ))}
+            </select>
+          </Field>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+            <button
+              className="wms-btn wms-btn-ghost"
+              onClick={() => setTrocaFornAlvo(null)}
+              type="button"
+            >
+              Cancelar
+            </button>
+            <button
+              className="wms-btn wms-btn-primary"
+              disabled={!trocaFornNome || trocarFornecedorMut.isPending}
+              onClick={() => {
+                const itemIds = trocaFornAlvo.pedidos.map((p) => p.item_id);
+                if (itemIds.length === 0) return;
+                trocarFornecedorMut.mutate({ itemIds, fornecedor_oc: trocaFornNome });
+              }}
+              type="button"
+            >
+              {trocarFornecedorMut.isPending ? "Salvando…" : "Trocar"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
@@ -905,9 +990,11 @@ function TabComprar({
 function ItemKebab({
   onIndisponivel,
   onPropostaCancelamento,
+  onTrocarFornecedor,
 }: {
   onIndisponivel: () => void;
   onPropostaCancelamento: () => void;
+  onTrocarFornecedor: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -973,6 +1060,18 @@ function ItemKebab({
             >
               <Icon name="alert" size={11} />
               Propor cancelamento
+            </button>
+            <button
+              className="wms-btn wms-btn-ghost wms-btn-sm"
+              style={{ justifyContent: "flex-start" }}
+              onClick={() => {
+                setOpen(false);
+                onTrocarFornecedor();
+              }}
+              type="button"
+            >
+              <Icon name="edit" size={11} />
+              Trocar fornecedor
             </button>
           </div>
         </>

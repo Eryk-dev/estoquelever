@@ -37,6 +37,8 @@ export interface ReceberLoteConfig {
   mlBlockVisible: boolean;
   planoSidebarVisible: boolean;
   leftFormVisible: boolean;
+  /** roda a query de sugestão de loc (/api/wms/receber?produto_id=). Só avulso. */
+  putawaySuggest?: boolean;
   /** código de permissão pra liberar o Confirmar (ex: 'operacoes.receber') */
   permissaoReceber: string;
   /** chip read-only do header (fornecedor/galpão) nos fluxos pré-definidos */

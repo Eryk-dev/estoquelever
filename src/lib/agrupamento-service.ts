@@ -300,12 +300,27 @@ export async function criarAgrupamentoFase1(pedidoId: string): Promise<void> {
 
   // Gate: both NF fields must be persisted
   if (!pedido.nota_fiscal_id || !pedido.chave_acesso_nf) {
-    logger.info(LOG_SOURCE, "Fase1: NF incompleta, deixando para segunda chance", {
-      pedidoId,
-      hasNotaFiscalId: !!pedido.nota_fiscal_id,
-      hasChaveAcesso: !!pedido.chave_acesso_nf,
-    });
-    return;
+    // Self-heal: NF pode já estar autorizada no Tiny com webhook perdido.
+    if (pedido.nota_fiscal_id) {
+      await recuperarChavesAcessoFaltantes(supabase, [pedidoId]);
+      const { data: refreshed } = await supabase
+        .from("siso_pedidos")
+        .select("chave_acesso_nf")
+        .eq("id", pedidoId)
+        .single();
+      if (refreshed?.chave_acesso_nf) {
+        pedido.chave_acesso_nf = refreshed.chave_acesso_nf;
+      }
+    }
+
+    if (!pedido.nota_fiscal_id || !pedido.chave_acesso_nf) {
+      logger.info(LOG_SOURCE, "Fase1: NF incompleta, deixando para segunda chance", {
+        pedidoId,
+        hasNotaFiscalId: !!pedido.nota_fiscal_id,
+        hasChaveAcesso: !!pedido.chave_acesso_nf,
+      });
+      return;
+    }
   }
 
   // Idempotency: skip if already has valid agrupamento (not 'pending')

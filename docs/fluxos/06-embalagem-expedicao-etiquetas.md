@@ -141,9 +141,9 @@ Entrypoints fire-and-forget:
 - `src/app/api/separacao/forcar-pendente/route.ts:110` e `[pedidoId]/forcar-pendente/route.ts:119` — após override manual de NF.
 - `src/app/api/admin/backfill-agrupamentos/route.ts:85` — endpoint de backfill admin.
 
-Gates (em ordem, `agrupamento-service.ts:219-274`):
+Gates (em ordem, `agrupamento-service.ts`):
 1. Pedido encontrado.
-2. `nota_fiscal_id IS NOT NULL` **e** `chave_acesso_nf IS NOT NULL`. Sem isso, não há como o Tiny montar agrupamento — deixa para o "second-chance" (fase 2 no `concluir`).
+2. `nota_fiscal_id IS NOT NULL` **e** `chave_acesso_nf IS NOT NULL`. Se há `nota_fiscal_id` mas a chave é NULL, roda o **self-heal** (`recuperarChavesAcessoFaltantes`): refetcha a NF no Tiny e, se situação 6/7 com `chaveAcesso`, persiste a chave e segue. Se mesmo assim faltar chave (NF não autorizada / webhook ainda não chegou), deixa para o "second-chance" (fase 2 no `concluir`).
 3. Idempotência: se `agrupamento_expedicao_id` já existe e ≠ `'pending'`, sai.
 4. `recuperarPendingTravados` — se há `'pending'` há mais de 5 minutos, libera (crash recovery).
 5. Atomic claim via `siso_claim_pedidos_para_agrupamento([pedidoId])` — só uma instância concorrente avança.

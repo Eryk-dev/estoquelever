@@ -420,14 +420,17 @@ erros:
     o pedido ficava travado para sempre: todo retry de etiqueta retornava
     falhas=1/recuperadas=0 e etiqueta_status=falhou, sem nenhum erro explicito.
   fix: >
-    Self-heal em preCriarAgrupamentosEmLote: novo helper
+    Self-heal em preCriarAgrupamentosEmLote E criarAgrupamentoFase1: helper
     recuperarChavesAcessoFaltantes refetcha a NF no Tiny (obterNotaFiscal)
     para pedidos com nota_fiscal_id e chave_acesso_nf null; se situacao in
     (6,7) e chaveAcesso presente, persiste a chave (update guardado com
     IS NULL, idempotente com o webhook) e o pedido segue para agrupamento +
-    etiqueta na mesma chamada. Pedido 1046216725 corrigido manualmente no
-    banco (chave gravada) + retry-etiqueta disparado: etiqueta recuperada
-    (agrupamento 982944251, expedicao 984377136).
+    etiqueta na mesma chamada. Com isso o backfill-agrupamentos e todos os
+    entrypoints de fase 1 tambem se auto-curam. Pedido 1046216725 corrigido
+    manualmente no banco + retry-etiqueta (agrupamento 982944251). Mais 22
+    pedidos aguardando_compra na mesma situacao: chaves refetchadas do Tiny
+    via API e backfill-agrupamentos executado (22/22 criados, 2 deles
+    expedido_externo).
   files:
     - src/lib/agrupamento-service.ts
   tags: [etiqueta, agrupamento, chave-acesso, nota-fiscal, webhook-perdido, nf-completa, retry-etiqueta, mercado-envios]

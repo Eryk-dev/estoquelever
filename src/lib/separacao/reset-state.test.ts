@@ -168,12 +168,12 @@ describe("resetarEstadoSeparacaoItens", () => {
     expect(estornar).toHaveBeenCalledWith({
       mov_id: "mov-1",
       usuario_id: "u-1",
-      observacoes: expect.stringContaining("encaminhar"),
+      motivo: expect.stringContaining("encaminhar"),
     });
     expect(estornar).toHaveBeenCalledWith({
       mov_id: "mov-2",
       usuario_id: "u-1",
-      observacoes: expect.any(String),
+      motivo: expect.any(String),
     });
 
     // bug C2 guard: mov_ajuste_loc_zerou_id is NEVER estornada

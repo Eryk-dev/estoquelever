@@ -127,7 +127,12 @@ describe("inserirMovimentacao · uuid validation (defensiva)", () => {
   });
 });
 
-describe("inserirMovimentacao · nota_fiscal_id required for NF origens (T8)", () => {
+// T8 — Fix-Final A hotfix: enforcement foi relaxado pra warn (não throw).
+// Callers legados (recebimento manual, separação parcial) passam nota_fiscal_id=null
+// legitimamente. Enforcement real está nos webhook handlers (nf-webhook-handler,
+// webhook-processor). Aqui verificamos que a ausência de nota_fiscal_id NÃO lança
+// o erro de validação (pode lançar por supabaseUrl faltando no env de teste).
+describe("inserirMovimentacao · nota_fiscal_id warn (não throw) para NF origens (T8 — relaxado)", () => {
   const triplaOk = {
     produto_id: "00000000-0000-4000-8000-000000000001",
     galpao_id: "00000000-0000-4000-8000-000000000002",
@@ -143,16 +148,20 @@ describe("inserirMovimentacao · nota_fiscal_id required for NF origens (T8)", (
   ] as const;
 
   for (const origem of NF_ORIGENS) {
-    it(`rejeita ${origem} sem nota_fiscal_id`, async () => {
-      await expect(
-        inserirMovimentacao({
+    it(`NÃO lança "nota_fiscal_id obrigatório" para ${origem} (apenas warn)`, async () => {
+      let caughtMsg = "";
+      try {
+        await inserirMovimentacao({
           tripla: triplaOk,
           tipo: "E",
           qty: 1,
           origem_tipo: origem,
           // nota_fiscal_id deliberadamente omitido
-        } as any),
-      ).rejects.toThrow(/nota_fiscal_id obrigatório/i);
+        } as any);
+      } catch (e) {
+        caughtMsg = e instanceof Error ? e.message : String(e);
+      }
+      expect(caughtMsg).not.toMatch(/nota_fiscal_id obrigatório/i);
     });
   }
 

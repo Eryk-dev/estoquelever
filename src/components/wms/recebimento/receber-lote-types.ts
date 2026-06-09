@@ -43,8 +43,9 @@ export interface ReceberLoteConfig {
   /** permite criar loc inline no LocalizacaoCombo. Default true (preserva avulso).
    *  false em transferência (operador escolhe loc EXISTENTE, nunca cria). */
   locAllowCreate?: boolean;
-  /** código de permissão pra liberar o Confirmar (ex: 'operacoes.receber') */
-  permissaoReceber: PermissaoCodigo;
+  /** código(s) de permissão pra liberar o Confirmar. Um único código ou lista
+   *  (OR): qualquer um dos listados libera o botão. */
+  permissaoReceber: PermissaoCodigo | PermissaoCodigo[];
   /** chip read-only do header (fornecedor/galpão) nos fluxos pré-definidos */
   headerChips?: { label: string; value: string }[];
 }

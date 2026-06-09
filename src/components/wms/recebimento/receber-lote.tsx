@@ -99,9 +99,12 @@ export function ReceberLote({
   validarExtra,
 }: ReceberLoteProps) {
   // Permissão de receber derivada do config (fonte única). Para avulso,
-  // config.permissaoReceber === 'operacoes.receber'.
-  const { can } = usePermissoes();
-  const podeReceber = can(config.permissaoReceber);
+  // config.permissaoReceber === 'operacoes.receber'. Para OC, aceita qualquer
+  // uma das permissões listadas (operacoes.receber OR compras.executar).
+  const { can, canAny } = usePermissoes();
+  const podeReceber = Array.isArray(config.permissaoReceber)
+    ? canAny(...config.permissaoReceber)
+    : can(config.permissaoReceber);
 
   const [lightbox, setLightbox] = useState<{
     imagens: string[];

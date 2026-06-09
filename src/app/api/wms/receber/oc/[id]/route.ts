@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
-import { userCan } from "@/lib/permissions";
+import { userCanAny } from "@/lib/permissions";
 import { logger } from "@/lib/logger";
 import { receberItensViaOC } from "@/lib/wms/receber-oc";
 
@@ -28,7 +28,7 @@ export async function GET(
   if (!session) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
-  if (!userCan(session, "operacoes.receber")) {
+  if (!userCanAny(session, "operacoes.receber", "compras.executar")) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   const { id } = await params;
@@ -95,7 +95,7 @@ export async function POST(
   if (!session) {
     return NextResponse.json({ error: "sessao_invalida" }, { status: 401 });
   }
-  if (!userCan(session, "operacoes.receber")) {
+  if (!userCanAny(session, "operacoes.receber", "compras.executar")) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   const { id } = await params;

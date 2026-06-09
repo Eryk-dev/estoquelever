@@ -93,7 +93,7 @@ export default function ReceberOCDetalhePage() {
       mlBlockVisible: true,
       planoSidebarVisible: false,
       leftFormVisible: false,
-      permissaoReceber: "operacoes.receber",
+      permissaoReceber: ["operacoes.receber", "compras.executar"],
       headerChips: [
         { label: "Fornecedor", value: oc.fornecedor ?? "—" },
         { label: "Galpão", value: oc.galpao_nome ?? "—" },

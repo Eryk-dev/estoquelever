@@ -7,26 +7,27 @@ vi.mock("@/lib/session", () => ({
 vi.mock("@/lib/permissions", () => ({
   userCan: (_s: unknown, code: string) => code === "compras.executar",
 }));
-const { registrarEventosSpy } = vi.hoisted(() => ({
+const { registrarEventosSpy, fornecedorRows } = vi.hoisted(() => ({
   registrarEventosSpy: vi.fn(async () => {}),
+  fornecedorRows: { value: [{ id: "f1" }] as { id: string }[] },
 }));
 vi.mock("@/lib/historico-service", () => ({
   registrarEventos: registrarEventosSpy,
 }));
 
-// createServiceClient chainable: fornecedor existe + update retorna 2 linhas.
+// createServiceClient chainable: fornecedor lookup usa fornecedorRows.value.
 const updateInSpy = vi.fn();
 vi.mock("@/lib/supabase-server", () => ({
   createServiceClient: () => ({
     from: (table: string) => {
       if (table === "siso_fornecedores") {
+        const terminal = {
+          limit: async () => ({ data: fornecedorRows.value, error: null }),
+        };
         return {
           select: () => ({
-            eq: () => ({
-              eq: () => ({
-                limit: async () => ({ data: [{ id: "f1" }], error: null }),
-              }),
-            }),
+            ilike: () => ({ eq: () => terminal }),
+            eq: () => ({ eq: () => terminal }),
           }),
         };
       }
@@ -80,5 +81,17 @@ describe("PATCH /api/wms/compras/itens/fornecedor", () => {
   it("rejeita item_ids vazio com 400", async () => {
     const res = await PATCH(makeReq({ item_ids: [], fornecedor_oc: "X" }) as never);
     expect(res.status).toBe(400);
+  });
+
+  it("retorna 400 quando fornecedor não existe na base", async () => {
+    fornecedorRows.value = [];
+    try {
+      const res = await PATCH(
+        makeReq({ item_ids: ["i1"], fornecedor_oc: "Inexistente" }) as never,
+      );
+      expect(res.status).toBe(400);
+    } finally {
+      fornecedorRows.value = [{ id: "f1" }];
+    }
   });
 });

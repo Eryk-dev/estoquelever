@@ -44,7 +44,7 @@ export async function PATCH(request: NextRequest) {
       const { data: forn } = await supabase
         .from("siso_fornecedores")
         .select("id")
-        .eq("nome", fornecedorOc)
+        .ilike("nome", fornecedorOc)
         .eq("ativo", true)
         .limit(1);
       if (!forn || forn.length === 0) {

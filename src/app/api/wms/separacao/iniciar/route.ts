@@ -160,6 +160,76 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 2.5 Re-rota OC→própria no clique SEPARAR: se entrou saldo PICKÁVEL desde
+    // que o item virou OC, o reconciliador limpa compra_status, cria reserva e
+    // marca decisao_final='propria' — o item some do balde "Itens OC" e vira
+    // linha normal na wave atual. Roda DEPOIS do promote (acima) pra tratar
+    // tanto pedidos recém-promovidos quanto os já em_separacao pelo mesmo
+    // caminho (reconciliador agora enxerga em_separacao). Idempotente e atômico
+    // (CLAIM compare-and-swap dentro do reconciliador); no-op se não houver item
+    // OC ou saldo livre. Best-effort: falha não bloqueia o iniciar.
+    try {
+      const { data: ocItems } = await supabase
+        .from("siso_pedido_itens")
+        .select("sku, siso_pedidos!inner(separacao_galpao_id)")
+        .in("pedido_id", pedido_ids)
+        .in("compra_status", ["oc_pendente", "aguardando_compra"]);
+
+      if (ocItems && ocItems.length > 0) {
+        const { reconciliarEntradaEstoque, paresProdutoGalpao } = await import(
+          "@/lib/wms/reconciliador-oc"
+        );
+        // sku → produto_uuid (siso_produtos.id); o reconciliador recebe UUID,
+        // NÃO o tiny_produto_id de siso_pedido_itens.produto_id.
+        const skus = [
+          ...new Set(
+            ocItems
+              .map((i) => i.sku as string | null)
+              .filter((s): s is string => !!s),
+          ),
+        ];
+        const { data: prods } = await supabase
+          .from("siso_produtos")
+          .select("id, sku")
+          .in("sku", skus);
+        const skuToUuid = new Map<string, string>(
+          (prods ?? []).map((p) => [p.sku as string, p.id as string]),
+        );
+        const itensNorm = ocItems.map((i) => {
+          const pedRaw = i.siso_pedidos as unknown;
+          const ped = Array.isArray(pedRaw)
+            ? (pedRaw[0] as { separacao_galpao_id?: string | null } | undefined)
+            : (pedRaw as { separacao_galpao_id?: string | null } | null);
+          return {
+            sku: (i.sku as string | null) ?? null,
+            galpao_id: ped?.separacao_galpao_id ?? null,
+          };
+        });
+        for (const { produtoId, galpaoId } of paresProdutoGalpao(
+          itensNorm,
+          skuToUuid,
+        )) {
+          try {
+            await reconciliarEntradaEstoque({ produtoId, galpaoId });
+          } catch (recErr) {
+            logger.warn(
+              "separacao-iniciar",
+              "reconciliar OC no clique separar falhou",
+              {
+                produtoId,
+                galpaoId,
+                error: recErr instanceof Error ? recErr.message : String(recErr),
+              },
+            );
+          }
+        }
+      }
+    } catch (ocErr) {
+      logger.warn("separacao-iniciar", "varredura OC no iniciar falhou (não-fatal)", {
+        error: ocErr instanceof Error ? ocErr.message : String(ocErr),
+      });
+    }
+
     // 3D (Fase 3): mini-swap intra-galpão removido — saldo é fungível por
     // (produto, galpão), então não há por que consolidar empresas em uma loc
     // canônica antes da wave. Pool físico já é unificado.

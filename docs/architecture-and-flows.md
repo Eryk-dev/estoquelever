@@ -245,6 +245,25 @@ ConflictError `{ code: 'DIVERGENCIA_JA_APLICADA' }`) e o caller pula a div, cont
 no cutover anterior + recria as reservas R com saldo. Antes, voltar etapa de embalagem
 deixava saldo permanentemente saído sem caminho de volta (estado fantasma).
 
+### Reconciliação OC por saldo tardio (item OC vira normal)
+
+`reconciliarEntradaEstoque` (`src/lib/wms/reconciliador-oc.ts`) rebaixa um item OC
+para separação normal quando aparece saldo livre que cobre — CLAIM atômico
+(compare-and-swap em `compra_status`) + reserva FIFO + `decisao_final='propria'`.
+
+Gatilhos: (a) gancho de mov `E` em `ledger.ts` (entrada de estoque); (b) confirmar
+put-away; (c) **clique SEPARAR** — `separacao/iniciar` chama o reconciliador por
+`(produto_uuid, galpão)` dos itens OC, após promover a `em_separacao` e antes de
+consolidar o checklist (helper puro `paresProdutoGalpao`, `sku→uuid`).
+
+`STATUS_PEDIDO_OC` inclui `validacao_oc | aguardando_compra | em_separacao`. Em
+`em_separacao`, `transicionarPedidoSeReconciliado` só marca `decisao_final='propria'`
+(não regride status) — o item vira linha normal na wave atual; a NF é gerada
+depois, na embalagem (`confirmar-item-embalagem` / `bipar-embalagem-oc` enfileiram
+`lancar_estoque`). Hoje só conta saldo em loc `tipo='picking'` (saldo em recebimento
+exige put-away; estender a recebimento é Fase 2, coordenando com a guarda p/ não
+violar `reservado<=saldo`).
+
 ### `lancamento-retroativo/[id]/reconciliar` (#8.6)
 
 Endpoint agora valida UUID format de `[id]` e `compra_mov_id` (regex) **antes** de chamar a

@@ -4289,3 +4289,33 @@ erros:
     - src/app/api/wms/separacao/localizacao/route.ts
     - src/app/api/wms/separacao/localizacao/localizacao-tiny-desacoplado.test.ts
   tags: [separacao, localizacao, tiny-api, oauth, invalid_grant, encontrei, validacao-oc, best-effort, wms-source-of-truth]
+
+- id: WMS-OC-SALDO-EM-SEPARACAO
+  date: 2026-06-09
+  source: usuario (checklist separação)
+  category: business_logic
+  message: >
+    Item OC continua no balde "Itens OC — validar" mesmo com saldo livre que
+    cobre o pedido. Ex: ACD003, loc A-01-2 (picking) disponível 17, mas 4 pedidos
+    seguem compra_status='oc_pendente' / decisao_final='oc'.
+  cause: >
+    reconciliador-oc (reconciliarEntradaEstoque) só processava pedidos em
+    validacao_oc/aguardando_compra. Ao abrir o checklist, separacao/iniciar
+    promove o pedido a em_separacao (toStart inclui validacao_oc; a blindagem só
+    barra aguardando_compra/comprado, deixa oc_pendente passar). Em em_separacao o
+    reconciliador nunca mais selecionava o pedido → item congela em OC apesar do
+    saldo. O clique SEPARAR não re-rotava nada.
+  fix: >
+    (1) STATUS_PEDIDO_OC inclui em_separacao — transicionarPedidoSeReconciliado já
+    trata estado avançado (só marca decisao_final='propria', não regride status; a
+    NF sai depois na embalagem via confirmar-item-embalagem/bipar-embalagem-oc).
+    (2) separacao/iniciar dispara reconciliarEntradaEstoque por (produto_uuid,
+    galpão) dos itens OC, após o promote e antes do consolidar. Helper puro
+    paresProdutoGalpao (sku→uuid; produto_id do item é tiny_produto_id).
+    Saldo em loc de RECEBIMENTO (ainda não guardado) é Fase 2 (coordenar com
+    put-away p/ não violar reservado<=saldo).
+  files:
+    - src/lib/wms/reconciliador-oc.ts
+    - src/app/api/wms/separacao/iniciar/route.ts
+    - src/lib/wms/reconciliador-oc.test.ts
+  tags: [oc, reconciliador, separacao, em_separacao, saldo-tardio, wms-source-of-truth]

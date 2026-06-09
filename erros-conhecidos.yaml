@@ -384,3 +384,24 @@ erros:
   files:
     - src/app/api/separacao/encaminhar/route.ts
   tags: [encaminhar, galpao, filtro, visibilidade, sugestao, transferencia]
+
+- id: voltar-etapa-falta-aguardando-compra
+  date: 2026-06-09
+  source: separacao/voltar-etapa
+  category: business_logic
+  message: "nenhum pedido pode ser movido para esse status"
+  cause: >
+    STATUS_ORDER em voltar-etapa/route.ts nao incluia "aguardando_compra"
+    (status da aba "Aguardando OC"). Ao mover um pedido dessa aba, o
+    STATUS_ORDER.indexOf retornava -1, o filtro de validIds (currentIdx >= 0)
+    descartava o pedido e a API respondia "nenhum pedido pode ser movido para
+    esse status". O mesmo gap quebrava mover de volta PARA "Aguardando OC"
+    (falhava no check STATUS_ORDER.includes -> "status invalido").
+  fix: >
+    Adicionado "aguardando_compra" como primeiro estagio do STATUS_ORDER.
+    Toda a logica de cleanup/forward usa indexOf (relativa), entao o shift
+    de indices e seguro. Doc do enum novo_status atualizada.
+  files:
+    - src/app/api/separacao/voltar-etapa/route.ts
+    - docs/api-reference-complete.md
+  tags: [voltar-etapa, separacao, aguardando-compra, oc, status, mover-etapa, admin]

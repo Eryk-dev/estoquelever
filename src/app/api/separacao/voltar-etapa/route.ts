@@ -16,6 +16,7 @@ import type { StatusSeparacao } from "@/types";
  */
 
 const STATUS_ORDER: StatusSeparacao[] = [
+  "aguardando_compra",
   "aguardando_nf",
   "validacao_oc",
   "aguardando_separacao",

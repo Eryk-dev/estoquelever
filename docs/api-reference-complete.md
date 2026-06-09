@@ -1583,7 +1583,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 ```json
 {
   "pedido_ids": ["string"],
-  "novo_status": "aguardando_nf" | "aguardando_separacao" | "em_separacao" | "separado" | "embalado"
+  "novo_status": "aguardando_compra" | "aguardando_nf" | "validacao_oc" | "aguardando_separacao" | "em_separacao" | "separado" | "embalado"
 }
 ```
 

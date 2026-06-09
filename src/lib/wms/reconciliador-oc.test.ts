@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { selecionarLiberaveisFifo } from "./reconciliador-oc";
+import { selecionarLiberaveisFifo, paresProdutoGalpao } from "./reconciliador-oc";
 
 describe("selecionarLiberaveisFifo — FIFO estrito, respeita saldo livre", () => {
   it("cobre o mais antigo e sobra não cobre o próximo (exemplo ACD003: 15 livre)", () => {
@@ -65,5 +65,38 @@ describe("selecionarLiberaveisFifo — FIFO estrito, respeita saldo livre", () =
       6,
     );
     expect(r.map((x) => x.libera)).toEqual([true, false, true]);
+  });
+});
+
+describe("paresProdutoGalpao — dedup de (produto_uuid, galpão) a reconciliar", () => {
+  const skuToUuid = new Map([
+    ["ACD003", "uuid-acd003"],
+    ["XYZ", "uuid-xyz"],
+  ]);
+
+  it("dedup por par e ignora sku sem uuid / sem galpão", () => {
+    const r = paresProdutoGalpao(
+      [
+        { sku: "ACD003", galpao_id: "g1" },
+        { sku: "ACD003", galpao_id: "g1" }, // dup
+        { sku: "ACD003", galpao_id: "g2" },
+        { sku: "XYZ", galpao_id: "g1" },
+        { sku: "SEM_UUID", galpao_id: "g1" }, // sem uuid → ignora
+        { sku: "ACD003", galpao_id: null }, // sem galpão → ignora
+      ],
+      skuToUuid,
+    );
+    expect(r).toEqual(
+      expect.arrayContaining([
+        { produtoId: "uuid-acd003", galpaoId: "g1" },
+        { produtoId: "uuid-acd003", galpaoId: "g2" },
+        { produtoId: "uuid-xyz", galpaoId: "g1" },
+      ]),
+    );
+    expect(r).toHaveLength(3);
+  });
+
+  it("lista vazia → []", () => {
+    expect(paresProdutoGalpao([], skuToUuid)).toEqual([]);
   });
 });

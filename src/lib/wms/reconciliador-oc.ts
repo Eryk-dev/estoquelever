@@ -31,11 +31,41 @@ export function selecionarLiberaveisFifo<T extends { outstanding: number }>(
   });
 }
 
+/**
+ * A partir de itens OC (com sku + galpão) e um mapa sku→produto_uuid, devolve
+ * os pares (produtoId, galpaoId) ÚNICOS que precisam ser reconciliados. Ignora
+ * itens sem uuid mapeado ou sem galpão. Pura — testável sem IO. Usada pelo
+ * clique SEPARAR (separacao/iniciar) pra disparar a reconciliação dos itens OC.
+ */
+export function paresProdutoGalpao(
+  itens: Array<{ sku: string | null; galpao_id: string | null }>,
+  skuToUuid: Map<string, string>,
+): Array<{ produtoId: string; galpaoId: string }> {
+  const vistos = new Set<string>();
+  const out: Array<{ produtoId: string; galpaoId: string }> = [];
+  for (const it of itens) {
+    if (!it.sku || !it.galpao_id) continue;
+    const produtoId = skuToUuid.get(it.sku);
+    if (!produtoId) continue;
+    const chave = `${produtoId}|${it.galpao_id}`;
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    out.push({ produtoId, galpaoId: it.galpao_id });
+  }
+  return out;
+}
+
 // ──────────────────────────────────────────────────────────────────
 // IO Orchestrator — reconcilia pedidos OC pendentes quando entra
 // estoque novo no galpão (disparado por mov E em ledger.ts).
 
-const STATUS_PEDIDO_OC = ["validacao_oc", "aguardando_compra"] as const;
+// Inclui em_separacao: se o saldo aparece DEPOIS do pedido já estar na wave
+// (operador abriu o checklist → promovido a em_separacao), o item OC tem que
+// poder ser rebaixado a normal mesmo assim. transicionarPedidoSeReconciliado
+// (branch de estado avançado) já trata: só marca decisao_final='propria', não
+// regride status. A NF sai depois, na embalagem (confirmar-item-embalagem /
+// bipar-embalagem-oc enfileiram lancar_estoque).
+const STATUS_PEDIDO_OC = ["validacao_oc", "aguardando_compra", "em_separacao"] as const;
 const COMPRA_PENDENTE = ["oc_pendente", "aguardando_compra"] as const;
 
 /**

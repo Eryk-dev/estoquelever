@@ -144,6 +144,7 @@ src/
       wms-shell.tsx                     # sidebar (8 grupos perm-gated) + CommandK (⌘K) + modal context
       home/quadro-tarefas.tsx           # home /wms: pipeline + kanban + exceções
       {separacao,cross,insights,inventario,vendas,configuracoes,home}/  # por feature
+      recebimento/{receber-lote.tsx,receber-lote-types.ts,receber-lote-adapters.ts}  # UI rica compartilhada de recebimento (config-driven; OC/manual/transferência/avulso renderizam o mesmo componente com adapters por fluxo)
       ui/{wms-ui.tsx,modals.tsx,avatar.tsx}   # PageHeader, StatusBadge, Modal, formatters...
   hooks/                                # 5 realtime hooks (postgres_changes + Presence → invalidate React Query)
   lib/

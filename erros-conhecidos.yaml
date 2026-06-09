@@ -4354,3 +4354,17 @@ erros:
       - src/app/wms/compras/page.tsx
       - src/lib/wms/compras-receber-merge.ts
     tags: [compras, recebimento, manual, unificacao]
+
+  - id: RECEBIMENTO-OC-TRANSF-POBRE
+    date: "2026-06-09"
+    source: refactor-compras-recebimento
+    category: business_logic
+    message: "Recebimento de OC/transferência era tabela seca (sem anúncio, etiqueta, putaway) vs avulso rico"
+    cause: "cada fluxo tinha sua page própria; só avulso tinha a UI rica"
+    fix: "componente compartilhado ReceberLote config-driven; OC/manual/transferência/avulso renderizam o mesmo componente com adapters por fluxo"
+    files:
+      - src/components/wms/recebimento/receber-lote.tsx
+      - src/app/wms/receber/oc/[id]/page.tsx
+      - src/app/wms/receber/manual/[id]/page.tsx
+      - src/app/wms/receber/transferencia/[id]/page.tsx
+    tags: [recebimento, oc, transferencia, manual, ui]

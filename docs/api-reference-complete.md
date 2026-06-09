@@ -4072,6 +4072,20 @@ OR
 
 ---
 
+### GET /api/wms/compras-manuais/[id]
+
+**File:** `src/app/api/wms/compras-manuais/[id]/route.ts`
+
+**Purpose:** Retorna uma única compra manual pelo id (busca entre as pendentes).
+
+**Auth:** X-Session-Id (required), `compras.executar`
+
+**Response (200):** `{ "compra": { ...CompraManual } }`
+
+**Response (404):** `{ "error": "Compra não encontrada" }` — compra inexistente ou já recebida (não está mais entre as pendentes).
+
+---
+
 ### DELETE /api/wms/compras-manuais/[id]
 
 **File:** `src/app/api/wms/compras-manuais/[id]/route.ts`
@@ -4130,6 +4144,18 @@ OR
 **Response (201):** o produto criado.
 
 **Response (400 — `sku e descricao obrigatórios`) / (409 — `SKU já existe`).**
+
+---
+
+### UI — /wms/receber/manual/[id]
+
+**File:** `src/app/wms/receber/manual/[id]/page.tsx`
+
+**Purpose:** Página rica de recebimento de compra manual. Exibe cabeçalho (fornecedor, galpão, data) + tabela de itens com controle de quantidade recebida e custo unitário; chama `POST /api/wms/compras-manuais/[id]/receber`. Renderiza o componente compartilhado `<ReceberLote>` com o adapter `buildManualPayload`.
+
+**Auth:** `compras.executar` (redirecionada pra `/wms/compras` se sem permissão)
+
+**Query:** Busca compra via `GET /api/wms/compras-manuais/[id]`; exibe 404 se não encontrada ou já recebida.
 
 ---
 

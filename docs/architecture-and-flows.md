@@ -72,6 +72,8 @@ sequenceDiagram
 
 A aba "Receber" em `/wms/compras` unifica OC (`siso_ordens_compra` status=comprado com itens pendentes) + compras manuais (`siso_compras_manuais` status=comprado|parcial com itens pendentes), agrupadas por fornecedor. Cada documento leva flag `origem` (oc|manual) e link pra página rica: `/wms/receber/oc/[id]` (OC) ou `/wms/receber/manual/[id]` (manual). Documentos ordenados por `criado_em` (mais antigo = mais urgente). Interfere-se com transferências inter-galpão (recebimento separado em `/wms/receber/transferencia`).
 
+**Componente compartilhado `<ReceberLote>` (Fase C, 2026-06-09):** os 4 fluxos de recebimento (avulso / OC / manual / transferência) convergem num único componente UI config-driven (`src/components/wms/recebimento/receber-lote.tsx`). Cada fluxo fornece um *adapter* que monta o payload do seu endpoint de backend (`buildOcPayload`, `buildManualPayload`, `buildTransferenciaPayload`, `buildAvulsoPayload` em `receber-lote-adapters.ts`). Os 4 backends (`POST /api/wms/compras/receber`, `/compras-manuais/[id]/receber`, `/receber/oc/[id]`, `/transferencias/[id]/receber`) permanecem inalterados.
+
 ---
 
 ## Devolução de Cliente (classificação A/B/C/D, 3D)

@@ -405,3 +405,29 @@ erros:
     - src/app/api/separacao/voltar-etapa/route.ts
     - docs/api-reference-complete.md
   tags: [voltar-etapa, separacao, aguardando-compra, oc, status, mover-etapa, admin]
+
+- id: etiqueta-chave-acesso-nula-webhook-nf-perdido
+  date: 2026-06-09
+  source: agrupamento-service
+  category: business_logic
+  message: "Nenhum pedido com NF completa para agrupamento"
+  cause: >
+    O gate de preCriarAgrupamentosEmLote exige nota_fiscal_id + chave_acesso_nf.
+    A chave so era persistida via webhook nota_fiscal do Tiny ("segunda chance")
+    ou no momento da geracao da NF (se ja autorizada). Quando o webhook
+    nota_fiscal nunca era entregue (caso do pedido 1046216725 / ML
+    2000016845849994, NF 174334 autorizada no Tiny mas chave null no banco),
+    o pedido ficava travado para sempre: todo retry de etiqueta retornava
+    falhas=1/recuperadas=0 e etiqueta_status=falhou, sem nenhum erro explicito.
+  fix: >
+    Self-heal em preCriarAgrupamentosEmLote: novo helper
+    recuperarChavesAcessoFaltantes refetcha a NF no Tiny (obterNotaFiscal)
+    para pedidos com nota_fiscal_id e chave_acesso_nf null; se situacao in
+    (6,7) e chaveAcesso presente, persiste a chave (update guardado com
+    IS NULL, idempotente com o webhook) e o pedido segue para agrupamento +
+    etiqueta na mesma chamada. Pedido 1046216725 corrigido manualmente no
+    banco (chave gravada) + retry-etiqueta disparado: etiqueta recuperada
+    (agrupamento 982944251, expedicao 984377136).
+  files:
+    - src/lib/agrupamento-service.ts
+  tags: [etiqueta, agrupamento, chave-acesso, nota-fiscal, webhook-perdido, nf-completa, retry-etiqueta, mercado-envios]

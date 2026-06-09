@@ -19,12 +19,15 @@ import {
   concluirAgrupamento,
   obterAgrupamento,
   obterEtiquetasExpedicao,
+  obterNotaFiscal,
 } from "@/lib/tiny-api";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { baixarZpl } from "@/lib/etiqueta-download";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "agrupamento-service";
+
+const NF_AUTORIZADA = [6, 7]; // 6=Autorizada, 7=Emitida Danfe
 
 interface PedidoClaimed {
   id: string;
@@ -49,6 +52,12 @@ export async function preCriarAgrupamentosEmLote(
   if (pedidoIds.length === 0) return;
 
   const supabase = createServiceClient();
+
+  // Self-heal: if the nota_fiscal webhook was never delivered, the pedido has
+  // nota_fiscal_id but chave_acesso_nf stays null forever and the gate below
+  // blocks the agrupamento. Refetch the NF from Tiny and persist the chave
+  // when the NF is already authorized.
+  await recuperarChavesAcessoFaltantes(supabase, pedidoIds);
 
   // Gate: only attempt agrupamento for pedidos with NF persistence complete
   // (both nota_fiscal_id and chave_acesso_nf must be set).
@@ -105,6 +114,64 @@ export async function preCriarAgrupamentosEmLote(
   );
 
   await Promise.allSettled(promises);
+}
+
+/**
+ * Recover missing chave_acesso_nf by refetching the NF from Tiny.
+ * Covers the case where the nota_fiscal webhook was never delivered:
+ * the NF is authorized in Tiny but the pedido row still has chave null.
+ * Errors are logged but never thrown — fire-and-forget.
+ */
+async function recuperarChavesAcessoFaltantes(
+  supabase: ReturnType<typeof createServiceClient>,
+  pedidoIds: string[],
+): Promise<void> {
+  const { data: semChave } = await supabase
+    .from("siso_pedidos")
+    .select("id, empresa_origem_id, nota_fiscal_id")
+    .in("id", pedidoIds)
+    .not("nota_fiscal_id", "is", null)
+    .is("chave_acesso_nf", null);
+
+  if (!semChave || semChave.length === 0) return;
+
+  for (const pedido of semChave) {
+    if (!pedido.empresa_origem_id) continue;
+
+    try {
+      const { token } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
+      const nf = await runWithEmpresa(pedido.empresa_origem_id, () =>
+        obterNotaFiscal(token, Number(pedido.nota_fiscal_id)),
+      );
+
+      if (!NF_AUTORIZADA.includes(Number(nf.situacao)) || !nf.chaveAcesso) {
+        logger.info(LOG_SOURCE, "Refetch NF: ainda não autorizada, mantendo gate", {
+          pedidoId: pedido.id,
+          notaFiscalId: String(pedido.nota_fiscal_id),
+          situacao: String(nf.situacao ?? "null"),
+        });
+        continue;
+      }
+
+      // Guarded update: idempotent if the webhook lands concurrently.
+      await supabase
+        .from("siso_pedidos")
+        .update({ chave_acesso_nf: nf.chaveAcesso })
+        .eq("id", pedido.id)
+        .is("chave_acesso_nf", null);
+
+      logger.info(LOG_SOURCE, "Refetch NF: chave de acesso recuperada do Tiny", {
+        pedidoId: pedido.id,
+        notaFiscalId: String(pedido.nota_fiscal_id),
+      });
+    } catch (err) {
+      logger.warn(LOG_SOURCE, "Refetch NF: falha ao consultar Tiny", {
+        pedidoId: pedido.id,
+        notaFiscalId: String(pedido.nota_fiscal_id),
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 }
 
 /**

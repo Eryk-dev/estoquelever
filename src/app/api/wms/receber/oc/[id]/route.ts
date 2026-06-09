@@ -56,6 +56,31 @@ export async function GET(
     )
     .eq("ordem_compra_id", id);
 
+  // Resolve produto_wms_id: sku → siso_produtos.id
+  const skus = [...new Set((itens ?? []).map((i) => i.sku).filter(Boolean))];
+  const skuToWmsId = new Map<string, string>();
+  if (skus.length > 0) {
+    const { data: produtos } = await supabase
+      .from("siso_produtos")
+      .select("id, sku")
+      .in("sku", skus);
+    for (const p of produtos ?? []) {
+      if (p.sku) skuToWmsId.set(p.sku, p.id);
+    }
+  }
+
+  // Resolve fornecedor_id: nome ilike → siso_fornecedores.id
+  let fornecedorId: string | null = null;
+  if (oc.fornecedor) {
+    const { data: forns } = await supabase
+      .from("siso_fornecedores")
+      .select("id")
+      .ilike("nome", oc.fornecedor)
+      .eq("ativo", true)
+      .limit(1);
+    fornecedorId = forns?.[0]?.id ?? null;
+  }
+
   const itensFmt = (itens ?? []).map((it) => ({
     id: String(it.id),
     sku: it.sku,
@@ -67,6 +92,7 @@ export async function GET(
       Number(it.compra_quantidade_solicitada ?? 0) -
       Number(it.compra_quantidade_recebida ?? 0),
     produto_id: it.produto_id,
+    produto_wms_id: (it.sku ? skuToWmsId.get(it.sku) : undefined) ?? null,
   }));
 
   return NextResponse.json({
@@ -78,6 +104,7 @@ export async function GET(
         (oc.siso_galpoes as { nome?: string } | null)?.nome ?? null,
       status: oc.status,
       observacao: oc.observacao,
+      fornecedor_id: fornecedorId,
     },
     itens: itensFmt,
   });

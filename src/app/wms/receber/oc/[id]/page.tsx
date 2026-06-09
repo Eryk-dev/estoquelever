@@ -186,6 +186,13 @@ export default function ReceberOCDetalhePage() {
       );
     }
 
+    const extraSemCusto = extras.some((it) => !(Number(it.custo) > 0));
+    if (extras.length > 0 && extraSemCusto) {
+      throw new Error(
+        "Informe o custo do(s) item(ns) extra(s) — obrigatório pra entrada avulsa",
+      );
+    }
+
     const r1 = await sisoFetch(`/api/wms/receber/oc/${id}`, {
       method: "POST",
       headers: JSONH,
@@ -238,8 +245,6 @@ export default function ReceberOCDetalhePage() {
       extrasResp: ExtrasResp | null;
       itensResolvidos: ReceberLoteItem[];
     };
-    const entradaDireta = ctx.entradaDireta;
-
     // ── Impressão fire-and-forget dos itens marcados ───────────────────────
     // Split em 2 POSTs (OC + extras) torna o alinhamento por índice contra
     // pendencia_ids inviável (cross-dock pode gerar 2 pendências/item; entrada

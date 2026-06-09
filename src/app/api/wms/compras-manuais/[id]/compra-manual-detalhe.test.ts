@@ -23,4 +23,11 @@ describe("GET /api/wms/compras-manuais/[id]", () => {
     expect(json.compra.id).toBe("m1");
     expect(json.compra.itens[0].sku).toBe("X");
   });
+
+  it("retorna 404 quando o id não existe na lista", async () => {
+    const res = await GET(new Request("http://x/api/wms/compras-manuais/naoexiste") as never, {
+      params: Promise.resolve({ id: "naoexiste" }),
+    });
+    expect(res.status).toBe(404);
+  });
 });

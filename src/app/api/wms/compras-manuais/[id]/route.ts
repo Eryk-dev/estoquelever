@@ -14,11 +14,20 @@ export async function GET(
     return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
   const { id } = await params;
-  // reusa o list (pendentes) e filtra; barato no volume atual.
-  const todas = await listarComprasManuais("pendentes");
-  const compra = todas.find((c) => c.id === id);
-  if (!compra) return NextResponse.json({ error: "Compra não encontrada" }, { status: 404 });
-  return NextResponse.json({ compra });
+  try {
+    // reusa o list (pendentes) e filtra; barato no volume atual.
+    const todas = await listarComprasManuais("pendentes");
+    const compra = todas.find((c) => c.id === id);
+    if (!compra) return NextResponse.json({ error: "Compra não encontrada" }, { status: 404 });
+    return NextResponse.json({ compra });
+  } catch (e) {
+    return wmsErrorResponse({
+      source: "wms.compras-manuais.detalhe",
+      error: e,
+      requestPath: `/api/wms/compras-manuais/${id}`,
+      requestMethod: "GET",
+    });
+  }
 }
 
 export async function DELETE(

@@ -12,6 +12,13 @@ import { calcularNecessidadeLiquida, piorStatusCobertura } from "@/lib/compras-n
 import type { StatusCobertura } from "@/lib/wms/cobertura";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { userCan } from "@/lib/permissions";
+import {
+  mergeReceberDocs,
+  type OcDoc,
+  type ManualDoc,
+  type ReceberFornecedorGrupo,
+} from "@/lib/wms/compras-receber-merge";
+import { listarComprasManuais } from "@/lib/wms/compras-manuais";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -50,32 +57,6 @@ interface FornecedorComprarGroup {
   pedidos_bloqueados: number;
   aging_dias: number;
   itens: ComprarSkuEntry[];
-}
-
-interface ReceberSkuEntry {
-  sku: string;
-  descricao: string;
-  imagem_url: string | null;
-  quantidade_comprada: number;
-  quantidade_recebida: number;
-  quantidade_pendente: number;
-  // [Fix-D #3.5] Excesso recebido vs comprado (max(recebida - comprada, 0)).
-  // Surfacing pra alertar fornecedor mandou a mais / contagem errada / ajuste
-  // manual posterior. Backend já tem `getCompraQuantidadeRestante` retornando
-  // negativo, mas o agregado por SKU é computado localmente aqui.
-  quantidade_excedente: number;
-  aging_dias: number;
-  comprado_em: string | null;
-  pedidos: PedidoRef[];
-}
-
-interface FornecedorReceberGroup {
-  fornecedor: string;
-  galpao_sugerido_nome: string | null;
-  skus_count: number;
-  pendente_count: number;
-  aging_dias: number;
-  itens: ReceberSkuEntry[];
 }
 
 interface ExcecaoItem {
@@ -194,28 +175,33 @@ export async function GET(request: NextRequest) {
 // ─── Counts ─────────────────────────────────────────────────────────────────
 
 async function fetchCounts(supabase: SupabaseClient) {
-  const [comprar, receber, excecoes, historico, bloqueados] = await Promise.all([
-    supabase
-      .from("siso_pedido_itens")
-      .select("id", { count: "exact", head: true })
-      .eq("compra_status", "aguardando_compra"),
-    supabase
-      .from("siso_pedido_itens")
-      .select("id", { count: "exact", head: true })
-      .eq("compra_status", "comprado"),
-    supabase
-      .from("siso_pedido_itens")
-      .select("id", { count: "exact", head: true })
-      .in("compra_status", [...COMPRA_EXCEPTION_STATUSES]),
-    supabase
-      .from("siso_pedido_itens")
-      .select("id", { count: "exact", head: true })
-      .eq("compra_status", "recebido"),
-    supabase
-      .from("siso_pedido_itens")
-      .select("pedido_id")
-      .in("compra_status", ["aguardando_compra", "comprado"]),
-  ]);
+  const [comprar, receber, excecoes, historico, bloqueados, manuaisPend, manuaisReceb] =
+    await Promise.all([
+      supabase
+        .from("siso_pedido_itens")
+        .select("id", { count: "exact", head: true })
+        .eq("compra_status", "aguardando_compra"),
+      supabase
+        .from("siso_pedido_itens")
+        .select("id", { count: "exact", head: true })
+        .eq("compra_status", "comprado"),
+      supabase
+        .from("siso_pedido_itens")
+        .select("id", { count: "exact", head: true })
+        .in("compra_status", [...COMPRA_EXCEPTION_STATUSES]),
+      supabase
+        .from("siso_pedido_itens")
+        .select("id", { count: "exact", head: true })
+        .eq("compra_status", "recebido"),
+      supabase
+        .from("siso_pedido_itens")
+        .select("pedido_id")
+        .in("compra_status", ["aguardando_compra", "comprado"]),
+      // Documentos de compra manual entram nos contadores de receber/historico
+      // junto com as OCs (aba Receber unificada por documento — Fase B).
+      listarComprasManuais("pendentes"),
+      listarComprasManuais("recebido"),
+    ]);
 
   const pedidosUnicos = new Set(
     (bloqueados.data ?? []).map((r) => r.pedido_id),
@@ -223,9 +209,9 @@ async function fetchCounts(supabase: SupabaseClient) {
 
   return {
     comprar: comprar.count ?? 0,
-    receber: receber.count ?? 0,
+    receber: (receber.count ?? 0) + manuaisPend.length,
     excecoes: excecoes.count ?? 0,
-    historico: historico.count ?? 0,
+    historico: (historico.count ?? 0) + manuaisReceb.length,
     pedidos_bloqueados: pedidosUnicos.size,
   };
 }
@@ -491,155 +477,68 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
 
 // ─── Tab: Receber ───────────────────────────────────────────────────────────
 
-async function fetchReceber(supabase: SupabaseClient): Promise<FornecedorReceberGroup[]> {
-  const { data: items, error } = await supabase
-    .from("siso_pedido_itens")
-    .select(
-      "id, sku, descricao, quantidade_pedida, compra_status, compra_quantidade_solicitada, compra_quantidade_recebida, compra_quantidade_comprada, comprado_em, fornecedor_oc, imagem_url, pedido_id, siso_pedidos(numero, cliente_nome, criado_em)",
-    )
-    .eq("compra_status", "comprado");
+/**
+ * Aba "Receber" unificada por DOCUMENTO (Fase B): cada OC (`siso_ordens_compra`)
+ * + cada compra manual (`siso_compras_manuais`), agrupados por fornecedor via o
+ * helper puro `mergeReceberDocs`. Substitui a agregação antiga por SKU sobre
+ * `siso_pedido_itens`. Cada documento aponta pra sua page rica de recebimento.
+ */
+async function fetchReceber(supabase: SupabaseClient): Promise<ReceberFornecedorGrupo[]> {
+  const { data: ocs, error: ocErr } = await supabase
+    .from("siso_ordens_compra")
+    .select("id, fornecedor, galpao_id, status, created_at, siso_galpoes(nome)")
+    .eq("status", "comprado")
+    .order("created_at", { ascending: true });
+  if (ocErr) throw new Error(`Erro ao buscar OCs: ${ocErr.message}`);
 
-  if (error) throw new Error(`Erro ao buscar itens para receber: ${error.message}`);
-  if (!items || items.length === 0) return [];
-
-  // Diagnóstico: itens cuja qty recebida >= solicitada mas status segue 'comprado'.
-  // ANTES (auto-fix): GET silenciosamente promovia esses itens pra 'recebido' e disparava
-  // checkAndReleasePedidos. Removido em 2026-05-27 [#P6-6.31 #P6-3.12]: GET deve ser puro.
-  // Inconsistência real é tarefa do receber endpoint ou de um job manual — não de leitura.
-  // Itens sobre-recebidos seguem filtrados da listagem (UX), apenas não são auto-promovidos.
-  const stuckIds: string[] = [];
-  const activeItems: typeof items = [];
-
-  for (const item of items) {
-    const solicitada = Number(item.compra_quantidade_solicitada ?? 0) || Number(item.quantidade_pedida ?? 0);
-    const recebida = Number(item.compra_quantidade_recebida ?? 0);
-    if (recebida >= solicitada && solicitada > 0) {
-      stuckIds.push(String(item.id));
-    } else {
-      activeItems.push(item);
+  const ocIds = (ocs ?? []).map((o) => String(o.id));
+  const pendenteByOC = new Map<string, number>();
+  if (ocIds.length > 0) {
+    const { data: itens } = await supabase
+      .from("siso_pedido_itens")
+      .select("ordem_compra_id, compra_quantidade_solicitada, compra_quantidade_recebida")
+      .in("ordem_compra_id", ocIds);
+    for (const it of itens ?? []) {
+      const ocId = String(it.ordem_compra_id ?? "");
+      if (!ocId) continue;
+      const pend =
+        Number(it.compra_quantidade_solicitada ?? 0) -
+        Number(it.compra_quantidade_recebida ?? 0);
+      if (pend > 0) pendenteByOC.set(ocId, (pendenteByOC.get(ocId) ?? 0) + pend);
     }
   }
 
-  if (stuckIds.length > 0) {
-    logger.warn(
-      "compras.tab-receber",
-      "inconsistências detectadas em GET (itens sobre-recebidos ainda em status='comprado')",
-      {
-        count: stuckIds.length,
-        sample_ids: stuckIds.slice(0, 10),
-      },
+  const ocDocs: OcDoc[] = (ocs ?? [])
+    .map((oc) => ({
+      id: String(oc.id),
+      fornecedor: (oc.fornecedor as string | null) ?? null,
+      galpao_nome: (oc.siso_galpoes as { nome?: string } | null)?.nome ?? null,
+      qty_pendente: pendenteByOC.get(String(oc.id)) ?? 0,
+      criado_em: (oc.created_at as string | null) ?? null,
+    }))
+    .filter((d) => d.qty_pendente > 0);
+
+  const manuais = await listarComprasManuais("pendentes");
+  const manualDocs: ManualDoc[] = manuais.map((m) => {
+    const pend = m.itens.reduce(
+      (s, it) => s + Math.max(it.qty_comprada - it.qty_recebida, 0),
+      0,
     );
-  }
-
-  if (activeItems.length === 0) return [];
-
-  const rawItems = activeItems as unknown as RawItem[];
-
-  const fornecedorMap = new Map<
-    string,
-    {
-      skuMap: Map<string, { entry: ReceberSkuEntry; pedidoIds: Set<string> }>;
-      oldestAging: number;
-      galpaoNome: string | null;
-    }
-  >();
-
-  for (const item of rawItems) {
-    const fornecedor = item.fornecedor_oc ?? "Sem fornecedor";
-    const qtySolicitada = getCompraQuantidadeSolicitada(item);
-    const qtyRecebida = Number(item.compra_quantidade_recebida ?? 0);
-    const qtyComprada = item.compra_quantidade_comprada
-      ? Number(item.compra_quantidade_comprada)
-      : qtySolicitada;
-    const itemAging = getAgingDays(item.comprado_em);
-
-    if (!fornecedorMap.has(fornecedor)) {
-      const skuInfo = getFornecedorBySku(item.sku);
-      fornecedorMap.set(fornecedor, {
-        skuMap: new Map(),
-        oldestAging: 0,
-        galpaoNome: skuInfo?.filialOC ?? null,
-      });
-    }
-
-    const group = fornecedorMap.get(fornecedor)!;
-    group.oldestAging = Math.max(group.oldestAging, itemAging);
-
-    const pedidoRef: PedidoRef = {
-      pedido_id: item.pedido_id,
-      numero: item.siso_pedidos?.numero ?? "?",
-      cliente_nome: item.siso_pedidos?.cliente_nome ?? "?",
-      quantidade: qtySolicitada,
-      aging_dias: getAgingDays(item.siso_pedidos?.criado_em),
-      item_id: String(item.id),
+    const custoTotal = m.itens.reduce(
+      (s, it) => s + it.qty_comprada * (it.custo_unitario ?? 0),
+      0,
+    );
+    return {
+      id: m.id,
+      fornecedor: m.fornecedor?.nome ?? null,
+      galpao_nome: null,
+      qty_pendente: pend,
+      criado_em: m.criado_em,
+      custo_total: custoTotal,
     };
+  });
 
-    if (!group.skuMap.has(item.sku)) {
-      group.skuMap.set(item.sku, {
-        entry: {
-          sku: item.sku,
-          descricao: item.descricao,
-          imagem_url: item.imagem_url,
-          quantidade_comprada: 0,
-          quantidade_recebida: 0,
-          quantidade_pendente: 0,
-          quantidade_excedente: 0,
-          aging_dias: 0,
-          comprado_em: null,
-          pedidos: [],
-        },
-        pedidoIds: new Set(),
-      });
-    }
-
-    const skuData = group.skuMap.get(item.sku)!;
-    skuData.entry.quantidade_comprada += qtyComprada;
-    skuData.entry.quantidade_recebida += qtyRecebida;
-    skuData.entry.aging_dias = Math.max(skuData.entry.aging_dias, itemAging);
-    skuData.entry.comprado_em = skuData.entry.comprado_em ?? item.comprado_em;
-    skuData.entry.pedidos.push(pedidoRef);
-    skuData.pedidoIds.add(item.pedido_id);
-  }
-
-  const result: FornecedorReceberGroup[] = [];
-
-  for (const [fornecedor, group] of fornecedorMap) {
-    const itens: ReceberSkuEntry[] = [];
-    let pendenteCount = 0;
-
-    for (const [, { entry }] of group.skuMap) {
-      entry.quantidade_pendente = Math.max(
-        entry.quantidade_comprada - entry.quantidade_recebida,
-        0,
-      );
-      entry.quantidade_excedente = Math.max(
-        entry.quantidade_recebida - entry.quantidade_comprada,
-        0,
-      );
-      entry.pedidos.sort((a, b) => b.aging_dias - a.aging_dias);
-      itens.push(entry);
-      if (entry.quantidade_pendente > 0) pendenteCount++;
-    }
-
-    itens.sort((a, b) => b.aging_dias - a.aging_dias);
-
-    result.push({
-      fornecedor,
-      galpao_sugerido_nome: group.galpaoNome,
-      skus_count: itens.length,
-      pendente_count: pendenteCount,
-      aging_dias: group.oldestAging,
-      itens,
-    });
-  }
-
-  result.sort(
-    (a, b) =>
-      b.aging_dias - a.aging_dias ||
-      a.fornecedor.localeCompare(b.fornecedor, "pt-BR"),
-  );
-
-  return result;
+  return mergeReceberDocs(ocDocs, manualDocs);
 }
 
 // ─── Excecoes ───────────────────────────────────────────────────────────────
@@ -694,6 +593,7 @@ async function fetchHistorico(
       descricao: string;
       quantidade_recebida: number;
       recebido_em: string | null;
+      origem: "oc" | "manual";
     }>;
   }>;
   next_cursor: string | null;
@@ -716,49 +616,84 @@ async function fetchHistorico(
   const { data: items, error } = await query;
 
   if (error) throw new Error(`Erro ao buscar itens recebidos: ${error.message}`);
-  if (!items || items.length === 0) return { fornecedores: [], next_cursor: null };
+
+  type HistoricoLinha = {
+    sku: string;
+    descricao: string;
+    quantidade_recebida: number;
+    recebido_em: string | null;
+    origem: "oc" | "manual";
+  };
 
   const groups = new Map<
     string,
     {
       fornecedor: string;
       data_recebimento: string;
-      itens: Array<{
-        sku: string;
-        descricao: string;
-        quantidade_recebida: number;
-        recebido_em: string | null;
-      }>;
+      itens: HistoricoLinha[];
     }
   >();
 
-  for (const item of items) {
-    const fornecedor = (item.fornecedor_oc as string) ?? "Sem fornecedor";
-    const dataRecebimento = item.comprado_em
-      ? (item.comprado_em as string).substring(0, 10)
-      : "sem-data";
+  function addLinha(
+    fornecedor: string,
+    recebidoEm: string | null,
+    linha: HistoricoLinha,
+  ) {
+    const dataRecebimento = recebidoEm ? recebidoEm.substring(0, 10) : "sem-data";
     const key = `${fornecedor}||${dataRecebimento}`;
-
     if (!groups.has(key)) {
       groups.set(key, { fornecedor, data_recebimento: dataRecebimento, itens: [] });
     }
+    groups.get(key)!.itens.push(linha);
+  }
 
-    groups.get(key)!.itens.push({
+  for (const item of items ?? []) {
+    const fornecedor = (item.fornecedor_oc as string) ?? "Sem fornecedor";
+    addLinha(fornecedor, item.comprado_em as string | null, {
       sku: item.sku as string,
       descricao: item.descricao as string,
       quantidade_recebida: Number(item.compra_quantidade_recebida ?? 0),
       recebido_em: item.comprado_em as string | null,
+      origem: "oc",
     });
   }
+
+  // Compras manuais recebidas: incluídas SOMENTE na primeira página (cursor==null).
+  // O cursor (comprado_em) pagina apenas as OCs de siso_pedido_itens; manuais não
+  // têm cursor equivalente, então paginá-las junto exigiria um merge-cursor. Pra
+  // o volume atual (poucos manuais), adicioná-las na 1ª página é suficiente.
+  if (cursor == null) {
+    const manuais = await listarComprasManuais("recebido");
+    if (manuais.length > 0) {
+      logger.info("compras.tab-historico", "compras manuais recebidas incluídas na 1ª página", {
+        count: manuais.length,
+      });
+    }
+    for (const m of manuais) {
+      const fornecedor = m.fornecedor?.nome ?? "Sem fornecedor";
+      for (const it of m.itens) {
+        addLinha(fornecedor, m.recebido_em, {
+          sku: it.sku,
+          descricao: it.descricao,
+          quantidade_recebida: it.qty_recebida,
+          recebido_em: m.recebido_em,
+          origem: "manual",
+        });
+      }
+    }
+  }
+
+  if (groups.size === 0) return { fornecedores: [], next_cursor: null };
 
   const fornecedores = [...groups.values()].sort((a, b) =>
     b.data_recebimento.localeCompare(a.data_recebimento),
   );
 
-  // next_cursor: comprado_em do último item retornado pela query (não do último
-  // group), pra cliente continuar a paginação a partir do próximo item.
+  // next_cursor: comprado_em do último item OC retornado pela query (não do
+  // último group), pra cliente continuar a paginação a partir do próximo item.
+  // Pagina SÓ OCs — manuais entram apenas na 1ª página.
   const nextCursor =
-    items.length === limit
+    items && items.length === limit
       ? ((items[items.length - 1].comprado_em as string | null) ?? null)
       : null;
 

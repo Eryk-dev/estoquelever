@@ -4337,3 +4337,20 @@ erros:
       - src/app/api/wms/compras/itens/fornecedor/route.ts
       - src/app/wms/compras/page.tsx
     tags: [compras, fornecedor, prefixo]
+
+  - id: COMPRAS-MANUAL-OC-SEPARADOS
+    date: "2026-06-09"
+    source: refactor-compras-recebimento
+    category: business_logic
+    message: >
+      Compra manual ficava numa aba isolada, separada das OC pendentes de recebimento
+    cause: >
+      siso_compras_manuais e siso_pedido_itens listados em telas diferentes
+    fix: >
+      aba Receber unifica OC+manual por documento (flag origem) com link pra page
+      rica; aba Manuais removida
+    files:
+      - src/app/api/wms/compras/route.ts
+      - src/app/wms/compras/page.tsx
+      - src/lib/wms/compras-receber-merge.ts
+    tags: [compras, recebimento, manual, unificacao]

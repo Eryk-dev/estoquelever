@@ -68,6 +68,10 @@ sequenceDiagram
 - Em E com `custo_unitario`: recalcula `siso_custo_medio` globalmente e populates `custo_medio_anterior/posterior` na mov pra rastreio histórico.
 - Tags `empresa_compradora_id` + `fornecedor_id` ficam na mov pra apuração via `/api/wms/relatorios/movs-por-empresa`.
 
+### Interface de Recebimento (Fase B, 2026-06-09)
+
+A aba "Receber" em `/wms/compras` unifica OC (`siso_ordens_compra` status=comprado com itens pendentes) + compras manuais (`siso_compras_manuais` status=comprado|parcial com itens pendentes), agrupadas por fornecedor. Cada documento leva flag `origem` (oc|manual) e link pra página rica: `/wms/receber/oc/[id]` (OC) ou `/wms/receber/manual/[id]` (manual). Documentos ordenados por `criado_em` (mais antigo = mais urgente). Interfere-se com transferências inter-galpão (recebimento separado em `/wms/receber/transferencia`).
+
 ---
 
 ## Devolução de Cliente (classificação A/B/C/D, 3D)

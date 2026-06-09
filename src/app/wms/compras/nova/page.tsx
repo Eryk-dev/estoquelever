@@ -16,6 +16,7 @@ import type {
   ReceberLoteConfig,
   ReceberLoteItem,
 } from "@/components/wms/recebimento/receber-lote-types";
+import type { Produto } from "@/lib/wms/types";
 
 interface FornecedorLite {
   id: string;
@@ -101,6 +102,31 @@ export default function NovaCompraManualPage() {
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
+  // criar produto inline
+  const [showNovoProd, setShowNovoProd] = useState(false);
+  const [novoProdSku, setNovoProdSku] = useState("");
+  const [novoProdDesc, setNovoProdDesc] = useState("");
+  const criarProdMut = useMutation({
+    mutationFn: async (vars: { sku: string; descricao: string }) => {
+      const r = await sisoFetch("/api/wms/compras-manuais/produto", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      });
+      if (!r.ok) {
+        const b = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? "falha ao criar produto");
+      }
+      return (await r.json()) as Produto;
+    },
+    onSuccess: (p) => {
+      toast.success(`Produto ${p.sku} criado — busque pelo SKU na linha do item`);
+      setNovoProdSku("");
+      setNovoProdDesc("");
+      setShowNovoProd(false);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+  });
+
   const itensIniciais = useMemo(() => ITENS_INICIAIS, []);
 
   function renderLeftFormExtra() {
@@ -166,6 +192,63 @@ export default function NovaCompraManualPage() {
             </button>
           </div>
         </Field>
+
+        <div style={{ marginTop: 4 }}>
+          <button
+            className="wms-btn-link"
+            type="button"
+            onClick={() => setShowNovoProd((v) => !v)}
+          >
+            {showNovoProd ? "− Cancelar cadastro" : "+ Cadastrar produto novo"}
+          </button>
+          {showNovoProd && (
+            <div
+              style={{
+                marginTop: 8,
+                padding: "12px",
+                border: "1px solid var(--wms-border)",
+                borderRadius: 6,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              <Field label="SKU" required>
+                <input
+                  className="wms-input wms-mono"
+                  placeholder="ex: ABC-001"
+                  value={novoProdSku}
+                  onChange={(e) => setNovoProdSku(e.target.value.toUpperCase())}
+                />
+              </Field>
+              <Field label="Descrição" required>
+                <input
+                  className="wms-input"
+                  placeholder="ex: Filtro de óleo 1.0"
+                  value={novoProdDesc}
+                  onChange={(e) => setNovoProdDesc(e.target.value)}
+                />
+              </Field>
+              <button
+                className="wms-btn wms-btn-ghost wms-btn-sm"
+                type="button"
+                disabled={
+                  !novoProdSku.trim() ||
+                  !novoProdDesc.trim() ||
+                  criarProdMut.isPending
+                }
+                onClick={() =>
+                  criarProdMut.mutate({
+                    sku: novoProdSku.trim(),
+                    descricao: novoProdDesc.trim(),
+                  })
+                }
+              >
+                {criarProdMut.isPending ? "Cadastrando…" : "Cadastrar"}
+              </button>
+            </div>
+          )}
+        </div>
 
         <Field label="Observação">
           <input

@@ -494,10 +494,14 @@ async function fetchReceber(supabase: SupabaseClient): Promise<ReceberFornecedor
   const ocIds = (ocs ?? []).map((o) => String(o.id));
   const pendenteByOC = new Map<string, number>();
   if (ocIds.length > 0) {
+    // Só itens efetivamente comprados contam pendência: uma OC draft pode ter
+    // itens ainda 'aguardando_compra' linkados (validar-oc-item) que não devem
+    // aparecer como "a receber". Itens 'recebido' contribuem 0 de toda forma.
     const { data: itens } = await supabase
       .from("siso_pedido_itens")
       .select("ordem_compra_id, compra_quantidade_solicitada, compra_quantidade_recebida")
-      .in("ordem_compra_id", ocIds);
+      .in("ordem_compra_id", ocIds)
+      .eq("compra_status", "comprado");
     for (const it of itens ?? []) {
       const ocId = String(it.ordem_compra_id ?? "");
       if (!ocId) continue;

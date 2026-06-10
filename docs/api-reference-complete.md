@@ -3331,7 +3331,7 @@ OR
 
 **File:** `src/app/api/wms/compras/comprar/route.ts`
 
-**Purpose:** Marks items as purchased (comprado) for a supplier. Qty is consolidated by SKU and distributed across order items by aging (oldest first).
+**Purpose:** Marks items as purchased (comprado) for a supplier. Qty is consolidated by SKU and distributed across order items by aging (oldest first). Items are linked to an OC via find-or-create (by fornecedor + galpão); at the end the touched OCs are confirmed `aguardando_compra` → `comprado` so the document appears in the Receber tab.
 
 **Auth:** X-Session-Id (required), must be comprador or admin
 

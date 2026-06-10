@@ -56,6 +56,9 @@ export async function POST(request: NextRequest) {
     quantidade_excedente: number;
   }> = [];
   let firstOcId: string | null = null;
+  // OCs vinculadas nesta rodada — flipam pra 'comprado' no final (sem isso o
+  // doc fica preso em 'aguardando_compra' e a aba Receber nunca o lista).
+  const ocIdsTocadas = new Set<string>();
 
   // Per-pedido audit aggregator (1 evento compra_item_comprado por pedido).
   const eventosPorPedido = new Map<
@@ -140,6 +143,7 @@ export async function POST(request: NextRequest) {
           sku,
         });
         if (!firstOcId && ocId) firstOcId = ocId;
+        if (ocId) ocIdsTocadas.add(ocId);
 
         const updatePayload: Record<string, unknown> = {
           compra_status: "comprado",
@@ -183,6 +187,27 @@ export async function POST(request: NextRequest) {
         quantidade_alocada: alocado,
         quantidade_excedente: Math.max(remaining, 0),
       });
+    }
+
+    // Confirma as OCs desta rodada: 'aguardando_compra' → 'comprado' (mesma
+    // semântica de POST /compras/ordens). É isso que faz o documento aparecer
+    // na aba Receber (fetchReceber filtra status='comprado').
+    if (ocIdsTocadas.size > 0) {
+      const { error: flipErr } = await supabase
+        .from("siso_ordens_compra")
+        .update({
+          status: "comprado",
+          comprado_por: session.id,
+          comprado_em: now,
+        })
+        .in("id", [...ocIdsTocadas])
+        .eq("status", "aguardando_compra");
+      if (flipErr) {
+        logger.error("compras-comprar", "Erro ao confirmar OCs como compradas", {
+          error: flipErr.message,
+          oc_ids: [...ocIdsTocadas],
+        });
+      }
     }
 
     // Audit trail: 1 evento compra_item_comprado por pedido afetado.

@@ -4381,3 +4381,29 @@ erros:
     - src/lib/wms/compras-manuais.ts
     - src/components/wms/recebimento/receber-lote.tsx
   tags: [recebimento, ux, pagina-unica]
+
+- id: COMPRAS-COMPRAR-OC-DRAFT-INVISIVEL
+  date: 2026-06-10
+  source: compras
+  category: business_logic
+  message: "Marcar como comprados some com o item: contador Receber sobe mas documento não aparece na aba"
+  cause: >
+    POST /api/wms/compras/comprar marcava itens compra_status='comprado' e linkava via
+    findOrCreateOC a uma OC draft (status='aguardando_compra'), mas nunca flipava a OC
+    pra 'comprado'. fetchReceber lista só OC status='comprado' → doc invisível pra sempre.
+    O contador usa count de itens 'comprado', por isso subia. Agravante: aba Receber
+    poluída por compras manuais de teste (Forn Manual *, FORN-*-TEST-PF-UQ-*) no staging.
+  fix: >
+    /compras/comprar agora flipa as OCs tocadas aguardando_compra→comprado (mesma semântica
+    de POST /compras/ordens); fetchReceber conta pendência só de itens compra_status='comprado'
+    (draft pode ter itens ainda não comprados linkados via validar-oc-item). Data repair no
+    staging: OCs draft com 100% itens comprados flipadas; compras manuais de teste canceladas
+    e fornecedores de teste desativados.
+  files:
+    - src/app/api/wms/compras/comprar/route.ts
+    - src/app/api/wms/compras/route.ts
+  tags: [compras, oc, receber, aguardando_compra, comprado, fornecedor, diversos]
+  notes: >
+    Fornecedor "Diversos" vem do PREFIX_MAP de sku-fornecedor.ts (default quando prefixo
+    do SKU não mapeia) setado no webhook — siso_produto_fornecedores (preferencial) NÃO é
+    consultado nesse caminho. Gap de design, não corrigido aqui.

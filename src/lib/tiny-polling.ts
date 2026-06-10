@@ -1,0 +1,527 @@
+/**
+ * Polling fallback Tiny → SISO.
+ *
+ * O fluxo primário é o webhook (api/wms/webhook/tiny). Webhooks podem ser
+ * perdidos (downtime do deploy, falha de entrega do Tiny, timeout). Este
+ * módulo varre periodicamente TODAS as contas Tiny conectadas e reprocessa
+ * o que escapou, com janela máxima de 7 dias pra trás (não puxa pedidos
+ * antigos):
+ *
+ *   - Pedidos APROVADOS (situacao=3) que não existem em siso_pedidos nem
+ *     em siso_webhook_logs → mesmos efeitos do webhook (processWebhook).
+ *   - Pedidos CANCELADOS (situacao=2) no Tiny mas ainda ativos no SISO →
+ *     mesma lógica do webhook (handlePedidoCancelamento).
+ *   - NFs AUTORIZADAS (situacao=6) e EMITIDA DANFE (7 — NF autorizada cuja
+ *     DANFE já saiu entre um poll e outro) → handleNfWebhook (dedup interno).
+ *
+ * Dedup: o poller insere em siso_webhook_logs com tipo='polling_pedido' —
+ * o dedup_key generated (tiny_pedido_id:tipo:codigo_situacao) torna cada
+ * varredura idempotente ENTRE POLLS. Ele NÃO colide com logs de webhook real
+ * (tipo diferente ⇒ dedup_key diferente), então a corrida poll × webhook
+ * atrasado é mitigada por um re-check por item imediatamente antes do
+ * processamento (encolhe a janela pra sub-segundo — mesma classe de corrida
+ * pré-existente entre inclusao_pedido e atualizacao_pedido).
+ *
+ * Retry: logs tipo='polling_pedido' com status='erro' (ou presos em
+ * 'processando' por >1h — função morta no meio) NÃO bloqueiam o dedup; a
+ * próxima varredura re-tenta. Logs de webhook real com erro são problema de
+ * processamento (não de entrega) — recovery é o /webhook/reprocessar manual.
+ */
+
+import { createServiceClient } from "./supabase-server";
+import { getValidTokenByEmpresa } from "./tiny-oauth";
+import { runWithEmpresa } from "./tiny-queue";
+import {
+  listarPedidos,
+  listarNotas,
+  type TinyPedidoListItem,
+  type TinyNotaListItem,
+} from "./tiny-api";
+import { getEmpresaByCnpj, type EmpresaInfo } from "./empresa-lookup";
+import { processWebhook } from "./webhook-processor";
+import { handleNfWebhook, type NfWebhookPayload } from "./nf-webhook-handler";
+import { handlePedidoCancelamento } from "./pedido-cancel-handler";
+import { logger } from "./logger";
+
+const LOG_SOURCE = "tiny-polling";
+const DIAS_JANELA = 7;
+const PAGE_LIMIT = 100;
+// Backstop contra paginação infinita (7d × ~500 pedidos/dia << 30 páginas)
+const MAX_PAGES = 30;
+
+const SITUACAO_PEDIDO_APROVADA = 3;
+const SITUACAO_PEDIDO_CANCELADA = 2;
+const SITUACOES_NF = [6, 7]; // 6=Autorizada, 7=Emitida Danfe
+
+// Log 'processando' mais velho que isso = run morto (maxDuration) → retry
+const STUCK_PROCESSANDO_MS = 60 * 60 * 1000;
+
+interface WebhookLogResumo {
+  tiny_pedido_id: string;
+  tipo: string;
+  status: string;
+  criado_em: string;
+}
+
+/**
+ * Um log de aprovação bloqueia o reprocessamento do pedido?
+ * - Log de webhook real: sempre bloqueia (falha ali é de processamento, não
+ *   de entrega — recovery é o /webhook/reprocessar manual).
+ * - Log do próprio poller: não bloqueia se a tentativa anterior falhou
+ *   (status='erro') ou ficou presa em 'processando' por >1h (função morta).
+ */
+function logBloqueiaReprocesso(log: WebhookLogResumo): boolean {
+  if (log.tipo !== "polling_pedido") return true;
+  if (log.status === "erro") return false;
+  if (
+    log.status === "processando" &&
+    Date.parse(log.criado_em) < Date.now() - STUCK_PROCESSANDO_MS
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export interface PollingResumoEmpresa {
+  empresa_id: string;
+  empresa_nome: string;
+  cnpj: string;
+  pedidos_aprovados_vistos: number;
+  pedidos_processados: number;
+  pedidos_cancelados_vistos: number;
+  cancelamentos_aplicados: number;
+  notas_vistas: number;
+  notas_processadas: number;
+  erros: string[];
+}
+
+export interface PollingResult {
+  janela_dias: number;
+  data_inicial: string;
+  empresas: PollingResumoEmpresa[];
+  executado_em: string;
+}
+
+function dataInicialJanela(): string {
+  return new Date(Date.now() - DIAS_JANELA * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/** Pagina uma listagem Tiny até esgotar (ou MAX_PAGES). */
+async function listarTodasPaginas<T>(
+  fetchPage: (offset: number) => Promise<{ itens?: T[] }>,
+): Promise<T[]> {
+  const todos: T[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { itens } = await fetchPage(page * PAGE_LIMIT);
+    const lote = itens ?? [];
+    todos.push(...lote);
+    if (lote.length < PAGE_LIMIT) break;
+  }
+  return todos;
+}
+
+// ─── Pedidos aprovados ──────────────────────────────────────────────────────
+
+async function pollPedidosAprovados(
+  token: string,
+  empresa: EmpresaInfo,
+  cnpj: string,
+  dataInicial: string,
+  resumo: PollingResumoEmpresa,
+): Promise<void> {
+  const sb = createServiceClient();
+
+  const aprovados = await listarTodasPaginas<TinyPedidoListItem>((offset) =>
+    listarPedidos(token, {
+      situacao: SITUACAO_PEDIDO_APROVADA,
+      dataInicial,
+      limit: PAGE_LIMIT,
+      offset,
+    }),
+  );
+  resumo.pedidos_aprovados_vistos = aprovados.length;
+  if (aprovados.length === 0) return;
+
+  const porId = new Map<string, TinyPedidoListItem>();
+  for (const p of aprovados) {
+    if (p?.id != null) porId.set(String(p.id), p);
+  }
+  const ids = [...porId.keys()];
+
+  // Dedup em lote: pedido já existe OU já tem webhook log de aprovação que
+  // bloqueia (qualquer tipo; logs do próprio poller com falha são retryable —
+  // ver logBloqueiaReprocesso).
+  const conhecidos = new Set<string>();
+  for (const lote of chunk(ids, 200)) {
+    const [{ data: pedidos }, { data: logs }] = await Promise.all([
+      sb.from("siso_pedidos").select("id").in("id", lote),
+      sb
+        .from("siso_webhook_logs")
+        .select("tiny_pedido_id, tipo, status, criado_em")
+        .eq("codigo_situacao", "aprovado")
+        .in("tiny_pedido_id", lote),
+    ]);
+    for (const p of (pedidos ?? []) as Array<{ id: string }>) conhecidos.add(p.id);
+    for (const l of (logs ?? []) as WebhookLogResumo[]) {
+      if (logBloqueiaReprocesso(l)) conhecidos.add(l.tiny_pedido_id);
+    }
+  }
+
+  const novos = ids.filter((id) => !conhecidos.has(id));
+  if (novos.length === 0) return;
+
+  logger.info(LOG_SOURCE, "Pedidos aprovados sem webhook detectados", {
+    empresaId: empresa.empresaId,
+    quantidade: novos.length,
+    ids: novos.slice(0, 50),
+  });
+
+  for (const pedidoId of novos) {
+    try {
+      // Re-check imediatamente antes de processar: o snapshot de dedup acima
+      // fica stale durante o processamento serial (rate-limited, minutos com
+      // backlog) e o dedup_key NÃO colide com logs de webhook real. Encolhe a
+      // janela da corrida poll × webhook atrasado pra sub-segundo.
+      const [{ data: jaExiste }, { data: logsAtuais }] = await Promise.all([
+        sb.from("siso_pedidos").select("id").eq("id", pedidoId).maybeSingle(),
+        sb
+          .from("siso_webhook_logs")
+          .select("tiny_pedido_id, tipo, status, criado_em")
+          .eq("codigo_situacao", "aprovado")
+          .eq("tiny_pedido_id", pedidoId),
+      ]);
+      if (jaExiste) continue;
+      if (((logsAtuais ?? []) as WebhookLogResumo[]).some(logBloqueiaReprocesso)) {
+        continue;
+      }
+
+      let webhookLogId: string;
+      const { data: logEntry, error: insertError } = await sb
+        .from("siso_webhook_logs")
+        .insert({
+          tiny_pedido_id: pedidoId,
+          cnpj,
+          tipo: "polling_pedido",
+          codigo_situacao: "aprovado",
+          filial: empresa.galpaoNome,
+          empresa_id: empresa.empresaId,
+          payload: { origem: "polling", dados: porId.get(pedidoId) ?? { id: pedidoId } },
+        })
+        .select("id")
+        .single();
+
+      if (insertError) {
+        if (insertError.code !== "23505") {
+          resumo.erros.push(`pedido ${pedidoId}: ${insertError.message}`);
+          continue;
+        }
+        // 23505 aqui só pode ser nosso PRÓPRIO log de poll anterior (logs de
+        // webhook real têm dedup_key diferente). Reusa e re-tenta apenas se o
+        // log existente for retryable (erro/preso) — um log fresco de outro
+        // poll concorrente bloqueia.
+        const { data: existente } = await sb
+          .from("siso_webhook_logs")
+          .select("id, tiny_pedido_id, tipo, status, criado_em")
+          .eq("tiny_pedido_id", pedidoId)
+          .eq("tipo", "polling_pedido")
+          .eq("codigo_situacao", "aprovado")
+          .single();
+        if (!existente || logBloqueiaReprocesso(existente as WebhookLogResumo & { id: string })) {
+          continue;
+        }
+        webhookLogId = existente.id;
+      } else {
+        webhookLogId = logEntry.id;
+      }
+
+      await processWebhook(
+        webhookLogId,
+        pedidoId,
+        empresa.empresaId,
+        empresa.galpaoId,
+        empresa.grupoId,
+      );
+      resumo.pedidos_processados++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resumo.erros.push(`pedido ${pedidoId}: ${msg}`);
+      logger.warn(LOG_SOURCE, "Falha processando pedido via polling (segue)", {
+        pedidoId,
+        empresaId: empresa.empresaId,
+        error: msg,
+      });
+    }
+  }
+}
+
+// ─── Pedidos cancelados ─────────────────────────────────────────────────────
+
+async function pollPedidosCancelados(
+  token: string,
+  empresa: EmpresaInfo,
+  cnpj: string,
+  dataInicial: string,
+  resumo: PollingResumoEmpresa,
+): Promise<void> {
+  const sb = createServiceClient();
+
+  // dataAtualizacao (não dataInicial): cancelamento acontece dias/semanas
+  // depois da CRIAÇÃO do pedido (claim ML, desistência). Filtrar por data de
+  // criação deixaria pra sempre vivo no SISO um pedido criado há >7d e
+  // cancelado hoje. O cancelamento atualiza o pedido no Tiny, então a janela
+  // de 7d por atualização cobre pedidos velhos cancelados recentemente.
+  const cancelados = await listarTodasPaginas<TinyPedidoListItem>((offset) =>
+    listarPedidos(token, {
+      situacao: SITUACAO_PEDIDO_CANCELADA,
+      dataAtualizacao: dataInicial,
+      limit: PAGE_LIMIT,
+      offset,
+    }),
+  );
+  resumo.pedidos_cancelados_vistos = cancelados.length;
+  if (cancelados.length === 0) return;
+
+  const ids = [...new Set(cancelados.filter((p) => p?.id != null).map((p) => String(p.id)))];
+
+  // Só interessam pedidos que o SISO conhece e ainda não estão cancelados.
+  const alvos: string[] = [];
+  for (const lote of chunk(ids, 200)) {
+    const { data: pedidos } = await sb
+      .from("siso_pedidos")
+      .select("id, status")
+      .in("id", lote)
+      .neq("status", "cancelado");
+    for (const p of (pedidos ?? []) as Array<{ id: string }>) alvos.push(p.id);
+  }
+  if (alvos.length === 0) return;
+
+  logger.info(LOG_SOURCE, "Cancelamentos perdidos detectados", {
+    empresaId: empresa.empresaId,
+    quantidade: alvos.length,
+    ids: alvos.slice(0, 50),
+  });
+
+  for (const pedidoId of alvos) {
+    try {
+      let webhookLogId: string;
+      const { data: logEntry, error: insertError } = await sb
+        .from("siso_webhook_logs")
+        .insert({
+          tiny_pedido_id: pedidoId,
+          cnpj,
+          tipo: "polling_pedido",
+          codigo_situacao: "cancelado",
+          filial: empresa.galpaoNome,
+          empresa_id: empresa.empresaId,
+          payload: { origem: "polling", dados: { id: pedidoId } },
+        })
+        .select("id")
+        .single();
+
+      if (insertError) {
+        if (insertError.code !== "23505") {
+          resumo.erros.push(`cancel ${pedidoId}: ${insertError.message}`);
+          continue;
+        }
+        // Log de um poll anterior cujo cancelamento não concluiu (status do
+        // pedido segue != cancelado) — reusa o log e re-tenta; o handler é
+        // idempotente.
+        const { data: existente } = await sb
+          .from("siso_webhook_logs")
+          .select("id")
+          .eq("tiny_pedido_id", pedidoId)
+          .eq("tipo", "polling_pedido")
+          .eq("codigo_situacao", "cancelado")
+          .single();
+        if (!existente) continue;
+        webhookLogId = existente.id;
+      } else {
+        webhookLogId = logEntry.id;
+      }
+
+      await handlePedidoCancelamento({
+        pedidoId,
+        webhookLogId,
+        empresaId: empresa.empresaId,
+      });
+      resumo.cancelamentos_aplicados++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resumo.erros.push(`cancel ${pedidoId}: ${msg}`);
+      logger.warn(LOG_SOURCE, "Falha cancelando pedido via polling (segue)", {
+        pedidoId,
+        empresaId: empresa.empresaId,
+        error: msg,
+      });
+    }
+  }
+}
+
+// ─── Notas fiscais autorizadas ──────────────────────────────────────────────
+
+async function pollNotasAutorizadas(
+  token: string,
+  empresa: EmpresaInfo,
+  cnpj: string,
+  dataInicial: string,
+  resumo: PollingResumoEmpresa,
+): Promise<void> {
+  const sb = createServiceClient();
+
+  const porId = new Map<string, TinyNotaListItem>();
+  for (const situacao of SITUACOES_NF) {
+    const notas = await listarTodasPaginas<TinyNotaListItem>((offset) =>
+      listarNotas(token, { situacao, dataInicial, limit: PAGE_LIMIT, offset }),
+    );
+    for (const nf of notas) {
+      if (nf?.id != null) porId.set(String(nf.id), nf);
+    }
+  }
+  resumo.notas_vistas = porId.size;
+  if (porId.size === 0) return;
+
+  // Pré-dedup por id (o handler ainda faz o dedup composto por chaveAcesso)
+  const ids = [...porId.keys()];
+  const conhecidas = new Set<string>();
+  for (const lote of chunk(ids, 200)) {
+    const { data: logs } = await sb
+      .from("siso_webhook_logs")
+      .select("tiny_pedido_id")
+      .eq("tipo", "nota_fiscal")
+      .in("tiny_pedido_id", lote);
+    for (const l of (logs ?? []) as Array<{ tiny_pedido_id: string }>) {
+      conhecidas.add(l.tiny_pedido_id);
+    }
+  }
+
+  const novas = ids.filter((id) => !conhecidas.has(id));
+  if (novas.length === 0) return;
+
+  logger.info(LOG_SOURCE, "NFs autorizadas sem webhook detectadas", {
+    empresaId: empresa.empresaId,
+    quantidade: novas.length,
+    ids: novas.slice(0, 50),
+  });
+
+  for (const nfId of novas) {
+    const nf = porId.get(nfId);
+    if (!nf) continue;
+    try {
+      const payload: NfWebhookPayload = {
+        cnpj,
+        tipo: "nota_fiscal",
+        dados: {
+          idNotaFiscalTiny: nf.id,
+          numero: nf.numero,
+          serie: nf.serie,
+          chaveAcesso: nf.chaveAcesso,
+          dataEmissao: nf.dataEmissao,
+          valorNota: nf.valor,
+        },
+      };
+      await handleNfWebhook(payload, empresa.empresaId);
+      resumo.notas_processadas++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resumo.erros.push(`nf ${nfId}: ${msg}`);
+      logger.warn(LOG_SOURCE, "Falha processando NF via polling (segue)", {
+        nfId,
+        empresaId: empresa.empresaId,
+        error: msg,
+      });
+    }
+  }
+}
+
+// ─── Entry point ────────────────────────────────────────────────────────────
+
+/**
+ * Varre todas as contas Tiny conectadas (siso_tiny_connections ativas com
+ * empresa vinculada) e reprocessa pedidos/NFs que escaparam do webhook.
+ * Erros são isolados por empresa e por item — uma falha não derruba o resto.
+ */
+export async function pollTiny(): Promise<PollingResult> {
+  const sb = createServiceClient();
+  const dataInicial = dataInicialJanela();
+
+  const { data: connections, error } = await sb
+    .from("siso_tiny_connections")
+    .select("cnpj, empresa_id")
+    .eq("ativo", true)
+    .not("empresa_id", "is", null)
+    .not("access_token", "is", null);
+
+  if (error) {
+    throw new Error(`Falha listando conexões Tiny: ${error.message}`);
+  }
+
+  const resultado: PollingResult = {
+    janela_dias: DIAS_JANELA,
+    data_inicial: dataInicial,
+    empresas: [],
+    executado_em: new Date().toISOString(),
+  };
+
+  for (const conn of (connections ?? []) as Array<{ cnpj: string; empresa_id: string }>) {
+    const resumo: PollingResumoEmpresa = {
+      empresa_id: conn.empresa_id,
+      empresa_nome: "",
+      cnpj: conn.cnpj,
+      pedidos_aprovados_vistos: 0,
+      pedidos_processados: 0,
+      pedidos_cancelados_vistos: 0,
+      cancelamentos_aplicados: 0,
+      notas_vistas: 0,
+      notas_processadas: 0,
+      erros: [],
+    };
+    resultado.empresas.push(resumo);
+
+    try {
+      const empresa = await getEmpresaByCnpj(conn.cnpj);
+      if (!empresa) {
+        resumo.erros.push("empresa não encontrada/inativa pra esse CNPJ");
+        continue;
+      }
+      resumo.empresa_nome = empresa.empresaNome;
+
+      const { token } = await getValidTokenByEmpresa(empresa.empresaId);
+
+      // runWithEmpresa: rate-limit + contexto pro stub (gotcha #8)
+      await runWithEmpresa(empresa.empresaId, async () => {
+        await pollPedidosAprovados(token, empresa, conn.cnpj, dataInicial, resumo);
+        await pollPedidosCancelados(token, empresa, conn.cnpj, dataInicial, resumo);
+        await pollNotasAutorizadas(token, empresa, conn.cnpj, dataInicial, resumo);
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resumo.erros.push(msg);
+      logger.logError({
+        error: err,
+        source: LOG_SOURCE,
+        message: `Polling falhou pra empresa ${conn.empresa_id}`,
+        category: "external_api",
+        empresaId: conn.empresa_id,
+        metadata: { cnpj: conn.cnpj },
+      });
+    }
+  }
+
+  logger.info(LOG_SOURCE, "Polling Tiny concluído", {
+    empresas: resultado.empresas.length,
+    pedidos: resultado.empresas.reduce((s, e) => s + e.pedidos_processados, 0),
+    cancelamentos: resultado.empresas.reduce((s, e) => s + e.cancelamentos_aplicados, 0),
+    notas: resultado.empresas.reduce((s, e) => s + e.notas_processadas, 0),
+    erros: resultado.empresas.reduce((s, e) => s + e.erros.length, 0),
+  });
+
+  return resultado;
+}

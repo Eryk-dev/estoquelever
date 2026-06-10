@@ -202,26 +202,75 @@ export interface TinyPedidoListItem {
   };
 }
 
-/** List orders with optional filters (situacao + date range) */
+/**
+ * List orders with optional filters.
+ * Per spec (api tiny.json): dataInicial/dataFinal filtram por data de CRIAÇÃO
+ * do pedido; dataAtualizacao filtra por data de ATUALIZAÇÃO (formato
+ * YYYY-MM-DD); situacao é o código numérico (3=Aprovada, 2=Cancelada).
+ */
 export async function listarPedidos(
   token: string,
   params: {
     situacao?: string | number;
-    dataInicialEmissao?: string;
-    dataFinalEmissao?: string;
+    dataInicial?: string;
+    dataFinal?: string;
+    dataAtualizacao?: string;
     limit?: number;
     offset?: number;
   } = {},
-): Promise<{ itens: TinyPedidoListItem[]; total?: number }> {
+): Promise<{ itens: TinyPedidoListItem[]; paginacao?: { total?: number }; total?: number }> {
   const query = new URLSearchParams();
   if (params.situacao != null) query.set("situacao", String(params.situacao));
-  if (params.dataInicialEmissao) query.set("dataInicialEmissao", params.dataInicialEmissao);
-  if (params.dataFinalEmissao) query.set("dataFinalEmissao", params.dataFinalEmissao);
+  if (params.dataInicial) query.set("dataInicial", params.dataInicial);
+  if (params.dataFinal) query.set("dataFinal", params.dataFinal);
+  if (params.dataAtualizacao) query.set("dataAtualizacao", params.dataAtualizacao);
   query.set("limit", String(params.limit ?? 100));
   if (params.offset) query.set("offset", String(params.offset));
   const qs = query.toString();
-  return tinyFetch<{ itens: TinyPedidoListItem[]; total?: number }>(
+  return tinyFetch<{ itens: TinyPedidoListItem[]; paginacao?: { total?: number }; total?: number }>(
     `/pedidos${qs ? `?${qs}` : ""}`,
+    { token },
+  );
+}
+
+/** Item returned by GET /notas (list) — fields from BaseNotaFiscalModel */
+export interface TinyNotaListItem {
+  id: number;
+  situacao?: number | string;
+  tipo?: "E" | "S";
+  numero?: string;
+  serie?: string;
+  chaveAcesso?: string;
+  dataEmissao?: string;
+  valor?: number;
+}
+
+/**
+ * List invoices with optional filters.
+ * Per spec: dataInicial/dataFinal filtram por data de criação (YYYY-MM-DD);
+ * situacao é código numérico (6=Autorizada, 7=Emitida Danfe).
+ */
+export async function listarNotas(
+  token: string,
+  params: {
+    situacao?: string | number;
+    tipo?: "E" | "S";
+    dataInicial?: string;
+    dataFinal?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<{ itens: TinyNotaListItem[]; paginacao?: { total?: number } }> {
+  const query = new URLSearchParams();
+  if (params.situacao != null) query.set("situacao", String(params.situacao));
+  if (params.tipo) query.set("tipo", params.tipo);
+  if (params.dataInicial) query.set("dataInicial", params.dataInicial);
+  if (params.dataFinal) query.set("dataFinal", params.dataFinal);
+  query.set("limit", String(params.limit ?? 100));
+  if (params.offset) query.set("offset", String(params.offset));
+  const qs = query.toString();
+  return tinyFetch<{ itens: TinyNotaListItem[]; paginacao?: { total?: number } }>(
+    `/notas${qs ? `?${qs}` : ""}`,
     { token },
   );
 }

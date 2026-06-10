@@ -142,6 +142,10 @@ export async function tinyStubResponse<T>(
   }
 
   // ─── Notas (NF) ────────────────────────────────────────────────────────
+  if (resource === "notas" && !id && method === "GET") {
+    // Listagem (polling fallback): stub não materializa NFs — lista vazia.
+    return { itens: [], paginacao: { total: 0 } } as T;
+  }
   if (resource === "notas" && id) {
     if (method === "GET" && !action) {
       return handleGetNota<T>(id);

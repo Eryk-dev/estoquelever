@@ -4596,6 +4596,24 @@ See `src/app/api/wms/tiny/stock/ajustar/route.ts`
 
 ---
 
+### GET /api/wms/tiny/polling
+
+**File:** `src/app/api/wms/tiny/polling/route.ts` (lib: `src/lib/tiny-polling.ts`)
+
+**Purpose:** Polling fallback pro webhook do Tiny. Varre TODAS as contas Tiny conectadas (`siso_tiny_connections` ativas com `empresa_id` e token) e reprocessa, com janela de **7 dias** pra trás (`dataInicial`, data de criação no Tiny):
+
+- **Pedidos aprovados** (`situacao=3`) sem registro em `siso_pedidos` nem `siso_webhook_logs` (`codigo_situacao='aprovado'`) → insere log `tipo='polling_pedido'` + `processWebhook` (mesmos efeitos do webhook).
+- **Pedidos cancelados** (`situacao=2`, janela por `dataAtualizacao` — cancelamento pode acontecer semanas após a criação) no Tiny mas ainda ativos no SISO → `handlePedidoCancelamento` (lógica compartilhada com o webhook).
+- **NFs autorizadas** (`situacao=6` e `7` Emitida Danfe) sem log `tipo='nota_fiscal'` → `handleNfWebhook` (dedup composto interno).
+
+**Auth:** `X-Worker-Secret` header ou `?secret=` (WORKER_SECRET) — cron pg_cron a cada 10min (`wms_tiny_polling_fallback`, migration `20260610_cron_tiny_polling.sql`) — OU sessão com `sistema.usuarios`.
+
+**Response 200:** `{ janela_dias, data_inicial, executado_em, empresas: [{ empresa_id, empresa_nome, cnpj, pedidos_aprovados_vistos, pedidos_processados, pedidos_cancelados_vistos, cancelamentos_aplicados, notas_vistas, notas_processadas, erros[] }] }`
+
+Erros são isolados por empresa e por item (uma falha não derruba a varredura). `maxDuration = 300`.
+
+---
+
 ## Worker & Background Jobs
 
 ### POST /api/wms/worker/processar

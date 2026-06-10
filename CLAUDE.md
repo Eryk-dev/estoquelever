@@ -59,6 +59,8 @@ npm run auth-matrix      # matriz de auth/permissões
 ```
 Tiny webhook (pedido)
   → api/wms/webhook/tiny           valida, dedup (siso_webhook_logs), CNPJ→empresa, discrimina pedido vs nota_fiscal
+    (fallback: cron 10min → api/wms/tiny/polling → tiny-polling.ts varre TODOS os Tinys conectados,
+     janela 7d: pedidos aprovados/cancelados + NFs autorizadas que escaparam do webhook)
   → processWebhook                 resolve galpão + busca pedido no Tiny (camada fiscal); IGNORA não-marketplace
   → processWebhookWms              ⬅ AQUI o processamento real acontece
        · resolverItensWms          Tiny produto_id → uuid WMS via siso_produto_empresas; expande kits
@@ -133,7 +135,7 @@ Fonte única de estoque. Cada posição é única por **`(produto_id, galpao_id,
 src/
   app/
     api/auth/{login,me}/route.ts        # ÚNICAS rotas fora de /api/wms (PIN login + sessão)
-    api/wms/**/route.ts                 # 203 rotas — TODO o backend
+    api/wms/**/route.ts                 # 204 rotas — TODO o backend
     wms/**                              # 57 pages (+layout) — TODO o frontend, todas "use client"
     login/page.tsx · page.tsx           # login + redirect pra /wms
     globals.css                         # Tailwind v4 (@theme inline)
@@ -151,6 +153,8 @@ src/
     webhook-processor(-wms).ts          # entry shell → -wms (ativo)
     execution-worker(-wms).ts           # entry shell → -wms (ativo)
     nf-webhook-handler.ts               # nota_fiscal → aguardando_separacao; upsertNotaFiscal()
+    pedido-cancel-handler.ts            # cancelamento de pedido (compartilhado webhook + polling)
+    tiny-polling.ts                     # polling fallback Tiny (pedidos aprovados/cancelados + NFs autorizadas, janela 7d, cron 10min)
     empresa-lookup.ts                   # CNPJ→empresa (cache 5min)
     grupo-resolver.ts                   # lookup de grupo (não roteia mais)
     compras-*.ts                        # release, equivalencia, embalagem, necessidade, utils
@@ -182,9 +186,9 @@ docs/                                   # ground-truth gerada (ver abaixo)
 erros-conhecidos.yaml                   # base de erros (grep antes, adicionar depois)
 ```
 
-### API — grupos por domínio (210 rotas em `/api/wms`)
+### API — grupos por domínio (211 rotas em `/api/wms`)
 
-`separacao` (31) · `admin` (21) · `inventario` (16) · `cross` (14) · `compras` (14) · `insights` (12) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (6) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `relatorios` (3) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
+`separacao` (31) · `admin` (21) · `inventario` (16) · `cross` (14) · `compras` (14) · `insights` (12) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (7) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `relatorios` (3) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
 
 ### Database — tabelas principais
 

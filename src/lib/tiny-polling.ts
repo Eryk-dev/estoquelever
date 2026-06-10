@@ -278,14 +278,34 @@ async function pollPedidosCancelados(
   // criação deixaria pra sempre vivo no SISO um pedido criado há >7d e
   // cancelado hoje. O cancelamento atualiza o pedido no Tiny, então a janela
   // de 7d por atualização cobre pedidos velhos cancelados recentemente.
-  const cancelados = await listarTodasPaginas<TinyPedidoListItem>((offset) =>
-    listarPedidos(token, {
-      situacao: SITUACAO_PEDIDO_CANCELADA,
-      dataAtualizacao: dataInicial,
-      limit: PAGE_LIMIT,
-      offset,
-    }),
-  );
+  let cancelados: TinyPedidoListItem[];
+  try {
+    cancelados = await listarTodasPaginas<TinyPedidoListItem>((offset) =>
+      listarPedidos(token, {
+        situacao: SITUACAO_PEDIDO_CANCELADA,
+        dataAtualizacao: dataInicial,
+        limit: PAGE_LIMIT,
+        offset,
+      }),
+    );
+  } catch (err) {
+    // Tiny recusa dataAtualizacao em contas grandes ("Sua consulta levou
+    // muito tempo" — visto na EasyPeasy). Degrada pra janela por data de
+    // criação: perde cancelamentos de pedidos criados há >7d, mas cobre o
+    // grosso em vez de nada.
+    logger.warn(LOG_SOURCE, "Listagem por dataAtualizacao falhou — fallback pra dataInicial", {
+      empresaId: empresa.empresaId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    cancelados = await listarTodasPaginas<TinyPedidoListItem>((offset) =>
+      listarPedidos(token, {
+        situacao: SITUACAO_PEDIDO_CANCELADA,
+        dataInicial,
+        limit: PAGE_LIMIT,
+        offset,
+      }),
+    );
+  }
   resumo.pedidos_cancelados_vistos = cancelados.length;
   if (cancelados.length === 0) return;
 
@@ -495,11 +515,27 @@ export async function pollTiny(): Promise<PollingResult> {
 
       const { token } = await getValidTokenByEmpresa(empresa.empresaId);
 
-      // runWithEmpresa: rate-limit + contexto pro stub (gotcha #8)
+      // runWithEmpresa: rate-limit + contexto pro stub (gotcha #8).
+      // Cada varredura é isolada: erro numa (ex.: Tiny 400 na listagem de
+      // cancelados) não derruba as demais da mesma empresa.
       await runWithEmpresa(empresa.empresaId, async () => {
-        await pollPedidosAprovados(token, empresa, conn.cnpj, dataInicial, resumo);
-        await pollPedidosCancelados(token, empresa, conn.cnpj, dataInicial, resumo);
-        await pollNotasAutorizadas(token, empresa, conn.cnpj, dataInicial, resumo);
+        const varreduras: Array<[string, () => Promise<void>]> = [
+          ["aprovados", () => pollPedidosAprovados(token, empresa, conn.cnpj, dataInicial, resumo)],
+          ["cancelados", () => pollPedidosCancelados(token, empresa, conn.cnpj, dataInicial, resumo)],
+          ["notas", () => pollNotasAutorizadas(token, empresa, conn.cnpj, dataInicial, resumo)],
+        ];
+        for (const [nome, varrer] of varreduras) {
+          try {
+            await varrer();
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            resumo.erros.push(`varredura ${nome}: ${msg}`);
+            logger.warn(LOG_SOURCE, `Varredura ${nome} falhou (segue pras demais)`, {
+              empresaId: empresa.empresaId,
+              error: msg,
+            });
+          }
+        }
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

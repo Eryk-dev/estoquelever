@@ -374,6 +374,23 @@ describe("pollTiny — pedidos cancelados", () => {
     expect(cancelMock).not.toHaveBeenCalled();
   });
 
+  it("fallback: dataAtualizacao recusada pelo Tiny → re-lista por dataInicial", async () => {
+    state.pedidosExistentes = [{ id: "222", status: "executando" }];
+    listarPedidosMock.mockImplementation(
+      async (_t: unknown, params: { situacao: number; dataAtualizacao?: string }) => {
+        if (params.situacao !== 2) return { itens: [] };
+        if (params.dataAtualizacao) throw new Error("400: Sua consulta levou muito tempo");
+        return { itens: [{ id: 222 }] };
+      },
+    );
+
+    const result = await pollTiny();
+
+    expect(cancelMock).toHaveBeenCalledTimes(1);
+    expect(result.empresas[0].cancelamentos_aplicados).toBe(1);
+    expect(result.empresas[0].erros).toHaveLength(0);
+  });
+
   it("retry: 23505 no insert reusa log existente e re-tenta cancelamento", async () => {
     state.pedidosExistentes = [{ id: "222", status: "executando" }];
     state.insertError = { code: "23505", message: "duplicate" };
@@ -475,6 +492,22 @@ describe("pollTiny — isolamento de erros", () => {
     expect(result.empresas).toHaveLength(2);
     expect(result.empresas[0].erros).toHaveLength(1);
     expect(result.empresas[1].pedidos_processados).toBe(1);
+  });
+
+  it("varreduras são isoladas: cancelados falhando não derruba as NFs", async () => {
+    listarPedidosMock.mockImplementation(async (_t: unknown, params: { situacao: number }) => {
+      if (params.situacao === 2) throw new Error("400: consulta lenta");
+      return { itens: [] };
+    });
+    listarNotasMock.mockImplementation(async (_t: unknown, params: { situacao: number }) =>
+      params.situacao === 6 ? { itens: [{ id: 333, chaveAcesso: "X" }] } : { itens: [] },
+    );
+
+    const result = await pollTiny();
+
+    expect(handleNfWebhookMock).toHaveBeenCalledTimes(1);
+    expect(result.empresas[0].notas_processadas).toBe(1);
+    expect(result.empresas[0].erros.some((e) => e.startsWith("varredura cancelados"))).toBe(true);
   });
 
   it("falha num pedido não bloqueia os seguintes", async () => {

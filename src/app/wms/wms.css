@@ -2172,6 +2172,22 @@
 }
 .wms-frc-row:last-child { border-bottom: 0; }
 
+/* Linha de DOCUMENTO da aba Receber (badge origem + id + pendente + custo + idade) */
+.wms-frc-row-doc {
+  display: grid;
+  grid-template-columns: 60px 76px minmax(0, 1fr) 100px 90px 24px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--wms-c-border);
+  background: none;
+  font: inherit;
+  color: inherit;
+}
+.wms-frc-row-doc:last-child { border-bottom: 0; }
+.wms-frc-row-doc:hover { background: var(--wms-c-panel-2); }
+.wms-frc-row-doc > .wms-badge { justify-self: start; }
+
 /* Aging chips */
 .wms-aging-chip {
   display: inline-flex;
@@ -2201,6 +2217,11 @@
   }
   .wms-frc-row > :nth-child(2),
   .wms-frc-row > :nth-child(5) { display: none; }
+  .wms-frc-row-doc {
+    grid-template-columns: 60px minmax(0, 1fr) 90px 24px;
+  }
+  .wms-frc-row-doc > :nth-child(2),
+  .wms-frc-row-doc > :nth-child(5) { display: none; }
 }
 
 /* ============================================================

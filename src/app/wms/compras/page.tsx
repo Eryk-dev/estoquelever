@@ -1092,7 +1092,7 @@ function TabReceber({
             {f.documentos.map((d) => (
               <button
                 key={`${d.origem}-${d.id}`}
-                className="wms-frc-row"
+                className="wms-frc-row-doc"
                 style={{ cursor: "pointer", width: "100%", textAlign: "left" }}
                 onClick={() => router.push(d.href)}
                 type="button"
@@ -1104,10 +1104,14 @@ function TabReceber({
                 >
                   {d.origem === "manual" ? "Manual" : "OC"}
                 </span>
-                <span>{d.id.slice(0, 8)}</span>
+                <span className="wms-mono wms-td-mute">{d.id.slice(0, 8)}</span>
                 <span>{fmtNum(d.qty_pendente)} un pendente</span>
-                {d.custo_total != null && <span>{fmtBRL(d.custo_total)}</span>}
-                {d.criado_em && <span>{fmtRelative(d.criado_em)}</span>}
+                <span className="wms-tar wms-mono">
+                  {d.custo_total != null ? fmtBRL(d.custo_total) : ""}
+                </span>
+                <span className="wms-td-mute">
+                  {d.criado_em ? fmtRelative(d.criado_em) : ""}
+                </span>
                 <Icon name="chevron-r" />
               </button>
             ))}

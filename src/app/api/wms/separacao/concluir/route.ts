@@ -98,6 +98,7 @@ export async function POST(request: NextRequest) {
 
     const separados: string[] = [];
     const aguardandoCompra: string[] = [];
+    const validacaoOc: string[] = [];
     const pendentes: string[] = [];
 
     for (const pid of pedido_ids) {
@@ -122,6 +123,11 @@ export async function POST(request: NextRequest) {
           i.compra_status === "comprado" ||
           i.compra_status === "oc_pendente",
       );
+      // Itens OC ainda NÃO decididos (ninguém clicou Encontrei/Esgotado) — o
+      // pedido NÃO pode ir pra compras por arrasto: volta pra validacao_oc.
+      const hasOcPendente = pedidoItems.some(
+        (i) => i.compra_status === "oc_pendente",
+      );
       // Normal items that need separacao_marcado check
       const normalItems = pedidoItems.filter(
         (i) =>
@@ -137,6 +143,11 @@ export async function POST(request: NextRequest) {
 
       if (!allNormalMarcado) {
         pendentes.push(pid);
+      } else if (hasOcPendente) {
+        // Itens OC sem decisão explícita → pedido volta pra validação OC.
+        // Só Esgotado explícito (ou o restante de uma contagem parcial) manda
+        // item pra compras — concluir não decide pelo operador.
+        validacaoOc.push(pid);
       } else if (compraItems.length > 0) {
         // All normal items marcado but has compra items → pause for purchases
         aguardandoCompra.push(pid);
@@ -190,6 +201,37 @@ export async function POST(request: NextRequest) {
     const separadosCompletos = separados.filter(
       (pid) => !pedidosComCoberturaIncompleta.has(pid),
     );
+
+    // Pedidos com itens OC sem decisão voltam pra validação OC (preserva o
+    // pick dos normais; libera o operador da wave).
+    if (validacaoOc.length > 0) {
+      const { error: validacaoError } = await supabase
+        .from("siso_pedidos")
+        .update({
+          status_separacao: "validacao_oc",
+          separacao_operador_id: null,
+          separacao_iniciada_em: null,
+        })
+        .in("id", validacaoOc)
+        .eq("status_separacao", "em_separacao");
+
+      if (validacaoError) {
+        logger.logError({
+          error: validacaoError,
+          source: "separacao-concluir",
+          message: "Failed to update pedidos to validacao_oc",
+          category: "database",
+          errorCode: validacaoError.code,
+          requestPath: "/api/wms/separacao/concluir",
+          requestMethod: "POST",
+          metadata: { validacaoOc, table: "siso_pedidos" },
+        });
+        return NextResponse.json(
+          { error: validacaoError.message },
+          { status: 500 },
+        );
+      }
+    }
 
     // Update pedidos transitioning to aguardando_compra (partial — waiting for purchases)
     if (aguardandoCompra.length > 0) {
@@ -253,9 +295,26 @@ export async function POST(request: NextRequest) {
     logger.info("separacao-concluir", "Separação concluída", {
       separados: separadosCompletos,
       aguardandoCompra,
+      validacaoOc,
       pendentes,
       coberturaIncompleta: [...pedidosComCoberturaIncompleta],
     });
+
+    // History: pedidos devolvidos pra validação OC
+    if (validacaoOc.length > 0) {
+      registrarEventos(
+        validacaoOc.map((pid) => ({
+          pedidoId: pid,
+          evento: "status_revertido" as const,
+          usuarioId: session.id,
+          usuarioNome: session.nome,
+          detalhes: {
+            motivo: "concluir_com_oc_pendente",
+            para: "validacao_oc",
+          },
+        })),
+      ).catch(() => {});
+    }
 
     // Record history for pedidos transitioning to aguardando_compra
     if (aguardandoCompra.length > 0) {
@@ -310,6 +369,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       separados: separadosCompletos,
       aguardandoCompra,
+      validacaoOc,
       pendentes,
       cobertura_incompleta: coberturaIncompleta,
     });

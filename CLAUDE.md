@@ -178,7 +178,7 @@ src/
       reconciliacao.ts · reconciliacao-tiny.ts · cobertura.ts
       devolucoes.ts · devolucao-detector.ts (puro) · dashboard-{geral,tarefas}.ts
       insights/{motor,queries,types}.ts
-      separacao/{pick-mov,distribuir-qty-pega,reset-state}.ts
+      separacao/{pick-mov,distribuir-qty-pega,reset-state,alocacao-contagem}.ts
       _archive/                         # código 4D morto — excluído do typecheck, NÃO ressuscitar
 supabase/migrations/                    # 184 .sql — YYYYMMDD_description.sql (sufixo b/c p/ mesmo dia)
 scripts/wms/cenarios/                   # runner E2E + cenários + auth matrix

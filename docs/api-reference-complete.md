@@ -1570,7 +1570,10 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 ```json
 {
   "separados": ["string"],
-  "pendentes": ["string"]
+  "aguardandoCompra": ["string"],
+  "validacaoOc": ["string"],
+  "pendentes": ["string"],
+  "cobertura_incompleta": [{ "pedido_id": "string", "sku": "string", "recebido": 0, "solicitado": 0, "mensagem": "string" }]
 }
 ```
 
@@ -1585,6 +1588,8 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 - Fetches all items for the given pedidos
 - Groups by pedido_id, checks if ALL items have separacao_marcado = true
 - Moves complete pedidos to status = "separado" with separacao_concluida_em
+- **Itens OC sem decisão (2026-06-10):** pedido com item `compra_status='oc_pendente'` (ninguém clicou Encontrei/Esgotado) NÃO vai mais pra `aguardando_compra` por arrasto — volta pra `validacao_oc` (bucket `validacaoOc` na resposta), resetando `separacao_operador_id`/`separacao_iniciada_em` e preservando o pick dos itens normais. Só esgotado explícito (ou o restante de uma contagem parcial no Encontrei) manda item pra compras.
+- Pedidos com itens já decididos pra compra (`aguardando_compra`/`comprado`) e normais todos marcados → `aguardandoCompra` (pausa pra compras, como antes)
 - Fire-and-forget: calls `preCriarAgrupamentosEmLote` (ensure agrupamentos exist)
 - Fire-and-forget: calls `recarregarEtiquetasFaltantes` (re-download ZPL for pedidos missing cached labels)
 
@@ -2737,7 +2742,7 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 }
 ```
 
-- `qty_contada` (number, optional — only meaningful when `acao='encontrei'`): total de unidades contadas fisicamente na prateleira (acerto de prateleira / contagem inline). Quando presente, o backend reconcilia o saldo da loc registrando uma contagem oficial (gera mov `inventario_ganho`/`inventario_perda` conforme o delta vs. saldo de sistema) antes de separar o pedido. Exige `qty_contada >= quantidade_pedida` do item — caso contrário responde **422** `contagem_menor_que_pedido`. `qty_contada <= 0` responde **422** `contagem_invalida`. Ausente = comportamento legado (pick sem contagem). **Mutuamente exclusivo com `solicitar_contagem`** — enviar ambos retorna **400**.
+- `qty_contada` (number, optional — only meaningful when `acao='encontrei'`): total de unidades contadas fisicamente na prateleira (acerto de prateleira / contagem inline). Quando presente, o backend reconcilia o saldo da loc registrando uma contagem oficial (gera mov `inventario_ganho`/`inventario_perda` conforme o delta vs. saldo de sistema — UMA vez por chamada, antes dos picks) e **distribui a contagem entre os itens pendentes** (`alocarContagem`, menor quantidade primeiro, maximizando pedidos liberados por inteiro): itens cobertos por inteiro são separados normalmente; a sobra que não cobre o próximo item inteiro vira **pick parcial** dele (`separacao_parcial=true`, `parcial_motivo='encontrei_parcial'`) com o restante mandado pra compras; itens sem cobertura nenhuma vão **direto pra compras** (`aguardando_compra`, qty efetiva = pedida − pega − realocs picadas, mesma semântica do esgotado explícito). Contagem menor que o total é PERMITIDA (decisão 2026-06-10 — antes respondia 422 `contagem_menor_que_pedido`). `qty_contada <= 0` responde **422** `contagem_invalida`. Ausente = comportamento legado (pick sem contagem). **Mutuamente exclusivo com `solicitar_contagem`** — enviar ambos retorna **400**.
 - `localizacao_codigo` (string, optional — only meaningful when `acao='encontrei'`): código da prateleira bipada. Alternativa a `localizacao_id` (uuid) pra resolver a loc-alvo da contagem dentro do galpão do pedido (`siso_localizacoes` filtrado por `galpao_id` do pedido + `codigo`). Usado em conjunto com `qty_contada` ou `solicitar_contagem`.
 - `solicitar_contagem` (boolean, optional — only meaningful when `acao='encontrei'`): quando `true`, pega exatamente a `quantidade_pedida` do item (gera mov E de ajuste_manual + mov S de pick) e enfileira a localização para contagem futura via inventário. O saldo da loc fica temporariamente subcontado de propósito — o operador achou fisicamente o item mas não contou a prateleira inteira; a reconciliação completa acontece depois. **Mutuamente exclusivo com `qty_contada`** — enviar ambos retorna **400** `solicitar_contagem e qty_contada são mutuamente exclusivos`.
 
@@ -2750,9 +2755,18 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
       "pedido_id": "uuid",
       "novo_status": "string"
     }
-  ]
+  ],
+  "cobertura": {
+    "qty_contada": "number",
+    "itens_cobertos": "number",
+    "itens_parciais": "number",
+    "itens_esgotados": "number",
+    "qty_para_compras": "number"
+  }
 }
 ```
+
+- `cobertura` só aparece no caminho `acao='encontrei'` + `qty_contada` — resume a alocação da contagem (quantos itens foram liberados inteiros, quantos parciais, quantos foram pra compras e a qty total mandada pra compras).
 
 **Response (400 - Params mutuamente exclusivos):**
 ```json
@@ -2764,17 +2778,14 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 **Response (422 - Contagem inline inválida, only acao=encontrei):**
 ```json
 {
-  "error": "contagem_menor_que_pedido | contagem_invalida | loc_obrigatoria | loc_invalida",
-  "message": "string",
-  "item_id": "uuid",
-  "qty_contada": "number (contagem_menor_que_pedido)",
-  "qty_pedido": "number (contagem_menor_que_pedido)"
+  "error": "contagem_invalida | loc_obrigatoria | loc_invalida",
+  "message": "string"
 }
 ```
 
 **Business Logic:**
 - **encontrei:** Clears all compra fields (compra_status, fornecedor_oc, compra_quantidade_solicitada, compra_solicitada_em, ordem_compra_id) and marks item as picked (separacao_marcado = true, bipado_completo = true, quantidade_bipada = quantidade_pedida). Três sub-caminhos mutuamente exclusivos:
-  - **com `qty_contada`** (Fase 1 — contagem inline): reconcilia o saldo da loc-alvo (resolvida por `localizacao_id` ou `localizacao_codigo`) via `registrarContagemInline` antes do pick. Exige `qty_contada >= quantidade_pedida`.
+  - **com `qty_contada`** (contagem inline, parcial permitida): reconcilia o saldo da loc-alvo (resolvida por `localizacao_id` ou `localizacao_codigo`) via `registrarContagemInline` UMA vez antes dos picks, depois aloca a contagem entre os itens (`alocarContagem` em `lib/wms/separacao/alocacao-contagem.ts`): cobertos inteiros → pick normal; sobra → pick parcial + restante pra compras; sem cobertura → compras (helper `enviarItemParaCompras`, mesma semântica do esgotado).
   - **com `solicitar_contagem=true`** (Fase 4 — contagem diferida): gera mov E (`ajuste_manual`, origem_id `solicitar-contagem-{item_id}`) + mov S (pick) com `quantidade_pedida`, e enfileira a loc para contagem futura (`enfileirarLocParaContagem`, fire-and-forget). Saldo da loc fica temporariamente subcontado. Loc obrigatória (`localizacao_id` ou `localizacao_codigo`).
   - **legado (sem ambos):** pick via `pickMovPicking`, que resolve a loc com maior saldo disponível no galpão. Se produto não tem saldo em nenhuma loc, exige `localizacao_id` (body) e gera mov E de `ajuste_manual` antes do pick.
 - **esgotado:** Sets compra_status = aguardando_compra, fills fornecedor_oc via getFornecedorBySku, sets compra_quantidade_solicitada and compra_solicitada_em. Auto-creates or finds existing OC (siso_ordens_compra) by fornecedor + galpao and links item.

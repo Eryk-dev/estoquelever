@@ -4508,3 +4508,34 @@ erros:
     - src/app/api/wms/tiny/oauth/callback/route.ts
     - src/app/wms/configuracoes/conexoes/page.tsx
   tags: [tiny, oauth, token, painel, conexoes, invalid_grant]
+
+- id: SEPARACAO-ENCONTREI-SEM-PARCIAL-CONCLUIR-JOGA-OC-PRA-COMPRAS
+  date: 2026-06-10
+  source: separacao
+  category: business_logic
+  message: "'Encontrei' bloqueava contagem parcial (422 contagem_menor_que_pedido) e concluir jogava itens oc_pendente pra compras sem decisão"
+  cause: >
+    validar-oc-item exigia qty_contada >= quantidade_pedida por item — operador
+    que achava 1 de 3 não tinha como liberar nada (e a reconciliação inline
+    rodava POR item, re-inflando o saldo da loc a cada pick quando o grupo
+    consolidado tinha mais de um item). No concluir, pedido com itens
+    oc_pendente (sem ninguém clicar Encontrei/Esgotado) caía no bucket
+    aguardando_compra por arrasto — 30 itens em validacao_oc iam todos pra
+    compras se o operador separasse 1 ou 2 e concluísse.
+  fix: >
+    (1) Contagem parcial permitida: alocarContagem (lib/wms/separacao/
+    alocacao-contagem.ts) distribui a contagem maximizando pedidos liberados
+    inteiros (menor qty primeiro); sobra vira pick parcial
+    (parcial_motivo='encontrei_parcial') e o restante descoberto vai
+    automaticamente pra compras (enviarItemParaCompras, mesma semântica do
+    esgotado, qty efetiva deduz pega+realocs). Reconciliação da loc roda UMA
+    vez por chamada, antes dos picks. Resposta ganhou bloco `cobertura`.
+    (2) concluir: pedido com oc_pendente volta pra validacao_oc (bucket
+    `validacaoOc` na resposta), reset de operador, pick dos normais
+    preservado — só esgotado explícito ou restante de parcial vai pra compras.
+  files:
+    - src/app/api/wms/separacao/validar-oc-item/route.ts
+    - src/app/api/wms/separacao/concluir/route.ts
+    - src/lib/wms/separacao/alocacao-contagem.ts
+    - src/app/wms/separacao/checklist/page.tsx
+  tags: [separacao, validacao-oc, encontrei, parcial, contagem, concluir, compras]

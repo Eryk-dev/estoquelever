@@ -8,6 +8,7 @@ import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
 import { estornarMovimentacao, inserirMovimentacao } from "@/lib/wms/ledger";
 import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
 import { registrarContagemInline, enfileirarLocParaContagem } from "@/lib/wms/contagem-inline";
+import { alocarContagem, type PlanoAlocacao } from "@/lib/wms/separacao/alocacao-contagem";
 
 /**
  * POST /api/separacao/validar-oc-item
@@ -101,6 +102,14 @@ export async function POST(request: NextRequest) {
 
     const now = new Date().toISOString();
     let itensAtualizados = 0;
+    // Resumo da alocação da contagem parcial (só no caminho encontrei+qty_contada)
+    let coberturaResp: {
+      qty_contada: number;
+      itens_cobertos: number;
+      itens_parciais: number;
+      itens_esgotados: number;
+      qty_para_compras: number;
+    } | null = null;
 
     // ─── Process each item ──────────────────────────────────────
     if (acao === "encontrei") {
@@ -143,11 +152,153 @@ export async function POST(request: NextRequest) {
       const locManualBody =
         typeof body?.localizacao_id === "string" ? body.localizacao_id : null;
 
+      // ─── Contagem parcial: distribui a contagem entre os itens pendentes,
+      // liberando o máximo de pedidos por inteiro (menor qty primeiro). A sobra
+      // vira pick parcial do próximo item e o restante descoberto vai pra
+      // compras automaticamente (decisão do operador ao contar menos que o total).
+      const infoMap = new Map(items.map((i) => [String(i.id), i]));
+      let planoContagem: Map<string, PlanoAlocacao> | null = null;
+      if (qtyContadaBody !== null) {
+        if (qtyContadaBody <= 0) {
+          return NextResponse.json(
+            { error: "contagem_invalida", message: "Quantidade contada deve ser maior que zero." },
+            { status: 422 },
+          );
+        }
+        const itensAlocaveis = (itensFull ?? []).filter((it) => {
+          if (it.mov_saida_id) return false; // já picado (retry) — fora da alocação
+          const c = ctxMap.get(it.pedido_id as string);
+          return Boolean(c && c.galpao && c.empresa);
+        });
+
+        // A contagem é de UMA prateleira de UM produto: itens de SKUs ou
+        // galpões diferentes na mesma chamada corromperiam a reconciliação
+        // (que roda uma vez, no galpão do primeiro item). A UI agrupa por
+        // produto, mas a API não pode confiar nisso.
+        const skusDistintos = new Set(itensAlocaveis.map((it) => String(it.sku)));
+        const galpoesDistintos = new Set(
+          itensAlocaveis.map((it) => ctxMap.get(it.pedido_id as string)?.galpao),
+        );
+        if (skusDistintos.size > 1 || galpoesDistintos.size > 1) {
+          return NextResponse.json(
+            {
+              error: "grupo_heterogeneo",
+              message:
+                "Contagem só pode ser aplicada a itens do mesmo SKU e galpão.",
+            },
+            { status: 422 },
+          );
+        }
+
+        const alocaveis = itensAlocaveis.map((it) => ({
+          id: String(it.id),
+          qty: Number(it.quantidade_pedida ?? 0),
+        }));
+        planoContagem = alocarContagem(alocaveis, qtyContadaBody);
+
+        let cobertos = 0;
+        let parciais = 0;
+        let esgotados = 0;
+        let qtyParaCompras = 0;
+        for (const a of alocaveis) {
+          const p = planoContagem.get(a.id);
+          if (!p || p.tipo === "cobre_total") cobertos++;
+          else if (p.tipo === "parcial") {
+            parciais++;
+            qtyParaCompras += Math.max(0, a.qty - p.qty_pega);
+          } else {
+            esgotados++;
+            qtyParaCompras += a.qty;
+          }
+        }
+        coberturaResp = {
+          qty_contada: qtyContadaBody,
+          itens_cobertos: cobertos,
+          itens_parciais: parciais,
+          itens_esgotados: esgotados,
+          qty_para_compras: qtyParaCompras,
+        };
+
+        // Reconciliação da loc roda UMA vez (contagem oficial da prateleira),
+        // ANTES dos picks. Dentro do loop ela re-inflaria o saldo a cada pick
+        // já consumido quando o grupo tem mais de um item.
+        const primeiro = (itensFull ?? []).find((it) =>
+          planoContagem!.has(String(it.id)),
+        );
+        if (primeiro) {
+          const ctx = ctxMap.get(primeiro.pedido_id as string)!;
+          // Resolve loc-alvo: localizacao_id (uuid) OU localizacao_codigo (string).
+          let locAlvoId: string | null = locManualBody;
+          if (!locAlvoId && locCodigoBody) {
+            const { data: locByCod } = await supabase
+              .from("siso_localizacoes")
+              .select("id")
+              .eq("galpao_id", ctx.galpao!)
+              .eq("codigo", locCodigoBody)
+              .maybeSingle();
+            locAlvoId = (locByCod as { id?: string } | null)?.id ?? null;
+          }
+          if (!locAlvoId) {
+            return NextResponse.json(
+              { error: "loc_obrigatoria", message: "Bipe/escolha a localização onde contou o item." },
+              { status: 422 },
+            );
+          }
+          // Se veio por uuid, confirma que pertence ao galpão.
+          if (locManualBody) {
+            const { data: locChk } = await supabase
+              .from("siso_localizacoes")
+              .select("id, galpao_id")
+              .eq("id", locManualBody)
+              .maybeSingle();
+            if (!locChk || (locChk as { galpao_id?: string }).galpao_id !== ctx.galpao) {
+              return NextResponse.json(
+                { error: "loc_invalida", message: "Localização não pertence ao galpão do pedido" },
+                { status: 422 },
+              );
+            }
+          }
+          const produtoWmsPrimeiro = await resolverProdutoWms(
+            ctx.empresa!,
+            String(primeiro.produto_id),
+          );
+          try {
+            await registrarContagemInline({
+              produto_id: produtoWmsPrimeiro,
+              galpao_id: ctx.galpao!,
+              localizacao_id: locAlvoId,
+              qty_contada: qtyContadaBody,
+              contada_por: user.id,
+              sku: String(primeiro.sku),
+              pedido_id: String(primeiro.pedido_id),
+            });
+          } catch (contErr) {
+            logger.logError({
+              error: contErr instanceof Error ? contErr : new Error(String(contErr)),
+              source: "validar-oc-item",
+              message: "Falhou registrar contagem inline",
+              category: "business_logic",
+              metadata: { item_id: primeiro.id, sku: primeiro.sku, loc_id: locAlvoId },
+            });
+            return NextResponse.json(
+              { error: "falhou_contagem_inline", message: "Não foi possível registrar a contagem" },
+              { status: 500 },
+            );
+          }
+        }
+      }
+
       for (const item of itensFull ?? []) {
         // Idempotência: item já picado anteriormente — pula pickMovPicking
         // pra evitar dupla baixa em retry. O update abaixo é safe (mesmos
         // campos, sem regredir estado).
         const jaPicado = Boolean(item.mov_saida_id);
+        const info = infoMap.get(String(item.id));
+
+        // Item parcial já resolvido (pick parcial + restante em compras):
+        // replay/clique-duplo NÃO pode cair no update compartilhado — ele
+        // limparia os campos de compra e inflaria quantidade_pega pro total.
+        if (jaPicado && info?.compra_status === "aguardando_compra") continue;
 
         const ctx = ctxMap.get(item.pedido_id as string);
         let movSaidaId: string | null = null;
@@ -156,83 +307,105 @@ export async function POST(request: NextRequest) {
           const produtoWmsId = await resolverProdutoWms(ctx.empresa, String(item.produto_id));
 
           if (qtyContadaBody !== null) {
-            // ─── Contagem inline (Fase 1): só cobre contado >= pedido ───
-            if (qtyContadaBody <= 0) {
-              return NextResponse.json(
-                { error: "contagem_invalida", message: "Quantidade contada deve ser maior que zero.", item_id: item.id },
-                { status: 422 },
-              );
-            }
-            if (qtyContadaBody < qty) {
-              return NextResponse.json(
-                {
-                  error: "contagem_menor_que_pedido",
-                  message:
-                    "Contou menos do que o pedido pede. Use 'Esgotado' pra mandar o restante pra compra.",
-                  item_id: item.id,
-                  qty_contada: qtyContadaBody,
-                  qty_pedido: qty,
-                },
-                { status: 422 },
-              );
-            }
-            // Resolve loc-alvo: localizacao_id (uuid) OU localizacao_codigo (string).
-            let locAlvoId: string | null = locManualBody;
-            if (!locAlvoId && locCodigoBody) {
-              const { data: locByCod } = await supabase
-                .from("siso_localizacoes")
-                .select("id")
-                .eq("galpao_id", ctx.galpao)
-                .eq("codigo", locCodigoBody)
-                .maybeSingle();
-              locAlvoId = (locByCod as { id?: string } | null)?.id ?? null;
-            }
-            if (!locAlvoId) {
-              return NextResponse.json(
-                { error: "loc_obrigatoria", message: "Bipe/escolha a localização onde contou o item.", item_id: item.id },
-                { status: 422 },
-              );
-            }
-            // Se veio por uuid, confirma que pertence ao galpão.
-            if (locManualBody) {
-              const { data: locChk } = await supabase
-                .from("siso_localizacoes")
-                .select("id, galpao_id")
-                .eq("id", locManualBody)
-                .maybeSingle();
-              if (!locChk || (locChk as { galpao_id?: string }).galpao_id !== ctx.galpao) {
-                return NextResponse.json(
-                  { error: "loc_invalida", message: "Localização não pertence ao galpão do pedido" },
-                  { status: 422 },
-                );
+            const plano = planoContagem?.get(String(item.id));
+            const jaPega = Number(info?.quantidade_pega ?? 0);
+
+            if (plano?.tipo === "parcial") {
+              // ─── Contagem parcial: pega a sobra da contagem e manda o
+              // restante do item pra compras (decisão explícita do operador).
+              let movParcialId: string | null = null;
+              try {
+                const result = await pickMovPicking({
+                  empresa_origem_id: ctx.empresa,
+                  galpao_id: ctx.galpao,
+                  pedido_id: String(item.pedido_id),
+                  pedido_numero: ctx.numero,
+                  item_id: Number(item.id),
+                  produto_id_tiny: String(item.produto_id),
+                  sku: String(item.sku),
+                  qty: plano.qty_pega,
+                  usuario_id: user.id,
+                  contexto: "encontrei_oc_parcial",
+                });
+                movParcialId = result?.movSaidaId ?? null;
+              } catch (movErr) {
+                logger.logError({
+                  error: movErr instanceof Error ? movErr : new Error(String(movErr)),
+                  source: "validar-oc-item",
+                  message: "pickMovPicking falhou em encontrei parcial — item segue pendente p/ retry",
+                  category: "business_logic",
+                  metadata: { item_id: item.id, sku: item.sku },
+                });
+                continue;
               }
-            }
-            try {
-              await registrarContagemInline({
-                produto_id: produtoWmsId,
-                galpao_id: ctx.galpao,
-                localizacao_id: locAlvoId,
-                qty_contada: qtyContadaBody,
-                contada_por: user.id,
-                sku: String(item.sku),
-                pedido_id: String(item.pedido_id),
-              });
-            } catch (contErr) {
-              logger.logError({
-                error: contErr instanceof Error ? contErr : new Error(String(contErr)),
-                source: "validar-oc-item",
-                message: "Falhou registrar contagem inline",
-                category: "business_logic",
-                metadata: { item_id: item.id, sku: item.sku, loc_id: locAlvoId },
-              });
-              return NextResponse.json(
-                { error: "falhou_contagem_inline", message: "Não foi possível registrar a contagem" },
-                { status: 500 },
+              const pegaTotal = jaPega + plano.qty_pega;
+              const enviado = await enviarItemParaCompras(
+                supabase,
+                user,
+                {
+                  id: String(item.id),
+                  pedido_id: String(item.pedido_id),
+                  sku: (item.sku as string | null) ?? null,
+                  quantidade_pedida: Number(item.quantidade_pedida ?? 0),
+                  fornecedor_oc: (info?.fornecedor_oc as string | null) ?? null,
+                },
+                {
+                  qtyJaPega: pegaTotal,
+                  now,
+                  motivo: "encontrei_parcial_restante",
+                  updatesExtras: {
+                    quantidade_pega: pegaTotal,
+                    quantidade_bipada: pegaTotal,
+                    separacao_parcial: true,
+                    parcial_motivo: "encontrei_parcial",
+                    parcial_em: now,
+                    separacao_marcado: false,
+                    bipado_completo: false,
+                    ...(movParcialId ? { mov_saida_id: movParcialId } : {}),
+                  },
+                },
               );
+              if (enviado) {
+                itensAtualizados++;
+                registrarEvento({
+                  pedidoId: item.pedido_id,
+                  evento: "oc_item_encontrado",
+                  usuarioId: user.id,
+                  usuarioNome: user.nome,
+                  detalhes: {
+                    sku: item.sku,
+                    item_id: item.id,
+                    parcial: true,
+                    qty_pega: plano.qty_pega,
+                    mov_saida_id: movParcialId,
+                  },
+                });
+              }
+              continue;
             }
+
+            if (plano?.tipo === "esgotado") {
+              // ─── Contagem não cobre nada deste item → tudo pra compras.
+              const enviado = await enviarItemParaCompras(
+                supabase,
+                user,
+                {
+                  id: String(item.id),
+                  pedido_id: String(item.pedido_id),
+                  sku: (item.sku as string | null) ?? null,
+                  quantidade_pedida: Number(item.quantidade_pedida ?? 0),
+                  fornecedor_oc: (info?.fornecedor_oc as string | null) ?? null,
+                },
+                { qtyJaPega: jaPega, now, motivo: "sem_cobertura_contagem" },
+              );
+              if (enviado) itensAtualizados++;
+              continue;
+            }
+
+            // ─── cobre_total: a contagem cobre o item inteiro — pick normal.
             // Fase 1 é OC-only: o produto não tinha saldo em outra loc, então o
             // pickMovPicking (que resolve por maior saldo no galpão) sai da loc
-            // que acabamos de reconciliar. Revisitar se estender a itens não-OC.
+            // reconciliada antes do loop. Revisitar se estender a itens não-OC.
             try {
               const result = await pickMovPicking({
                 empresa_origem_id: ctx.empresa,
@@ -805,6 +978,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       itens_atualizados: itensAtualizados,
       transicoes,
+      ...(coberturaResp ? { cobertura: coberturaResp } : {}),
     });
   } catch (err) {
     const { id: erro_id, timestamp: erro_em } = logger.logError({
@@ -817,6 +991,134 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ error: "Erro interno", erro_id, erro_em }, { status: 500 });
   }
+}
+
+// ─── Helper: manda item OC pra compras (esgotado automático) ────────────────
+// Usado pela contagem parcial: itens sem cobertura (ou com sobra parcial)
+// viram aguardando_compra com a qty efetiva (pedida − pega − realocs picadas),
+// igual ao "esgotado" explícito. `updatesExtras` permite gravar os campos do
+// pick parcial no MESMO update (mov_saida_id, quantidade_pega, etc).
+
+async function enviarItemParaCompras(
+  supabase: ReturnType<typeof createServiceClient>,
+  user: { id: string; nome: string },
+  item: {
+    id: string;
+    pedido_id: string;
+    sku: string | null;
+    quantidade_pedida: number;
+    fornecedor_oc: string | null;
+  },
+  opts: {
+    qtyJaPega: number;
+    now: string;
+    motivo: string;
+    updatesExtras?: Record<string, unknown>;
+  },
+): Promise<boolean> {
+  const fornecedorInfo = getFornecedorBySku(item.sku);
+  const fornecedor = item.fornecedor_oc || fornecedorInfo.fornecedor;
+
+  const { data: realocs } = await supabase
+    .from("siso_pedido_item_realocacoes")
+    .select("qty_picada")
+    .eq("pedido_item_id", item.id)
+    .eq("status", "picado");
+  const qtyRealocsPicadas = (realocs ?? []).reduce(
+    (acc, r) => acc + Number(r.qty_picada ?? 0),
+    0,
+  );
+  const qtyEfetiva = Math.max(
+    0,
+    item.quantidade_pedida - opts.qtyJaPega - qtyRealocsPicadas,
+  );
+
+  // 1) Campos do pick parcial primeiro, INCONDICIONAL — o S já saiu no ledger,
+  //    o item tem que registrar mov_saida_id/quantidade_pega mesmo que a parte
+  //    de compras perca a corrida pro reconciliador-oc.
+  const temExtras =
+    opts.updatesExtras && Object.keys(opts.updatesExtras).length > 0;
+  if (temExtras) {
+    const { error: extrasErr } = await supabase
+      .from("siso_pedido_itens")
+      .update(opts.updatesExtras!)
+      .eq("id", item.id);
+    if (extrasErr) {
+      logger.logError({
+        error: extrasErr,
+        source: "validar-oc-item",
+        message: `Erro ao gravar pick parcial do item ${item.id} (${opts.motivo})`,
+        category: "database",
+      });
+      return false;
+    }
+  }
+
+  if (qtyEfetiva <= 0) {
+    // Tudo já coberto por picks/realocs — nada a comprar.
+    logger.warn("validar-oc-item", "item sem qty efetiva pra compras — não vai pra OC", {
+      item_id: item.id,
+      sku: item.sku,
+      motivo: opts.motivo,
+    });
+    return Boolean(temExtras);
+  }
+
+  // 2) Campos de compras com compare-and-swap (mesmo padrão do reconciliador):
+  //    só aplica se o item ainda está em estado de compra pendente. Se uma
+  //    entrada concorrente (reconciliador-oc) reivindicou o item nesse
+  //    meio-tempo (compra_status=null + reserva criada), NÃO sobrescrever —
+  //    o item já voltou pro fluxo próprio.
+  const { data: claimed, error: updErr } = await supabase
+    .from("siso_pedido_itens")
+    .update({
+      compra_status: "aguardando_compra",
+      compra_quantidade_solicitada: qtyEfetiva,
+      compra_solicitada_em: opts.now,
+      fornecedor_oc: fornecedor,
+    })
+    .eq("id", item.id)
+    .in("compra_status", ["oc_pendente", "aguardando_compra"])
+    .select("id");
+  if (updErr) {
+    logger.logError({
+      error: updErr,
+      source: "validar-oc-item",
+      message: `Erro ao mandar item ${item.id} pra compras (${opts.motivo})`,
+      category: "database",
+    });
+    return false;
+  }
+  if (!claimed || claimed.length === 0) {
+    logger.warn(
+      "validar-oc-item",
+      "item reivindicado por fluxo concorrente — não foi pra compras",
+      { item_id: item.id, sku: item.sku, motivo: opts.motivo },
+    );
+    return Boolean(temExtras);
+  }
+
+  await linkItemToOC(
+    supabase,
+    { id: item.id, pedido_id: item.pedido_id, sku: item.sku },
+    fornecedor,
+  );
+  registrarEvento({
+    pedidoId: item.pedido_id,
+    evento: "oc_item_confirmado",
+    usuarioId: user.id,
+    usuarioNome: user.nome,
+    detalhes: {
+      sku: item.sku,
+      item_id: item.id,
+      fornecedor,
+      qty_efetiva: qtyEfetiva,
+      qty_ja_pega: opts.qtyJaPega,
+      qty_realocs_picadas: qtyRealocsPicadas,
+      motivo: opts.motivo,
+    },
+  });
+  return true;
 }
 
 // ─── Helper: find or create OC and link item ────────────────────────────────

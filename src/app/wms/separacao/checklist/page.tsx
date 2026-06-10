@@ -441,6 +441,7 @@ export default function WmsChecklistPage() {
         separados: string[];
         pendentes: string[];
         aguardandoCompra?: string[];
+        validacaoOc?: string[];
         cobertura_incompleta?: Array<{
           pedido_id: string;
           sku: string;
@@ -634,6 +635,8 @@ export default function WmsChecklistPage() {
   // e separa o pedido. Ver POST /api/wms/separacao/validar-oc-item acao=encontrei.
   async function handleOcEncontreiFinalizar(codigoLoc: string, qtyContada: number) {
     if (!ocLocModal) return;
+    if (submittingActionRef.current) return;
+    submittingActionRef.current = true;
     const { produto } = ocLocModal;
     setOcLocModal((p) => (p ? { ...p, bipando: true } : null));
     try {
@@ -674,13 +677,30 @@ export default function WmsChecklistPage() {
       });
       if (!rVal.ok) {
         const body = await rVal.json().catch(() => ({}));
-        // erroApiTexto surfaça a `message` do backend (ex.: 422 contagem_menor_que_pedido / contagem_invalida).
+        // erroApiTexto surfaça a `message` do backend (ex.: 422 contagem_invalida / loc_obrigatoria).
         toastErroApi(erroApiTexto(body, "Erro ao validar item OC"));
         setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
         return;
       }
       const result = await rVal.json().catch(() => ({}));
-      toast.success(`Item OC validado: ${produto.sku}`);
+      const cob = result.cobertura as
+        | {
+            qty_contada: number;
+            itens_cobertos: number;
+            itens_parciais: number;
+            itens_esgotados: number;
+            qty_para_compras: number;
+          }
+        | undefined;
+      if (cob && (cob.itens_parciais > 0 || cob.itens_esgotados > 0)) {
+        toast.warning(
+          `${produto.sku}: contagem ${cob.qty_contada} de ${produto.quantidade_total} — ` +
+            `${cob.itens_cobertos} item(ns) liberado(s); ${cob.qty_para_compras} un. foram pra compras`,
+          { duration: 6000 },
+        );
+      } else {
+        toast.success(`Item OC validado: ${produto.sku}`);
+      }
       setOcLocModal(null);
       queryClient.invalidateQueries({ queryKey });
 
@@ -699,6 +719,8 @@ export default function WmsChecklistPage() {
     } catch {
       toastErroApi("Erro de conexão");
       setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
+    } finally {
+      submittingActionRef.current = false;
     }
   }
 
@@ -706,6 +728,8 @@ export default function WmsChecklistPage() {
   // Não reconcilia a loc (saldo fica temporariamente subcontado — intencional).
   async function handleOcSolicitarContagem(codigoLoc: string) {
     if (!ocLocModal) return;
+    if (submittingActionRef.current) return;
+    submittingActionRef.current = true;
     const { produto } = ocLocModal;
     setOcLocModal((p) => (p ? { ...p, bipando: true } : null));
     try {
@@ -744,6 +768,8 @@ export default function WmsChecklistPage() {
     } catch {
       toastErroApi("Erro de conexão");
       setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
+    } finally {
+      submittingActionRef.current = false;
     }
   }
 
@@ -958,11 +984,13 @@ export default function WmsChecklistPage() {
       const sep = result.separados?.length ?? 0;
       const pen = result.pendentes?.length ?? 0;
       const ag = result.aguardandoCompra?.length ?? 0;
+      const valOc = result.validacaoOc?.length ?? 0;
       const incompletos = result.cobertura_incompleta ?? [];
       const pedidosIncompletos = new Set(incompletos.map((c) => c.pedido_id));
       const partes: string[] = [];
       if (sep > 0) partes.push(`${sep} separado(s)`);
       if (ag > 0) partes.push(`${ag} aguardando compra`);
+      if (valOc > 0) partes.push(`${valOc} com validação OC pendente`);
       if (pen > 0) partes.push(`${pen} pendente(s)`);
       if (pedidosIncompletos.size > 0) {
         partes.push(`${pedidosIncompletos.size} pendente(s) de cobertura OC`);
@@ -971,11 +999,18 @@ export default function WmsChecklistPage() {
       if (pedidosIncompletos.size > 0) {
         const primeiraMsg = incompletos[0]?.mensagem ?? "";
         toast.warning(`${msg}${primeiraMsg ? ` — ${primeiraMsg}` : ""}`);
+      } else if (valOc > 0) {
+        toast.warning(
+          `${msg} — itens OC sem decisão voltaram pra validação (use Encontrei/Esgotado)`,
+          { duration: 6000 },
+        );
       } else {
         toast.success(msg);
       }
       queryClient.invalidateQueries({ queryKey: ["wms-separacao"] });
-      if (ag > 0 && sep === 0) {
+      if (valOc > 0 && sep === 0 && ag === 0) {
+        router.push("/wms/separacao?tab=aguardando_separacao");
+      } else if (ag > 0 && sep === 0) {
         router.push("/wms/separacao?tab=aguardando_compra");
       } else {
         router.push("/wms/separacao?tab=separado");
@@ -1961,6 +1996,15 @@ function OcEncontreiModal({
   const [qtdContada, setQtdContada] = useState("");
   const [locInput, setLocInput] = useState("");
 
+  // Contagem menor que o total é permitida (parcial): libera o que cobrir e
+  // manda o restante pra compras — avisa antes do operador confirmar.
+  const nContada = Number(qtdContada);
+  const contagemParcial =
+    qtdContada.trim() !== "" &&
+    Number.isFinite(nContada) &&
+    nContada > 0 &&
+    nContada < produto.quantidade_total;
+
   function handleSubmit(codigo: string) {
     if (!codigo.trim()) {
       setFeedback({ text: "Código vazio", tone: "warn" });
@@ -1970,13 +2014,6 @@ function OcEncontreiModal({
     if (qtdContada.trim() === "" || !Number.isFinite(n) || n <= 0) {
       setFeedback({
         text: "Informe quantas unidades tem na prateleira (maior que zero).",
-        tone: "warn",
-      });
-      return;
-    }
-    if (n < produto.quantidade_total) {
-      setFeedback({
-        text: `Contou ${n}, mas o pedido pede ${produto.quantidade_total}. Use 'Esgotado' pro restante.`,
         tone: "warn",
       });
       return;
@@ -2065,6 +2102,16 @@ function OcEncontreiModal({
               disabled={bipando}
               autoFocus
             />
+            {contagemParcial && (
+              <p
+                className="wms-td-mute"
+                style={{ fontSize: 12, marginTop: 6, lineHeight: 1.4 }}
+              >
+                Menos que o total ({produto.quantidade_total}): libera os
+                pedidos que a contagem cobrir e manda o restante pra compras
+                automaticamente.
+              </p>
+            )}
           </div>
           <HandheldScan
             label="Bipe a localização do item encontrado"

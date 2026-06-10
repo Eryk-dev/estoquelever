@@ -22,6 +22,28 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: dropdown-transparente-var-css-inexistente
+    date: "2026-06-10"
+    source: wms.separacao
+    category: config
+    message: >
+      dropdowns da página de Separação (Mover etapa, Encaminhar, TagPopover) e cards
+      de /wms/transferir renderizavam com fundo transparente — texto da tabela
+      vazava por baixo, parecendo que o popup estava "numa camada debaixo"
+    cause: >
+      background usava var(--wms-c-paper), token que NÃO existe no wms.css (o token
+      real de superfície branca é --wms-c-panel). CSS var inexistente resolve pra
+      nada → background transparente. Não era problema de z-index.
+    fix: >
+      Trocadas as 4 ocorrências de var(--wms-c-paper) por var(--wms-c-panel).
+    files:
+      - src/app/wms/separacao/page.tsx
+      - src/app/wms/transferir/page.tsx
+    tags: [css, dropdown, transparente, wms-c-panel, design-tokens]
+    notes: >
+      Ao estilizar inline com tokens wms-*, conferir o nome no wms.css — var
+      inexistente falha silenciosamente (sem erro de build/lint).
+
   - id: guarda-a-guardar-derivado-min-saldo-livre
     date: "2026-06-08"
     source: wms.guarda

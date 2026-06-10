@@ -224,7 +224,7 @@ function EmTransitoList({
         <div
           key={t.id}
           style={{
-            background: "var(--wms-c-paper)",
+            background: "var(--wms-c-panel)",
             border: "1px solid var(--wms-c-border)",
             borderRadius: "var(--wms-r-3)",
             padding: 14,

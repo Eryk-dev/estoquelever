@@ -10,7 +10,7 @@ export async function GET() {
   const { data, error } = await supabase
     .from("siso_tiny_connections")
     .select(
-      "id, filial, nome_empresa, cnpj, ativo, ultimo_teste_em, ultimo_teste_ok, client_id, client_secret, access_token, token_expires_at, deposito_id, deposito_nome, criado_em, atualizado_em",
+      "id, filial, nome_empresa, cnpj, ativo, ultimo_teste_em, ultimo_teste_ok, client_id, client_secret, access_token, token_expires_at, token_status, token_erro, token_renovado_em, deposito_id, deposito_nome, criado_em, atualizado_em",
     )
     .order("filial");
 
@@ -37,6 +37,9 @@ export async function GET() {
     has_client_secret: !!c.client_secret,
     is_authorized: !!c.access_token,
     token_expires_at: c.token_expires_at,
+    token_status: c.token_status ?? null,
+    token_erro: c.token_erro ?? null,
+    token_renovado_em: c.token_renovado_em ?? null,
     // Deposit selection
     deposito_id: c.deposito_id ?? null,
     deposito_nome: c.deposito_nome ?? null,

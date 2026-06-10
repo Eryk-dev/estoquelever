@@ -15,6 +15,9 @@ export interface TinyConnection {
   has_client_secret: boolean;
   is_authorized: boolean;
   token_expires_at: string | null;
+  token_status: "ok" | "erro" | null;
+  token_erro: string | null;
+  token_renovado_em: string | null;
   deposito_id: number | null;
   deposito_nome: string | null;
 }

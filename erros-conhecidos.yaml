@@ -4481,3 +4481,30 @@ erros:
   files:
     - src/lib/tiny-polling.ts
   tags: [tiny, polling, dataAtualizacao, timeout, fallback]
+
+- id: TINY-PAINEL-TOKEN-MORTO-AUTORIZADO
+  date: 2026-06-10
+  source: configuracoes
+  category: auth
+  message: "Painel de conexões mostrava 'Autorizado' com refresh_token morto (invalid_grant)"
+  cause: >
+    Badge era baseado em is_authorized = !!access_token (token salvo existe,
+    mesmo expirado/revogado). Falha de refresh em getValidToken só logava —
+    nada era persistido na conexão. Bônus: teste de conexão falho não gravava
+    ultimo_teste_ok=false (catch retornava sem update), então 'Conectado'
+    ficava congelado. NetAir/NetParts ficaram semanas mortas parecendo OK.
+  fix: >
+    Colunas token_status/token_erro/token_renovado_em em siso_tiny_connections
+    (migration 20260610c), gravadas por getValidToken (sucesso e falha), pelo
+    oauth/callback (re-autorização) e pelo test-connection (falha). Badge novo
+    'Token expirado — re-autorizar' (danger) sobrepõe os demais; linha com
+    último refresh OK. Renovação automática: polling fallback (10min) chama
+    getValidTokenByEmpresa por empresa → refresh a cada ~4h mantém o
+    refresh_token rotacionado e vivo.
+  files:
+    - src/lib/tiny-oauth.ts
+    - src/app/api/wms/tiny/connections/route.ts
+    - src/app/api/wms/tiny/test-connection/route.ts
+    - src/app/api/wms/tiny/oauth/callback/route.ts
+    - src/app/wms/configuracoes/conexoes/page.tsx
+  tags: [tiny, oauth, token, painel, conexoes, invalid_grant]

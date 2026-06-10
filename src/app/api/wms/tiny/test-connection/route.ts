@@ -36,6 +36,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Erro desconhecido";
+    // Grava o teste falho (antes só sucesso atualizava — painel ficava
+    // eternamente "Conectado" com token morto). Falha de refresh também já
+    // marcou token_status='erro' dentro de getValidToken.
+    const supabase = createServiceClient();
+    await supabase
+      .from("siso_tiny_connections")
+      .update({
+        ultimo_teste_em: new Date().toISOString(),
+        ultimo_teste_ok: false,
+      })
+      .eq("id", body.connectionId);
     return NextResponse.json({ ok: false, erro: msg });
   }
 }

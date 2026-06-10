@@ -161,6 +161,15 @@ export async function getValidToken(connectionId: string): Promise<string> {
       severity: "critical",
       metadata: { connectionId },
     });
+    // Persiste a falha pro painel mostrar a realidade (refresh_token morto
+    // continua com access_token salvo — sem isso a conexão parece saudável).
+    await supabase
+      .from("siso_tiny_connections")
+      .update({
+        token_status: "erro",
+        token_erro: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+      })
+      .eq("id", connectionId);
     throw err;
   }
 
@@ -178,6 +187,9 @@ export async function getValidToken(connectionId: string): Promise<string> {
       token_expires_at: new Date(
         Date.now() + tokens.expires_in * 1000,
       ).toISOString(),
+      token_status: "ok",
+      token_erro: null,
+      token_renovado_em: new Date().toISOString(),
     })
     .eq("id", connectionId);
 

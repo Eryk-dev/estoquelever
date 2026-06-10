@@ -78,6 +78,9 @@ export async function GET(request: NextRequest) {
         oauth_state: null, // clear state
         ultimo_teste_em: new Date().toISOString(),
         ultimo_teste_ok: testResult.ok,
+        token_status: "ok",
+        token_erro: null,
+        token_renovado_em: new Date().toISOString(),
       })
       .eq("id", connectionId);
 

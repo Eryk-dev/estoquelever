@@ -1321,6 +1321,9 @@ Undo de recebimento de transferência **atômico**: estorno das legs E + reset d
 | `deposito_id` | integer | YES | | Configured Tiny deposit (warehouse) ID |
 | `deposito_nome` | text | YES | | Deposit name (cached) |
 | `ativo` | boolean | NO | true | Active flag |
+| `token_status` | text | YES | | Resultado da última renovação: `ok` \| `erro` \| NULL (CHECK). Gravado por `tiny-oauth.getValidToken` |
+| `token_erro` | text | YES | | Mensagem da última falha de refresh (NULL após sucesso) |
+| `token_renovado_em` | timestamptz | YES | | Último refresh OAuth bem-sucedido |
 
 **Primary Key:** `id`
 
@@ -1335,6 +1338,7 @@ Undo de recebimento de transferência **atômico**: estorno das legs E + reset d
 - Tokens auto-refreshed with 60s buffer before expiry
 - `deposito_id` selects which Tiny warehouse to use for stock operations
 - `cnpj` is legacy; prefer `empresa_id`
+- `token_status='erro'` = refresh_token morto (invalid_grant) — painel de conexões mostra "Token expirado"; requer re-autorização OAuth. O polling fallback (10min) mantém os tokens vivos renovando a cada ~4h
 
 ---
 
@@ -1930,6 +1934,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-09 | `20260609_guarda_reserva_forte_auto_encerrar.sql` | **FASE 6 — Guarda dinâmica (reserva forte + auto-encerrar).** (1) CHECK `siso_movimentacoes_origem_tipo_check` +`reserva_guarda`/`liberacao_guarda`. (2) CHECK `siso_wms_pendencias_guarda_status_check` +`encerrada_sem_saldo`. (3) NEW RPC `wms_iniciar_guarda_atomico(p_pendencia_id, p_usuario_id, p_forcar)`: `FOR UPDATE` na pendência + claim (status→`em_guarda`, idempotente/takeover) + cria R `reserva_guarda` (TTL 7d) sobre o saldo livre da loc de recebimento (idempotente — não duplica). (4) `wms_confirmar_guarda_atomico`: **(a) auto-encerrar** quando `saldo=0 AND qty_pendente>0` (NÃO `disponivel=0`) → status `encerrada_sem_saldo`, RETURN early, sem par S+E; **(b)** libera L `liberacao_guarda` da fração `p_qty` ANTES da perna S do replenishment (senão violaria `CHECK reservado<=saldo`). (5) `wms_desfazer_guarda_atomico`: re-reserva (R `reserva_guarda`) o saldo que volta pra loc de recebimento quando a pendência regride pra `em_guarda` (só se já existia R). (6) NEW RPC `wms_cancelar_pendencia_guarda_atomico`: libera a R remanescente antes de marcar `cancelada`. |
 | 2026-06-10 | `20260610_cron_tiny_polling.sql` | Cron pg_cron `wms_tiny_polling_fallback` (*/10min) → `net.http_get` em `/api/wms/tiny/polling` (vault `worker_secret`). Polling fallback do webhook Tiny: pedidos aprovados/cancelados + NFs autorizadas, janela 7 dias. |
 | 2026-06-10 | `20260610b_cron_tiny_polling_timeout.sql` | Re-agenda `wms_tiny_polling_fallback` com timeout 290s (1ª rodada de backlog levou 203s > 120s do pg_net; colado no `maxDuration=300` da rota). |
+| 2026-06-10 | `20260610c_tiny_connections_token_status.sql` | `siso_tiny_connections` +`token_status` (`ok`\|`erro`, CHECK), +`token_erro`, +`token_renovado_em`. Persistem o resultado da última renovação OAuth (gravado em `tiny-oauth.getValidToken`) — painel de conexões deixa de mostrar "Autorizado" pra refresh_token morto. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

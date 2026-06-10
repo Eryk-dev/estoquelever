@@ -478,6 +478,10 @@ function ConnectionRow({
   }
 
   const statusLabel = (() => {
+    // token_status='erro' = última renovação OAuth falhou (refresh_token
+    // morto) — sobrepõe qualquer teste antigo bem-sucedido.
+    if (connection.is_authorized && connection.token_status === "erro")
+      return { label: "Token expirado — re-autorizar", cls: "wms-badge-danger" };
     if (connection.is_authorized && connection.ultimo_teste_ok === true)
       return { label: "Conectado", cls: "wms-badge-ok" };
     if (connection.is_authorized)
@@ -485,6 +489,20 @@ function ConnectionRow({
     if (hasCredentials)
       return { label: "Aguardando", cls: "wms-badge-warn" };
     return { label: "Sem credenciais", cls: "wms-badge-mute" };
+  })();
+
+  const tokenInfo = (() => {
+    if (!connection.is_authorized) return null;
+    if (connection.token_status === "erro") {
+      return { texto: connection.token_erro ?? "Falha na renovação do token", erro: true };
+    }
+    if (connection.token_renovado_em) {
+      return {
+        texto: `Token renovado em ${new Date(connection.token_renovado_em).toLocaleString("pt-BR")}`,
+        erro: false,
+      };
+    }
+    return null;
   })();
 
   return (
@@ -511,6 +529,19 @@ function ConnectionRow({
         </span>
         <span className={`wms-badge ${statusLabel.cls}`}>{statusLabel.label}</span>
       </div>
+
+      {tokenInfo && (
+        <div
+          className={tokenInfo.erro ? "" : "wms-td-mute"}
+          style={{
+            fontSize: 11,
+            marginBottom: 8,
+            ...(tokenInfo.erro ? { color: "var(--wms-c-danger)" } : {}),
+          }}
+        >
+          {tokenInfo.texto}
+        </div>
+      )}
 
       {connection.is_authorized && (
         <DepositoSelector connection={connection} onSaved={onUpdated} />

@@ -59,13 +59,13 @@ export async function POST(request: NextRequest) {
 
   try {
     // ── 1. Find oldest pedido with matching SKU among provided IDs ──
-    // Fetch pedidos that are aguardando_compra, ordered by data_pedido asc (oldest first)
+    // Fetch pedidos that are aguardando_compra, ordered by data asc (oldest first)
     const { data: pedidos, error: pedidosErr } = await supabase
       .from("siso_pedidos")
-      .select("id, numero, empresa_origem_id, data_pedido, etiqueta_zpl, etiqueta_url, separacao_tags")
+      .select("id, numero, empresa_origem_id, data, etiqueta_zpl, etiqueta_url, separacao_tags")
       .in("id", pedido_ids)
       .eq("status_separacao", "aguardando_compra")
-      .order("data_pedido", { ascending: true });
+      .order("data", { ascending: true });
 
     if (pedidosErr) {
       logger.logError({

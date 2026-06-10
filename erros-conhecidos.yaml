@@ -4561,3 +4561,42 @@ erros:
     - src/lib/wms/separacao/alocacao-contagem.ts
     - src/app/wms/separacao/checklist/page.tsx
   tags: [separacao, validacao-oc, encontrei, parcial, contagem, concluir, compras]
+
+- id: ETIQUETA-CHAVE-ACESSO-NF-WEBHOOK-PERDIDO
+  date: 2026-06-10
+  source: etiquetas
+  category: external_api
+  message: "Etiqueta nunca sai e retry-etiqueta sempre falha: pedido com nota_fiscal_id mas chave_acesso_nf NULL"
+  cause: >
+    chave_acesso_nf só era persistida via webhook nota_fiscal ou na geração da
+    NF. Quando o webhook do Tiny se perde, o gate de NF completa
+    (nota_fiscal_id + chave_acesso_nf) em criarAgrupamentoFase1 e
+    preCriarAgrupamentosEmLote bloqueia o agrupamento para sempre — retry
+    devolve falhas=1 eternamente. Fix já existia em prod (main, commits
+    cc6519a + 365024f) mas nunca foi portado pro develop.
+  fix: >
+    Port do self-heal da main: recuperarChavesAcessoFaltantes() em
+    agrupamento-service.ts refetcha a NF do Tiny (obterNotaFiscal) antes do
+    gate, e se situacao 6/7 (Autorizada/Emitida Danfe) com chaveAcesso,
+    persiste a chave (update guardado com IS NULL, idempotente com webhook).
+    Roda em preCriarAgrupamentosEmLote (cobre retry-etiqueta) e em
+    criarAgrupamentoFase1 (cobre fase 1). Basta rodar retry-etiqueta.
+  files:
+    - src/lib/agrupamento-service.ts
+  tags: [etiquetas, tiny, nf, webhook, retry, agrupamento, self-heal]
+
+- id: EMBALAGEM-OC-BIPAR-COLUNA-DATA-PEDIDO-INEXISTENTE
+  date: 2026-06-10
+  source: separacao
+  category: database
+  message: "Todo bip na Embalagem Direta OC falhava com 500 antes de qualquer match de SKU"
+  cause: >
+    bipar-embalagem-oc selecionava/ordenava siso_pedidos por "data_pedido",
+    coluna que não existe (a real é "data"). Fix já existia em prod (main,
+    commit 82354b0) mas nunca foi portado pro develop.
+  fix: >
+    select/order trocados para "data" em
+    /api/wms/separacao/bipar-embalagem-oc.
+  files:
+    - src/app/api/wms/separacao/bipar-embalagem-oc/route.ts
+  tags: [separacao, embalagem-oc, bipar, schema, coluna-inexistente]

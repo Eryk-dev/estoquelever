@@ -4461,3 +4461,23 @@ erros:
   files:
     - src/app/wms/receber/avulso/page.tsx
   tags: [receber, avulso, galpao, estoque-fantasma]
+
+- id: TINY-LISTAGEM-DATAATUALIZACAO-TIMEOUT-400
+  date: 2026-06-10
+  source: tiny-polling
+  category: external_api
+  message: "Tiny GET /pedidos com dataAtualizacao retorna 400: 'Sua consulta levou muito tempo. Por favor, ajuste seus filtros'"
+  cause: >
+    Em contas Tiny com volume grande (EasyPeasy), o filtro dataAtualizacao
+    força query pesada no lado do Tiny e a API recusa com 400 antes de
+    qualquer página. dataInicial/dataFinal (data de criação, indexada) não
+    sofrem disso. Não é rate-limit: vem como 400 com mensagem em PT, não 429.
+  fix: >
+    pollPedidosCancelados tenta dataAtualizacao primeiro (cobre pedido criado
+    >7d atrás e cancelado recente) e cai pra dataInicial no catch (perde
+    cancelamentos de pedidos antigos, mas cobre o grosso). Varreduras também
+    foram isoladas por try/catch pra falha numa não derrubar as demais da
+    mesma empresa.
+  files:
+    - src/lib/tiny-polling.ts
+  tags: [tiny, polling, dataAtualizacao, timeout, fallback]

@@ -5,7 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { sisoFetch } from "@/lib/auth-context";
-import { PageHeader, Field } from "@/components/wms/ui/wms-ui";
+import { PageHeader, Field, fmtDateTime } from "@/components/wms/ui/wms-ui";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import {
   ReceberLote,
   type ReceberLoteSubmitCtx,
@@ -116,13 +118,7 @@ export default function ReceberTransferenciaDetalhePage() {
   function renderLeftFormExtra() {
     if (!transferencia) return null;
     const criadaEm = transferencia.criada_em
-      ? new Date(transferencia.criada_em).toLocaleString("pt-BR", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        })
+      ? fmtDateTime(transferencia.criada_em)
       : null;
     return (
       <>
@@ -235,8 +231,14 @@ export default function ReceberTransferenciaDetalhePage() {
   if (isLoading) {
     return (
       <>
-        <PageHeader title="Transferência —" subtitle="Carregando…" />
-        <div className="px-4 pt-8 text-sm text-zinc-500">Carregando…</div>
+        <PageHeader
+          title="Receber transferência"
+          backHref="/wms/receber/transferencia"
+          backLabel="Transferências"
+        />
+        <div className="px-4 pt-4 max-w-3xl mx-auto">
+          <LoadingSpinner message="Carregando transferência…" />
+        </div>
       </>
     );
   }
@@ -248,8 +250,14 @@ export default function ReceberTransferenciaDetalhePage() {
         : "Erro ao carregar transferência.";
     return (
       <>
-        <PageHeader title="Transferência —" subtitle={msg} />
-        <div className="px-4 pt-8 text-sm text-red-500">{msg}</div>
+        <PageHeader
+          title="Receber transferência"
+          backHref="/wms/receber/transferencia"
+          backLabel="Transferências"
+        />
+        <div className="px-4 pt-4 max-w-3xl mx-auto">
+          <ErrorBanner message={msg} />
+        </div>
       </>
     );
   }
@@ -257,8 +265,18 @@ export default function ReceberTransferenciaDetalhePage() {
   return (
     <>
       <PageHeader
-        title={`Transferência ${transferencia.id.slice(0, 8)}`}
-        subtitle={`${transferencia.origem_nome ?? "—"} → ${transferencia.destino_nome ?? "—"} · ${transferencia.status}`}
+        title={`Receber transferência — ${transferencia.origem_nome ?? "—"} → ${transferencia.destino_nome ?? "—"}`}
+        subtitle={
+          <>
+            <span className="wms-mono" style={{ fontSize: 11 }}>
+              {transferencia.id.slice(0, 8)}
+            </span>
+            {" · "}
+            {transferencia.status}
+          </>
+        }
+        backHref="/wms/receber/transferencia"
+        backLabel="Transferências"
       />
       <div className="px-4 pb-12 max-w-5xl mx-auto pt-4">
         <ReceberLote

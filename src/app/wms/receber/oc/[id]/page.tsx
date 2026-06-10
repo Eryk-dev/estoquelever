@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { sisoFetch } from "@/lib/auth-context";
 import { PageHeader, Field } from "@/components/wms/ui/wms-ui";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import {
   ReceberLote,
   type ReceberLoteSubmitCtx,
@@ -59,6 +61,8 @@ interface ExtrasResp {
 
 const JSONH = { "Content-Type": "application/json" };
 
+const noopSubscribe = () => () => {};
+
 export default function ReceberOCDetalhePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -66,6 +70,16 @@ export default function ReceberOCDetalhePage() {
 
   // NF que chegou com a caixa (opcional). Carimba nota_fiscal_id nas movs E.
   const [nf, setNf] = useState("");
+
+  // Volta pra onde o operador veio: aba Receber de compras quando o referrer
+  // mostra que foi de lá; senão o hub de recebimento.
+  const veioDeCompras = useSyncExternalStore(
+    noopSubscribe,
+    () => document.referrer.includes("/wms/compras"),
+    () => false,
+  );
+  const backHref = veioDeCompras ? "/wms/compras?tab=receber" : "/wms/receber";
+  const backLabel = veioDeCompras ? "Compras" : "Recebimento";
 
   const { data, isLoading, error } = useQuery<OCDetailResponse>({
     queryKey: ["receber-oc-detail", id],
@@ -125,53 +139,20 @@ export default function ReceberOCDetalhePage() {
       imprimirVisible: true,
       mlBlockVisible: true,
       planoSidebarVisible: true,
-      leftFormVisible: true,
+      leftFormVisible: false,
+      headerChips: [
+        { label: "Fornecedor", value: oc.fornecedor ?? "—" },
+        { label: "Galpão", value: oc.galpao_nome ?? "—" },
+        { label: "Origem", value: "Compra (OC)" },
+        ...(oc.observacao
+          ? [{ label: "Observação", value: oc.observacao }]
+          : []),
+      ],
       guardaTogglesVisible: true,
       permissaoReceber: ["operacoes.receber", "compras.executar"],
       confirmLabel: "Confirmar recebimento",
     };
   }, [oc]);
-
-  // ── Left form travado: fornecedor/galpão/origem fixos; NF editável ──────
-  function renderLeftFormExtra() {
-    if (!oc) return null;
-    return (
-      <>
-        <div className="wms-row-2">
-          <Field label="Fornecedor">
-            <input className="wms-input" value={oc.fornecedor ?? "—"} disabled />
-          </Field>
-          <Field label="Galpão">
-            <input
-              className="wms-input"
-              value={oc.galpao_nome ?? "—"}
-              disabled
-            />
-          </Field>
-        </div>
-
-        <div className="wms-row-2">
-          <Field label="Origem">
-            <input className="wms-input" value="Compra (OC)" disabled />
-          </Field>
-          <Field label="NF de referência" hint="opcional">
-            <input
-              className="wms-input"
-              value={nf}
-              onChange={(e) => setNf(e.target.value)}
-              placeholder="Número da NF (opcional)"
-            />
-          </Field>
-        </div>
-
-        {oc.observacao && (
-          <Field label="Observação">
-            <input className="wms-input" value={oc.observacao} disabled />
-          </Field>
-        )}
-      </>
-    );
-  }
 
   // ── submit: OC (linhas do documento) + extras (entrada avulsa) ──────────
   async function submit(itens: ReceberLoteItem[], ctx: ReceberLoteSubmitCtx) {
@@ -304,14 +285,20 @@ export default function ReceberOCDetalhePage() {
     toast.success(partes.join(" · "));
 
     qc.invalidateQueries({ queryKey: ["wms-compras"] });
-    router.push("/wms/compras?tab=receber");
+    router.push(backHref);
   }
 
   if (isLoading) {
     return (
       <>
-        <PageHeader title="OC —" subtitle="Carregando…" />
-        <div className="px-4 pt-8 text-sm text-zinc-500">Carregando…</div>
+        <PageHeader
+          title="Receber OC"
+          backHref={backHref}
+          backLabel={backLabel}
+        />
+        <div className="px-4 pt-4 max-w-3xl mx-auto">
+          <LoadingSpinner message="Carregando OC…" />
+        </div>
       </>
     );
   }
@@ -323,8 +310,14 @@ export default function ReceberOCDetalhePage() {
         : "Erro ao carregar OC.";
     return (
       <>
-        <PageHeader title="OC —" subtitle={msg} />
-        <div className="px-4 pt-8 text-sm text-red-500">{msg}</div>
+        <PageHeader
+          title="Receber OC"
+          backHref={backHref}
+          backLabel={backLabel}
+        />
+        <div className="px-4 pt-4 max-w-3xl mx-auto">
+          <ErrorBanner message={msg} />
+        </div>
       </>
     );
   }
@@ -332,10 +325,32 @@ export default function ReceberOCDetalhePage() {
   return (
     <>
       <PageHeader
-        title={`OC ${oc.id.slice(0, 8)}`}
-        subtitle={`${oc.fornecedor ?? "—"} · ${oc.galpao_nome ?? "—"}${oc.status ? ` · ${oc.status}` : ""}`}
+        title={`Receber OC — ${oc.fornecedor ?? "—"} · ${oc.galpao_nome ?? "—"}`}
+        subtitle={
+          <>
+            <span className="wms-mono" style={{ fontSize: 11 }}>
+              {oc.id.slice(0, 8)}
+            </span>
+            {oc.status ? <> · {oc.status}</> : null}
+          </>
+        }
+        backHref={backHref}
+        backLabel={backLabel}
       />
       <div className="px-4 pb-12 max-w-5xl mx-auto pt-4">
+        <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
+          Dados do recebimento
+        </h3>
+        <div style={{ maxWidth: 320, marginBottom: 12 }}>
+          <Field label="NF de referência" hint="opcional">
+            <input
+              className="wms-input"
+              value={nf}
+              onChange={(e) => setNf(e.target.value)}
+              placeholder="Número da NF (opcional)"
+            />
+          </Field>
+        </div>
         <ReceberLote
           config={config}
           galpaoId={oc.galpao_id}
@@ -343,7 +358,6 @@ export default function ReceberOCDetalhePage() {
           submit={submit}
           onSuccess={onSuccess}
           onError={(e) => toast.error(e.message)}
-          renderLeftFormExtra={renderLeftFormExtra}
         />
       </div>
     </>

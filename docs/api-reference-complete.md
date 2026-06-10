@@ -3007,10 +3007,11 @@ OR
 
 > Na tab `comprar`, a `quantidade_necessaria` de cada item é recalculada na leitura (necessidade líquida viva = `max(0, demanda_aberta − estoque_livre − em_transito)`), não um valor congelado. Pode ser 0 quando livre + em-trânsito já cobrem a demanda.
 
-**Auth:** X-Session-Id (required), must have purchase-related cargo (comprador, admin)
+**Auth:** X-Session-Id (required). `tab=comprar|historico` exige `compras.ver`; `tab=receber|counts` aceita `compras.ver` OU `operacoes.receber` (operador de doca chega pela rota /wms/receber sem ser comprador).
 
 **Query Params:**
-- `tab`: "comprar" | "receber" | "historico" (default: "comprar")
+- `tab`: "comprar" | "receber" | "historico" | "counts" (default: "comprar")
+- `counts`: retorna só `{ counts }` — usado pelo polling de badges dos tabs da página /wms/compras
 - `cursor` (apenas tab=historico): ISO timestamp de `comprado_em` do último item retornado anteriormente — ativa modo cursor-based
 - `limit` (apenas tab=historico): items per page (default 100, max 200)
 
@@ -3089,12 +3090,13 @@ OR
   "fornecedores": [
     {
       "fornecedor": "string",
-      "galpao_nome": "string | null",
+      "galpao_nome": "string | null (manuais resolvem via join siso_galpoes)",
       "documentos": [
         {
           "origem": "oc" | "manual",
           "id": "string (uuid de siso_ordens_compra ou siso_compras_manuais)",
           "qty_pendente": "number",
+          "skus_count": "number (SKUs distintos com pendência no documento)",
           "criado_em": "ISO datetime | null",
           "custo_total": "number | null (only for manual purchases)",
           "href": "string (link to rich receiving page: /wms/receber/oc/[id] or /wms/receber/manual/[id])"
@@ -3129,6 +3131,7 @@ OR
 ```
 
 **Business Logic:**
+- **Counts:** `counts.receber` conta DOCUMENTOS pendentes (mesma fonte/filtro da tab receber: ocDocs + manualDocs com qty_pendente>0) — o badge do tab bate com as linhas visíveis.
 - **Comprar tab:** Groups items by fornecedor, aggregates by SKU, includes all unique pedidos per SKU
 - **Receber tab:** Unifies OC documents (`siso_ordens_compra` status=comprado with pending items) + manual purchases (`siso_compras_manuais` status=comprado|parcial with pending items) grouped by fornecedor. Each document carries `origem` flag and links to its rich receiving page. Documents sorted by `criado_em` ascending (oldest first = highest priority).
 - **Historico tab:** Shows received items (compra_status = "recebido") grouped by fornecedor and date, with `origem` field marking source (OC vs manual). Paginação cursor-based via `?cursor=<comprado_em>&limit=<N>` (default 100, max 200); `next_cursor` é null quando exausto. Ordering `comprado_em DESC, id DESC` (tiebreaker estável). Manual receipts appear only on first page (subsequent pages have OC only).

@@ -4407,3 +4407,57 @@ erros:
     Fornecedor "Diversos" vem do PREFIX_MAP de sku-fornecedor.ts (default quando prefixo
     do SKU não mapeia) setado no webhook — siso_produto_fornecedores (preferencial) NÃO é
     consultado nesse caminho. Gap de design, não corrigido aqui.
+
+- id: COMPRAS-BADGE-RECEBER-CONTAVA-ITENS
+  date: 2026-06-10
+  source: compras
+  category: business_logic
+  message: "Tab Receber mostra '37'/'10' mas a lista tem 3 documentos — contador não bate com o que se vê"
+  cause: >
+    fetchCounts somava LINHAS de siso_pedido_itens compra_status='comprado' + documentos
+    manuais (unidades mistas), enquanto a aba lista DOCUMENTOS com qty_pendente>0.
+    Agravante: os counts exibidos vinham do cache da primeira query com dados
+    (comprarQuery ?? receberQuery ?? historicoQuery) e queries de abas inativas não
+    refazem fetch → contador congelado/saltando ao alternar aba.
+  fix: >
+    fetchCounts conta documentos pendentes com a MESMA fonte do fetchReceber
+    (fetchReceberDocs extraído como fonte única); front usa query dedicada sempre
+    ativa GET /api/wms/compras?tab=counts (refetch 30s) e mostra '–' enquanto undefined.
+  files:
+    - src/app/api/wms/compras/route.ts
+    - src/app/wms/compras/page.tsx
+  tags: [compras, receber, contador, badge, react-query]
+
+- id: RECEBER-HUB-PERMISSAO-OPERADOR-DOCA
+  date: 2026-06-10
+  source: receber
+  category: auth
+  message: "Card 'Receber OC pendente' do hub manda operador de doca pra 'Acesso negado'"
+  cause: >
+    Hub /wms/receber linka pra /wms/compras?tab=receber, mas GET /api/wms/compras
+    exigia compras.ver pra TODAS as tabs — operador com só operacoes.receber caía
+    em 403 no caminho principal do recebimento.
+  fix: >
+    GET /api/wms/compras com tab=receber|counts aceita userCanAny(compras.ver,
+    operacoes.receber); demais tabs seguem exigindo compras.ver.
+  files:
+    - src/app/api/wms/compras/route.ts
+  tags: [receber, permissoes, operacoes.receber, hub]
+
+- id: RECEBER-AVULSO-GALPAO-DEFAULT-ERRADO
+  date: 2026-06-10
+  source: receber
+  category: business_logic
+  message: "Recebimento avulso abre com galpão = primeiro da lista, não o galpão ativo do operador"
+  cause: >
+    Default era galpoesList[0] — operador de SP registrava entrada física em CWB:
+    estoque fantasma num galpão e furo no outro. O galpão ativo da sessão
+    (X-Galpao-Id / auth-context) existia e não era usado. Bônus: o seed via
+    ?produto_id= fazia router.replace('/wms/receber') — URL antiga pré-hub — e
+    perdia o form.
+  fix: >
+    Default = galpão ativo da sessão (fallback galpoesList[0]); hint mute quando
+    seleção diverge do ativo. Redirect do seed corrigido pra /wms/receber/avulso.
+  files:
+    - src/app/wms/receber/avulso/page.tsx
+  tags: [receber, avulso, galpao, estoque-fantasma]

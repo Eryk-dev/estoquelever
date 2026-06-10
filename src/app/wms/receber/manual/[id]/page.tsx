@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { sisoFetch } from "@/lib/auth-context";
-import { PageHeader, Field } from "@/components/wms/ui/wms-ui";
+import { PageHeader } from "@/components/wms/ui/wms-ui";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import {
   ReceberLote,
   type ReceberLoteSubmitCtx,
@@ -62,13 +64,22 @@ interface ExtrasResp {
 
 const JSONH = { "Content-Type": "application/json" };
 
+const noopSubscribe = () => () => {};
+
 export default function ReceberManualDetalhePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
 
-  // State só pra controlar nf (não usado, mas mantém paridade com OC — manual sem campo NF)
-  const [_nf] = useState(""); // eslint-disable-line @typescript-eslint/no-unused-vars
+  // Volta pra onde o operador veio: aba Receber de compras quando o referrer
+  // mostra que foi de lá; senão o hub de recebimento.
+  const veioDeCompras = useSyncExternalStore(
+    noopSubscribe,
+    () => document.referrer.includes("/wms/compras"),
+    () => false,
+  );
+  const backHref = veioDeCompras ? "/wms/compras?tab=receber" : "/wms/receber";
+  const backLabel = veioDeCompras ? "Compras" : "Recebimento";
 
   const { data, isLoading, error } = useQuery<CompraManualDetailResponse>({
     queryKey: ["receber-manual-detail", id],
@@ -146,48 +157,21 @@ export default function ReceberManualDetalhePage() {
       imprimirVisible: true,
       mlBlockVisible: true,
       planoSidebarVisible: true,
-      leftFormVisible: true,
+      leftFormVisible: false,
+      headerChips: [
+        { label: "Fornecedor", value: compra.fornecedor?.nome ?? "—" },
+        { label: "Empresa", value: compra.empresa?.nome ?? "—" },
+        { label: "Galpão", value: galpaoNome ?? compra.galpao_id.slice(0, 8) },
+        { label: "Origem", value: "Compra manual" },
+        ...(compra.observacao
+          ? [{ label: "Observação", value: compra.observacao }]
+          : []),
+      ],
       guardaTogglesVisible: true,
       permissaoReceber: "compras.executar",
       confirmLabel: "Confirmar recebimento",
     };
-  }, [compra]);
-
-  // ── Left form travado: infos da compra fixas ────────────────────────────
-  function renderLeftFormExtra() {
-    if (!compra) return null;
-    return (
-      <>
-        <div className="wms-row-2">
-          <Field label="Fornecedor">
-            <input className="wms-input" value={compra.fornecedor?.nome ?? "—"} disabled />
-          </Field>
-          <Field label="Empresa">
-            <input className="wms-input" value={compra.empresa?.nome ?? "—"} disabled />
-          </Field>
-        </div>
-
-        <div className="wms-row-2">
-          <Field label="Galpão">
-            <input
-              className="wms-input"
-              value={galpaoNome ?? compra.galpao_id.slice(0, 8)}
-              disabled
-            />
-          </Field>
-          <Field label="Origem">
-            <input className="wms-input" value="Compra manual" disabled />
-          </Field>
-        </div>
-
-        {compra.observacao && (
-          <Field label="Observação">
-            <input className="wms-input" value={compra.observacao} disabled />
-          </Field>
-        )}
-      </>
-    );
-  }
+  }, [compra, galpaoNome]);
 
   // ── submit: linhas da compra + extras (entrada avulsa) ──────────────────
   async function submit(itens: ReceberLoteItem[], ctx: ReceberLoteSubmitCtx) {
@@ -313,14 +297,20 @@ export default function ReceberManualDetalhePage() {
     toast.success(partes.join(" · "));
 
     qc.invalidateQueries({ queryKey: ["wms-compras"] });
-    router.push("/wms/compras?tab=receber");
+    router.push(backHref);
   }
 
   if (isLoading) {
     return (
       <>
-        <PageHeader title="Compra Manual —" subtitle="Carregando…" />
-        <div className="px-4 pt-8 text-sm text-zinc-500">Carregando…</div>
+        <PageHeader
+          title="Receber compra"
+          backHref={backHref}
+          backLabel={backLabel}
+        />
+        <div className="px-4 pt-4 max-w-3xl mx-auto">
+          <LoadingSpinner message="Carregando compra…" />
+        </div>
       </>
     );
   }
@@ -332,8 +322,14 @@ export default function ReceberManualDetalhePage() {
         : "Erro ao carregar compra.";
     return (
       <>
-        <PageHeader title="Compra Manual —" subtitle={msg} />
-        <div className="px-4 pt-8 text-sm text-red-500">{msg}</div>
+        <PageHeader
+          title="Receber compra"
+          backHref={backHref}
+          backLabel={backLabel}
+        />
+        <div className="px-4 pt-4 max-w-3xl mx-auto">
+          <ErrorBanner message={msg} />
+        </div>
       </>
     );
   }
@@ -341,10 +337,22 @@ export default function ReceberManualDetalhePage() {
   return (
     <>
       <PageHeader
-        title={`Compra ${compra.id.slice(0, 8)}`}
-        subtitle={`${compra.fornecedor?.nome ?? "—"} · ${compra.empresa?.nome ?? "—"}${galpaoNome ? ` · ${galpaoNome}` : ""}`}
+        title={`Receber compra — ${compra.fornecedor?.nome ?? "—"} · ${galpaoNome ?? "—"}`}
+        subtitle={
+          <>
+            <span className="wms-mono" style={{ fontSize: 11 }}>
+              {compra.id.slice(0, 8)}
+            </span>
+            {compra.status ? <> · {compra.status}</> : null}
+          </>
+        }
+        backHref={backHref}
+        backLabel={backLabel}
       />
       <div className="px-4 pb-12 max-w-5xl mx-auto pt-4">
+        <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
+          Dados do recebimento
+        </h3>
         <ReceberLote
           config={config}
           galpaoId={compra.galpao_id}
@@ -352,7 +360,6 @@ export default function ReceberManualDetalhePage() {
           submit={submit}
           onSuccess={onSuccess}
           onError={(e) => toast.error(e.message)}
-          renderLeftFormExtra={renderLeftFormExtra}
         />
       </div>
     </>

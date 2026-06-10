@@ -15,6 +15,11 @@ export interface ReceberLoteItem {
   qty: string;
   /** qty esperada/pendente (read-only ref pra divergência e default) */
   qtyEsperada: number | null;
+  /** qty originalmente pedida no documento (OC/manual). Com qtyJaRecebida > 0,
+   *  a microcopy vira "pedido X · recebido Y · falta Z". */
+  qtyPedida?: number | null;
+  /** qty já recebida em recebimentos anteriores do documento */
+  qtyJaRecebida?: number | null;
   custo: string;
   locIdOverride: string | null;
   locCodigoOverride: string | null;
@@ -53,6 +58,12 @@ export interface ReceberLoteConfig {
   /** rótulo do botão Confirmar (idle). Default "Confirmar lote".
    *  Ex.: OC usa "Confirmar recebimento". */
   confirmLabel?: string;
+  /** título da seção do left-form. Default "Configuração do lote".
+   *  Ex.: criação de compra usa "Dados da compra". */
+  tituloConfiguracao?: string;
+  /** header da coluna de qty. Default "Qtd recebida".
+   *  Ex.: criação de compra usa "Qtd". */
+  qtdColLabel?: string;
   /** mostra os toggles entrada-direta/iniciar-rota na sidebar. Default true.
    *  false em transferência: entrada é sempre direta no backend e não há rota
    *  de guarda, então os toggles não fazem sentido. */

@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { sisoFetch } from "@/lib/auth-context";
+import { sisoFetch, useAuth } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, PageHeader, Field } from "@/components/wms/ui/wms-ui";
 import {
@@ -30,8 +30,10 @@ export default function ReceberPage() {
   return (
     <>
       <PageHeader
-        title="Receber mercadoria"
-        subtitle="Etapa 1 de 2 — registra entrada no dock RECEBIMENTO e decide a loc destino. Pra 1 SKU ou N: tudo na mesma tela. A guarda física é feita em /wms/guarda (tablet), em rota agrupada por lote."
+        title="Recebimento avulso"
+        subtitle="Registra a entrada e gera a rota de guarda — a guarda física é feita depois, no tablet."
+        backHref="/wms/receber"
+        backLabel="Recebimento"
       />
       <Suspense fallback={null}>
         <ReceberBody />
@@ -91,9 +93,11 @@ function ReceberBody() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const produtoIdSeed = searchParams.get("produto_id");
+  const { activeGalpaoId } = useAuth();
   const { data: galpoes } = useGalpoes();
   const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
-  const defaultGalpao = galpoesList[0];
+  const defaultGalpao =
+    galpoesList.find((g) => g.id === activeGalpaoId) ?? galpoesList[0];
 
   const empresasQuery = useQuery({
     queryKey: ["wms-empresas-lite"],
@@ -148,7 +152,7 @@ function ReceberBody() {
     if (seedUrlLimpaRef.current) return;
     if (!seedProduto) return;
     seedUrlLimpaRef.current = true;
-    router.replace("/wms/receber", { scroll: false });
+    router.replace("/wms/receber/avulso", { scroll: false });
   }, [seedProduto, router]);
 
   // ── submit: monta o body 3D + POST + impressão fire-and-forget ─────────
@@ -329,15 +333,26 @@ function ReceberBody() {
   // 3D: fornecedor sempre obrigatório; compradora obrigatória só em NF
   // de compra. (qty/custo/loc são validados dentro do componente.)
   function validarExtra() {
-    const compradoraOk = origem !== "nf_compra" || !!empresaCompradoraId;
-    return !!fornecedorId && compradoraOk;
+    const faltas: string[] = [];
+    if (!fornecedorId)
+      faltas.push(origem === "devolucao" ? "Falta: fornecedor/origem" : "Falta: fornecedor");
+    if (origem === "nf_compra" && !empresaCompradoraId)
+      faltas.push("Falta: empresa compradora");
+    return faltas;
   }
 
   function renderLeftFormExtra() {
     return (
       <>
         <div className="wms-row-2">
-          <Field label="Galpão">
+          <Field
+            label="Galpão"
+            hint={
+              activeGalpaoId && galpaoId && galpaoId !== activeGalpaoId
+                ? "diferente do seu galpão ativo"
+                : undefined
+            }
+          >
             <select
               className="wms-select"
               value={galpaoId}
@@ -350,7 +365,10 @@ function ReceberBody() {
               ))}
             </select>
           </Field>
-          <Field label="Fornecedor" hint="obrigatório">
+          <Field
+            label={origem === "devolucao" ? "Fornecedor/origem" : "Fornecedor"}
+            hint="obrigatório"
+          >
             <select
               className="wms-select"
               value={fornecedorId}

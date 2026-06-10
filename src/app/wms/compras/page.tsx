@@ -23,7 +23,6 @@ import {
   fmtBRL,
   fmtDateTime,
   fmtNum,
-  fmtRelative,
 } from "@/components/wms/ui/wms-ui";
 
 // ── Tipos ────────────────────────────────────────────────────────────
@@ -89,6 +88,7 @@ interface ReceberDoc {
   qty_pendente: number;
   criado_em: string | null;
   custo_total: number | null;
+  skus_count: number;
   href: string;
 }
 
@@ -133,15 +133,15 @@ function agingClass(dias: number): "is-fresh" | "is-aging" | "is-overdue" {
 function coberturaLabel(s: StatusCobertura): { txt: string; color: string } {
   switch (s) {
     case "critico":
-      return { txt: "crítico", color: "#dc2626" };
+      return { txt: "crítico", color: "var(--wms-c-danger)" };
     case "lead_time_risco":
-      return { txt: "risco lead time", color: "#d97706" };
+      return { txt: "risco lead time", color: "var(--wms-c-warn)" };
     case "atencao":
-      return { txt: "atenção", color: "#d97706" };
+      return { txt: "atenção", color: "var(--wms-c-warn)" };
     case "ok":
-      return { txt: "ok", color: "#16a34a" };
+      return { txt: "ok", color: "var(--wms-c-ok)" };
     default:
-      return { txt: "sem giro", color: "#71717a" };
+      return { txt: "sem giro", color: "var(--wms-c-mute)" };
   }
 }
 
@@ -166,6 +166,14 @@ export default function WmsComprasPage() {
     },
     [router, searchParams],
   );
+
+  // Counts numa query dedicada e sempre ativa — os counts embutidos nas
+  // queries de aba congelam quando a aba está desabilitada.
+  const countsQuery = useQuery<{ counts: Counts }>({
+    queryKey: ["wms-compras", "counts"],
+    queryFn: () => wmsApi<{ counts: Counts }>("/api/wms/compras?tab=counts"),
+    refetchInterval: 30_000,
+  });
 
   const comprarQuery = useQuery<ComprarResponse>({
     queryKey: ["wms-compras", "comprar"],
@@ -198,10 +206,7 @@ export default function WmsComprasPage() {
     refetchInterval: 60_000,
   });
 
-  const counts =
-    comprarQuery.data?.counts ??
-    receberQuery.data?.counts ??
-    historicoQuery.data?.pages?.[0]?.counts;
+  const counts = countsQuery.data?.counts;
 
   const invalidateAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["wms-compras"] });
@@ -242,30 +247,30 @@ export default function WmsComprasPage() {
           onClick={() => setTab("comprar")}
         >
           Comprar{" "}
-          <span className="wms-vtab-n">{counts?.comprar ?? 0}</span>
-        </button>
-        <button
-          className={`wms-vtab-btn ${tab === "receber" ? "is-active" : ""}`}
-          onClick={() => setTab("receber")}
-        >
-          Receber{" "}
-          <span className="wms-vtab-n">{counts?.receber ?? 0}</span>
-          {counts && counts.receber > 0 ? (
+          <span className="wms-vtab-n">{counts ? counts.comprar : "–"}</span>
+          {counts && counts.excecoes > 0 ? (
             <span
               className="wms-aging-chip is-aging"
               style={{ marginLeft: 6 }}
-              title="Pendentes"
+              title="Exceções aguardando decisão"
             >
               !
             </span>
           ) : null}
         </button>
         <button
+          className={`wms-vtab-btn ${tab === "receber" ? "is-active" : ""}`}
+          onClick={() => setTab("receber")}
+        >
+          Receber{" "}
+          <span className="wms-vtab-n">{counts ? counts.receber : "–"}</span>
+        </button>
+        <button
           className={`wms-vtab-btn ${tab === "historico" ? "is-active" : ""}`}
           onClick={() => setTab("historico")}
         >
           Histórico{" "}
-          <span className="wms-vtab-n">{counts?.historico ?? 0}</span>
+          <span className="wms-vtab-n">{counts ? counts.historico : "–"}</span>
         </button>
       </div>
 
@@ -304,6 +309,15 @@ function TabComprar({
     new Map(),
   );
   const [pendingExcId, setPendingExcId] = useState<string | null>(null);
+  const [trocaSkuAlvo, setTrocaSkuAlvo] = useState<ComprarItem | null>(null);
+  const [trocaSkuNovo, setTrocaSkuNovo] = useState("");
+  const [trocaSkuErro, setTrocaSkuErro] = useState<string | null>(null);
+  const [trocaSkuValidando, setTrocaSkuValidando] = useState(false);
+  const [indisponivelAlvo, setIndisponivelAlvo] = useState<ComprarItem | null>(
+    null,
+  );
+  const [cancelAlvo, setCancelAlvo] = useState<ComprarItem | null>(null);
+  const [cancelMotivo, setCancelMotivo] = useState("");
   // ref-per-fornecedor pra suportar shift+click range select isolado por card
   const lastCheckedRef = useRef<Map<string, number>>(new Map());
 
@@ -399,6 +413,7 @@ function TabComprar({
     },
     onSuccess: () => {
       toast.success("SKU trocado");
+      setTrocaSkuAlvo(null);
       onMutated();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -417,6 +432,7 @@ function TabComprar({
     },
     onSuccess: () => {
       toast.success("Item marcado como indisponível");
+      setIndisponivelAlvo(null);
       onMutated();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -439,6 +455,8 @@ function TabComprar({
     },
     onSuccess: () => {
       toast.success("Proposta de cancelamento registrada");
+      setCancelAlvo(null);
+      setCancelMotivo("");
       onMutated();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -575,51 +593,52 @@ function TabComprar({
     comprarMut.mutate(itens);
   }, [selected, allItensBySku, qtyOverrides, comprarMut]);
 
-  const onTrocarSku = useCallback(
-    (item: ComprarItem) => {
-      const novoSku = window.prompt(
-        `Trocar SKU ${item.sku} por:`,
-        item.sku,
+  const onTrocarSku = useCallback((item: ComprarItem) => {
+    setTrocaSkuAlvo(item);
+    setTrocaSkuNovo(item.sku);
+    setTrocaSkuErro(null);
+  }, []);
+
+  const submitTrocarSku = useCallback(async () => {
+    if (!trocaSkuAlvo) return;
+    const novo = trocaSkuNovo.trim();
+    if (!novo || novo === trocaSkuAlvo.sku) return;
+    const itemIds = trocaSkuAlvo.pedidos.map((p) => p.item_id);
+    if (itemIds.length === 0) {
+      toast.error("Nenhum item vinculado pra trocar");
+      return;
+    }
+    setTrocaSkuValidando(true);
+    setTrocaSkuErro(null);
+    try {
+      const res = await wmsApi<{ rows: { sku: string }[] }>(
+        `/api/wms/produtos?q=${encodeURIComponent(novo)}&limit=20`,
       );
-      if (!novoSku || novoSku.trim() === "" || novoSku === item.sku) return;
-      const itemIds = item.pedidos.map((p) => p.item_id);
-      if (itemIds.length === 0) {
-        toast.error("Nenhum item vinculado pra trocar");
+      const match = (res.rows ?? []).find(
+        (r) => r.sku.toLowerCase() === novo.toLowerCase(),
+      );
+      if (!match) {
+        setTrocaSkuErro(`SKU "${novo}" não existe no catálogo`);
         return;
       }
-      trocarSkuMut.mutate({ item_ids: itemIds, novo_sku: novoSku.trim() });
-    },
-    [trocarSkuMut],
-  );
+      trocarSkuMut.mutate({ item_ids: itemIds, novo_sku: match.sku });
+    } catch (e) {
+      setTrocaSkuErro(e instanceof Error ? e.message : "Erro ao validar SKU");
+    } finally {
+      setTrocaSkuValidando(false);
+    }
+  }, [trocaSkuAlvo, trocaSkuNovo, trocarSkuMut]);
 
-  const onIndisponivel = useCallback(
-    (item: ComprarItem) => {
-      const itemId = item.pedidos[0]?.item_id;
-      if (!itemId) return;
-      if (
-        !window.confirm(
-          `Marcar SKU ${item.sku} como indisponível para o pedido #${item.pedidos[0]?.numero}?`,
-        )
-      )
-        return;
-      indisponivelMut.mutate(itemId);
-    },
-    [indisponivelMut],
-  );
+  const onIndisponivel = useCallback((item: ComprarItem) => {
+    if (!item.pedidos[0]?.item_id) return;
+    setIndisponivelAlvo(item);
+  }, []);
 
-  const onPropostaCancelamento = useCallback(
-    (item: ComprarItem) => {
-      const itemId = item.pedidos[0]?.item_id;
-      if (!itemId) return;
-      const motivo = window.prompt(
-        `Motivo do cancelamento (SKU ${item.sku}, pedido #${item.pedidos[0]?.numero}):`,
-        "",
-      );
-      if (!motivo || motivo.trim() === "") return;
-      cancelamentoMut.mutate({ itemId, motivo: motivo.trim() });
-    },
-    [cancelamentoMut],
-  );
+  const onPropostaCancelamento = useCallback((item: ComprarItem) => {
+    if (!item.pedidos[0]?.item_id) return;
+    setCancelAlvo(item);
+    setCancelMotivo("");
+  }, []);
 
   if (query.isLoading) {
     return <div className="wms-loading-pane">Carregando itens…</div>;
@@ -701,6 +720,17 @@ function TabComprar({
               </div>
               {isExpanded && (
                 <div className="wms-frc-body">
+                  <div
+                    className="wms-frc-row wms-td-mute"
+                    style={{ fontSize: 10.5, padding: "4px 0" }}
+                  >
+                    <div />
+                    <div />
+                    <div />
+                    <div className="wms-tar">Necessário</div>
+                    <div className="wms-tar">Comprar</div>
+                    <div />
+                  </div>
                   {f.itens.map((item, idx) => {
                     const checked = selected.has(item.sku);
                     const qty =
@@ -802,9 +832,11 @@ function TabComprar({
                               <span
                                 style={{ color: coberturaLabel(item.status_cobertura).color }}
                               >
-                                gira {item.giro_diario.toFixed(1)}/d
+                                <span title="giro médio diário de vendas (últimos 30 dias)">
+                                  gira {item.giro_diario.toFixed(1)}/d
+                                </span>
                                 {item.dias_cobertura != null
-                                  ? ` · ${item.dias_cobertura}d cob`
+                                  ? ` · cobertura ${item.dias_cobertura}d`
                                   : ""}{" "}
                                 · {coberturaLabel(item.status_cobertura).txt}
                               </span>
@@ -949,6 +981,127 @@ function TabComprar({
           </div>
         </Modal>
       )}
+
+      {trocaSkuAlvo && (
+        <Modal
+          title={`Trocar SKU — ${trocaSkuAlvo.sku}`}
+          subtitle={trocaSkuAlvo.descricao}
+          onClose={() => setTrocaSkuAlvo(null)}
+        >
+          <Field label="Novo SKU">
+            <input
+              className="wms-input wms-mono"
+              value={trocaSkuNovo}
+              onChange={(e) => {
+                setTrocaSkuNovo(e.target.value);
+                setTrocaSkuErro(null);
+              }}
+              autoFocus
+            />
+          </Field>
+          {trocaSkuErro && (
+            <p style={{ color: "var(--wms-c-danger)", fontSize: 12, marginTop: 6 }}>
+              {trocaSkuErro}
+            </p>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+            <button
+              className="wms-btn wms-btn-ghost"
+              onClick={() => setTrocaSkuAlvo(null)}
+              type="button"
+            >
+              Cancelar
+            </button>
+            <button
+              className="wms-btn wms-btn-primary"
+              disabled={
+                !trocaSkuNovo.trim() ||
+                trocaSkuNovo.trim() === trocaSkuAlvo.sku ||
+                trocaSkuValidando ||
+                trocarSkuMut.isPending
+              }
+              onClick={submitTrocarSku}
+              type="button"
+            >
+              {trocaSkuValidando || trocarSkuMut.isPending
+                ? "Trocando…"
+                : "Trocar"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {indisponivelAlvo && (
+        <Modal
+          title="Marcar indisponível"
+          onClose={() => setIndisponivelAlvo(null)}
+        >
+          <p style={{ fontSize: 13 }}>
+            Marcar SKU{" "}
+            <strong className="wms-mono">{indisponivelAlvo.sku}</strong> como
+            indisponível para o pedido #{indisponivelAlvo.pedidos[0]?.numero}?
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+            <button
+              className="wms-btn wms-btn-ghost"
+              onClick={() => setIndisponivelAlvo(null)}
+              type="button"
+            >
+              Cancelar
+            </button>
+            <button
+              className="wms-btn wms-btn-danger"
+              disabled={indisponivelMut.isPending}
+              onClick={() => {
+                const itemId = indisponivelAlvo.pedidos[0]?.item_id;
+                if (!itemId) return;
+                indisponivelMut.mutate(itemId);
+              }}
+              type="button"
+            >
+              {indisponivelMut.isPending ? "Marcando…" : "Marcar indisponível"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {cancelAlvo && (
+        <Modal
+          title={`Propor cancelamento — ${cancelAlvo.sku}`}
+          subtitle={`Pedido #${cancelAlvo.pedidos[0]?.numero}`}
+          onClose={() => setCancelAlvo(null)}
+        >
+          <Field label="Motivo">
+            <textarea
+              className="wms-textarea"
+              value={cancelMotivo}
+              onChange={(e) => setCancelMotivo(e.target.value)}
+              autoFocus
+            />
+          </Field>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+            <button
+              className="wms-btn wms-btn-ghost"
+              onClick={() => setCancelAlvo(null)}
+              type="button"
+            >
+              Cancelar
+            </button>
+            <button
+              className="wms-btn wms-btn-danger"
+              disabled={!cancelMotivo.trim() || cancelamentoMut.isPending}
+              onClick={() => {
+                const itemId = cancelAlvo.pedidos[0]?.item_id;
+                if (!itemId) return;
+                cancelamentoMut.mutate({ itemId, motivo: cancelMotivo.trim() });
+              }}
+              type="button"
+            >
+              {cancelamentoMut.isPending ? "Enviando…" : "Propor cancelamento"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
@@ -975,7 +1128,7 @@ function ItemKebab({
         title="Mais ações"
         type="button"
       >
-        <Icon name="alert" size={11} />
+        <Icon name="dots" size={11} />
       </button>
       {open && (
         <>
@@ -1104,13 +1257,24 @@ function TabReceber({
                 >
                   {d.origem === "manual" ? "Manual" : "OC"}
                 </span>
-                <span className="wms-mono wms-td-mute">{d.id.slice(0, 8)}</span>
-                <span>{fmtNum(d.qty_pendente)} un pendente</span>
+                <span>
+                  {d.skus_count} SKU{d.skus_count === 1 ? "" : "s"}
+                </span>
+                <span>
+                  {fmtNum(d.qty_pendente)} un pendente
+                  {d.qty_pendente === 1 ? "" : "s"}{" "}
+                  <span
+                    className="wms-mono wms-td-mute"
+                    style={{ fontSize: 10 }}
+                  >
+                    {d.id.slice(0, 8)}
+                  </span>
+                </span>
                 <span className="wms-tar wms-mono">
-                  {d.custo_total != null ? fmtBRL(d.custo_total) : ""}
+                  {d.custo_total != null ? fmtBRL(d.custo_total) : "—"}
                 </span>
                 <span className="wms-td-mute">
-                  {d.criado_em ? fmtRelative(d.criado_em) : ""}
+                  {d.criado_em ? fmtDateTime(d.criado_em) : "—"}
                 </span>
                 <Icon name="chevron-r" />
               </button>
@@ -1167,7 +1331,7 @@ function TabHistorico({
               <th>Fornecedor</th>
               <th>SKU</th>
               <th>Produto</th>
-              <th className="wms-tar">Qty</th>
+              <th className="wms-tar">Qtd</th>
             </tr>
           </thead>
           <tbody>

@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { sisoFetch } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import { PageHeader, Field } from "@/components/wms/ui/wms-ui";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import {
   ReceberLote,
+  emptyReceberLoteItem,
   type ReceberLoteSubmitCtx,
 } from "@/components/wms/recebimento/receber-lote";
 import { buildCompraPayload } from "@/components/wms/recebimento/receber-lote-adapters";
@@ -45,9 +47,9 @@ const CONFIG_COMPRA: ReceberLoteConfig = {
   guardaTogglesVisible: false,
   permissaoReceber: "compras.executar",
   confirmLabel: "Criar compra",
+  tituloConfiguracao: "Dados da compra",
+  qtdColLabel: "Qtd",
 };
-
-const ITENS_INICIAIS: ReceberLoteItem[] = [];
 
 export default function NovaCompraManualPage() {
   const router = useRouter();
@@ -59,18 +61,19 @@ export default function NovaCompraManualPage() {
   const [observacao, setObservacao] = useState("");
 
   // criar fornecedor inline
+  const [showNovoForn, setShowNovoForn] = useState(false);
   const [novoFornNome, setNovoFornNome] = useState("");
 
-  const { data: contexto } = useQuery<ContextoResp>({
+  const contextoQuery = useQuery<ContextoResp>({
     queryKey: ["compras-manuais-contexto"],
     queryFn: () =>
       wmsApi<ContextoResp>("/api/wms/compras-manuais/contexto"),
     staleTime: 5 * 60_000,
   });
-  const galpoes = contexto?.galpoes ?? [];
-  const empresas = contexto?.empresas ?? [];
+  const galpoes = contextoQuery.data?.galpoes ?? [];
+  const empresas = contextoQuery.data?.empresas ?? [];
 
-  const { data: fornData } = useQuery<{ rows: FornecedorLite[] }>({
+  const fornQuery = useQuery<{ rows: FornecedorLite[] }>({
     queryKey: ["compras-manuais-fornecedores"],
     queryFn: async () => {
       const r = await sisoFetch("/api/wms/fornecedores");
@@ -79,7 +82,7 @@ export default function NovaCompraManualPage() {
     },
     staleTime: 5 * 60_000,
   });
-  const fornecedores = fornData?.rows ?? [];
+  const fornecedores = fornQuery.data?.rows ?? [];
 
   const criarFornMut = useMutation({
     mutationFn: async (nome: string) => {
@@ -98,6 +101,7 @@ export default function NovaCompraManualPage() {
       qc.invalidateQueries({ queryKey: ["compras-manuais-fornecedores"] });
       setFornecedorId(f.id);
       setNovoFornNome("");
+      setShowNovoForn(false);
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
@@ -119,7 +123,13 @@ export default function NovaCompraManualPage() {
       return (await r.json()) as Produto;
     },
     onSuccess: (p) => {
-      toast.success(`Produto ${p.sku} criado — busque pelo SKU na linha do item`);
+      const primeira = itensLiveRef.current[0];
+      if (primeira && !primeira.produto) {
+        setItensSeed([{ ...emptyReceberLoteItem(), produto: p }]);
+        toast.success(`Produto ${p.sku} criado e adicionado aos itens`);
+      } else {
+        toast.success(`Produto ${p.sku} criado — busque pelo SKU na linha do item`);
+      }
       setNovoProdSku("");
       setNovoProdDesc("");
       setShowNovoProd(false);
@@ -127,73 +137,140 @@ export default function NovaCompraManualPage() {
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
-  const itensIniciais = useMemo(() => ITENS_INICIAIS, []);
+  // Seed do lote: abre com 1 linha vazia (autofocus na busca vem do ProdutoCombo).
+  // Produto cadastrado inline entra direto na 1ª linha via re-seed.
+  const [itensSeed, setItensSeed] = useState<ReceberLoteItem[]>(() => [
+    emptyReceberLoteItem(),
+  ]);
+
+  // Snapshot dos itens vivos do <ReceberLote> (capturado em validarExtra) pra
+  // calcular a pendência exibida junto do botão Criar compra.
+  const itensLiveRef = useRef<ReceberLoteItem[]>(itensSeed);
 
   function renderLeftFormExtra() {
     return (
-      <>
-        <Field label="Galpão" required>
-          <select
-            className="wms-select"
-            value={galpaoId}
-            onChange={(e) => setGalpaoId(e.target.value)}
-          >
-            <option value="">selecione…</option>
-            {galpoes.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.nome}
-              </option>
-            ))}
-          </select>
-        </Field>
+      <div style={{ maxWidth: 560 }}>
+        {contextoQuery.isError && (
+          <div style={{ marginBottom: 12 }}>
+            <ErrorBanner
+              message="Falha ao carregar galpões e empresas"
+              onRetry={() => contextoQuery.refetch()}
+            />
+          </div>
+        )}
+        {fornQuery.isError && (
+          <div style={{ marginBottom: 12 }}>
+            <ErrorBanner
+              message="Falha ao carregar fornecedores"
+              onRetry={() => fornQuery.refetch()}
+            />
+          </div>
+        )}
 
-        <Field label="Empresa compradora" required>
-          <select
-            className="wms-select"
-            value={empresaId}
-            onChange={(e) => setEmpresaId(e.target.value)}
-          >
-            <option value="">selecione…</option>
-            {empresas.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.nome}
+        <div className="wms-row-2">
+          <Field label="Galpão" required>
+            <select
+              className="wms-select"
+              value={galpaoId}
+              disabled={contextoQuery.isLoading}
+              onChange={(e) => setGalpaoId(e.target.value)}
+            >
+              <option value="">
+                {contextoQuery.isLoading ? "carregando…" : "selecione…"}
               </option>
-            ))}
-          </select>
-        </Field>
+              {galpoes.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.nome}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Empresa compradora" required>
+            <select
+              className="wms-select"
+              value={empresaId}
+              disabled={contextoQuery.isLoading}
+              onChange={(e) => setEmpresaId(e.target.value)}
+            >
+              <option value="">
+                {contextoQuery.isLoading ? "carregando…" : "selecione…"}
+              </option>
+              {empresas.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.nome}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
 
         <Field label="Fornecedor" required>
           <select
             className="wms-select"
             value={fornecedorId}
+            disabled={fornQuery.isLoading}
             onChange={(e) => setFornecedorId(e.target.value)}
           >
-            <option value="">selecione…</option>
+            <option value="">
+              {fornQuery.isLoading ? "carregando…" : "selecione…"}
+            </option>
             {fornecedores.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.nome}
               </option>
             ))}
           </select>
-          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-            <input
-              className="wms-input"
-              placeholder="ou criar fornecedor…"
-              value={novoFornNome}
-              onChange={(e) => setNovoFornNome(e.target.value)}
-            />
-            <button
-              className="wms-btn wms-btn-ghost"
-              type="button"
-              disabled={!novoFornNome.trim() || criarFornMut.isPending}
-              onClick={() => criarFornMut.mutate(novoFornNome.trim())}
-            >
-              {criarFornMut.isPending ? "Criando…" : "Criar"}
-            </button>
-          </div>
+          {!showNovoForn ? (
+            <div style={{ marginTop: 6 }}>
+              <button
+                className="wms-btn-link"
+                type="button"
+                onClick={() => setShowNovoForn(true)}
+              >
+                + Criar fornecedor
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+              <input
+                className="wms-input"
+                placeholder="nome do fornecedor…"
+                value={novoFornNome}
+                autoFocus
+                onChange={(e) => setNovoFornNome(e.target.value)}
+              />
+              <button
+                className="wms-btn wms-btn-ghost"
+                type="button"
+                disabled={!novoFornNome.trim() || criarFornMut.isPending}
+                onClick={() => criarFornMut.mutate(novoFornNome.trim())}
+              >
+                {criarFornMut.isPending ? "Criando…" : "Criar"}
+              </button>
+              <button
+                className="wms-btn-link"
+                type="button"
+                onClick={() => {
+                  setShowNovoForn(false);
+                  setNovoFornNome("");
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          )}
         </Field>
 
-        <div style={{ marginTop: 4 }}>
+        <Field label="Observação">
+          <input
+            className="wms-input"
+            value={observacao}
+            onChange={(e) => setObservacao(e.target.value)}
+          />
+        </Field>
+
+        <div style={{ marginTop: 12 }}>
           <button
             className="wms-btn-link"
             type="button"
@@ -206,7 +283,7 @@ export default function NovaCompraManualPage() {
               style={{
                 marginTop: 8,
                 padding: "12px",
-                border: "1px solid var(--wms-border)",
+                border: "1px solid var(--wms-c-border)",
                 borderRadius: 6,
                 display: "flex",
                 flexDirection: "column",
@@ -218,6 +295,7 @@ export default function NovaCompraManualPage() {
                   className="wms-input wms-mono"
                   placeholder="ex: ABC-001"
                   value={novoProdSku}
+                  autoFocus
                   onChange={(e) => setNovoProdSku(e.target.value.toUpperCase())}
                 />
               </Field>
@@ -230,8 +308,9 @@ export default function NovaCompraManualPage() {
                 />
               </Field>
               <button
-                className="wms-btn wms-btn-ghost wms-btn-sm"
+                className="wms-btn wms-btn-primary wms-btn-sm"
                 type="button"
+                style={{ alignSelf: "flex-start" }}
                 disabled={
                   !novoProdSku.trim() ||
                   !novoProdDesc.trim() ||
@@ -249,20 +328,16 @@ export default function NovaCompraManualPage() {
             </div>
           )}
         </div>
-
-        <Field label="Observação">
-          <input
-            className="wms-input"
-            value={observacao}
-            onChange={(e) => setObservacao(e.target.value)}
-          />
-        </Field>
-      </>
+      </div>
     );
   }
 
-  function validarExtra() {
-    return !!(galpaoId && empresaId && fornecedorId);
+  function validarExtra(itens: ReceberLoteItem[]) {
+    itensLiveRef.current = itens;
+    const faltas: string[] = [];
+    if (!empresaId) faltas.push("Falta: empresa compradora");
+    if (!fornecedorId) faltas.push("Falta: fornecedor");
+    return faltas;
   }
 
   async function submit(itens: ReceberLoteItem[], _ctx: ReceberLoteSubmitCtx) {
@@ -305,7 +380,7 @@ export default function NovaCompraManualPage() {
         <ReceberLote
           config={CONFIG_COMPRA}
           galpaoId={galpaoId}
-          itensIniciais={itensIniciais}
+          itensIniciais={itensSeed}
           submit={submit}
           onSuccess={onSuccess}
           onError={(e) => toast.error(e.message)}

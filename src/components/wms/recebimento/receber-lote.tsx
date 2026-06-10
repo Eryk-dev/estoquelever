@@ -44,6 +44,15 @@ export function makeUid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+/** Tira o sufixo "(CÓDIGO)" da razão do putaway quando repete a loc exibida ao lado. */
+function stripRazaoLocSuffix(razao: string, locCodigo: string) {
+  if (!locCodigo) return razao;
+  const sufixo = `(${locCodigo})`;
+  return razao.endsWith(sufixo)
+    ? razao.slice(0, razao.length - sufixo.length).trimEnd()
+    : razao;
+}
+
 /** Linha vazia — usada como seed/reset (avulso). */
 export function emptyReceberLoteItem(): ReceberLoteItem {
   return {
@@ -84,8 +93,10 @@ export interface ReceberLoteProps {
   renderLeftFormExtra?: () => React.ReactNode;
   /** rodapé extra dentro do plano-de-guarda (avulso: "Ir pra fila de guarda"). */
   renderSidebarFooter?: () => React.ReactNode;
-  /** validação extra do fluxo (avulso: fornecedor/compradora). true = ok */
-  validarExtra?: (itens: ReceberLoteItem[]) => boolean;
+  /** validação extra do fluxo (avulso: fornecedor/compradora). true/[] = ok.
+   *  Pode devolver lista de pendências legíveis (ex.: "Falta: fornecedor") —
+   *  a primeira aparece junto ao botão de confirmar. boolean só desabilita. */
+  validarExtra?: (itens: ReceberLoteItem[]) => boolean | string[];
 }
 
 export function ReceberLote({
@@ -134,6 +145,7 @@ export function ReceberLote({
       // re-sincroniza, pra não atropelar edições do operador.
       if (predefSeededRef.current || itensIniciais.length === 0) return;
       predefSeededRef.current = true;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setItens(itensIniciais);
       return;
     }
@@ -153,6 +165,7 @@ export function ReceberLote({
   useEffect(() => {
     if (galpaoRef.current === galpaoId) return;
     galpaoRef.current = galpaoId;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setItens((prev) =>
       prev.map((it) => ({ ...it, locIdOverride: null, locCodigoOverride: null })),
     );
@@ -185,7 +198,8 @@ export function ReceberLote({
     }),
   });
 
-  // Plano de guarda: agrupa por loc destino (resolvida ou pendente)
+  // Plano de guarda: agrupa por loc destino (resolvida ou pendente), com os
+  // itens agregados por SKU dentro de cada loc (soma qty, conta linhas).
   const plano = useMemo(() => {
     const grupos = new Map<
       string,
@@ -193,14 +207,17 @@ export function ReceberLote({
         locId: string | null;
         locCodigo: string;
         locTipo: string;
-        itens: Array<{
-          uid: string;
-          sku: string;
-          qty: number;
-          imagem_url: string | null;
-          imagens: string[];
-          descricao: string;
-        }>;
+        itens: Map<
+          string,
+          {
+            sku: string;
+            qty: number;
+            linhas: number;
+            imagem_url: string | null;
+            imagens: string[];
+            descricao: string;
+          }
+        >;
       }
     >();
     itens.forEach((it, idx) => {
@@ -223,23 +240,36 @@ export function ReceberLote({
         locId,
         locCodigo,
         locTipo,
-        itens: [],
+        itens: new Map(),
       };
-      grp.itens.push({
-        uid: it.uid,
-        sku,
-        qty: Number(it.qty),
-        imagem_url: it.produto?.imagem_url ?? it.imagem_url,
-        imagens: it.produto?.imagens ?? [],
-        descricao: it.produto?.descricao ?? it.descricao,
-      });
+      const entry = grp.itens.get(sku);
+      if (entry) {
+        entry.qty += Number(it.qty);
+        entry.linhas += 1;
+      } else {
+        grp.itens.set(sku, {
+          sku,
+          qty: Number(it.qty),
+          linhas: 1,
+          imagem_url: it.produto?.imagem_url ?? it.imagem_url,
+          imagens: it.produto?.imagens ?? [],
+          descricao: it.produto?.descricao ?? it.descricao,
+        });
+      }
       grupos.set(key, grp);
     });
-    return Array.from(grupos.values()).sort((a, b) => {
-      if (a.locId === null) return 1;
-      if (b.locId === null) return -1;
-      return a.locCodigo.localeCompare(b.locCodigo);
-    });
+    return Array.from(grupos.values())
+      .map((g) => ({
+        ...g,
+        itens: Array.from(g.itens.values()).sort((a, b) =>
+          a.sku.localeCompare(b.sku),
+        ),
+      }))
+      .sort((a, b) => {
+        if (a.locId === null) return 1;
+        if (b.locId === null) return -1;
+        return a.locCodigo.localeCompare(b.locCodigo);
+      });
   }, [itens, putawayQueries, locsById]);
 
   const totaisPlano = useMemo(() => {
@@ -249,9 +279,10 @@ export function ReceberLote({
     plano.forEach((g) => {
       g.itens.forEach((i) => {
         totalUn += i.qty;
-        totalLinhas++;
+        totalLinhas += i.linhas;
       });
-      if (g.locId === null) semLoc += g.itens.length;
+      if (g.locId === null)
+        semLoc += g.itens.reduce((s, i) => s + i.linhas, 0);
     });
     return { totalUn, totalLinhas, semLoc };
   }, [plano]);
@@ -294,37 +325,62 @@ export function ReceberLote({
   // Um item "tem produto" se há um produto resolvido (avulso) ou um sku
   // pré-definido (OC/manual/transferência).
   const temProduto = (it: ReceberLoteItem) => !!it.produto || !!it.sku;
-  const itensValidos = itens.filter((it) => {
-    if (!temProduto(it)) return false;
-    // Linha pré-definida com qty 0 = "não veio" (recebimento parcial). É válida
-    // — os adapters filtram qty<=0 do payload — e não exige custo/loc.
-    const naoVeio = it.backendItemId != null && Number(it.qty) === 0;
-    if (naoVeio) return true;
+  // Linha pré-definida com qty 0 = "não veio" (recebimento parcial). É válida
+  // — os adapters filtram qty<=0 do payload — e não exige custo/loc.
+  const ehNaoVeio = (it: ReceberLoteItem) =>
+    it.backendItemId != null && Number(it.qty) === 0;
+  const itemPendencia = (it: ReceberLoteItem): string | null => {
+    if (ehNaoVeio(it)) return null;
     // qty > 0 sempre exigida (editável ou fixa)
-    if (!it.qty || Number(it.qty) <= 0) return false;
+    if (!it.qty || Number(it.qty) <= 0) return "sem quantidade";
     if (config.custoObrigatorio) {
-      if (it.custo === "" || !Number.isFinite(Number(it.custo)) || Number(it.custo) < 0)
-        return false;
+      if (it.custo === "") return "sem custo";
+      if (!Number.isFinite(Number(it.custo)) || Number(it.custo) < 0)
+        return "com custo inválido";
     } else if (config.custoVisible) {
       // custo opcional mas, se preenchido, precisa ser válido
       if (it.custo !== "" && (!Number.isFinite(Number(it.custo)) || Number(it.custo) < 0))
-        return false;
+        return "com custo inválido";
     }
-    if (config.locObrigatoria && !it.locIdOverride) return false;
-    return true;
-  });
+    if (config.locObrigatoria && !it.locIdOverride) return "sem localização";
+    return null;
+  };
+  const itensComProduto = itens.filter(temProduto);
+  const itensValidos = itensComProduto.filter((it) => itemPendencia(it) === null);
+  const itensConfirmaveis = itensValidos.filter((it) => Number(it.qty) > 0).length;
+  const itensNaoVieram = itensValidos.length - itensConfirmaveis;
 
-  const extraOk = validarExtra ? validarExtra(itens) : true;
-  const valid =
-    !!galpaoId &&
-    extraOk &&
-    itensValidos.length > 0 &&
-    itensValidos.length === itens.filter(temProduto).length &&
-    // o lote não pode ser todo qty 0 (todas as linhas "não veio")
-    itens.some((it) => Number(it.qty) > 0) &&
-    // entrada direta exige loc só nas linhas que de fato vêm (qty>0); totaisPlano
-    // já só conta linhas qty>0.
-    (!entradaDireta || totaisPlano.semLoc === 0);
+  // Pendências legíveis — a primeira aparece junto ao botão de confirmar.
+  const pendencias: string[] = [];
+  if (!galpaoId) pendencias.push("Falta: galpão");
+  const extraResult = validarExtra ? validarExtra(itens) : true;
+  if (Array.isArray(extraResult)) pendencias.push(...extraResult);
+  else if (!extraResult)
+    pendencias.push("Preencha os campos obrigatórios do formulário");
+  itensComProduto.forEach((it) => {
+    const p = itemPendencia(it);
+    if (p) pendencias.push(`${it.produto?.sku ?? it.sku} ${p}`);
+  });
+  if (itensComProduto.length === 0)
+    pendencias.push(
+      itens.length > 0 ? "Escolha o produto do item" : "Adicione ao menos 1 item",
+    );
+  // o lote não pode ser todo qty 0 (todas as linhas "não veio")
+  if (itensComProduto.length > 0 && !itens.some((it) => Number(it.qty) > 0))
+    pendencias.push("Todas as linhas estão como “não veio”");
+  // entrada direta exige loc só nas linhas que de fato vêm (qty>0); totaisPlano
+  // já só conta linhas qty>0.
+  if (entradaDireta && totaisPlano.semLoc > 0)
+    pendencias.push(
+      `${totaisPlano.semLoc} ${totaisPlano.semLoc > 1 ? "itens" : "item"} sem loc destino (entrada direta exige loc)`,
+    );
+  const valid = pendencias.length === 0;
+
+  const confirmIdleLabel = `${config.confirmLabel ?? "Confirmar lote"} (${itensConfirmaveis}${
+    itensNaoVieram > 0
+      ? ` · ${itensNaoVieram} não ${itensNaoVieram === 1 ? "veio" : "vieram"}`
+      : ""
+  })`;
 
   // ── helpers de manipulação de itens (avulso) ─────────────────────────
   const updateItem = (idx: number, next: ReceberLoteItem) =>
@@ -336,6 +392,34 @@ export function ReceberLote({
     );
 
   const addItem = () => setItens((p) => [...p, emptyReceberLoteItem()]);
+
+  // Render: ordena por SKU e agrupa linhas consecutivas do mesmo SKU (OC gera
+  // 1 linha por siso_pedido_item). Só visual — cada linha mantém seu input e
+  // seu idx original (putaway/update/remove apontam pro estado real).
+  const renderGroups = useMemo(() => {
+    const entries = itens.map((it, idx) => ({
+      it,
+      idx,
+      sku: it.produto?.sku ?? it.sku,
+    }));
+    const sorted = [...entries].sort((a, b) => {
+      if (!a.sku && !b.sku) return a.idx - b.idx;
+      if (!a.sku) return 1;
+      if (!b.sku) return -1;
+      return a.sku.localeCompare(b.sku) || a.idx - b.idx;
+    });
+    const groups: Array<{ sku: string; totalUn: number; entries: typeof sorted }> = [];
+    sorted.forEach((e) => {
+      const last = groups[groups.length - 1];
+      if (last && e.sku && last.sku === e.sku) {
+        last.entries.push(e);
+        last.totalUn += Number(e.it.qty) || 0;
+      } else {
+        groups.push({ sku: e.sku, totalUn: Number(e.it.qty) || 0, entries: [e] });
+      }
+    });
+    return groups;
+  }, [itens]);
 
   const onImageClick = (p: Produto) =>
     setLightbox({
@@ -364,7 +448,9 @@ export function ReceberLote({
       <div>
         {config.leftFormVisible ? (
           <>
-            <h3 className="wms-sec-h">Configuração do lote</h3>
+            <h3 className="wms-sec-h">
+              {config.tituloConfiguracao ?? "Configuração do lote"}
+            </h3>
             {renderLeftFormExtra?.()}
           </>
         ) : (
@@ -398,24 +484,100 @@ export function ReceberLote({
         )}
 
         <h3 className="wms-sec-h" style={{ marginTop: config.leftFormVisible ? 16 : 0 }}>
-          Itens ({itens.length})
+          Itens (
+          {itensValidos.length === itens.length
+            ? itens.length
+            : `${itensValidos.length} de ${itens.length} prontos`}
+          )
         </h3>
+        {(config.qtyEditable || config.custoVisible) && itens.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "0 11px",
+              marginBottom: 4,
+            }}
+          >
+            <span style={{ flex: 1 }} />
+            <span
+              className="wms-td-mute"
+              style={{ width: 80, textAlign: "right", fontSize: 11 }}
+            >
+              {config.qtdColLabel ?? "Qtd recebida"}
+            </span>
+            {config.custoVisible && (
+              <span
+                className="wms-td-mute"
+                style={{ width: 100, textAlign: "right", fontSize: 11 }}
+              >
+                Custo un.
+              </span>
+            )}
+            {config.canAddItems && <span style={{ width: 24 }} />}
+          </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
-          {itens.map((it, idx) => (
-            <ItemLoteRow
-              key={it.uid}
-              config={config}
-              item={it}
-              putaway={putawayQueries[idx]?.data}
-              isFetching={!!putawayQueries[idx]?.isFetching}
-              galpaoId={galpaoId}
-              locsById={locsById}
-              canResolve={!!galpaoId}
-              onImageClick={onImageClick}
-              onChange={(next) => updateItem(idx, next)}
-              onRemove={() => removeItem(idx)}
-            />
-          ))}
+          {renderGroups.map((grupo) => {
+            const rows = grupo.entries.map((e) => {
+              const row = (
+                <ItemLoteRow
+                  key={e.it.uid}
+                  config={config}
+                  item={e.it}
+                  putaway={putawayQueries[e.idx]?.data}
+                  isFetching={!!putawayQueries[e.idx]?.isFetching}
+                  galpaoId={galpaoId}
+                  locsById={locsById}
+                  canResolve={!!galpaoId}
+                  grouped={grupo.entries.length > 1}
+                  onImageClick={onImageClick}
+                  onChange={(next) => updateItem(e.idx, next)}
+                  onRemove={() => removeItem(e.idx)}
+                />
+              );
+              if (grupo.entries.length === 1) return row;
+              return (
+                <div
+                  key={e.it.uid}
+                  style={{ borderTop: "1px solid var(--wms-c-border)" }}
+                >
+                  {row}
+                </div>
+              );
+            });
+            if (grupo.entries.length === 1) return rows;
+            return (
+              <div
+                key={`g-${grupo.sku}`}
+                style={{
+                  border: "1px solid var(--wms-c-border)",
+                  borderRadius: "var(--wms-r-2)",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "6px 10px",
+                    background: "var(--wms-c-faint)",
+                    fontSize: 11,
+                  }}
+                >
+                  <span className="wms-mono" style={{ fontWeight: 600 }}>
+                    {grupo.sku}
+                  </span>
+                  <span className="wms-td-mute">
+                    × {fmtNum(grupo.totalUn)} un ({grupo.entries.length} linhas)
+                  </span>
+                </div>
+                {rows}
+              </div>
+            );
+          })}
           {config.canAddItems && (
             <button
               type="button"
@@ -506,7 +668,7 @@ export function ReceberLote({
                 <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
                   {g.itens.map((i) => (
                     <li
-                      key={i.uid}
+                      key={i.sku}
                       style={{
                         display: "flex",
                         alignItems: "center",
@@ -632,25 +794,53 @@ export function ReceberLote({
             )}
           </div>
 
-          <button
-            type="button"
-            className="wms-btn wms-btn-primary"
-            style={{ marginTop: 10, width: "100%" }}
-            disabled={!valid || submitMut.isPending || !podeReceber}
-            title={!podeReceber ? "Sem permissão pra receber mercadoria" : ""}
-            onClick={() => submitMut.mutate()}
+          <div
+            style={{
+              marginTop: 12,
+              paddingTop: 12,
+              borderTop: "1px solid var(--wms-c-border)",
+            }}
           >
-            <Icon name="check" size={11} />
-            {submitMut.isPending
-              ? "Enviando…"
-              : `${config.confirmLabel ?? "Confirmar lote"} (${itensValidos.length})`}
-          </button>
-
-          {renderSidebarFooter?.()}
+            <button
+              type="button"
+              className="wms-btn wms-btn-primary"
+              style={{ width: "100%" }}
+              disabled={!valid || submitMut.isPending || !podeReceber}
+              title={!podeReceber ? "Sem permissão pra receber mercadoria" : ""}
+              onClick={() => submitMut.mutate()}
+            >
+              <Icon name="check" size={11} />
+              {submitMut.isPending ? "Enviando…" : confirmIdleLabel}
+            </button>
+            {!valid && !submitMut.isPending && pendencias[0] && (
+              <div
+                className="wms-td-mute"
+                style={{ marginTop: 6, fontSize: 11, textAlign: "center" }}
+              >
+                {pendencias[0]}
+              </div>
+            )}
+            {renderSidebarFooter && (
+              <div style={{ marginTop: 10 }}>{renderSidebarFooter()}</div>
+            )}
+          </div>
         </aside>
       ) : (
         // Footer simples (fluxos sem plano-de-guarda)
-        <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+        <div
+          style={{
+            marginTop: 16,
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          {!valid && !submitMut.isPending && pendencias[0] && (
+            <span className="wms-td-mute" style={{ fontSize: 11 }}>
+              {pendencias[0]}
+            </span>
+          )}
           <button
             type="button"
             className="wms-btn wms-btn-primary"
@@ -659,9 +849,7 @@ export function ReceberLote({
             onClick={() => submitMut.mutate()}
           >
             <Icon name="check" size={11} />
-            {submitMut.isPending
-              ? "Enviando…"
-              : `${config.confirmLabel ?? "Confirmar lote"} (${itensValidos.length})`}
+            {submitMut.isPending ? "Enviando…" : confirmIdleLabel}
           </button>
         </div>
       )}
@@ -686,6 +874,7 @@ function ItemLoteRow({
   galpaoId,
   locsById,
   canResolve,
+  grouped,
   onChange,
   onRemove,
   onImageClick,
@@ -697,6 +886,8 @@ function ItemLoteRow({
   galpaoId: string;
   locsById: Map<string, { codigo: string; tipo: string }>;
   canResolve: boolean;
+  /** linha dentro de um grupo visual de SKU repetido (sem borda própria) */
+  grouped?: boolean;
   onChange: (next: ReceberLoteItem) => void;
   onRemove: () => void;
   onImageClick?: (p: Produto) => void;
@@ -723,13 +914,16 @@ function ItemLoteRow({
     config.divergenciaVisible &&
     item.qtyEsperada != null &&
     Number(item.qty) !== item.qtyEsperada;
+  const naoVeio = item.backendItemId != null && Number(item.qty) === 0;
+  const custoFaltando =
+    config.custoObrigatorio && temProduto && !naoVeio && item.custo === "";
 
   return (
     <div
       style={{
         background: "var(--wms-c-panel)",
-        border: "1px solid var(--wms-c-border)",
-        borderRadius: "var(--wms-r-2)",
+        border: grouped ? "none" : "1px solid var(--wms-c-border)",
+        borderRadius: grouped ? 0 : "var(--wms-r-2)",
         padding: 10,
         display: "flex",
         flexDirection: "column",
@@ -818,24 +1012,49 @@ function ItemLoteRow({
               <input
                 className="wms-input wms-mono wms-tar"
                 type="number"
-                min={1}
+                min={item.backendItemId != null ? 0 : 1}
                 value={item.qty}
                 style={{ width: 80 }}
                 onChange={(e) => onChange({ ...item, qty: e.target.value })}
                 placeholder="qty"
               />
-              <span
-                className="wms-td-mute"
-                style={{ fontSize: 11, whiteSpace: "nowrap" }}
-              >
-                era pra vir {fmtNum(item.qtyEsperada)}
-              </span>
+              {naoVeio ? (
+                <span
+                  className="wms-td-mute"
+                  style={{ fontSize: 11, whiteSpace: "nowrap" }}
+                >
+                  não veio · fica pendente
+                </span>
+              ) : (
+                <>
+                  <span
+                    className="wms-td-mute"
+                    style={{ fontSize: 11, whiteSpace: "nowrap" }}
+                  >
+                    {item.qtyPedida != null &&
+                    item.qtyJaRecebida != null &&
+                    item.qtyJaRecebida > 0
+                      ? `pedido ${fmtNum(item.qtyPedida)} · recebido ${fmtNum(item.qtyJaRecebida)} · falta ${fmtNum(item.qtyEsperada)}`
+                      : `falta ${fmtNum(item.qtyEsperada)}`}
+                  </span>
+                  {item.backendItemId != null && (
+                    <button
+                      type="button"
+                      className="wms-btn-link"
+                      style={{ fontSize: 11 }}
+                      onClick={() => onChange({ ...item, qty: "0" })}
+                    >
+                      não veio
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           ) : (
             <input
               className="wms-input wms-mono wms-tar"
               type="number"
-              min={1}
+              min={item.backendItemId != null ? 0 : 1}
               value={item.qty}
               style={{ width: 80 }}
               onChange={(e) => onChange({ ...item, qty: e.target.value })}
@@ -848,17 +1067,43 @@ function ItemLoteRow({
           </span>
         )}
         {config.custoVisible && (
-          <input
-            className="wms-input wms-mono wms-tar"
-            type="number"
-            step="0.01"
-            value={item.custo}
-            style={{ width: 100 }}
-            placeholder="custo"
-            onChange={(e) => onChange({ ...item, custo: e.target.value })}
-          />
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: 2,
+            }}
+          >
+            <div
+              className="wms-input-prefix"
+              style={{
+                width: 100,
+                ...(custoFaltando
+                  ? { borderColor: "var(--wms-c-danger)" }
+                  : {}),
+              }}
+            >
+              <span>R$</span>
+              <input
+                className="wms-mono wms-tar"
+                type="number"
+                step="0.01"
+                value={item.custo}
+                style={{ minWidth: 0, fontSize: 13 }}
+                placeholder="unit."
+                title="Custo unitário"
+                onChange={(e) => onChange({ ...item, custo: e.target.value })}
+              />
+            </div>
+            {custoFaltando && (
+              <span style={{ fontSize: 11, color: "var(--wms-c-danger)" }}>
+                obrigatório
+              </span>
+            )}
+          </div>
         )}
-        {config.canAddItems && item.backendItemId == null && (
+        {config.canAddItems && item.backendItemId == null ? (
           <button
             type="button"
             className="wms-btn-icon"
@@ -867,12 +1112,14 @@ function ItemLoteRow({
           >
             <Icon name="trash" size={12} />
           </button>
-        )}
+        ) : config.canAddItems ? (
+          <span style={{ width: 24, flexShrink: 0 }} />
+        ) : null}
       </div>
 
       {config.divergenciaVisible && divergiu && (
         <div style={{ paddingLeft: 4 }}>
-          <Field label="Motivo da divergência" hint="qty difere do esperado">
+          <Field label="Motivo da divergência" hint="opcional">
             <select
               className="wms-select"
               value={item.motivoDivergencia ?? ""}
@@ -916,7 +1163,8 @@ function ItemLoteRow({
               </span>
               {isSugestao && putaway?.razao && (
                 <span className="wms-td-mute">
-                  <Icon name="sparkle" size={10} /> {putaway.razao}
+                  <Icon name="sparkle" size={10} />{" "}
+                  {stripRazaoLocSuffix(putaway.razao, locCodigoAtual)}
                 </span>
               )}
               {!isSugestao && (

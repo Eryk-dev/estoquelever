@@ -11,11 +11,12 @@ import {
 import { calcularNecessidadeLiquida, piorStatusCobertura } from "@/lib/compras-necessidade";
 import type { StatusCobertura } from "@/lib/wms/cobertura";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
-import { userCan } from "@/lib/permissions";
+import { userCan, userCanAny } from "@/lib/permissions";
 import {
   mergeReceberDocs,
   type OcDoc,
   type ManualDoc,
+  type ReceberDoc,
   type ReceberFornecedorGrupo,
 } from "@/lib/wms/compras-receber-merge";
 import { listarComprasManuais } from "@/lib/wms/compras-manuais";
@@ -103,15 +104,12 @@ type SupabaseClient = ReturnType<typeof createServiceClient>;
 
 // ─── GET /api/compras ───────────────────────────────────────────────────────
 
-const VALID_TABS = ["comprar", "receber", "historico", "pendentes", "recebidos"] as const;
+const VALID_TABS = ["comprar", "receber", "historico", "counts", "pendentes", "recebidos"] as const;
 
 export async function GET(request: NextRequest) {
   const session = await getSessionUser(request);
   if (!session) {
     return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
-  }
-  if (!userCan(session, "compras.ver")) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -128,10 +126,24 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Operador de doca (só operacoes.receber) pode consultar a fila de
+  // recebimento e os counts; o resto do módulo continua exigindo compras.ver.
+  const podeVer =
+    tab === "receber" || tab === "counts"
+      ? userCanAny(session, "compras.ver", "operacoes.receber")
+      : userCan(session, "compras.ver");
+  if (!podeVer) {
+    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  }
+
   const supabase = createServiceClient();
 
   try {
     const counts = await fetchCounts(supabase);
+
+    if (tab === "counts") {
+      return NextResponse.json({ counts });
+    }
 
     if (tab === "historico") {
       const cursorRaw = searchParams.get("cursor");
@@ -175,16 +187,12 @@ export async function GET(request: NextRequest) {
 // ─── Counts ─────────────────────────────────────────────────────────────────
 
 async function fetchCounts(supabase: SupabaseClient) {
-  const [comprar, receber, excecoes, historico, bloqueados, manuaisPend, manuaisReceb] =
+  const [comprar, excecoes, historico, bloqueados, receberDocs, manuaisReceb] =
     await Promise.all([
       supabase
         .from("siso_pedido_itens")
         .select("id", { count: "exact", head: true })
         .eq("compra_status", "aguardando_compra"),
-      supabase
-        .from("siso_pedido_itens")
-        .select("id", { count: "exact", head: true })
-        .eq("compra_status", "comprado"),
       supabase
         .from("siso_pedido_itens")
         .select("id", { count: "exact", head: true })
@@ -197,9 +205,9 @@ async function fetchCounts(supabase: SupabaseClient) {
         .from("siso_pedido_itens")
         .select("pedido_id")
         .in("compra_status", ["aguardando_compra", "comprado"]),
-      // Documentos de compra manual entram nos contadores de receber/historico
-      // junto com as OCs (aba Receber unificada por documento — Fase B).
-      listarComprasManuais("pendentes"),
+      // Receber conta DOCUMENTOS pendentes — mesma fonte/filtro da aba
+      // (ocDocs + manualDocs com qty_pendente > 0), pro badge bater com a lista.
+      fetchReceberDocs(supabase),
       listarComprasManuais("recebido"),
     ]);
 
@@ -209,7 +217,7 @@ async function fetchCounts(supabase: SupabaseClient) {
 
   return {
     comprar: comprar.count ?? 0,
-    receber: (receber.count ?? 0) + manuaisPend.length,
+    receber: receberDocs.ocDocs.length + receberDocs.manualDocs.length,
     excecoes: excecoes.count ?? 0,
     historico: (historico.count ?? 0) + manuaisReceb.length,
     pedidos_bloqueados: pedidosUnicos.size,
@@ -477,13 +485,19 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
 
 // ─── Tab: Receber ───────────────────────────────────────────────────────────
 
+interface ReceberDocsResult {
+  ocDocs: OcDoc[];
+  manualDocs: ManualDoc[];
+  /** nº de SKUs com pendência por documento (id → count), pra UI identificar o doc. */
+  skusByDoc: Map<string, number>;
+}
+
 /**
- * Aba "Receber" unificada por DOCUMENTO (Fase B): cada OC (`siso_ordens_compra`)
- * + cada compra manual (`siso_compras_manuais`), agrupados por fornecedor via o
- * helper puro `mergeReceberDocs`. Substitui a agregação antiga por SKU sobre
- * `siso_pedido_itens`. Cada documento aponta pra sua page rica de recebimento.
+ * Fonte única dos documentos pendentes de recebimento: OCs (`siso_ordens_compra`
+ * status 'comprado' com pendência) + compras manuais pendentes. Usada tanto pela
+ * aba Receber quanto pelo contador, pro badge bater com a lista.
  */
-async function fetchReceber(supabase: SupabaseClient): Promise<ReceberFornecedorGrupo[]> {
+async function fetchReceberDocs(supabase: SupabaseClient): Promise<ReceberDocsResult> {
   const { data: ocs, error: ocErr } = await supabase
     .from("siso_ordens_compra")
     .select("id, fornecedor, galpao_id, status, created_at, siso_galpoes(nome)")
@@ -493,23 +507,30 @@ async function fetchReceber(supabase: SupabaseClient): Promise<ReceberFornecedor
 
   const ocIds = (ocs ?? []).map((o) => String(o.id));
   const pendenteByOC = new Map<string, number>();
+  const skusByDoc = new Map<string, number>();
   if (ocIds.length > 0) {
     // Só itens efetivamente comprados contam pendência: uma OC draft pode ter
     // itens ainda 'aguardando_compra' linkados (validar-oc-item) que não devem
     // aparecer como "a receber". Itens 'recebido' contribuem 0 de toda forma.
     const { data: itens } = await supabase
       .from("siso_pedido_itens")
-      .select("ordem_compra_id, compra_quantidade_solicitada, compra_quantidade_recebida")
+      .select("ordem_compra_id, sku, compra_quantidade_solicitada, compra_quantidade_recebida")
       .in("ordem_compra_id", ocIds)
       .eq("compra_status", "comprado");
+    const skusPendentes = new Map<string, Set<string>>();
     for (const it of itens ?? []) {
       const ocId = String(it.ordem_compra_id ?? "");
       if (!ocId) continue;
       const pend =
         Number(it.compra_quantidade_solicitada ?? 0) -
         Number(it.compra_quantidade_recebida ?? 0);
-      if (pend > 0) pendenteByOC.set(ocId, (pendenteByOC.get(ocId) ?? 0) + pend);
+      if (pend > 0) {
+        pendenteByOC.set(ocId, (pendenteByOC.get(ocId) ?? 0) + pend);
+        if (!skusPendentes.has(ocId)) skusPendentes.set(ocId, new Set());
+        skusPendentes.get(ocId)!.add(String(it.sku ?? ""));
+      }
     }
+    for (const [ocId, skus] of skusPendentes) skusByDoc.set(ocId, skus.size);
   }
 
   const ocDocs: OcDoc[] = (ocs ?? [])
@@ -523,6 +544,17 @@ async function fetchReceber(supabase: SupabaseClient): Promise<ReceberFornecedor
     .filter((d) => d.qty_pendente > 0);
 
   const manuais = await listarComprasManuais("pendentes");
+
+  const galpaoIds = [...new Set(manuais.map((m) => m.galpao_id).filter(Boolean))];
+  const galpaoNomeById = new Map<string, string>();
+  if (galpaoIds.length > 0) {
+    const { data: galpoes } = await supabase
+      .from("siso_galpoes")
+      .select("id, nome")
+      .in("id", galpaoIds);
+    for (const g of galpoes ?? []) galpaoNomeById.set(String(g.id), String(g.nome));
+  }
+
   const manualDocs: ManualDoc[] = manuais.map((m) => {
     const pend = m.itens.reduce(
       (s, it) => s + Math.max(it.qty_comprada - it.qty_recebida, 0),
@@ -532,17 +564,43 @@ async function fetchReceber(supabase: SupabaseClient): Promise<ReceberFornecedor
       (s, it) => s + it.qty_comprada * (it.custo_unitario ?? 0),
       0,
     );
+    skusByDoc.set(
+      m.id,
+      m.itens.filter((it) => it.qty_comprada - it.qty_recebida > 0).length,
+    );
     return {
       id: m.id,
       fornecedor: m.fornecedor?.nome ?? null,
-      galpao_nome: null,
+      galpao_nome: galpaoNomeById.get(m.galpao_id) ?? null,
       qty_pendente: pend,
       criado_em: m.criado_em,
       custo_total: custoTotal,
     };
   });
 
-  return mergeReceberDocs(ocDocs, manualDocs);
+  return { ocDocs, manualDocs, skusByDoc };
+}
+
+type ReceberDocOut = ReceberDoc & { skus_count: number };
+type ReceberGrupoOut = Omit<ReceberFornecedorGrupo, "documentos"> & {
+  documentos: ReceberDocOut[];
+};
+
+/**
+ * Aba "Receber" unificada por DOCUMENTO (Fase B): cada OC (`siso_ordens_compra`)
+ * + cada compra manual (`siso_compras_manuais`), agrupados por fornecedor via o
+ * helper puro `mergeReceberDocs`. Substitui a agregação antiga por SKU sobre
+ * `siso_pedido_itens`. Cada documento aponta pra sua page rica de recebimento.
+ */
+async function fetchReceber(supabase: SupabaseClient): Promise<ReceberGrupoOut[]> {
+  const { ocDocs, manualDocs, skusByDoc } = await fetchReceberDocs(supabase);
+  return mergeReceberDocs(ocDocs, manualDocs).map((g) => ({
+    ...g,
+    documentos: g.documentos.map((d) => ({
+      ...d,
+      skus_count: skusByDoc.get(d.id) ?? 0,
+    })),
+  }));
 }
 
 // ─── Excecoes ───────────────────────────────────────────────────────────────

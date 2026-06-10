@@ -38,6 +38,7 @@ export type IconName =
   | "x"
   | "alert"
   | "dot"
+  | "dots"
   | "filter"
   | "columns"
   | "edit"
@@ -227,6 +228,14 @@ export function Icon({ name, size = 14, className }: IconProps) {
       return (
         <svg {...common}>
           <circle cx="8" cy="8" r="2.5" fill="currentColor" />
+        </svg>
+      );
+    case "dots":
+      return (
+        <svg {...common}>
+          <circle cx="8" cy="3" r="1.1" fill="currentColor" stroke="none" />
+          <circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none" />
+          <circle cx="8" cy="13" r="1.1" fill="currentColor" stroke="none" />
         </svg>
       );
     case "filter":

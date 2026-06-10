@@ -54,14 +54,21 @@ export async function GET(request: NextRequest) {
   }
   const { data: itens } = await supabase
     .from("siso_transferencia_galpao_itens")
-    .select("transferencia_id, qty, mov_entrada_id")
+    .select("transferencia_id, produto_id, qty, mov_entrada_id")
     .in("transferencia_id", ids);
 
   const pendenteByTr = new Map<string, number>();
+  const skusByTr = new Map<string, Set<string>>();
   for (const it of itens ?? []) {
     const trId = String(it.transferencia_id);
     if (it.mov_entrada_id) continue; // já recebido
     pendenteByTr.set(trId, (pendenteByTr.get(trId) ?? 0) + Number(it.qty ?? 0));
+    let skus = skusByTr.get(trId);
+    if (!skus) {
+      skus = new Set();
+      skusByTr.set(trId, skus);
+    }
+    skus.add(String(it.produto_id));
   }
 
   const result = (trs ?? [])
@@ -73,6 +80,7 @@ export async function GET(request: NextRequest) {
       destino_nome:
         (t.destino as { nome?: string } | null)?.nome ?? null,
       qty_pendente: pendenteByTr.get(String(t.id)) ?? 0,
+      skus_pendentes: skusByTr.get(String(t.id))?.size ?? 0,
     }))
     .filter((t) => t.qty_pendente > 0);
 

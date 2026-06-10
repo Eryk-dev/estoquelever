@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/session", () => ({
   getSessionUser: async () => ({ id: "u1", nome: "T" }),
 }));
-vi.mock("@/lib/permissions", () => ({ userCan: () => true }));
+vi.mock("@/lib/permissions", () => ({ userCan: () => true, userCanAny: () => true }));
 vi.mock("@/lib/sku-fornecedor", () => ({ getFornecedorBySku: () => null }));
 vi.mock("@/lib/wms/compras-manuais", () => ({
   listarComprasManuais: async (filtro: string) =>
@@ -68,20 +68,33 @@ function buildSb() {
               const r = { count: 0, error: null };
               return { eq: () => Promise.resolve(r), in: () => Promise.resolve(r) };
             }
-            // data path: pendente-by-OC (fetchReceber) and bloqueados (fetchCounts)
+            // data path: pendente-by-OC (fetchReceberDocs, .in().eq()) e
+            // bloqueados (fetchCounts, await direto no .in())
+            const result = {
+              data: [
+                {
+                  ordem_compra_id: "oc1",
+                  sku: "X",
+                  compra_quantidade_solicitada: 5,
+                  compra_quantidade_recebida: 0,
+                },
+              ],
+              error: null,
+            };
             return {
-              in: async () => ({
-                data: [
-                  {
-                    ordem_compra_id: "oc1",
-                    compra_quantidade_solicitada: 5,
-                    compra_quantidade_recebida: 0,
-                  },
-                ],
-                error: null,
+              in: () => ({
+                eq: async () => result,
+                then: (resolve: (v: typeof result) => unknown) => resolve(result),
               }),
             };
           },
+        };
+      }
+      if (table === "siso_galpoes") {
+        return {
+          select: () => ({
+            in: async () => ({ data: [{ id: "g1", nome: "CWB" }], error: null }),
+          }),
         };
       }
       return { select: () => ({ eq: () => Promise.resolve({ count: 0, error: null }) }) };

@@ -744,6 +744,11 @@ export interface TinyExpedicaoResponse {
     id: number;
     numero?: number;
   };
+  /** LogisticaExpedicaoResponseModel — codigoRastreio é o barcode da etiqueta (Shopee raster só tem ele) */
+  logistica?: {
+    codigoRastreio?: string | null;
+    urlRastreio?: string | null;
+  };
 }
 
 export interface TinyAgrupamentoResponse {

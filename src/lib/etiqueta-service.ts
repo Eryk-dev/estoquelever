@@ -15,6 +15,7 @@ import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { criarAgrupamento, concluirAgrupamento, obterAgrupamento, obterEtiquetasExpedicao } from "@/lib/tiny-api";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { baixarZpl } from "@/lib/etiqueta-download";
+import { montarBarcodesEtiqueta } from "@/lib/etiqueta-barcode";
 import { enviarImpressaoZpl } from "@/lib/printnode";
 import { resolverImpressora } from "@/lib/printnode";
 import { logger } from "@/lib/logger";
@@ -378,6 +379,7 @@ async function resolverZplFallback(
 
     // Find this pedido's expedition within the agrupamento, then fetch its label
     let url = pedido.etiqueta_url;
+    let codigoRastreio: string | null | undefined;
     if (!url) {
       const maxRetries = 3;
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -393,6 +395,7 @@ async function resolverZplFallback(
           );
 
           if (exp) {
+            codigoRastreio = exp.logistica?.codigoRastreio;
             const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId!, exp.id);
             if (etiquetas.urls && etiquetas.urls.length > 0) {
               url = etiquetas.urls[0];
@@ -429,10 +432,15 @@ async function resolverZplFallback(
     const zpl = await baixarZpl(url);
     if (!zpl) return null;
 
-    // Cache for future use
+    // Cache for future use (+ barcodes pra conferência de embalagem)
+    const barcodes = montarBarcodesEtiqueta(zpl, [codigoRastreio]);
     await supabase
       .from("siso_pedidos")
-      .update({ etiqueta_url: url, etiqueta_zpl: zpl })
+      .update({
+        etiqueta_url: url,
+        etiqueta_zpl: zpl,
+        ...(barcodes.length > 0 ? { etiqueta_barcodes: barcodes } : {}),
+      })
       .eq("id", pedido.id);
 
     return zpl;

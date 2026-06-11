@@ -23,6 +23,7 @@ import {
 } from "@/lib/tiny-api";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { baixarZpl } from "@/lib/etiqueta-download";
+import { montarBarcodesEtiqueta } from "@/lib/etiqueta-barcode";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "agrupamento-service";
@@ -587,7 +588,7 @@ async function processarPedido(
     const url = etiquetas.urls[0];
     const zpl = await baixarZpl(url);
 
-    await salvarEtiqueta(supabase, pedido.id, url, zpl, exp.id);
+    await salvarEtiqueta(supabase, pedido.id, url, zpl, exp.id, exp.logistica?.codigoRastreio);
 
     logger.info(LOG_SOURCE, "Etiqueta ZPL pré-cacheada", {
       pedidoId: pedido.id,
@@ -660,7 +661,7 @@ async function retryAgrupamento(
 
   // 2. Fast path: expedicao_id already saved → skip obterAgrupamento
   if (pedido.expedicao_id) {
-    await fetchAndSaveLabel(supabase, token, agrupamentoId, parseInt(pedido.expedicao_id, 10), pedido.id);
+    await fetchAndSaveLabel(supabase, token, agrupamentoId, parseInt(pedido.expedicao_id, 10), pedido.id, undefined);
     return;
   }
 
@@ -677,7 +678,7 @@ async function retryAgrupamento(
 
   // Single pedido per agrupamento → use first expedition
   const exp = details.expedicoes[0];
-  await fetchAndSaveLabel(supabase, token, agrupamentoId, exp.id, pedido.id);
+  await fetchAndSaveLabel(supabase, token, agrupamentoId, exp.id, pedido.id, exp.logistica?.codigoRastreio);
 }
 
 /** Fetch label for a single expedition and save to DB */
@@ -687,6 +688,7 @@ async function fetchAndSaveLabel(
   agrupamentoId: number,
   expedicaoId: number,
   pedidoId: string,
+  codigoRastreio?: string | null,
 ): Promise<void> {
   try {
     const etiquetas = await obterEtiquetasExpedicao(token, agrupamentoId, expedicaoId);
@@ -702,7 +704,7 @@ async function fetchAndSaveLabel(
 
     const url = etiquetas.urls[0];
     const zpl = await baixarZpl(url);
-    await salvarEtiqueta(supabase, pedidoId, url, zpl, expedicaoId);
+    await salvarEtiqueta(supabase, pedidoId, url, zpl, expedicaoId, codigoRastreio);
 
     logger.info(LOG_SOURCE, "Etiqueta recuperada no retry", {
       pedidoId,
@@ -726,16 +728,23 @@ async function salvarEtiqueta(
   url: string,
   zpl: string | null,
   expedicaoId?: number,
+  codigoRastreio?: string | null,
 ): Promise<void> {
   // Only cache ZPL if download was successful. Saving null ZPL with a URL
   // leaves the pedido in a state where fast path always fails and the URL
   // may be stale. Better to leave both null so fallback creates fresh.
-  const updateData: Record<string, string | null> = { etiqueta_url: url };
+  const updateData: Record<string, string | string[] | null> = { etiqueta_url: url };
   if (expedicaoId != null) {
     updateData.expedicao_id = String(expedicaoId);
   }
   if (zpl) {
     updateData.etiqueta_zpl = zpl;
+  }
+  // Barcodes pra conferência de embalagem: extraídos do ZPL (ML) + rastreio
+  // da expedição (única fonte pra Shopee raster).
+  const barcodes = montarBarcodesEtiqueta(zpl, [codigoRastreio]);
+  if (barcodes.length > 0) {
+    updateData.etiqueta_barcodes = barcodes;
   }
   await supabase
     .from("siso_pedidos")

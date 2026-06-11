@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { X, Loader2, AlertTriangle } from "lucide-react";
@@ -63,8 +63,19 @@ const MODO_STORAGE_KEY = "siso_conferencia_modo";
 
 // ─── Page ───────────────────────────────────────────────────────────────────
 
+function getModoInicial(): Modo {
+  if (typeof window === "undefined") return "conferir";
+  try {
+    const saved = localStorage.getItem(MODO_STORAGE_KEY);
+    return saved === "embalar" ? "embalar" : "conferir";
+  } catch {
+    return "conferir";
+  }
+}
+
 export default function WmsConferenciaPage() {
-  const [modo, setModo] = useState<Modo>("conferir");
+  // Modo persiste entre sessões da bancada
+  const [modo, setModo] = useState<Modo>(getModoInicial);
   const [ultimo, setUltimo] = useState<BipResposta | null>(null);
   const [historico, setHistorico] = useState<HistoricoBipe[]>([]);
   const [divergenciaAberta, setDivergenciaAberta] = useState(false);
@@ -73,11 +84,6 @@ export default function WmsConferenciaPage() {
     tone: "ok" | "warn" | "error" | "neutral";
   } | null>(null);
 
-  // Modo persiste entre sessões da bancada
-  useEffect(() => {
-    const saved = localStorage.getItem(MODO_STORAGE_KEY);
-    if (saved === "embalar" || saved === "conferir") setModo(saved);
-  }, []);
   function trocarModo(m: Modo) {
     setModo(m);
     localStorage.setItem(MODO_STORAGE_KEY, m);
@@ -313,6 +319,7 @@ export default function WmsConferenciaPage() {
       )}
 
       <DivergenciaModal
+        key={divergenciaAberta ? "aberto" : "fechado"}
         open={divergenciaAberta}
         loading={divergenciaMut.isPending}
         onConfirm={(tipo, observacao) =>
@@ -340,15 +347,9 @@ function DivergenciaModal({
   onCancel: () => void;
   pedidoNumero: string;
 }) {
+  // Estado zera a cada abertura via prop `key` no caller (remonta o componente)
   const [tipo, setTipo] = useState<string | null>(null);
   const [obs, setObs] = useState("");
-
-  useEffect(() => {
-    if (open) {
-      setTipo(null);
-      setObs("");
-    }
-  }, [open]);
 
   if (!open) return null;
 

@@ -29,6 +29,14 @@ async function validarSupabaseUrl() {
 }
 
 async function limparPedidosEstoque() {
+  // Trava de segurança (2026-06-11): o staging é ambiente VIVO — este seed
+  // apaga TODOS os pedidos/movs/estoque. Wipe exige opt-in explícito.
+  if (process.env.ALLOW_STAGING_WIPE !== "true") {
+    throw new Error(
+      "ABORT: limpeza do staging bloqueada. Esse seed APAGA todos os pedidos/movs/estoque. " +
+        "Se é isso mesmo que você quer, rode com ALLOW_STAGING_WIPE=true.",
+    );
+  }
   const sb = createServiceClient();
 
   console.log("\n— Limpando dados sintéticos antigos —");

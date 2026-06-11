@@ -45,6 +45,7 @@ npm run auth-matrix      # matriz de auth/permissões
 ```
 
 > ⚠️ **integration + scenarios rodam contra o staging real e truncam tabelas operacionais antes de cada run.** Nunca apontar pra prod.
+> 🔒 **O staging é ambiente VIVO (pedidos reais)** — desde 2026-06-11 todo wipe (truncate do harness + `seed:staging`) exige `ALLOW_STAGING_WIPE=true` no env, senão aborta. O cron diário do GitHub Actions (`wms-stock-suite`) foi removido — a suite só roda via dispatch manual. **NUNCA setar a flag sem o Eryk pedir explicitamente.**
 
 ### Environment variables (só nomes — nunca commitar valores)
 

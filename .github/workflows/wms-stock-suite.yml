@@ -1,8 +1,9 @@
 name: WMS Stock Ledger Suite
 
+# ⚠️ Esta suite TRUNCA as tabelas operacionais do staging (pedidos/movs/estoque).
+# O staging é ambiente vivo — por isso o cron diário foi removido (2026-06-11).
+# Rodar SÓ manualmente (workflow_dispatch), ciente de que apaga os dados.
 on:
-  schedule:
-    - cron: "0 6 * * *"   # 06:00 UTC = 03:00 BRT (horário ocioso)
   workflow_dispatch: {}
 
 concurrency:
@@ -25,6 +26,7 @@ jobs:
       TEST_RUNNER_NOME: "test-runner"
       TEST_RUNNER_PIN: "9999"
       TEST_RUNNER_BASE_URL: "http://localhost:3001"
+      ALLOW_STAGING_WIPE: "true"   # dispatch manual = wipe consentido
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

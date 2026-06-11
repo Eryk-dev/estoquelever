@@ -5398,3 +5398,20 @@ erros:
     - supabase/migrations/20260611c_status_conferido_check.sql
     - src/app/api/wms/separacao/conferencia/bipar/route.ts
   tags: [separacao, conferencia, status, check-constraint, claim-atomico, postgrest]
+- id: HAND-SCAN-STICKY-DARK
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "Barra Bipe SKU/GTIN do wave picking congelava no scroll e tinha fundo invertido escuro destoando do app"
+  cause: >
+    .wms-hand-scan tinha position: sticky (top: 50px, z-index: 20) e
+    background: var(--wms-c-fg) — bloco preto fixo cobrindo conteúdo
+    enquanto o operador rolava o checklist no tablet.
+  fix: >
+    Removido sticky; barra rola com a página. Redesign pra card claro do
+    design system (panel + border, focus-ring cyan via :focus-within,
+    feedback em tokens semânticos ok/warn/danger em vez de cores hardcoded
+    de dark theme).
+  files:
+    - src/app/wms/wms.css
+  tags: [separacao, checklist, handheld-scan, css, mobile]

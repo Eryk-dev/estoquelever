@@ -33,6 +33,11 @@ function makeBuilder(table: string) {
     if (table === "siso_tiny_connections") {
       return { data: state.connections, error: null };
     }
+    if (table === "siso_empresas") {
+      // filtro de empresas ativas do pollTiny: por default toda empresa das
+      // connections é ativa (testes de inativa setam state.connections sem ela)
+      return { data: state.connections.map((c) => ({ id: c.empresa_id })), error: null };
+    }
     if (table === "siso_pedidos") {
       const inOp = ops.find((o) => o.m === "in");
       const eqId = ops.find((o) => o.m === "eq" && o.args[0] === "id");

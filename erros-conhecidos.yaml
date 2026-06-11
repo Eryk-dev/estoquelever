@@ -5415,7 +5415,7 @@ erros:
   files:
     - src/app/wms/wms.css
   tags: [separacao, checklist, handheld-scan, css, mobile]
-=======
+
 - id: MOBILE-PWA-ORIENTATION-TABELA-CLIP
   date: 2026-06-11
   source: wms

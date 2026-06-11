@@ -216,7 +216,7 @@ essa lacuna com 7 endpoints reverse e ajustes pra preservar invariantes do ledge
 | `POST /api/wms/devolucoes/[id]/classificar` (E + transferência opcional pra QUARENTENA + RMA) | `POST /api/wms/devolucoes/[id]/desclassificar` | Match por janela temporal ±60s da `classificada_em` + origem_tipo + (NF/produto quando disponíveis). Estorna todas as movs e volta pra `aguardando_classificacao`. |
 | `POST /api/wms/replenishment` (S+E intra-galpão) | `POST /api/wms/replenishment/[origem_id]/reverter` | Estorna ambas as legs (idempotente — chamadas repetidas pulam movs já estornadas). |
 | `POST /api/wms/ajuste` (mov manual S ou E) | `POST /api/wms/ajuste/[mov_id]/estornar` | Estorna a mov; valida `origem_tipo='ajuste_manual'` antes (recusa estornar movs de outras origens por esse endpoint). |
-| `POST /api/wms/vendas/criar` (baixa_direta gera S por item; modo separação gera R) | `POST /api/wms/vendas/[id]/cancelar` | Estorna movs S (idempotente) ou libera R conforme o status atual. Rejeita 400 se status_separacao ∈ {em_separacao,separado,embalado} — operador deve `voltar-etapa` primeiro. |
+| `POST /api/wms/vendas/criar` (baixa_direta gera S por item; modo separação gera R) | `POST /api/wms/vendas/[id]/cancelar` | Estorna movs S (idempotente) ou libera R conforme o status atual. Rejeita 400 se status_separacao ∈ {em_separacao,separado,embalado,conferido} — operador deve `voltar-etapa` primeiro. |
 | `POST /api/wms/transferencias/[id]/receber` (E destino) | `POST /api/wms/transferencias/[id]/desfazer-recebimento` | Estorna **só a leg E** + reset itens + header volta pra `em_transito`. A leg S continua (estoque continua em trânsito). Permite re-receber. |
 
 ### Atomicidade reforçada (RPCs)
@@ -275,3 +275,31 @@ violar `reservado<=saldo`).
 Endpoint agora valida UUID format de `[id]` e `compra_mov_id` (regex) **antes** de chamar a
 RPC, e SELECT verifica existência das duas movs. Antes, caller podia passar string vazia/uuid
 inexistente e receber 23502/23503 cripticamente.
+
+## Conferência de Embalagem (2026-06-11)
+
+Etapa opcional entre `embalado` e `expedido`, operada por bip da **etiqueta de envio** (ML/Shopee) na bancada (`/wms/separacao/conferencia`).
+
+```
+separado → [checklist bipa PRODUTOS, imprime etiquetas] → embalado
+         → embalador bipa ETIQUETA (modo embalar)   grava embalado_real_por/em — status NÃO muda
+         → conferente bipa ETIQUETA (modo conferir) embalado → conferido (claim atômico)
+         → expedir                                  aceita embalado OU conferido (não bloqueia)
+```
+
+### Resolução do bip (lib/wms/conferencia.ts)
+
+1. `etiqueta_barcodes @> [codigo]` — array gravado na hora em que o ZPL é persistido (`agrupamento-service.salvarEtiqueta` + fallback do `etiqueta-service`): valores extraídos do ZPL (`lib/etiqueta-barcode.ts`, comandos `^BC`/`^BQ`/etc com normalização de escapes Code128) + `codigoRastreio` da expedição Tiny.
+2. `chave_acesso_nf` quando o código tem 44 dígitos (barcode da DANFE).
+3. `id_pedido_ecommerce` (escopo separado/embalado/conferido).
+4. ILIKE no `etiqueta_zpl` bruto (janela 30d) com **self-heal** (persiste os barcodes no hit).
+
+> **Shopee é raster (`~DG`)** — o ZPL não tem comandos de barcode; a cobertura vem do `codigoRastreio` (e dos fallbacks).
+
+### Regras
+
+- Conferência é **visual** (sem bipar produto a produto): o bip mostra os itens esperados; bipar a próxima etiqueta = OK da anterior (zero clique). Divergência = botão (tipo + obs), conferente arruma fisicamente na bancada; o registro conta contra o embalador.
+- **Auto-conferência permitida** (mesmo usuário pode embalar e conferir — decisão D5 2026-06-11).
+- `conferido` está em `FORWARD_STATES` do cutover (embalado→conferido NÃO reverte estoque).
+- `voltar-etapa` pra ≤`embalado` limpa conferência+divergência; pra ≤`separado` limpa também `embalado_real_*`.
+- Métricas em `/wms/relatorios/conferencia`: taxa de acerto por embalador (breakdown por tipo), % conferido, volume por conferente.

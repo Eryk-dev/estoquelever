@@ -59,7 +59,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `erro` | text | YES | | Error message if status = 'erro' |
 | `estoque_lancado` | boolean | NO | false | Flag: stock already deducted in Tiny |
 | `compra_estoque_lancado_alerta` | boolean | NO | false | Flag: alert if stock entered before cancellation |
-| `status_separacao` | text | YES | | Separation status: `aguardando_compra`, `aguardando_nf`, `aguardando_separacao`, `em_separacao`, `pendente_realocacao`, `separado`, `embalado` |
+| `status_separacao` | text | YES | | Separation status: `aguardando_compra`, `aguardando_nf`, `aguardando_separacao`, `em_separacao`, `pendente_realocacao`, `separado`, `embalado`, `conferido` |
 | `separacao_galpao_id` | uuid | YES | FK | Galpão where separation happens |
 | `separacao_operador_id` | uuid | YES | FK | User performing separation |
 | `separacao_iniciada_em` | timestamptz | YES | | When wave picking started |
@@ -70,6 +70,13 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `etiqueta_status` | text | YES | | Shipping label status: `pendente`, `imprimindo`, `impresso`, `falhou` |
 | `etiqueta_url` | text | YES | | Shipping label URL (PrintNode receipt) |
 | `etiqueta_zpl` | text | YES | | Raw ZPL content cached at separation |
+| `etiqueta_barcodes` | text[] | YES | | Barcode values da etiqueta de envio (extraídos do ZPL + codigoRastreio da expedição Tiny) — lookup do bip de conferência (GIN) |
+| `embalado_real_por` | uuid | YES | FK | Embalador físico (bipou a etiqueta ao embalar) — difere de embalagem_operador_id (checklist) |
+| `embalado_real_em` | timestamptz | YES | | Quando o embalador bipou |
+| `conferido_por` | uuid | YES | FK | Conferente (2º bip da etiqueta → status conferido) |
+| `conferido_em` | timestamptz | YES | | Quando foi conferido |
+| `divergencia_tipo` | text | YES | | Divergência achada na conferência: `produto_errado`, `faltou_item`, `sobrou_item`, `quantidade_errada` |
+| `divergencia_obs` | text | YES | | Observação livre da divergência |
 | `url_danfe` | text | YES | | DANFE (NF invoice) URL |
 | `chave_acesso_nf` | text | YES | | NF access key (unique NFe identifier) |
 | `nota_fiscal_id` | bigint | YES | | Tiny NF ID |
@@ -98,6 +105,8 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `idx_pedidos_separacao_galpao` (separacao_galpao_id, status_separacao) WHERE status_separacao IN ('aguardando_separacao', 'em_separacao')
 - `idx_pedidos_separacao_aguardando` (separacao_galpao_id) WHERE status_separacao = 'aguardando_nf'
 - `idx_pedidos_separacao_embalado` (separacao_galpao_id) WHERE status_separacao = 'embalado'
+- `idx_pedidos_etiqueta_barcodes` GIN (etiqueta_barcodes) WHERE etiqueta_barcodes IS NOT NULL — bip da conferência
+- `idx_pedidos_embalado_real` (embalado_real_por, embalado_real_em) WHERE embalado_real_por IS NOT NULL — relatório de conferência
 - `idx_pedidos_separacao_data` (separacao_galpao_id, data ASC) WHERE status_separacao IN ('aguardando_separacao', 'em_separacao')
 - `idx_pedidos_reenfileirado` (separacao_reenfileirado_em) WHERE separacao_reenfileirado_em IS NOT NULL — **Fase 3 #3:** acelera ordenação "fim da fila" de parciais re-enfileirados
 - `idx_siso_pedidos_separacao_tags` GIN index on separacao_tags
@@ -106,7 +115,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 **Constraints:**
 - `CHECK (status IN ('pendente', 'executando', 'concluido', 'cancelado', 'erro'))`
-- `CHECK (status_separacao IS NULL OR status_separacao IN ('aguardando_compra', 'aguardando_nf', 'aguardando_separacao', 'em_separacao', 'pendente_realocacao', 'separado', 'embalado'))`
+- `CHECK (status_separacao IS NULL OR status_separacao IN ('aguardando_compra', 'aguardando_nf', 'aguardando_separacao', 'em_separacao', 'pendente_realocacao', 'separado', 'embalado', 'conferido', 'expedido', 'validacao_oc'))` (20260611c)
 - `CHECK (etiqueta_status IS NULL OR etiqueta_status IN (...))`
 - `siso_pedidos_origem_pedido_chk` — `CHECK (origem_pedido IN ('webhook','manual'))`
 
@@ -1938,6 +1947,8 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-10 | `20260610c_tiny_connections_token_status.sql` | `siso_tiny_connections` +`token_status` (`ok`\|`erro`, CHECK), +`token_erro`, +`token_renovado_em`. Persistem o resultado da última renovação OAuth (gravado em `tiny-oauth.getValidToken`) — painel de conexões deixa de mostrar "Autorizado" pra refresh_token morto. |
 | 2026-06-10 | `20260610d_compra_preco_unitario.sql` | `siso_pedido_itens` +`compra_preco_unitario numeric(14,4)` — preço unitário declarado pelo comprador no modal de `/compras/comprar`; pré-preenche o custo no recebimento da OC. |
 | 2026-06-10 | `20260610e_rpc_siso_cross_cluster_skus.sql` | RPC `siso_cross_cluster_skus(p_sku text) RETURNS SETOF text` (SQL, STABLE) — expande recursivamente o cluster de SKUs equivalentes: arestas via OEM compartilhado (`siso_produtos_catalogo.oem && oem`, índice GIN) + links manuais (`siso_produto_links`, ambas direções). Usada pelo módulo cross (`catalogo-queries.ts`, `equivalentes-rapidos`, `has-cross`). Portada de prod — existia lá sem migration no repo; staging ficou sem e o cross quebrava. |
+| 2026-06-11 | `20260611b_conferencia_embalagem.sql` | **Conferência de embalagem.** `siso_pedidos` +`etiqueta_barcodes text[]` (GIN parcial) +`embalado_real_por/em` +`conferido_por/em` +`divergencia_tipo` (CHECK 4 tipos) +`divergencia_obs` + índice `idx_pedidos_embalado_real`. Embalador bipa etiqueta ao embalar (registra QUEM embalou, sem mudar status); conferente bipa de novo → `status_separacao='conferido'`. |
+| 2026-06-11 | `20260611c_status_conferido_check.sql` | Recria `siso_pedidos_status_separacao_check` incluindo `conferido` (o CHECK enumerava os status e o claim embalado→conferido violava silenciosamente). |
 | 2026-06-11 | `20260611d_rpc_desmarcar_item_parcial.sql` | `wms_desmarcar_item_atomico` ganha `p_qty_link numeric` + `p_pedido_item_id bigint` (defaults NULL = comportamento antigo). Com `p_qty_link`: estorno PARCIAL da fração do item numa S consolidada de wave (E com `origem_detalhes.parcial=true` + `pedido_item_id` como chave de idempotência, interop com `qty_estornada`), R recriada clampada (semântica D4). Fix P0-01 da limpa. |
 | 2026-06-11 | `20260611e_inventario_reaplicacao_geracao.sql` | `siso_inventario_divergencias` +`aplicacoes int default 0` (geração de aplicação, bumpada no estorno). Índice `uniq_movs_inventario_divergencia` recriado sobre `(divergencia_id, COALESCE(origem_detalhes->>'aplicacao','0'))` — re-aplicar sessão após estorno deixa de colidir 23505. `wms_aplicar_sessao_inventario` grava a geração, RAISE nomeia divergência culpada (id/sku/loc/saldo/reservado) e pré-checa perda abaixo do reservado. Fix INV-01/02/04. |
 | 2026-06-11 | `20260611f_contagem_inline_guard_reservado.sql` | `wms_contagem_inline_atomica` pré-checa `qty_contada < reservado` na perda → RAISE orientado ("libere ou realoque as reservas") em vez de 23514 cru do CHECK `reservado <= saldo`. Fix INV-04. |

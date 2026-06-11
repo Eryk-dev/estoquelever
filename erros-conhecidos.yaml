@@ -1,13 +1,11 @@
-# ============================================================
-# SISO — Erros Conhecidos e Corrigidos
+# =====================================================# SISO — Erros Conhecidos e Corrigidos
 #
 # Este arquivo serve como base de conhecimento para diagnostico
 # rapido de erros recorrentes. Sempre que um erro for corrigido,
 # adicione uma entrada aqui seguindo o formato abaixo.
 #
 # Para consultar: grep por message, source, category ou tags.
-# ============================================================
-
+# =====================================================
 # Formato de cada entrada:
 # - id: identificador curto e unico (kebab-case)
 #   date: YYYY-MM-DD da correcao
@@ -4664,11 +4662,9 @@ erros:
     - src/app/api/wms/separacao/bipar-embalagem-oc/route.ts
   tags: [separacao, embalagem-oc, bipar, schema, coluna-inexistente]
 
-# ============================================================
-# LIMPA 2026-06-11 — correções P0/P1 do diagnóstico de módulos
+# =====================================================# LIMPA 2026-06-11 — correções P0/P1 do diagnóstico de módulos
 # (plano: docs/superpowers/plans/2026-06-11-limpa-diagnostico-modulos.md)
-# ============================================================
-
+# =====================================================
 - id: limpa-p0-01-desmarcar-wave-consolidada-estorna-total
   date: 2026-06-11
   source: separacao
@@ -5114,10 +5110,8 @@ erros:
     - src/app/api/wms/separacao/validar-oc-item/route.ts
   tags: [inventario, contagem-inline, reservado, check-constraint, erro-orientado]
 
-# ============================================================
-# LIMPA 2026-06-11 — rodada 2: P2/P3 (spec Fable, exec Opus)
-# ============================================================
-
+# =====================================================# LIMPA 2026-06-11 — rodada 2: P2/P3 (spec Fable, exec Opus)
+# =====================================================
 - id: limpa-p2-cmp-recebimento-compensacoes
   date: 2026-06-11
   source: compras
@@ -5384,3 +5378,23 @@ erros:
   files:
     - docs/superpowers/plans/2026-06-11-limpa-diagnostico-modulos.md
   tags: [limpa, p3, lote, plano]
+- id: STATUS-SEPARACAO-CHECK-SEM-STATUS-NOVO
+  date: 2026-06-11
+  source: separacao
+  category: database
+  message: "UPDATE embalado→conferido falhava silenciosamente (claim retornava 0 rows e a rota reportava 'ja_conferido')"
+  cause: >
+    siso_pedidos tem CHECK (siso_pedidos_status_separacao_check) que ENUMERA
+    os valores válidos de status_separacao. Adicionar um status novo só no
+    type TS (StatusSeparacao) não basta: o UPDATE viola o CHECK e, se o
+    caller ignora o error do PostgREST ({ data } sem { error }), a falha
+    vira "0 rows atualizadas" — indistinguível de race perdida.
+  fix: >
+    Migration 20260611c recria o CHECK incluindo 'conferido' (+ expedido e
+    validacao_oc que já existiam). Rotas de claim atômico agora SEMPRE
+    destructuram { error } do update e retornam 500 em vez de mascarar.
+    Regra: todo status novo em status_separacao exige atualizar o CHECK.
+  files:
+    - supabase/migrations/20260611c_status_conferido_check.sql
+    - src/app/api/wms/separacao/conferencia/bipar/route.ts
+  tags: [separacao, conferencia, status, check-constraint, claim-atomico, postgrest]

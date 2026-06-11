@@ -2279,7 +2279,7 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 ```json
 {
   "pedido_ids": ["string"],
-  "novo_status": "aguardando_nf" | "aguardando_separacao" | "em_separacao" | "separado" | "embalado"
+  "novo_status": "aguardando_nf" | "validacao_oc" | "aguardando_separacao" | "em_separacao" | "pendente_realocacao" | "separado" | "embalado" | "conferido"
 }
 ```
 
@@ -2536,11 +2536,70 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 
 ---
 
+### POST /api/wms/separacao/conferencia/bipar
+
+**File:** `src/app/api/wms/separacao/conferencia/bipar/route.ts`
+
+**Purpose:** Bip da etiqueta de envio na bancada. `modo=embalar` registra QUEM embalou fisicamente (`embalado_real_por/em`, status não muda; idempotente pro mesmo usuário, outro usuário recebe aviso sem sobrescrever). `modo=conferir` valida embalado → `conferido` (claim atômico; auto-conferência permitida). Resolução do código: `etiqueta_barcodes` (exato) → `chave_acesso_nf` (44 dígitos) → `id_pedido_ecommerce` → ILIKE no `etiqueta_zpl` com self-heal.
+
+**Auth:** X-Session-Id (required), warehouse access (`requireWarehouseAccess`)
+
+**Request Body:**
+```json
+{
+  "codigo": "string",
+  "modo": "embalar" | "conferir"
+}
+```
+
+**Response (200):**
+```json
+{
+  "pedido": {
+    "id": "string", "numero": "string", "nome_ecommerce": "string",
+    "status_separacao": "embalado" | "conferido",
+    "embalado_real_por": "uuid|null", "embalado_real_por_nome": "string|null",
+    "conferido_por": "uuid|null", "conferido_por_nome": "string|null",
+    "divergencia_tipo": "string|null"
+  },
+  "itens": [{ "id": "uuid", "sku": "string", "gtin": "string|null", "descricao": "string", "quantidade_pedida": "number", "imagem_url": "string|null" }],
+  "via": "barcode" | "chave_nf" | "pedido_ecommerce" | "zpl_self_heal",
+  "aviso": "ja_embalado" | "ja_conferido" | null
+}
+```
+
+**Errors:** 404 `nao_encontrado` · 409 `ambiguo` (código casa >1 pedido) · 422 `status_invalido` (com `status_atual`)
+
+---
+
+### POST /api/wms/separacao/conferencia/divergencia
+
+**File:** `src/app/api/wms/separacao/conferencia/divergencia/route.ts`
+
+**Purpose:** Registra divergência achada na conferência (pedido já `conferido`). Conta contra o embalador nas métricas. Idempotente (re-clique sobrescreve).
+
+**Auth:** X-Session-Id (required), warehouse access
+
+**Request Body:**
+```json
+{
+  "pedido_id": "string",
+  "tipo": "produto_errado" | "faltou_item" | "sobrou_item" | "quantidade_errada",
+  "observacao": "string (opcional)"
+}
+```
+
+**Response (200):** `{ "ok": true, "pedido_id": "string", "tipo": "string", "observacao": "string|null" }`
+
+**Errors:** 400 tipo inválido · 404 `pedido_nao_encontrado` · 422 `status_invalido`
+
+---
+
 ### POST /api/wms/separacao/expedir
 
 **File:** `src/app/api/wms/separacao/expedir/route.ts`
 
-**Purpose:** Mark packed orders as shipped (embalado → expedido).
+**Purpose:** Mark packed orders as shipped (embalado|conferido → expedido). Conferência não bloqueia expedição.
 
 **Auth:** X-Session-Id (required), user must have galpaoId
 
@@ -2823,6 +2882,8 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 ### POST /api/wms/separacao/reimprimir
 
 **File:** `src/app/api/wms/separacao/reimprimir/route.ts`
+
+> Aceita pedidos em `embalado` ou `conferido`.
 
 **Purpose:** Print/reprint a shipping label. Fast path uses cached ZPL; fallback creates agrupamento in Tiny.
 
@@ -6352,6 +6413,20 @@ Com o ledger simplificado, apuração por empresa virou **report sobre tags em m
 ```
 
 **Side Effects:** None.
+
+---
+
+### GET /api/wms/relatorios/conferencia
+
+**File:** `src/app/api/wms/relatorios/conferencia/route.ts`
+
+**Purpose:** Métricas da conferência de embalagem no período: KPIs gerais (% rastreado, % conferido, divergências), taxa de acerto por embalador (breakdown por tipo de erro) e volume por conferente.
+
+**Auth:** X-Session-Id (required)
+
+**Query params:** `de` (ISO date, default 7d atrás) · `ate` (ISO date, inclusivo, default hoje) · `galpao_id` (opcional)
+
+**Response (200):** `{ periodo, geral: { embalados_periodo, com_embalador, conferidos, divergencias, pct_rastreado, pct_conferido }, por_embalador: [...], por_conferente: [...] }`
 
 ---
 

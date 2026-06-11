@@ -87,7 +87,8 @@ Entrada de estoque (mov tipo E) → reconciliador-oc.ts (fire-and-forget via led
   · receber via /api/wms/receber/oc/[id] (receberItensViaOC) agora seta recebido + chama release
   ──────────────────────────────────────────────────────────────
 Separação: iniciar → em_separacao → marcar-item (L+S atômico no pick) → concluir → separado
-           → confirmar-item-embalagem → embalado → expedir → expedido
+           → confirmar-item-embalagem → embalado → [conferência opcional: embalador bipa etiqueta
+           (embalado_real_por, status não muda) → conferente bipa → conferido] → expedir → expedido
            (parcial = 2 movs + re-busca cascade; encaminhar = manda pra outro galpão)
 ```
 
@@ -114,7 +115,7 @@ Conjunto: `propria | transferencia | oc` (sem empréstimo/swap no 3D).
 ### Status
 
 - **Pedido** (`StatusPedido`): `pendente · executando · concluido · cancelado · erro`. `decisao_final`: `propria | transferencia | oc | rejeitado`.
-- **Separação** (`StatusSeparacao`): `aguardando_compra → aguardando_nf → validacao_oc → aguardando_separacao → em_separacao → separado → embalado` (+ `pendente_realocacao`). `expedido` é escrito na coluna mas não está no type. Ordem canônica de `voltar-etapa`: `aguardando_compra → aguardando_nf → aguardando_separacao → em_separacao → pendente_realocacao → separado → embalado → expedido`.
+- **Separação** (`StatusSeparacao`): `aguardando_compra → aguardando_nf → validacao_oc → aguardando_separacao → em_separacao → separado → embalado → conferido` (+ `pendente_realocacao`). `expedido` é escrito na coluna mas não está no type. Ordem canônica de `voltar-etapa`: `aguardando_nf → validacao_oc → aguardando_separacao → em_separacao → pendente_realocacao → separado → embalado → conferido`. **Conferência de embalagem (2026-06-11):** bip da etiqueta de envio em `/wms/separacao/conferencia` — modo embalar grava `embalado_real_por` (status não muda); modo conferir move `embalado→conferido` (visual, zero-clique, auto-conferência permitida); divergência (4 tipos) conta contra o embalador; expedir NÃO exige conferido. Barcodes da etiqueta em `siso_pedidos.etiqueta_barcodes` (ZPL + codigoRastreio Tiny; Shopee é raster — só rastreio). Métricas em `/wms/relatorios/conferencia`.
 
 ---
 
@@ -136,8 +137,8 @@ Fonte única de estoque. Cada posição é única por **`(produto_id, galpao_id,
 src/
   app/
     api/auth/{login,me}/route.ts        # ÚNICAS rotas fora de /api/wms (PIN login + sessão)
-    api/wms/**/route.ts                 # 204 rotas — TODO o backend
-    wms/**                              # 57 pages (+layout) — TODO o frontend, todas "use client"
+    api/wms/**/route.ts                 # 214 rotas — TODO o backend
+    wms/**                              # 60 pages (+layout) — TODO o frontend, todas "use client"
     login/page.tsx · page.tsx           # login + redirect pra /wms
     globals.css                         # Tailwind v4 (@theme inline)
   components/
@@ -187,9 +188,9 @@ docs/                                   # ground-truth gerada (ver abaixo)
 erros-conhecidos.yaml                   # base de erros (grep antes, adicionar depois)
 ```
 
-### API — grupos por domínio (211 rotas em `/api/wms`)
+### API — grupos por domínio (214 rotas em `/api/wms`)
 
-`separacao` (31) · `admin` (21) · `inventario` (16) · `cross` (14) · `compras` (14) · `insights` (12) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (7) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `relatorios` (3) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
+`separacao` (33) · `admin` (21) · `inventario` (16) · `cross` (14) · `compras` (14) · `insights` (12) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (7) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `relatorios` (4) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
 
 ### Database — tabelas principais
 

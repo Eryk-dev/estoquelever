@@ -24,6 +24,9 @@ import { logger } from "./logger";
 import { registrarEvento } from "./historico-service";
 import { kickWorker } from "./execution-worker";
 import { getFornecedorBySku } from "./sku-fornecedor";
+import { criarMarcadoresPedido } from "./tiny-api";
+import { getValidTokenByEmpresa } from "./tiny-oauth";
+import { runWithEmpresa } from "./tiny-queue";
 import { reservarAtomico, estornarReservaIndividual } from "./wms/reservas";
 import { rotearPedidoDoBanco } from "./wms/roteamento";
 import type { RotaResult } from "./wms/roteamento";
@@ -581,6 +584,31 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     { onConflict: "id" },
   );
   if (pedidoErr) throw pedidoErr;
+
+  // 5b. Tag "WMS" no pedido Tiny assim que ele ENTRA no sistema (pedido novo).
+  //     Fire-and-forget: falha não bloqueia o intake; 400 do Tiny = marcador
+  //     já existe (re-entrega de webhook) → idempotente, silencioso.
+  if (!existente) {
+    void (async () => {
+      try {
+        const { token } = await getValidTokenByEmpresa(empresaOrigemId);
+        await runWithEmpresa(empresaOrigemId, () =>
+          criarMarcadoresPedido(token, pedido.id, ["WMS"]),
+        );
+        logger.info("processor.wms", "marcador WMS aplicado no pedido Tiny", {
+          pedidoId: pedido.id,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes("400")) {
+          logger.warn("processor.wms", "falha ao aplicar marcador WMS no Tiny", {
+            pedidoId: pedido.id,
+            error: msg,
+          });
+        }
+      }
+    })();
+  }
 
   // 6. Grava itens (siso_pedido_itens) — upsert + limpa órfãos
   const tinyIdsNovos = itensResolvidos.map((i) => i.tinyProdutoId);

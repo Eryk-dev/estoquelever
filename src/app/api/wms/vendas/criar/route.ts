@@ -405,7 +405,7 @@ export async function POST(request: NextRequest) {
     decisao_final: "propria",
     nome_ecommerce: null,
     separacao_galpao_id: galpao_id,
-    marcadores: ["LVR", "VENDA_DIRETA"],
+    marcadores: ["LVR", "VENDA_DIRETA", "WMS"],
     payload_original: idempotency_key
       ? { ...payloadBase, idempotency_key }
       : payloadBase,

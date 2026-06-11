@@ -60,7 +60,7 @@ npm run auth-matrix      # matriz de auth/permissões
 ```
 Tiny webhook (pedido)
   → api/wms/webhook/tiny           valida, dedup (siso_webhook_logs), CNPJ→empresa, discrimina pedido vs nota_fiscal
-    (fallback: cron 10min → api/wms/tiny/polling → tiny-polling.ts varre TODOS os Tinys conectados,
+    (fallback: cron 10min → api/wms/tiny/polling → tiny-polling.ts varre os Tinys conectados de empresas ATIVAS (siso_empresas.ativo; inativa = pulada + webhook 400 via empresa-lookup),
      janela 7d: pedidos aprovados/cancelados + NFs autorizadas que escaparam do webhook)
   → processWebhook                 resolve galpão + busca pedido no Tiny (camada fiscal); IGNORA não-marketplace
   → processWebhookWms              ⬅ AQUI o processamento real acontece

@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
-import { Icon, Field } from "@/components/wms/ui/wms-ui";
+import { Icon, Field, Modal } from "@/components/wms/ui/wms-ui";
 import type { GalpaoHierarquiaWms, EmpresaHierarquiaWms } from "./types";
 
 interface EmpresaFlat extends EmpresaHierarquiaWms {
@@ -326,7 +327,7 @@ export function AbaEmpresas({
                 <th>CNPJ</th>
                 <th>Preferenciais</th>
                 <th>Conexão</th>
-                <th style={{ width: 80 }}></th>
+                <th style={{ width: 200 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -368,6 +369,29 @@ function LinhaEmpresa({
     nome: empresa.nome,
     preferenciais: empresa.preferenciais.map((p) => p.id),
     ativo: empresa.ativo,
+  });
+  const [confirmandoToggle, setConfirmandoToggle] = useState(false);
+
+  // Toggle rápido de ativo/inativo (independente do form de edição).
+  // Desativar = parar de aceitar pedidos da empresa (webhook recusa por
+  // getEmpresaByCnpj + polling pula via Set de ativas).
+  const toggleAtivo = useMutation({
+    mutationFn: () =>
+      wmsApi(`/api/wms/admin/empresas/${empresa.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ativo: !empresa.ativo }),
+      }),
+    onSuccess: () => {
+      toast.success(
+        empresa.ativo
+          ? `${empresa.nome} desativada — pedidos novos serão recusados`
+          : `${empresa.nome} reativada`,
+      );
+      setConfirmandoToggle(false);
+      onSalvo();
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const salvar = useMutation({
@@ -411,15 +435,38 @@ function LinhaEmpresa({
           <StatusConexao empresa={empresa} />
         </td>
         <td>
-          <button
-            type="button"
-            className="wms-btn wms-btn-ghost"
-            onClick={onEditar}
-          >
-            <Icon name="edit" size={12} />
-            Editar
-          </button>
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              className={`wms-btn ${empresa.ativo ? "wms-btn-ghost" : "wms-btn-primary"}`}
+              onClick={() => setConfirmandoToggle(true)}
+              title={
+                empresa.ativo
+                  ? "Desativar: para de aceitar pedidos desta empresa"
+                  : "Reativar: volta a aceitar pedidos desta empresa"
+              }
+            >
+              <Icon name={empresa.ativo ? "minus" : "check"} size={12} />
+              {empresa.ativo ? "Desativar" : "Reativar"}
+            </button>
+            <button
+              type="button"
+              className="wms-btn wms-btn-ghost"
+              onClick={onEditar}
+            >
+              <Icon name="edit" size={12} />
+              Editar
+            </button>
+          </div>
         </td>
+        {confirmandoToggle && (
+          <ConfirmarToggleEmpresa
+            empresa={empresa}
+            pending={toggleAtivo.isPending}
+            onConfirmar={() => toggleAtivo.mutate()}
+            onCancelar={() => setConfirmandoToggle(false)}
+          />
+        )}
       </tr>
     );
   }
@@ -536,5 +583,62 @@ function LinhaEmpresa({
         </div>
       </td>
     </tr>
+  );
+}
+
+function ConfirmarToggleEmpresa({
+  empresa,
+  pending,
+  onConfirmar,
+  onCancelar,
+}: {
+  empresa: EmpresaFlat;
+  pending: boolean;
+  onConfirmar: () => void;
+  onCancelar: () => void;
+}) {
+  const desativando = empresa.ativo;
+  // Portal pro body: o Modal renderiza um <div> e este componente é montado
+  // dentro de um <tr> — div direto em tr é HTML inválido. Só rende após clique
+  // (confirmandoToggle), nunca no SSR, então o guard de document basta.
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <Modal
+      title={desativando ? `Desativar ${empresa.nome}?` : `Reativar ${empresa.nome}?`}
+      onClose={onCancelar}
+      footer={
+        <>
+          <button className="wms-btn wms-btn-ghost" onClick={onCancelar}>
+            Cancelar
+          </button>
+          <button
+            className={`wms-btn ${desativando ? "wms-btn-danger" : "wms-btn-primary"}`}
+            disabled={pending}
+            onClick={onConfirmar}
+          >
+            <Icon name={desativando ? "minus" : "check"} size={11} />
+            {pending
+              ? "Aplicando…"
+              : desativando
+                ? "Desativar"
+                : "Reativar"}
+          </button>
+        </>
+      }
+    >
+      {desativando ? (
+        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5 }}>
+          Pedidos novos desta empresa serão recusados no webhook e ignorados no
+          polling. Pedidos já em andamento continuam fluindo. Pode levar até 5
+          min pra valer (cache).
+        </p>
+      ) : (
+        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5 }}>
+          A empresa volta a aceitar pedidos novos pelo webhook e pelo polling.
+          Pode levar até 5 min pra valer (cache).
+        </p>
+      )}
+    </Modal>,
+    document.body,
   );
 }

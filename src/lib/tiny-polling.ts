@@ -483,6 +483,35 @@ export async function pollTiny(): Promise<PollingResult> {
     throw new Error(`Falha listando conexões Tiny: ${error.message}`);
   }
 
+  // Empresa desativada = recusa pedidos novos (o webhook já filtra via
+  // getEmpresaByCnpj.eq("ativo", true)). O polling é o fallback do webhook,
+  // então também precisa pular essas. Filtro em 2 queries via Set — não há FK
+  // declarada entre siso_tiny_connections e siso_empresas pra PostgREST juntar.
+  const { data: empresasAtivas, error: empresasError } = await sb
+    .from("siso_empresas")
+    .select("id")
+    .eq("ativo", true);
+  if (empresasError) {
+    throw new Error(`Falha listando empresas ativas: ${empresasError.message}`);
+  }
+  const ativasSet = new Set(
+    (empresasAtivas ?? []).map((e) => (e as { id: string }).id),
+  );
+
+  const connectionsTodas = (connections ?? []) as Array<{
+    cnpj: string;
+    empresa_id: string;
+  }>;
+  const connectionsAtivas = connectionsTodas.filter((c) =>
+    ativasSet.has(c.empresa_id),
+  );
+  const puladas = connectionsTodas.filter((c) => !ativasSet.has(c.empresa_id));
+  if (puladas.length > 0) {
+    logger.info(LOG_SOURCE, "empresas inativas puladas", {
+      empresa_ids: puladas.map((c) => c.empresa_id),
+    });
+  }
+
   const resultado: PollingResult = {
     janela_dias: DIAS_JANELA,
     data_inicial: dataInicial,
@@ -490,7 +519,7 @@ export async function pollTiny(): Promise<PollingResult> {
     executado_em: new Date().toISOString(),
   };
 
-  for (const conn of (connections ?? []) as Array<{ cnpj: string; empresa_id: string }>) {
+  for (const conn of connectionsAtivas) {
     const resumo: PollingResumoEmpresa = {
       empresa_id: conn.empresa_id,
       empresa_nome: "",

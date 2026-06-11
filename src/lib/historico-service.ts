@@ -101,7 +101,10 @@ export type EventoPedido =
   | "mandado_pra_compras_via_cascade"
   | "recebimento_item_zero"
   | "recebimento_via_oc"
-  | "oc_item_saldo_reconciliado";
+  | "oc_item_saldo_reconciliado"
+  | "embalagem_fisica_registrada"
+  | "conferencia_ok"
+  | "conferencia_divergencia";
 
 /**
  * Record a single event in the order history.

@@ -33,7 +33,10 @@ async function kickWorkerSafe(): Promise<void> {
   }
 }
 
-const FORWARD_STATES = ["separado", "embalado", "expedido"] as const;
+// "conferido" (conferência de embalagem, entre embalado e expedido) é forward:
+// sem ele aqui, embalado→conferido seria tratado como saída do conjunto e
+// reverterCutoverSeRetrocedeu estornaria o estoque de um pedido já embalado.
+const FORWARD_STATES = ["separado", "embalado", "conferido", "expedido"] as const;
 type ForwardState = (typeof FORWARD_STATES)[number];
 
 export function isForwardStatus(status: string | null | undefined): status is ForwardState {

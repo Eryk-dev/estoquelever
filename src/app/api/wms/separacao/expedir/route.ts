@@ -97,9 +97,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Validate all pedidos have status_separacao = 'embalado'
+    // 3. Validate all pedidos have status_separacao embalado|conferido
+    //    (conferência é opcional — não bloqueia expedição)
     const notEmbalado = (pedidos ?? []).filter(
-      (p) => p.status_separacao !== "embalado",
+      (p) => p.status_separacao !== "embalado" && p.status_separacao !== "conferido",
     );
     if (notEmbalado.length > 0) {
       return NextResponse.json(
@@ -116,7 +117,7 @@ export async function POST(request: NextRequest) {
       .from("siso_pedidos")
       .update({ status_separacao: "expedido" })
       .in("id", pedido_ids)
-      .eq("status_separacao", "embalado");
+      .in("status_separacao", ["embalado", "conferido"]);
 
     if (updateError) {
       logger.logError({

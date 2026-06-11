@@ -36,6 +36,7 @@ const STATUS_ORDER: StatusOrdem[] = [
   "pendente_realocacao",
   "separado",
   "embalado",
+  "conferido",
   "expedido",
 ];
 
@@ -125,6 +126,20 @@ export async function POST(request: NextRequest) {
         pedidoUpdate.embalagem_concluida_em = null;
       }
 
+      // Conferência de embalagem: voltar pra antes de 'conferido' invalida a
+      // conferência (re-conferir depois); voltar pra antes de 'embalado'
+      // invalida também o registro de quem embalou fisicamente.
+      if (targetIdx <= STATUS_ORDER.indexOf("embalado")) {
+        pedidoUpdate.conferido_por = null;
+        pedidoUpdate.conferido_em = null;
+        pedidoUpdate.divergencia_tipo = null;
+        pedidoUpdate.divergencia_obs = null;
+      }
+      if (targetIdx <= STATUS_ORDER.indexOf("separado")) {
+        pedidoUpdate.embalado_real_por = null;
+        pedidoUpdate.embalado_real_em = null;
+      }
+
       // Keep etiqueta/agrupamento data — never clear cached ZPL labels
     }
 
@@ -141,6 +156,12 @@ export async function POST(request: NextRequest) {
       }
       if (targetIdx >= STATUS_ORDER.indexOf("embalado")) {
         pedidoUpdate.embalagem_concluida_em = now;
+      }
+      // Só o hop EXPLÍCITO pra 'conferido' marca conferência — avançar direto
+      // pra 'expedido' não fabrica conferido_por (contaminaria o relatório).
+      if (targetIdx === STATUS_ORDER.indexOf("conferido")) {
+        pedidoUpdate.conferido_em = now;
+        pedidoUpdate.conferido_por = session.id;
       }
     }
 

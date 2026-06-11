@@ -176,6 +176,7 @@ export type StatusSeparacao =
   | "em_separacao"
   | "separado"
   | "embalado"
+  | "conferido"
   | "pendente_realocacao";
 
 /** Consolidated product for wave picking */
@@ -215,6 +216,7 @@ export interface SeparacaoCounts {
   em_separacao: number;
   separado: number;
   embalado: number;
+  conferido: number;
   pendente_realocacao: number;
 }
 

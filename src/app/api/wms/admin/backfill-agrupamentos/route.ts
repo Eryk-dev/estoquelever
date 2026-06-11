@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
     .or("agrupamento_expedicao_id.is.null,agrupamento_expedicao_id.eq.pending")
     .in("status_separacao", [
       "aguardando_compra",
+      "validacao_oc",
       "aguardando_nf",
       "aguardando_separacao",
       "em_separacao",

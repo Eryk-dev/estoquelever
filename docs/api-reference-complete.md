@@ -4577,7 +4577,7 @@ OR
 
 - **GET** `/api/wms/admin/empresas` - List all empresas with galpão, grupo, and Tiny connection info
 - **POST** `/api/wms/admin/empresas` - Create new empresa (CNPJ, name, galpão)
-- **PUT** `/api/wms/admin/empresas/[id]` - Update empresa name, ativo status, galpões preferenciais e `sync_pedidos_desde` (corte de migração — ISO timestamp ou null; pedidos Tiny criados antes não entram no WMS, ver `src/lib/sync-pedidos-corte.ts`)
+- **PUT** `/api/wms/admin/empresas/[id]` - Update empresa name, CNPJ, ativo status
 - **DELETE** `/api/wms/admin/empresas/[id]` - Delete empresa (cascades to grupo relations and connections)
 
 ### Additional Admin Routes - Grupos

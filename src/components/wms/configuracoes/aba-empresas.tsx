@@ -350,14 +350,6 @@ export function AbaEmpresas({
   );
 }
 
-/** ISO → valor de <input type="datetime-local"> no fuso local do browser. */
-function isoParaInputLocal(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 function LinhaEmpresa({
   empresa,
   galpoes,
@@ -377,7 +369,6 @@ function LinhaEmpresa({
     nome: empresa.nome,
     preferenciais: empresa.preferenciais.map((p) => p.id),
     ativo: empresa.ativo,
-    syncPedidosDesde: isoParaInputLocal(empresa.sync_pedidos_desde),
   });
   const [confirmandoToggle, setConfirmandoToggle] = useState(false);
 
@@ -412,9 +403,6 @@ function LinhaEmpresa({
           nome: form.nome,
           galpoes_preferenciais: form.preferenciais,
           ativo: form.ativo,
-          sync_pedidos_desde: form.syncPedidosDesde
-            ? new Date(form.syncPedidosDesde).toISOString()
-            : null,
         }),
       }),
     onSuccess: () => {
@@ -566,29 +554,6 @@ function LinhaEmpresa({
             style={{ fontSize: 11, marginTop: 6, marginBottom: 0 }}
           >
             Vazio = sem viés geográfico no roteamento.
-          </p>
-        </div>
-        <div style={{ marginTop: 10, maxWidth: 420 }}>
-          <Field label="Puxar pedidos do Tiny a partir de">
-            <input
-              type="datetime-local"
-              className="wms-input"
-              value={form.syncPedidosDesde}
-              onChange={(e) =>
-                setForm({ ...form, syncPedidosDesde: e.target.value })
-              }
-            />
-          </Field>
-          <p
-            className="wms-td-mute"
-            style={{ fontSize: 11, marginTop: 6, marginBottom: 0 }}
-          >
-            Corte de migração: pedidos criados antes desse momento ficam com o
-            processo antigo (webhook ignora e o polling não puxa). O Tiny só
-            informa o <strong>dia</strong> de criação do pedido — use
-            meia-noite do dia da virada pra um corte limpo. Vazio = sem corte
-            (polling puxa a janela cheia de 7 dias). Pode levar até 5 min pra
-            valer (cache).
           </p>
         </div>
         <div

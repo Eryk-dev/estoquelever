@@ -61,9 +61,8 @@ npm run auth-matrix      # matriz de auth/permissões
 Tiny webhook (pedido)
   → api/wms/webhook/tiny           valida, dedup (siso_webhook_logs), CNPJ→empresa, discrimina pedido vs nota_fiscal
     (fallback: cron 10min → api/wms/tiny/polling → tiny-polling.ts varre os Tinys conectados de empresas ATIVAS (siso_empresas.ativo; inativa = pulada + webhook 400 via empresa-lookup),
-     janela 7d: pedidos aprovados/cancelados + NFs autorizadas que escaparam do webhook;
-     siso_empresas.sync_pedidos_desde = corte de migração: clampa aprovados/NFs pro 1º dia inteiramente pós-corte — lib/sync-pedidos-corte.ts)
-  → processWebhook                 resolve galpão + busca pedido no Tiny (camada fiscal); IGNORA não-marketplace e pedido criado antes do corte
+     janela 7d: pedidos aprovados/cancelados + NFs autorizadas que escaparam do webhook)
+  → processWebhook                 resolve galpão + busca pedido no Tiny (camada fiscal); IGNORA não-marketplace
   → processWebhookWms              ⬅ AQUI o processamento real acontece
        · resolverItensWms          Tiny produto_id → uuid WMS via siso_produto_empresas; expande kits
        · rotearPedidoDoBanco       lê siso_estoque → propria | transferencia | oc (geo-priority)
@@ -157,8 +156,7 @@ src/
     execution-worker(-wms).ts           # entry shell → -wms (ativo)
     nf-webhook-handler.ts               # nota_fiscal → aguardando_separacao; upsertNotaFiscal()
     pedido-cancel-handler.ts            # cancelamento de pedido (compartilhado webhook + polling)
-    tiny-polling.ts                     # polling fallback Tiny (pedidos aprovados/cancelados + NFs autorizadas, janela 7d clampada por sync_pedidos_desde, cron 10min)
-    sync-pedidos-corte.ts               # corte de migração por empresa (sync_pedidos_desde): semântica dia-granular do Tiny
+    tiny-polling.ts                     # polling fallback Tiny (pedidos aprovados/cancelados + NFs autorizadas, janela 7d, cron 10min)
     empresa-lookup.ts                   # CNPJ→empresa (cache 5min)
     grupo-resolver.ts                   # lookup de grupo (não roteia mais)
     compras-*.ts                        # release, equivalencia, embalagem, necessidade, utils

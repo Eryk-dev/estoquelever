@@ -392,7 +392,6 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `cnpj` | text | NO | UNIQUE | 14-digit CNPJ |
 | `galpao_id` | uuid | NO | FK | Physical location |
 | `ativo` | boolean | NO | true | Active flag |
-| `sync_pedidos_desde` | timestamptz | YES | NULL | Corte de migração: pedidos Tiny criados antes não entram no WMS (webhook ignora dia anterior ao corte; polling só puxa dias inteiramente pós-corte — `src/lib/sync-pedidos-corte.ts`). NULL = sem corte |
 | `criado_em` | timestamptz | NO | now() | Creation |
 | `atualizado_em` | timestamptz | NO | now() | Last update |
 

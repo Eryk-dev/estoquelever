@@ -10,9 +10,6 @@ import { userCan } from "@/lib/permissions";
  * Body:
  *   - nome?: string
  *   - ativo?: boolean
- *   - sync_pedidos_desde?: string | null — corte de migração (ISO timestamp).
- *     Pedidos Tiny criados antes não entram no WMS (lib/sync-pedidos-corte.ts).
- *     null limpa o corte.
  *   - galpoes_preferenciais?: string[] — replace-all dos preferenciais. Quando
  *     presente (inclusive []) substitui o conjunto inteiro. Quando ausente
  *     mantém o atual.
@@ -39,19 +36,6 @@ export async function PUT(
   const update: Record<string, unknown> = { atualizado_em: new Date().toISOString() };
   if (typeof body.nome === "string") update.nome = body.nome.trim();
   if (typeof body.ativo === "boolean") update.ativo = body.ativo;
-  if ("sync_pedidos_desde" in body) {
-    const v = body.sync_pedidos_desde;
-    if (v === null) {
-      update.sync_pedidos_desde = null;
-    } else if (typeof v === "string" && !Number.isNaN(Date.parse(v))) {
-      update.sync_pedidos_desde = new Date(v).toISOString();
-    } else {
-      return NextResponse.json(
-        { error: "sync_pedidos_desde inválido — ISO timestamp ou null" },
-        { status: 400 },
-      );
-    }
-  }
 
   const supabase = createServiceClient();
   const { error: updateError } = await supabase
@@ -97,7 +81,7 @@ export async function PUT(
   // Re-fetch pra devolver estado consistente.
   const { data, error: fetchError } = await supabase
     .from("siso_empresas")
-    .select("id, nome, galpao_id, ativo, sync_pedidos_desde")
+    .select("id, nome, galpao_id, ativo")
     .eq("id", id)
     .single();
 

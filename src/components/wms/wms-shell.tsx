@@ -139,6 +139,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/wms/relatorios/movs-por-empresa", icon: "columns", label: "Movs por Empresa", requires: ["relatorios.ver"] },
       { href: "/wms/relatorios/historico-custo", icon: "history", label: "Histórico de Custo", requires: ["relatorios.ver"] },
       { href: "/wms/relatorios/saldos-por-empresa", icon: "box", label: "Saldos por Empresa", requires: ["relatorios.ver"] },
+      { href: "/wms/relatorios/conferencia", icon: "check", label: "Conferência", requires: ["relatorios.ver"] },
       { href: "/wms/relatorios/reconciliacao-tiny", icon: "shuffle", label: "Reconciliação Tiny", requires: ["insights.ver"] },
     ],
   },

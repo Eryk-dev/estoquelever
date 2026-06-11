@@ -84,6 +84,9 @@
   display: grid;
   grid-template-columns: 240px 1fr;
   height: 100vh;
+  /* Mobile: 100vh inclui a barra de URL recolhida do Chrome e corta o rodapé;
+     dvh acompanha a viewport visível real. */
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -502,6 +505,9 @@
   border: 1px solid var(--wms-c-border);
   border-radius: var(--wms-r-3);
   overflow: hidden;
+  /* Mobile: tabela mais larga que a tela vira pan horizontal em vez de corte. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .wms-tbl table { width: 100%; border-collapse: collapse; }
 

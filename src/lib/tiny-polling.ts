@@ -5,7 +5,10 @@
  * perdidos (downtime do deploy, falha de entrega do Tiny, timeout). Este
  * módulo varre periodicamente TODAS as contas Tiny conectadas e reprocessa
  * o que escapou, com janela máxima de 7 dias pra trás (não puxa pedidos
- * antigos):
+ * antigos). Empresa com corte de migração (siso_empresas.sync_pedidos_desde)
+ * tem a janela de aprovados/NFs clampada pro primeiro dia inteiramente
+ * pós-corte (ver lib/sync-pedidos-corte.ts); cancelados mantêm a janela cheia
+ * (só afetam pedidos que o SISO já conhece — todos pós-corte):
  *
  *   - Pedidos APROVADOS (situacao=3) que não existem em siso_pedidos nem
  *     em siso_webhook_logs → mesmos efeitos do webhook (processWebhook).
@@ -38,6 +41,7 @@ import {
   type TinyNotaListItem,
 } from "./tiny-api";
 import { getEmpresaByCnpj, type EmpresaInfo } from "./empresa-lookup";
+import { primeiroDiaInteiroPosCorte } from "./sync-pedidos-corte";
 import { processWebhook } from "./webhook-processor";
 import { handleNfWebhook, type NfWebhookPayload } from "./nf-webhook-handler";
 import { handlePedidoCancelamento } from "./pedido-cancel-handler";
@@ -86,6 +90,8 @@ export interface PollingResumoEmpresa {
   empresa_id: string;
   empresa_nome: string;
   cnpj: string;
+  /** Início efetivo da janela de aprovados/NFs (7d, clampado pelo corte). */
+  data_inicial: string;
   pedidos_aprovados_vistos: number;
   pedidos_processados: number;
   pedidos_cancelados_vistos: number;
@@ -524,6 +530,7 @@ export async function pollTiny(): Promise<PollingResult> {
       empresa_id: conn.empresa_id,
       empresa_nome: "",
       cnpj: conn.cnpj,
+      data_inicial: dataInicial,
       pedidos_aprovados_vistos: 0,
       pedidos_processados: 0,
       pedidos_cancelados_vistos: 0,
@@ -542,6 +549,16 @@ export async function pollTiny(): Promise<PollingResult> {
       }
       resumo.empresa_nome = empresa.empresaNome;
 
+      // Corte de migração: clampa a janela de aprovados/NFs pro primeiro dia
+      // inteiramente pós-corte. Cancelados ficam na janela cheia de propósito
+      // (filtram por pedidos já conhecidos do SISO, todos pós-corte).
+      const corte = empresa.syncPedidosDesde;
+      const dataInicialPedidos =
+        corte && primeiroDiaInteiroPosCorte(corte) > dataInicial
+          ? primeiroDiaInteiroPosCorte(corte)
+          : dataInicial;
+      resumo.data_inicial = dataInicialPedidos;
+
       const { token } = await getValidTokenByEmpresa(empresa.empresaId);
 
       // runWithEmpresa: rate-limit + contexto pro stub (gotcha #8).
@@ -549,9 +566,9 @@ export async function pollTiny(): Promise<PollingResult> {
       // cancelados) não derruba as demais da mesma empresa.
       await runWithEmpresa(empresa.empresaId, async () => {
         const varreduras: Array<[string, () => Promise<void>]> = [
-          ["aprovados", () => pollPedidosAprovados(token, empresa, conn.cnpj, dataInicial, resumo)],
+          ["aprovados", () => pollPedidosAprovados(token, empresa, conn.cnpj, dataInicialPedidos, resumo)],
           ["cancelados", () => pollPedidosCancelados(token, empresa, conn.cnpj, dataInicial, resumo)],
-          ["notas", () => pollNotasAutorizadas(token, empresa, conn.cnpj, dataInicial, resumo)],
+          ["notas", () => pollNotasAutorizadas(token, empresa, conn.cnpj, dataInicialPedidos, resumo)],
         ];
         for (const [nome, varrer] of varreduras) {
           try {

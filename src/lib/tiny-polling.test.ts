@@ -122,6 +122,7 @@ const EMPRESA = {
   galpaoNome: "CWB",
   grupoId: "grupo-1",
   grupoNome: "Autopecas",
+  syncPedidosDesde: null,
 };
 
 vi.mock("./empresa-lookup", () => ({
@@ -477,6 +478,78 @@ describe("pollTiny — notas fiscais", () => {
     await pollTiny();
 
     expect(handleNfWebhookMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("pollTiny — corte de sincronização (sync_pedidos_desde)", () => {
+  const DIA = 24 * 60 * 60 * 1000;
+  const diaSP = (ms: number) =>
+    new Date(ms).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  const janela7d = () => new Date(Date.now() - 7 * DIA).toISOString().slice(0, 10);
+
+  it("corte com horário clampa aprovados/NFs pro dia seguinte; cancelados mantêm 7d", async () => {
+    const diaCorte = diaSP(Date.now() - 2 * DIA);
+    // 17:00Z = 14:00 SP — não é meia-noite
+    vi.mocked(getEmpresaByCnpj).mockResolvedValue({
+      ...EMPRESA,
+      syncPedidosDesde: `${diaCorte}T17:00:00.000Z`,
+    });
+
+    const result = await pollTiny();
+
+    const diaSeguinte = new Date(Date.parse(`${diaCorte}T00:00:00Z`) + DIA)
+      .toISOString()
+      .slice(0, 10);
+    expect(listarPedidosMock).toHaveBeenCalledWith(
+      "tok-1",
+      expect.objectContaining({ situacao: 3, dataInicial: diaSeguinte }),
+    );
+    expect(listarNotasMock).toHaveBeenCalledWith(
+      "tok-1",
+      expect.objectContaining({ situacao: 6, dataInicial: diaSeguinte }),
+    );
+    expect(listarPedidosMock).toHaveBeenCalledWith(
+      "tok-1",
+      expect.objectContaining({ situacao: 2, dataAtualizacao: janela7d() }),
+    );
+    expect(result.empresas[0].data_inicial).toBe(diaSeguinte);
+  });
+
+  it("corte à meia-noite SP inclui o próprio dia", async () => {
+    const diaCorte = diaSP(Date.now() - 2 * DIA);
+    // 03:00Z = 00:00 SP (UTC-3, sem DST)
+    vi.mocked(getEmpresaByCnpj).mockResolvedValue({
+      ...EMPRESA,
+      syncPedidosDesde: `${diaCorte}T03:00:00.000Z`,
+    });
+
+    const result = await pollTiny();
+
+    expect(listarPedidosMock).toHaveBeenCalledWith(
+      "tok-1",
+      expect.objectContaining({ situacao: 3, dataInicial: diaCorte }),
+    );
+    expect(result.empresas[0].data_inicial).toBe(diaCorte);
+  });
+
+  it("corte mais velho que a janela não muda a dataInicial", async () => {
+    vi.mocked(getEmpresaByCnpj).mockResolvedValue({
+      ...EMPRESA,
+      syncPedidosDesde: new Date(Date.now() - 30 * DIA).toISOString(),
+    });
+
+    const result = await pollTiny();
+
+    expect(listarPedidosMock).toHaveBeenCalledWith(
+      "tok-1",
+      expect.objectContaining({ situacao: 3, dataInicial: janela7d() }),
+    );
+    expect(result.empresas[0].data_inicial).toBe(janela7d());
+  });
+
+  it("sem corte → janela cheia de 7 dias", async () => {
+    const result = await pollTiny();
+    expect(result.empresas[0].data_inicial).toBe(janela7d());
   });
 });
 

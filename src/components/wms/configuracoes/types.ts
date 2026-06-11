@@ -13,6 +13,11 @@ export interface EmpresaHierarquiaWms {
   cnpj: string;
   ativo: boolean;
   /**
+   * Corte de migração (ISO timestamp): pedidos Tiny criados antes não entram
+   * no WMS (webhook ignora, polling clampa a janela). null = sem corte.
+   */
+  sync_pedidos_desde: string | null;
+  /**
    * Galpões preferenciais (geo-priority no roteamento). Pode estar vazio.
    * Vem de siso_empresa_galpoes_preferenciais (N:N).
    */

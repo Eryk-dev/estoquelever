@@ -2,6 +2,8 @@ import { createServiceClient } from "./supabase-server";
 import { getPedido } from "./tiny-api";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
+import { getEmpresaById } from "./empresa-lookup";
+import { criadoAntesDoDiaDoCorte } from "./sync-pedidos-corte";
 import { logger, getCorrelationId } from "./logger";
 import { processWebhookWms } from "./webhook-processor-wms";
 
@@ -82,6 +84,33 @@ export async function processWebhook(
           status: "ignorado",
           processado_em: new Date().toISOString(),
           erro: "Pedido sem ecommerce — não é marketplace",
+        })
+        .eq("id", webhookLogId);
+
+      return;
+    }
+
+    // 2b. Corte de migração (siso_empresas.sync_pedidos_desde): pedido criado
+    // em dia anterior ao corte pertence ao processo antigo — não entra no WMS.
+    // Pega webhook de atualização de pedido velho; semântica em
+    // lib/sync-pedidos-corte.ts.
+    const empresaInfo = await getEmpresaById(empresaOrigemId);
+    const corte = empresaInfo?.syncPedidosDesde ?? null;
+    if (corte && criadoAntesDoDiaDoCorte(pedido.data, corte)) {
+      logger.info("processor", "Skipping pedido criado antes do corte de sync", {
+        pedidoId: pedidoTinyId,
+        numero: pedido.numero,
+        dataPedido: pedido.data,
+        corte,
+        empresaId: empresaOrigemId,
+      });
+
+      await supabase
+        .from("siso_webhook_logs")
+        .update({
+          status: "ignorado",
+          processado_em: new Date().toISOString(),
+          erro: `Pedido criado em ${pedido.data}, antes do corte de sincronização (${corte})`,
         })
         .eq("id", webhookLogId);
 

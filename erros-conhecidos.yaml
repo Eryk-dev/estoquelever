@@ -452,3 +452,22 @@ erros:
   files:
     - src/app/api/separacao/bipar-embalagem-oc/route.ts
   tags: [bipar, embalagem-oc, embalagem-direta, data-pedido, coluna-inexistente, 500, sku]
+
+- id: bipar-embalagem-oc-coluna-quantidade-inexistente
+  date: 2026-06-11
+  source: bipar-embalagem-oc
+  category: database
+  message: "column siso_pedido_itens.quantidade does not exist"
+  cause: >
+    A rota /api/separacao/bipar-embalagem-oc fazia select de "quantidade"
+    em siso_pedido_itens, coluna que nao existe (a coluna real e
+    "quantidade_pedida"). Todo bip na tela Embalagem Direta OC retornava
+    500 antes de qualquer match de SKU — operador nao conseguia bipar
+    nenhum produto. Mesmo padrao do erro
+    bipar-embalagem-oc-coluna-data-pedido-inexistente (09/06).
+  fix: >
+    Renomeado quantidade -> quantidade_pedida no select e no calculo de
+    bipado_completo.
+  files:
+    - src/app/api/separacao/bipar-embalagem-oc/route.ts
+  tags: [bipar, embalagem-oc, embalagem-direta, quantidade, quantidade-pedida, coluna-inexistente, 500, sku]

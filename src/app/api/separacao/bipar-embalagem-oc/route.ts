@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
     // Find the first pedido that has a matching item (by sku, case-insensitive)
     const { data: matchingItems, error: itemsErr } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, produto_id, sku, quantidade, quantidade_bipada, bipado_completo, compra_status")
+      .select("id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_bipada, bipado_completo, compra_status")
       .in("pedido_id", pedidoIdsSorted)
       .ilike("sku", sku);
 
@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
 
     // ── 2. Increment quantidade_bipada atomically ──
     const newQtyBipada = (targetItem.quantidade_bipada ?? 0) + quantidade;
-    const isBipadoCompleto = newQtyBipada >= targetItem.quantidade;
+    const isBipadoCompleto = newQtyBipada >= targetItem.quantidade_pedida;
 
     const { error: updateErr } = await supabase
       .from("siso_pedido_itens")

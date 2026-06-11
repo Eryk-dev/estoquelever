@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
       printnode_printer_id_produto, printnode_printer_nome_produto, printnode_account_id_produto,
       criado_em, atualizado_em,
       siso_empresas!siso_empresas_galpao_id_fkey (
-        id, nome, cnpj, ativo, criado_em, atualizado_em,
+        id, nome, cnpj, ativo, sync_pedidos_desde, criado_em, atualizado_em,
         siso_grupo_empresas (
           id, tier,
           siso_grupos ( id, nome )
@@ -83,6 +83,7 @@ export async function GET(request: NextRequest) {
         nome: e.nome,
         cnpj: e.cnpj,
         ativo: e.ativo,
+        sync_pedidos_desde: e.sync_pedidos_desde ?? null,
         preferenciais,
         grupo: grupoRel ? { id: grupoRel.siso_grupos.id, nome: grupoRel.siso_grupos.nome } : null,
         tier: grupoRel?.tier ?? null,

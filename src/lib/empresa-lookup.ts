@@ -13,6 +13,11 @@ export interface EmpresaInfo {
   galpaoNome: string;
   grupoId: string | null;
   grupoNome: string | null;
+  /**
+   * Corte de migração: pedidos Tiny criados antes deste momento não entram
+   * no WMS (semântica em lib/sync-pedidos-corte.ts). NULL = sem corte.
+   */
+  syncPedidosDesde: string | null;
 }
 
 interface CacheEntry {
@@ -49,6 +54,7 @@ export async function getEmpresaByCnpj(
       id,
       nome,
       galpao_id,
+      sync_pedidos_desde,
       siso_galpoes!siso_empresas_galpao_id_fkey!inner ( id, nome ),
       siso_grupo_empresas ( grupo_id, siso_grupos ( id, nome ) )
     `)
@@ -75,6 +81,7 @@ export async function getEmpresaByCnpj(
     galpaoNome: galpao.nome,
     grupoId,
     grupoNome: grupoRel?.siso_grupos?.nome ?? null,
+    syncPedidosDesde: empresa.sync_pedidos_desde ?? null,
   };
 
   cache.set(clean, { data: info, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -103,6 +110,7 @@ export async function getEmpresaById(
       nome,
       cnpj,
       galpao_id,
+      sync_pedidos_desde,
       siso_galpoes!siso_empresas_galpao_id_fkey!inner ( id, nome ),
       siso_grupo_empresas ( grupo_id, siso_grupos ( id, nome ) )
     `)
@@ -125,6 +133,7 @@ export async function getEmpresaById(
     galpaoNome: galpao.nome,
     grupoId: grupoRel2?.siso_grupos?.id ?? null,
     grupoNome: grupoRel2?.siso_grupos?.nome ?? null,
+    syncPedidosDesde: empresa.sync_pedidos_desde ?? null,
   };
 
   cache.set(cleanCnpj(empresa.cnpj), {

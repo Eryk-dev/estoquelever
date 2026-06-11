@@ -338,7 +338,16 @@ export async function criarAgrupamentoFase1(pedidoId: string): Promise<void> {
     { p_pedido_ids: [pedidoId] },
   );
 
-  if (claimErr || !claimed || (claimed as PedidoClaimed[]).length === 0) {
+  if (claimErr) {
+    // Claim quebrado é infra (RPC ausente/divergente) — NUNCA engolir.
+    // O silêncio aqui escondeu por semanas a RPC faltante/ambígua no staging.
+    logger.warn(LOG_SOURCE, "Fase1: claim RPC falhou", {
+      pedidoId,
+      error: claimErr.message,
+    });
+    return;
+  }
+  if (!claimed || (claimed as PedidoClaimed[]).length === 0) {
     // Already claimed by another caller or no empresa_origem_id
     return;
   }

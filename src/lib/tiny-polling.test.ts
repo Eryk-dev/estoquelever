@@ -449,6 +449,7 @@ describe("pollTiny — notas fiscais", () => {
         },
       },
       "emp-1",
+      { aguardarFase1: true },
     );
     expect(result.empresas[0].notas_processadas).toBe(1);
   });

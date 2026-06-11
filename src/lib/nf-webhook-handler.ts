@@ -131,6 +131,7 @@ export async function upsertNotaFiscal(input: UpsertNfInput): Promise<string> {
 export async function handleNfWebhook(
   payload: NfWebhookPayload,
   empresaId: string,
+  opts?: { aguardarFase1?: boolean },
 ): Promise<void> {
   const supabase = createServiceClient();
   const { idNotaFiscalTiny, urlDanfe, chaveAcesso } = payload.dados;
@@ -186,23 +187,48 @@ export async function handleNfWebhook(
     .select("id")
     .single();
 
+  let webhookLogId: string;
+
   if (insertError) {
     if (insertError.code === "23505") {
-      logger.info("nf-webhook", "Duplicate NF webhook ignored", {
+      // Re-entrega de NF já vista. Se o log anterior ficou em
+      // 'aguardando_pedido' (NF chegou ANTES do pedido — race), re-tenta o
+      // match agora: o pedido pode já ter sido salvo. Sem isso, a NF fica
+      // órfã pra sempre (o dedup engolia todas as re-entregas, inclusive as
+      // do polling de 10min que serviriam de segunda chance).
+      const { data: pendente } = await supabase
+        .from("siso_webhook_logs")
+        .select("id")
+        .eq("tipo", "nota_fiscal")
+        .eq("tiny_pedido_id", idAsText)
+        .eq("status", "aguardando_pedido")
+        .is("processado_em", null)
+        .limit(1)
+        .maybeSingle();
+      if (!pendente) {
+        logger.info("nf-webhook", "Duplicate NF webhook ignored", {
+          idNotaFiscalTiny: String(idNotaFiscalTiny),
+          empresaId,
+        });
+        return;
+      }
+      logger.info("nf-webhook", "NF aguardando_pedido re-entregue — retry de match", {
         idNotaFiscalTiny: String(idNotaFiscalTiny),
         empresaId,
+        logId: pendente.id,
       });
-      return;
+      webhookLogId = pendente.id;
+    } else {
+      logger.error("nf-webhook", "Failed to insert webhook log", {
+        idNotaFiscalTiny: String(idNotaFiscalTiny),
+        empresaId,
+        error: insertError.message,
+      });
+      throw new Error(`Failed to insert NF webhook log: ${insertError.message}`);
     }
-    logger.error("nf-webhook", "Failed to insert webhook log", {
-      idNotaFiscalTiny: String(idNotaFiscalTiny),
-      empresaId,
-      error: insertError.message,
-    });
-    throw new Error(`Failed to insert NF webhook log: ${insertError.message}`);
+  } else {
+    webhookLogId = logEntry.id;
   }
-
-  const webhookLogId = logEntry.id;
 
   // Step 2 — Fast-path match: pedido already has nota_fiscal_id saved
   const { data: pedidoFastPath } = await supabase
@@ -326,10 +352,16 @@ export async function handleNfWebhook(
     empresaId,
   });
 
-  // Step 5a.1 — Attempt fase-1 agrupamento when both NF fields are now persisted
-  // Fire-and-forget: criarAgrupamentoFase1 never throws, and must not block the webhook response
+  // Step 5a.1 — Attempt fase-1 agrupamento when both NF fields are now persisted.
+  // Webhook real: fire-and-forget (não bloquear a resposta pro Tiny).
+  // Polling (aguardarFase1): AWAIT — fire-and-forget dentro da rota do cron
+  // morre quando a lambda congela (promises soltas perdidas em serverless).
   if (chaveAcesso) {
-    criarAgrupamentoFase1(pedidoId).catch(() => {});
+    if (opts?.aguardarFase1) {
+      await criarAgrupamentoFase1(pedidoId).catch(() => {});
+    } else {
+      criarAgrupamentoFase1(pedidoId).catch(() => {});
+    }
   }
 
   // Step 5b — Transition aguardando_nf → aguardando_separacao (only if in correct status)

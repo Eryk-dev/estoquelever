@@ -447,7 +447,7 @@ async function pollNotasAutorizadas(
           valorNota: nf.valor,
         },
       };
-      await handleNfWebhook(payload, empresa.empresaId);
+      await handleNfWebhook(payload, empresa.empresaId, { aguardarFase1: true });
       resumo.notas_processadas++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
